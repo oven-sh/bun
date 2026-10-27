@@ -144,7 +144,8 @@ impl Channel {
             return Ok(());
         }
 
-        self.cache.insert(now, &query.cache_key, &response);
+        // Whoever asked is told of a response that cannot be written: `finish` writes it too.
+        let _ = self.cache.insert(now, &query.cache_key, &response);
         self.clear_server_failures(server);
         self.end_query(now, Some(server), serial, Ok(response), Some(deferred));
         Ok(())

@@ -2,6 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::Result;
 use crate::io::Time;
 use crate::message::{Message, RData, flag, rcode};
 
@@ -80,21 +81,19 @@ impl QueryCache {
         entry.response.rewritten(age).ok()
     }
 
-    /// Keeps `response` if it is one to keep.
-    pub(super) fn insert(&mut self, now: Time, key: &[u8], response: &Message) {
-        let Ok(response) = response.rewritten(0) else {
-            return;
-        };
+    /// Keeps `response` if it is one to keep. `Err`: it cannot be written, so it could not be handed out again.
+    pub(super) fn insert(&mut self, now: Time, key: &[u8], response: &Message) -> Result<()> {
+        let response = response.rewritten(0)?;
         let ttl = match response.rcode {
-            _ if response.flags & flag::TC != 0 => return,
+            _ if response.flags & flag::TC != 0 => return Ok(()),
             rcode::NOERROR if !response.answer.is_empty() => lowest_ttl(&response),
             // RFC 2308 section 5 treats NODATA as NXDOMAIN. c-ares does not, and keeps it for `MAX_TTL`.
             rcode::NOERROR | rcode::NXDOMAIN => negative_ttl(&response),
-            _ => return,
+            _ => return Ok(()),
         }
         .min(MAX_TTL);
         if ttl == 0 {
-            return;
+            return Ok(());
         }
         let expires_at = now.sec + i64::from(ttl);
         let entry = Entry {
@@ -106,5 +105,6 @@ impl QueryCache {
             self.expiry.remove(&(replaced.expires_at, key.to_vec()));
         }
         self.expiry.insert((expires_at, key.to_vec()));
+        Ok(())
     }
 }

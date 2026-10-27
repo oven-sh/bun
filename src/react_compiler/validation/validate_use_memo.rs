@@ -1,11 +1,9 @@
-use std::collections::HashSet;
-
-use crate::collections::IdMap;
+use crate::collections::{IdBitSet, IdMap};
 use crate::diagnostics::{
     CompilerDiagnostic, CompilerDiagnosticDetail, CompilerError, ErrorCategory, SourceLocation,
 };
 use crate::hir::environment::Environment;
-use crate::hir::visitors::{each_instruction_value_operand_with_functions, each_terminal_operand};
+use crate::hir::visitors::{operands, terminal_operands};
 use crate::hir::{
     FunctionId, HirFunction, IdentifierId, InstructionValue, Place, PlaceOrSpread, ReturnVariant,
     Terminal,
@@ -37,8 +35,8 @@ fn validate_use_memo_impl(
     validate_no_void_use_memo: bool,
 ) -> CompilerError {
     let mut void_memo_errors = CompilerError::new();
-    let mut use_memos: HashSet<IdentifierId> = HashSet::new();
-    let mut react: HashSet<IdentifierId> = HashSet::new();
+    let mut use_memos: IdBitSet<IdentifierId> = IdBitSet::default();
+    let mut react: IdBitSet<IdentifierId> = IdBitSet::default();
     let mut func_exprs: IdMap<IdentifierId, FuncExprInfo> = IdMap::new();
     let mut unused_use_memos: IdMap<IdentifierId, (SourceLocation, Option<String>)> = IdMap::new();
 
@@ -50,8 +48,8 @@ fn validate_use_memo_impl(
 
             // Remove used operands from unused_use_memos
             if !unused_use_memos.is_empty() {
-                for operand_id in each_instruction_value_operand_ids(value, functions) {
-                    unused_use_memos.remove(operand_id);
+                for operand in operands(value, functions) {
+                    unused_use_memos.remove(operand.identifier);
                 }
             }
 
@@ -67,7 +65,7 @@ fn validate_use_memo_impl(
                 InstructionValue::PropertyLoad {
                     object, property, ..
                 } => {
-                    if react.contains(&object.identifier) {
+                    if react.contains(object.identifier) {
                         if let crate::hir::PropertyLiteral::String(prop_name) = property {
                             if prop_name == b"useMemo" {
                                 use_memos.insert(lvalue.identifier);
@@ -120,8 +118,8 @@ fn validate_use_memo_impl(
 
         // Check terminal operands for unused_use_memos
         if !unused_use_memos.is_empty() {
-            for operand_id in each_terminal_operand_ids(&block.terminal) {
-                unused_use_memos.remove(operand_id);
+            for operand in terminal_operands(&block.terminal) {
+                unused_use_memos.remove(operand.identifier);
             }
         }
     }
@@ -230,7 +228,7 @@ fn handle_possible_use_memo_call(
     functions: &[HirFunction],
     errors: &mut CompilerError,
     void_memo_errors: &mut CompilerError,
-    use_memos: &HashSet<IdentifierId>,
+    use_memos: &IdBitSet<IdentifierId>,
     func_exprs: &IdMap<IdentifierId, FuncExprInfo>,
     unused_use_memos: &mut IdMap<IdentifierId, (SourceLocation, Option<String>)>,
     callee: &Place,
@@ -238,7 +236,7 @@ fn handle_possible_use_memo_call(
     lvalue: &Place,
     validate_no_void_use_memo: bool,
 ) {
-    let is_use_memo = use_memos.contains(&callee.identifier);
+    let is_use_memo = use_memos.contains(callee.identifier);
     if !is_use_memo || args.is_empty() {
         return;
     }
@@ -282,14 +280,14 @@ fn handle_possible_use_memo_call(
 }
 
 fn validate_no_context_variable_assignment(func: &HirFunction, errors: &mut CompilerError) {
-    let context: HashSet<IdentifierId> =
+    let context: IdBitSet<IdentifierId> =
         func.context.iter().map(|place| place.identifier).collect();
 
     for (_block_id, block) in &func.body.blocks {
         for &instr_id in &block.instructions {
             let instr = &func.instructions[instr_id.0 as usize];
             if let InstructionValue::StoreContext { lvalue, .. } = &instr.value {
-                if context.contains(&lvalue.place.identifier) {
+                if context.contains(lvalue.place.identifier) {
                     errors.push_diagnostic(diag_context_reassign(lvalue.place.loc));
                 }
             }
@@ -309,25 +307,4 @@ fn has_non_void_return(func: &HirFunction) -> bool {
         }
     }
     false
-}
-
-/// Collect all operand IdentifierIds from an InstructionValue.
-/// Thin wrapper around canonical `each_instruction_value_operand_with_functions` that maps to ids.
-fn each_instruction_value_operand_ids(
-    value: &InstructionValue,
-    functions: &[HirFunction],
-) -> Vec<IdentifierId> {
-    each_instruction_value_operand_with_functions(value, functions)
-        .into_iter()
-        .map(|p| p.identifier)
-        .collect()
-}
-
-/// Collect all operand IdentifierIds from a Terminal.
-/// Thin wrapper around canonical `each_terminal_operand` that maps to ids.
-fn each_terminal_operand_ids(terminal: &Terminal) -> Vec<IdentifierId> {
-    each_terminal_operand(terminal)
-        .into_iter()
-        .map(|p| p.identifier)
-        .collect()
 }

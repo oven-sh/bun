@@ -15,7 +15,7 @@ on:
       - "src/**/*.rs"
       - "src/**/*.h"
       - "src/**/*.cpp"
-      - "src/**/*.classes.ts"
+      - "src/**/*.bind.ts"
       - "src/codegen/**"
       - "src/js/builtins.d.ts"
       - "src/jsc/bindings/**"
@@ -39,7 +39,7 @@ on:
       - "src/**/*.rs"
       - "src/**/*.h"
       - "src/**/*.cpp"
-      - "src/**/*.classes.ts"
+      - "src/**/*.bind.ts"
       - "src/codegen/**"
       - "src/js/builtins.d.ts"
       - "src/jsc/bindings/**"
@@ -61,7 +61,7 @@ on:
   merge_group:
 
 env:
-  BUN_VERSION: "1.4.2"
+  BUN_VERSION: "1.4.4"
 
 jobs:
   source-lints:

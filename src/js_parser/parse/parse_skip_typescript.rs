@@ -215,7 +215,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<(), Error> {
         self.mark_type_script_only();
 
-        if self.try_skip_type_script_arrow_args_with_backtracking() {
+        if self.try_skip_type_script_arrow_args_with_backtracking()? {
             self.skip_typescript_return_type()?;
             if GET_METADATA {
                 *result.expect("infallible: GET_METADATA implies Some") = Metadata::MFunction;
@@ -495,7 +495,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     let _ = self
                                         .try_skip_type_script_constraint_of_infer_type_with_backtracking(
                                             opts,
-                                        );
+                                        )?;
                                 }
                             }
 
@@ -1443,11 +1443,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     // ───────────────────────── Backtracking ─────────────────────────
     // Two concrete helpers covering the actual call patterns:
-    //   - `lexer_backtracker_bool`   — fn returns Result<()>/Result<bool>, helper returns bool
+    //   - `lexer_backtracker_bool`   — fn returns Result<()>/Result<bool>, helper returns whether the attempt succeeded
     //   - `lexer_backtracker_result` — fn returns Result<SkipTypeParameterResult>
+    // Both return `Err` only for stack and memory exhaustion, which are not properties of the attempt. If they counted as a failed
+    // attempt, the caller would parse the same text another way, and where that way needs less stack per level it would end in an
+    // ordinary syntax error for valid code.
 
     #[inline]
-    fn lexer_backtracker_bool<F, R>(&mut self, func: F) -> bool
+    fn lexer_backtracker_bool<F, R>(&mut self, func: F) -> Result<bool, Error>
     where
         F: FnOnce(&mut Self) -> Result<R, Error>,
     {
@@ -1458,10 +1461,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let old_log_disabled = self.lexer.is_log_disabled;
         self.lexer.is_log_disabled = true;
         let mut backtrack = false;
+        let mut exhausted = None;
         match func(self) {
             Ok(_) => {}
-            Err(_) => {
+            Err(err) => {
                 backtrack = true;
+                if matches!(err, Error::StackOverflow | Error::Alloc(_)) {
+                    exhausted = Some(err);
+                }
             }
         }
 
@@ -1469,12 +1476,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.lexer.restore(&old_lexer);
         }
         self.lexer.is_log_disabled = old_log_disabled;
+        if let Some(err) = exhausted {
+            return Err(err);
+        }
 
-        !backtrack
+        Ok(!backtrack)
     }
 
     #[inline]
-    fn lexer_backtracker_result<F>(&mut self, func: F) -> SkipTypeParameterResult
+    fn lexer_backtracker_result<F>(&mut self, func: F) -> Result<SkipTypeParameterResult, Error>
     where
         F: FnOnce(&mut Self) -> Result<SkipTypeParameterResult, Error>,
     {
@@ -1483,10 +1493,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let old_log_disabled = self.lexer.is_log_disabled;
         self.lexer.is_log_disabled = true;
         let mut backtrack = false;
+        let mut exhausted = None;
         let result = match func(self) {
             Ok(r) => r,
-            Err(_) => {
+            Err(err) => {
                 backtrack = true;
+                if matches!(err, Error::StackOverflow | Error::Alloc(_)) {
+                    exhausted = Some(err);
+                }
                 SkipTypeParameterResult::DidNotSkipAnything
             }
         };
@@ -1495,8 +1509,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.lexer.restore(&old_lexer);
         }
         self.lexer.is_log_disabled = old_log_disabled;
+        if let Some(err) = exhausted {
+            return Err(err);
+        }
 
-        result
+        Ok(result)
     }
 
     pub(crate) fn skip_type_script_type_parameters_then_open_paren_with_backtracking(
@@ -1597,6 +1614,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let snapshot = self.parser_snapshot();
         self.lexer.is_log_disabled = true;
+        // Metadata looks up type names, which adds unbound symbols to the module scope.
+        let emit_decorator_metadata =
+            core::mem::take(&mut self.options.features.emit_decorator_metadata);
 
         let mut data = arrow_data.clone();
         let result: Result<(), Error> = (|| {
@@ -1609,6 +1629,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         })();
 
         self.restore_parser_snapshot(snapshot);
+        self.options.features.emit_decorator_metadata = emit_decorator_metadata;
         let is_arrow_fn = match result {
             Ok(()) => true,
             // Stack and memory exhaustion are not properties of the attempt
@@ -1632,28 +1653,34 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub(crate) fn try_skip_type_script_type_parameters_then_open_paren_with_backtracking(
         &mut self,
-    ) -> SkipTypeParameterResult {
+    ) -> Result<SkipTypeParameterResult, Error> {
         self.lexer_backtracker_result(
             Self::skip_type_script_type_parameters_then_open_paren_with_backtracking,
         )
     }
 
-    pub(crate) fn try_skip_type_script_type_arguments_with_backtracking(&mut self) -> bool {
+    pub(crate) fn try_skip_type_script_type_arguments_with_backtracking(
+        &mut self,
+    ) -> Result<bool, Error> {
         self.lexer_backtracker_bool(Self::skip_type_script_type_arguments_with_backtracking)
     }
 
-    pub(crate) fn try_skip_type_script_arrow_return_type_with_backtracking(&mut self) -> bool {
+    pub(crate) fn try_skip_type_script_arrow_return_type_with_backtracking(
+        &mut self,
+    ) -> Result<bool, Error> {
         self.lexer_backtracker_bool(Self::skip_type_script_arrow_return_type_with_backtracking)
     }
 
-    pub(crate) fn try_skip_type_script_arrow_args_with_backtracking(&mut self) -> bool {
+    pub(crate) fn try_skip_type_script_arrow_args_with_backtracking(
+        &mut self,
+    ) -> Result<bool, Error> {
         self.lexer_backtracker_bool(Self::skip_type_script_arrow_args_with_backtracking)
     }
 
     pub(crate) fn try_skip_type_script_constraint_of_infer_type_with_backtracking(
         &mut self,
         flags: SkipTypeOptionsBitset,
-    ) -> bool {
+    ) -> Result<bool, Error> {
         // The outcome of this attempt depends only on the position of the `extends`
         // token and on whether conditional types are allowed, so an attempt that
         // already backtracked here can be skipped. Each backtracked constraint gets
@@ -1672,12 +1699,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .binary_search(&memo_key)
             .is_ok()
         {
-            return false;
+            return Ok(false);
         }
 
         let skipped = self.lexer_backtracker_bool(|p| {
             p.skip_type_script_constraint_of_infer_type_with_backtracking(flags)
-        });
+        })?;
         if !skipped {
             // Re-search for the insertion point: attempts nested inside the one that
             // just failed may have added entries of their own.
@@ -1686,6 +1713,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     .insert(insert_at, memo_key);
             }
         }
-        skipped
+        Ok(skipped)
     }
 }

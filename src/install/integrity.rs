@@ -11,7 +11,7 @@ const SHA384_DIGEST_LEN: usize = 48;
 const SHA512_DIGEST_LEN: usize = 64;
 
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Integrity {
     pub tag: Tag,
     /// Possibly a [Subresource Integrity](https://developer.mozilla.org/en-US/docs/Web/Security/Subresource_Integrity) value initially
@@ -48,6 +48,9 @@ const DIGEST_BUF_LEN: usize = {
 };
 
 impl Integrity {
+    /// `sha512-`, 86 base64 digits, `==`.
+    pub(crate) const MAX_SRI_LEN: usize = 7 + 86 + 2;
+
     pub(crate) fn parse_sha_sum(buf: &[u8]) -> crate::Result<Integrity> {
         if buf.is_empty() {
             return Ok(Integrity {
@@ -69,13 +72,6 @@ impl Integrity {
         }
         let mut out_i: usize = 0;
         let mut i: usize = 0;
-
-        // initializer should zero it out
-        if cfg!(debug_assertions) {
-            for c in integrity.value.iter() {
-                debug_assert!(*c == 0);
-            }
-        }
 
         while i < end {
             // npm sha1 strings are always [0-9a-f]; canonical hex_pair_value
@@ -191,6 +187,11 @@ impl Integrity {
         }
     }
 
+    /// Formats it the way bun.lock does. An extracted `file:` or URL tarball has it in `.bun-tag`.
+    pub(crate) fn sri<'a>(&self, buf: &'a mut [u8; Self::MAX_SRI_LEN]) -> &'a [u8] {
+        bun_core::fmt::buf_print_infallible(buf, format_args!("{self}"))
+    }
+
     #[inline]
     pub fn verify(&self, bytes: &[u8]) -> bool {
         Self::verify_by_tag(self.tag, bytes, &self.value)
@@ -243,13 +244,11 @@ impl Integrity {
 
 impl fmt::Display for Integrity {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.tag {
-            Tag::SHA1 => f.write_str("sha1-")?,
-            Tag::SHA256 => f.write_str("sha256-")?,
-            Tag::SHA384 => f.write_str("sha384-")?,
-            Tag::SHA512 => f.write_str("sha512-")?,
-            _ => return Ok(()),
-        }
+        let Some(algorithm) = self.tag.name() else {
+            return Ok(());
+        };
+        f.write_str(algorithm)?;
+        f.write_str("-")?;
 
         let mut base64_buf = [0u8; 512];
         let bytes = self.slice();
@@ -291,6 +290,18 @@ impl Tag {
     #[inline]
     pub fn is_supported(self) -> bool {
         self.0 >= Tag::SHA1.0 && self.0 <= Tag::SHA512.0
+    }
+
+    /// Returns the algorithm part of the SRI string (`sha512` in `sha512-...`), or `None` for
+    /// `UNKNOWN`.
+    pub(crate) fn name(self) -> Option<&'static str> {
+        Some(match self {
+            Tag::SHA1 => "sha1",
+            Tag::SHA256 => "sha256",
+            Tag::SHA384 => "sha384",
+            Tag::SHA512 => "sha512",
+            _ => return None,
+        })
     }
 
     pub(crate) fn parse(buf: &[u8]) -> (Tag, usize) {

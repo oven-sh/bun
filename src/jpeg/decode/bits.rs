@@ -156,8 +156,10 @@ impl BitReader {
 
     /// Reads bytes until the buffer is full or a marker comes. Afterwards there are at least `nbits` bits, made up if
     /// need be.
+    ///
+    /// By value, here and in `decode_slow`, so that a reader that is a local variable can stay in registers.
     #[inline(never)]
-    pub(crate) fn fill(&mut self, input: &mut Input, nbits: u32) {
+    fn filled(mut self, input: &mut Input, nbits: u32) -> Self {
         if input.unread_marker == 0 {
             while self.bits_left < MIN_GET_BITS {
                 let mut c = input.byte();
@@ -181,13 +183,14 @@ impl BitReader {
             self.buf <<= MIN_GET_BITS - self.bits_left;
             self.bits_left = MIN_GET_BITS;
         }
+        self
     }
 
     /// Makes sure of `nbits` bits, at most 16.
     #[inline(always)]
     pub(crate) fn ensure(&mut self, input: &mut Input, nbits: u32) {
         if self.bits_left < nbits {
-            self.fill(input, nbits);
+            *self = self.filled(input, nbits);
         }
     }
 
@@ -208,25 +211,27 @@ impl BitReader {
     /// The next symbol.
     #[inline(always)]
     pub(crate) fn decode(&mut self, input: &mut Input, table: &DerivedTable) -> u8 {
+        let mut min_bits = 1;
         if self.bits_left < LOOKAHEAD {
-            self.fill(input, 0);
-            if self.bits_left < LOOKAHEAD {
-                // The segment ends here. The code may still be whole.
-                return self.decode_slow(input, table, 1);
+            *self = self.filled(input, 0);
+        }
+        // Otherwise the segment ends here. The code may still be whole.
+        if self.bits_left >= LOOKAHEAD {
+            let (length, symbol) = self.lookup(table);
+            if length <= LOOKAHEAD {
+                self.bits_left -= length;
+                return symbol;
             }
+            min_bits = length;
         }
-        let (length, symbol) = self.lookup(table);
-        if length <= LOOKAHEAD {
-            self.bits_left -= length;
-            symbol
-        } else {
-            self.decode_slow(input, table, length)
-        }
+        let symbol;
+        (*self, symbol) = self.decode_slow(input, table, min_bits);
+        symbol
     }
 
     /// The code is known to have at least `min_bits` bits.
     #[inline(never)]
-    fn decode_slow(&mut self, input: &mut Input, table: &DerivedTable, min_bits: u32) -> u8 {
+    fn decode_slow(mut self, input: &mut Input, table: &DerivedTable, min_bits: u32) -> (Self, u8) {
         let mut length = min_bits as usize;
         self.ensure(input, min_bits);
         let mut code = self.get(min_bits);
@@ -237,14 +242,11 @@ impl BitReader {
             length += 1;
         }
         if length > 16 {
-            return 0;
+            return (self, 0);
         }
         let offset = table.valoffset.get(length).copied().unwrap_or(0);
-        table
-            .huffval
-            .get((code + offset) as usize)
-            .copied()
-            .unwrap_or(0)
+        let symbol = table.huffval.get((code + offset) as usize);
+        (self, symbol.copied().unwrap_or(0))
     }
 }
 

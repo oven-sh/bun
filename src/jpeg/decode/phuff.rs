@@ -167,22 +167,24 @@ impl PHuffDecoder {
         if input.insufficient_data {
             return Ok(());
         }
+        let mut bits = self.bits;
         for (index, info) in self.blocks.iter().enumerate().take(self.blocks_in_mcu) {
             let table = bits::table(&self.tables, info.dc_selector)?;
             let last_dc = self
                 .last_dc_val
                 .get_mut(usize::from(info.scan_component))
                 .ok_or(Error::Internal)?;
-            let s = u32::from(self.bits.decode(input, table));
+            let s = u32::from(bits.decode(input, table));
             let mut diff = 0;
             if s != 0 {
-                self.bits.ensure(input, s);
-                diff = huff_extend(self.bits.get(s), s);
+                bits.ensure(input, s);
+                diff = huff_extend(bits.get(s), s);
             }
             *last_dc = last_dc.checked_add(diff).ok_or(Error::BadDctCoef)?;
             let [dc, ..] = mcu.block(index).ok_or(Error::Internal)?;
             *dc = last_dc.wrapping_shl(self.al) as i16;
         }
+        self.bits = bits;
         Ok(())
     }
 
@@ -198,7 +200,7 @@ impl PHuffDecoder {
         let [info, ..] = self.blocks;
         let table = bits::table(&self.tables, info.ac_selector)?;
         let block = mcu.block(0).ok_or(Error::Internal)?;
-        let bits = &mut self.bits;
+        let mut bits = self.bits;
 
         let mut k = self.ss;
         while k <= self.se {
@@ -224,19 +226,22 @@ impl PHuffDecoder {
             }
             k += 1;
         }
+        self.bits = bits;
         Ok(())
     }
 
     fn decode_dc_refine(&mut self, input: &mut Input, mcu: &mut impl McuBlocks) -> Result<()> {
         // Made-up zeros change nothing, so running out of data needs no check.
         let plus_one = 1i16 << self.al;
+        let mut bits = self.bits;
         for index in 0..self.blocks_in_mcu {
-            self.bits.ensure(input, 1);
-            if self.bits.get(1) != 0 {
+            bits.ensure(input, 1);
+            if bits.get(1) != 0 {
                 let [dc, ..] = mcu.block(index).ok_or(Error::Internal)?;
                 *dc |= plus_one;
             }
         }
+        self.bits = bits;
         Ok(())
     }
 
@@ -248,7 +253,7 @@ impl PHuffDecoder {
         let [info, ..] = self.blocks;
         let table = bits::table(&self.tables, info.ac_selector)?;
         let block = mcu.block(0).ok_or(Error::Internal)?;
-        let bits = &mut self.bits;
+        let mut bits = self.bits;
         let se = self.se;
         // 1 and -1 in the bit position being coded.
         let plus_one = 1i16 << self.al;
@@ -296,7 +301,7 @@ impl PHuffDecoder {
                 loop {
                     let coef = coef_at(block, k)?;
                     if *coef != 0 {
-                        correct(bits, input, coef, plus_one, minus_one);
+                        correct(&mut bits, input, coef, plus_one, minus_one);
                     } else {
                         r -= 1;
                         if r < 0 {
@@ -320,12 +325,13 @@ impl PHuffDecoder {
             while k <= se {
                 let coef = coef_at(block, k)?;
                 if *coef != 0 {
-                    correct(bits, input, coef, plus_one, minus_one);
+                    correct(&mut bits, input, coef, plus_one, minus_one);
                 }
                 k += 1;
             }
             self.eobrun -= 1;
         }
+        self.bits = bits;
         Ok(())
     }
 }

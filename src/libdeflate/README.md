@@ -16,14 +16,14 @@ decompressor reports it as bad data, a compressor as a result that does not fit.
 
 ## Files
 
-| File | libdeflate | |
-| --- | --- | --- |
-| `compressor.rs`, `decompressor.rs` | `gzip_*.c`, `zlib_*.c` | The public types, the gzip and zlib wrappers |
-| `decompress.rs` | `deflate_decompress.c`, `decompress_template.h` | Decode tables and the decoding loops |
-| `compress.rs` | `deflate_compress.c` | Blocks, the output bit stream, levels 0 to 9 |
-| `near_optimal.rs` | `deflate_compress.c` | Levels 10 to 12 |
-| `huffman.rs` | `deflate_compress.c` | Length-limited canonical codes |
-| `ht_`, `hc_`, `bt_matchfinder.rs` | the headers of the same names | Level 1, levels 2 to 9, levels 10 to 12 |
+| File                               | libdeflate                                      |                                              |
+| ---------------------------------- | ----------------------------------------------- | -------------------------------------------- |
+| `compressor.rs`, `decompressor.rs` | `gzip_*.c`, `zlib_*.c`                          | The public types, the gzip and zlib wrappers |
+| `decompress.rs`                    | `deflate_decompress.c`, `decompress_template.h` | Decode tables and the decoding loops         |
+| `compress.rs`                      | `deflate_compress.c`                            | Blocks, the output bit stream, levels 0 to 9 |
+| `near_optimal.rs`                  | `deflate_compress.c`                            | Levels 10 to 12                              |
+| `huffman.rs`                       | `deflate_compress.c`                            | Length-limited canonical codes               |
+| `ht_`, `hc_`, `bt_matchfinder.rs`  | the headers of the same names                   | Level 1, levels 2 to 9, levels 10 to 12      |
 
 The two checksums come from zlib, through `bun_zlib::crc32_bytes` and `adler32_bytes`.
 
@@ -77,15 +77,15 @@ length for an entry in the main table, and that minus `table_bits` in a subtable
 
 Litlen entries:
 
-| Bits | literal | length | end of block | subtable pointer |
-| --- | --- | --- | --- | --- |
-| 31 `HUFFDEC_LITERAL` | 1 | 0 | 0 | 0 |
-| 30-16 | the literal | base length | | index of the subtable |
-| 15 `HUFFDEC_EXCEPTIONAL` | 0 | 0 | 1 | 1 |
-| 14 `HUFFDEC_SUBTABLE_POINTER` | 0 | 0 | 0 | 1 |
-| 13 `HUFFDEC_END_OF_BLOCK` | 0 | 0 | 1 | 0 |
-| 11-8 | | remaining | | index bits of the subtable |
-| 4-0 | remaining | remaining + extra bits | remaining | index bits of the main table |
+| Bits                          | literal     | length                 | end of block | subtable pointer             |
+| ----------------------------- | ----------- | ---------------------- | ------------ | ---------------------------- |
+| 31 `HUFFDEC_LITERAL`          | 1           | 0                      | 0            | 0                            |
+| 30-16                         | the literal | base length            |              | index of the subtable        |
+| 15 `HUFFDEC_EXCEPTIONAL`      | 0           | 0                      | 1            | 1                            |
+| 14 `HUFFDEC_SUBTABLE_POINTER` | 0           | 0                      | 0            | 1                            |
+| 13 `HUFFDEC_END_OF_BLOCK`     | 0           | 0                      | 1            | 0                            |
+| 11-8                          |             | remaining              |              | index bits of the subtable   |
+| 4-0                           | remaining   | remaining + extra bits | remaining    | index bits of the main table |
 
 Offset entries are like length entries and subtable pointers, with the base offset in bits 31-16. Precode entries have
 the symbol in bits 20-16 and the codeword length in bits 2-0, and never need a subtable.

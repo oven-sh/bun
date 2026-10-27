@@ -290,6 +290,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             has_decorators: has_any_decorators,
             should_lower_standard_decorators: p.options.features.standard_decorators
                 && (has_any_decorators || has_auto_accessor),
+            inner_class_ref: js_ast::Ref::NONE,
         })
     }
 
@@ -1516,7 +1517,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             && (!keep || expr.value.loc.start == stmt.loc.start)
                         {
                             is_directive_prologue = true;
-                            let source: &'a bun_ast::Source = p.source;
+                            let source: &'a bun_ast::Source<'a> = p.source;
                             let as_written = keep.then(|| {
                                 let text = &source.contents()[stmt.loc.start as usize..];
                                 let mut end = 1;

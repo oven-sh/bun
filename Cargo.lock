@@ -616,6 +616,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_histogram"
+version = "0.0.0"
+
+[[package]]
 name = "bun_http"
 version = "0.0.0"
 dependencies = [
@@ -1313,6 +1317,7 @@ name = "bun_patch_jsc"
 version = "0.0.0"
 dependencies = [
  "bstr",
+ "bun_core",
  "bun_jsc",
  "bun_patch",
  "bun_sys",
@@ -1491,6 +1496,7 @@ dependencies = [
  "bun_glob",
  "bun_hash",
  "bun_highway",
+ "bun_histogram",
  "bun_http",
  "bun_http_jsc",
  "bun_http_types",
@@ -1747,7 +1753,6 @@ dependencies = [
 name = "bun_sourcemap_jsc"
 version = "0.0.0"
 dependencies = [
- "bstr",
  "bun_alloc",
  "bun_ast",
  "bun_collections",
@@ -1759,7 +1764,6 @@ dependencies = [
  "bun_options_types",
  "bun_paths",
  "bun_sourcemap",
- "bun_url",
  "bun_wyhash",
 ]
 

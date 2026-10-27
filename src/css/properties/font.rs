@@ -403,8 +403,9 @@ impl FontFamily {
                 // CSS wide keywords, as well as "default", must also be quoted.
                 // https://www.w3.org/TR/css-fonts-4/#family-name-syntax
 
+                // Printed bare, ` inherit` reads back as the keyword.
                 if !val.is_empty()
-                    && !is_reserved_custom_ident(val)
+                    && !is_reserved_custom_ident(bun_core::strings::trim(val, b" \t\n\r\x0c"))
                     && !css::parse_utility::parse_string::<GenericFontFamily>(
                         dest.arena,
                         val,

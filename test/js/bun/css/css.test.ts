@@ -4993,6 +4993,22 @@ describe("css tests", () => {
       minify_test(`.foo { font: 12px ${keyword} }`, `.foo{font:12px ${keyword}}`);
     }
 
+    // A quoted reserved word with a blank at an end keeps its quotes: bare, it reads back as the keyword.
+    for (const name of [
+      " inherit",
+      "inherit ",
+      " initial",
+      " unset",
+      " default ",
+      " revert",
+      "revert-layer ",
+      " revert-rule",
+      "  inherit  ",
+    ]) {
+      minify_test(`.foo { font-family: "${name}", Georgia }`, `.foo{font-family:"${name}",Georgia}`);
+    }
+    minify_test('.foo { font: 12px " inherit" }', '.foo{font:12px " inherit"}');
+
     cssTest(
       `
       .foo {

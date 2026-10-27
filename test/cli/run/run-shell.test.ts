@@ -83,19 +83,21 @@ test.skipIf(isWindows)(
 );
 
 // hide-paths.c makes chosen paths look absent (seccomp user notification). `bin` is the helper,
-// `skip` means this host cannot use it (no cc, missing headers, a kernel or sandbox that refuses
-// the filter), `error` is a compile failure of the helper itself.
+// `skip` means this host cannot use it (no C compiler, no kernel headers, a kernel or sandbox that
+// refuses the filter), `error` is a bug in the helper itself.
 const hidePaths: { bin: string } | { skip: true } | { error: string } = (() => {
-  if (!isLinux) return { skip: true };
-  const dir = tempDir("hide-paths", {});
+  const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+  if (!isLinux || !cc) return { skip: true };
+  const dir = tempDir("hide-paths", {
+    "kernel-headers.c": "#include <linux/audit.h>\n#include <linux/filter.h>\n#include <linux/seccomp.h>\n",
+  });
   const result = ((): typeof hidePaths => {
     const bin = join(String(dir), "hide-paths");
-    const compile = spawnSync("cc", ["-O0", "-o", bin, join(import.meta.dir, "hide-paths.c")], { stdio: "pipe" });
-    if ((compile.error as NodeJS.ErrnoException | undefined)?.code === "ENOENT") return { skip: true };
+    const compile = spawnSync(cc, ["-O0", "-o", bin, join(import.meta.dir, "hide-paths.c")], { stdio: "pipe" });
     if (compile.status !== 0) {
-      const stderr = compile.stderr?.toString() ?? "";
-      // A missing header or libc means this host cannot build C. Anything else is a bug in the helper.
-      return stderr.includes("No such file or directory") ? { skip: true } : { error: stderr };
+      // A host without the kernel headers (a separate package on some distros) skips. Any other failure is a bug.
+      const headers = spawnSync(cc, ["-E", join(String(dir), "kernel-headers.c")], { stdio: "ignore" });
+      return headers.status === 0 ? { error: String(compile.stderr ?? compile.error) } : { skip: true };
     }
     // Probe: the helper runs itself with no arguments, which prints the usage and exits 2. 77 means skip.
     return spawnSync(bin, ["/hide-paths-probe", "--", bin], { stdio: "pipe" }).status === 2 ? { bin } : { skip: true };

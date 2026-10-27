@@ -45,21 +45,6 @@ impl Stmt {
         false
     }
 
-    /// The `value` of `this.name = value;`
-    pub fn assigned_to_member_of_this(self) -> Option<Expr> {
-        let Data::SExpr(s_expr) = self.data else {
-            return None;
-        };
-        let expr::Data::EBinary(binary) = s_expr.value.data else {
-            return None;
-        };
-        let expr::Data::EDot(dot) = binary.left.data else {
-            return None;
-        };
-        let is_assignment = binary.op == crate::op::Code::BinAssign;
-        (is_assignment && matches!(dot.target.data, expr::Data::EThis(_))).then_some(binary.right)
-    }
-
     pub fn is_missing_expr(self) -> bool {
         if let Data::SExpr(s_expr) = self.data {
             return matches!(s_expr.value.data, expr::Data::EMissing(_));

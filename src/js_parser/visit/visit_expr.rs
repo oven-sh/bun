@@ -1970,11 +1970,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     e_.can_be_unwrapped_if_unused = dot.call_can_be_unwrapped_if_unused;
                 }
             }
-            Data::ESuper(_) if p.super_shim.is_symbol() => {
-                if is_in_constructor_parameters(p.current_scope_ref()) {
-                    p.super_shim = Ref::NONE;
+            Data::ESuper(_) if p.super_ctor_ref.is_symbol() => {
+                if is_in_constructor_parameters(p.current_scope_ref(), p.super_ctor_args) {
+                    p.super_ctor_ref = Ref::NONE;
                 } else {
-                    e_.target = p.use_ref(p.super_shim, e_.target.loc);
+                    e_.target = p.use_ref(p.super_ctor_ref, e_.target.loc);
                 }
             }
             _ => {}

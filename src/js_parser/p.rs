@@ -16,6 +16,7 @@ use bun_wyhash::Wyhash;
 
 use crate::defines::{Define, DefineData};
 use crate::lexer as js_lexer;
+use crate::lower::lower_class::value_assigned_to_this;
 use crate::parse::parse_entry::Options as ParserOptions;
 use crate::renamer;
 use crate::{
@@ -562,9 +563,11 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// uses anywhere in the class body.
     pub(crate) field_init_class_bodies: Vec<js_ast::StoreRef<Scope>>,
     /// The symbols (by inner index) that those initializers use, for `rename_constructor_variables`.
-    pub(crate) field_initializer_uses: Vec<u32>,
-    /// What stands for `super` in a call, in a constructor that `super_shim_of` has an answer for.
-    pub(crate) super_shim: Ref,
+    pub(crate) field_init_uses: Vec<u32>,
+    /// `__super`, which replaces `super` in the `super()` calls of the constructor being visited, or `Ref::NONE`.
+    pub(crate) super_ctor_ref: Ref,
+    /// The scope of the parameters of that constructor.
+    pub(crate) super_ctor_args: js_ast::StoreRef<Scope>,
     /// Becomes `Ast::scope_uses`.
     pub(crate) scope_uses: Vec<js_ast::ast_result::ScopeUse>,
     /// `(class body scope, symbol)`; becomes `Ast::scope_uses.spans` once the
@@ -2126,7 +2129,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 && !self.options.use_define_for_class_fields
                 && !self.will_use_renamer()
             {
-                self.field_initializer_uses.push(ref_.inner_index());
+                self.field_init_uses.push(ref_.inner_index());
             }
         }
 
@@ -6106,8 +6109,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let csb = property.class_static_block_ref().unwrap();
                 for stmt in csb.stmts.slice() {
                     // `static x = 1` with `useDefineForClassFields: false`
-                    let value =
-                        (stmt.assigned_to_member_of_this()).filter(|_| !can_have_static_accessor);
+                    let value = value_assigned_to_this(stmt).filter(|_| !can_have_static_accessor);
                     let can_be_removed = match value {
                         Some(value) => self.expr_can_be_removed_if_unused_without_dce_check(&value),
                         None => self.stmts_can_be_removed_if_unused_without_dce_check(
@@ -9004,8 +9006,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             track_scope_uses,
             visit_scope_count: 0,
             field_init_class_bodies: Vec::new(),
-            field_initializer_uses: Vec::new(),
-            super_shim: Ref::NONE,
+            field_init_uses: Vec::new(),
+            super_ctor_ref: Ref::NONE,
+            super_ctor_args: scope,
             scope_uses: Vec::new(),
             span_uses: Vec::new(),
             is_inside_single_stmt_body: false,

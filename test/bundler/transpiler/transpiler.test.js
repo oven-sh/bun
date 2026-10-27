@@ -354,6 +354,7 @@ describe("Bun.Transpiler", () => {
     });
 
     it.each([
+      // tsc removes these two imports as well.
       [`import { Baz } from "baz";`, `import { Baz } from "baz";`],
       [`import * as Baz from "baz";`, `import * as Baz from "baz";`],
       [`namespace Baz { export const Bar = 1; }`, `var Baz;\n((Baz) => Baz.Bar = 1)(Baz ||= {});`],

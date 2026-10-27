@@ -118,44 +118,17 @@ pub(crate) fn insert_stmts<'a>(
     *body = bun_ast::StoreSlice::from_bump(stmts);
 }
 
-fn insert_after_super_in<'a>(
-    body: &mut js_ast::StmtNodeList,
-    inserted: &[Stmt],
-    arena: &'a bun_alloc::Arena,
-) -> bool {
-    for i in 0..body.len() {
-        let stmt = body.slice()[i];
-        if stmt.is_super_call() {
-            insert_stmts(body, i + 1, inserted, arena);
-            return true;
-        }
-        if let js_ast::StmtData::STry(mut s_try) = stmt.data
-            && insert_after_super_in(&mut s_try.body, inserted, arena)
-        {
-            return true;
-        }
-    }
-    false
-}
-
-/// True if `insert_after_super` finds the `super()` statement of `body`.
-pub(crate) fn has_super_statement(body: &[Stmt]) -> bool {
-    body.iter().any(|stmt| match stmt.data {
-        js_ast::StmtData::STry(s_try) => has_super_statement(s_try.body.slice()),
-        _ => stmt.is_super_call(),
-    })
-}
-
-/// Puts `inserted` after the `super()` statement of `constructor`: a top-level one, or in a `try` block that is.
+/// Puts `inserted` after the top-level `super()` statement of `constructor`.
 pub(crate) fn insert_after_super<'a>(
     constructor: &mut G::Fn,
     inserted: &[Stmt],
     arena: &'a bun_alloc::Arena,
 ) {
     let body = &mut constructor.body.stmts;
-    if !insert_after_super_in(body, inserted, arena) {
-        insert_stmts(body, 0, inserted, arena);
-    }
+    let after_super = (body.slice().iter())
+        .position(|stmt| stmt.is_super_call())
+        .map_or(0, |i| i + 1);
+    insert_stmts(body, after_super, inserted, arena);
 }
 
 // ── impl P ───────────────────────────────────────────────────────────────────
@@ -1464,7 +1437,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     /// Moves `effects` into the key of `prop` so they run where the member is
-    /// defined. Returns the key as `__decorateElement` names it; `reuse_key`
+    /// defined. Returns the key for the call that decorates `prop`; `reuse_key`
     /// keeps a computed key in a temporary for that, which is also returned.
     pub(crate) fn host_key_effects(
         &mut self,
@@ -1723,6 +1696,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         stmts
     }
 
+    /// `super(...args);`
+    pub(crate) fn super_call_stmt(&mut self, args: Expr, loc: bun_ast::Loc) -> Stmt {
+        let spread = self.new_expr(E::Spread { value: args }, loc);
+        let call = E::Call {
+            target: self.new_expr(E::Super {}, loc),
+            args: ExprNodeList::init_one(spread),
+            ..Default::default()
+        };
+        let call = self.new_expr(call, loc);
+        self.expr_stmt(call, loc)
+    }
+
     /// `constructor() { super(...arguments); effects }`
     pub(crate) fn new_constructor(
         &mut self,
@@ -1734,23 +1719,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if is_derived {
             let arguments = self.new_sym(js_ast::symbol::Kind::Unbound, arguments_str);
             let arguments = self.new_expr(E::Identifier::init(arguments), loc);
-            let spread = self.new_expr(E::Spread { value: arguments }, loc);
-            let target = self.new_expr(E::Super {}, loc);
-            let call = self.new_expr(
-                E::Call {
-                    target,
-                    args: ExprNodeList::init_one(spread),
-                    ..Default::default()
-                },
-                loc,
-            );
-            stmts.push(self.s(
-                S::SExpr {
-                    value: call,
-                    ..Default::default()
-                },
-                loc,
-            ));
+            stmts.push(self.super_call_stmt(arguments, loc));
         }
         stmts.extend(self.effect_stmts(effects, loc));
         let func = G::Fn {

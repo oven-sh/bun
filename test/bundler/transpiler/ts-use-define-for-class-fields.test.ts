@@ -18,19 +18,49 @@ async function run(dir: string, entry = "index.ts") {
 }
 
 describe("tsconfig compilerOptions.useDefineForClassFields", () => {
-  test.concurrent("false: an unused class with a static field is not bundled", async () => {
-    using dir = tempDir("udfcf-tree-shaking", {
-      "tsconfig.json": JSON.stringify({ compilerOptions: { useDefineForClassFields: false } }),
-      "index.ts": `
+  test.concurrent(
+    "false: an unused class with static fields is removed, unless assigning one calls a setter or throws",
+    async () => {
+      using dir = tempDir("udfcf-tree-shaking", {
+        "tsconfig.json": JSON.stringify({ compilerOptions: { useDefineForClassFields: false } }),
+        "index.ts": `
         import { used } from "./lib";
         console.log(used);
+        await import("./throws").catch(e => console.log(e.name));
       `,
-      "lib.ts": `
+        "throws.ts": `class AssignsToName { static { (this as any).name = "n"; } }`,
+        "lib.ts": `
         export const used = "used";
-        export class Unused { static a = 1; static b = [() => Unused]; c = 2; }
+        enum E { a = "A" }
+        export class Unused { static a = 1; static b = [() => Unused]; c = 2; static 0 = 3; static [E.a] = 4; static "é" = 5; }
         class Base { static set s(value: number) { console.log("set s", value); } }
         export class CallsSetter extends Base { static s = 1; }
         export class CallsOwnSetter { static set t(value: number) { console.log("set t", value); } static { this.t = 2; } }
+      `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "index.ts", "--outfile=out.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      expect({ stderr: await proc.stderr.text(), exitCode: await proc.exited }).toEqual({ stderr: "", exitCode: 0 });
+      expect(await Bun.file(join(String(dir), "out.js")).text()).not.toContain("Unused");
+      expect(await run(String(dir), "out.js")).toEqual({
+        stdout: "set s 1\nset t 2\nused\nTypeError\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+
+  test.concurrent("false: a key of more terms than there is stack for", async () => {
+    using dir = tempDir("udfcf-long-key", {
+      "tsconfig.json": JSON.stringify({ compilerOptions: { useDefineForClassFields: false } }),
+      "index.ts": `
+        const a: string = String("a");
+        export class A { [${Array(20_000).fill("a").join("+")}] = 1; }
       `,
     });
     await using proc = Bun.spawn({
@@ -41,8 +71,39 @@ describe("tsconfig compilerOptions.useDefineForClassFields", () => {
       stderr: "pipe",
     });
     expect({ stderr: await proc.stderr.text(), exitCode: await proc.exited }).toEqual({ stderr: "", exitCode: 0 });
-    expect(await Bun.file(join(String(dir), "out.js")).text()).not.toContain("Unused");
-    expect(await run(String(dir), "out.js")).toEqual({ stdout: "set s 1\nset t 2\nused\n", stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent("false: fields go after the only super() statement, minified too", async () => {
+    using dir = tempDir("udfcf-minify-super", {
+      "tsconfig.json": JSON.stringify({ compilerOptions: { useDefineForClassFields: false } }),
+      "index.ts": `
+        class Base { constructor(...args: any[]) {} }
+        export class A extends Base { f = 1; constructor(public x: number) { const y = x + 1; super(y); this.f = y; console.log(y); } }
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "index.ts", "--minify-syntax"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("super(y);\n    this.x = x;\n    this.f = 1;\n    this.f = y, console.log(y);");
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent("false: a function of the constructor keeps its name if no initializer moves there", async () => {
+    using dir = tempDir("udfcf-function-name", {
+      "tsconfig.json": JSON.stringify({ compilerOptions: { useDefineForClassFields: false } }),
+      "index.ts": `
+        const v = String("outer");
+        class A { static x = v; constructor() { function v() {} console.log(v.name); } }
+        new A();
+        function f(this: any) { return class { [this.k] = v; constructor() { function v() {} console.log(v.name); } }; }
+        new (f.call({ k: "k" }))();
+      `,
+    });
+    expect(await run(String(dir))).toEqual({ stdout: "v\nv\n", stderr: "", exitCode: 0 });
   });
 
   test.concurrent("false: field initializers see parameter properties (#10961)", async () => {

@@ -5,7 +5,7 @@ use bun_collections::VecExt as _;
 
 use crate::lower::decorator_metadata::{AccessorPair, accessor_pair};
 use crate::lower::lower_decorators::{
-    has_super_statement, insert_after_super, insert_stmts, is_constant_key, is_constructor,
+    insert_after_super, insert_stmts, is_constant_key, is_constructor,
 };
 use crate::p::P;
 use crate::parser::TempRef;
@@ -49,15 +49,56 @@ fn is_private(prop: &G::Property) -> bool {
     )
 }
 
-/// `this.name = value` throws in a class, as for the other names of `checkClassForStaticPropertyNameConflicts`.
-fn initializes_function_property(prop: &G::Property) -> bool {
-    let names: [&[u8]; 4] = [b"name", b"length", b"caller", b"arguments"];
+/// `static { this.name = value; }` throws. The names of `checkClassForStaticPropertyNameConflicts`, and `prototype`.
+const UNASSIGNABLE_IN_CLASS: [&[u8]; 5] =
+    [b"name", b"length", b"caller", b"arguments", b"prototype"];
+
+fn is_unassignable_in_class(key: &Expr) -> bool {
+    matches!(
+        key.unwrap_inlined().data,
+        js_ast::ExprData::EString(s) if UNASSIGNABLE_IN_CLASS.iter().any(|name| s.eql_comptime(name))
+    )
+}
+
+/// True for `static name = value`, which stays a field. A key that isn't constant can evaluate to `name`.
+fn initializes_unassignable(prop: &G::Property) -> bool {
+    let is_computed = prop.flags.contains(Flags::Property::IsComputed);
     is_static(prop)
         && prop.initializer.is_some()
-        && matches!(
-            prop.key.map(|key| key.data),
-            Some(js_ast::ExprData::EString(s)) if names.iter().any(|name| s.eql_bytes(name))
-        )
+        && (prop.key).is_some_and(|key| {
+            is_unassignable_in_class(&key) || (is_computed && !is_constant_key(&key))
+        })
+}
+
+/// The `value` of `this.key = value;`, which in a `static {}` only defines `key` unless the class has a setter for it.
+pub(crate) fn value_assigned_to_this(stmt: &Stmt) -> Option<Expr> {
+    let js_ast::StmtData::SExpr(s_expr) = stmt.data else {
+        return None;
+    };
+    let js_ast::ExprData::EBinary(binary) = s_expr.value.data else {
+        return None;
+    };
+    let (target, defines_key) = match binary.left.data {
+        js_ast::ExprData::EDot(dot) => {
+            let name = dot.name.slice();
+            let defines_key = !UNASSIGNABLE_IN_CLASS.contains(&name) && name != b"__proto__";
+            (dot.target, defines_key)
+        }
+        js_ast::ExprData::EIndex(index) => {
+            let defines_key = match index.index.unwrap_inlined().data {
+                js_ast::ExprData::ENumber(_) => true,
+                js_ast::ExprData::EString(name) => {
+                    !is_unassignable_in_class(&index.index) && !name.eql_comptime(b"__proto__")
+                }
+                _ => false,
+            };
+            (index.target, defines_key)
+        }
+        _ => return None,
+    };
+    let is_assignment = binary.op == js_ast::op::Code::BinAssign;
+    (is_assignment && defines_key && matches!(target.data, js_ast::ExprData::EThis(_)))
+        .then_some(binary.right)
 }
 
 /// True if the class evaluates the key of `prop`. `lower_class` removes a field that is there for its decorators.
@@ -66,10 +107,17 @@ fn has_evaluated_key(prop: &G::Property) -> bool {
         && !matches!(prop.kind, PropertyKind::Declare | PropertyKind::Abstract)
 }
 
-/// True if `key` has only what is listed here, which means the same in a `static {}` of its class. `this` doesn't.
-fn can_move_to_static_block(key: &Expr, symbols: &[js_ast::Symbol]) -> bool {
+/// True if `key` evaluates to the same in a `static {}` of its class. What isn't matched here (`this`, `await`) can't move.
+fn can_move_to_static_block(mut key: &Expr, symbols: &[js_ast::Symbol]) -> bool {
     use js_ast::ExprData as Data;
     let can_move = |expr: &Expr| can_move_to_static_block(expr, symbols);
+    // The parser needs no stack for `a + b + c`, so it can be deeper than the stack here.
+    while let Data::EBinary(binary) = &key.data {
+        if !can_move(&binary.right) {
+            return false;
+        }
+        key = &binary.left;
+    }
     match &key.data {
         Data::EIdentifier(id) => !matches!(
             symbols[id.ref_.inner_index() as usize]
@@ -96,7 +144,6 @@ fn can_move_to_static_block(key: &Expr, symbols: &[js_ast::Symbol]) -> bool {
         Data::ESpread(spread) => can_move(&spread.value),
         Data::EArray(array) => array.items.slice().iter().all(can_move),
         Data::EUnary(unary) => can_move(&unary.value),
-        Data::EBinary(binary) => can_move(&binary.left) && can_move(&binary.right),
         Data::EIf(it) => can_move(&it.test) && can_move(&it.yes) && can_move(&it.no),
         Data::ETemplate(template) => {
             template.tag.as_ref().is_none_or(can_move)
@@ -106,9 +153,24 @@ fn can_move_to_static_block(key: &Expr, symbols: &[js_ast::Symbol]) -> bool {
     }
 }
 
+/// The call of `callee();`
+fn call_stmt_of(stmt: &Stmt, callee: Ref) -> Option<StoreRef<E::Call>> {
+    let js_ast::StmtData::SExpr(s_expr) = stmt.data else {
+        return None;
+    };
+    let call = s_expr.value.data.e_call()?;
+    matches!(call.target.data, js_ast::ExprData::EIdentifier(id) if id.ref_ == callee)
+        .then_some(call)
+}
+
+/// True for `super();`, also after `super_ctor_ref` has replaced `super`.
+pub(crate) fn is_super_call(stmt: &Stmt, super_ctor_ref: Ref) -> bool {
+    stmt.is_super_call() || call_stmt_of(stmt, super_ctor_ref).is_some()
+}
+
 /// `classOrConstructorParameterIsDecorated`, with `experimentalDecorators`.
 pub(crate) fn class_or_constructor_parameter_is_decorated(class: &G::Class) -> bool {
-    if !class.has_decorators || class.should_lower_standard_decorators {
+    if !class.has_decorators {
         return false;
     }
     let has_decorated_parameter = |func: StoreRef<E::Function>| {
@@ -122,16 +184,17 @@ pub(crate) fn class_or_constructor_parameter_is_decorated(class: &G::Class) -> b
 }
 
 /// For the scope of a `super()` call. `var __super` is in the body of the constructor, which the parameters don't see.
-pub(crate) fn is_in_constructor_parameters(mut scope: js_ast::StoreRef<js_ast::Scope>) -> bool {
-    let mut came_from = scope.kind;
-    while scope
-        .parent
-        .is_some_and(|parent| parent.kind != js_ast::scope::Kind::ClassBody)
-    {
-        came_from = scope.kind;
-        scope = scope.parent.unwrap();
+pub(crate) fn is_in_constructor_parameters(
+    mut scope: StoreRef<js_ast::Scope>,
+    constructor_args: StoreRef<js_ast::Scope>,
+) -> bool {
+    while let Some(parent) = scope.parent.filter(|_| scope != constructor_args) {
+        if parent == constructor_args {
+            return scope.kind != js_ast::scope::Kind::FunctionBody;
+        }
+        scope = parent;
     }
-    came_from != js_ast::scope::Kind::FunctionBody
+    true
 }
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
@@ -160,25 +223,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    /// Standard decorator lowering wraps field initializers where they are.
-    fn defines_fields(&self, class: &G::Class) -> bool {
+    /// False if the fields of `class` become assignments. Standard decorator lowering wraps initializers where they are.
+    fn use_define_for_class_fields(&self, class: &G::Class) -> bool {
         self.options.use_define_for_class_fields || class.should_lower_standard_decorators
     }
 
-    /// `__super`, if the constructor of `class` has no `super()` statement for `lower_class_fields` to add to.
-    pub(crate) fn super_shim_of(&mut self, class: &G::Class) -> Ref {
+    /// `__super`, if `lower_class_fields` adds to the constructor of `class` what has to wait for `super()`.
+    pub(crate) fn generate_super_ctor_ref(&mut self, class: &G::Class) -> Ref {
         let Some(constructor) = class.properties.iter().find_map(constructor_function) else {
             return Ref::NONE;
         };
-        let is_initialized =
+        let is_initialized_instance_field =
             |prop: &G::Property| is_field(prop) && !is_static(prop) && prop.initializer.is_some();
         let adds_to_constructor = (constructor.func.args.iter())
             .any(|arg| parameter_property(arg).is_some())
-            || (!self.defines_fields(class) && class.properties.iter().any(is_initialized));
-        if class.extends.is_none()
-            || !adds_to_constructor
-            || has_super_statement(constructor.func.body.stmts.slice())
-        {
+            || (!self.use_define_for_class_fields(class)
+                && class.properties.iter().any(is_initialized_instance_field));
+        if class.extends.is_none() || !adds_to_constructor {
             return Ref::NONE;
         }
         self.generate_temp_var(b"__super")
@@ -187,17 +248,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// `var __super = (...args) => { super(...args); effects; return this; };`
     fn declare_super_shim(&mut self, shim: Ref, effects: &[Expr], loc: bun_ast::Loc) -> Stmt {
         let args = self.generate_temp_var(b"args");
-        let spread = E::Spread {
-            value: self.use_ref(args, loc),
-        };
-        let call = E::Call {
-            target: self.new_expr(E::Super {}, loc),
-            args: ExprNodeList::init_one(self.new_expr(spread, loc)),
-            ..Default::default()
-        };
-        let call = self.new_expr(call, loc);
         let mut stmts = BumpVec::<Stmt>::with_capacity_in(effects.len() + 2, self.arena);
-        stmts.push(self.expr_stmt(call, loc));
+        let spread_args = self.use_ref(args, loc);
+        stmts.push(self.super_call_stmt(spread_args, loc));
         stmts.extend(self.effect_stmts(effects, loc));
         let this = self.new_expr(E::This {}, loc);
         stmts.push(self.s(S::Return { value: Some(this) }, loc));
@@ -250,19 +303,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         class.properties = bun_ast::StoreSlice::from_bump(properties);
     }
 
-    /// `constructor(public x)` and, with `useDefineForClassFields: false`, `x = 1` become `this.x = ...`.
-    pub(crate) fn lower_class_fields(&mut self, class: &mut G::Class, super_shim: Ref) {
-        let use_define = self.defines_fields(class);
+    /// `constructor(public x)` and, without `useDefineForClassFields`, `x = 1` become `this.x = ...`. True if `1` moved.
+    pub(crate) fn lower_class_fields(&mut self, class: &mut G::Class, super_ctor_ref: Ref) -> bool {
+        let use_define = self.use_define_for_class_fields(class);
         let constructor = class.properties.iter().find_map(constructor_function);
         let args = constructor.map_or(bun_ast::StoreSlice::EMPTY, |it| it.func.args);
         // A private field is only assigned to keep its place among the initializers of those that aren't private.
-        let has_initialized_public_field = (class.properties.iter()).any(|prop| {
+        let assigns_instance_field = (class.properties.iter()).any(|prop| {
             is_field(prop) && !is_static(prop) && !is_private(prop) && prop.initializer.is_some()
         });
         let can_lower_field = |prop: &G::Property| {
-            is_field(prop)
-                && !initializes_function_property(prop)
-                && (!is_private(prop) || (!is_static(prop) && has_initialized_public_field))
+            !use_define
+                && is_field(prop)
+                && !initializes_unassignable(prop)
+                && (!is_private(prop) || (!is_static(prop) && assigns_instance_field))
         };
         let key_to_hoist = |prop: &G::Property| {
             let is_computed = prop.flags.contains(Flags::Property::IsComputed);
@@ -270,8 +324,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         };
         // A key is evaluated with the next key that stays, or else in a `static {}`. If it can't be, its fields stay.
         let has_own_stmt_list = !self.is_param_default_or_field_initializer();
-        let mut lower_static_fields = !use_define;
-        let mut lower_instance_fields = !use_define;
+        let mut lower_static_fields = true;
+        let mut lower_instance_fields = true;
         for prop in class.properties.iter() {
             let can_hoist = key_to_hoist(prop).is_none_or(|key| {
                 has_own_stmt_list && can_move_to_static_block(&key, &self.symbols)
@@ -283,9 +337,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
         // A decorator can put an accessor on the prototype, which only an assignment reaches.
-        let is_lowered_for_decorators = |prop: &G::Property| {
-            !use_define && prop.ts_decorators.len() > 0 && key_to_hoist(prop).is_none()
-        };
+        let is_lowered_for_decorators =
+            |prop: &G::Property| prop.ts_decorators.len() > 0 && key_to_hoist(prop).is_none();
         let should_lower_field = |prop: &G::Property| {
             let lowers_all = if is_static(prop) {
                 lower_static_fields
@@ -294,11 +347,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             };
             can_lower_field(prop) && (lowers_all || is_lowered_for_decorators(prop))
         };
-        if !super_shim.is_symbol()
+        if !super_ctor_ref.is_symbol()
             && !args.iter().any(|arg| parameter_property(arg).is_some())
             && !class.properties.iter().any(should_lower_field)
         {
-            return;
+            return false;
         }
 
         let loc = class.body_loc;
@@ -307,6 +360,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.arena,
         );
         let mut constructor_effects = BumpVec::<Expr>::new_in(self.arena);
+        let mut moved_initializer = false;
 
         for arg in args.iter() {
             let Some(id_ref) = parameter_property(arg) else {
@@ -350,7 +404,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut prop = core::mem::take(slot);
             if !should_lower_field(&prop) {
                 if has_evaluated_key(&prop) {
-                    self.host_key_effects(&mut prop, &mut pending_keys, false);
+                    let reuse_key = false;
+                    self.host_key_effects(&mut prop, &mut pending_keys, reuse_key);
                 }
                 properties.push(prop);
                 continue;
@@ -375,6 +430,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     properties.push(self.make_static_block(&[assign], key.loc));
                 } else {
                     constructor_effects.push(assign);
+                    moved_initializer = true;
                 }
             }
             if is_kept_for_decorators {
@@ -392,12 +448,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         match constructor {
-            Some(mut constructor) if super_shim.is_symbol() => {
-                // A constructor that never calls `super()` has no `this` to initialize.
-                if self.symbols[super_shim.inner_index() as usize].use_count_estimate > 0 {
-                    let shim = self.declare_super_shim(super_shim, &constructor_effects, loc);
-                    insert_stmts(&mut constructor.func.body.stmts, 0, &[shim], self.arena);
+            Some(mut constructor) if super_ctor_ref.is_symbol() => {
+                let calls = self.symbols[super_ctor_ref.inner_index() as usize].use_count_estimate;
+                let body = &mut constructor.func.body.stmts;
+                let only_call = (body.slice().iter().enumerate())
+                    .filter(|_| calls == 1)
+                    .find_map(|(i, stmt)| Some((i, call_stmt_of(stmt, super_ctor_ref)?)));
+                if let Some((i, mut call)) = only_call {
+                    call.target = self.new_expr(E::Super {}, call.target.loc);
+                    self.ignore_usage(super_ctor_ref);
+                    let stmts = self.effect_stmts(&constructor_effects, loc);
+                    insert_stmts(body, i + 1, &stmts, self.arena);
+                } else if calls > 0 {
+                    let shim = self.declare_super_shim(super_ctor_ref, &constructor_effects, loc);
+                    insert_stmts(body, 0, &[shim], self.arena);
                 }
+                // Or else it never calls `super()` and has no `this` to initialize.
             }
             Some(mut constructor) => {
                 let stmts = self.effect_stmts(&constructor_effects, loc);
@@ -413,6 +479,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
         class.properties = bun_ast::StoreSlice::from_bump(properties);
+        moved_initializer
     }
 
     /// Without a renamer, an initializer now in the constructor would read the constructor's variable of the same name.
@@ -434,7 +501,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .find(is_body)
             .copied();
         for i in uses {
-            let used = self.field_initializer_uses[i];
+            let used = self.field_init_uses[i];
             let name: &'a [u8] = self.symbols[used as usize].original_name.slice();
             for scope in [Some(constructor_args), body].into_iter().flatten() {
                 let Some(member) = scope.members.get(name) else {
@@ -450,13 +517,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    fn class_temps(&mut self, loc: bun_ast::Loc) -> Option<Stmt> {
+    fn drain_class_temp_decls(&mut self, loc: bun_ast::Loc) -> Option<Stmt> {
         self.drain_capture_temp_decls(0, CLASS_TEMP_KIND, loc)
     }
 
     /// Declares the temporaries of a class expression.
     pub(crate) fn declare_class_expr_temps(&mut self, loc: bun_ast::Loc) {
-        let temps = self.class_temps(loc);
+        let temps = self.drain_class_temp_decls(loc);
         if let Some(stmts) = self.nearest_stmt_list_mut() {
             stmts.extend(temps);
         }
@@ -473,7 +540,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         if !s_class.class.has_decorators {
             stmts.push(stmt);
-            if let Some(temps) = self.class_temps(stmt.loc) {
+            if let Some(temps) = self.drain_class_temp_decls(stmt.loc) {
                 stmts.insert(0, temps);
             }
             return stmts.into_bump_slice_mut();
@@ -552,7 +619,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if !decorators.is_empty() {
                 let loc = prop.key.expect("infallible: prop has key").loc;
                 let no_effects = &mut BumpVec::<Expr>::new_in(self.arena);
-                let (key, _) = self.host_key_effects(prop, no_effects, !is_removed);
+                let reuse_key = !is_removed;
+                let (key, _) = self.host_key_effects(prop, no_effects, reuse_key);
 
                 let descriptor: Expr = if is_method {
                     self.new_expr(E::Null {}, loc)
@@ -649,7 +717,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             stmts.push(self.expr_stmt(rebind, stmt.loc));
         }
 
-        if let Some(temps) = self.class_temps(stmt.loc) {
+        if let Some(temps) = self.drain_class_temp_decls(stmt.loc) {
             stmts.insert(0, temps);
         }
         stmts.into_bump_slice_mut()

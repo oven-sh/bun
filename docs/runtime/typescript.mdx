@@ -65,7 +65,13 @@ Bun compiles one file at a time and doesn't check types to run it. These options
 | Option                    | Effect                                                                                                                                                                                                           |
 | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `experimentalDecorators`  | Decorators are TypeScript's older kind, not the standard ones.                                                                                                                                                   |
-| `emitDecoratorMetadata`   | With `experimentalDecorators`, a decorated member gets `design:type`, `design:paramtypes` and `design:returntype` for `Reflect.getMetadata`.                                                                     |
+| `emitDecoratorMetadata`   | A decorated member gets `design:type`, `design:paramtypes` and `design:returntype` for `Reflect.getMetadata`. It also turns on `experimentalDecorators`.                                                         |
 | `useDefineForClassFields` | If `false`, `x = 1` in a class becomes `this.x = 1` in the constructor. That calls a setter from a base class or from a decorator, where a field would hide it. A field without an initializer adds no property. |
 | `target`                  | Older than `ES2022`, it makes `false` the default of `useDefineForClassFields`. Bun doesn't compile syntax for older engines.                                                                                    |
 | `strictNullChecks`        | If `true`, the `design:type` of `string \| null` is `Object`. If `false`, it's `String`. The default is the value of `strict`, or else `true`.                                                                   |
+
+With `useDefineForClassFields: false`, these stay fields:
+
+- the fields of a class with standard decorators
+- the static or the instance fields of a class, if the computed key of one of them has `this`, `await`, an arrow function, a class or an object literal in it
+- static fields named `name`, `length`, `caller` or `arguments`, which a class can't assign to, and static fields with a computed key that isn't a constant

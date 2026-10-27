@@ -573,7 +573,7 @@ test.concurrent(
       const d: any = () => {};
       type T0 = string;
       ${aliases}
-      class A { @d x: T20000; @d y: T0${Buffer.alloc(40_000, "[]").toString()}; }
+      class A { @d x: T20000; @d y: T0${Buffer.alloc(40_000, "[]").toString()}; @d z: T0${Buffer.alloc(50_000, "!").toString()}; }
     `,
     });
     await using build = spawn({
@@ -587,7 +587,7 @@ test.concurrent(
     expect({ stderr: await build.stderr.text(), exitCode: await build.exited }).toEqual({ stderr: "", exitCode: 0 });
     await using proc = spawn({ cmd: [bunExe(), "out.js"], env: bunEnv, cwd: String(dir), stderr: "pipe" });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "String\nArray\n", stderr: "", exitCode: 0 });
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "String\nArray\nString\n", stderr: "", exitCode: 0 });
   },
   longLimit,
 );

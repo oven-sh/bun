@@ -226,7 +226,7 @@ impl TSConfigJSON {
             .unwrap_or(true)
     }
 
-    /// Effective `strictNullChecks`. `strict` is on unless it's set, which is the default since TypeScript 6.
+    /// Effective `strictNullChecks`. Since TypeScript 6, `strict` is `true` unless it's set.
     pub fn strict_null_checks(&self) -> bool {
         self.strict_null_checks.or(self.strict).unwrap_or(true)
     }

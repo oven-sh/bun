@@ -259,7 +259,7 @@ show(a.x, a.y());`,
   ),
   ...expecting(
     defineAndAssign(
-      "names of the constructor that an initializer means something else by",
+      "function, nested var, global and nested class named like a variable of an initializer",
       `let v = "outer";
 function h() { return "outer h"; }
 (globalThis as any).g = "global";
@@ -285,7 +285,7 @@ show(new (new C("parameter of C").x)("parameter of x").y);`,
     },
   ),
   ...defineAndAssign(
-    "eval in a constructor with a name that an initializer means something else by",
+    "direct eval in a constructor with a parameter named like a variable of an initializer",
     `const v = String("outer");
 class A { x = v; constructor(v: string) { log(eval("v")); } }
 show(new A("parameter").x);
@@ -437,6 +437,10 @@ class A { @seen static a = 1; @seen static b?: number; @seen c = 2; @seen m() {}
       `try { class A { @d static name = "n"; } show(A.name, Object.getOwnPropertyDescriptor(A, "name")?.writable); } catch (e: any) { log(e.name); }
 try { class A { static length = 2; } show(A.length); } catch (e: any) { log(e.name); }
 try { class A { static caller = 3; @d static arguments = [4]; } show(A.caller, A.arguments); } catch (e: any) { log(e.name); }
+enum E { name = "name" }
+const length = String("length");
+try { class A { static [length] = 5; } show(A.length); } catch (e: any) { log(e.name); }
+try { class A { static [E.name] = "enum"; } show(A.name); } catch (e: any) { log(e.name); }
 class Base { static set other(v: string) { log("set other " + v); } }
 class B extends Base { static name = "b"; static other = B.name; }
 class C { static name: string; static length?: number; }
@@ -451,10 +455,21 @@ show(C.name, C.length);`,
         `A["arguments"] design:type = Object`,
         `A["arguments"] @d`,
         "3 [4]",
+        "5",
+        `"enum"`,
         "set other b",
         `"C" 0`,
       ],
     },
+  ),
+  ...defineAndAssign(
+    "extends names its class, which has a decorator",
+    `const replace = (c: any): any => class Replaced extends c {};
+let get: any;
+const mixin = (it: any) => { get = it; return Object; };
+@replace class A extends mixin(() => A) {}
+show(get().name, get() === A);
+try { @replace class B extends (typeof B === "undefined" ? Object : Array) {} } catch (e: any) { log(e.name); }`,
   ),
   ...defineAndAssign(
     "class without a name",
@@ -742,7 +757,7 @@ show(Object.keys(new A()));`,
   ),
   ...defineAndAssign(
     "keys that are strings added together",
-    `class Base { set ab(v: number) { log("set ab " + v); } static set cd(v: number) { log("set cd " + v); } }
+    `class Base { set ab(v: number) { log("set ab " + v); } }
 class A extends Base { ["a" + "b"] = 1; static ["c" + "d"] = 2; @d ["e" + "f" + "g"] = 3; @d static ["h" + \`i\`] = 4; }
 show(Object.keys(new A()), Object.keys(A));`,
   ),
@@ -1048,6 +1063,41 @@ show(new C(true).v);`,
   ),
   ...expecting(
     defineAndAssign(
+      "super() is a statement and is also called elsewhere",
+      `class Base { constructor(public v?: any) { if (v === "throw") throw new Error(); } }
+class A extends Base { a = 1; constructor(c: boolean, public p = 2) { if (c) { super(1); return; } super(2); } }
+show(Object.entries(new A(true)).join(";"), Object.entries(new A(false)).join(";"));
+class B extends Base { a = 1; constructor(public p = 2) { try { super("throw"); } catch { super(3); } } }
+show(Object.entries(new B()).join(";"));`,
+    ),
+    {
+      define: [`"v,1;p,2;a,1" "v,2;p,2;a,1"`, `"v,3;p,2;a,1"`],
+      assign: [`"v,1;p,2;a,1" "v,2;p,2;a,1"`, `"v,3;p,2;a,1"`],
+    },
+  ),
+  ...expecting(
+    defineAndAssign(
+      "variable of the try block of super() named like a parameter property or a variable of an initializer",
+      `const v = String("outer");
+class Base {}
+class A extends Base { x = v; constructor(public p: string) { try { super(); let v = "inner", p = "inner p"; show(v, p); } catch (e: any) { log(e.name); } } }
+show(Object.entries(new A("parameter")).join(";"));`,
+    ),
+    {
+      define: [`"inner" "inner p"`, `"p,parameter;x,outer"`],
+      assign: [`"inner" "inner p"`, `"p,parameter;x,outer"`],
+    },
+  ),
+  ...defineAndAssign(
+    "super() after a throw or a return",
+    `class Base {}
+class A extends Base { x = 1; constructor(public p = 2) { throw new RangeError("no"); super(); } }
+try { new A(); } catch (e: any) { log(e.name); }
+class B extends Base { x = 1; constructor(public p = 2) { return { r: 1 } as any; super(); } }
+show(Object.keys(new B()));`,
+  ),
+  ...expecting(
+    defineAndAssign(
       "super() is not a statement, and the base class has a setter",
       `class Base { constructor(...args: any[]) { log("base " + args); } set x(v: number) { log("set x " + v); } }
 class A extends Base { x = 1; constructor(c: boolean, public p = 2) { if (c) super(1); else super(2); log("after " + this.p); } }
@@ -1099,7 +1149,9 @@ show(Object.keys(new D()));`,
 class A extends Base { x = 1; constructor(public p = 2, q: any = super()) { log("body " + this.p); } }
 show(Object.keys(new A()));
 class B extends Base { x = 1; constructor(public p = 2, q: any = (() => super())()) { log("body " + this.p); } }
-show(Object.keys(new B()));`,
+show(Object.keys(new B()));
+class C extends Base { x = 1; constructor(q = class { [(() => (super(), "k"))()]() {} }) { log("body " + Object.keys(this)); } }
+show(Object.keys(new C()));`,
   ),
   ...expecting(
     defineAndAssign(

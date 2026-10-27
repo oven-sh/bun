@@ -272,8 +272,11 @@ fn collect_type_references(hir: &File, mut ty: TypeNodeId, references: &mut Vec<
     if ty.is_none() {
         return;
     }
-    // The parser needs no stack for `T[][]`, so it can be deeper than the stack here.
-    while let TypeNodeKind::Array(inner) = hir[ty].kind {
+    // The parser needs no stack for `T[][]` or `T!!`, so it can be deeper than the stack here.
+    while let TypeNodeKind::Array(inner)
+    | TypeNodeKind::Readonly(inner)
+    | TypeNodeKind::JSDoc { ty: inner, .. } = hir[ty].kind
+    {
         ty = inner;
     }
     match hir[ty].kind {
@@ -282,9 +285,6 @@ fn collect_type_references(hir: &File, mut ty: TypeNodeId, references: &mut Vec<
             if !args.is_empty() {
                 collect_type_references(hir, hir.id_at(args, 0), references);
             }
-        }
-        TypeNodeKind::Readonly(inner) | TypeNodeKind::JSDoc { ty: inner, .. } => {
-            collect_type_references(hir, inner, references);
         }
         TypeNodeKind::Union(types) | TypeNodeKind::Intersection(types) => {
             for part in hir.ids(types) {

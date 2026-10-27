@@ -2939,6 +2939,7 @@ declare module "bun" {
       jsxImportSource?: string;
       /**
        * If `false`, `x = 1` in a class is `this.x = 1` in its constructor, which calls a setter that the class inherits.
+       * A class with standard decorators keeps its fields.
        *
        * @default false if `target` is older than ES2022, or else true
        */
@@ -2947,9 +2948,9 @@ declare module "bun" {
       target?: string;
       /** Compile decorators as TypeScript did before the standard ones. */
       experimentalDecorators?: boolean;
-      /** With `experimentalDecorators`, give decorators `design:type`, `design:paramtypes` and `design:returntype`. */
+      /** Give decorators `design:type`, `design:paramtypes` and `design:returntype`. Turns on `experimentalDecorators`. */
       emitDecoratorMetadata?: boolean;
-      /** Only sets the default of `strictNullChecks`. */
+      /** To run code, it only sets the default of `strictNullChecks`. */
       strict?: boolean;
       /**
        * If `true`, the `design:type` of `string | null` is `Object`, and if `false` it is `String`.

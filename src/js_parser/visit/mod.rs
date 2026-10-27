@@ -7,7 +7,7 @@ pub(crate) mod visit_expr;
 pub(crate) mod visit_stmt;
 
 use crate::lexer as js_lexer;
-use crate::lower::lower_class::class_or_constructor_parameter_is_decorated;
+use crate::lower::lower_class::{class_or_constructor_parameter_is_decorated, is_super_call};
 use crate::lower::lower_decorators::is_constructor;
 use crate::p::{LowerUsingDeclarationsContext, P};
 use crate::parser::{
@@ -1069,12 +1069,18 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             } else {
                 name_ref
             };
+            // With `experimentalDecorators`, `extends` reads the class that the decorators get.
+            let extends_ref = if class.should_lower_standard_decorators {
+                body_ref
+            } else {
+                name_ref
+            };
             // SAFETY: `original_name` is an AST-arena slice.
             unsafe {
                 self.vis_scope().members.put(
                     original_name,
                     ScopeMember {
-                        ref_: body_ref,
+                        ref_: extends_ref,
                         loc: name.loc,
                     },
                 )
@@ -1095,17 +1101,35 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             self.visit_expr(extends);
         }
 
+        if let Some(name) = class.class_name
+            && class.inner_class_ref.is_symbol()
+        {
+            let original_name: &'a [u8] = self.symbols[name.ref_.inner_index() as usize]
+                .original_name
+                .slice();
+            // SAFETY: `original_name` is an AST-arena slice.
+            unsafe {
+                self.vis_scope().members.put(
+                    original_name,
+                    ScopeMember {
+                        ref_: class.inner_class_ref,
+                        loc: name.loc,
+                    },
+                )
+            };
+        }
+
         {
             self.push_scope_for_visit_pass(ScopeKind::ClassBody, class.body_loc)
                 .expect("unreachable");
 
-            let mut super_shim = if Self::IS_TYPESCRIPT_ENABLED {
-                self.super_shim_of(class)
+            let mut super_ctor_ref = if Self::IS_TYPESCRIPT_ENABLED {
+                self.generate_super_ctor_ref(class)
             } else {
                 Ref::NONE
             };
             let mut constructor_args: Option<js_ast::StoreRef<js_ast::Scope>> = None;
-            let outer_initializer_uses = self.field_initializer_uses.len();
+            let field_init_uses_baseline = self.field_init_uses.len();
 
             let properties: &mut [G::Property] = class.properties.slice_mut();
             for property in properties.iter_mut() {
@@ -1155,17 +1179,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     };
                     self.record_declared_symbol(priv_ref);
                 } else if let Some(key) = property.key.as_mut() {
-                    // Lowering may move a field's computed key into the
-                    // constructor along with its initializer.
-                    let is_field = !property.flags.contains(flags::Property::IsMethod);
-                    if is_field {
-                        let class_body = self.current_scope;
-                        self.field_init_class_bodies.push(class_body);
-                    }
                     self.visit_expr(key);
-                    if is_field {
-                        self.field_init_class_bodies.pop();
-                    }
                 }
 
                 // Make it an error to use "arguments" in a class body
@@ -1191,10 +1205,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
-                let outer_super_shim = self.super_shim;
+                let old_super_ctor_ref = self.super_ctor_ref;
+                let old_super_ctor_args = self.super_ctor_args;
                 if is_constructor(property) {
-                    self.super_shim = super_shim;
+                    self.super_ctor_ref = super_ctor_ref;
                     constructor_args = self.scope_order_to_visit.first().map(|it| it.scope_ref());
+                    self.super_ctor_args = constructor_args.unwrap_or(old_super_ctor_args);
+                    debug_assert!(
+                        constructor_args.is_some_and(|it| it.kind == ScopeKind::FunctionArgs)
+                    );
                 }
 
                 if let Some(val) = property.value {
@@ -1218,13 +1237,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 if is_constructor(property) {
-                    super_shim = self.super_shim;
+                    super_ctor_ref = self.super_ctor_ref;
                 }
-                self.super_shim = outer_super_shim;
+                self.super_ctor_ref = old_super_ctor_ref;
+                self.super_ctor_args = old_super_ctor_args;
 
                 if let Some(val) = property.initializer {
-                    let class_body = self.current_scope;
-                    self.field_init_class_bodies.push(class_body);
+                    let is_static = property.flags.contains(flags::Property::IsStatic);
+                    if !is_static {
+                        let class_body = self.current_scope;
+                        self.field_init_class_bodies.push(class_body);
+                    }
                     if let Some(name) = name_to_keep {
                         let was_anon = val.is_anonymous_named();
                         let prev_dcn2 = self.decorator_class_name;
@@ -1243,7 +1266,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     } else {
                         self.visit_expr(property.initializer.as_mut().unwrap());
                     }
-                    self.field_init_class_bodies.pop();
+                    if !is_static {
+                        self.field_init_class_bodies.pop();
+                    }
                 }
 
                 // manual restore for the two `defer`s above
@@ -1253,14 +1278,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             if Self::IS_TYPESCRIPT_ENABLED {
                 self.capture_decorated_class(class);
-                self.lower_class_fields(class, super_shim);
-                let uses = outer_initializer_uses..self.field_initializer_uses.len();
-                if let Some(constructor_args) = constructor_args {
+                let moved_initializer = self.lower_class_fields(class, super_ctor_ref);
+                let uses = field_init_uses_baseline..self.field_init_uses.len();
+                if let Some(constructor_args) = constructor_args.filter(|_| moved_initializer) {
                     self.rename_constructor_variables(constructor_args, uses);
                 }
                 // The initializer that this class is in uses them too.
                 if self.field_init_class_bodies.is_empty() {
-                    self.field_initializer_uses.truncate(outer_initializer_uses);
+                    self.field_init_uses.truncate(field_init_uses_baseline);
                 }
             }
 
@@ -1805,7 +1830,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             // don't merge super calls to ensure they are called before "this" is accessed
-            if stmt.is_super_call() {
+            if is_super_call(&stmt, p.super_ctor_ref) {
                 output.push(stmt);
                 continue;
             }
@@ -1849,7 +1874,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let prev_idx = output.len() - 1;
                         let prev_stmt = &mut output[prev_idx];
                         if let StmtData::SExpr(mut prev_expr) = prev_stmt.data {
-                            if !prev_stmt.is_super_call()
+                            if !is_super_call(prev_stmt, p.super_ctor_ref)
                                 && p.options.runtime_merge_adjacent_expression_statements()
                             {
                                 prev_expr.does_not_affect_tree_shaking = prev_expr
@@ -1906,7 +1931,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let prev_idx = output.len() - 1;
                         let prev_stmt = output[prev_idx];
                         if let StmtData::SExpr(prev_expr) = prev_stmt.data {
-                            if !prev_stmt.is_super_call() {
+                            if !is_super_call(&prev_stmt, p.super_ctor_ref) {
                                 s_switch.test =
                                     Expr::join_with_comma(prev_expr.value, s_switch.test);
                                 output.truncate(prev_idx);
@@ -1921,7 +1946,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let prev_idx = output.len() - 1;
                         let prev_stmt = output[prev_idx];
                         if let StmtData::SExpr(prev_expr) = prev_stmt.data {
-                            if !prev_stmt.is_super_call() {
+                            if !is_super_call(&prev_stmt, p.super_ctor_ref) {
                                 s_if.test = Expr::join_with_comma(prev_expr.value, s_if.test);
                                 output.truncate(prev_idx);
                             }
@@ -1940,7 +1965,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let prev_idx = output.len() - 1;
                         let prev_stmt = output[prev_idx];
                         if let StmtData::SExpr(prev_expr) = prev_stmt.data {
-                            if !prev_stmt.is_super_call() {
+                            if !is_super_call(&prev_stmt, p.super_ctor_ref) {
                                 ret.value = Some(Expr::join_with_comma(
                                     prev_expr.value,
                                     ret.value.unwrap(),
@@ -1965,7 +1990,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let prev_idx = output.len() - 1;
                         let prev_stmt = output[prev_idx];
                         if let StmtData::SExpr(prev_expr) = prev_stmt.data {
-                            if !prev_stmt.is_super_call() {
+                            if !is_super_call(&prev_stmt, p.super_ctor_ref) {
                                 output[prev_idx] = p.s(
                                     S::Throw {
                                         value: Expr::join_with_comma(

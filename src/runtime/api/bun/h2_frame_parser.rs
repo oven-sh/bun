@@ -669,7 +669,7 @@ impl Handlers {
         if self.should_skip_dispatch(data) {
             return false;
         }
-        self.vm.event_loop_ref().run_callback(
+        self.vm.event_loop().run_callback(
             bun_event_loop::ContextId::NONE,
             callback,
             &self.global(),
@@ -686,7 +686,7 @@ impl Handlers {
         if self.should_skip_dispatch(data) {
             return false;
         }
-        self.vm.event_loop_ref().run_callback(
+        self.vm.event_loop().run_callback(
             bun_event_loop::ContextId::NONE,
             callback,
             &self.global(),
@@ -708,7 +708,7 @@ impl Handlers {
         if self.should_skip_dispatch(data) {
             return JSValue::ZERO;
         }
-        self.vm.event_loop_ref().run_callback_with_result(
+        self.vm.event_loop().run_callback_with_result(
             bun_event_loop::ContextId::NONE,
             callback,
             &self.global(),
@@ -720,7 +720,6 @@ impl Handlers {
     fn new(global_object: &JSGlobalObject) -> Handlers {
         Handlers {
             binary_type: BinaryType::Buffer,
-            // SAFETY: bun_vm() never returns null; VM outlives every JS object (effectively 'static).
             vm: global_object.bun_vm(),
             global_object: GlobalRef::from(global_object),
         }
@@ -2948,7 +2947,7 @@ impl H2FrameParser {
         let found_existing = self
             .global_this
             .bun_vm()
-            .event_loop_mut()
+            .event_loop()
             .deferred_tasks
             .post_task(ctx, on_auto_flush_trampoline);
         debug_assert!(!found_existing);
@@ -2968,7 +2967,7 @@ impl H2FrameParser {
         let removed = self
             .global_this
             .bun_vm()
-            .event_loop_mut()
+            .event_loop()
             .deferred_tasks
             .unregister_task(ctx);
         debug_assert!(removed);
@@ -4308,18 +4307,13 @@ impl DirectWriterStruct {
         let payload_size = 1 + data.len() + padding as usize;
         // Taken by value so a re-entrant call gets its own; see take_h2_padded_frame_buffer.
         let global = self.writer.global();
-        let mut buffer = global
-            .bun_vm()
-            .as_mut()
-            .rare_data()
-            .take_h2_padded_frame_buffer();
+        let mut buffer = global.bun_vm().rare_data().take_h2_padded_frame_buffer();
         buffer[0] = padding;
         buffer[1..=data.len()].copy_from_slice(data);
         buffer[1 + data.len()..payload_size].fill(0);
         let result = self.write_all(&buffer[..payload_size]);
         global
             .bun_vm()
-            .as_mut()
             .rare_data()
             .put_back_h2_padded_frame_buffer(buffer);
         result
@@ -6317,7 +6311,7 @@ impl H2FrameParser {
             let Some(value) = (unsafe { (*stream).js_context.get() }) else {
                 continue;
             };
-            self.handlers.get().vm.event_loop_mut().run_callback(
+            self.handlers.get().vm.event_loop().run_callback(
                 bun_event_loop::ContextId::NONE,
                 callback,
                 global_object,

@@ -217,7 +217,7 @@ pub(crate) fn handle_internal_message_primary(
         return Ok(());
     }
 
-    let event_loop = global.bun_vm().event_loop_mut();
+    let event_loop = global.bun_vm().event_loop();
 
     // TODO: investigate if "ack" and "seq" are observable and if they're not, remove them entirely.
     if let Some(p) = message.get(global, "ack")? {
@@ -267,8 +267,8 @@ pub(crate) fn handle_internal_message_primary(
 //
 
 pub(crate) fn set_ref(enabled: bool) {
-    let vm = VirtualMachine::get().as_mut();
-    vm.channel_ref_overridden = true;
+    let vm = VirtualMachine::get();
+    vm.channel_ref_overridden.set(true);
     if enabled {
         vm.channel_ref.ref_(bun_io::js_vm_ctx());
     } else {
@@ -278,29 +278,31 @@ pub(crate) fn set_ref(enabled: bool) {
 
 // HOST_EXPORT(Bun__refChannelUnlessOverridden, c)
 pub(crate) fn ref_channel_unless_overridden(global: &JSGlobalObject) {
-    let vm = global.bun_vm().as_mut();
-    if !vm.channel_ref_overridden {
+    let vm = global.bun_vm();
+    if !vm.channel_ref_overridden.get() {
         vm.channel_ref.ref_(bun_io::js_vm_ctx());
     }
 }
 
 // HOST_EXPORT(Bun__unrefChannelUnlessOverridden, c)
 pub(crate) fn unref_channel_unless_overridden(global: &JSGlobalObject) {
-    let vm = global.bun_vm().as_mut();
-    if !vm.channel_ref_overridden {
+    let vm = global.bun_vm();
+    if !vm.channel_ref_overridden.get() {
         vm.channel_ref.unref(bun_io::js_vm_ctx());
     }
 }
 
 pub(crate) fn channel_ignore_one_disconnect_event_listener() {
-    let vm = VirtualMachine::get().as_mut();
-    vm.channel_ref_should_ignore_one_disconnect_event_listener = true;
+    let vm = VirtualMachine::get();
+    vm.channel_ref_should_ignore_one_disconnect_event_listener
+        .set(true);
 }
 
 // HOST_EXPORT(Bun__shouldIgnoreOneDisconnectEventListener, c)
 pub(crate) fn should_ignore_one_disconnect_event_listener(global: &JSGlobalObject) -> bool {
     let vm = global.bun_vm();
     vm.channel_ref_should_ignore_one_disconnect_event_listener
+        .get()
 }
 
 pub(crate) fn cluster_raw_bind<'a>(

@@ -227,11 +227,11 @@ impl Snapshots {
             return Ok(());
         }
 
-        // SAFETY: VM is thread-local singleton installed before any test runs; lives for the
-        // duration of the runner. Per `VirtualMachine::get` doc, callers form a short-lived borrow.
-        let vm = VirtualMachine::get().as_mut();
-        let opts =
-            js_parser::ParserOptions::init(vm.transpiler.options.jsx.clone(), bun_ast::Loader::Js);
+        let vm = VirtualMachine::get();
+        let opts = js_parser::ParserOptions::init(
+            vm.transpiler().options.jsx.clone(),
+            bun_ast::Loader::Js,
+        );
         // Thread a per-call arena — js_parser is bump-allocated.
         let arena = bun_alloc::Arena::new();
         let mut temp_log = bun_ast::Log::init();
@@ -274,7 +274,7 @@ impl Snapshots {
             opts,
             &mut temp_log,
             &source,
-            &vm.transpiler.options.define,
+            &vm.transpiler().options.define,
             &arena,
         )?;
 
@@ -373,8 +373,7 @@ impl Snapshots {
         // `success` is a Cell so the per-iteration error-check guard
         // closure can flip it without holding a &mut across the loop body.
         let success = core::cell::Cell::new(true);
-        // SAFETY: see `parse_file` — thread-local VM singleton, short-lived reborrow.
-        let vm = VirtualMachine::get().as_mut();
+        let vm = VirtualMachine::get();
 
         // The arena is reset() inside the loop, bulk-freeing per-iteration scratch.
         let mut arena = bun_alloc::Arena::new();
@@ -552,7 +551,7 @@ impl Snapshots {
                     lexer.next()?;
                     // `ParserOptions` isn't `Clone`; rebuild per-iteration.
                     let opts = js_parser::ParserOptions::init(
-                        vm.transpiler.options.jsx.clone(),
+                        vm.transpiler().options.jsx.clone(),
                         bun_ast::Loader::Js,
                     );
                     // `P::init` takes an out-param
@@ -570,7 +569,7 @@ impl Snapshots {
                         &arena,
                         core::ptr::NonNull::new(log_ptr).expect("log_ptr derived from &mut *log"),
                         &source,
-                        &vm.transpiler.options.define,
+                        &vm.transpiler().options.define,
                         lexer,
                         opts,
                     )?;

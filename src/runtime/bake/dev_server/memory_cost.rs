@@ -44,7 +44,6 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
             root: _,
             inspector_server_id: _,
             configuration_hash_key: _,
-            vm: _,
             vm_handle: _,
             server: _,
             router: _,
@@ -110,7 +109,6 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     //   .watcher_atomics
 
     // pointers that are not considered a part of DevServer
-    //   .vm
     //   .server
     //   .server_transpiler
     //   .client_transpiler
@@ -299,19 +297,19 @@ impl DevServer {
 impl DevServer {
     pub(crate) fn emit_visualizer_message_if_needed(&mut self) {}
 
-    #[inline]
-    pub(super) fn timer_heap(&self) -> &mut crate::timer::All {
-        crate::jsc_hooks::timer_all_mut()
-    }
-
-    pub(crate) fn emit_memory_visualizer_message_timer(timer: *mut EventLoopTimer) {
-        // SAFETY: `timer` points to the `memory_visualizer_timer` field of a DevServer.
+    /// # Safety
+    /// `timer` is the `memory_visualizer_timer` field of a live boxed `DevServer` that nothing
+    /// borrows, and the timer heap has just popped it.
+    pub(crate) unsafe fn emit_memory_visualizer_message_timer(timer: *mut EventLoopTimer) {
+        // SAFETY: fn contract.
         let dev: &mut DevServer = unsafe { &mut *DevServer::from_timer_ptr(timer) };
         debug_assert!(dev.magic == Magic::Valid);
-        dev.emit_memory_visualizer_message();
         dev.memory_visualizer_timer.state = EventLoopTimerState::FIRED;
+        dev.emit_memory_visualizer_message();
         let next = bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, 1000);
-        dev.timer_heap().update(timer, &next);
+        // SAFETY: `ACTIVE` is linked: the popped node was marked `FIRED` first thing.
+        // `DevServer::drop` unlinks it before the box is freed. `dev` is not used again.
+        unsafe { crate::jsc_hooks::timer_all().update(timer, &next) };
     }
 
     pub(crate) fn emit_memory_visualizer_message_if_needed(&mut self) {}

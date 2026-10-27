@@ -39,7 +39,7 @@ pub(crate) struct Handler {
 
     // Always set manually.
     // LIFETIMES.tsv = STATIC (vm) / JSC_BORROW (global_object) — both outlive the handler.
-    pub(crate) vm: bun_ptr::BackRef<VirtualMachine>,
+    pub(crate) vm: &'static VirtualMachine,
     pub(crate) global_object: bun_ptr::BackRef<JSGlobalObject>,
     /// The context of the script that gave these handlers: a websocket event is dispatched inside it.
     pub(crate) context: bun_jsc::ContextId,
@@ -66,11 +66,9 @@ impl Handler {
         self.global_object.get()
     }
 
-    /// `vm` is a `BackRef`; the VM is `'static` per LIFETIMES.tsv (set in
-    /// `from_js`).
     #[inline]
-    pub(crate) fn vm(&self) -> &VirtualMachine {
-        self.vm.get()
+    pub(crate) fn vm(&self) -> &'static VirtualMachine {
+        self.vm
     }
 
     /// Routes an error thrown by a websocket handler to the `error` handler as
@@ -98,7 +96,7 @@ impl Handler {
         }
         if !on_error.is_empty_or_undefined_or_null() {
             // A top-level call of its own: what `error` throws is reported here.
-            global_object.bun_vm().event_loop_mut().run_callback(
+            global_object.bun_vm().event_loop().run_callback(
                 bun_event_loop::ContextId::NONE,
                 on_error,
                 global_object,
@@ -109,10 +107,7 @@ impl Handler {
             return Ok(());
         }
 
-        let _ =
-            VirtualMachine::get()
-                .as_mut()
-                .uncaught_exception(global_object, error_value, false);
+        let _ = VirtualMachine::get().uncaught_exception(global_object, error_value, false);
         Ok(())
     }
 
@@ -127,7 +122,7 @@ impl Handler {
             on_pong: JSValue::ZERO,
             app: None,
             server: None,
-            vm: bun_ptr::BackRef::new(VirtualMachine::get()),
+            vm: VirtualMachine::get(),
             global_object: bun_ptr::BackRef::new(global_object),
             context: global_object.bun_vm().context_of_caller().id(),
             flags: HandlerFlags::empty(),

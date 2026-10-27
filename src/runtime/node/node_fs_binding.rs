@@ -1,5 +1,3 @@
-use core::ptr::NonNull;
-
 use bun_jsc::bindgen::{JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::call_frame::ArgumentsSlice;
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -88,7 +86,7 @@ fn run_async<A: FsArgument>(
         &bun_jsc::JsThread<'_>,
         &Binding,
         ThreadIsolated<A>,
-        &mut VirtualMachine,
+        &VirtualMachine,
         Option<JSValue>,
     ) -> JSValue,
 ) -> JsResult<JSValue> {
@@ -99,7 +97,7 @@ fn run_async<A: FsArgument>(
         ParsedAsyncArgs::Args(args) => args,
         ParsedAsyncArgs::Rejected(error) => return reject_before_schedule(global, callback, error),
     };
-    let vm: &mut VirtualMachine = global.bun_vm().as_mut();
+    let vm: &VirtualMachine = global.bun_vm();
     Ok(create_task(&cx, this, args, vm, callback))
 }
 
@@ -176,8 +174,7 @@ impl Binding {
             ParsedAsyncArgs::Args(args) => args,
             ParsedAsyncArgs::Rejected(error) => return reject_before_schedule(global, None, error),
         };
-        let vm: &mut VirtualMachine = global.bun_vm().as_mut();
-        Ok(AsyncCpTask::create(&cx, self, cp_args, vm))
+        Ok(AsyncCpTask::create(&cx, self, cp_args, global.bun_vm()))
     }
 
     /// `callSync(.cp)`.
@@ -225,7 +222,7 @@ impl Binding {
                 return reject_before_schedule(global, callback, error);
             }
         };
-        let vm: &mut VirtualMachine = global.bun_vm().as_mut();
+        let vm: &VirtualMachine = global.bun_vm();
         // /$bunfs/ is in-memory; readdir_inner handles it (recursive included).
         let is_bunfs = bun_standalone_graph::Graph::get_ref().is_some()
             && bun_standalone_graph::is_bun_standalone_file_path(rd_args.path.slice());
@@ -374,7 +371,7 @@ impl Binding {
 pub(crate) fn binding<'a>(cx: &mut JsScope<'a>) -> JsWrapper<'a, Binding> {
     Binding {
         node_fs: JsCell::new(NodeFS {
-            vm: NonNull::new(cx.global().bun_vm_ptr()),
+            vm: Some(cx.global().bun_vm()),
             ..Default::default()
         }),
     }

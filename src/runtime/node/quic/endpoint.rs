@@ -14,7 +14,7 @@ use bun_jsc::{
 use bun_lsquic_sys as lsquic;
 use bun_uws as uws;
 
-use crate::jsc_hooks::timer_all_mut as timer_all;
+use crate::jsc_hooks::timer_all;
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 
 use super::callbacks;
@@ -201,7 +201,7 @@ pub(crate) struct QuicEndpoint {
     socket: Cell<Option<*mut uws::udp::Socket>>,
     bind_config: JsCell<BindConfig>,
     local_addr: Cell<StoredAddr>,
-    poll_ref: JsCell<KeepAlive>,
+    poll_ref: KeepAlive,
     this_value: JsCell<JsRef>,
 
     /// Both can coexist on one endpoint — Node allows that.
@@ -296,7 +296,7 @@ impl QuicEndpoint {
         // list, which `unlink_loop_driver` clears before the endpoint dies.
         unsafe {
             us_nq_loop_register(
-                uws::Loop::get().cast(),
+                uws::Loop::get().as_ptr().cast(),
                 self.nq_driver.as_ptr(),
                 core::ptr::from_ref(self).cast_mut().cast(),
             );
@@ -310,7 +310,7 @@ impl QuicEndpoint {
             return;
         }
         // SAFETY: registered by `link_loop_driver` on this same loop.
-        unsafe { us_nq_loop_unregister(uws::Loop::get().cast(), self.nq_driver.as_ptr()) };
+        unsafe { us_nq_loop_unregister(uws::Loop::get().as_ptr().cast(), self.nq_driver.as_ptr()) };
     }
 
     /// Marks that lsquic has work queued, so the next driver pass runs.
@@ -1125,7 +1125,7 @@ impl QuicEndpoint {
             socket: Cell::new(None),
             bind_config: JsCell::new(BindConfig::default()),
             local_addr: Cell::new(StoredAddr::default()),
-            poll_ref: JsCell::new(KeepAlive::init()),
+            poll_ref: KeepAlive::init(),
             this_value: JsCell::new(JsRef::empty()),
             server_engine: Cell::new(null_mut()),
             client_engine: Cell::new(null_mut()),
@@ -1364,7 +1364,7 @@ impl QuicEndpoint {
         let mut err: c_int = 0;
         let cfg = self.bind_config.get();
         let socket = uws::udp::Socket::create(
-            uws::Loop::get(),
+            uws::Loop::get().as_ptr(),
             on_data,
             on_drain,
             on_close,
@@ -1425,8 +1425,11 @@ impl QuicEndpoint {
         let listening = self.with_state(|s| s.listening) != 0;
         let busy = listening || !self.sessions.get().is_empty();
         let ctx = bun_io::js_vm_ctx();
-        self.poll_ref
-            .with_mut(|p| if busy { p.ref_(ctx) } else { p.unref(ctx) });
+        if busy {
+            self.poll_ref.ref_(ctx);
+        } else {
+            self.poll_ref.unref(ctx);
+        }
     }
 
     fn process(&self, global: &JSGlobalObject) {
@@ -1504,8 +1507,8 @@ impl QuicEndpoint {
             };
             let handle = session.handle();
             if let Some(callback) = callbacks::get(global, "onSessionNew") {
-                let vm = global.bun_vm().as_mut();
-                vm.event_loop_ref().run_callback(
+                let vm = global.bun_vm();
+                vm.event_loop().run_callback(
                     bun_event_loop::ContextId::NONE,
                     callback,
                     global,
@@ -1577,12 +1580,17 @@ impl QuicEndpoint {
         // time-driven state (RTO, ACK delay, idle) and the deferred close.
         self.mark_driver_pending();
         let next = bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, 1);
-        timer_all().update(
-            core::ptr::addr_of!(self.event_loop_timer)
-                .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
-                .cast_mut(),
-            &next,
-        );
+        // SAFETY: the node is in a cell of the endpoint, which is stored in its JS object: that
+        // does not move, and the sweeper frees it through `Drop`, which unlinks the node first.
+        // `ACTIVE` is linked: `on_timer_fire` marks the popped node `FIRED` first thing.
+        unsafe {
+            timer_all().update(
+                core::ptr::addr_of!(self.event_loop_timer)
+                    .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
+                    .cast_mut(),
+                &next,
+            );
+        }
     }
 
     fn rearm_timer(&self) {
@@ -1620,12 +1628,15 @@ impl QuicEndpoint {
                 bun_core::TimespecMockMode::ForceRealTime,
                 ms as i64,
             );
-            timer_all().update(
-                core::ptr::addr_of!(self.event_loop_timer)
-                    .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
-                    .cast_mut(),
-                &next,
-            );
+            // SAFETY: as in `schedule_process`.
+            unsafe {
+                timer_all().update(
+                    core::ptr::addr_of!(self.event_loop_timer)
+                        .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
+                        .cast_mut(),
+                    &next,
+                );
+            }
         }
     }
 
@@ -2089,7 +2100,8 @@ impl QuicEndpoint {
         // Unlink first: the driver walk must never reach a freed endpoint.
         self.unlink_loop_driver();
         if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
-            timer_all().remove(self.event_loop_timer.as_ptr());
+            // SAFETY: `ACTIVE` is linked (see `schedule_process`).
+            unsafe { timer_all().remove(self.event_loop_timer.as_ptr()) };
         }
         for engine in [
             self.server_engine.replace(null_mut()),
@@ -2134,15 +2146,18 @@ impl QuicEndpoint {
             return;
         }
         // Defer onEndpointClose to the next turn (Node closes asynchronously).
-        self.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
+        self.poll_ref.ref_(bun_io::js_vm_ctx());
         self.pending_endpoint_close.set(true);
         let next = bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::ForceRealTime, 1);
-        timer_all().update(
-            core::ptr::addr_of!(self.event_loop_timer)
-                .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
-                .cast_mut(),
-            &next,
-        );
+        // SAFETY: as in `schedule_process`.
+        unsafe {
+            timer_all().update(
+                core::ptr::addr_of!(self.event_loop_timer)
+                    .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
+                    .cast_mut(),
+                &next,
+            );
+        }
     }
 
     fn apply_server_session_options(
@@ -2189,10 +2204,10 @@ impl QuicEndpoint {
     }
 
     fn deliver_endpoint_close(&self, global: &JSGlobalObject, context: u8, status: c_int) {
-        self.poll_ref.with_mut(|p| p.disable());
+        self.poll_ref.disable();
         if let Some(callback) = callbacks::get(global, "onEndpointClose") {
-            let vm = global.bun_vm().as_mut();
-            vm.event_loop_ref().run_callback(
+            let vm = global.bun_vm();
+            vm.event_loop().run_callback(
                 bun_event_loop::ContextId::NONE,
                 callback,
                 global,
@@ -2587,7 +2602,7 @@ impl QuicEndpoint {
     pub(crate) fn release_socket(&self, _: &mut JsScope<'_>) {
         self.pending_endpoint_close.set(false);
         self.teardown();
-        self.poll_ref.with_mut(|p| p.disable());
+        self.poll_ref.disable();
     }
 
     pub(crate) fn address(&self, cx: &mut JsScope<'_>) -> JSValue {
@@ -2701,7 +2716,8 @@ impl Drop for QuicEndpoint {
         // Remove the timer before the backing storage drops, or a later heap
         // operation dereferences the freed node.
         if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
-            timer_all().remove(self.event_loop_timer.as_ptr());
+            // SAFETY: `ACTIVE` is linked (see `schedule_process`).
+            unsafe { timer_all().remove(self.event_loop_timer.as_ptr()) };
         }
         self.detach_for_finalize();
         self.release_native();

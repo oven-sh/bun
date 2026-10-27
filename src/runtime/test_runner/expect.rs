@@ -504,10 +504,8 @@ impl Expect {
 
                     Self::call_then_if_pending(global_this, value, promise)?;
 
-                    // SAFETY: bun_vm() returns the live thread-local VirtualMachine.
             global_this
                 .bun_vm()
-                .as_mut()
                 .wait_for_promise(promise)
                 .map_err(|stopped| stopped.throw(global_this))?;
 
@@ -806,8 +804,7 @@ impl Expect {
         global_this: &JSGlobalObject,
         value: JSValue,
     ) -> JsResult<(Option<JSValue>, JSValue)> {
-        // SAFETY: bun_vm() returns the live thread-local VirtualMachine; valid for this call.
-        let vm = global_this.bun_vm().as_mut();
+        let vm = global_this.bun_vm();
 
         let mut return_value_from_function: JSValue = JSValue::ZERO;
 
@@ -824,14 +821,14 @@ impl Expect {
         let _ = vm.global().handle_rejected_promises();
 
         let scope = vm.unhandled_rejection_scope();
-        let prev_unhandled_pending_rejection_to_capture = vm.unhandled_pending_rejection_to_capture;
-        vm.unhandled_pending_rejection_to_capture = Some(&raw mut return_value);
-        vm.on_unhandled_rejection = VirtualMachine::on_quiet_unhandled_rejection_handler_capture_value;
+        let prev_unhandled_pending_rejection_to_capture = vm.unhandled_pending_rejection_to_capture.get();
+        vm.unhandled_pending_rejection_to_capture.set(Some(&raw mut return_value));
+        vm.on_unhandled_rejection.set(VirtualMachine::on_quiet_unhandled_rejection_handler_capture_value);
         return_value_from_function = match value.call(global_this, JSValue::UNDEFINED, &[]) {
             Ok(v) => v,
             Err(err) => global_this.take_exception(err),
         };
-        vm.unhandled_pending_rejection_to_capture = prev_unhandled_pending_rejection_to_capture;
+        vm.unhandled_pending_rejection_to_capture.set(prev_unhandled_pending_rejection_to_capture);
 
         let _ = vm.global().handle_rejected_promises();
 
@@ -1323,8 +1320,7 @@ impl Expect {
             }
         }
 
-        // SAFETY: bun_vm() returns the live thread-local VirtualMachine.
-        global_this.bun_vm().as_mut().auto_garbage_collect();
+        global_this.bun_vm().auto_garbage_collect();
 
         Ok(())
     }
@@ -1377,10 +1373,8 @@ impl Expect {
             let vm = global_this.vm();
             promise.set_handled(vm);
 
-            // SAFETY: bun_vm() returns the live thread-local VirtualMachine.
             global_this
                 .bun_vm()
-                .as_mut()
                 .wait_for_promise(promise)
                 .map_err(|stopped| stopped.throw(global_this))?;
 
@@ -1392,8 +1386,7 @@ impl Expect {
                 js_promise::Status::Fulfilled => {}
                 js_promise::Status::Rejected => {
                     // TODO: rewrite this code to use .then() instead of blocking the event loop
-                    // SAFETY: per-use reborrow of the thread-local VM (see VirtualMachine::get docs).
-                    bun_test::print_error(VirtualMachine::get().as_mut(), global_this, result, None);
+                    bun_test::print_error(VirtualMachine::get(), global_this, result, None);
                     return Err(global_this.throw(format_args!(
                         "Matcher `{}` returned a promise that rejected",
                         matcher_name,
@@ -1466,8 +1459,7 @@ impl Expect {
         args: &[JsLocal<'_>],
     ) -> JsResult<JSValue> {
         let global_this = cx.global();
-        // SAFETY: bun_vm() returns the live VM pointer for this global.
-        let _gc = global_this.bun_vm().as_mut().auto_gc_on_drop();
+        let _gc = global_this.bun_vm().auto_gc_on_drop();
 
         // retrieve the user-provided matcher function (matcher_fn)
         let func: JSValue = callee.to_js();
@@ -1543,8 +1535,7 @@ impl Expect {
 
     pub(crate) fn has_assertions(cx: &mut JsScope<'_>) -> JsResult<()> {
         let global_this = cx.global();
-        // SAFETY: bun_vm() returns the live VM pointer for this global.
-        let _gc = global_this.bun_vm().as_mut().auto_gc_on_drop();
+        let _gc = global_this.bun_vm().auto_gc_on_drop();
 
         let Some(buntest_strong) = bun_test::clone_active_strong() else {
             return Err(global_this.throw(format_args!("expect.assertions() must be called within a test")));
@@ -1563,8 +1554,7 @@ impl Expect {
 
     pub(crate) fn assertions(cx: &mut JsScope<'_>, expected: JsLocal<'_>) -> JsResult<()> {
         let global_this = cx.global();
-        // SAFETY: bun_vm() returns the live VM pointer for this global.
-        let _gc = global_this.bun_vm().as_mut().auto_gc_on_drop();
+        let _gc = global_this.bun_vm().auto_gc_on_drop();
 
         let expected = expected.to_js();
 

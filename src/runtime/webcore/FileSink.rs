@@ -74,7 +74,7 @@ pub struct FileSink {
     /// Strong reference to the JS wrapper object to prevent GC from collecting it
     /// while an async operation is pending. This is set when endFromJS returns a
     /// pending Promise and cleared when the operation completes.
-    pub(crate) js_sink_ref: JsCell<bun_jsc::strong::Optional>,
+    pub(crate) js_sink_ref: bun_jsc::strong::Optional,
     /// Armed while a file this sink opened for a `Bun.ModuleGraph`'s script is open.
     abort_handle: bun_jsc::AbortHandle,
 }
@@ -149,8 +149,8 @@ bun_io::impl_streaming_writer_parent! {
     on_ready   = on_ready,
     on_close   = on_close,
     event_loop = |this| (*this).io_evtloop(),
-    uws_loop   = |this| (*this).event_loop_handle.r#loop(),
-    uv_loop    = |this| (*this).event_loop_handle.uv_loop(),
+    uws_loop   = |this| (*this).event_loop_handle.r#loop().as_ptr(),
+    uv_loop    = |this| (*this).event_loop_handle.uv_loop().as_ptr(),
     ref_       = |this| (&*this).ref_(),
     deref      = |this| FileSink::deref(this),
 }
@@ -192,7 +192,7 @@ impl Drop for FileSink {
         LIVE_COUNT.fetch_sub(1, Ordering::Relaxed);
         self.release_pipe();
         if let Some(global) = self.js_global() {
-            let vm = global.bun_vm().as_mut();
+            let vm = global.bun_vm();
             AutoFlusher::unregister_deferred_microtask_with_type::<Self>(self, vm);
         }
     }
@@ -299,11 +299,7 @@ impl FileSink {
             if let Some(stream) = (*this).pipe.get().take_stream() {
                 if let Some(global) = (*this).js_global() {
                     if !status.is_ok() {
-                        // SAFETY: `bun_vm()` is non-null when `global_object()` was;
-                        // `event_loop()` returns the live VM-owned `*mut EventLoop`.
-                        let _entered = bun_jsc::event_loop::EventLoop::enter_scope(
-                            global.bun_vm().as_mut().event_loop(),
-                        );
+                        let _entered = global.bun_vm().event_loop().enter_scope();
                         crate::dispatch::fold(stream.cancel(global));
                     } else {
                         stream.done();
@@ -351,7 +347,7 @@ impl FileSink {
             // Release the JS wrapper reference now that the pending operation is complete.
             // This was held to prevent GC from collecting the wrapper while the async
             // operation was in progress.
-            (*this).js_sink_ref.with_mut(|r| r.deinit());
+            (*this).js_sink_ref.deinit();
         }
     }
 
@@ -822,14 +818,8 @@ impl FileSink {
         self.event_loop_handle
     }
 
-    /// `bun_io::EventLoopHandle` is an opaque `*mut c_void` that the io-layer
-    /// `FilePollVTable` round-trips back to the runtime. We pass the address of
-    /// the stored `bun_jsc::EventLoopHandle` so the (runtime-registered) vtable
-    /// can recover it.
     #[inline]
     fn io_evtloop(&self) -> bun_io::EventLoopHandle {
-        // SAFETY: `bun_io::EventLoopHandle` stores `*mut c_void` purely for
-        // type-erasure; the vtable consumers treat the pointee as read-only
         self.event_loop_handle.as_event_loop_ctx()
     }
 
@@ -847,18 +837,13 @@ impl FileSink {
         Some(bun_opaque::opaque_deref(p.cast::<JSGlobalObject>()))
     }
 
-    /// `EventLoopHandle::bun_vm()` returns an erased `*mut ()`; recover the
-    /// typed `&mut VirtualMachine` (None for the mini loop or null).
+    /// `None` on the mini loop.
     #[inline]
-    #[allow(clippy::mut_from_ref)] // recovers `&mut` from a type-erased raw ptr (per-thread VM, not aliased)
-    fn js_vm(&self) -> Option<&mut bun_jsc::VirtualMachineRef> {
-        let p = self.event_loop_handle.bun_vm();
-        if p.is_null() {
-            return None;
+    fn js_vm(&self) -> Option<&'static bun_jsc::VirtualMachineRef> {
+        match self.event_loop_handle {
+            EventLoopHandle::Js { .. } => Some(bun_jsc::VirtualMachineRef::get()),
+            EventLoopHandle::Mini(_) => None,
         }
-        // SAFETY: `bun_vm()` returns an erased `*mut VirtualMachine` for the
-        // Js arm; non-null implies the per-thread VM, never aliased here.
-        Some(unsafe { &mut *p.cast::<bun_jsc::VirtualMachineRef>() })
     }
 
     pub(crate) fn start(
@@ -1057,7 +1042,7 @@ impl FileSink {
         // `deinit` (Box drop) since in-flight IO may still need them.
         // SAFETY: as above; the `deref` is the last use of `this`.
         unsafe {
-            (*this).js_sink_ref.with_mut(|r| r.deinit());
+            (*this).js_sink_ref.deinit();
             FileSink::deref(this);
         }
     }
@@ -1115,10 +1100,7 @@ impl FileSink {
     /// This should be called when endFromJS returns a pending Promise.
     /// The reference is released when runPending() completes.
     pub(crate) fn protect_js_wrapper(&self, global_this: &JSGlobalObject, js_wrapper: JSValue) {
-        // SAFETY(JsCell): `Strong::set` is a JSC root-slot write; does not
-        // re-enter user JS.
-        self.js_sink_ref
-            .with_mut(|r| r.set(global_this, js_wrapper));
+        self.js_sink_ref.set(global_this, js_wrapper);
     }
 
     pub(crate) fn init(fd: Fd, event_loop_handle: impl Into<EventLoopHandle>) -> RefPtr<FileSink> {
@@ -1600,7 +1582,7 @@ impl FileSink {
             stream_js_error: Cell::new(false),
             stream_bytes: Cell::new(None),
             pump_promise_ref: Cell::new(false),
-            js_sink_ref: JsCell::new(bun_jsc::strong::Optional::empty()),
+            js_sink_ref: bun_jsc::strong::Optional::empty(),
             abort_handle: bun_jsc::AbortHandle::for_owner::<FileSink>(),
         }
     }

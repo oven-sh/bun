@@ -99,15 +99,15 @@ pub(crate) enum UpgradeState {
 
 /// The root on the Response being rendered. A plain Blob body is read in the frame that returned it, so it is left unrooted (see `response_weakref`); a file or streaming body is read after that frame, so [`set_rooted`](Self::set_rooted) roots it.
 #[derive(Default)]
-pub(crate) struct ResponseRoot(JsCell<bun_jsc::strong::Optional>);
+pub(crate) struct ResponseRoot(bun_jsc::strong::Optional);
 
 impl ResponseRoot {
     pub(crate) fn set_rooted(&self, value: JSValue, global: &JSGlobalObject) {
-        self.0.set(bun_jsc::strong::Optional::create(value, global));
+        self.0.set(global, value);
     }
 
     pub(crate) fn clear(&self) {
-        self.0.set(bun_jsc::strong::Optional::empty());
+        self.0.deinit();
     }
 }
 
@@ -367,11 +367,11 @@ fn as_response(value: JSValue) -> Option<*mut Response> {
 
 /// Reports an error that no `error()` handled. The server keeps running, so a
 /// Worker prints it like the main thread does. Its own handler ends the Worker.
-fn report_unhandled_error(vm: &mut jsc::VirtualMachine, global: &JSGlobalObject, value: JSValue) {
-    if vm.worker.is_some() {
+fn report_unhandled_error(vm: &jsc::VirtualMachine, global: &JSGlobalObject, value: JSValue) {
+    if vm.worker.get().is_some() {
         jsc::VirtualMachine::default_on_unhandled_rejection(vm, global, value);
     } else {
-        (vm.on_unhandled_rejection)(vm, global, value);
+        (vm.on_unhandled_rejection.get())(vm, global, value);
     }
 }
 
@@ -617,7 +617,7 @@ where
         if self.is_async() {
             return Ok(());
         }
-        server.vm().as_mut().event_loop_mut().drain_microtasks()
+        server.vm().event_loop().drain_microtasks()
     }
 
     /// Runs `on_abort` itself (may free `self`) if a nested event loop run already closed the socket.
@@ -1053,7 +1053,7 @@ where
             };
             unhandled = err;
         }
-        let vm = global.bun_vm().as_mut();
+        let vm = global.bun_vm();
         report_unhandled_error(vm, global, unhandled);
     }
 
@@ -1103,7 +1103,7 @@ where
             if !value.is_empty_or_undefined_or_null()
                 && let Some(server) = self.server.get()
             {
-                server.vm().as_mut().run_error_handler(value, None);
+                server.vm().run_error_handler(value, None);
             }
             self.close_incomplete_stream();
             return;
@@ -1555,7 +1555,7 @@ where
         // If we called into JavaScript, we must drain the microtask queue.
         scopeguard::defer! {
             if any_js_calls.get() {
-                vm.as_mut().drain_microtasks();
+                vm.drain_microtasks();
             }
         }
 
@@ -2060,7 +2060,7 @@ where
             fd,
             auto_close,
             resp,
-            vm: bun_ptr::BackRef::new(server.vm()),
+            vm: server.vm(),
             file_type,
             pollable,
             offset: sendfile.offset as u64,
@@ -2333,7 +2333,7 @@ where
                             && let Some(server) = this.server.get()
                             && !err.is_empty_or_undefined_or_null()
                         {
-                            server.vm().as_mut().run_error_handler(err, None);
+                            server.vm().run_error_handler(err, None);
                         }
                         let mut readable_ref = this
                             .response_body_readable_stream_ref
@@ -2453,7 +2453,7 @@ where
 
         if self.end_request_streaming().unwrap_or(true) {
             // TODO: properly propagate exception upwards
-            self.server().vm().as_mut().drain_microtasks();
+            self.server().vm().drain_microtasks();
         }
     }
 
@@ -3036,14 +3036,13 @@ where
         }
         let server = self.server();
         if !DEBUG_MODE || !resp_writable || server.dev_server().is_none() {
-            server.vm().as_mut().run_error_handler(err, None);
+            server.vm().run_error_handler(err, None);
             return false;
         }
 
         let mut exception_list: jsc::ExceptionList = Vec::new();
         server
             .vm()
-            .as_mut()
             .run_error_handler(err, Some(&mut exception_list));
 
         let bb = DevErrorPage {
@@ -3596,32 +3595,33 @@ where
         };
         let server = &*server;
         let global_this = server.global_this();
-        // `ServerLike::vm()` is the process-static VM `BackRef`; `as_mut()` is
-        // the single audited `&mut VirtualMachine` accessor.
-        let vm = server.vm().as_mut();
+        let vm = server.vm();
         if DEBUG_MODE {
             let mut exception_list: jsc::ExceptionList = Vec::new();
-            let prev_exception_list = vm.on_unhandled_rejection_exception_list;
-            vm.on_unhandled_rejection_exception_list = Some(NonNull::from(&mut exception_list));
+            let prev_exception_list = vm.on_unhandled_rejection_exception_list.get();
+            vm.on_unhandled_rejection_exception_list
+                .set(Some(NonNull::from(&mut exception_list)));
             report_unhandled_error(vm, global_this, value);
-            vm.on_unhandled_rejection_exception_list = prev_exception_list;
+            vm.on_unhandled_rejection_exception_list
+                .set(prev_exception_list);
 
-            let log = vm.log_mut().unwrap();
             bun_core::pretty_errorln!(
                 "<r><red>{:?}<r> - <b>{}<r> failed",
                 self.method,
                 self.ensure_pathname()
             );
             let msg = format!("{:?} - {} failed", self.method, self.ensure_pathname());
-            self.render_default_error(log, &exception_list, msg.as_bytes());
-            log.reset();
+            self.render_default_error(vm.log_ref().unwrap(), &exception_list, msg.as_bytes());
+            // SAFETY: the borrow above ended, and nothing is resolving or transpiling here.
+            unsafe { vm.log_mut() }.unwrap().reset();
             return;
         }
         if status != 404 {
             report_unhandled_error(vm, global_this, value);
         }
         self.render_production_error(status);
-        vm.log_mut().unwrap().reset();
+        // SAFETY: nothing is resolving or transpiling here, so no other borrow of the log is live.
+        unsafe { vm.log_mut() }.unwrap().reset();
     }
 
     pub(crate) fn run_error_handler_with_status_code_dont_check_responded(
@@ -3819,7 +3819,6 @@ where
             {
                 server
                     .vm()
-                    .as_mut()
                     .run_error_handler(global_this.take_exception(err), None);
             }
             // `cookies` drops here, releasing the ref taken in `set_cookies`.

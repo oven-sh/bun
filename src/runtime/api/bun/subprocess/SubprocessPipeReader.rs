@@ -37,12 +37,9 @@ pub(crate) struct PipeReader {
     // live whenever `process.is_some()` — see `on_close_io`/`finalize` ordering.
     // `'static` erases the borrow-checker lifetime (Subprocess is heap-pinned).
     pub(crate) process: Option<ParentRef<Subprocess<'static>>>,
-    // Long-lived borrow of the VM's event loop. The VM (and its embedded
-    // `EventLoop`) outlives every PipeReader, so `BackRef` centralises the
-    // single unsafe deref behind a safe `Deref`/`get()`.
-    pub(crate) event_loop: bun_ptr::BackRef<EventLoop>,
-    /// Typed enum mirror of `event_loop` for the io-layer FilePoll vtable
-    /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
+    /// The VM's loop, or its isolated one for `spawnSync`.
+    pub(crate) event_loop: &'static EventLoop,
+    /// `event_loop`, for the io layer.
     pub(crate) event_loop_handle: bun_jsc::EventLoopHandle,
     pub(crate) ref_count: RefCount<PipeReader>,
     pub(crate) state: State,
@@ -101,7 +98,7 @@ impl PipeReader {
     }
 
     pub(crate) fn create(
-        event_loop: NonNull<EventLoop>,
+        event_loop: &'static EventLoop,
         process: NonNull<Subprocess<'static>>,
         result: StdioResult,
         limit: Option<NonNull<MaxBuf>>,
@@ -110,8 +107,8 @@ impl PipeReader {
             ref_count: RefCount::init(),
             process: Some(ParentRef::from(process)),
             reader: IOReader::init::<PipeReader>(),
-            event_loop: event_loop.into(),
-            event_loop_handle: bun_jsc::EventLoopHandle::init(event_loop.as_ptr().cast::<()>()),
+            event_loop,
+            event_loop_handle: event_loop.handle(),
             stdio_result: result,
             state: State::Pending,
         });
@@ -145,13 +142,13 @@ impl PipeReader {
     pub(crate) fn start(
         &mut self,
         process: NonNull<Subprocess<'static>>,
-        event_loop: NonNull<EventLoop>,
+        event_loop: &'static EventLoop,
         lazy: bool,
     ) {
         self.r#ref();
         self.process = Some(ParentRef::from(process));
-        self.event_loop = event_loop.into();
-        self.event_loop_handle = bun_jsc::EventLoopHandle::init(event_loop.as_ptr().cast::<()>());
+        self.event_loop = event_loop;
+        self.event_loop_handle = event_loop.handle();
         #[cfg(windows)]
         {
             if lazy {
@@ -364,22 +361,12 @@ impl PipeReader {
 
     #[cfg(unix)]
     fn loop_(&self) -> *mut AsyncLoop {
-        self.event_loop.native_loop()
+        self.event_loop.native_loop().as_ptr()
     }
 
     #[cfg(windows)]
     fn loop_(&self) -> *mut AsyncLoop {
-        // `event_loop.virtual_machine` is set by the time a PipeReader is
-        // created. The VM is the per-thread singleton owning `event_loop`, so
-        // the `BackRef` invariant (pointee outlives holder) trivially holds.
-        let vm = self
-            .event_loop
-            .virtual_machine
-            .map(bun_ptr::BackRef::from)
-            .expect("event_loop.virtual_machine");
-        let uws = vm.uws_loop();
-        // SAFETY: uws loop pointer is live for the VM lifetime.
-        unsafe { (*uws).uv_loop }
+        bun_jsc::VirtualMachineRef::get().uws_loop().uv().as_ptr()
     }
 }
 

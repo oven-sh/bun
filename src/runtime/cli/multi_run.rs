@@ -70,12 +70,6 @@ impl<'a> PipeReader<'a> {
             line_buffer: Vec::new(),
         }
     }
-
-    fn event_loop_ptr(&self) -> *mut MiniEventLoop {
-        // SAFETY: handle is a backref set in ProcessHandle::start() before any read; State
-        // outlives all handles (lives on `run`'s stack frame for the whole event loop).
-        unsafe { (*(*self.handle).state).event_loop }
-    }
 }
 
 // Callbacks here touch only `line_buffer` / `ended` / `handle` / the State
@@ -101,7 +95,7 @@ bun_io::impl_buffered_reader_parent! {
         let state = &mut *(*handle).state.cast_mut();
         let _ = state.maybe_finish(&mut *handle);
     };
-    loop_           = |this| bun_io::uws_to_native((*(*this).event_loop_ptr()).loop_);
+    loop_           = |this| bun_io::uws_to_native((*(*(*this).handle).state).event_loop.loop_).as_ptr();
     event_loop      = |this| (*(*(*this).handle).state).event_loop_handle.as_event_loop_ctx();
 }
 
@@ -344,7 +338,7 @@ const RESET: &[u8] = ansi::RESET.as_bytes();
 
 struct State<'a> {
     handles: Box<[ProcessHandle<'a>]>,
-    event_loop: *mut MiniEventLoop,
+    event_loop: &'static MiniEventLoop,
     /// Typed enum mirror of `event_loop` for the io-layer FilePoll vtable
     /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
     event_loop_handle: EventLoopHandle,
@@ -1246,8 +1240,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
             // before blocking in a tick no event may ever wake.
             continue;
         }
-        // SAFETY: event_loop points at the thread-lifetime MiniEventLoop singleton.
-        unsafe { (*event_loop).tick_once((&raw const state).cast_mut().cast::<c_void>()) };
+        event_loop.tick_once((&raw const state).cast_mut().cast::<c_void>());
     }
 
     let status = state.finalize();

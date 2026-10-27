@@ -989,7 +989,7 @@ impl ServePlugins {
         };
         // NOTE: reshaped for borrowck — clone the slice refs so we can mutate self.state below
         let plugin_list: Vec<_> = plugin_list.iter().collect();
-        let bunfig_path: &[u8] = &global.bun_vm().transpiler.options.bunfig_path;
+        let bunfig_path: &[u8] = &global.bun_vm().transpiler().options.bunfig_path;
         // With no bunfig.toml, only `bake.config.ts` has plugins: their root is the project.
         let bunfig_folder: &[u8] = if bunfig_path.is_empty() {
             FileSystem::instance().top_level_dir()
@@ -1028,7 +1028,7 @@ impl ServePlugins {
             dev_server: None,
         };
 
-        global.bun_vm().event_loop_mut().enter();
+        global.bun_vm().event_loop().enter();
         let result = jsc::host_fn::from_js_host_call(global, || {
             match &self.state {
                 ServePluginsState::Pending { plugin, .. } => plugin.as_ref(),
@@ -1036,7 +1036,7 @@ impl ServePlugins {
             }
             .load_and_resolve_plugins_for_serve(plugin_js_array, bunfig_folder_bunstr)
         })?;
-        global.bun_vm().event_loop_mut().exit();
+        global.bun_vm().event_loop().exit();
 
         // handle the case where js synchronously throws an error
         if let Some(e) = global.try_take_exception() {
@@ -1147,7 +1147,7 @@ impl ServePlugins {
         }
 
         Output::err_generic("Failed to load plugins for Bun.serve:", ());
-        global.bun_vm().as_mut().run_error_handler(err, None);
+        global.bun_vm().run_error_handler(err, None);
     }
 
     /// Clears the pending `server` before it's freed, so a load that settles later can't call into it.
@@ -1355,14 +1355,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         super::AnyServer::from(std::ptr::from_ref::<Self>(self))
     }
 
-    /// Shared `&VirtualMachine` accessor.
-    #[inline(always)]
-    fn vm_ref(&self) -> &jsc::virtual_machine::VirtualMachine {
-        // `vm` is a `BackRef<VirtualMachine>` (per-thread singleton, set in
-        // `init()`); safe `Deref` projection.
-        self.vm.get()
-    }
-
     /// Shared `&JSGlobalObject` accessor (struct stores it as `*const`).
     #[inline(always)]
     fn global(&self) -> GlobalRef {
@@ -1388,7 +1380,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     pub(super) fn notify_inspector_server_stopped(&self) {
         if self.inspector_server_id.get().get() != 0 {
             bun_core::hint::cold();
-            if let Some(debugger) = &self.vm().as_mut().debugger {
+            if let Some(debugger) = self.vm().debugger.get() {
                 bun_core::hint::cold();
                 // NOTE (layering): the `HTTPServerAgent.notifyServerStopped`
                 // wrapper lives in
@@ -1918,7 +1910,7 @@ where
         }
 
         if self.inspector_server_id.get().get() != 0 {
-            if let Some(debugger) = self.vm().as_mut().debugger.as_deref_mut() {
+            if let Some(debugger) = self.vm().debugger.get() {
                 bun_core::handle_oom(super::http_server_agent::notify_server_routes_updated(
                     &debugger.http_server_agent,
                     self.as_any_server(),
@@ -2380,7 +2372,7 @@ where
         let buffer_writer = bun_js_printer::BufferWriter::init();
         let mut writer = bun_js_printer::BufferPrinter::init(buffer_writer);
         let source = bun_ast::Source::init_empty_file(b"info.json");
-        let transpiler = &VirtualMachine::VirtualMachine::get().transpiler;
+        let transpiler = VirtualMachine::VirtualMachine::get().transpiler();
         let _ = bun_js_printer::print_json(
             &mut writer,
             BunInfo::generate(transpiler).expect("unreachable"),
@@ -3073,7 +3065,7 @@ where
         let first_hash_segment: [u8; 8] = 'brk: {
             let mut buffer = paths::path_buffer_pool::get();
             // No entry module (`bun bake`): the hash of the project root below tells servers apart.
-            let main = self.vm_ref().main().unwrap_or_default();
+            let main = self.vm().main().unwrap_or_default();
             let len = main.len().min(buffer.len());
             break 'brk hash(strings::copy_lowercase(&main[..len], &mut buffer[..len]))
                 .to_ne_bytes();
@@ -3145,9 +3137,7 @@ where
 
             let error_code_value = JSValue::js_number(error_code as f64);
             let raw_packet_value = ArrayBuffer::create_buffer(&global, raw_packet)?;
-            // SAFETY: event_loop() returns a live raw pointer tied to the global.
-            let _scope =
-                unsafe { jsc::event_loop::EventLoop::enter_scope(global.bun_vm().event_loop()) };
+            let _scope = global.bun_vm().event_loop().enter_scope();
             callback.call(
                 &global,
                 JSValue::UNDEFINED,
@@ -3181,9 +3171,7 @@ where
         if node_socket.is_undefined_or_null() {
             return Ok(());
         }
-        // SAFETY: event_loop() returns a live raw pointer tied to the global.
-        let _scope =
-            unsafe { jsc::event_loop::EventLoop::enter_scope(global.bun_vm().event_loop()) };
+        let _scope = global.bun_vm().event_loop().enter_scope();
         callback.call(&global, JSValue::UNDEFINED, &[node_socket])?;
         Ok(())
     }

@@ -60,15 +60,13 @@ pub(crate) struct PathWatcherManager {
     // Keys are owned path bytes, values are raw heap
     // PathWatcher ptrs. `StringArrayHashMap` lets `get`/`insert` take `&[u8]` borrows.
     watchers: JsCell<StringArrayHashMap<*mut PathWatcher>>,
-    // LIFETIMES.tsv: JSC_BORROW → `&VirtualMachine`. The manager is heap-allocated and stored in a
-    // process-global, so we spell the borrow as `'static`; soundness relies on
-    // the owning VM outliving the manager (watchers are torn down before the VM).
-    vm: &'static jsc::VirtualMachineRef,
+    /// Whose manager this is. Other VMs' threads read it in `watch()`: compared, never dereferenced.
+    vm: *const jsc::VirtualMachineRef,
     deinit_on_last_watcher: Cell<bool>,
 }
 
 impl PathWatcherManager {
-    fn init(vm: &'static jsc::VirtualMachineRef) -> *mut PathWatcherManager {
+    fn init(vm: &jsc::VirtualMachineRef) -> *mut PathWatcherManager {
         bun_core::heap::into_raw(Box::new(PathWatcherManager {
             watchers: JsCell::new(StringArrayHashMap::default()),
             vm,
@@ -215,7 +213,7 @@ impl PathWatcher {
         }
 
         // SAFETY: libuv contract — `loop_` is valid while the handle is open.
-        let timestamp = unsafe { (*me.handle.loop_).time };
+        let timestamp = unsafe { (*me.handle.loop_).time.get() };
 
         if let Some(err) = status.to_error(sys::Tag::watch) {
             me.emit_in_progress.set(true);
@@ -335,6 +333,7 @@ impl PathWatcher {
 
     fn init(
         manager: *mut PathWatcherManager,
+        vm: &jsc::VirtualMachineRef,
         path: &ZStr,
         recursive: bool,
     ) -> sys::Result<*mut PathWatcher> {
@@ -382,7 +381,7 @@ impl PathWatcher {
             // hands it back to `uv_event_callback`, which `from_field_ptr!`-offsets it to recover
             // the parent `PathWatcher`. Deriving via `addr_of_mut!` keeps `this`'s whole-allocation
             // provenance so that container-of access stays in-bounds under Stacked Borrows.
-            let rc = uv::uv_fs_event_init(mgr.vm.uv_loop(), ptr::addr_of_mut!((*this).handle));
+            let rc = uv::uv_fs_event_init(vm.uv_loop().as_ptr(), ptr::addr_of_mut!((*this).handle));
             debug_assert!(rc == uv::ReturnCode::zero());
             (*this).handle.data = this.cast::<c_void>();
         }
@@ -507,7 +506,7 @@ impl PathWatcher {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub(crate) fn watch(
-    vm: &'static jsc::VirtualMachineRef,
+    vm: &jsc::VirtualMachineRef,
     path: &ZStr,
     recursive: bool,
     ctx: *mut c_void,
@@ -535,7 +534,7 @@ pub(crate) fn watch(
         existing
     };
 
-    let watcher = match PathWatcher::init(manager, path, recursive) {
+    let watcher = match PathWatcher::init(manager, vm, path, recursive) {
         sys::Result::Err(err) => return sys::Result::Err(err),
         sys::Result::Ok(w) => w,
     };

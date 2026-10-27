@@ -76,7 +76,7 @@ impl ReplCommand {
         // Initialize the VM. `InitOptions` has no allocator field (the VM does
         // not take a caller-provided allocator in the Rust port; `vm.arena` is
         // set below).
-        let vm: *mut VirtualMachine = VirtualMachine::init(jsc::VirtualMachineInitOptions {
+        let vm = VirtualMachine::init(jsc::VirtualMachineInitOptions {
             transform_options: core::mem::take(&mut ctx.args),
             debugger: core::mem::take(&mut ctx.runtime_options.debugger),
             log: core::ptr::NonNull::new(ctx.log),
@@ -87,16 +87,13 @@ impl ReplCommand {
             ..Default::default()
         })?;
 
-        // SAFETY: vm is a freshly heap-allocated VirtualMachine valid for process lifetime.
-        let b = unsafe { &mut (*vm).transpiler };
-        // SAFETY: vm valid as above; preload/argv are disjoint from `b`'s transpiler borrow.
-        unsafe {
-            (*vm).preload = core::mem::take(&mut ctx.preloads);
-            (*vm).argv = core::mem::take(&mut ctx.passthrough);
-            // `vm.dns_result_order` is a `u8` (see VirtualMachine.rs); set
-            // post-init like run_command.rs since InitOptions doesn't carry it.
-            (*vm).dns_result_order = dns_order as u8;
-        }
+        // SAFETY: nothing else borrows the transpiler: no script has run yet.
+        let b = unsafe { vm.transpiler_mut() };
+        vm.preload.replace(core::mem::take(&mut ctx.preloads));
+        let _ = vm.argv.set(core::mem::take(&mut ctx.passthrough));
+        // `vm.dns_result_order` is a `u8` (see VirtualMachine.rs); set
+        // post-init like run_command.rs since InitOptions doesn't carry it.
+        vm.dns_result_order.set(dns_order as u8);
         // There is no per-VM allocator handle; the `vm.arena` assignment itself happens below
         // ReplRunner construction to avoid a move-after-borrow.
 
@@ -117,21 +114,21 @@ impl ReplCommand {
         b.options.dead_code_elimination = false; // REPL needs all code
 
         if b.configure_defines().is_err() {
-            Self::dump_build_error(VirtualMachine::get());
+            Self::dump_build_error(vm);
             Global::exit(1);
         }
 
-        bun_http::async_http::load_env(VirtualMachine::get().log_mut().unwrap(), b.env());
-        VirtualMachine::get()
-            .as_mut()
-            .load_extra_env_and_source_code_printer();
+        // SAFETY: nothing else borrows the log: no script has run yet, and `b` is not used again.
+        let log = unsafe { vm.log_mut() }.unwrap();
+        bun_http::async_http::load_env(log, vm.env_loader());
+        vm.load_extra_env_and_source_code_printer();
 
-        VirtualMachine::get().as_mut().is_main_thread = true;
+        vm.is_main_thread.set(true);
         bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
 
         // Store VM reference in REPL (safe - no JS allocation)
-        repl.vm = Some(VirtualMachine::get());
-        repl.global = Some(VirtualMachine::get().global());
+        repl.vm = Some(vm);
+        repl.global = Some(vm.global());
 
         // Create the ReplRunner and execute within the API lock
         // NOTE: JS-allocating operations like ExposeNodeModuleGlobals must
@@ -156,9 +153,7 @@ impl ReplCommand {
         // lifetime is the holdAPILock scope (globalExit() never returns so the frame never
         // unwinds). Assigned AFTER moving `arena` into `runner` — assigning from the pre-move
         // local would dangle.
-        // SAFETY: vm is valid for process lifetime (see above); runner.arena is pinned on this
-        // stack frame for the holdAPILock scope and global_exit() (`!`) prevents unwind past it.
-        unsafe { (*vm).arena = NonNull::new(&raw mut runner.arena) };
+        vm.arena.set(NonNull::new(&raw mut runner.arena));
 
         // `bun_jsc::opaque_wrap` requires a type implementing `FnTyped<Ctx>`;
         // rather than depend on that upstream trait, write the trivial thunk locally.
@@ -167,13 +162,10 @@ impl ReplCommand {
             let runner = unsafe { bun_ptr::callback_ctx::<ReplRunner<'_, '_>>(ctx) };
             ReplRunner::start(runner);
         }
-        // SAFETY: vm.global is valid; runner is pinned on stack for the lock duration.
+        // `runner` is pinned on the stack for the lock duration.
         #[allow(deprecated)]
-        unsafe {
-            (&*(*vm).global)
-                .vm()
-                .hold_api_lock((&raw mut runner).cast::<c_void>(), repl_runner_thunk);
-        }
+        vm.jsc_vm()
+            .hold_api_lock((&raw mut runner).cast::<c_void>(), repl_runner_thunk);
         Ok(())
     }
 
@@ -181,13 +173,10 @@ impl ReplCommand {
         Output::flush();
         let writer = Output::error_writer_buffered();
         let _flush = Output::flush_guard();
-        if let Some(log) = vm.log {
-            // SAFETY: log is a valid NonNull<Log> for the VM lifetime.
+        if let Some(log) = vm.log_ref() {
             // `Log::print` accepts `*mut io::Writer` (IntoLogWrite is impl'd for the raw ptr,
             // not the &mut), so coerce the `&mut Writer` from `error_writer_buffered`.
-            let _ = unsafe {
-                (*log.as_ptr()).print(std::ptr::from_mut::<bun_core::io::Writer>(writer))
-            };
+            let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(writer));
         }
     }
 }
@@ -199,7 +188,7 @@ impl ReplCommand {
 // outlive the local, tripping the borrow checker against `Drop for Repl`.
 struct ReplRunner<'a, 'r> {
     repl: &'a mut Repl<'r>,
-    vm: *mut VirtualMachine,
+    vm: &'static VirtualMachine,
     arena: Arena,
     eval_script: &'a [u8],
     eval_and_print: bool,
@@ -207,8 +196,7 @@ struct ReplRunner<'a, 'r> {
 
 impl<'a, 'r> ReplRunner<'a, 'r> {
     fn start(this: &mut ReplRunner<'a, 'r>) {
-        let _ = this.vm;
-        let vm = VirtualMachine::get().as_mut();
+        let vm = this.vm;
 
         // Set up the REPL environment (now inside API lock)
         if this.setup_repl_environment().is_err() {
@@ -216,7 +204,7 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
             if let Some(exception) = vm.global().try_take_exception() {
                 vm.print_error_like_object_to_console(exception);
             }
-            vm.exit_handler.exit_code = 1;
+            vm.exit_handler.exit_code.set(1);
             vm.on_exit();
             vm.global_exit();
         }
@@ -229,7 +217,7 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
             if had_error {
                 // Only overwrite on error so `process.exitCode = N` in the
                 // script is preserved on success.
-                vm.exit_handler.exit_code = 1;
+                vm.exit_handler.exit_code.set(1);
             } else {
                 // Fire process.on("beforeExit") and re-drain as needed
                 // (matches bun -e / Node.js semantics).
@@ -237,7 +225,7 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
             }
         } else {
             // Interactive: run the REPL loop
-            if let Err(err) = this.repl.run_with_vm(Some(VirtualMachine::get())) {
+            if let Err(err) = this.repl.run_with_vm(Some(vm)) {
                 bun_core::pretty_errorln!("<r><red>REPL error: {}<r>", err.name());
             }
         }
@@ -248,14 +236,11 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
     }
 
     fn setup_repl_environment(&mut self) -> bun_jsc::JsResult<()> {
-        let vm = VirtualMachine::get().as_mut();
+        let vm = self.vm;
 
         // Expose Node.js module globals (__dirname, __filename, require, etc.)
         // This must be done inside the API lock as it allocates JS objects
-        // SAFETY: vm.global is a valid JSGlobalObject pointer for the duration of the API lock.
-        unsafe {
-            Bun__ExposeNodeModuleGlobals(vm.global);
-        }
+        Bun__ExposeNodeModuleGlobals(vm.global());
 
         // Set up require(), module, __filename, __dirname relative to cwd
         let cwd = bun_resolver::fs::FileSystem::get().top_level_dir_without_trailing_slash();
@@ -264,12 +249,11 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
         // which opens a `TopExceptionScope` before the call (post-hoc `has_exception()`
         // would assert under `BUN_JSC_validateExceptionChecks=1`).
         unsafe {
-            bun_jsc::cpp::Bun__REPL__setupGlobalRequire(&*vm.global, cwd.as_ptr(), cwd.len())?;
+            bun_jsc::cpp::Bun__REPL__setupGlobalRequire(vm.global(), cwd.as_ptr(), cwd.len())?;
         }
 
         // Set timezone if specified
-        // SAFETY: transpiler.env is a valid *mut Loader set during VM init.
-        if let Some(tz) = unsafe { (*vm.transpiler.env).get(b"TZ") } {
+        if let Some(tz) = vm.env_loader().get(b"TZ") {
             if !tz.is_empty() {
                 let _ = vm.global().set_time_zone(&EncodedSlice::from_bytes(tz));
             }
@@ -281,7 +265,7 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
 
 // Local extern declarations for C++ exports the bun_jsc wrappers don't expose yet.
 unsafe extern "C" {
-    fn Bun__ExposeNodeModuleGlobals(global: *const JSGlobalObject);
+    safe fn Bun__ExposeNodeModuleGlobals(global: &JSGlobalObject);
 }
 
 use bun_bundler::options::EnvBehavior;

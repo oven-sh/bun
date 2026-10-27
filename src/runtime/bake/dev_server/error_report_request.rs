@@ -320,12 +320,7 @@ impl ErrorReportRequest {
             // `print_externally_remapped_zig_exception` takes a runtime
             // `allow_ansi_color` flag.
             let ansi_colors = Output::enable_ansi_colors_stderr();
-            // `dev.vm` is `*const` (shared-ref provenance from `Options.vm`);
-            // `vm_mut()` recovers `&mut VirtualMachine` via the per-thread
-            // singleton (`VirtualMachine::get() -> *mut`), which carries
-            // mutable provenance. Single JS thread — no aliasing `&mut`.
-            let vm = dev.vm_mut();
-            let _ = vm.print_externally_remapped_zig_exception(
+            let _ = dev.vm().print_externally_remapped_zig_exception(
                 &mut exception,
                 None,
                 stderr,

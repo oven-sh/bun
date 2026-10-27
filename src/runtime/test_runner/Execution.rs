@@ -320,8 +320,7 @@ impl Execution {
                     let entry = unsafe { entry.as_ref() };
                     let now = Timespec::now_force_real_time();
                     if entry.timespec.order(&now) == core::cmp::Ordering::Less {
-                        // SAFETY: bun_vm() returns the live per-thread VM.
-                        let kill_count = global_this.bun_vm().as_mut().auto_killer.kill();
+                        let kill_count = global_this.bun_vm().auto_killer.kill();
                         if kill_count.processes > 0 {
                             bun_core::pretty_errorln!(
                                 "<d>killed {} dangling process{}<r>",
@@ -567,15 +566,13 @@ impl Execution {
     }
 
     fn on_group_started(global_this: &JSGlobalObject) {
-        // SAFETY: bun_vm() returns the live per-thread VM.
-        global_this.bun_vm().as_mut().auto_killer.enable();
+        global_this.bun_vm().auto_killer.enable();
     }
 
     fn on_group_completed(global_this: &JSGlobalObject) {
-        // SAFETY: bun_vm() returns the live per-thread VM.
-        let vm = global_this.bun_vm().as_mut();
+        let vm = global_this.bun_vm();
         // Under --isolate the swap between files kills and clears the tracked set.
-        if !vm.test_isolation_enabled {
+        if !vm.test_isolation_enabled.get() {
             vm.auto_killer.disable();
         }
     }
@@ -601,8 +598,7 @@ impl Execution {
             );
 
             if entry.base.test_id_for_debugger != 0 {
-                // SAFETY: VirtualMachine::get() returns the live singleton.
-                if let Some(debugger) = VirtualMachine::get().as_mut().debugger.as_mut() {
+                if let Some(debugger) = VirtualMachine::get().debugger.get() {
                     if debugger.test_reporter_agent.is_enabled() {
                         debugger
                             .test_reporter_agent
@@ -677,8 +673,7 @@ impl Execution {
             // SAFETY: arena-owned entry
             let entry = unsafe { entry_ptr.as_ref() };
             if entry.base.test_id_for_debugger != 0 {
-                // SAFETY: VirtualMachine::get() returns the live singleton.
-                if let Some(debugger) = VirtualMachine::get().as_mut().debugger.as_mut() {
+                if let Some(debugger) = VirtualMachine::get().debugger.get() {
                     if debugger.test_reporter_agent.is_enabled() {
                         use bun_jsc::Debugger::TestStatus as S;
                         debugger.test_reporter_agent.report_test_end(

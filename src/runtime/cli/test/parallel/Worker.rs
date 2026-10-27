@@ -13,8 +13,6 @@ use crate::api::bun::process::SpawnResultExt as _;
 use crate::api::bun::process::WindowsStdio as Stdio;
 use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, Status};
 use bun_core::{self, Output};
-#[cfg(windows)]
-use bun_jsc as jsc;
 
 use super::channel::{Channel, ChannelOwner};
 use super::coordinator::Coordinator;
@@ -153,11 +151,7 @@ impl Worker {
             let stdout = spawned.stdout;
             let stderr = spawned.stderr;
             let extra_pipes = core::mem::take(&mut spawned.extra_pipes);
-            this.process = Some(
-                spawned.to_process_handle(bun_event_loop::EventLoopHandle::init(
-                    coord.vm.event_loop().cast(),
-                )),
-            );
+            this.process = Some(spawned.to_process_handle(coord.event_loop_handle));
             if let Some(fd) = stdout {
                 this.out
                     .reader
@@ -171,8 +165,6 @@ impl Worker {
                     .map_err(|_| crate::Error::PipeStartFailed)?;
             }
             if !extra_pipes.is_empty() {
-                // coord.vm backref valid for worker lifetime; adopt() mutates the
-                // loop's socket context via interior mutability on the C side.
                 if !Channel::adopt(&raw mut this.ipc, coord.vm, extra_pipes[0].fd()) {
                     return Err(crate::Error::ChannelAdoptFailed);
                 }
@@ -214,7 +206,7 @@ impl Worker {
                 extra_fds: vec![Stdio::Ipc(ipc_pipe)].into_boxed_slice(),
                 cwd: coord.cwd.to_vec().into_boxed_slice(),
                 windows: spawn::WindowsOptions {
-                    loop_: jsc::EventLoopHandle::init(coord.vm.event_loop().cast()),
+                    loop_: coord.event_loop_handle,
                     ..Default::default()
                 },
                 stream: true,
@@ -246,7 +238,7 @@ impl Worker {
                     debug_assert_eq!(raw, ipc_pipe, "extra_pipes Box must wrap ipc_pipe");
                 }
             }
-            this.process = Some(spawned.to_process_handle(coord.vm.event_loop()));
+            this.process = Some(spawned.to_process_handle(coord.event_loop_handle));
 
             if let spawn::WindowsStdioResult::Buffer(pipe) = spawned.stdout.take() {
                 // SAFETY: `pipe` is a Box<uv::Pipe> just produced by spawn_process;
@@ -434,7 +426,6 @@ bun_io::impl_buffered_reader_parent! {
     on_read_chunk   = |this, chunk, state| (*this).on_read_chunk(&chunk, state);
     on_reader_done  = |this| (*this).on_reader_done();
     on_reader_error = |this, err| (*this).on_reader_error(err);
-    // `vm.uv_loop()` is `*mut bun_io::Loop` on every target.
-    loop_           = |this| (*(*(*this).worker).coord).vm.uv_loop();
+    loop_           = |this| (*(*(*this).worker).coord).vm.uv_loop().as_ptr();
     event_loop      = |this| (*(*(*this).worker).coord).event_loop_handle.as_event_loop_ctx();
 }

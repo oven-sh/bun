@@ -461,10 +461,8 @@ impl SharedConnection {
         );
         // SAFETY: `FilePoll::init` returned a live pool slot; exclusive here.
         let poll = unsafe { &mut *poll_ptr };
-        // SAFETY: the event loop outlives every lookup made on it.
-        let loop_ = unsafe { ctx.platform_event_loop() };
         let rc = poll.register_with_fd(
-            loop_,
+            ctx.platform_event_loop(),
             Async::PollKind::Readable,
             Async::posix_event_loop::OneShotFlag::None,
             fd,
@@ -652,10 +650,11 @@ impl SharedConnection {
         }
         let now = bun::timespec::now(bun::TimespecMockMode::ForceRealTime);
         let next = now.add_ms((deadline - now.ms()).max(1));
-        let state = crate::jsc_hooks::runtime_state();
-        // SAFETY: this thread's live RuntimeState; the timer slot is valid until `destroy`.
+        // SAFETY: the node is in a cell of the heap-allocated connection, which only `destroy`
+        // frees, after it unlinks the node. `ACTIVE` is linked: `on_early_out` marks the popped
+        // node `FIRED` first thing.
         unsafe {
-            (*state).timer.update(
+            crate::jsc_hooks::timer_all().update(
                 core::ptr::addr_of!(self.early_out_timer)
                     .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
                     .cast_mut(),
@@ -663,8 +662,8 @@ impl SharedConnection {
                     sec: next.sec,
                     nsec: next.nsec,
                 },
-            )
-        };
+            );
+        }
         self.early_out_armed_for.set(deadline);
     }
 
@@ -704,12 +703,8 @@ impl SharedConnection {
         if conn.early_out_timer.get().state == EventLoopTimerState::ACTIVE
             && VirtualMachine::get_or_null().is_some()
         {
-            // SAFETY: this thread's live RuntimeState owns the timer heap.
-            unsafe {
-                (*crate::jsc_hooks::runtime_state())
-                    .timer
-                    .remove(conn.early_out_timer.as_ptr())
-            };
+            // SAFETY: `ACTIVE` is linked (see `arm_early_out`).
+            unsafe { crate::jsc_hooks::timer_all().remove(conn.early_out_timer.as_ptr()) };
         }
         // SAFETY: `file_poll` is the live hive slot; `deinit` returns it.
         unsafe { (*conn.file_poll.as_ptr()).deinit() };
@@ -790,9 +785,8 @@ impl SharedConnection {
     }
 }
 
-fn event_loop_scope() -> Option<bun_jsc::event_loop::EventLoopEnterGuard> {
-    // SAFETY: the current thread's VM, if any, is live for the callback.
-    VirtualMachine::get_or_null().map(|vm| unsafe { (*vm).enter_event_loop_scope() })
+fn event_loop_scope() -> Option<bun_jsc::event_loop::EventLoopEnterGuard<'static>> {
+    VirtualMachine::get_or_null().map(VirtualMachine::enter_event_loop_scope)
 }
 
 pub(crate) fn lookup(

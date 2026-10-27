@@ -45,13 +45,7 @@
     ]
   },
   "src/jsc/hot_reloader.rs": {
-    "thread spawn": 1,
-    "unsafe impl Send": [
-      "WatchChangedPaths"
-    ],
-    "unsafe impl Sync": [
-      "WatchChangedPaths"
-    ]
+    "thread spawn": 1
   },
   "src/jsc/thread_isolated.rs": {
     "unsafe impl Send": [
@@ -217,6 +211,11 @@
   },
   "src/runtime/shell/interpreter.rs": {
     "WorkPool::schedule*": 1
+  },
+  "src/runtime/timer/mod.rs": {
+    "unsafe impl Sync": [
+      "WtfTimers"
+    ]
   },
   "src/runtime/webcore/Blob.rs": {
     "WorkPool::schedule*": 1

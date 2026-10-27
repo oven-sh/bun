@@ -31,12 +31,7 @@ bun_output::declare_scope!(FileResponseStream, hidden);
 pub(crate) struct FileResponseStream {
     ref_count: Cell<u32>,
     resp: Cell<AnyResponse>,
-    // LIFETIMES.tsv: `&'static VirtualMachine`. `BackRef` keeps the struct
-    // `'static` for the uWS callback userdata slot while giving safe `Deref`.
-    vm: Cell<bun_ptr::BackRef<VirtualMachine>>,
-    /// Typed enum mirror of `vm.event_loop()` for the io-layer FilePoll vtable
-    /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
-    event_loop_handle: Cell<EventLoopHandle>,
+    event_loop_handle: EventLoopHandle,
     fd: Cell<Fd>,
     auto_close: Cell<bool>,
     idle_timeout: Cell<u8>,
@@ -101,7 +96,7 @@ pub(crate) struct StartOptions {
     pub fd: Fd,
     pub auto_close: bool,
     pub resp: AnyResponse,
-    pub vm: bun_ptr::BackRef<VirtualMachine>,
+    pub vm: &'static VirtualMachine,
     pub file_type: FileType,
     pub pollable: bool,
     /// Byte offset into the file to begin reading from.
@@ -165,10 +160,7 @@ impl FileResponseStream {
             bun_core::heap::into_raw(Box::new(FileResponseStream {
                 ref_count: Cell::new(1),
                 resp: Cell::new(opts.resp),
-                vm: Cell::new(opts.vm),
-                event_loop_handle: Cell::new(EventLoopHandle::init(
-                    opts.vm.event_loop().cast::<()>(),
-                )),
+                event_loop_handle: opts.vm.event_loop().handle(),
                 fd: Cell::new(opts.fd),
                 auto_close: Cell::new(opts.auto_close),
                 idle_timeout: Cell::new(opts.idle_timeout),
@@ -598,28 +590,9 @@ impl FileResponseStream {
         // SAFETY: `self` is live and owns the ref; nothing touches `self` after.
         unsafe { Self::deref(self.as_ptr()) };
     }
-
-    fn event_loop(&self) -> EventLoopHandle {
-        EventLoopHandle::init(self.vm.get().event_loop().cast::<()>())
-    }
-
-    fn r#loop(&self) -> *mut bun_io::Loop {
-        #[cfg(windows)]
-        {
-            // SAFETY: `r#loop()` returns the live uws WindowsLoop; its `uv_loop`
-            // is set by C `us_create_loop` and valid for the loop's lifetime.
-            return unsafe { (*self.event_loop().r#loop()).uv_loop };
-        }
-        #[cfg(not(windows))]
-        {
-            self.event_loop().r#loop()
-        }
-    }
 }
 
-// BufferedReader vtable parent.
-// `loop_` delegates to the inherent `r#loop()` which already does the
-// cfg(windows) `.uv_loop` projection. The read/done/error arms take a ref for
+// BufferedReader vtable parent. The read/done/error arms take a ref for
 // the duration of the handler since it can end in `finish()`.
 bun_io::impl_buffered_reader_parent! {
     FileResponseStream for FileResponseStream;
@@ -636,8 +609,8 @@ bun_io::impl_buffered_reader_parent! {
         let _guard = RefPtr::init_ref(this);
         (*this).on_reader_error(err)
     };
-    loop_           = |this| (*this).r#loop();
-    event_loop      = |this| (*this).event_loop_handle.get().as_event_loop_ctx();
+    loop_           = |this| (*this).event_loop_handle.native_loop().as_ptr();
+    event_loop      = |this| (*this).event_loop_handle.as_event_loop_ctx();
     // The reader still uses itself (embedded here) after dispatching the `on_reader_done` that releases the owning ref.
     ref_            = |this| (*this).ref_();
     deref           = |this| Self::deref(this);
@@ -651,7 +624,7 @@ impl Drop for FileResponseStream {
         self.reader_mut().handle.close_without_closing_fd();
         if self.auto_close.get() {
             #[cfg(windows)]
-            Closer::close(self.fd.get(), bun_sys::windows::libuv::Loop::get());
+            Closer::close(self.fd.get(), bun_sys::windows::libuv::Loop::get().as_ptr());
             #[cfg(not(windows))]
             Closer::close(self.fd.get(), ());
         }

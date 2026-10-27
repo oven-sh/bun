@@ -54,7 +54,7 @@ impl<'a, 'r> Router::ResolverLike for RouterResolver<'a, 'r> {
 struct RefCountedString(BackRef<RefString>);
 
 impl RefCountedString {
-    fn new(vm: &mut VirtualMachine, bytes: &[u8]) -> Result<Self, StringTooLong> {
+    fn new(vm: &VirtualMachine, bytes: &[u8]) -> Result<Self, StringTooLong> {
         let string = BackRef::from(vm.ref_counted_string(bytes, None)?);
         // The cache adds no ref on a hit.
         string.ref_();
@@ -101,21 +101,27 @@ fn load_router(
     config: RouteConfig,
     load: Load,
 ) -> JsResult<Option<(Router::Router, bun_resolver::DirInfoRef)>> {
+    let vm = VirtualMachine::get();
     let mut log = Log::Log::new();
-    // SAFETY: the VM and its resolver outlive this call, and this is dropped before `log`.
-    let _restore_log = unsafe {
-        Resolver::scoped_log(
-            core::ptr::addr_of_mut!((*VirtualMachine::get_mut_ptr()).transpiler.resolver),
-            core::ptr::NonNull::from(&mut log),
-        )
-    };
+    // SAFETY: no other transpiler borrow is live across the store.
+    let previous_log = core::mem::replace(
+        &mut unsafe { vm.transpiler_mut() }.resolver.log,
+        core::ptr::NonNull::from(&mut log),
+    );
+    // Dropped before `log`.
+    let _restore_log = scopeguard::guard(previous_log, |previous_log| {
+        // SAFETY: runs after the last use of `resolver` below, so no other transpiler borrow is live.
+        unsafe { vm.transpiler_mut() }.resolver.log = previous_log;
+    });
     if load == Load::FromDisk {
         FileSystemRouter::bust_dir_cache_recursive(
             strings::paths::without_trailing_slash_windows_path(&config.dir),
         );
     }
 
-    let resolver = &mut VirtualMachine::get().as_mut().transpiler.resolver;
+    // SAFETY: nothing until its last use, in `load_routes`, reaches the transpiler through the VM
+    // or runs script (see `transpiler_mut` on macros).
+    let resolver = &mut unsafe { vm.transpiler_mut() }.resolver;
     let root_dir_info = match resolver.read_dir_info(&config.dir) {
         Ok(Some(info)) => info,
         Ok(None) => return Ok(None),
@@ -142,7 +148,6 @@ fn load_router(
 
 impl FileSystemRouter {
     fn bust_dir_cache_recursive(input_path: &[u8]) {
-        // `vm.as_mut()` at each use: the recursive call makes its own, which ends one held across it.
         let vm = VirtualMachine::get();
         #[cfg(not(windows))]
         let path = input_path;
@@ -159,7 +164,9 @@ impl FileSystemRouter {
             path = normalized.as_slice();
         }
 
-        let root_dir_info = match vm.as_mut().transpiler.resolver.read_dir_info(path) {
+        // SAFETY: `load_router` holds no transpiler borrow across this call, and the borrow ends
+        // with the statement.
+        let root_dir_info = match unsafe { vm.transpiler_mut() }.resolver.read_dir_info(path) {
             Ok(v) => v,
             Err(_) => return,
         };
@@ -192,7 +199,7 @@ impl FileSystemRouter {
                     // needs `&mut Entry` to update the cached stat; no shared
                     // borrow of `*entry_ptr` is live across this block.
                     let kind = {
-                        let fs_impl = &mut vm.transpiler.fs_mut().fs;
+                        let fs_impl = &mut vm.transpiler().fs_mut().fs;
                         // SAFETY: `entry_ptr` is a live `*mut Entry` in the process-static
                         // EntryStore (checked non-null above); the lazy-stat rewrite is
                         // serialized on `Entry.mutex`; fs_impl is the process-global RealFS.
@@ -208,7 +215,7 @@ impl FileSystemRouter {
                         // `abs()` writes into a thread-local buffer; copy out
                         // before recursing (recursion overwrites it).
                         let full_path = vm.fs().abs(&abs_parts).to_vec();
-                        let _ = vm.as_mut().transpiler.resolver.bust_dir_cache(
+                        let _ = bun_resolver::bust_dir_cache(
                             strings::paths::without_trailing_slash_windows_path(&full_path),
                         );
                         Self::bust_dir_cache_recursive(&full_path);
@@ -217,7 +224,7 @@ impl FileSystemRouter {
             }
         }
 
-        let _ = vm.as_mut().transpiler.resolver.bust_dir_cache(path);
+        let _ = bun_resolver::bust_dir_cache(path);
     }
 }
 
@@ -290,7 +297,7 @@ impl FileSystemRouter {
             root_dir_info.abs_path
         };
 
-        let vm = global.bun_vm().as_mut();
+        let vm = global.bun_vm();
         let mut ref_counted = |bytes: &[u8]| {
             RefCountedString::new(vm, bytes).map_err(|_| global.throw_string_too_long())
         };

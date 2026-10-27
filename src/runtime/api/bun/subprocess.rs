@@ -569,12 +569,7 @@ impl Subprocess<'_> {
         self.event_loop_timer_refd.set(refd);
         let uws_loop = self.global_this().bun_vm().uws_loop();
         let delta: i32 = if refd { 1 } else { -1 };
-        Self::timer_all().increment_timer_ref(delta, uws_loop);
-    }
-
-    #[inline]
-    fn timer_all() -> &'static mut crate::timer::All {
-        crate::jsc_hooks::timer_all_mut()
+        crate::jsc_hooks::timer_all().increment_timer_ref(delta, uws_loop);
     }
 
     pub(crate) fn timeout_callback(&self) {
@@ -857,7 +852,7 @@ impl Subprocess<'_> {
         // (mirrors the original `&'a` return — the global outlives `self`).
         let global_this = self.global_this;
         let global_this = global_this.get();
-        let jsc_vm = global_this.bun_vm().as_mut();
+        let jsc_vm = global_this.bun_vm();
         this_jsvalue.ensure_still_alive();
         self.pid_rusage.set(Some(*rusage));
         let is_sync = self.flags.get().contains(Flags::IS_SYNC);
@@ -868,15 +863,16 @@ impl Subprocess<'_> {
         // kept explicit at the tail for now (no early returns in this body).
 
         if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
-            Self::timer_all().remove(self.event_loop_timer.as_ptr());
+            // SAFETY: `ACTIVE` is linked: `timeout_callback` takes the popped node off it before
+            // it calls anything that gets here.
+            unsafe { crate::jsc_hooks::timer_all().remove(self.event_loop_timer.as_ptr()) };
         }
         self.set_event_loop_timer_refd(false);
 
-        // SAFETY: `jsc_vm` is the live VM owning `global_this`; mutator-thread
-        // only. `process` is the raw `*mut Process` threaded from the vtable
+        // SAFETY: `process` is the non-null raw `*mut Process` threaded from the vtable
         // thunk so the auto-killer's `(*process).deref()` keeps mutable
         // provenance (no `&Process → *mut` round-trip).
-        unsafe { (*jsc_vm).on_subprocess_exit(NonNull::new_unchecked(process)) };
+        unsafe { jsc_vm.on_subprocess_exit(NonNull::new_unchecked(process)) };
 
         if self.flags.get().contains(Flags::OWNS_TERMINAL) {
             // Deliver EOF to the terminal reader without closing the Terminal.
@@ -1016,18 +1012,14 @@ impl Subprocess<'_> {
 
         let mut did_update_has_pending_activity = false;
 
-        // Kept as raw `*mut` so the enter guard and the body can both call
-        // `&mut`-taking methods without tripping borrowck.
-        let event_loop = (*jsc_vm).event_loop();
+        let event_loop = jsc_vm.event_loop();
 
         // The exit is reported to the script that spawned the child.
-        let _context = (*jsc_vm).enter_context(self.context);
+        let _context = jsc_vm.enter_context(self.context);
         if !is_sync {
             if !this_jsvalue.is_empty() {
                 if let Some(promise) = js::exited_promise_take_cached(this_jsvalue, global_this) {
-                    // SAFETY: event_loop points into the live VM and outlives this scope.
-                    let _exit_guard =
-                        unsafe { bun_jsc::event_loop::EventLoop::enter_scope(event_loop) };
+                    let _exit_guard = event_loop.enter_scope();
 
                     if !did_update_has_pending_activity {
                         self.update_has_pending_activity();
@@ -1094,16 +1086,7 @@ impl Subprocess<'_> {
                         did_update_has_pending_activity = true;
                     }
 
-                    // SAFETY: event_loop points into the live VM.
-                    unsafe {
-                        (*event_loop).run_callback(
-                            self.context,
-                            callback,
-                            global_this,
-                            this_value,
-                            &args,
-                        )
-                    };
+                    event_loop.run_callback(self.context, callback, global_this, this_value, &args);
                 }
             }
         }
@@ -1246,7 +1229,9 @@ impl Subprocess<'_> {
             self.deref();
         }
         if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
-            Self::timer_all().remove(self.event_loop_timer.as_ptr());
+            // SAFETY: `ACTIVE` is linked: `timeout_callback` takes the popped node off it before
+            // it calls anything that gets here.
+            unsafe { crate::jsc_hooks::timer_all().remove(self.event_loop_timer.as_ptr()) };
         }
         self.set_event_loop_timer_refd(false);
 
@@ -1350,18 +1335,14 @@ impl Subprocess<'_> {
                 if !this_jsvalue.is_empty() {
                     if let Some(cb) = js::ipc_callback_get_cached(this_jsvalue) {
                         let global_this = self.global_this();
-                        let event_loop = global_this.bun_vm().as_mut().event_loop();
-                        // SAFETY: `event_loop` is the live VM's owned event loop,
-                        // accessed on the single JS mutator thread.
-                        unsafe {
-                            (*event_loop).run_callback(
-                                self.context,
-                                cb,
-                                global_this,
-                                this_jsvalue,
-                                &[*data, this_jsvalue, handle],
-                            )
-                        };
+                        let event_loop = global_this.bun_vm().event_loop();
+                        event_loop.run_callback(
+                            self.context,
+                            cb,
+                            global_this,
+                            this_jsvalue,
+                            &[*data, this_jsvalue, handle],
+                        );
                     }
                 }
             }
@@ -1392,18 +1373,14 @@ impl Subprocess<'_> {
             if let Some(callback) =
                 js::on_disconnect_callback_take_cached(this_jsvalue, global_this)
             {
-                let event_loop = global_this.bun_vm().as_mut().event_loop();
-                // SAFETY: `event_loop` is the live VM's owned event loop,
-                // accessed on the single JS mutator thread.
-                unsafe {
-                    (*event_loop).run_callback(
-                        self.context,
-                        callback,
-                        global_this,
-                        this_jsvalue,
-                        &[JSValue::TRUE],
-                    )
-                };
+                let event_loop = global_this.bun_vm().event_loop();
+                event_loop.run_callback(
+                    self.context,
+                    callback,
+                    global_this,
+                    this_jsvalue,
+                    &[JSValue::TRUE],
+                );
             }
         }
     }

@@ -378,9 +378,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     jsc::mark_binding();
     let global_this = ctx;
     bun_core::analytics::Features::FETCH.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-    // SAFETY: `VirtualMachine::get()` returns the live thread-local VM pointer; it
-    // outlives this call frame.
-    let vm = VirtualMachine::get().as_mut();
+    let vm = VirtualMachine::get();
 
     let mut upgraded_connection = false;
     let mut forced_protocol: Option<http::Protocol> = None;
@@ -1350,10 +1348,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 #[cfg(not(windows))]
                 let cwd = bun_resolver::fs::FileSystem::get().top_level_dir();
 
-                // SAFETY: bun_vm() returns the live thread-local VM pointer.
                 // Relative to the folder of the entry module, or to the working directory when there
                 // is none (`bun bake`).
-                let parts: &[&[u8]] = match global_this.bun_vm().as_mut().main() {
+                let parts: &[&[u8]] = match global_this.bun_vm().main() {
                     Some(main) => &[main, b"../", url_path_decoded],
                     None => &[url_path_decoded],
                 };
@@ -1675,8 +1672,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         let env_creds = s3_credentials_from_env(
             global_this
                 .bun_vm()
-                .as_mut()
-                .transpiler
+                .transpiler()
                 .env_mut()
                 .get_s3_credentials(),
         );

@@ -243,7 +243,7 @@ impl DirectoryRoute {
             fd: file.into_raw(),
             auto_close: true,
             resp,
-            vm: bun_ptr::BackRef::new(server.vm()),
+            vm: server.vm(),
             file_type: FileType::File,
             pollable: false,
             offset: body_offset,

@@ -15,39 +15,23 @@ use bun_jsc::{JSGlobalObject, JSValue, JsClass as _, JsResult, StringJsc as _};
 use bun_uws::Loop as UwsLoop;
 
 use super::{
-    All, CountdownOverflowBehavior, DateHeaderTimer, EventLoopTimer, EventLoopTimerState,
-    EventLoopTimerTag, ImmediateObject, Kind, TimeoutObject, TimeoutWarning, TimerObjectInternals,
+    All, CountdownOverflowBehavior, DateHeaderTimer, EventLoopTimerState, EventLoopTimerTag,
+    ImmediateObject, Kind, TimeoutObject, TimeoutWarning, TimerObjectInternals,
 };
-use crate::jsc_hooks::timer_all_mut;
+use crate::jsc_hooks::timer_all;
 
 // ════════════════════════════════════════════════════════════════════════════
 // JS-facing surface on `super::All`
 // ════════════════════════════════════════════════════════════════════════════
 
 impl All {
-    /// # Safety
-    /// `vm` must point to the live per-thread `VirtualMachine`.
-    // Forwards `vm` to `DateHeaderTimer::enable` without dereferencing it here;
-    // the raw pointer is intentional (avoids aliased-`&mut` across the
-    // jsc/runtime crate cycle — see DateHeaderTimer.rs).
     pub(crate) fn update_date_header_timer_if_necessary(
-        &mut self,
+        &'static self,
         loop_: &UwsLoop,
-        vm: *mut VirtualMachine,
+        vm: &VirtualMachine,
     ) {
         if loop_.should_enable_date_header_timer() {
-            // `is_date_timer_active()` is private to mod.rs; inline.
-            if self.date_header_timer.event_loop_timer.state != EventLoopTimerState::ACTIVE {
-                // SAFETY: caller contract guarantees `vm` is valid.
-                unsafe {
-                    self.date_header_timer.enable(
-                        vm,
-                        // Be careful to avoid adding extra calls to bun.timespec.now()
-                        // when it's not needed.
-                        &Timespec::now(TimespecMockMode::ForceRealTime),
-                    );
-                }
-            }
+            DateHeaderTimer::enable(self, vm);
         } else {
             // don't un-schedule it here.
             // it's better to wake up an extra 1 time after a second idle
@@ -108,7 +92,7 @@ impl All {
 
     /// Convert an arbitrary JavaScript value to a number of milliseconds used to schedule a timer.
     fn js_value_to_countdown(
-        &mut self,
+        &self,
         global_this: &JSGlobalObject,
         countdown: JSValue,
         overflow_behavior: CountdownOverflowBehavior,
@@ -137,8 +121,8 @@ impl All {
                                 countdown_double,
                                 TimeoutWarning::TimeoutOverflowWarning,
                             )?;
-                        } else if countdown_double < 0.0 && !self.warned_negative_number {
-                            self.warned_negative_number = true;
+                        } else if countdown_double < 0.0 && !self.warned_negative_number.get() {
+                            self.warned_negative_number.set(true);
                             Self::warn_invalid_countdown(
                                 global_this,
                                 countdown_double,
@@ -147,9 +131,9 @@ impl All {
                         } else if !countdown.is_undefined()
                             && countdown.is_number()
                             && countdown_double.is_nan()
-                            && !self.warned_not_number
+                            && !self.warned_not_number.get()
                         {
-                            self.warned_not_number = true;
+                            self.warned_not_number.set(true);
                             Self::warn_invalid_countdown(
                                 global_this,
                                 countdown_double,
@@ -177,7 +161,7 @@ impl All {
     ) -> JsResult<JSValue> {
         bun_jsc::mark_binding!();
         debug_assert!(!promise.is_empty() && !countdown.is_empty());
-        let all = timer_all_mut();
+        let all = timer_all();
         let id = all.next_id();
 
         let countdown_int = all.js_value_to_countdown(
@@ -204,7 +188,7 @@ impl All {
     ) -> JsResult<JSValue> {
         bun_jsc::mark_binding!();
         debug_assert!(!callback.is_empty() && !arguments.is_empty());
-        let all = timer_all_mut();
+        let all = timer_all();
         let id = all.next_id();
 
         let wrapped_callback = callback.with_async_context_if_needed(cx.global());
@@ -219,7 +203,7 @@ impl All {
     ) -> JsResult<JSValue> {
         bun_jsc::mark_binding!();
         debug_assert!(!callback.is_empty() && !arguments.is_empty() && !countdown.is_empty());
-        let all = timer_all_mut();
+        let all = timer_all();
         let id = all.next_id();
 
         let wrapped_callback = callback.with_async_context_if_needed(cx.global());
@@ -247,7 +231,7 @@ impl All {
     ) -> JsResult<JSValue> {
         bun_jsc::mark_binding!();
         debug_assert!(!callback.is_empty() && !arguments.is_empty() && !countdown.is_empty());
-        let all = timer_all_mut();
+        let all = timer_all();
         let id = all.next_id();
 
         let wrapped_callback = callback.with_async_context_if_needed(cx.global());
@@ -281,18 +265,16 @@ impl All {
     /// The timer `id` names for the running script, removed from the map
     /// (see `VirtualMachine::context_may_name`).
     fn remove_timer_by_id(
-        &mut self,
+        &self,
         vm: &VirtualMachine,
         context: &bun_jsc::ScriptExecutionContext,
         id: u64,
     ) -> Option<*mut TimeoutObject> {
-        let (map, idx) = if let Some(idx) = self.maps.set_timeout.get_index(&id) {
-            (&mut self.maps.set_timeout, idx)
+        let (map, (idx, value)) = if let Some(found) = self.maps.set_timeout.find(id) {
+            (&self.maps.set_timeout, found)
         } else {
-            let idx = self.maps.set_interval.get_index(&id)?;
-            (&mut self.maps.set_interval, idx)
+            (&self.maps.set_interval, self.maps.set_interval.find(id)?)
         };
-        let value: *mut EventLoopTimer = map.values()[idx];
         // SAFETY: entry value points to EventLoopTimer embedded in a TimeoutObject
         debug_assert!(unsafe { (*value).tag } == EventLoopTimerTag::TimeoutObject);
         // SAFETY: entry value points to TimeoutObject.event_loop_timer
@@ -312,10 +294,10 @@ impl All {
     ) -> JsResult<()> {
         bun_jsc::mark_binding!();
 
-        let vm = global_this.bun_vm_ptr();
+        let vm = global_this.bun_vm();
         // `clearTimeout` / `clearInterval` / `clearImmediate`, C++ host functions, call this.
-        let context = global_this.bun_vm().context_of_caller();
-        let all = timer_all_mut();
+        let context = vm.context_of_caller();
+        let all = timer_all();
 
         let timer: Option<*mut TimerObjectInternals> = 'brk: {
             if timer_id_value.is_number() {
@@ -325,7 +307,7 @@ impl All {
                     return Ok(());
                 };
                 // Immediates don't have numeric IDs in Node.js so we only have to look up timeouts and intervals
-                let Some(t) = all.remove_timer_by_id(global_this.bun_vm(), context, id) else {
+                let Some(t) = all.remove_timer_by_id(vm, context, id) else {
                     return Ok(());
                 };
                 // SAFETY: t is a valid TimeoutObject pointer
@@ -385,7 +367,7 @@ impl All {
                 if parsed > Self::MAX_ID {
                     return Ok(());
                 }
-                let Some(t) = all.remove_timer_by_id(global_this.bun_vm(), context, parsed) else {
+                let Some(t) = all.remove_timer_by_id(vm, context, parsed) else {
                     return Ok(());
                 };
                 // SAFETY: t is a valid TimeoutObject pointer
@@ -443,46 +425,38 @@ impl All {
 // ════════════════════════════════════════════════════════════════════════════
 
 impl DateHeaderTimer {
-    /// Schedule the "Date" header timer.
+    /// Schedule the "Date" header timer, unless it is scheduled.
     ///
     /// The logic handles two scenarios:
     /// 1. If the timer was recently updated (< 1 second ago), just reschedule it
     /// 2. If the timer is stale (> 1 second since last update), update the date
     ///    immediately and reschedule
     ///
-    /// # Safety
-    /// `vm` must point to the live per-thread `VirtualMachine`; its `uws_loop()`
-    /// must outlive this call.
-    unsafe fn enable(&mut self, vm: *mut VirtualMachine, now: &Timespec) {
-        debug_assert!(self.event_loop_timer.state != EventLoopTimerState::ACTIVE);
+    fn enable(all: &'static All, vm: &VirtualMachine) {
+        let timer = &all.date_header_timer.event_loop_timer;
+        if timer.state() == EventLoopTimerState::ACTIVE {
+            return;
+        }
+        // Be careful to avoid adding extra calls to bun.timespec.now()
+        // when it's not needed.
+        let now = Timespec::now(TimespecMockMode::ForceRealTime);
 
-        // `EventLoopTimer.next` is the lower-tier `ElTimespec` stub
-        // (same `{sec,nsec}` layout) until bun_event_loop switches to bun_core::Timespec.
-        let last_update = Timespec {
-            sec: self.event_loop_timer.next.sec,
-            nsec: self.event_loop_timer.next.nsec,
-        };
+        let last_update = timer.next();
         let elapsed = now.duration(&last_update).ms();
 
         // If the last update was more than 1 second ago, the date is stale
         if elapsed >= 1000 {
             // Update the date immediately since it's stale
             // updateDate() is an expensive function.
-            // SAFETY: `vm` is the live per-thread VM; `uws_loop()` returns its
-            // owned uws loop, which outlives this call.
-            unsafe { (*(*vm).uws_loop()).update_date() };
+            vm.uws_loop().update_date();
 
-            let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
-            // SAFETY: single JS thread; nothing `All::update` touches overlaps
-            // `date_header_timer`, which `self` aliases (raw-ptr-per-field
-            // re-entry pattern, see jsc_hooks.rs).
-            unsafe { (*Self::timer_all()).update(elt, &now.add_ms(1000)) };
-        } else {
-            // The date was updated recently, just reschedule for the next second
-            let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
-            // SAFETY: see above — disjoint-field access on `All`.
-            unsafe { (*Self::timer_all()).insert(elt) };
+            timer.set_next(now.add_ms(1000));
         }
+        // Otherwise the date was updated recently, just reschedule for the next second.
+
+        // SAFETY: see `EmbeddedTimer`. Only `all` links the node, and `run` marks it `FIRED`
+        // first thing, so not `ACTIVE` means unlinked.
+        unsafe { all.insert(timer.as_ptr()) };
     }
 }
 
@@ -583,7 +557,7 @@ pub(crate) mod internal_bindings {
         id: Option<u64>,
     ) -> bindgen::Result<'a, ()> {
         let Some(id) = id else { return Ok(()) };
-        let current = timer_all_mut().last_id;
+        let current = timer_all().last_id.get();
         if id < current {
             return Err(heap.error_with_code(
                 bun_jsc::ErrorCode::OUT_OF_RANGE,
@@ -601,7 +575,7 @@ pub(crate) mod internal_bindings {
                 ),
             ));
         }
-        timer_all_mut().last_id = id;
+        timer_all().last_id.set(id);
         Ok(())
     }
 }

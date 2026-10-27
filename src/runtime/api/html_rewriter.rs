@@ -540,20 +540,21 @@ struct ActiveSinkGuard {
 
 impl ActiveSinkGuard {
     fn enter(pipe: &RewriterPipe) -> Self {
-        let vm: &mut VirtualMachine = pipe.global.bun_vm().as_mut();
         Self {
-            prev: core::mem::replace(
-                &mut vm.html_rewriter_active_sink,
-                NonNull::new(core::ptr::from_ref(pipe).cast_mut().cast()),
-            ),
+            prev: pipe
+                .global
+                .bun_vm()
+                .html_rewriter_active_sink
+                .replace(Some(NonNull::from_ref(pipe).cast())),
         }
     }
 }
 
 impl Drop for ActiveSinkGuard {
     fn drop(&mut self) {
-        // SAFETY: the JS thread's VM outlives this synchronous frame.
-        VirtualMachine::get().as_mut().html_rewriter_active_sink = self.prev;
+        VirtualMachine::get()
+            .html_rewriter_active_sink
+            .set(self.prev);
     }
 }
 
@@ -561,8 +562,9 @@ impl Drop for ActiveSinkGuard {
 /// any. Content handlers can only run inside such a call.
 fn active_sink(global: &JSGlobalObject) -> Option<BackRef<RewriterPipe>> {
     global
-        .bun_vm_ref()
+        .bun_vm()
         .html_rewriter_active_sink
+        .get()
         .map(|p| BackRef::from(p.cast::<RewriterPipe>()))
 }
 
@@ -1242,7 +1244,7 @@ impl RewriterPipe {
             cell.protect();
         }
         self.ref_();
-        vm.as_mut().enqueue_task(bun_event_loop::Task::init(
+        vm.enqueue_task(bun_event_loop::Task::init(
             core::ptr::from_ref(self)
                 .cast_mut()
                 .cast::<RewriterPipeBackgroundPull>(),

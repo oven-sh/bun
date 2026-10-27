@@ -200,7 +200,7 @@ impl Handlers {
     pub(crate) fn enter(self: &Rc<Self>) -> Scope {
         self.mark_active();
         let context = self.vm.enter_context(self.context);
-        self.vm.event_loop_ref().enter();
+        self.vm.event_loop().enter();
         Scope {
             handlers: Rc::clone(self),
             _context: context,
@@ -250,11 +250,9 @@ impl Handlers {
         if let Some(listener) = self.listener() {
             if matches!(listener.listener.get(), ListenerType::None) {
                 listener.abort_handle.leave();
-                listener.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
+                listener.poll_ref.unref(bun_io::js_vm_ctx());
                 listener.this_value.with_mut(|r| r.downgrade());
-                listener
-                    .strong_data
-                    .with_mut(|s| s.clear_without_deallocation());
+                listener.strong_data.clear_without_deallocation();
             }
         }
         false
@@ -278,16 +276,13 @@ impl Handlers {
         let on_error = self.on_error();
 
         if on_error.is_empty() {
-            // SAFETY: `bun_vm()` is non-null for a Bun-owned global; single JS thread.
-            let _ =
-                global_object
-                    .bun_vm()
-                    .as_mut()
-                    .uncaught_exception(&global_object, args[1], false);
+            let _ = global_object
+                .bun_vm()
+                .uncaught_exception(&global_object, args[1], false);
             return Ok(());
         }
 
-        global_object.bun_vm().event_loop_mut().run_callback(
+        global_object.bun_vm().event_loop().run_callback(
             bun_event_loop::ContextId::NONE,
             on_error,
             &global_object,
@@ -320,8 +315,6 @@ impl Handlers {
         Ok(Rc::new(Handlers {
             cell: JSSocketHandlers::create(global_object, &wrapped),
             binary_type: Cell::new(binary_type_from_generated(generated.binary_type)),
-            // SAFETY: `bun_vm()` never returns null for a Bun-owned global; the
-            // VM outlives every `Handlers` (process-lifetime singleton).
             vm: global_object.bun_vm(),
             global_object: GlobalRef::from(global_object),
             context: global_object.bun_vm().context_of_caller().id(),
@@ -431,7 +424,7 @@ impl Scope {
     /// `upgradeTLS` the socket, so the caller must observe the resulting
     /// `handlers` state before deciding whether to decrement.
     pub(crate) fn exit_event_loop(&self) {
-        self.handlers.vm.event_loop_ref().exit();
+        self.handlers.vm.event_loop().exit();
     }
 
     /// The `active_connections` half: decrements and, on reaching zero,

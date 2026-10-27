@@ -264,10 +264,8 @@ impl DeferredDerefTask {
     const TAG_MASK: usize = 0b1111;
 
     pub(crate) fn schedule(ctx: *mut c_void, tag: Tag) {
-        // SAFETY: called from the JS thread (GC sweep → C++ destructor); the
-        // thread-local VM is alive for the duration of this call.
         let vm = VirtualMachine::get();
-        if vm.event_loop_ref().is_closed_for_tasks() {
+        if vm.event_loop().is_closed_for_tasks() {
             // Teardown has forbidden script and released the queue; from here on only GC destructors
             // (possibly mid-sweep in `~VM`) reach this, and theirs is the last use of `ctx` in that
             // frame. A worker's HTMLRewriter pipe would outlive it, so those refs are released now,
@@ -297,9 +295,7 @@ impl DeferredDerefTask {
         // `Task` is a plain `{ tag, ptr }` pair (no bitfield packing), so
         // build it directly — dispatch unpacks via `task.ptr as usize`.
         let task = Task::init((addr | (tag as usize)) as *mut DeferredDerefTask);
-        // SAFETY: event_loop() returns the VM's owned EventLoop; we are the
-        // sole mutator on the JS thread here.
-        vm.event_loop_ref().enqueue_task(task);
+        vm.event_loop().enqueue_task(task);
     }
 
     pub(crate) fn run_from_js_thread(packed_ptr: usize) {

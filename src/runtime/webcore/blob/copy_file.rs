@@ -1059,9 +1059,6 @@ pub(crate) struct CopyFileWindows<'a> {
     pub(crate) promise: jsc::JSPromiseStrong,
     pub(crate) mkdirp_if_not_exists: bool,
     pub(crate) destination_mode: Option<Mode>,
-    // per LIFETIMES.tsv: JSC_BORROW → &jsc::EventLoop
-    // TODO(refactor): lifetime — heap-allocated and re-entered from libuv callbacks;
-    // likely should be *const jsc::EventLoop.
     pub(crate) event_loop: &'a jsc::event_loop::EventLoop,
     /// The context of the script that asked for the copy.
     pub(crate) context: jsc::ContextId,
@@ -1128,7 +1125,7 @@ impl<'a> CopyFileWindows<'a> {
             base: self.read_write_loop.read_buf.as_mut_ptr(),
         };
         let source_fd = self.read_write_loop.source_fd;
-        let loop_ = self.event_loop.uv_loop();
+        let loop_ = self.event_loop.uv_loop().as_ptr();
 
         // This io_request is used for both reading and writing.
         // For now, we don't start reading the next chunk until
@@ -1164,7 +1161,7 @@ impl ReadWriteLoop {
         if self.must_close_source_fd {
             match self.source_fd.make_libuv_owned() {
                 Ok(fd) => {
-                    aio::Closer::close(fd, aio::Loop::get());
+                    aio::Closer::close(fd, aio::Loop::get().as_ptr());
                 }
                 Err(_) => {
                     self.source_fd.close();
@@ -1177,7 +1174,7 @@ impl ReadWriteLoop {
         if self.must_close_destination_fd {
             match self.destination_fd.make_libuv_owned() {
                 Ok(fd) => {
-                    aio::Closer::close(fd, aio::Loop::get());
+                    aio::Closer::close(fd, aio::Loop::get().as_ptr());
                 }
                 Err(_) => {
                     self.destination_fd.close();
@@ -1242,7 +1239,7 @@ extern "C" fn on_read(req: *mut libuv::fs_t) {
     // `read_buf` (len set above), and `on_write` is a valid `uv_fs_cb`.
     let rc2 = unsafe {
         libuv::uv_fs_write(
-            event_loop.uv_loop(),
+            event_loop.uv_loop().as_ptr(),
             &mut this.io_request,
             destination_fd.uv(),
             core::ptr::from_mut(&mut this.read_write_loop.uv_buf),
@@ -1307,7 +1304,7 @@ extern "C" fn on_write(req: *mut libuv::fs_t) {
         // `on_write` is a valid `uv_fs_cb`.
         let rc2 = unsafe {
             libuv::uv_fs_write(
-                this.event_loop.uv_loop(),
+                this.event_loop.uv_loop().as_ptr(),
                 &mut this.io_request,
                 destination_fd.uv(),
                 core::ptr::from_mut(&mut this.read_write_loop.uv_buf),
@@ -1594,7 +1591,7 @@ impl<'a> CopyFileWindows<'a> {
                 }
             }
         };
-        let loop_ = self.event_loop.uv_loop();
+        let loop_ = self.event_loop.uv_loop().as_ptr();
         self.io_request.data = this_ptr;
 
         // SAFETY: FFI — `loop_` is the live VM uv loop, `io_request` is owned by `self`,
@@ -1631,11 +1628,7 @@ impl<'a> CopyFileWindows<'a> {
         let promise = JSPromise::opaque_mut(self.promise.swap());
         let err_instance = err.to_js_with_async_stack(global_this, promise);
 
-        // SAFETY: VM-owned event loop is valid for the process lifetime; `enter_scope`
-        // calls enter() now and exit() on drop.
-        let _guard = unsafe {
-            jsc::event_loop::EventLoop::enter_scope(self.event_loop as *const _ as *mut _)
-        };
+        let _guard = self.event_loop.enter_scope();
         // SAFETY: self was heap-allocated in init(); destroy reclaims and drops it. self is not accessed afterward.
         unsafe { Self::destroy(core::ptr::from_mut(self)) };
         // `promise` points to a GC-owned `JSPromise` cell, not into `self`; valid after `destroy`.
@@ -1672,7 +1665,7 @@ impl<'a> CopyFileWindows<'a> {
                     .path()
                     .slice_z(&mut pathbuf)
                     .as_ptr();
-                let loop_ = self.event_loop.uv_loop();
+                let loop_ = self.event_loop.uv_loop().as_ptr();
                 self.io_request.deinit();
                 // SAFETY: all-zero is a valid libuv::fs_t
                 self.io_request = bun_core::ffi::zeroed::<libuv::fs_t>();
@@ -1714,11 +1707,7 @@ impl<'a> CopyFileWindows<'a> {
         // see `throw` — re-type the GC cell via the ZST opaque deref so it
         // outlives `destroy(self)` for borrowck.
         let promise = JSPromise::opaque_mut(self.promise.swap());
-        // SAFETY: VM-owned event loop is valid for the process lifetime; `enter_scope`
-        // calls enter() now and exit() on drop.
-        let _guard = unsafe {
-            jsc::event_loop::EventLoop::enter_scope(self.event_loop as *const _ as *mut _)
-        };
+        let _guard = self.event_loop.enter_scope();
 
         // SAFETY: self was heap-allocated in init(); destroy reclaims and drops it. self is not accessed afterward.
         unsafe { Self::destroy(core::ptr::from_mut(self)) };
@@ -1913,16 +1902,15 @@ extern "C" fn on_chmod(req: *mut libuv::fs_t) {
 #[cfg(windows)]
 fn on_mkdirp_complete_concurrent(ctx: *mut (), err_: bun_sys::Maybe<()>, ticket: &jsc::Ticket) {
     bun_sys::syslog!("mkdirp complete");
+    let this = ctx.cast::<CopyFileWindows<'_>>();
     // SAFETY: `ctx` is the `*mut CopyFileWindows` stored in `AsyncMkdirp.completion_ctx`
-    // by `mkdirp` above; sole owner on this concurrent path.
-    let this = unsafe { bun_ptr::callback_ctx::<CopyFileWindows>(ctx.cast()) };
-    debug_assert!(this.err.is_none());
-    this.err = match err_ {
-        bun_sys::Result::Err(e) => Some(e),
-        bun_sys::Result::Ok(()) => None,
-    };
+    // by `mkdirp` above, which the JS thread leaves alone until the post below.
+    // Only `err` is borrowed: this is a pool thread, and `event_loop` is `!Sync`.
+    let err = unsafe { &mut (*this).err };
+    debug_assert!(err.is_none());
+    *err = err_.err();
     ticket.post(jsc::ConcurrentTask::create_from(
-        std::ptr::from_mut(this).cast::<CopyFileWindowsMkdirp<'_>>(),
+        this.cast::<CopyFileWindowsMkdirp<'_>>(),
     ));
 }
 

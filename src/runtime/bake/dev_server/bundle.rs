@@ -387,11 +387,9 @@ impl DevServer {
         // — bumpalo chunks are heap-allocated, so the address is stable across
         // the move of `heap` into `bv2.graph.heap` and lives exactly as long
         // as `bv2`.
-        let event_loop: bun_bundler::linker_context_mod::EventLoop =
-            // SAFETY: `self.vm().event_loop()` is the live per-thread `jsc::EventLoop`.
-            Some(::core::ptr::NonNull::from(heap.alloc(
-                bun_event_loop::AnyEventLoop::js(self.vm().event_loop().cast()),
-            )));
+        let event_loop: bun_bundler::linker_context_mod::EventLoop = Some(
+            ::core::ptr::NonNull::from(heap.alloc(bun_event_loop::AnyEventLoop::js_current())),
+        );
 
         // SAFETY: `heap` is `Box`-allocated above and moved into
         // `CurrentBundle` (which also owns `bv2`); the boxed arena's address

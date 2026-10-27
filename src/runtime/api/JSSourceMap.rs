@@ -74,9 +74,7 @@ pub(crate) fn find_source_map<'a>(
 
     let source_url = source_url_slice.slice();
 
-    // SAFETY: `bun_vm()` returns the live per-thread VM for a Bun-owned global.
-    let vm = global.bun_vm().as_mut();
-    let Some(source_map) = vm.source_mappings().get(source_url) else {
+    let Some(source_map) = global.bun_vm().source_mappings.get(source_url) else {
         return Ok(None);
     };
     drop(source_url_slice);

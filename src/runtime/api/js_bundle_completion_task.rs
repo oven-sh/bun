@@ -203,7 +203,7 @@ impl JSBundleCompletionTask {
     /// `BundleV2.createAndScheduleCompletionTask` — take a process-keepalive
     /// ref and hand the task to the bundle-thread singleton. The one ref `new`
     /// created travels with the task and is released by `on_complete_anytask`.
-    pub(crate) fn schedule(mut self) {
+    pub(crate) fn schedule(self) {
         self.poll_ref.ref_(self.global_this.bun_vm().loop_ctx());
         let plugins = self.plugins;
         let completion = RefPtr::new(self).into_raw();
@@ -670,10 +670,8 @@ impl JSBundleCompletionTask {
 
     fn on_complete(&mut self) -> bun_event_loop::JsResult<()> {
         let this = self;
-        let vm = this.global_this.bun_vm_ptr();
-        // SAFETY: `vm` is the live per-thread VM (`global_this.bun_vm_ptr()`).
         this.poll_ref
-            .unref(unsafe { jsc::virtual_machine::VirtualMachine::event_loop_ctx(vm) });
+            .unref(this.global_this.bun_vm().event_loop_ctx());
         if this.cancelled.load(core::sync::atomic::Ordering::Acquire) {
             this.abandon_html_route();
             return Ok(());
@@ -1310,14 +1308,13 @@ impl CompletionStruct for JSBundleCompletionTask {
         // bump-allocated) so its `MiniEventLoop::tasks` queue is dropped at
         // scope exit; the bump bulk-free skips Drop. Declared before `bv2` so
         // it outlives the BACKREF in `linker.loop`.
-        let mut any_loop = bun_event_loop::AnyEventLoop::default();
-        let event_loop: bun_bundler::linker_context_mod::EventLoop =
-            Some(NonNull::from(&mut any_loop).cast::<bun_event_loop::AnyEventLoop>());
-        if let bun_event_loop::AnyEventLoop::Mini(mini) = &any_loop {
-            // So a cancelling VM can wake us out of an idle wait for plugins.
-            self.bundle_loop
-                .store(mini.loop_ptr(), core::sync::atomic::Ordering::Release);
-        }
+        let any_loop = bun_event_loop::AnyEventLoop::default();
+        let event_loop: bun_bundler::linker_context_mod::EventLoop = Some(NonNull::from(&any_loop));
+        // So a cancelling VM can wake us out of an idle wait for plugins.
+        self.bundle_loop.store(
+            any_loop.r#loop().as_ptr(),
+            core::sync::atomic::Ordering::Release,
+        );
 
         // `thread_pool` is the `WorkPool` singleton (`OnceLock`-backed,
         // process-lifetime, concurrently read by worker threads). Do NOT

@@ -137,19 +137,19 @@ impl<Owner: ChannelOwner> Channel<Owner> {
     /// one-off whose ext type (`*mut Self`) varies by Owner — not worth a
     /// `SocketKind` value of its own. The per-file isolation swap skips
     /// `rare.test_parallel_ipc_group` so the coordinator link survives.
-    fn ensure_posix_group(vm: &mut VirtualMachine) -> &mut uws::SocketGroup {
+    fn ensure_posix_group(vm: &VirtualMachine) -> &uws::SocketGroup {
         let loop_ = vm.uws_loop();
         let g = vm.rare_data().test_parallel_ipc_group(loop_);
         // First Owner to call wins the vtable; coordinator and worker run in
         // separate processes so there's never more than one Owner type sharing
         // this group.
-        if g.vtable.is_none() {
+        if g.vtable.get().is_none() {
             // cannot use `uws::vtable::make::<PosixHandlers<Owner>>()`
             // because `bun_uws_sys::vtable::Handler` requires `Self: 'static`
             // and one owner (`WorkerCommands<'a>`) carries a lifetime. The
             // hand-rolled `PosixHandlers::<Owner>::VTABLE` const below mirrors
             // exactly what `vtable::make` would produce.
-            g.vtable = Some(&PosixHandlers::<Owner>::VTABLE);
+            g.vtable.set(Some(&PosixHandlers::<Owner>::VTABLE));
         }
         g
     }
@@ -192,25 +192,18 @@ impl Default for WindowsBackend {
 impl<Owner: ChannelOwner> Channel<Owner> {
     /// Adopt a duplex fd into the channel and start reading. POSIX: the
     /// socketpair end. Windows: the inherited named-pipe end (worker side).
-    // callers (`runner.rs`, `Worker.rs`) only hold `&VirtualMachine`;
-    // the upstream `rare_data()` / `test_parallel_ipc_group()` accessors require
-    // `&mut`. Take a raw `*const` and cast
-    // away const locally — single-threaded init path. A `&VirtualMachine`
-    // parameter would trip `invalid_reference_casting` on the `&T → &mut T`
-    // promotion; the raw-pointer route sidesteps that lint while keeping both
-    // call sites (which pass `&`/`&mut` and coerce) unchanged.
     /// `this` is the channel's address derived from the owner's `&mut`.
-    pub(crate) fn adopt(this: *mut Self, vm: *const VirtualMachine, fd: Fd) -> bool {
+    pub(crate) fn adopt(this: *mut Self, vm: &VirtualMachine, fd: Fd) -> bool {
         // SAFETY: caller passes `&raw mut owner.channel` (live for the call).
         let self_ = unsafe { &*this };
         self_.root.set(this);
         Self::adopt_impl(self_, this, vm, fd)
     }
 
-    fn adopt_impl(&self, this: *mut Self, _vm: *const VirtualMachine, fd: Fd) -> bool {
+    fn adopt_impl(&self, this: *mut Self, vm: &VirtualMachine, fd: Fd) -> bool {
         #[cfg(windows)]
         {
-            let _ = this; // registered via `adopt_pipe_impl` from `self.root`
+            let _ = (this, vm); // registered via `adopt_pipe_impl` from `self.root`
             // With ipc=true
             // libuv wraps reads/writes in its own framing; both ends use it so
             // the wrapping is transparent and our payload bytes pass through
@@ -220,7 +213,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
             // frame.
             let mut pipe = Box::new(bun_core::ffi::zeroed::<uv::Pipe>());
             if let Some(e) = pipe
-                .init(uv::Loop::get(), true)
+                .init(uv::Loop::get().as_ptr(), true)
                 .to_error(bun_sys::Tag::pipe)
             {
                 bun_core::debug_warn!(
@@ -251,9 +244,6 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         }
         #[cfg(not(windows))]
         {
-            // VM is process-singleton and accessed only from the main
-            // thread here; route through the safe singleton accessor.
-            let vm: &mut VirtualMachine = VirtualMachine::get().as_mut();
             let g = Self::ensure_posix_group(vm);
             let Some(sock) = Socket::from_fd(g, uws::SocketKind::Dynamic, fd, this, true) else {
                 // us_socket_from_fd does NOT take ownership on failure; leaving
@@ -272,11 +262,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
     /// reading. On failure the caller still owns `pipe`. The pipe stays ref'd
     /// so the loop blocks for the peer's first frame; `Drop` closes it.
     #[cfg(windows)]
-    pub(crate) fn adopt_pipe(
-        this: *mut Self,
-        _vm: *const VirtualMachine,
-        pipe: *mut uv::Pipe,
-    ) -> bool {
+    pub(crate) fn adopt_pipe(this: *mut Self, _vm: &VirtualMachine, pipe: *mut uv::Pipe) -> bool {
         // SAFETY: caller passes `&raw mut owner.channel` (live for the call).
         let self_ = unsafe { &*this };
         self_.root.set(this);

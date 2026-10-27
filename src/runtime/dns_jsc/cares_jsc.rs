@@ -715,14 +715,13 @@ impl ErrorDeferred {
         if vm.is_shutting_down() {
             return;
         }
-        vm.as_mut()
-            .enqueue_task(bun_event_loop::Task::from_boxed(Box::new(
-                ErrorDeferredTask {
-                    asking: context,
-                    deferred: self,
-                    global_this: bun_ptr::BackRef::new(global_this),
-                },
-            )));
+        vm.enqueue_task(bun_event_loop::Task::from_boxed(Box::new(
+            ErrorDeferredTask {
+                asking: context,
+                deferred: self,
+                global_this: bun_ptr::BackRef::new(global_this),
+            },
+        )));
     }
 }
 

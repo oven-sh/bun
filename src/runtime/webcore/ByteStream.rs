@@ -27,7 +27,7 @@ pub struct ByteStream {
     // Raw fat slice ptr because the backing store is JS-heap-owned and rooted via
     // `pending_value: Strong`. Never freed by Rust.
     pub(crate) pending_buffer: Cell<*mut [u8]>,
-    pub(crate) pending_value: JsCell<StrongOptional>, // jsc.Strong.Optional
+    pub(crate) pending_value: StrongOptional, // jsc.Strong.Optional
     pub(crate) high_water_mark: blob::SizeType,
     /// Native sink this stream is piped into; `on_data` dispatches and honors `Writable`.
     pub(crate) sink: JsCell<SinkHandle>,
@@ -48,7 +48,7 @@ impl Default for ByteStream {
             }),
             done: Cell::new(false),
             pending_buffer: Cell::new(Self::empty_pending_buffer()),
-            pending_value: JsCell::new(StrongOptional::empty()),
+            pending_value: StrongOptional::empty(),
             high_water_mark: 0,
             sink: JsCell::new(SinkHandle::None),
             sink_paused: Cell::new(false),
@@ -340,7 +340,7 @@ impl readable_stream::SourceContext for ByteStream {
         bun_jsc::mark_binding!();
         self.buffered.clear();
 
-        self.pending_value.with_mut(|pv| pv.deinit());
+        self.pending_value.deinit();
         if !self.done.get() {
             self.done.set(true);
 
@@ -448,13 +448,7 @@ impl ByteStream {
     }
 
     fn value(&self) -> JSValue {
-        self.pending_value.with_mut(|pv| {
-            let Some(result) = pv.get() else {
-                return JSValue::ZERO;
-            };
-            pv.clear_without_deallocation();
-            result
-        })
+        self.pending_value.swap()
     }
 
     /// Drop the native sink and end the stream locked to it: errored with the producer's `err`, else closed.
@@ -726,7 +720,6 @@ impl ByteStream {
             let mut pending_view = self
                 .pending_value
                 .get()
-                .get()
                 .and_then(|view| view.as_array_buffer(global))
                 .unwrap_or_default();
             let pending_buf = pending_view.slice_mut();
@@ -852,7 +845,7 @@ impl ByteStream {
     fn set_value(&self, view: JSValue) {
         bun_jsc::mark_binding!();
         let global = self.parent_const().global_this();
-        self.pending_value.with_mut(|pv| pv.set(global, view));
+        self.pending_value.set(global, view);
     }
 
     /// The JS stream was errored with `reason`. A native reader that waits now fails with it.
@@ -874,7 +867,7 @@ impl ByteStream {
         let view = self.value();
         self.buffered.clear();
         self.done.set(true);
-        self.pending_value.with_mut(|pv| pv.deinit());
+        self.pending_value.deinit();
         // A native sink wired to this stream must fail, not later see an EOF and commit what it
         // has (an S3 upload would complete with a truncated object).
         let sink = *self.sink.get();

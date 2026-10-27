@@ -1112,11 +1112,11 @@ impl<'a> Repl<'a> {
             if SIGINT_DURING_WAIT.swap(false, Ordering::AcqRel) {
                 return true;
             }
-            vm.as_mut().event_loop_mut().tick();
+            vm.event_loop().tick();
             if jsc::JSPromise::opaque_mut(promise).status() == PromiseStatus::Pending
                 && !SIGINT_DURING_WAIT.load(Ordering::Acquire)
             {
-                vm.as_mut().event_loop_mut().auto_tick();
+                vm.event_loop().auto_tick();
             }
         }
         false
@@ -1708,7 +1708,7 @@ impl<'a> Repl<'a> {
                         let exc = global.take_exception(err);
                         self.set_last_error(exc);
                         self.print_js_error(exc);
-                        vm.as_mut().tick();
+                        vm.tick();
                         return;
                     }
                 };
@@ -1738,7 +1738,7 @@ impl<'a> Repl<'a> {
         }
 
         // Tick the event loop to handle any pending work
-        vm.as_mut().tick();
+        vm.tick();
     }
 
     /// Evaluate a script from `bun repl -e/--eval` or `-p/--print` non-interactively.
@@ -1818,9 +1818,7 @@ impl<'a> Repl<'a> {
             // owning JSC VM handle for this thread.
             jsc::JSPromise::opaque_mut(promise).set_handled();
             // Interrupted (SIGINT forbids execution) ⇒ handled just below.
-            let _ = vm
-                .as_mut()
-                .wait_for_promise(jsc::AnyPromise::Normal(promise));
+            let _ = vm.wait_for_promise(jsc::AnyPromise::Normal(promise));
             let jsc_vm_ref = vm.jsc_vm();
             match jsc::JSPromise::opaque_mut(promise).status() {
                 PromiseStatus::Fulfilled => {
@@ -1855,10 +1853,10 @@ impl<'a> Repl<'a> {
         let _prot = actual_result.protected();
 
         // Drain the event loop (timers, I/O, etc.) before printing / exiting
-        vm.as_mut().tick();
+        vm.tick();
         while vm.is_event_loop_alive() {
-            vm.as_mut().tick();
-            vm.as_mut().auto_tick_active();
+            vm.tick();
+            vm.auto_tick_active();
         }
 
         if print_result {
@@ -1914,7 +1912,7 @@ impl<'a> Repl<'a> {
         }
 
         if let Some(vm) = self.vm {
-            vm.as_mut().tick();
+            vm.tick();
         }
     }
 
@@ -1993,7 +1991,7 @@ impl<'a> Repl<'a> {
                         let exc = global.take_exception(err);
                         self.set_last_error(exc);
                         self.print_js_error(exc);
-                        vm.as_mut().tick();
+                        vm.tick();
                         return;
                     }
                 };
@@ -2013,7 +2011,7 @@ impl<'a> Repl<'a> {
             self.set_last_error(exc);
             self.print_js_error(exc);
         }
-        vm.as_mut().tick();
+        vm.tick();
     }
 
     /// Format a JS value as a string suitable for clipboard.
@@ -2141,9 +2139,14 @@ impl<'a> Repl<'a> {
         // Create arena for parsing
         let arena = bun_alloc::Arena::new();
 
+        // SAFETY: the REPL transforms a line before it evaluates it, so no script is running and
+        // nothing else borrows the transpiler. A macro that the parse below runs is the exception
+        // `transpiler_mut` documents.
+        let transpiler = unsafe { vm.transpiler_mut() };
+
         // Set up parser options with repl_mode enabled
         let mut opts = bun_js_parser::ParserOptions::init(
-            vm.transpiler.options.jsx.clone(),
+            transpiler.options.jsx.clone(),
             bun_ast::Loader::Tsx,
         );
         opts.repl_mode = true;
@@ -2158,12 +2161,10 @@ impl<'a> Repl<'a> {
         // which the REPL transform passes through intact.
 
         // Initialize macro context from transpiler (required for import processing).
-        if vm.transpiler.macro_context.is_none() {
-            vm.as_mut().transpiler.macro_context = Some(bun_js_parser::Macro::MacroContext::init(
-                &mut vm.as_mut().transpiler,
-            ));
+        if transpiler.macro_context.is_none() {
+            transpiler.macro_context = Some(bun_js_parser::Macro::MacroContext::init(transpiler));
         }
-        opts.macro_context = vm.as_mut().transpiler.macro_context.as_mut();
+        opts.macro_context = transpiler.macro_context.as_mut();
 
         // Create log for errors
         let mut log = bun_ast::Log::init();
@@ -2176,7 +2177,7 @@ impl<'a> Repl<'a> {
             opts,
             &mut log,
             &source,
-            &vm.transpiler.options.define,
+            &transpiler.options.define,
             &arena,
         ) {
             Ok(p) => p,

@@ -1,4 +1,4 @@
-use crate::jsc::rare_data::PathBuf as RarePathBuf;
+use crate::jsc::rare_data::{PathBuf as RarePathBuf, PathBufLease as RarePathBufLease};
 use crate::jsc::{
     JSGlobalObject, JSStringView, JSValue, JsResult, StringJsc as _, SysErrorJsc as _,
     bun_string_jsc,
@@ -30,15 +30,17 @@ fn create_js_string_t<T: PathCharCwd>(global: &JSGlobalObject, s: &[T]) -> JsRes
     }
 }
 
-/// Pooled path scratch carved from the per-VM [`RarePathBuf`].
+/// Path scratch leased from the per-VM [`RarePathBuf`].
 ///
-/// JS is single-threaded, so re-using the lazily-allocated tier across calls is
-/// sound. When the request exceeds the largest tier (32 × `MAX_PATH_BYTES`) we spill to a one-shot
+/// When the request exceeds the largest tier (32 × `MAX_PATH_BYTES`) we spill to a one-shot
 /// zeroed heap slab instead (`T: Pod`, so the zero-fill is the cost of handing
 /// out a safe `&mut [T]`; consumers are write-before-read so the zeros are
 /// never observed).
 enum PathScratch<'a, T: PathCharCwd> {
-    Pooled(&'a mut [T]),
+    Pooled {
+        lease: RarePathBufLease<'a>,
+        bytes: usize,
+    },
     Spill(Box<[T]>),
 }
 
@@ -47,12 +49,13 @@ impl<'a, T: PathCharCwd> PathScratch<'a, T> {
     const POOL_MAX: usize = 32 * MAX_PATH_BYTES;
 
     #[inline]
-    fn new(pool: &'a mut RarePathBuf, len: usize) -> Self {
+    fn new(pool: &'a RarePathBuf, len: usize) -> Self {
         let bytes = len * size_of::<T>();
-        if bytes <= Self::POOL_MAX
-            && let Some(pooled) = bun_core::try_cast_slice_mut(&mut pool.get(bytes)[..bytes])
-        {
-            return Self::Pooled(pooled);
+        if bytes <= Self::POOL_MAX {
+            let mut lease = pool.take(bytes);
+            if bun_core::try_cast_slice_mut::<u8, T>(&mut lease[..bytes]).is_some() {
+                return Self::Pooled { lease, bytes };
+            }
         }
         // Spill is rare (over 128 KB), so the zero-fill is negligible.
         Self::Spill(vec![T::default(); len].into_boxed_slice())
@@ -61,7 +64,8 @@ impl<'a, T: PathCharCwd> PathScratch<'a, T> {
     #[inline]
     fn slice(&mut self) -> &mut [T] {
         match self {
-            Self::Pooled(s) => s,
+            // `new` checked that this cast succeeds.
+            Self::Pooled { lease, bytes } => bun_core::cast_slice_mut(&mut lease[..*bytes]),
             Self::Spill(b) => &mut b[..],
         }
     }
@@ -297,7 +301,7 @@ fn format_windows_js_t<T: PathCharCwd>(
 
 fn format_js_t<T: PathCharCwd>(
     global_object: &JSGlobalObject,
-    pool: &mut RarePathBuf,
+    pool: &RarePathBuf,
     is_windows: bool,
     path_object: &PathParsed<'_, T>,
 ) -> JsResult<JSValue> {
@@ -388,7 +392,7 @@ fn format(global_object: &JSGlobalObject, is_windows: bool, args: &[JSValue]) ->
         ext = slice.slice();
     }
 
-    let pool = &mut global_object.bun_vm().as_mut().rare_data().path_buf;
+    let pool = &global_object.bun_vm().rare_data().path_buf;
     format_js_t::<u8>(
         global_object,
         pool,
@@ -493,7 +497,7 @@ fn join_windows_js_t<T: PathCharCwd>(
 
 fn join_js_t<T: PathCharCwd>(
     global_object: &JSGlobalObject,
-    pool: &mut RarePathBuf,
+    pool: &RarePathBuf,
     is_windows: bool,
     paths: &[&[T]],
 ) -> JsResult<JSValue> {
@@ -541,7 +545,7 @@ pub(crate) fn join(
     }
     let owned: SmallVec<[Utf8Bytes<'_>; 8]> = views.iter().map(JSStringView::to_utf8).collect();
     let paths: SmallVec<[&[u8]; 8]> = owned.iter().map(Utf8Bytes::slice).collect();
-    let pool = &mut global_object.bun_vm().as_mut().rare_data().path_buf;
+    let pool = &global_object.bun_vm().rare_data().path_buf;
     join_js_t::<u8>(global_object, pool, is_windows, &paths)
 }
 
@@ -563,7 +567,7 @@ fn normalize_windows_js_t<T: PathCharCwd>(
 
 fn normalize_js_t<T: PathCharCwd>(
     global_object: &JSGlobalObject,
-    pool: &mut RarePathBuf,
+    pool: &RarePathBuf,
     is_windows: bool,
     path: &[T],
 ) -> JsResult<JSValue> {
@@ -594,7 +598,7 @@ fn normalize(
     }
 
     let path_slice = path_str.to_utf8();
-    let pool = &mut global_object.bun_vm().as_mut().rare_data().path_buf;
+    let pool = &global_object.bun_vm().rare_data().path_buf;
     normalize_js_t::<u8>(global_object, pool, is_windows, path_slice.slice())
 }
 
@@ -676,7 +680,7 @@ fn relative_windows_js_t<T: PathCharCwd>(
 
 fn relative_js_t<T: PathCharCwd>(
     global_object: &JSGlobalObject,
-    pool: &mut RarePathBuf,
+    pool: &RarePathBuf,
     is_windows: bool,
     from: &[T],
     to: &[T],
@@ -720,7 +724,7 @@ fn relative(
 
     let from_slice = from_str.to_utf8();
     let to_slice_ = to_str.to_utf8();
-    let pool = &mut global_object.bun_vm().as_mut().rare_data().path_buf;
+    let pool = &global_object.bun_vm().rare_data().path_buf;
     relative_js_t::<u8>(
         global_object,
         pool,
@@ -761,7 +765,7 @@ fn resolve_windows_js_t<T: PathCharCwd>(
 
 fn resolve_js_t<T: PathCharCwd>(
     global_object: &JSGlobalObject,
-    pool: &mut RarePathBuf,
+    pool: &RarePathBuf,
     is_windows: bool,
     paths: &[&[T]],
 ) -> JsResult<JSValue> {
@@ -830,7 +834,7 @@ fn resolve(
         }
     }
 
-    let pool = &mut global_object.bun_vm().as_mut().rare_data().path_buf;
+    let pool = &global_object.bun_vm().rare_data().path_buf;
     resolve_js_t::<u8>(global_object, pool, is_windows, &paths)
 }
 
@@ -848,7 +852,7 @@ fn to_namespaced_path_windows_js_t<T: PathCharCwd>(
 
 fn to_namespaced_path_js_t<T: PathCharCwd>(
     global_object: &JSGlobalObject,
-    pool: &mut RarePathBuf,
+    pool: &RarePathBuf,
     is_windows: bool,
     path: &[T],
 ) -> JsResult<JSValue> {
@@ -887,7 +891,7 @@ fn to_namespaced_path(
     }
 
     let path_slice = path_str.to_utf8();
-    let pool = &mut global_object.bun_vm().as_mut().rare_data().path_buf;
+    let pool = &global_object.bun_vm().rare_data().path_buf;
     to_namespaced_path_js_t::<u8>(global_object, pool, is_windows, path_slice.slice())
 }
 

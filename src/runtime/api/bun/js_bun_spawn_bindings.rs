@@ -8,12 +8,12 @@ use crate::ipc as IPC;
 use bun_core::StackCheck;
 use bun_core::{Output, Timespec, TimespecMockMode, ZBox, fmt as bun_fmt};
 use bun_core::{String as BunString, ZStr, strings};
-use bun_event_loop::SpawnSyncEventLoop::TickState;
 use bun_io::max_buf::MaxBuf;
 use bun_jsc::bindgen::{JsLocal, JsScope};
+use bun_jsc::spawn_sync_event_loop::TickState;
 use bun_jsc::{
-    self as jsc, EventLoopHandle, JSGlobalObject, JSObject, JSPropertyIterator, JSValue, JsError,
-    JsResult, SystemError,
+    self as jsc, JSGlobalObject, JSObject, JSPropertyIterator, JSValue, JsError, JsResult,
+    SystemError,
 };
 use bun_jsc::{JsCell, SysErrorJsc as _};
 #[cfg(unix)]
@@ -300,7 +300,7 @@ pub(crate) fn spawn_sync(
         && let Some(runner) = crate::test_runner::jest::Jest::runner()
         && let Some(active_file) = runner.bun_test_root.active_file.clone()
     {
-        let vm = cx.vm().as_mut();
+        let vm = cx.vm();
         runner.remove_active_timeout(vm);
         crate::test_runner::bun_test::BunTest::bun_test_timeout_callback(
             &active_file,
@@ -373,9 +373,7 @@ fn spawn_maybe_sync(
 
     let mut override_env = false;
     let mut env_array: Vec<CStrPtr> = Vec::new();
-    // SAFETY: `bun_vm()` returns the live VirtualMachine for this thread; it
-    // outlives this call frame.
-    let jsc_vm: &mut jsc::VirtualMachineRef = cx.vm().as_mut();
+    let jsc_vm: &'static jsc::VirtualMachineRef = cx.global().bun_vm();
 
     let mut cwd: &[u8] = bun_resolver::fs::FileSystem::get().top_level_dir();
     let mut user_specified_cwd = false;
@@ -928,7 +926,7 @@ fn spawn_maybe_sync(
         // (per-VM DotEnv loader, valid for VM lifetime; centralised
         // single-unsafe deref). `.map` is its `&'a mut Map` slot.
         let envmap = match jsc_vm
-            .transpiler
+            .transpiler()
             .env_mut()
             .map
             .create_null_delimited_env_map()
@@ -1039,7 +1037,7 @@ fn spawn_maybe_sync(
         && !stdio[1].is_piped()
         && !stdio[2].is_piped()
         && extra_fds.is_empty()
-        && !jsc_vm.auto_killer.enabled
+        && !jsc_vm.auto_killer.enabled.get()
         && !jsc_vm.is_inspector_enabled()
         && !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_SPAWNSYNC_FAST_PATH
             .get()
@@ -1047,19 +1045,8 @@ fn spawn_maybe_sync(
 
     // For spawnSync, use an isolated event loop to prevent JavaScript timers from firing
     // and to avoid interfering with the main event loop.
-    //
-    // Note: borrowck — `rare_data()` borrows `jsc_vm` mutably and the
-    // returned `&SpawnSyncEventLoop` keeps that borrow alive for the whole
-    // call. Route through a raw `*mut VirtualMachineRef` instead.
-    let jsc_vm_ptr: *mut jsc::VirtualMachineRef = jsc_vm;
-    let sync_loop = if is_sync {
-        // SAFETY: see note above; `spawn_sync_event_loop` re-borrows the
-        // same VM via the raw pointer for its `vm` arg.
-        let Some(sync_loop) = (unsafe {
-            (*jsc_vm_ptr)
-                .rare_data()
-                .spawn_sync_event_loop(&mut *jsc_vm_ptr)
-        }) else {
+    let isolated_loop = if is_sync {
+        let Some(isolated_loop) = jsc_vm.rare_data().spawn_sync_event_loop() else {
             // `WindowsStdio` has no `Drop`; free the pipes `as_spawn_option` allocated.
             #[cfg(windows)]
             for e in &mut extra_fds {
@@ -1067,23 +1054,18 @@ fn spawn_maybe_sync(
             }
             return Err(throw_spawn_sync_loop_init_failed(cx.global()));
         };
-        Some(sync_loop.prepare(jsc_vm_ptr.cast()))
+        Some(isolated_loop)
     } else {
         None
     };
-    // For is_sync, use the isolated loop's `event_loop` (created by
-    // `SpawnSyncEventLoop::init`) so stdio readers/writers register on it
-    // instead of the main loop.
-    let event_loop: *mut jsc::event_loop::EventLoop = match &sync_loop {
-        // `SpawnSyncEventLoop.event_loop` is type-erased to `*mut ()`
-        // (bun_event_loop is below bun_jsc).
-        Some(sync_loop) => sync_loop
-            .event_loop_ptr()
-            .cast::<jsc::event_loop::EventLoop>(),
+    let sync_loop = isolated_loop.map(|isolated_loop| isolated_loop.prepare());
+    // For is_sync, stdio readers/writers register on the isolated loop instead of the main loop.
+    let event_loop: &'static jsc::event_loop::EventLoop = match isolated_loop {
+        Some(isolated_loop) => isolated_loop.event_loop(),
         None => jsc_vm.event_loop(),
     };
 
-    let loop_handle = EventLoopHandle::init(event_loop.cast::<()>());
+    let loop_handle = event_loop.handle();
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     let cgroup_dir = match &cgroup {
@@ -1358,8 +1340,7 @@ fn spawn_maybe_sync(
 
     match Writable::init(
         &mut stdio[0],
-        // SAFETY: event_loop points to the live JSC EventLoop for this thread.
-        unsafe { &*event_loop },
+        event_loop,
         subprocess,
         spawned_stdin,
         &mut promise_for_stream,
@@ -1429,11 +1410,9 @@ fn spawn_maybe_sync(
         }
     }
 
-    // event_loop points to the live JSC EventLoop for this thread.
-    let event_loop_nn = NonNull::new(event_loop).expect("event_loop is null");
     subprocess.stdout.set(Readable::init(
         core::mem::replace(&mut stdio[1], Stdio::Ignore),
-        event_loop_nn,
+        event_loop,
         subprocess_nn,
         spawned_stdout,
         subprocess.stdout_maxbuf.get(),
@@ -1441,7 +1420,7 @@ fn spawn_maybe_sync(
     ));
     subprocess.stderr.set(Readable::init(
         core::mem::replace(&mut stdio[2], Stdio::Ignore),
-        event_loop_nn,
+        event_loop,
         subprocess_nn,
         spawned_stderr,
         subprocess.stderr_maxbuf.get(),
@@ -1491,10 +1470,8 @@ fn spawn_maybe_sync(
     #[cfg(unix)]
     if !is_sync {
         if let Some(mode) = maybe_ipc_mode {
-            // SAFETY: `jsc_vm_ptr` is the live per-thread VM; JS thread.
-            let vm = unsafe { &mut *jsc_vm_ptr };
-            let loop_ = vm.uws_loop();
-            let raw_socket = vm.rare_data().spawn_ipc_group(loop_).from_fd(
+            let loop_ = jsc_vm.uws_loop();
+            let raw_socket = jsc_vm.rare_data().spawn_ipc_group(loop_).from_fd(
                 bun_uws::SocketKind::SpawnIpc,
                 None,
                 core::mem::size_of::<*mut IPC::SendQueue>() as core::ffi::c_int,
@@ -1612,12 +1589,11 @@ fn spawn_maybe_sync(
             // `Timer::All` lives in `bun_runtime`; reach it via the
             // `RuntimeHooks` dispatch (`VirtualMachineRef::timer_insert`) which
             // forwards to `crate::timer::All::insert`.
-            // SAFETY: `jsc_vm_ptr` is the live per-thread VM; the timer node is
-            // owned by the boxed `Subprocess` and stays at a stable address
-            // until `Subprocess::finalize` removes it from the heap.
+            // SAFETY: never linked yet. The node is in a cell of the heap-allocated `Subprocess`,
+            // on which the JS wrapper holds a ref until `Subprocess::finalize`, which unlinks it.
             unsafe {
                 jsc::VirtualMachineRef::timer_insert(
-                    jsc_vm_ptr,
+                    jsc_vm,
                     core::ptr::addr_of!(subprocess.event_loop_timer)
                         .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
                         .cast_mut(),
@@ -1670,7 +1646,7 @@ fn spawn_maybe_sync(
         // Note: pass `subprocess_nn` (the `NonNull<Subprocess<'static>>`
         // captured above) instead of the live `&mut subprocess`, which would
         // alias with the `&mut subprocess.stdout` borrow held by `pipe`.
-        Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop_nn, !is_sync && lazy);
+        Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop, !is_sync && lazy);
         if (is_sync || !lazy) && matches!(subprocess.stdout.get(), Readable::Pipe(_)) {
             if let Readable::Pipe(pipe) = subprocess.stdout.get() {
                 Readable::pipe_reader_mut(pipe).read_all();
@@ -1680,7 +1656,7 @@ fn spawn_maybe_sync(
 
     if let Readable::Pipe(pipe) = subprocess.stderr.get() {
         // Note: see stdout arm above — avoid aliased &mut.
-        Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop_nn, !is_sync && lazy);
+        Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop, !is_sync && lazy);
 
         if (is_sync || !lazy) && matches!(subprocess.stderr.get(), Readable::Pipe(_)) {
             if let Readable::Pipe(pipe) = subprocess.stderr.get() {
@@ -1742,23 +1718,17 @@ fn spawn_maybe_sync(
 
     let Some(sync_loop) = &sync_loop else {
         if !subprocess.has_exited() {
-            // SAFETY: jsc_vm_ptr points to the live thread VM; `subprocess.process`
-            // is a `BackRef` (wraps `NonNull`), so its pointer is non-null.
-            // `subprocess_ptr` is live and heap-pinned.
-            unsafe {
-                (*jsc_vm_ptr)
-                    .on_subprocess_spawn(NonNull::new_unchecked(subprocess.process.as_ptr()));
-                if let Some(context) = (*jsc_vm_ptr).as_graph_context(cx.context()) {
-                    bun_jsc::AbortHandle::arm_owner(subprocess_ptr, context);
-                }
-            };
+            jsc_vm.on_subprocess_spawn(subprocess.process.as_non_null());
+            if let Some(context) = jsc_vm.as_graph_context(cx.context()) {
+                // SAFETY: `subprocess_ptr` is live and heap-pinned.
+                unsafe { bun_jsc::AbortHandle::arm_owner(subprocess_ptr, context) };
+            }
         }
         return Ok(out);
     };
 
     if can_block_entire_thread_to_reduce_cpu_usage_in_fast_path {
-        // SAFETY: jsc_vm_ptr is the live thread VM.
-        unsafe { &mut *jsc_vm_ptr }
+        jsc_vm
             .counters
             .mark(jsc::counters::Field::SpawnSyncBlocking);
         let debug_timer = Output::DebugTimer::start();
@@ -1791,11 +1761,7 @@ fn spawn_maybe_sync(
     }
 
     if !subprocess.has_exited() {
-        // SAFETY: jsc_vm_ptr points to the live thread VM; `subprocess.process`
-        // is a `BackRef` (wraps `NonNull`), so its pointer is non-null.
-        unsafe {
-            (*jsc_vm_ptr).on_subprocess_spawn(NonNull::new_unchecked(subprocess.process.as_ptr()))
-        };
+        jsc_vm.on_subprocess_spawn(subprocess.process.as_non_null());
     }
 
     let mut did_timeout = false;
@@ -1848,7 +1814,7 @@ fn spawn_maybe_sync(
             // Re-evaluate this at each iteration of the loop since it may change between iterations.
             let bun_test_timeout: Timespec = if bun_test_fired {
                 Timespec::EPOCH
-            } else if jsc_vm.is_main_thread
+            } else if jsc_vm.is_main_thread.get()
                 && let Some(runner) = crate::test_runner::jest::Jest::runner()
             {
                 // The test runner and its deadlines belong to the main thread.

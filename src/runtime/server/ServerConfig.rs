@@ -585,10 +585,10 @@ impl ServerConfig {
         let env = vm.env_loader();
         // `bun bake` sets this for its own `Bun.serve()`, with a framework or for the `.tsx` pages
         // of the default one. Taken first: it is for this one call, even when an option throws.
-        let bake_pages = core::mem::take(&mut global.bun_vm().as_mut().bake_pages);
+        let bake_pages = vm.bake_pages.take();
 
         let mut args = ServerConfig {
-            development: if let Some(hmr) = vm.transpiler.options.transform_options.serve_hmr {
+            development: if let Some(hmr) = vm.transpiler().options.transform_options.serve_hmr {
                 if !hmr {
                     DevelopmentOption::DevelopmentWithoutHmr
                 } else {
@@ -610,7 +610,7 @@ impl ServerConfig {
             args.development = DevelopmentOption::Production;
         }
 
-        if vm.transpiler.options.production {
+        if vm.transpiler().options.production {
             args.development = DevelopmentOption::Production;
         }
 
@@ -626,14 +626,14 @@ impl ServerConfig {
                 }
             }
 
-            if let Some(port) = vm.transpiler.options.transform_options.port {
+            if let Some(port) = vm.transpiler().options.transform_options.port {
                 break 'brk port;
             }
 
             3000
         };
 
-        if let Some(origin) = &vm.transpiler.options.transform_options.origin {
+        if let Some(origin) = &vm.transpiler().options.transform_options.origin {
             args.base_uri = Box::<[u8]>::from(origin.as_ref());
         }
 
@@ -894,12 +894,8 @@ impl ServerConfig {
                 if args.development.is_hmr_enabled() {
                     use bun_options_types::schema::api::DotEnvBehavior;
 
-                    // SAFETY: `bun_vm()` returns the live VM for this global;
-                    // we need `&mut Resolver` for `Framework::auto`.
                     let mut bundler_options = crate::bake::SplitBundlerOptions::default();
-                    let bake_framework = global.bun_vm().bake_framework.get();
-                    let resolver = &mut global.bun_vm().as_mut().transpiler.resolver;
-                    let framework = match bake_framework {
+                    let framework = match vm.bake_framework.get() {
                         Some(object) if bake_pages => {
                             match crate::bake::Framework::from_js(
                                 object,
@@ -913,11 +909,19 @@ impl ServerConfig {
                                 }
                             }
                         }
-                        _ if bake_pages => crate::bake::Framework::bake_pages(resolver),
-                        _ => crate::bake::Framework::auto(
-                            resolver,
-                            core::mem::take(&mut init_ctx.framework_router_list),
-                        ),
+                        _ => {
+                            // SAFETY: no other transpiler borrow is live here and resolving runs
+                            // no script (see `transpiler_mut` on macros).
+                            let resolver = &mut unsafe { vm.transpiler_mut() }.resolver;
+                            if bake_pages {
+                                crate::bake::Framework::bake_pages(resolver)
+                            } else {
+                                crate::bake::Framework::auto(
+                                    resolver,
+                                    core::mem::take(&mut init_ctx.framework_router_list),
+                                )
+                            }
+                        }
                     };
 
                     let mut user_options = crate::bake::UserOptions {
@@ -929,7 +933,7 @@ impl ServerConfig {
                         bundler_options,
                     };
 
-                    let o = &vm.transpiler.options.transform_options;
+                    let o = &vm.transpiler().options.transform_options;
 
                     match o.serve_env_behavior {
                         DotEnvBehavior::prefix => {

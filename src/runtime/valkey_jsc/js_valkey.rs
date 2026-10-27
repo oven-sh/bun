@@ -268,9 +268,7 @@ impl JSValkeyClient {
         let mut iter = callbacks.array_iterator(global_object)?;
         while let Some(callback) = iter.next()? {
             debug_assert!(callback.is_callable());
-            // `event_loop_mut()` is the safe accessor for the VM-owned
-            // event-loop self-pointer (see `VirtualMachine::event_loop_mut`).
-            vm.event_loop_mut().run_callback(
+            vm.event_loop().run_callback(
                 self.context,
                 callback,
                 global_object,
@@ -369,12 +367,11 @@ impl RefCountedTimer {
                 nsec: now.nsec,
             }
         });
-        let vm = std::ptr::from_ref::<VirtualMachine>(owner.client.get().vm).cast_mut();
-        // SAFETY: `vm` is the live per-thread VM; the timer is an unlinked
-        // field of the boxed `JSValkeyClient` (stable address until disarmed).
+        // SAFETY: the timer is an unlinked field of the boxed `JSValkeyClient` (stable
+        // address until disarmed).
         unsafe {
             VirtualMachine::timer_insert(
-                vm,
+                owner.client.get().vm,
                 core::ptr::addr_of!(self.event_loop_timer)
                     .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
                     .cast_mut(),
@@ -388,10 +385,11 @@ impl RefCountedTimer {
     /// Remove from the VM timer heap and release the keep-alive ref if held.
     fn disarm(&self, owner: &JSValkeyClient) {
         if self.state() == Timer::State::ACTIVE {
-            let vm = std::ptr::from_ref::<VirtualMachine>(owner.client.get().vm).cast_mut();
-            // SAFETY: `vm` is the live per-thread VM; the timer is currently
-            // linked into the heap (state == ACTIVE checked above).
-            unsafe { VirtualMachine::timer_remove(vm, self.event_loop_timer.as_ptr()) };
+            // SAFETY: the timer is currently linked into the heap (state == ACTIVE
+            // checked above).
+            unsafe {
+                VirtualMachine::timer_remove(owner.client.get().vm, self.event_loop_timer.as_ptr())
+            };
         }
         // The caller's ref keeps `owner` live past this call.
         self.held_ref.set(None);
@@ -1114,10 +1112,7 @@ impl JSValkeyClient {
             ctx: self.ref_guard(),
             what,
         }));
-        // SAFETY: VM-owned event loop pointer; uniquely accessed on the JS thread.
-        unsafe {
-            (*self.vm().event_loop()).enqueue_task(task);
-        }
+        self.vm().event_loop().enqueue_task(task);
     }
 
     pub(crate) fn on_reconnect_timer(&self) -> JsResult<()> {
@@ -1448,14 +1443,12 @@ impl JSValkeyClient {
         }
 
         let is_tls = self.client.get().tls != valkey::TLS::None;
-        let vm = self.client.get().vm.as_mut();
+        let vm = self.client.get().vm;
         let loop_ = vm.uws_loop();
         // (A client that redials on its own stays with the context that created it; what joins a
         // context that is gone is closed on the next turn of the loop.)
-        let context = core::ptr::from_ref(vm.context_of(self.context));
-        // SAFETY: the VM's own, or registered ⇒ not freed under this call; JS thread.
-        let groups = vm.client_socket_groups_in(unsafe { &*context });
-        let group: *mut uws::SocketGroup = if is_tls {
+        let groups = vm.client_socket_groups_in(vm.context_of(self.context));
+        let group = if is_tls {
             groups.valkey_group::<true>(loop_)
         } else {
             groups.valkey_group::<false>(loop_)
@@ -1471,11 +1464,7 @@ impl JSValkeyClient {
                 // Per-VM weak cache: a `duplicate()`'d client (or any
                 // other client with the same config) hits the same
                 // `SSL_CTX*` instead of rebuilding.
-                let state = crate::jsc_hooks::runtime_state();
-                debug_assert!(!state.is_null(), "RuntimeState not installed");
-                // SAFETY: per-thread `RuntimeState`; `ssl_ctx_cache` has a
-                // stable address for the VM's lifetime, JS-thread-only.
-                let cache = unsafe { &mut (*state).ssl_ctx_cache };
+                let cache = &crate::jsc_hooks::runtime_state().ssl_ctx_cache;
                 self._secure.set(cache.get_or_create(custom, &mut err));
             }
             self._secure.get().is_none()
@@ -1518,13 +1507,12 @@ impl JSValkeyClient {
         // (`SocketHandler::on_close` or `SocketHandler::on_connect_error`),
         // which is the one event uSockets delivers for every socket this returns.
         let socket_ref = self.ref_guard();
-        // SAFETY: `client_ptr` is live; `group` is the lazy-initialised per-VM
-        // `SocketGroup` (stable for the VM's lifetime). `ssl_ctx` is a +1-ref
-        // BoringSSL `SSL_CTX*` (or None) forwarded opaquely to usockets.
+        // SAFETY: `client_ptr` is live. `ssl_ctx` is a +1-ref BoringSSL `SSL_CTX*` (or
+        // None) forwarded opaquely to usockets.
         let socket = unsafe {
             (*client_ptr)
                 .address
-                .connect(owner_ptr, &mut *group, ssl_ctx, is_tls)
+                .connect(owner_ptr, group, ssl_ctx, is_tls)
         }?;
         self.client_mut().socket = socket;
         // Disarm on success: the socket now owns the keep-alive ref.
@@ -1991,7 +1979,6 @@ impl Options {
                     valkey::TLS::None
                 };
             } else if tls.is_object() {
-                // SAFETY: `bun_vm()` returns the live per-global VM pointer.
                 if let Some(ssl_config) =
                     SSLConfig::from_js(global_object.bun_vm(), global_object, tls, false)?
                 {

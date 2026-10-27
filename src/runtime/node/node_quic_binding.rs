@@ -42,7 +42,6 @@ pub(crate) fn set_callbacks<'a>(
     // (node/src/quic/bindingdata.cc `BindingData::SetCallbacks`).
     if global
         .bun_vm()
-        .as_mut()
         .rare_data()
         .node_quic_callbacks
         .get()

@@ -67,8 +67,8 @@ pub(crate) fn get_exec_argv(global: &JSGlobalObject) -> JsResult<JSValue> {
 // @190n: this may need to be noreturn
 #[unsafe(export_name = "Bun__Process__exit")]
 pub(crate) extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
-    let vm = global_object.bun_vm().as_mut();
-    vm.exit_handler.exit_code = code;
+    let vm = global_object.bun_vm();
+    vm.exit_handler.exit_code.set(code);
     if let Some(worker) = vm.worker_ref() {
         // @190n: we may need to use requestTerminate or throwTerminationException
         // instead to terminate the worker sooner
@@ -86,7 +86,7 @@ pub(crate) extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
             bun_core::Output::flush();
             bun_core::reload_process(should_clear_terminal, false);
         }
-        vm.exit_handler.requested = true;
+        vm.exit_handler.requested.set(true);
         vm.on_exit();
         vm.global_exit();
     }
@@ -222,7 +222,6 @@ mod _impl {
     }
 
     fn create_exec_argv(global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        // SAFETY: `bun_vm()` returns the live per-thread VM for this global.
         let vm = global_object.bun_vm();
 
         if let Some(worker) = vm.worker_ref() {
@@ -362,14 +361,14 @@ mod _impl {
 
     #[unsafe(export_name = "Bun__Process__createArgv")]
     extern "C" fn create_argv(global_object: &JSGlobalObject) -> JSValue {
-        // SAFETY: `bun_vm()` returns the live per-thread VM for this global.
         let vm = global_object.bun_vm();
 
         let worker: Option<&WebWorker> = vm.worker_ref();
+        let vm_argv: &[Box<[u8]>] = vm.argv.get().map_or(&[], |argv| argv);
 
         let args_count: usize = match worker {
             Some(w) => w.argv().len(),
-            None => vm.argv.len(),
+            None => vm_argv.len(),
         };
 
         // argv omits "bun" because it could be "bun run" or "bun" and it's kind of ambiguous
@@ -418,7 +417,7 @@ mod _impl {
                     .map(|&arg| super::worker_option_string(arg)),
             );
         } else {
-            for arg in &vm.argv {
+            for arg in vm_argv {
                 // https://github.com/yargs/yargs/blob/adb0d11e02c613af3d9427b3028cc192703a3869/lib/utils/process-argv.ts#L1
                 args_list.push(BunString::clone_utf8(arg));
             }
@@ -432,18 +431,17 @@ mod _impl {
 
     #[unsafe(export_name = "Bun__Process__getEval")]
     extern "C" fn get_eval(global_object: &JSGlobalObject) -> JSValue {
-        // SAFETY: `bun_vm()` returns the live per-thread VM for this global.
         let vm = global_object.bun_vm();
         // `--interactive` boots the bootstrap through `eval_source`, so read
         // the user's real `-e` bytes from `interactive_eval_script` instead
         // (`undefined` when empty, matching `node -i` without `-e`).
-        if let Some(script) = vm.module_loader.interactive_eval_script.as_deref() {
+        if let Some(script) = vm.module_loader.interactive_eval_script() {
             if script.is_empty() {
                 return JSValue::UNDEFINED;
             }
             return EncodedSlice::from_bytes(script).to_js(global_object);
         }
-        if let Some(source) = vm.module_loader.eval_source.as_deref() {
+        if let Some(source) = vm.module_loader.eval_source() {
             return EncodedSlice::from_bytes(source.contents()).to_js(global_object);
         }
         JSValue::UNDEFINED
@@ -506,11 +504,10 @@ mod _impl {
             return Err(global_object
                 .throw_invalid_arguments(format_args!("Expected path to be a non-empty string")));
         }
-        // SAFETY: `bun_vm()` returns the live per-thread VM for this global.
-        let vm = global_object.bun_vm().as_mut();
+        let vm = global_object.bun_vm();
         // `Transpiler::fs_mut()` is the audited safe `&mut FileSystem` accessor for
         // the process-lifetime singleton (centralised single-unsafe deref).
-        let fs = vm.transpiler.fs_mut();
+        let fs = vm.transpiler().fs_mut();
 
         let mut buf = bun_paths::path_buffer_pool::get();
         let Ok(slice) = to.slice_z_buf(&mut buf) else {
@@ -523,10 +520,8 @@ mod _impl {
         let prev_cwd: Box<[u8]> = Box::from(fs.top_level_dir());
         match vm.set_process_cwd(slice) {
             bun_sys::Result::Ok(()) => {
-                vm.test_isolation_scope(|state| {
-                    state.saved_cwd.get_or_insert(prev_cwd);
-                });
-                let fs = vm.transpiler.fs_mut();
+                vm.save_cwd_for_test_isolation(prev_cwd);
+                let fs = vm.transpiler().fs_mut();
                 #[cfg(windows)]
                 let without_trailing_slash =
                     bun_paths::string_paths::without_trailing_slash_windows_path;

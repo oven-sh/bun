@@ -624,10 +624,8 @@ pub(crate) mod js_bundler {
                     if !plugin_result.is_empty_or_undefined_or_null() {
                         if let Some(promise) = plugin_result.as_any_promise() {
                             promise.set_handled(global_this.vm());
-                            // SAFETY: bun_vm() returns the live process VirtualMachine pointer.
                             global_this
                                 .bun_vm()
-                                .as_mut()
                                 .wait_for_promise(promise)
                                 .map_err(|stopped| stopped.throw(global_this))?;
                             match promise
@@ -1486,7 +1484,7 @@ pub(crate) mod js_bundler {
         // 2. During parsing, it encounters a macro and evaluates it
         // 3. The macro calls Bun.build, which tries to enqueue to the same singleton thread
         // 4. The singleton thread is blocked waiting for the macro to complete -> deadlock
-        if vm.macro_mode {
+        if vm.macro_mode() {
             return Err(global_this.throw(format_args!("Bun.build cannot be called from within a macro during bundling.\n\n\
                  This would cause a deadlock because the bundler is waiting for the macro to complete,\n\
                  but the macro's Bun.build call is waiting for the bundler.\n\n\
@@ -1629,18 +1627,12 @@ pub(crate) mod js_bundler {
             // running BundleV2), which is distinct from the
             // `enqueue_on_js_loop_for_plugins` target (the plugin host's JS loop)
             // when `Bun.build` runs the bundler on its own Mini event loop.
-            // SAFETY: `parse_task.ctx` and `bv2` are valid backrefs; `r#loop()`
-            // points at a live `AnyEventLoop` owned by the bundle thread /
-            // runtime for the duration of the bundle.
+            // SAFETY: `parse_task.ctx` and `bv2` are valid backrefs; `mini` is
+            // live (see `BundleV2::mini_poster`).
             unsafe {
                 let ctx = (*self.parse_task).ctx.expect("ParseTask.ctx unset");
-                // SAFETY: write provenance from `ParseTask::init`; bundle outlives plugin.
-                let any_loop = ctx
-                    .assume_mut()
-                    .r#loop()
-                    .expect("BundleV2.linker.loop must be set before plugins run");
-                match &mut *any_loop.as_ptr() {
-                    bun_event_loop::AnyEventLoop::Js { .. } => {
+                match (*ctx.as_mut_ptr()).mini_poster {
+                    None => {
                         let ct = ConcurrentTask::create_from(
                             std::ptr::from_mut::<Load>(self).cast::<LoadDeferred>(),
                         );
@@ -1653,12 +1645,13 @@ pub(crate) mod js_bundler {
                             bun_event_loop::ConcurrentTask::ConcurrentTask::release_refused(ct);
                         }
                     }
-                    bun_event_loop::AnyEventLoop::Mini(mini) => {
-                        mini.enqueue_task_concurrent_with_extra_ctx::<Load, BundleV2<'static>>(
-                            std::ptr::from_mut::<Load>(self),
-                            on_notify_defer_mini_wrap,
-                            core::mem::offset_of!(Load, defer_task),
-                        );
+                    Some(mini) => {
+                        mini.as_ref()
+                            .enqueue_task_concurrent_with_extra_ctx::<Load, BundleV2<'static>>(
+                                std::ptr::from_mut::<Load>(self),
+                                on_notify_defer_mini_wrap,
+                                core::mem::offset_of!(Load, defer_task),
+                            );
                     }
                 }
 

@@ -330,7 +330,7 @@ impl Route {
         let global = this.bundle.global.get();
         let server = this.server.get().expect("server set");
         let development = server.config().development;
-        let vm = global.bun_vm().as_mut();
+        let vm = global.bun_vm();
 
         let mut config = JSBundlerConfig::default();
         // `Config` owns its fields and
@@ -343,7 +343,7 @@ impl Route {
             )],
             loaders: vec![bun_options_types::schema::api::Loader::html],
         });
-        let xform = &vm.transpiler.options.transform_options;
+        let xform = &vm.transpiler().options.transform_options;
         if let Some(public_path) = xform.serve_public_path.as_deref() {
             if !public_path.is_empty() {
                 config.public_path.append_slice(public_path)?;

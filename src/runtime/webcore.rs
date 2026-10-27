@@ -131,7 +131,7 @@ impl AutoFlusher {
         // Do not wrap the side-effecting call in `debug_assert!`;
         // only the *check* is debug-gated.
         let removed = vm
-            .event_loop_ref()
+            .event_loop()
             .deferred_tasks
             .unregister_task(Self::erased_ctx(this));
         debug_assert!(removed);
@@ -146,7 +146,7 @@ impl AutoFlusher {
         debug_assert!(!this.auto_flusher().registered.get());
         this.auto_flusher().registered.set(true);
         let found_existing = vm
-            .event_loop_ref()
+            .event_loop()
             .deferred_tasks
             .post_task(Self::erased_ctx(this), Self::erased_cb::<T>());
         debug_assert!(!found_existing);

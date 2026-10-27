@@ -25,7 +25,7 @@
 use core::cell::Cell;
 use core::ffi::{CStr, c_char, c_int, c_uint, c_void};
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicI32, AtomicU8, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicI32, AtomicPtr, AtomicU8, AtomicU32, Ordering};
 
 use bun_core::{Timespec, TimespecMockMode};
 use bun_event_loop::{ContextId, TaskTag, Taskable, task_tag};
@@ -37,7 +37,7 @@ use bun_jsc::{
     LoopKind, Posted, VmHandle,
 };
 
-use crate::jsc_hooks::{RuntimeState, timer_all_mut};
+use crate::jsc_hooks::{RuntimeState, timer_all};
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 
 bun_output::declare_scope!(uv, hidden);
@@ -171,7 +171,6 @@ enum DispatchState {
 pub(crate) struct UvLoop {
     /// `uv_loop_t.data`. Only the addon reads and writes it. Must be at offset 0 like in uv.h.
     data: Cell<*mut c_void>,
-    vm: NonNull<VirtualMachine>,
     /// Lets `uv_async_send` post to the JS thread from any thread.
     handle: VmHandle,
     dispatch_state: AtomicU8,
@@ -266,11 +265,10 @@ impl WatcherList {
 }
 
 impl UvLoop {
-    /// Called by `init_runtime_state` on the JS thread. `handle` is `vm`'s [`VmHandle`].
-    pub(crate) fn new(vm: NonNull<VirtualMachine>, handle: VmHandle) -> UvLoop {
+    /// Called by `init_runtime_state` on the JS thread. `handle` is its VM's [`VmHandle`].
+    pub(crate) fn new(handle: VmHandle) -> UvLoop {
         UvLoop {
             data: Cell::new(core::ptr::null_mut()),
-            vm,
             handle,
             dispatch_state: AtomicU8::new(DispatchState::Idle as u8),
             asyncs: JsCell::new(Vec::new()),
@@ -287,9 +285,7 @@ impl UvLoop {
         if self.idles.is_empty() && self.prepares.is_empty() {
             return false;
         }
-        // SAFETY: the VM owns the `RuntimeState` that contains this loop, and this is
-        // the JS thread.
-        let vm = unsafe { self.vm.as_ref() };
+        let vm = VirtualMachine::get();
         if !vm.script_allowed() {
             return false;
         }
@@ -303,8 +299,7 @@ impl UvLoop {
         if self.checks.is_empty() {
             return;
         }
-        // SAFETY: same as `before_poll`.
-        let vm = unsafe { self.vm.as_ref() };
+        let vm = VirtualMachine::get();
         if vm.script_allowed() {
             self.checks.walk(vm);
         }
@@ -329,8 +324,8 @@ impl UvLoop {
     /// this because `runtime_state` doesn't change between those two writes, and an
     /// addon stops its threads in its cleanup hooks, which run before the second write.
     pub(crate) unsafe fn of_vm(vm: *const VirtualMachine) -> *mut UvLoop {
-        // SAFETY: fn contract.
-        let state = unsafe { (*vm).runtime_state }.cast::<RuntimeState>();
+        // SAFETY: fn contract. Only the field is borrowed: this may not be the VM's thread.
+        let state = unsafe { (*vm).runtime_state.load(Ordering::Relaxed) }.cast::<RuntimeState>();
         if state.is_null() {
             return core::ptr::null_mut();
         }
@@ -341,8 +336,7 @@ impl UvLoop {
 
     /// JS thread only.
     fn global(&self) -> &'static JSGlobalObject {
-        // SAFETY: the VM owns the `RuntimeState` that contains this loop, so the VM is alive.
-        unsafe { self.vm.as_ref() }.global()
+        VirtualMachine::get().global()
     }
 
     /// Queues the dispatch task unless one is already queued. Any thread can call this.
@@ -478,11 +472,25 @@ impl Taskable for UvLoop {
 /// the Worker's loop.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn uv_default_loop() -> *mut UvLoop {
-    let Some(vm) = VirtualMachine::get_main_thread_vm() else {
-        return core::ptr::null_mut();
-    };
-    // SAFETY: the main thread's VM is never freed.
-    unsafe { UvLoop::of_vm(vm) }
+    DEFAULT_LOOP.load(Ordering::Acquire)
+}
+
+/// The main thread's loop, while its `RuntimeState` is alive.
+static DEFAULT_LOOP: AtomicPtr<UvLoop> = AtomicPtr::new(core::ptr::null_mut());
+
+/// `init_runtime_state` of the main thread's VM.
+pub(crate) fn set_default_loop(uv_loop: *const UvLoop) {
+    DEFAULT_LOOP.store(uv_loop.cast_mut(), Ordering::Release);
+}
+
+/// Before `uv_loop` is freed. Does nothing for another thread's loop.
+pub(crate) fn clear_default_loop(uv_loop: *const UvLoop) {
+    let _ = DEFAULT_LOOP.compare_exchange(
+        uv_loop.cast_mut(),
+        core::ptr::null_mut(),
+        Ordering::AcqRel,
+        Ordering::Relaxed,
+    );
 }
 
 /// Returns `vm`'s loop for `node::GetCurrentEventLoop`, the same one
@@ -832,17 +840,16 @@ impl UvTimerNode {
             (*this).timer
         };
         // SAFETY: a started timer is initialized and not closed, and this is the loop thread.
-        let (cb, repeat_ms, loop_) = unsafe {
+        let (cb, repeat_ms) = unsafe {
             (*timer).ref_state.set_active(false);
-            ((*timer).timer_cb, (*timer).repeat_ms, (*timer).handle.loop_)
+            ((*timer).timer_cb, (*timer).repeat_ms)
         };
         if repeat_ms != 0 {
             // SAFETY: same as above.
             unsafe { UvTimer::arm(timer, repeat_ms) };
         }
         bun_output::scoped_log!(uv, "uv_timer_t {:?}: timer_cb", timer);
-        // SAFETY: the loop outlives its handles.
-        let vm = unsafe { &*(*loop_).vm.as_ptr() };
+        let vm = VirtualMachine::get();
         if let Some(cb) = cb {
             let _scope = vm.enter_event_loop_scope();
             let _handles = CallbackScope::open(vm.global());
@@ -866,9 +873,11 @@ impl UvTimer {
             TimespecMockMode::ForceRealTime,
             i64::try_from(timeout_ms).unwrap_or(i64::MAX),
         );
-        // SAFETY: fn contract. A timer owns its node until it's closed.
+        // SAFETY: fn contract. A timer owns its heap-allocated node until it's closed, and `close`
+        // unlinks the node before it frees it. `ACTIVE` is linked: `on_fire` marks the popped node
+        // `FIRED` first thing.
         unsafe {
-            timer_all_mut().update(&raw mut (*(*handle).node).event_loop_timer, &due);
+            timer_all().update(&raw mut (*(*handle).node).event_loop_timer, &due);
             (*handle).ref_state.set_active(true);
         }
     }
@@ -880,14 +889,14 @@ impl UvTimer {
     /// # Safety
     /// Same as [`Self::arm`].
     unsafe fn stop(handle: *mut UvTimer) {
-        // SAFETY: fn contract.
+        // SAFETY: fn contract. `ACTIVE` is linked (see `arm`).
         unsafe {
             if !(*handle).ref_state.active {
                 return;
             }
             let event_loop_timer = &raw mut (*(*handle).node).event_loop_timer;
             if (*event_loop_timer).state == EventLoopTimerState::ACTIVE {
-                timer_all_mut().remove(event_loop_timer);
+                timer_all().remove(event_loop_timer);
             }
             (*handle).ref_state.set_active(false);
         }

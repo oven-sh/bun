@@ -50,7 +50,7 @@ impl Crypto {
     pub(crate) fn random_uuid(&self) -> BunString {
         let (str, bytes) = BunString::create_uninitialized_latin1(36);
 
-        let uuid = VirtualMachine::get().as_mut().rare_data().next_uuid();
+        let uuid = VirtualMachine::get().rare_data().next_uuid();
 
         uuid.print(
             (&mut bytes[0..36])
@@ -91,12 +91,7 @@ fn random_data(global: &JSGlobalObject, slice: &mut [u8]) {
         0 => {}
         // 512 bytes or less we reuse from the same cache as UUID generation.
         1..=ENTROPY_CACHE_FAST_PATH_MAX => {
-            let src = global
-                .bun_vm()
-                .as_mut()
-                .rare_data()
-                .entropy_slice(slice.len());
-            slice[..src.len()].copy_from_slice(src);
+            global.bun_vm().rare_data().fill_entropy(slice);
         }
         _ => {
             bun_boringssl_sys::rand_bytes(slice);
@@ -165,11 +160,9 @@ pub(crate) fn random_uuid_v7<'a>(
         ),
     };
 
-    let entropy = VirtualMachine::get().as_mut().rare_data().entropy_slice(10);
-
     let uuid = UUID7::init(
         timestamp,
-        <[u8; 10]>::try_from(&entropy[0..10]).unwrap(),
+        VirtualMachine::get().rare_data().entropy::<10>(),
         timestamp_source,
     );
 

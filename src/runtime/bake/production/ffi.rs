@@ -5,7 +5,7 @@ use super::*;
 /// unsafe function, must be run outside of the event loop
 /// fails with `JSError` on exception
 pub(super) fn load_module(
-    vm: *mut VirtualMachine,
+    vm: &VirtualMachine,
     global: &JSGlobalObject,
     key: JSValue,
 ) -> crate::Result<JSValue> {
@@ -18,29 +18,20 @@ pub(super) fn load_module(
     // S012: `JSInternalPromise` (= `JSPromise`) is an `opaque_ffi!` ZST —
     // safe `*mut → &mut` deref via the const-asserted accessor.
     jsc::JSInternalPromise::opaque_mut(promise).set_handled();
-    // Note: we take `*mut VirtualMachine` (not `&VirtualMachine`) so the provenance
-    // permits mutation — casting a `&T` to `*mut T` and writing through it is
-    // UB. The raw pointer flows from `VirtualMachine::init_bake` unchanged.
-    //
-    let _ = vm;
-    let vm_ref = VirtualMachine::get();
-    vm_ref
-        .as_mut()
-        .wait_for_promise(AnyPromise::Internal(promise))
-        .map_err(|stopped| js_err(stopped.throw(vm_ref.global())))?;
+    vm.wait_for_promise(AnyPromise::Internal(promise))
+        .map_err(|stopped| js_err(stopped.throw(global)))?;
     // TODO: Specially draining microtasks here because `waitForPromise` has a
     //       bug which forgets to do it, but I don't want to fix it right now as it
     //       could affect a lot of the codebase. This should be removed.
-    if vm_ref.event_loop_mut().drain_microtasks().is_err() {
+    if vm.event_loop().drain_microtasks().is_err() {
         Global::crash();
     }
-    let jsc_vm = vm_ref.as_mut().jsc_vm_mut();
-    match jsc::JSInternalPromise::opaque_mut(promise).unwrap(jsc_vm, UnwrapMode::MarkHandled) {
+    match jsc::JSInternalPromise::opaque_mut(promise).unwrap(vm.jsc_vm(), UnwrapMode::MarkHandled) {
         Unwrapped::Pending => unreachable!(),
         Unwrapped::Fulfilled(_) => {
             jsc::from_js_host_call(global, || BakeGetModuleNamespace(global, key)).map_err(js_err)
         }
-        Unwrapped::Rejected(err) => Err(js_err(vm_ref.global().throw_value(err))),
+        Unwrapped::Rejected(err) => Err(js_err(global.throw_value(err))),
     }
 }
 

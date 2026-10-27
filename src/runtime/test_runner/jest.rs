@@ -196,7 +196,7 @@ impl<'a> TestRunner<'a> {
         bun_core::Timespec { sec: active_file.timer.next.sec, nsec: active_file.timer.next.nsec }
     }
 
-    pub(crate) fn remove_active_timeout(&mut self, vm: &mut VirtualMachine) {
+    pub(crate) fn remove_active_timeout(&mut self, vm: &VirtualMachine) {
         let Some(active_file) = self.bun_test_root.active_file.as_ref() else {
             return;
         };
@@ -211,7 +211,9 @@ impl<'a> TestRunner<'a> {
             return;
         }
         let _ = vm;
-        bun_test::vm_timer().remove(&raw mut active_file.timer);
+        // SAFETY: `ACTIVE` is linked: `bun_test_timeout_callback` marks the popped node `PENDING`
+        // first thing.
+        unsafe { crate::jsc_hooks::timer_all().remove(&raw mut active_file.timer) };
     }
 
 
@@ -477,7 +479,7 @@ pub(crate) fn jest(cx: &mut JsScope<'_>, path: Option<&[u8]>) -> JsResult<JSValu
     let global_object = cx.global();
     let vm = global_object.bun_vm();
 
-    if vm.is_in_preload || Jest::runner().is_none() {
+    if vm.is_in_preload.get() || Jest::runner().is_none() {
         // in preload, no arguments needed
     } else {
         let Some(path) = path else {
@@ -572,7 +574,7 @@ pub(crate) mod on_unhandled_rejection {
     use super::*;
 
     pub(crate) fn on_unhandled_rejection(
-        jsc_vm: &mut VirtualMachine,
+        jsc_vm: &VirtualMachine,
         global_object: &JSGlobalObject,
         rejection: JSValue,
     ) {
@@ -623,11 +625,11 @@ pub(crate) mod on_unhandled_rejection {
             return;
         }
 
-        // SAFETY: `on_unhandled_rejection_exception_list` is either None or a
-        // live `NonNull<ExceptionList>` owned by the VM; reborrow as `&mut`
-        // for the duration of `run_error_handler` (single-threaded JS thread).
+        // SAFETY: whoever set the list owns it, clears the slot before the list dies, and does
+        // not touch the list while it is in the slot.
         let exception_list = jsc_vm
             .on_unhandled_rejection_exception_list
+            .get()
             .map(|p| unsafe { &mut *p.as_ptr() });
         bun_test::print_error(jsc_vm, global_object, rejection, exception_list);
     }

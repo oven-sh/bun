@@ -23,19 +23,13 @@ pub(crate) mod callbacks {
     pub(crate) fn set(global: &JSGlobalObject, holder: JSValue) {
         global
             .bun_vm()
-            .as_mut()
             .rare_data()
             .node_quic_callbacks
             .set(global, holder);
     }
 
     pub(crate) fn get(global: &JSGlobalObject, name: &str) -> Option<JSValue> {
-        let holder = global
-            .bun_vm()
-            .as_mut()
-            .rare_data()
-            .node_quic_callbacks
-            .get()?;
+        let holder = global.bun_vm().rare_data().node_quic_callbacks.get()?;
         match holder.get(global, name) {
             Ok(Some(value)) if value.is_callable() => Some(value),
             _ => None,

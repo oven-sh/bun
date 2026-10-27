@@ -450,11 +450,6 @@ impl SourceMapStore {
         Self::default()
     }
 
-    #[inline]
-    fn timer_all<'a>() -> &'a mut crate::timer::All {
-        crate::jsc_hooks::timer_all_mut()
-    }
-
     pub(crate) fn put_or_increment_ref_count(
         &mut self,
         script_id: Key,
@@ -534,7 +529,12 @@ impl SourceMapStore {
                 if self.weak_ref_sweep_timer.state == EventLoopTimerState::ACTIVE
                     && self.weak_ref_sweep_timer.next.sec == first.expire
                 {
-                    Self::timer_all().remove(core::ptr::addr_of_mut!(self.weak_ref_sweep_timer));
+                    // SAFETY: `ACTIVE` is linked: `sweep_weak_refs` takes the popped node off it
+                    // before it returns, and does not come here.
+                    unsafe {
+                        crate::jsc_hooks::timer_all()
+                            .remove(core::ptr::addr_of_mut!(self.weak_ref_sweep_timer));
+                    }
                 }
             }
         }
@@ -549,7 +549,12 @@ impl SourceMapStore {
 
         if self.weak_ref_sweep_timer.state != EventLoopTimerState::ACTIVE {
             map_log!("arming weak ref sweep timer");
-            Self::timer_all().update(core::ptr::addr_of_mut!(self.weak_ref_sweep_timer), &expire);
+            // SAFETY: not `ACTIVE`, so unlinked (as above). `self` is the `source_maps` field of
+            // the boxed `DevServer` (what `owner()` relies on), whose `Drop` unlinks the node.
+            unsafe {
+                crate::jsc_hooks::timer_all()
+                    .update(core::ptr::addr_of_mut!(self.weak_ref_sweep_timer), &expire);
+            }
         }
         map_log!("addWeakRef {:x}, ref_count: {}", key.get(), entry_ref_count);
     }
@@ -610,16 +615,13 @@ impl SourceMapStore {
     /// # Safety
     /// `timer` must point to the `weak_ref_sweep_timer` field of a live
     /// `SourceMapStore` that is itself the `source_maps` field of a live
-    /// heap-allocated `DevServer`.
-    // `timer` is never dereferenced in Rust — `from_timer_ptr` only does
-    // `container_of` pointer arithmetic to recover the parent `SourceMapStore`;
-    // the deref is of that recovered parent pointer, not the parameter.
-    pub(crate) fn sweep_weak_refs(
+    /// heap-allocated `DevServer` that nothing borrows, and the timer heap has just popped it.
+    pub(crate) unsafe fn sweep_weak_refs(
         timer: *mut EventLoopTimer,
         now_ts: &bun_event_loop::EventLoopTimer::Timespec,
     ) {
         map_log!("sweepWeakRefs");
-        // SAFETY: `timer` points to the `weak_ref_sweep_timer` field of a SourceMapStore.
+        // SAFETY: fn contract.
         let store: &mut SourceMapStore = unsafe { &mut *SourceMapStore::from_timer_ptr(timer) };
         // SAFETY: invariant of `owner()` — store is the `source_maps` field of a live DevServer.
         debug_assert!(unsafe { (*store.owner()).magic } == Magic::Valid);
@@ -639,13 +641,17 @@ impl SourceMapStore {
             } else {
                 store.weak_refs.unget(&[item]).expect("unreachable"); // space exists since the last item was just removed.
                 store.weak_ref_sweep_timer.state = EventLoopTimerState::FIRED;
-                Self::timer_all().update(
-                    core::ptr::addr_of_mut!(store.weak_ref_sweep_timer),
-                    &Timespec {
-                        sec: item.expire + 1,
-                        nsec: 0,
-                    },
-                );
+                // SAFETY: popped and marked `FIRED`, so unlinked. `DevServer::drop` unlinks it
+                // before the box that holds the store is freed.
+                unsafe {
+                    crate::jsc_hooks::timer_all().update(
+                        core::ptr::addr_of_mut!(store.weak_ref_sweep_timer),
+                        &Timespec {
+                            sec: item.expire + 1,
+                            nsec: 0,
+                        },
+                    );
+                }
                 // SAFETY: invariant of `owner()`.
                 unsafe { (*store.owner()).emit_memory_visualizer_message_if_needed() };
                 return;

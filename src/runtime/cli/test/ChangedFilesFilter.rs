@@ -25,8 +25,6 @@ use bun_core::{self, Global, Output, env_var, fmt as bun_fmt};
 use bun_core::{ZBox, ZStr, getenv_z};
 #[cfg(not(windows))]
 use bun_jsc as jsc;
-#[cfg(windows)]
-use bun_jsc::EventLoopHandle;
 use bun_jsc::virtual_machine::VirtualMachine;
 #[cfg(not(windows))]
 use bun_paths::SEP;
@@ -63,7 +61,7 @@ pub(crate) struct Result<'a> {
 /// order) and the new length is returned via `Result.test_files`.
 pub(crate) fn filter<'a>(
     ctx: &Command::Context,
-    vm: &mut VirtualMachine,
+    vm: &VirtualMachine,
     test_files: &'a mut [Interned],
     changed_since: &[u8],
 ) -> core::result::Result<Result<'a>, crate::Error> {
@@ -132,7 +130,7 @@ pub(crate) fn filter<'a>(
     let log: &'static mut bun_ast::Log = arena.alloc(bun_ast::Log::new());
 
     let scan_transpiler: &'static mut Transpiler<'static> = arena.alloc(
-        match Transpiler::init(arena, log, ctx.args.clone(), Some(vm.transpiler.env)) {
+        match Transpiler::init(arena, log, ctx.args.clone(), Some(vm.transpiler().env)) {
             Ok(t) => t,
             Err(err) => {
                 Output::err_generic(
@@ -163,12 +161,12 @@ pub(crate) fn filter<'a>(
 
     // Stack-owned Mini loop so its tasks/concurrent_tasks queues drop at
     // scope exit; the arena bulk-free skips Drop.
-    let mut event_loop = bun_event_loop::AnyEventLoop::init();
+    let event_loop = bun_event_loop::AnyEventLoop::init();
 
     let mut bundle = match BundleV2::scan_module_graph_from_cli(
         scan_transpiler,
         arena,
-        Some(core::ptr::NonNull::from(&mut event_loop)),
+        Some(core::ptr::NonNull::from(&event_loop)),
         &entry_points,
     ) {
         Ok(b) => b,
@@ -589,9 +587,7 @@ fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {
         // Windows rather than spinning up a MiniEventLoop.
         #[cfg(windows)]
         windows: spawn_sync::WindowsOptions {
-            // `init` takes the erased `*mut ()` event-loop pointer
-            // directly, so unwrap it here.
-            loop_: EventLoopHandle::init(VirtualMachine::get().event_loop().cast()),
+            loop_: VirtualMachine::get().event_loop().handle(),
             ..Default::default()
         },
         ..Default::default()

@@ -19,7 +19,7 @@ extern "C" fn Bun__UVSignalHandle__init(
 
     // SAFETY: `signal` is a freshly heap-allocated, properly aligned uv_signal_t and
     // `uv_loop()` returns the VM's live libuv loop.
-    let mut rc = unsafe { libuv::uv_signal_init(global.bun_vm().uv_loop(), signal) };
+    let mut rc = unsafe { libuv::uv_signal_init(global.bun_vm().uv_loop().as_ptr(), signal) };
     if rc.is_err() {
         // SAFETY: `signal` was just allocated via heap::into_raw above and never handed out.
         drop(unsafe { bun_core::heap::take(signal) });

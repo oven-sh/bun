@@ -28,15 +28,6 @@ macro_rules! group_begin {
 }
 pub(crate) use group_begin;
 
-/// Recover this thread's `timer::All` heap (jsc/runtime crate cycle: `vm.timer` is `()` in
-/// the low-tier `VirtualMachine`; the real value lives in `RuntimeState`).
-#[inline]
-pub(super) fn vm_timer<'a>() -> &'a mut crate::timer::All {
-    // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`;
-    // single JS thread, raw-ptr-per-field re-entry pattern (jsc_hooks.rs).
-    unsafe { &mut (*crate::jsc_hooks::runtime_state()).timer }
-}
-
 /// `bun.timespec.orderIgnoreEpoch` — epoch == "no timeout", treated as +∞.
 /// Local helper so it can compare `bun_core::Timespec` against the
 /// event-loop crate's distinct `Timespec` (converted by field).
@@ -51,8 +42,6 @@ fn order_ignore_epoch(a: &Timespec, b: &ElTimespec) -> core::cmp::Ordering {
 /// can box callbacks.
 #[inline]
 fn strong_create(value: JSValue) -> Strong {
-    // SAFETY: `VirtualMachine::get()` is the live per-thread VM; `global`
-    // is non-null after VM init.
     let global = VirtualMachine::get().global();
     Strong::create(value, global)
 }
@@ -108,7 +97,7 @@ pub(crate) mod js_fns {
         signature: Signature<'_>,
     ) -> JsResult<BunTestPtr> {
         let bun_test_root = get_test_root(global_this, signature)?;
-        if global_this.bun_vm().is_in_preload {
+        if global_this.bun_vm().is_in_preload.get() {
             return Err(global_this.throw(format_args!(
                 "Cannot use {} during preload.",
                 signature
@@ -554,7 +543,7 @@ impl BunTestRoot {
     }
 
     pub(crate) fn get_active_file_unless_in_preload(&mut self, vm: &VirtualMachine) -> Option<&mut BunTest> {
-        if vm.is_in_preload {
+        if vm.is_in_preload.get() {
             return None;
         }
         // SAFETY: single-threaded; caller (js_fns::generic_hook) holds the only
@@ -819,7 +808,7 @@ impl BunTest {
         } else {
             // error is only reported for the first done() call
             if was_error {
-                let _ = global_this.bun_vm().as_mut().uncaught_exception(global_this, value, false);
+                let _ = global_this.bun_vm().uncaught_exception(global_this, value, false);
             }
         }
         this.called.set(true);
@@ -882,7 +871,7 @@ impl BunTest {
     }
 
     pub(crate) fn run_next_tick(weak: &BunTestPtrWeak, global_this: &JSGlobalObject, phase: RefDataValue) {
-        let vm = global_this.bun_vm().as_mut();
+        let vm = global_this.bun_vm();
         // Check liveness before allocating so the early return doesn't strand a Box.
         let Some(strong) = weak.upgrade() else {
             debug_assert!(false); // shouldn't be calling runNextTick after moving on to the next file
@@ -975,14 +964,19 @@ impl BunTest {
             bun_core::scoped_log!(bun_test_group, "-> setting timer to {:?}", min_timeout);
             if self.timer.next != ElTimespec::EPOCH {
                 bun_core::scoped_log!(bun_test_group, "-> removing existing timer");
-                vm_timer().remove(&raw mut self.timer);
+                // SAFETY: `next` is not `EPOCH` only while the node is linked:
+                // `bun_test_timeout_callback`, which runs once it is popped or
+                // `remove_active_timeout` has unlinked it, resets `next` first thing.
+                unsafe { crate::jsc_hooks::timer_all().remove(&raw mut self.timer) };
             }
             // `EventLoopTimer.next` uses the event-loop crate's local
             // `Timespec` (distinct from `bun_core::Timespec`); convert by field.
             self.timer.next = ElTimespec { sec: min_timeout.sec, nsec: min_timeout.nsec };
             if self.timer.next != ElTimespec::EPOCH {
                 bun_core::scoped_log!(bun_test_group, "-> inserting timer");
-                vm_timer().insert(&raw mut self.timer);
+                // SAFETY: unlinked: `next` was `EPOCH`, or it was removed above. `self` is the
+                // payload of an `Rc<BunTestCell>` (`run` got it from one), and `Drop` unlinks the node.
+                unsafe { crate::jsc_hooks::timer_all().insert(&raw mut self.timer) };
                 if debug::group::get_log_enabled() {
                     let duration = min_timeout.since_now_force_real_time();
                     bun_core::scoped_log!(bun_test_group, "-> timer duration: {}", duration);
@@ -1130,7 +1124,7 @@ impl BunTest {
         // SAFETY: `UnsafeCell`-derived; sole `&mut` at this point (before JS re-entry).
         unsafe { (*this).update_min_timeout(global_this, timeout) };
         let args_slice: &[JSValue] = if !done_arg.is_empty() { core::slice::from_ref(&done_arg) } else { &[] };
-        let result: JSValue = match vm.event_loop_mut().run_callback_with_result_and_forcefully_drain_microtasks(bun_event_loop::ContextId::NONE, 
+        let result: JSValue = match vm.event_loop().run_callback_with_result_and_forcefully_drain_microtasks(bun_event_loop::ContextId::NONE, 
             cfg_callback,
             global_this,
             JSValue::UNDEFINED,
@@ -1162,9 +1156,9 @@ impl BunTest {
                 }
             }
 
-            let prev_unhandled_count = vm.unhandled_error_counter;
+            let prev_unhandled_count = vm.unhandled_error_counter.get();
             let _ = global_this.handle_rejected_promises();
-            if vm.unhandled_error_counter == prev_unhandled_count {
+            if vm.unhandled_error_counter.get() == prev_unhandled_count {
                 break;
             }
         }
@@ -1320,16 +1314,15 @@ impl BunTest {
             Output::flush();
         }
 
-        let vm = global_this.bun_vm().as_mut();
+        let vm = global_this.bun_vm();
         if !failure_ctx.is_null() {
-            vm.on_print_error_zig_exception =
-                Some(crate::cli::test_command::TestFailure::record_cb);
-            vm.on_print_error_zig_exception_ctx = failure_ctx;
+            vm.on_print_error_zig_exception.set(Some(crate::cli::test_command::TestFailure::record_cb));
+            vm.on_print_error_zig_exception_ctx.set(failure_ctx);
         }
         print_error(vm, global_this, exception, None);
         if !failure_ctx.is_null() {
-            vm.on_print_error_zig_exception = None;
-            vm.on_print_error_zig_exception_ctx = core::ptr::null_mut();
+            vm.on_print_error_zig_exception.set(None);
+            vm.on_print_error_zig_exception_ctx.set(core::ptr::null_mut());
         }
 
         if matches!(
@@ -1346,7 +1339,7 @@ impl BunTest {
 
 /// Prints `error`, then prints any exception the error's getters or `toString` threw during the print.
 pub(crate) fn print_error(
-    vm: &mut VirtualMachine,
+    vm: &VirtualMachine,
     global_this: &JSGlobalObject,
     error: JSValue,
     exception_list: Option<&mut bun_jsc::virtual_machine::ExceptionList>,
@@ -1373,7 +1366,9 @@ impl Drop for BunTest {
 
         if self.timer.state == EventLoopTimerState::ACTIVE {
             // must remove an active timer to prevent UAF (if the timer were to trigger after BunTest deinit)
-            vm_timer().remove(&raw mut self.timer);
+            // SAFETY: `ACTIVE` is linked: `bun_test_timeout_callback` marks the popped node
+            // `PENDING` first thing.
+            unsafe { crate::jsc_hooks::timer_all().remove(&raw mut self.timer) };
         }
 
         for entry in self.extra_execution_entries.drain(..) {

@@ -47,7 +47,6 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     unsafe {
         w!(magic, Magic::Valid);
         w!(root, Box::from(root));
-        w!(vm, bun_ptr::BackRef::new(options.vm));
         w!(vm_handle, options.vm.handle());
         w!(server, None);
         w!(directory_watchers, DirectoryWatchStore::default());
@@ -551,7 +550,6 @@ impl Drop for DevServer {
                 root: _,
                 inspector_server_id: _,
                 configuration_hash_key: _,
-                vm: _,
                 vm_handle: _,
                 server: _,
                 router: _,
@@ -618,7 +616,8 @@ impl Drop for DevServer {
 
         if self.memory_visualizer_timer.state == EventLoopTimerState::ACTIVE {
             let timer_ptr: *mut EventLoopTimer = &raw mut self.memory_visualizer_timer;
-            self.timer_heap().remove(timer_ptr);
+            // SAFETY: `ACTIVE` is linked: the handler marks the popped node `FIRED` first thing.
+            unsafe { crate::jsc_hooks::timer_all().remove(timer_ptr) };
         }
         self.graph_safety_lock.lock();
         // Hand ownership of the heap allocation to the watcher thread (which frees it in
@@ -658,7 +657,9 @@ impl Drop for DevServer {
         }
         if self.source_maps.weak_ref_sweep_timer.state == EventLoopTimerState::ACTIVE {
             let timer_ptr: *mut EventLoopTimer = &raw mut self.source_maps.weak_ref_sweep_timer;
-            self.timer_heap().remove(timer_ptr);
+            // SAFETY: `ACTIVE` is linked: `sweep_weak_refs` takes the popped node off it before
+            // it returns, and does not drop the server.
+            unsafe { crate::jsc_hooks::timer_all().remove(timer_ptr) };
         }
 
         // `Watcher::shutdown` serialises with `dispatch_file_updates` on
@@ -758,10 +759,7 @@ impl DevServer {
                 return Err(err);
             }
             Err(err) => {
-                // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime;
-                // `print_error_like_object_to_console` needs `&mut VM`, so cast
-                // the shared borrow through a raw pointer (single-threaded JS).
-                self.vm_mut()
+                self.vm()
                     .print_error_like_object_to_console(global.take_exception(err));
                 panic!("Server runtime failed to start. The above error is always a bug in Bun");
             }

@@ -551,11 +551,7 @@ pub(crate) type BodyHiveHandle = bun_collections::HiveRefHandle<Value, POOL_SIZE
 /// Moves `value` into a pooled `HiveRef` slot and returns an owning handle
 /// (ref_count = 1).
 pub(crate) fn hive_alloc(value: Value) -> BodyHiveHandle {
-    let state = crate::jsc_hooks::runtime_state();
-    debug_assert!(!state.is_null(), "hive_alloc before init_runtime_state");
-    // SAFETY: `state` is the live boxed RuntimeState; `body_value_pool` is a
-    // heap-stable `Box<HiveAllocator>` for the VM lifetime.
-    let pool = unsafe { &raw const **(*state).body_value_pool };
+    let pool = &raw const **crate::jsc_hooks::runtime_state().body_value_pool;
     // SAFETY: `pool` outlives every handle (process lifetime).
     unsafe { BodyHiveHandle::new(value, pool) }
 }
@@ -1184,7 +1180,6 @@ impl Value {
                 new_blob
             }
             Value::InternalBlob(ib) => {
-                // SAFETY: VirtualMachine::get() returns the live per-thread VM.
                 let global = VirtualMachine::get().global();
                 let new_blob = Blob::init(
                     ib.to_owned_slice(),
@@ -1203,7 +1198,6 @@ impl Value {
                 // released exactly once below.
                 let _ = core::mem::ManuallyDrop::new(core::mem::replace(self, Value::Used));
                 let wtf_ref = wtf_impl(&wtf);
-                // SAFETY: VirtualMachine::get() returns the live per-thread VM.
                 let global = VirtualMachine::get().global();
                 let new_blob = Blob::init(wtf_ref.to_utf8().into_vec(), global);
                 // Release the +1 the body held.

@@ -7,7 +7,7 @@
 //!
 //! `#[unsafe(no_mangle)] extern "C"` thunks are emitted by
 //! `src/codegen/generate-host-exports.ts` from the `// HOST_EXPORT(Sym, c)`
-//! markers; the bodies take safe `&mut VirtualMachine` / `&BunString` borrows.
+//! markers; the bodies take safe `&VirtualMachine` / `&BunString` borrows.
 
 use core::ffi::c_void;
 
@@ -46,8 +46,9 @@ unsafe extern "C" {
     fn DevServerSourceProvider__getSourceMapJSON(
         this: *const DevServerSourceProvider,
     ) -> DevServerSourceMapData;
-    fn BakeGlobalObject__isBakeGlobalObject(global: *mut JSGlobalObject) -> bool;
-    fn BakeGlobalObject__getPerThreadData(global: *mut JSGlobalObject) -> *mut c_void;
+    safe fn BakeGlobalObject__isBakeGlobalObject(global: &JSGlobalObject) -> bool;
+    /// `global` must be a `Bake::GlobalObject`.
+    fn BakeGlobalObject__getPerThreadData(global: &JSGlobalObject) -> *mut c_void;
 }
 
 impl SourceProvider for BakeSourceProvider {
@@ -68,11 +69,14 @@ impl SourceProvider for BakeSourceProvider {
     fn get_external_data(&self, source_filename: &[u8]) -> Option<&[u8]> {
         // The VM the provider was created in, not the calling thread's: a stack trace may be remapped from the collector
         // thread, which has no VM of its own (its end phase runs with the JS thread parked, so nothing here races it).
-        // SAFETY: opaque FFI handle; the provider does not outlive its VM.
-        let global =
-            unsafe { (*BakeSourceProvider__getBunVM(self).cast::<VirtualMachine>()).global };
-        // SAFETY: `global` is that VM's live JSGlobalObject.
-        if !unsafe { BakeGlobalObject__isBakeGlobalObject(global) } {
+        // SAFETY: opaque FFI handle; the provider does not outlive its VM. Only the `global` field is borrowed, and the
+        // JS thread, its one writer, is this thread or is parked.
+        let global = unsafe {
+            (*BakeSourceProvider__getBunVM(self).cast::<VirtualMachine>())
+                .global
+                .get()
+        }?;
+        if !BakeGlobalObject__isBakeGlobalObject(global) {
             return None;
         }
         // SAFETY: `global` is a `Bake::GlobalObject` (checked above).
@@ -129,7 +133,7 @@ impl SourceProvider for DevServerSourceProvider {
 
 // HOST_EXPORT(Bun__addBakeSourceProviderSourceMap, c)
 pub(crate) fn add_bake_source_provider_source_map(
-    vm: &mut VirtualMachine,
+    vm: &VirtualMachine,
     opaque_source_provider: *mut c_void,
     specifier: &BunString,
 ) {
@@ -144,20 +148,25 @@ pub(crate) fn add_bake_source_provider_source_map(
     );
 }
 
+/// `~SourceProvider` calls this, on whichever thread drops the last reference, so it takes no
+/// `&VirtualMachine`.
+///
+/// # Safety
+/// `vm` is a live VM.
 // HOST_EXPORT(Bun__removeBakeSourceProviderSourceMap, c)
-pub(crate) fn remove_bake_source_provider_source_map(
-    vm: &mut VirtualMachine,
+pub(crate) unsafe fn remove_bake_source_provider_source_map(
+    vm: *const VirtualMachine,
     opaque_source_provider: *mut c_void,
     specifier: &BunString,
 ) {
     let slice = specifier.to_utf8();
-    vm.source_mappings
-        .remove_source_provider(opaque_source_provider, slice.slice());
+    // SAFETY: fn contract. Only the field is borrowed, and it is `Sync`.
+    unsafe { &(*vm).source_mappings }.remove_source_provider(opaque_source_provider, slice.slice());
 }
 
 // HOST_EXPORT(Bun__addDevServerSourceProvider, c)
 pub(crate) fn add_dev_server_source_provider(
-    vm: &mut VirtualMachine,
+    vm: &VirtualMachine,
     opaque_source_provider: *mut c_void,
     specifier: &BunString,
 ) {
@@ -172,13 +181,18 @@ pub(crate) fn add_dev_server_source_provider(
     );
 }
 
+/// `~SourceProvider` calls this, on whichever thread drops the last reference, so it takes no
+/// `&VirtualMachine`.
+///
+/// # Safety
+/// `vm` is a live VM.
 // HOST_EXPORT(Bun__removeDevServerSourceProvider, c)
-pub(crate) fn remove_dev_server_source_provider(
-    vm: &mut VirtualMachine,
+pub(crate) unsafe fn remove_dev_server_source_provider(
+    vm: *const VirtualMachine,
     opaque_source_provider: *mut c_void,
     specifier: &BunString,
 ) {
     let slice = specifier.to_utf8();
-    vm.source_mappings
-        .remove_source_provider(opaque_source_provider, slice.slice());
+    // SAFETY: fn contract. Only the field is borrowed, and it is `Sync`.
+    unsafe { &(*vm).source_mappings }.remove_source_provider(opaque_source_provider, slice.slice());
 }

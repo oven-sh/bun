@@ -375,11 +375,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 Some(unsafe { &mut *std::ptr::from_mut::<DotEnv::Loader>(env) }),
                 Some(cwd),
             );
-            // SAFETY: `init_global` returns the thread-local singleton as a raw
-            // pointer; reborrow `&'static mut` for the
-            // duration of `init_and_run_from_source` — single-threaded mini loop,
-            // no aliasing `&mut` exists across this call.
-            let mini = unsafe { &mut *mini };
             let code = match crate::shell::Interpreter::init_and_run_from_source(
                 ctx,
                 mini,
@@ -958,12 +953,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             // SAFETY: `bundle.env` points to the process-lifetime DotEnv
             // singleton (set by `Transpiler::init`).
             Some(unsafe { &mut *bundle.env }),
-            None,
+            Some(top_level_dir),
         );
-        // SAFETY: `init_global` returns the thread-local singleton; single-
-        // threaded mini loop, no aliasing `&mut` exists across this call.
-        let mini = unsafe { &mut *mini };
-        mini.top_level_dir = Box::<[u8]>::from(top_level_dir);
 
         // `initAndRunFromFile`: read source then hand off to the interpreter.
         let src = sys::File::read_from(Fd::cwd(), entry_path)?;
@@ -1039,7 +1030,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         });
         bun_ast::initialize_store();
 
-        let vm_ptr = VirtualMachine::init(VmInitOptions {
+        let vm = VirtualMachine::init(VmInitOptions {
             transform_options: ctx.args.clone(),
             log: ::core::ptr::NonNull::new(ctx.log),
             debugger: ::core::mem::take(&mut ctx.runtime_options.debugger),
@@ -1050,17 +1041,14 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             is_main_thread: true,
             ..Default::default()
         })?;
-        // SAFETY: `init` returns the unique freshly-boxed VM on this thread.
-        let vm = unsafe { &mut *vm_ptr };
 
-        // `vm.preload`/`vm.argv` are `Vec<Box<[u8]>>` on both sides;
-        // hand the CLI's vectors over wholesale (process-lifetime, never freed).
-        vm.preload = std::mem::take(&mut ctx.preloads);
-        vm.argv = std::mem::take(&mut ctx.passthrough);
+        // Hand the CLI's vectors over wholesale (process-lifetime, never freed).
+        vm.preload.replace(std::mem::take(&mut ctx.preloads));
+        let _ = vm.argv.set(std::mem::take(&mut ctx.passthrough));
         // `vm.dns_result_order` is a `u8` until the b2-cycle widens
         // it to `bun_dns::Order`; the enum is `#[repr(u8)]` so `as u8` is exact.
-        vm.dns_result_order =
-            bun_dns::Order::from_string_or_die(&ctx.runtime_options.dns_result_order) as u8;
+        vm.dns_result_order
+            .set(bun_dns::Order::from_string_or_die(&ctx.runtime_options.dns_result_order) as u8);
         // `vm.main` is a BACKREF into these bytes and the runner never returns,
         // so the allocation is process-lifetime by construction.
         let (entry, loader): (Option<&'static [u8]>, Option<Loader>) = match main {
@@ -1085,12 +1073,14 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                     ctx.runtime_options.eval.script.len(),
                 )
             };
-            vm.module_loader.eval_source =
-                Some(Box::new(bun_ast::Source::init_path_string(entry, script)));
-            vm.module_loader.interactive_eval_script =
-                ctx.runtime_options.eval.interactive_script.take();
+            vm.module_loader
+                .set_eval_source(Box::new(bun_ast::Source::init_path_string(entry, script)));
+            if let Some(script) = ctx.runtime_options.eval.interactive_script.take() {
+                vm.module_loader.set_interactive_eval_script(script);
+            }
             if ctx.runtime_options.eval.eval_and_print {
-                vm.transpiler.options.dead_code_elimination = false;
+                // SAFETY: nothing else borrows the transpiler: no script has run yet.
+                unsafe { vm.transpiler_mut() }.options.dead_code_elimination = false;
             }
         } else if let Some(entry) = entry
             && !ctx.runtime_options.cron_title.is_empty()
@@ -1126,10 +1116,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             eval_path.extend_from_slice(EVAL_TRIGGER);
             let heap_entry: &'static [u8] = runner_arena().alloc_slice_copy(&eval_path);
 
-            vm.module_loader.eval_source = Some(Box::new(bun_ast::Source::init_path_string(
-                heap_entry,
-                cron_script,
-            )));
+            vm.module_loader
+                .set_eval_source(Box::new(bun_ast::Source::init_path_string(
+                    heap_entry,
+                    cron_script,
+                )));
             // Override what
             // `Run::start` will pass to `vm.load_entry_point`.
             run_entry = Some(heap_entry);
@@ -1137,16 +1128,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         }
 
         // ctx → transpiler/resolver option mapping.
-        // reshaped for borrowck — `b` borrows `vm.transpiler`
-        // exclusively; `fail_with_build_error(vm)` needs the whole `vm`, so
-        // capture the defines result, drop `b`, then branch.
-        let defines_ok = {
-            let b = &mut vm.transpiler;
-            Self::wire_transpiler_from_ctx(b, ctx);
-            b.options.env.behavior = api::DotEnvBehavior::LoadAllWithoutInlining;
-            b.configure_defines().is_ok()
-        };
-        if !defines_ok {
+        // SAFETY: nothing else borrows the transpiler: no script has run yet.
+        let b = unsafe { vm.transpiler_mut() };
+        Self::wire_transpiler_from_ctx(b, ctx);
+        b.options.env.behavior = api::DotEnvBehavior::LoadAllWithoutInlining;
+        if b.configure_defines().is_err() {
             crate::run_main::fail_with_build_error(vm);
         }
 
@@ -1162,13 +1148,12 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             }
         }
 
-        // SAFETY: `vm.log` set in `init`; `b.env` is the long-lived
-        // `DotEnv::Loader` allocated/retained for the VM (never null after
-        // `Transpiler::init`).
-        bun_http::async_http::load_env(unsafe { vm.log.unwrap().as_mut() }, vm.env_loader());
+        // SAFETY: nothing else borrows the log: no script has run yet, and `b` is not used again.
+        let log = unsafe { vm.log_mut() }.unwrap();
+        bun_http::async_http::load_env(log, vm.env_loader());
 
         vm.load_extra_env_and_source_code_printer();
-        vm.is_main_thread = true;
+        vm.is_main_thread.set(true);
         bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
 
         bun_http::EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI.store(
@@ -1182,22 +1167,22 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         Self::do_preconnect(&ctx.runtime_options.preconnect);
 
         // Only `bun bake` boots with no entry module.
-        vm.main_entry_point = match entry {
+        vm.main_entry_point.set(match entry {
             None => MainEntryPoint::Bake,
             Some(entry)
                 if loader
-                    .unwrap_or_else(|| vm.transpiler.options.loader(paths::extension(entry)))
+                    .unwrap_or_else(|| vm.transpiler().options.loader(paths::extension(entry)))
                     == Loader::Html =>
             {
                 MainEntryPoint::Html
             }
             Some(_) => MainEntryPoint::File,
-        };
+        });
 
         // `ctx.debug.hot_reload` → `vm.hot_reload` (a `u8` until the
         // b2-cycle widens it to `cli::HotReload`); `Run::start` re-reads it
         // from `self.ctx` to drive the hot-reloader enable.
-        vm.hot_reload = ctx.debug.hot_reload;
+        vm.hot_reload.set(ctx.debug.hot_reload);
 
         Run {
             ctx,
@@ -1253,7 +1238,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             &*(std::ptr::from_ref::<bun_standalone_graph::Graph>(graph)
                 as *const (dyn bun_resolver::StandaloneModuleGraph + 'static))
         };
-        let vm_ptr = VirtualMachine::init_with_module_graph(bun_jsc::virtual_machine::Options {
+        let vm = VirtualMachine::init_with_module_graph(bun_jsc::virtual_machine::Options {
             log: std::ptr::NonNull::new(ctx.log),
             args: ctx.args.clone(),
             graph: Some(graph_dyn),
@@ -1267,49 +1252,38 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             ) as u8,
             ..Default::default()
         })?;
-        // SAFETY: `init_with_module_graph` returns the unique freshly-boxed VM
-        // on this thread.
-        let vm = unsafe { &mut *vm_ptr };
         if graph.runtime_options.jit_policy > 1.0 {
             vm.jsc_vm()
                 .set_startup_jit_deferral_scale(f64::from(graph.runtime_options.jit_policy));
         }
 
-        vm.preload = std::mem::take(&mut ctx.preloads);
-        vm.argv = std::mem::take(&mut ctx.passthrough);
+        vm.preload.replace(std::mem::take(&mut ctx.preloads));
+        let _ = vm.argv.set(std::mem::take(&mut ctx.passthrough));
 
-        // `vm.main` is a BACKREF (`*const [u8]`) into `entry_path`'s heap
-        // buffer and the runner never returns, so the allocation is
-        // process-lifetime by construction.
+        // The runner never returns, so the allocation is process-lifetime by construction.
         let entry: &'static [u8] = Box::leak(entry_path);
         vm.set_main(Some(entry));
 
-        // reshaped for borrowck — `b` borrows `vm.transpiler`
-        // exclusively; `fail_with_build_error(vm)` needs the whole `vm`, so
-        // capture the defines result, drop `b`, then branch.
-        let defines_ok = {
-            let b = &mut vm.transpiler;
-            Self::wire_transpiler_from_ctx(b, ctx);
+        // SAFETY: nothing else borrows the transpiler: no script has run yet.
+        let b = unsafe { vm.transpiler_mut() };
+        Self::wire_transpiler_from_ctx(b, ctx);
 
-            // `serve_plugins` / `bunfig_path` (standalone-only).
-            b.options.serve_plugins = ctx.args.serve_plugins.take().map(Vec::into_boxed_slice);
-            b.options.bunfig_path = ::core::mem::take(&mut ctx.args.bunfig_path);
+        // `serve_plugins` / `bunfig_path` (standalone-only).
+        b.options.serve_plugins = ctx.args.serve_plugins.take().map(Vec::into_boxed_slice);
+        b.options.bunfig_path = ::core::mem::take(&mut ctx.args.bunfig_path);
 
-            crate::run_main::apply_standalone_runtime_flags(b, graph);
+        crate::run_main::apply_standalone_runtime_flags(b, graph);
 
-            b.configure_defines().is_ok()
-        };
-        if !defines_ok {
+        if b.configure_defines().is_err() {
             crate::run_main::fail_with_build_error(vm);
         }
 
-        // SAFETY: `vm.log` set in `init`; `b.env` is the long-lived
-        // `DotEnv::Loader` allocated/retained for the VM (never null after
-        // `Transpiler::init`).
-        bun_http::async_http::load_env(unsafe { vm.log.unwrap().as_mut() }, vm.env_loader());
+        // SAFETY: nothing else borrows the log: no script has run yet, and `b` is not used again.
+        let log = unsafe { vm.log_mut() }.unwrap();
+        bun_http::async_http::load_env(log, vm.env_loader());
 
         vm.load_extra_env_and_source_code_printer();
-        vm.is_main_thread = true;
+        vm.is_main_thread.set(true);
         bun_jsc::virtual_machine::IS_MAIN_THREAD_VM.set(true);
 
         bun_http::EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI.store(
@@ -1342,7 +1316,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 /// `RunCommand::boot` / `boot_standalone`.
 pub(crate) struct Run<'a> {
     ctx: &'a ContextData,
-    vm: &'a mut VirtualMachine,
+    vm: &'static VirtualMachine,
     /// `vm.main` already points into these bytes; `'static` because the hot
     /// reloader stores them too (`boot` leaks the `Box<[u8]>`, cron mode uses
     /// the runner arena). `None` for `bun bake`, which has no entry module.
@@ -1370,13 +1344,14 @@ impl Run<'_> {
     /// `start()` sets a non-zero exit code, then route through the VM's
     /// default error printer.
     fn on_unhandled_rejection_before_close(
-        this: &mut VirtualMachine,
+        this: &VirtualMachine,
         _global: &JSGlobalObject,
         value: JSValue,
     ) {
         // SAFETY: BORROW_PARAM ptr set by caller, outlives this call.
         let list = this
             .on_unhandled_rejection_exception_list
+            .get()
             .map(|p| unsafe { &mut *p.as_ptr() });
         this.run_error_handler(value, list);
         ANY_UNHANDLED.store(true, Ordering::Relaxed);
@@ -1386,17 +1361,15 @@ impl Run<'_> {
     /// node-module globals and `--expose-gc` into the JSC global object.
     fn add_conditional_globals(vm: &VirtualMachine, ctx: &ContextData) {
         unsafe extern "C" {
-            fn Bun__ExposeNodeModuleGlobals(global: *const JSGlobalObject);
-            fn JSC__JSGlobalObject__addGc(global: *const JSGlobalObject);
+            safe fn Bun__ExposeNodeModuleGlobals(global: &JSGlobalObject);
+            safe fn JSC__JSGlobalObject__addGc(global: &JSGlobalObject);
         }
         let ro = &ctx.runtime_options;
         if !ro.eval.script.is_empty() {
-            // SAFETY: FFI; `vm.global` is live for the VM lifetime.
-            unsafe { Bun__ExposeNodeModuleGlobals(vm.global) };
+            Bun__ExposeNodeModuleGlobals(vm.global());
         }
         if ro.expose_gc {
-            // SAFETY: FFI; `vm.global` is live for the VM lifetime.
-            unsafe { JSC__JSGlobalObject__addGc(vm.global) };
+            JSC__JSGlobalObject__addGc(vm.global());
         }
     }
 
@@ -1412,8 +1385,9 @@ impl Run<'_> {
         } = self;
         let _api_lock = vm.global().vm().get_api_lock();
 
-        vm.hot_reload = ctx.debug.hot_reload;
-        vm.on_unhandled_rejection = Run::on_unhandled_rejection_before_close;
+        vm.hot_reload.set(ctx.debug.hot_reload);
+        vm.on_unhandled_rejection
+            .set(Run::on_unhandled_rejection_before_close);
 
         // ── CPU profiler ────────────────────────────────────────────────────
         if ctx.runtime_options.cpu_prof.enabled {
@@ -1423,16 +1397,16 @@ impl Run<'_> {
             let name: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(opts.name.as_ref()) };
             // SAFETY: same process-lifetime erasure as `name` above.
             let dir: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(opts.dir.as_ref()) };
-            vm.cpu_profiler_config = Some(bun_jsc::bun_cpu_profiler::CPUProfilerConfig {
-                name,
-                dir,
-                md_format: opts.md_format,
-                json_format: opts.json_format,
-                interval: opts.interval,
-            });
+            vm.cpu_profiler_config
+                .set(Some(bun_jsc::bun_cpu_profiler::CPUProfilerConfig {
+                    name,
+                    dir,
+                    md_format: opts.md_format,
+                    json_format: opts.json_format,
+                    interval: opts.interval,
+                }));
             bun_jsc::bun_cpu_profiler::set_sampling_interval(opts.interval);
-            // SAFETY: `vm.jsc_vm` set in `init`.
-            bun_jsc::bun_cpu_profiler::start_cpu_profiler(unsafe { &mut *vm.jsc_vm });
+            bun_jsc::bun_cpu_profiler::start_cpu_profiler(vm.jsc_vm());
             bun_analytics::features::cpu_profile.fetch_add(1, Ordering::Relaxed);
         }
 
@@ -1443,11 +1417,12 @@ impl Run<'_> {
             let name: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(opts.name.as_ref()) };
             // SAFETY: same process-lifetime erasure as `name` above.
             let dir: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(opts.dir.as_ref()) };
-            vm.heap_profiler_config = Some(bun_jsc::bun_heap_profiler::HeapProfilerConfig {
-                name,
-                dir,
-                text_format: opts.text_format,
-            });
+            vm.heap_profiler_config
+                .set(Some(bun_jsc::bun_heap_profiler::HeapProfilerConfig {
+                    name,
+                    dir,
+                    text_format: opts.text_format,
+                }));
             bun_analytics::features::heap_snapshot.fetch_add(1, Ordering::Relaxed);
         }
 
@@ -1509,13 +1484,9 @@ impl Run<'_> {
         // ── hot-reloader enable ─────────────────────────────────────────────
         match ctx.debug.hot_reload {
             cli::command::HotReload::Hot => {
-                // SAFETY: `vm` is the boxed-and-leaked main-thread VM
-                // (process-lifetime); it outlives the leaked reloader.
+                // SAFETY: no borrow of the transpiler is live here.
                 unsafe {
-                    bun_jsc::hot_reloader::HotReloader::enable_hot_module_reloading(
-                        std::ptr::from_mut::<VirtualMachine>(vm),
-                        entry,
-                    )
+                    bun_jsc::hot_reloader::HotReloader::enable_hot_module_reloading(vm, entry)
                 }
                 // `bun bake` (no entry module) starts again when `bake.config.ts` changes: the
                 // kill signal's JS handlers run first, as in watch mode.
@@ -1526,13 +1497,9 @@ impl Run<'_> {
                 }
             }
             cli::command::HotReload::Watch => {
-                // SAFETY: `vm` is the boxed-and-leaked main-thread VM
-                // (process-lifetime); it outlives the leaked reloader.
+                // SAFETY: no borrow of the transpiler is live here.
                 unsafe {
-                    bun_jsc::hot_reloader::WatchReloader::enable_hot_module_reloading(
-                        std::ptr::from_mut::<VirtualMachine>(vm),
-                        entry,
-                    )
+                    bun_jsc::hot_reloader::WatchReloader::enable_hot_module_reloading(vm, entry)
                 }
                 bun_jsc::posix_signal_handle::enable_watch_mode_signals(
                     ctx.debug.watch_kill_signal,
@@ -1542,9 +1509,7 @@ impl Run<'_> {
         }
 
         if entry == Some(b".".as_slice()) {
-            // SAFETY: `vm.transpiler.fs` is the process-static `FileSystem`
-            // singleton (set in `Transpiler::init`).
-            let tld = unsafe { (*vm.transpiler.fs).top_level_dir() };
+            let tld = vm.fs().top_level_dir();
             if !tld.is_empty() {
                 entry = Some(tld);
             }
@@ -1555,8 +1520,8 @@ impl Run<'_> {
             Some(Unchecked::Main(loader)) => {
                 let watching = crate::cli::check_command::watching(vm);
                 let main = (vm.main()).expect("a file entry point has a path");
-                let has_type_errors =
-                    !RunCommand::check_main(ctx, main, loader, &vm.argv, watching);
+                let argv = vm.argv.get().map_or(&[][..], |argv| argv);
+                let has_type_errors = !RunCommand::check_main(ctx, main, loader, argv, watching);
                 if has_type_errors {
                     // It is not read if the options are wrong.
                     vm.add_main_to_watcher_if_needed();
@@ -1575,34 +1540,29 @@ impl Run<'_> {
                 // SAFETY: `promise` is a live GC cell returned by the module loader.
                 let promise = unsafe { &mut *promise };
                 if promise.status() == PromiseStatus::Rejected {
-                    // SAFETY: `vm.jsc_vm` set in `init`; FFI takes `*mut`.
-                    let result = promise.result(unsafe { &mut *vm.jsc_vm });
-                    let global = vm.global;
+                    let result = promise.result(vm.jsc_vm());
                     // A CJS entry runs synchronously in Node, so its top-level
                     // throw is an uncaughtException; only an ESM entry
                     // rejection reports origin "unhandledRejection".
-                    let is_rejection = !vm.entry_point_result.evaluated_as_cjs;
-                    // SAFETY: `global` valid for VM lifetime.
-                    let handled = vm.uncaught_exception(unsafe { &*global }, result, is_rejection);
+                    let is_rejection = !vm.entry_point_result.evaluated_as_cjs.get();
+                    let handled = vm.uncaught_exception(vm.global(), result, is_rejection);
                     promise.set_handled();
-                    vm.pending_internal_promise_reported_at = vm.hot_reload_counter;
+                    vm.pending_internal_promise_reported_at
+                        .set(vm.hot_reload_counter.get());
 
                     // When --hot/--watch is on (or a user
                     // `uncaughtException` handler swallowed the error), keep the
                     // process alive instead of hard-exiting on a rejected entry.
                     // The core run-loop below does the actual waiting.
-                    if vm.hot_reload != cli::command::HotReload::None || handled {
+                    if vm.hot_reload.get() != cli::command::HotReload::None || handled {
                         vm.add_main_to_watcher_if_needed();
-                        // SAFETY: `event_loop` is a self-pointer into this VM;
-                        // uniquely accessed here.
-                        vm.event_loop_ref().tick();
+                        vm.event_loop().tick();
                     } else {
                         exit_with_unhandled_note(vm);
                     }
                 }
 
-                // SAFETY: `vm.jsc_vm` set in `init`.
-                let _ = promise.result(unsafe { &mut *vm.jsc_vm });
+                let _ = promise.result(vm.jsc_vm());
 
                 if log_has_msgs(vm) {
                     dump_build_error(vm);
@@ -1616,7 +1576,7 @@ impl Run<'_> {
         // standalone executable has no transpiler garbage, and its unlinked code blocks came from the embedded bytecode
         // cache — deleting them here only means decoding them again on first call — so leave its heap to the collector.
         if vm.standalone_module_graph.is_none()
-            && (vm.is_event_loop_alive() || vm.event_loop_ref().tick_concurrent_with_count() > 0)
+            && (vm.is_event_loop_alive() || vm.event_loop().tick_concurrent_with_count() > 0)
         {
             vm.global().vm().release_weak_refs();
             // `bun_alloc::Arena` has no per-heap collect to run alongside this
@@ -1639,17 +1599,17 @@ impl Run<'_> {
             loop {
                 while vm.is_event_loop_alive() {
                     // After an unhandled error, only immediates keep the loop alive.
-                    vm.timers_ran_after_error |= vm.unhandled_error_counter > 0;
+                    vm.timers_ran_after_error.set(
+                        vm.timers_ran_after_error.get() | (vm.unhandled_error_counter.get() > 0),
+                    );
                     vm.tick();
                     vm.report_exception_in_hot_reloaded_module_if_needed();
                     vm.auto_tick_active();
                 }
                 vm.on_before_exit();
                 vm.report_exception_in_hot_reloaded_module_if_needed();
-                // SAFETY: `event_loop` is a self-pointer into this VM; uniquely
-                // accessed here. Watcher arm keeps the process alive across
-                // reloads.
-                vm.event_loop_ref().tick_possibly_forever();
+                // Keeps the process alive across reloads.
+                vm.event_loop().tick_possibly_forever();
             }
         } else {
             while vm.is_event_loop_alive() {
@@ -1708,11 +1668,12 @@ impl Run<'_> {
             Output::flush();
         }
 
-        vm.on_unhandled_rejection = Run::on_unhandled_rejection_before_close;
+        vm.on_unhandled_rejection
+            .set(Run::on_unhandled_rejection_before_close);
         let _ = vm.global().handle_rejected_promises();
         // The loop stopped on an uncaught error: Node's fatal-exception exit, not a drain.
-        if vm.unhandled_error_counter > 0 {
-            vm.exit_handler.requested = true;
+        if vm.unhandled_error_counter.get() > 0 {
+            vm.exit_handler.requested.set(true);
         }
         vm.on_exit();
 
@@ -1735,19 +1696,14 @@ impl Run<'_> {
 
 #[inline]
 fn log_has_msgs(vm: &VirtualMachine) -> bool {
-    match vm.log {
-        // SAFETY: `vm.log` is a process-lifetime `&mut Log` written once in
-        // `VirtualMachine::init`; never freed, single-threaded CLI.
-        Some(p) => unsafe { !(*p.as_ptr()).msgs.is_empty() },
-        None => false,
-    }
+    vm.log_ref().is_some_and(|log| !log.msgs.is_empty())
 }
 
 #[inline]
-fn log_clear_msgs(vm: &mut VirtualMachine) {
-    if let Some(p) = vm.log {
-        // SAFETY: see `log_has_msgs`.
-        unsafe { (*p.as_ptr()).msgs.clear() };
+fn log_clear_msgs(vm: &VirtualMachine) {
+    // SAFETY: `Run::start` calls this between ticks, holding no borrow of the log or the transpiler.
+    if let Some(log) = unsafe { vm.log_mut() } {
+        log.msgs.clear();
     }
 }
 
@@ -1757,11 +1713,9 @@ fn log_clear_msgs(vm: &mut VirtualMachine) {
     any(target_os = "linux", target_os = "android"),
     unsafe(link_section = ".text.unlikely")
 )]
-fn dump_build_error(vm: &mut VirtualMachine) {
+fn dump_build_error(vm: &VirtualMachine) {
     Output::flush();
-    if let Some(log) = vm.log {
-        // SAFETY: `vm.log` set in `init`; single-threaded CLI.
-        let log = unsafe { &mut *log.as_ptr() };
+    if let Some(log) = vm.log_ref() {
         let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(
             Output::error_writer_buffered(),
         ));
@@ -1780,9 +1734,9 @@ fn dump_build_error(vm: &mut VirtualMachine) {
     any(target_os = "linux", target_os = "android"),
     unsafe(link_section = ".text.unlikely")
 )]
-fn exit_with_unhandled_note(vm: &mut VirtualMachine) -> ! {
-    vm.exit_handler.exit_code = 1;
-    vm.exit_handler.requested = true;
+fn exit_with_unhandled_note(vm: &VirtualMachine) -> ! {
+    vm.exit_handler.exit_code.set(1);
+    vm.exit_handler.requested.set(true);
     vm.on_exit();
     if ANY_UNHANDLED.load(Ordering::Relaxed) {
         bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo::print();
@@ -1798,7 +1752,7 @@ fn exit_with_unhandled_note(vm: &mut VirtualMachine) -> ! {
     any(target_os = "linux", target_os = "android"),
     unsafe(link_section = ".text.unlikely")
 )]
-fn entry_point_load_failed(vm: &mut VirtualMachine, err: &crate::Error) -> ! {
+fn entry_point_load_failed(vm: &VirtualMachine, err: &crate::Error) -> ! {
     if log_has_msgs(vm) {
         dump_build_error(vm);
         log_clear_msgs(vm);
@@ -1820,8 +1774,8 @@ fn entry_point_load_failed(vm: &mut VirtualMachine, err: &crate::Error) -> ! {
     any(target_os = "linux", target_os = "android"),
     unsafe(link_section = ".text.unlikely")
 )]
-fn print_unhandled_version_note(vm: &mut VirtualMachine) {
-    vm.exit_handler.exit_code = 1;
+fn print_unhandled_version_note(vm: &VirtualMachine) {
+    vm.exit_handler.exit_code.set(1);
     bun_sourcemap::SavedSourceMap::MissingSourceMapNoteInfo::print();
     pretty_errorln!("<r>\n<d>{}<r>", Global::unhandled_error_bun_version_string,);
 }

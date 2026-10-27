@@ -292,8 +292,7 @@ bun_spawn::link_impl_ProcessExit! {
 
 impl<'a> ProcessHandle<'a> {
     fn loop_(&self) -> *mut bun_io::Loop {
-        // SAFETY: state backref valid; event_loop is the live MiniEventLoop singleton.
-        bun_io::uws_to_native(unsafe { (*self.state.event_loop).loop_ })
+        bun_io::uws_to_native(self.state.event_loop.loop_).as_ptr()
     }
 }
 
@@ -319,9 +318,7 @@ macro_rules! fmt {
 
 struct State<'a> {
     handles: Box<[ProcessHandle<'a>]>,
-    // Raw `*mut` — `init_global` returns the
-    // thread-local singleton pointer; aliasing &mut would be UB.
-    event_loop: *mut MiniEventLoop,
+    event_loop: &'static MiniEventLoop,
     /// Typed enum mirror of `event_loop` for the io-layer FilePoll vtable
     /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
     event_loop_handle: EventLoopHandle,
@@ -961,11 +958,7 @@ pub(crate) fn run_scripts_with_filter(
     // --no-orphans: register the macOS kqueue parent watch on this MiniEventLoop
     // (the VirtualMachine.init path is never reached for --filter). Linux is
     // already covered by prctl in enable() + linux_pdeathsig on each spawn.
-    // SAFETY: `event_loop` is the live per-thread `MiniEventLoop` (init'd above);
-    // `as_event_loop_ctx` only stores it as a tagged backref.
-    bun_io::ParentDeathWatchdog::install_on_event_loop(MiniEventLoop::as_event_loop_ctx(unsafe {
-        &mut *event_loop
-    }));
+    bun_io::ParentDeathWatchdog::install_on_event_loop(event_loop.as_event_loop_ctx());
     let shell_bin: Option<&'static ZStr> = if cfg!(unix) {
         // SAFETY: env_ptr is the live process-lifetime DotEnv loader.
         let path = unsafe { (*env_ptr).get(b"PATH") }.unwrap_or(b"");
@@ -1143,8 +1136,7 @@ pub(crate) fn run_scripts_with_filter(
             // before blocking in a tick no event may ever wake.
             continue;
         }
-        // SAFETY: event_loop is the live thread-local MiniEventLoop singleton.
-        unsafe { (*event_loop).tick_once(&raw const state as *mut c_void) };
+        event_loop.tick_once(&raw const state as *mut c_void);
     }
 
     let status = state.finalize();

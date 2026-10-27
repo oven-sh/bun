@@ -113,7 +113,7 @@ pub(crate) struct Handlers {
         fn(*mut (), &mut bun_boringssl_sys::SSL) -> bun_boringssl::ServerIdentity,
 }
 
-use crate::jsc_hooks::timer_all_mut as timer_all;
+use crate::jsc_hooks::timer_all;
 
 /// Lazily create-and-cache a JS host-function callback in `shadow`, mirrored
 /// into the owning `JSTLSSocket` wrapper's internal field (the GC
@@ -702,7 +702,9 @@ impl UpgradedDuplex {
 
     fn set_timeout_in_milliseconds(&self, ms: c_uint) {
         if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
-            timer_all().remove(self.event_loop_timer.as_ptr());
+            // SAFETY: `ACTIVE` is linked: `on_timeout` marks the popped node `FIRED` before it
+            // calls anything.
+            unsafe { timer_all().remove(self.event_loop_timer.as_ptr()) };
         }
         self.current_timeout.set(ms);
 
@@ -722,11 +724,16 @@ impl UpgradedDuplex {
                 nsec: next.nsec,
             };
         });
-        timer_all().insert(
-            core::ptr::addr_of!(self.event_loop_timer)
-                .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
-                .cast_mut(),
-        );
+        // SAFETY: unlinked above. The node is in a cell of `self`, which was written in place into
+        // its heap-allocated `DuplexUpgradeContext` and is dropped with it; `Drop` unlinks the node
+        // (`teardown`).
+        unsafe {
+            timer_all().insert(
+                core::ptr::addr_of!(self.event_loop_timer)
+                    .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
+                    .cast_mut(),
+            );
+        }
     }
 
     #[uws_callback(export = "UpgradedDuplex__set_timeout")]

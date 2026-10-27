@@ -24,7 +24,7 @@ use crate::test_command::CommandLineReporter;
 use crate::api::bun::process::Status as SpawnStatus;
 
 pub(crate) struct Coordinator<'a> {
-    pub(crate) vm: &'a VirtualMachine,
+    pub(crate) vm: &'static VirtualMachine,
     /// Typed enum mirror of `vm.event_loop()` for the io-layer FilePoll vtable
     /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
     pub(crate) event_loop_handle: bun_jsc::EventLoopHandle,
@@ -146,7 +146,7 @@ impl<'a> Coordinator<'a> {
                 self.abort_all(signal);
                 return;
             }
-            self.vm.event_loop_ref().tick();
+            self.vm.event_loop().tick();
             self.run_pending_reaps();
             self.maybe_scale_up();
             self.run_pending_reaps();
@@ -163,13 +163,12 @@ impl<'a> Coordinator<'a> {
                     sec: self.scale_up_after_ms / MS_PER_S,
                     nsec: (self.scale_up_after_ms % MS_PER_S) * bun_core::time::NS_PER_MS as i64,
                 };
-                // SAFETY: event_loop()/usockets_loop() return live pointers for the VM lifetime.
-                unsafe {
-                    (*(*self.vm.event_loop()).usockets_loop())
-                        .tick_with_timeout(Some(&ts), bun_uws::NOW_NS_UNKNOWN);
-                }
+                self.vm
+                    .event_loop()
+                    .usockets_loop()
+                    .tick_with_timeout(Some(&ts), bun_uws::NOW_NS_UNKNOWN);
             } else {
-                self.vm.event_loop_ref().auto_tick();
+                self.vm.event_loop().auto_tick();
             }
             self.run_pending_reaps();
         }

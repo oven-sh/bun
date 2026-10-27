@@ -69,8 +69,7 @@ type Sockaddr = netc::sockaddr;
 
 /// Helper: fetch the per-VM global DNS resolver (port of
 /// `RareData::globalDNSResolver`). The storage is
-/// [`crate::jsc_hooks::RuntimeState::global_dns_data`] — concrete
-/// `Option<Box<GlobalData>>`, freed by `deinit_runtime_state` on VM teardown.
+/// [`crate::jsc_hooks::RuntimeState::global_dns_data`], freed by `deinit_runtime_state` on VM teardown.
 ///
 /// R-2: returns `&Resolver` (shared). All Resolver mutation routes through
 /// `Cell` / `JsCell` fields, so a shared borrow is sufficient and avoids the
@@ -227,12 +226,7 @@ pub(crate) mod lib_uv_backend {
         let task = jsc::Task::from_boxed(Box::new(LibuvCompleteHolder { uv_info }));
         // SAFETY: `this` is the live GetAddrInfoRequest set as uv data.
         unsafe {
-            (*this)
-                .head
-                .global_this()
-                .bun_vm()
-                .as_mut()
-                .enqueue_task(task);
+            (*this).head.global_this().bun_vm().enqueue_task(task);
         }
     }
 
@@ -284,7 +278,7 @@ pub(crate) mod lib_uv_backend {
             (*request).backend.as_libc_uv_mut().data = request.cast::<c_void>();
             let promise = (*request).head.promise.value();
             let rc = libuv::uv_getaddrinfo(
-                this.vm().uv_loop(),
+                this.vm().uv_loop().as_ptr(),
                 (*request).backend.as_libc_uv_mut(),
                 Some(on_raw_libuv_complete),
                 host.as_ptr().cast::<c_char>(),
@@ -459,7 +453,7 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
         context: bun_jsc::ContextId,
         cache_field: PendingCacheField,
     ) -> *mut Self {
-        let mut poll_ref = KeepAlive::init();
+        let poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
         let request = bun_core::heap::into_raw(Box::new(Self {
             resolver_for_caching: resolver,
@@ -595,7 +589,7 @@ impl GetHostByAddrInfoRequest {
         global_this: &JSGlobalObject,
         context: bun_jsc::ContextId,
     ) -> *mut Self {
-        let mut poll_ref = KeepAlive::init();
+        let poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
         let request = bun_core::heap::into_raw(Box::new(Self {
             resolver_for_caching: resolver,
@@ -701,7 +695,7 @@ impl CAresNameInfo {
         context: bun_jsc::ContextId,
         name: Box<[u8]>,
     ) -> *mut Self {
-        let mut poll_ref = KeepAlive::init();
+        let poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
         bun_core::heap::into_raw(Box::new(Self {
             global_this: bun_ptr::BackRef::new(global_this),
@@ -849,7 +843,7 @@ impl GetNameInfoRequest {
         context: bun_jsc::ContextId,
         cache_field: PendingCacheField,
     ) -> *mut Self {
-        let mut poll_ref = KeepAlive::init();
+        let poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
         let request = bun_core::heap::into_raw(Box::new(Self {
             resolver_for_caching: resolver,
@@ -1176,7 +1170,7 @@ impl GetAddrInfoRequest {
         cache_field: PendingCacheField,
     ) -> *mut Self {
         bun_output::scoped_log!(GetAddrInfoRequest, "init");
-        let mut poll_ref = KeepAlive::init();
+        let poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
         let request = bun_core::heap::into_raw(Box::new(Self {
             backend,
@@ -1458,7 +1452,7 @@ impl CAresReverse {
         context: bun_jsc::ContextId,
         name: &[u8],
     ) -> *mut Self {
-        let mut poll_ref = KeepAlive::init();
+        let poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
         bun_core::heap::into_raw(Box::new(Self {
             // SAFETY: resolver is live and intrusively refcounted; init_ref bumps the embedded ref_count.
@@ -1582,7 +1576,7 @@ impl<T: CAresRecordType> CAresLookup<T> {
         context: bun_jsc::ContextId,
         name: &[u8],
     ) -> *mut Self {
-        let mut poll_ref = KeepAlive::init();
+        let poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
         Self::new(Self {
             // SAFETY: resolver is live and intrusively refcounted; init_ref bumps the embedded ref_count.
@@ -1727,7 +1721,7 @@ impl DNSLookup {
     ) -> *mut Self {
         bun_output::scoped_log!(DNSLookup, "init");
 
-        let mut poll_ref = KeepAlive::init();
+        let poll_ref = KeepAlive::init();
         poll_ref.ref_(js_event_loop_ctx());
 
         bun_core::heap::into_raw(Box::new(Self {
@@ -1943,7 +1937,7 @@ pub(crate) struct GlobalData {
 }
 
 impl GlobalData {
-    pub(crate) fn init(vm: &VirtualMachine) -> Box<Self> {
+    pub(crate) fn init(vm: &'static VirtualMachine) -> Box<Self> {
         Box::new(Self {
             // The VM-global resolver serves every context of the realm.
             resolver: Resolver::setup(vm, None),
@@ -2937,7 +2931,7 @@ pub(crate) mod internal {
     }
 
     pub(crate) fn getaddrinfo(
-        loop_: *mut Loop,
+        loop_: &Loop,
         host: Option<&ZStr>,
         port: u16,
         is_cache_hit: Option<&mut bool>,
@@ -3035,12 +3029,10 @@ pub(crate) mod internal {
                 .get()
                 .unwrap_or(false)
             {
-                // SAFETY: `loop_` is the live uSockets loop; its parent tag/ptr
-                // was set by `EventLoopHandle::set_as_parent_of` at startup.
-                let handle = unsafe {
-                    let (tag, ptr) = (*loop_).internal_loop_data.get_parent();
-                    jsc::EventLoopHandle::from_tag_ptr(tag, ptr)
-                };
+                let (tag, ptr) = loop_.internal_loop_data.get_parent();
+                // SAFETY: `EventLoopHandle::set_as_parent_of` set the loop's parent tag/ptr at
+                // startup, and that event loop outlives its uSockets loop.
+                let handle = unsafe { jsc::EventLoopHandle::from_tag_ptr(tag, ptr) };
                 let res = lookup_dns_sd(req, handle);
                 if res {
                     bun_output::scoped_log!(
@@ -3085,7 +3077,7 @@ pub(crate) mod internal {
         );
     }
 
-    pub(crate) fn prefetch(loop_: *mut Loop, hostname: Option<&ZStr>, port: u16) {
+    pub(crate) fn prefetch(loop_: &Loop, hostname: Option<&ZStr>, port: u16) {
         let _ = getaddrinfo(loop_, hostname, port, None);
     }
 
@@ -3094,23 +3086,22 @@ pub(crate) mod internal {
     /// hostnames without a crate cycle. Link-time resolved.
     ///
     /// # Safety
-    /// `hostname` (if non-null) must point to a NUL-terminated `[u8; len]` live
-    /// for the duration of the call.
-    // `hostname` is null-guarded before the deref; the non-null contract is
-    // documented above and on the `bun_dns` extern decl.
+    /// `loop_` is this thread's live uSockets loop. `hostname` (if non-null) must point to a
+    /// NUL-terminated `[u8; len]` live for the duration of the call.
     #[unsafe(no_mangle)]
-    fn __bun_dns_prefetch(loop_: *mut c_void, hostname: *const u8, len: usize, port: u16) {
+    unsafe fn __bun_dns_prefetch(loop_: *mut c_void, hostname: *const u8, len: usize, port: u16) {
         let host = if hostname.is_null() || len == 0 {
             None
         } else {
             // SAFETY: caller passes a NUL-terminated `[u8; len]` live for the call.
             Some(unsafe { ZStr::from_raw(hostname, len) })
         };
-        prefetch(loop_.cast::<Loop>(), host, port);
+        // SAFETY: fn contract.
+        prefetch(unsafe { &*loop_.cast::<Loop>() }, host, port);
     }
 
     extern "C" fn us_getaddrinfo(
-        loop_: *mut Loop,
+        loop_: &Loop,
         _host: *const c_char,
         port: u16,
         socket: *mut *mut c_void,
@@ -3213,7 +3204,7 @@ pub(crate) mod internal {
     }
     #[unsafe(no_mangle)]
     extern "C" fn Bun__addrinfo_get(
-        loop_: *mut Loop,
+        loop_: &Loop,
         host: *const c_char,
         port: u16,
         socket: *mut *mut c_void,
@@ -3588,7 +3579,7 @@ pub(crate) struct Resolver {
     /// to query. `None`: the VM-global one, which is the realm's whatever the realm's context is
     /// called by then (`bun test --isolate` renews it for every file).
     made_in: Option<bun_jsc::ContextId>,
-    pub(crate) vm: bun_ptr::BackRef<VirtualMachine>, // JSC_BORROW (BACKREF — VirtualMachine outlives the resolver; read-only after init)
+    pub(crate) vm: &'static VirtualMachine,
     pub(crate) polls: JsCell<PollsMap>,
     pub(crate) options: Cell<c_ares::ChannelOptions>,
 
@@ -3902,8 +3893,8 @@ impl Resolver {
         unsafe { RefPtr::init_ref(self.as_ctx_ptr()) }
     }
 
-    pub(crate) fn vm(&self) -> &VirtualMachine {
-        self.vm.get()
+    pub(crate) fn vm(&self) -> &'static VirtualMachine {
+        self.vm
     }
 
     // Intrusive refcount forwarders (RefCount.ref / RefCount.deref).
@@ -3927,12 +3918,12 @@ impl Resolver {
         unsafe { bun_ptr::RefCount::<Self>::deref(this) };
     }
 
-    pub(crate) fn setup(vm: &VirtualMachine, made_in: Option<bun_jsc::ContextId>) -> Self {
+    pub(crate) fn setup(vm: &'static VirtualMachine, made_in: Option<bun_jsc::ContextId>) -> Self {
         Self {
             ref_count: bun_ptr::RefCount::init(),
             channel: Cell::new(None),
             made_in,
-            vm: bun_ptr::BackRef::new(vm),
+            vm,
             polls: JsCell::new(PollsMap::new()),
             options: Cell::new(c_ares::ChannelOptions::default()),
             event_loop_timer: JsCell::new(EventLoopTimer::init_paused(
@@ -3958,7 +3949,10 @@ impl Resolver {
         }
     }
 
-    pub(crate) fn init(vm: &VirtualMachine, made_in: Option<bun_jsc::ContextId>) -> *mut Self {
+    pub(crate) fn init(
+        vm: &'static VirtualMachine,
+        made_in: Option<bun_jsc::ContextId>,
+    ) -> *mut Self {
         bun_output::scoped_log!(DNSResolver, "init");
         bun_core::heap::into_raw(Box::new(Self::setup(vm, made_in)))
     }
@@ -3992,11 +3986,7 @@ impl Resolver {
         // `&Resolver` from their stored ctx without aliasing UB.
         let deref_this = self.as_ctx_ptr();
         scopeguard::defer! {
-            // jsc/runtime crate cycle: low-tier `VirtualMachine.timer` is `()`;
-            // resolve via the high-tier `RuntimeState` hook.
-            let state = crate::jsc_hooks::runtime_state();
-            // SAFETY: `state` is the boxed per-thread `RuntimeState`; single-threaded JS heap.
-            unsafe { (*state).timer.increment_timer_ref(-1, uws_loop) };
+            crate::jsc_hooks::timer_all().increment_timer_ref(-1, uws_loop);
             // SAFETY: `deref_this` is the heap allocation from `init`; releases
             // `add_timer`'s ref. May be the final release; nothing touches
             // `*self` after this point.
@@ -4089,12 +4079,15 @@ impl Resolver {
             }
         });
         let uws_loop = self.vm().uws_loop();
-        let state = crate::jsc_hooks::runtime_state();
-        // SAFETY: `state` is the boxed per-thread `RuntimeState`; single-threaded JS heap.
+        let all = crate::jsc_hooks::timer_all();
+        all.increment_timer_ref(1, uws_loop);
+        // SAFETY: not `ACTIVE`, so unlinked: `check_timeouts` marks the popped node `PENDING`
+        // before it calls anything. The node is in a cell of the heap-allocated resolver, which
+        // the ref taken above keeps until `check_timeouts` or `remove_timer` releases it, each
+        // once the node is unlinked. Projected from `self`, so that `from_field_ptr!` can recover
+        // the resolver when it fires.
         unsafe {
-            (*state).timer.increment_timer_ref(1, uws_loop);
-            // whole-struct provenance: `from_field_ptr!` recovers the container on fire
-            (*state).timer.insert(
+            all.insert(
                 core::ptr::addr_of!(self.event_loop_timer)
                     .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
                     .cast_mut(),
@@ -4118,15 +4111,13 @@ impl Resolver {
             // `deref` cannot reach 0 while `&self` is live.
             unsafe {
                 let uws_loop = (*this).vm().uws_loop();
-                let state = crate::jsc_hooks::runtime_state();
-                (*state).timer.increment_timer_ref(-1, uws_loop);
+                crate::jsc_hooks::timer_all().increment_timer_ref(-1, uws_loop);
                 Self::deref(this);
             }
         }
 
-        let state = crate::jsc_hooks::runtime_state();
-        // SAFETY: `state` is the boxed per-thread `RuntimeState`; single-threaded JS heap.
-        unsafe { (*state).timer.remove(self.event_loop_timer.as_ptr()) };
+        // SAFETY: `ACTIVE` is linked (see `add_timer`).
+        unsafe { crate::jsc_hooks::timer_all().remove(self.event_loop_timer.as_ptr()) };
     }
 
     // ───────────── pending-cache helpers ─────────────
@@ -4679,7 +4670,7 @@ impl Resolver {
         unsafe {
             (*poll).poll_cb_depth += 1;
             let parent: *mut Resolver = (*poll).parent;
-            let vm = (*parent).vm.get();
+            let vm = (*parent).vm;
             {
                 // Dropping `_exit` drains microtasks. That JS can run a nested `uv_run`,
                 // which calls `on_close_uv` for a socket c-ares closed below.
@@ -4708,7 +4699,7 @@ impl Resolver {
             (*poll).poll_cb_depth -= 1;
             if (*poll).poll_cb_depth == 0 && (*poll).closed {
                 // The task queue isn't drained until this libuv callback returns.
-                vm.as_mut().enqueue_task(jsc::Task::init(poll));
+                vm.enqueue_task(jsc::Task::init(poll));
             }
         }
     }
@@ -4807,10 +4798,13 @@ impl Resolver {
                 // Publish into the map first so the `GetOrPutResult` borrow can
                 // end (NLL) before we may need to `swap_remove` on init failure.
                 *poll_entry.value_ptr = new_poll;
-                // SAFETY: `Loop::get()` is the live per-thread uws loop;
-                // `new_poll` is a fresh heap allocation with a zeroed `uv_poll_t`.
+                // SAFETY: `new_poll` is a fresh heap allocation with a zeroed `uv_poll_t`.
                 if unsafe {
-                    uv::uv_poll_init_socket((*Loop::get()).uv_loop, &mut (*new_poll).poll, fd as _)
+                    uv::uv_poll_init_socket(
+                        Loop::get().uv().as_ptr(),
+                        &mut (*new_poll).poll,
+                        fd as _,
+                    )
                 } < 0
                 {
                     UvDnsPoll::destroy(new_poll);
@@ -4858,8 +4852,7 @@ impl Resolver {
                 Async::posix_event_loop::poll_tag::DNS_RESOLVER,
                 self.as_ctx_ptr().cast::<()>(),
             );
-            // SAFETY: `event_loop_handle` is set once VM is initialized; live for VM lifetime.
-            let loop_ = unsafe { &mut *self.vm().event_loop_handle.unwrap() };
+            let loop_ = self.vm().event_loop_handle.get().unwrap();
             // SAFETY: single-JS-thread; the `&mut PollsMap` borrow does not span
             // any re-entrant call (`FilePoll::register` is a syscall wrapper).
             let polls = unsafe { self.polls.get_mut() };
@@ -5042,7 +5035,6 @@ impl Resolver {
             (*channel).get_host_by_addr(ip, &mut *request);
         }
 
-        // SAFETY: `bun_vm()` returns the live VM back-ptr.
         self.request_sent(global_this.bun_vm());
         Ok(promise)
     }
@@ -5336,7 +5328,6 @@ impl Resolver {
         // consumes the request, so the `&mut` borrow is not held past this call.
         unsafe { (*channel).resolve(name, &mut *request) };
 
-        // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
         self.request_sent(global_this.bun_vm());
         Ok(promise)
     }
@@ -5393,7 +5384,6 @@ impl Resolver {
         // borrow is not held past this call.
         unsafe { (*channel).get_addr_info(&query.name, query.port, &hints_buf, &mut *request) };
 
-        // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
         self.request_sent(global_this.bun_vm());
         Ok(promise)
     }
@@ -5737,7 +5727,6 @@ impl Resolver {
 
     pub(crate) fn new_resolver(cx: &mut JsScope<'_>, options: &ResolverOptions) -> JSValue {
         let global_this = cx.global();
-        // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
         let resolver = Resolver::init(
             global_this.bun_vm(),
             Some(global_this.bun_vm().context_of_caller().id()),
@@ -5849,7 +5838,6 @@ impl Resolver {
             );
         }
 
-        // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
         resolver.request_sent(global_this.bun_vm());
         Ok(promise)
     }
@@ -5857,7 +5845,7 @@ impl Resolver {
     pub(crate) fn get_runtime_default_result_order_option() -> bun::String {
         // `VirtualMachine.dns_result_order` is stored as a raw `u8` (the jsc
         // crate cannot depend on this crate's `Order`); cast through Order's repr(u8).
-        let raw = VirtualMachine::get().dns_result_order;
+        let raw = VirtualMachine::get().dns_result_order.get();
         let order = match raw {
             4 => Order::Ipv4first,
             6 => Order::Ipv6first,

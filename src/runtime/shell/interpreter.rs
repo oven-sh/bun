@@ -284,7 +284,7 @@ pub(crate) struct Interpreter {
     pub(crate) root_shell: JsCell<ShellExecEnv>,
     pub(crate) root_io: JsCell<IO>,
 
-    pub(crate) keep_alive: JsCell<bun_io::KeepAlive>,
+    pub(crate) keep_alive: bun_io::KeepAlive,
     /// The `Bun.ModuleGraph` context whose script started this (`run_from_js`), if any. Every
     /// child the script spawns belongs to it, and once it stops the script runs no further.
     pub(crate) context: Cell<Option<bun_jsc::ContextId>>,
@@ -557,7 +557,7 @@ impl Interpreter {
                 stdout: crate::shell::io::OutKind::Pipe,
                 stderr: crate::shell::io::OutKind::Pipe,
             }),
-            keep_alive: JsCell::new(bun_io::KeepAlive::default()),
+            keep_alive: bun_io::KeepAlive::default(),
             context: Cell::new(None),
             async_commands_executing: Cell::new(0),
             global_this: Cell::new(core::ptr::null_mut()),
@@ -593,7 +593,7 @@ impl Interpreter {
     /// not bumping `standalone_shell` analytics.
     pub(crate) fn init_and_run_from_file(
         ctx: &mut bun_options_types::context::ContextData,
-        mini: &'static mut bun_event_loop::MiniEventLoop::MiniEventLoop,
+        mini: &'static bun_event_loop::MiniEventLoop::MiniEventLoop,
         path: &[u8],
         src: &[u8],
     ) -> crate::Result<ExitCode> {
@@ -610,7 +610,7 @@ impl Interpreter {
     /// without a diagnostic.
     pub(crate) fn init_and_run_from_source(
         ctx: &mut bun_options_types::context::ContextData,
-        mini: &'static mut bun_event_loop::MiniEventLoop::MiniEventLoop,
+        mini: &'static bun_event_loop::MiniEventLoop::MiniEventLoop,
         path_for_errors: &[u8],
         src: &[u8],
         cwd: Option<&[u8]>,
@@ -624,7 +624,7 @@ impl Interpreter {
     /// the two entrypoints.
     fn init_and_run_impl(
         ctx: &mut bun_options_types::context::ContextData,
-        mini: &'static mut bun_event_loop::MiniEventLoop::MiniEventLoop,
+        mini: &'static bun_event_loop::MiniEventLoop::MiniEventLoop,
         label: &[u8],
         src: &[u8],
         cwd: Option<&[u8]>,
@@ -673,7 +673,7 @@ impl Interpreter {
         shargs.set_script_ast(script);
 
         // ── init ───────────────────────────────────────────────────────────
-        let evtloop = EventLoopHandle::init_mini(std::ptr::from_mut(mini));
+        let evtloop = EventLoopHandle::init_mini(mini);
         // Boxed: `run` hands out its address.
         let interp = match Self::init(std::ptr::from_mut(ctx), evtloop, shargs, None, cwd) {
             Ok(i) => Box::new(i),
@@ -694,15 +694,7 @@ impl Interpreter {
         }
 
         // ── tick until done ────────────────────────────────────────────────
-        // The closure captures a raw pointer so borrowck doesn't see an
-        // overlap with `tick`'s `&mut self` on `mini`.
-        let interp_ptr: *const Interpreter = &raw const *interp;
-        mini.tick(core::ptr::null_mut(), |_ctx| {
-            // SAFETY: `interp` lives in this stack frame for the whole tick
-            // loop; `flags` is `Cell<InterpreterFlags>` (interior-mutable), so
-            // the read is sound even while tasks `tick` drains mutate it.
-            unsafe { (*interp_ptr).flags.get().done() }
-        });
+        mini.tick(core::ptr::null_mut(), |_ctx| interp.flags.get().done());
 
         Ok(interp.exit_code.get().expect("exit_code set by finish()"))
     }
@@ -1230,7 +1222,7 @@ impl Interpreter {
             if let Some(this_jsvalue) = this_value.try_get() {
                 if self.failed() {
                     // The trampoline that ran `fail` rejects the promise.
-                    self.keep_alive.with_mut(|k| k.disable());
+                    self.keep_alive.disable();
                     self.deref_root_shell_and_io_if_needed(true);
                 } else if let Some(resolve) = js::resolve_get_cached(this_jsvalue) {
                     let loop_ = self.event_loop;
@@ -1242,7 +1234,7 @@ impl Interpreter {
                     let buffers = self
                         .get_buffered_stdout(global_this)
                         .and_then(|out| Ok((out, self.get_buffered_stderr(global_this)?)));
-                    self.keep_alive.with_mut(|k| k.disable());
+                    self.keep_alive.disable();
                     self.deref_root_shell_and_io_if_needed(true);
                     let _entered = loop_.entered();
                     // The shell state machine (`Yield`) has no exception channel,
@@ -1251,7 +1243,7 @@ impl Interpreter {
                     // finishes. If the output buffers could not be built
                     // (allocation failure), the promise is rejected with that
                     // instead; a terminating VM settles nothing.
-                    let event_loop = global_this.bun_vm().event_loop_mut();
+                    let event_loop = global_this.bun_vm().event_loop();
                     match buffers {
                         Ok((buffered_stdout, buffered_stderr)) => event_loop.run_callback(
                             self.task_context(),
@@ -1324,7 +1316,7 @@ impl Interpreter {
             .global_this_ref()
             .expect("take_failure returned a rejection on the Js path");
         let _entered = self.event_loop.entered();
-        global_this.bun_vm().event_loop_mut().run_callback(
+        global_this.bun_vm().event_loop().run_callback(
             self.task_context(),
             reject,
             global_this,
@@ -1503,15 +1495,7 @@ impl Interpreter {
                 }
                 int -= 1;
 
-                let vm_ptr = event_loop
-                    .bun_vm()
-                    .cast::<bun_jsc::virtual_machine::VirtualMachine>();
-                if vm_ptr.is_null() {
-                    return;
-                }
-                // SAFETY: `bun_vm()` on a JS event loop returns the live
-                // `*VirtualMachine` owning that loop.
-                let vm = unsafe { &*vm_ptr };
+                let vm = bun_jsc::virtual_machine::VirtualMachine::get();
                 if let Some(main) = vm.main() {
                     if int == 0 {
                         out.extend_from_slice(main);
@@ -1520,10 +1504,7 @@ impl Interpreter {
                     int -= 1;
                 }
 
-                if let Some(worker_ptr) = vm.worker {
-                    // SAFETY: `vm.worker` is set in `VirtualMachine::init_worker`
-                    // to a live `*WebWorker` for the worker's lifetime.
-                    let worker = unsafe { &*worker_ptr.cast::<bun_jsc::web_worker::WebWorker>() };
+                if let Some(worker) = vm.worker_ref() {
                     let argv = worker.argv();
                     if int as usize >= argv.len() {
                         return;
@@ -1539,8 +1520,8 @@ impl Interpreter {
                     return;
                 }
 
-                if (int as usize) < vm.argv.len() {
-                    out.extend_from_slice(&vm.argv[int as usize]);
+                if let Some(arg) = vm.argv.get().and_then(|argv| argv.get(int as usize)) {
+                    out.extend_from_slice(arg);
                 }
             }
             EventLoopHandle::Mini(_) => {
@@ -1619,7 +1600,7 @@ impl Drop for Interpreter {
         }
 
         let event_loop_ctx = self.event_loop.as_event_loop_ctx();
-        self.keep_alive.with_mut(|k| k.unref(event_loop_ctx));
+        self.keep_alive.unref(event_loop_ctx);
     }
 }
 
@@ -2938,9 +2919,7 @@ pub(crate) fn create_shell_interpreter<'a>(
 
     let cwd_slice = cwd.as_ref().map(|c| c.to_utf8());
 
-    // bun_vm() returns the live thread-local VM for a Bun-owned global; that
-    // pointer is the live `jsc::EventLoop` `EventLoopHandle::init` expects.
-    let event_loop = EventLoopHandle::init(global.bun_vm().as_mut().event_loop().cast::<()>());
+    let event_loop = global.bun_vm().event_loop().handle();
     let mut interpreter = match Interpreter::init(
         // command_ctx — unused on the JS event-loop path.
         core::ptr::null_mut(),
@@ -2974,10 +2953,7 @@ pub(crate) fn create_shell_interpreter<'a>(
     // SAFETY: the payload of `this_value`.
     let interp = unsafe { this_value.payload_ptr().as_ref() };
     interp.this_value.set(JsRef::init_weak(js_value));
-    interp.keep_alive.with_mut(|k| {
-        // SAFETY: `bun_vm_ptr()` is the live per-thread VM singleton.
-        k.ref_(unsafe { crate::jsc::VirtualMachineRef::event_loop_ctx(global.bun_vm_ptr()) })
-    });
+    interp.keep_alive.ref_(global.bun_vm().event_loop_ctx());
     bun_analytics::features::shell.fetch_add(1, Ordering::Relaxed);
     Ok(this_value)
 }

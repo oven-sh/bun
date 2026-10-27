@@ -31,6 +31,8 @@ use bun_jsc::bindgen::{self, BufferSource, JsHeap, JsLocal, JsScope};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 #[cfg(not(windows))]
+use core::cell::Cell;
+#[cfg(not(windows))]
 use core::ptr::NonNull;
 
 /// Pressure level passed to JS. Values are the `NOTE_MEMORYSTATUS_PRESSURE_*`
@@ -75,7 +77,7 @@ fn pressure_task(lvl: i32) -> Task {
 }
 
 #[cfg(not(windows))]
-fn slot(vm: &mut VirtualMachine) -> &mut Option<NonNull<core::ffi::c_void>> {
+fn slot(vm: &VirtualMachine) -> &Cell<Option<NonNull<core::ffi::c_void>>> {
     vm.rare_data().memory_pressure_watcher_slot()
 }
 
@@ -107,7 +109,7 @@ mod posix {
         psi_some_total: u64,
     }
 
-    fn take_watcher(vm: &mut VirtualMachine) -> Option<Box<MemoryPressureWatcher>> {
+    fn take_watcher(vm: &VirtualMachine) -> Option<Box<MemoryPressureWatcher>> {
         let raw = slot(vm).take()?;
         // SAFETY: slot is populated only by `install` with a `Box<MemoryPressureWatcher>`.
         Some(unsafe { bun_core::heap::take(raw.as_ptr().cast::<MemoryPressureWatcher>()) })
@@ -245,7 +247,7 @@ mod posix {
                     NonNull::<()>::dangling().as_ptr(),
                 ),
             );
-            // SAFETY: `poll` is the fresh hive slot; `platform_event_loop` is the live uws loop.
+            // SAFETY: `poll` is the fresh hive slot.
             let result = unsafe {
                 (*poll).register(ctx.platform_event_loop(), Flags::MemoryPressure, false)
             };
@@ -259,8 +261,8 @@ mod posix {
     }
 
     pub(super) fn install(global: &JSGlobalObject) {
-        let vm = global.bun_vm().as_mut();
-        if slot(vm).is_some() {
+        let vm = global.bun_vm();
+        if slot(vm).get().is_some() {
             return;
         }
         let (poll, psi_some_total) = register_os_watch(global).unzip();
@@ -271,14 +273,14 @@ mod posix {
             #[cfg(any(target_os = "linux", target_os = "android"))]
             psi_some_total: psi_some_total.unwrap_or(0),
         });
-        *slot(global.bun_vm().as_mut()) = NonNull::new(bun_core::heap::into_raw(watcher).cast());
+        slot(vm).set(NonNull::new(bun_core::heap::into_raw(watcher).cast()));
     }
 
     /// Whether the installed watcher holds a live OS source. `install` still
     /// fills the slot when no backend could be registered, so `isInstalled`
     /// alone cannot tell the two apart.
     pub(super) fn has_os_backend(global: &JSGlobalObject) -> bool {
-        let Some(raw) = *slot(global.bun_vm().as_mut()) else {
+        let Some(raw) = slot(global.bun_vm()).get() else {
             return false;
         };
         // SAFETY: slot is populated only by `install` with a `Box<MemoryPressureWatcher>`,
@@ -288,7 +290,7 @@ mod posix {
     }
 
     pub(super) fn uninstall(global: &JSGlobalObject) {
-        let Some(watcher) = take_watcher(global.bun_vm().as_mut()) else {
+        let Some(watcher) = take_watcher(global.bun_vm()) else {
             return;
         };
         if let Some(mut poll) = watcher.poll {
@@ -302,7 +304,7 @@ mod posix {
     /// `__bun_run_file_poll` dispatch target. `fflags` is the kqueue `fflags`
     /// on macOS (carrying the pressure level) and 0 on Linux.
     pub(crate) fn on_poll(poll: &mut FilePoll, fflags: i64) {
-        let vm = VirtualMachine::get_mut();
+        let vm = VirtualMachine::get();
 
         // `EPOLLERR`/`EPOLLHUP` on a PSI fd means the trigger is dead (e.g.
         // the cgroup was removed). kernfs reports that permanently, so tear
@@ -316,7 +318,7 @@ mod posix {
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-            let Some(raw) = *slot(vm) else {
+            let Some(raw) = slot(vm).get() else {
                 return;
             };
             // SAFETY: slot is populated only by `install` with a
@@ -350,6 +352,7 @@ mod posix {
 
 #[cfg(windows)]
 mod windows {
+    use core::cell::Cell;
     use core::ffi::c_void;
     use core::ptr::{self, NonNull};
 
@@ -397,7 +400,7 @@ mod windows {
         thread: Option<std::thread::JoinHandle<()>>,
     }
 
-    fn slot(vm: &mut VirtualMachine) -> &mut Option<NonNull<c_void>> {
+    fn slot(vm: &VirtualMachine) -> &Cell<Option<NonNull<c_void>>> {
         vm.rare_data().memory_pressure_watcher_slot()
     }
 
@@ -427,8 +430,8 @@ mod windows {
     }
 
     pub(super) fn install(global: &JSGlobalObject) {
-        let vm = global.bun_vm().as_mut();
-        if slot(vm).is_some() {
+        let vm = global.bun_vm();
+        if slot(vm).get().is_some() {
             return;
         }
 
@@ -445,15 +448,11 @@ mod windows {
         }
         let shutdown = OwnedHandle(shutdown);
 
-        let (vm, n, s) = (
-            global.bun_vm().handle(),
-            notify.0 as usize,
-            shutdown.0 as usize,
-        );
+        let (handle, n, s) = (vm.handle(), notify.0 as usize, shutdown.0 as usize);
         let Ok(thread) = std::thread::Builder::new()
             .name("MemoryPressure".into())
             .stack_size(64 * 1024)
-            .spawn(move || thread_main(vm, n, s))
+            .spawn(move || thread_main(handle, n, s))
         else {
             return;
         };
@@ -463,11 +462,11 @@ mod windows {
             shutdown,
             thread: Some(thread),
         });
-        *slot(global.bun_vm().as_mut()) = NonNull::new(bun_core::heap::into_raw(watcher).cast());
+        slot(vm).set(NonNull::new(bun_core::heap::into_raw(watcher).cast()));
     }
 
     pub(super) fn uninstall(global: &JSGlobalObject) {
-        let Some(raw) = slot(global.bun_vm().as_mut()).take() else {
+        let Some(raw) = slot(global.bun_vm()).take() else {
             return;
         };
         // SAFETY: slot is populated only by `install` with a `Box<MemoryPressureWatcher>`.
@@ -510,9 +509,9 @@ pub(crate) extern "C" fn Bun__MemoryPressure__emit(global: &JSGlobalObject, lvl:
 pub(crate) extern "C" fn Bun__MemoryPressure__isInstalled(global: &JSGlobalObject) -> bool {
     global
         .bun_vm()
-        .as_mut()
         .rare_data()
         .memory_pressure_watcher_slot()
+        .get()
         .is_some()
 }
 

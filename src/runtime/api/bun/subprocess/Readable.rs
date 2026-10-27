@@ -89,7 +89,7 @@ impl Readable {
 
     pub(crate) fn init(
         stdio: Stdio,
-        event_loop: NonNull<EventLoop>,
+        event_loop: &'static EventLoop,
         process: NonNull<Subprocess<'static>>,
         result: StdioResult,
         max_size: Option<NonNull<MaxBuf>>,

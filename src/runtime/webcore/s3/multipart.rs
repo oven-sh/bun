@@ -138,7 +138,7 @@ pub struct MultiPartUpload {
     pub(crate) storage_class: Option<StorageClass>,
     pub(crate) request_payer: bool,
     pub(crate) credentials: RefPtr<S3Credentials>,
-    pub poll_ref: JsCell<KeepAlive>,
+    pub poll_ref: KeepAlive,
     /// An upload waits for its script to write more, which the script of a `Bun.ModuleGraph` that
     /// was disposed never does: the graph's context fails it.
     pub(crate) abort_handle: bun_jsc::AbortHandle,
@@ -421,11 +421,9 @@ impl Drop for MultiPartUpload {
         // KeepAlive::unref takes an `EventLoopCtx` (aio cycle-break vtable),
         // not `&VirtualMachine`. Route through the global hook like simple_request does.
         let _ = self.vm;
-        self.poll_ref.with_mut(|poll_ref| {
-            poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
-                bun_io::AllocatorType::Js,
-            ))
-        });
+        self.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
+            bun_io::AllocatorType::Js,
+        ));
     }
 }
 
@@ -611,11 +609,9 @@ impl MultiPartUpload {
             )?;
             // Nothing more is expected for this upload (a rollback request keeps the loop alive
             // itself), and whoever still holds a ref may hold it for as long as the collector likes.
-            self.poll_ref.with_mut(|poll_ref| {
-                poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
-                    bun_io::AllocatorType::Js,
-                ))
-            });
+            self.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
+                bun_io::AllocatorType::Js,
+            ));
 
             if old_state == State::MultipartCompleted {
                 // we are a multipart upload so we need to rollback
@@ -633,7 +629,7 @@ impl MultiPartUpload {
     pub(crate) fn fail_writer_collected(&self) {
         self.ref_();
         self.vm
-            .event_loop_ref()
+            .event_loop()
             .enqueue_task(bun_event_loop::Task::init(
                 self.root_ptr().cast::<WriterCollected>(),
             ));

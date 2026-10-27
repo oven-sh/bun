@@ -30,8 +30,8 @@ mod _impl {
         /// How the pool thread delivers a finished write to the VM.
         pub ticket: Cell<Option<bun_jsc::Ticket>>,
         pub stream: JsCell<Context>,
-        pub poll_ref: JsCell<CountedKeepAlive>,
-        pub this_value: JsCell<StrongOptional>, // jsc.Strong.Optional
+        pub poll_ref: CountedKeepAlive,
+        pub this_value: StrongOptional,
         pub write_in_progress: Cell<bool>,
         /// bit 0: the pending input's ArrayBuffer is pinned; bit 1: the pending output's. A held bufferless view sets neither.
         pub pinned_buffers: Cell<u8>,
@@ -55,8 +55,8 @@ mod _impl {
                 global_this: bun_ptr::BackRef::new(cx.global()),
                 ticket: Cell::new(None),
                 stream: JsCell::new(stream),
-                poll_ref: JsCell::new(CountedKeepAlive::default()),
-                this_value: JsCell::new(StrongOptional::empty()),
+                poll_ref: CountedKeepAlive::default(),
+                this_value: StrongOptional::empty(),
                 write_in_progress: Cell::new(false),
                 pinned_buffers: Cell::new(0),
                 input_copy: JsCell::new(Default::default()),

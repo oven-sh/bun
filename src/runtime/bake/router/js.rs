@@ -81,7 +81,9 @@ impl JSFrameworkRouter {
             stored_parse_errors: Vec::new(),
         };
 
-        let resolver = &mut global.bun_vm().as_mut().transpiler.resolver;
+        // SAFETY: `scan` only reads directories: it runs no script, so nothing else reaches the
+        // transpiler while `resolver` is live.
+        let resolver = unsafe { &mut global.bun_vm().transpiler_mut().resolver };
         // The handler only touches `files`/`stored_parse_errors`, so split-borrow
         // those two fields into a dedicated context (see `JSFrameworkRouterScanCtx`).
         {

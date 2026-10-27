@@ -19,14 +19,8 @@ use bun_uws::Loop;
 use crate::jsc_hooks::timer_all;
 
 #[unsafe(no_mangle)]
-extern "C" fn Bun__internal_ensureDateHeaderTimerIsEnabled(loop_: *mut Loop) {
-    if let Some(vm_ptr) = VirtualMachine::get_or_null() {
-        // SAFETY: loop_ is a valid uws Loop pointer passed from C++ and lives
-        // for the call duration.
-        let loop_ref = unsafe { &*loop_ };
-        // SAFETY: single JS thread; `timer_all()` returns the live per-thread
-        // `All` (non-null after init). `update_date_header_timer_if_necessary`
-        // takes the VM by raw pointer to avoid aliased-`&mut` (jsc/runtime crate cycle).
-        unsafe { (*timer_all()).update_date_header_timer_if_necessary(loop_ref, vm_ptr) };
+extern "C" fn Bun__internal_ensureDateHeaderTimerIsEnabled(loop_: &Loop) {
+    if let Some(vm) = VirtualMachine::get_or_null() {
+        timer_all().update_date_header_timer_if_necessary(loop_, vm);
     }
 }

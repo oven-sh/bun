@@ -92,7 +92,7 @@ impl FileRoute {
         if self.has_last_modified_header {
             if let Some(last_modified) = self.headers.get(b"last-modified") {
                 let string = StringView::borrow_utf8(last_modified);
-                let global = VirtualMachine::get().as_mut().global();
+                let global = VirtualMachine::get().global();
                 let date_f64 = bun_string_jsc::parse_date(&string, global)?;
                 if !date_f64.is_nan() && date_f64.is_finite() {
                     return Ok(Some(date_f64 as u64));
@@ -301,7 +301,7 @@ impl FileRoute {
         match route.serve(fd, path, &mut req, resp, method) {
             Serve::Done => {
                 #[cfg(windows)]
-                Closer::close(fd, bun_sys::windows::libuv::Loop::get());
+                Closer::close(fd, bun_sys::windows::libuv::Loop::get().as_ptr());
                 #[cfg(not(windows))]
                 Closer::close(fd, ());
                 route.on_response_complete(resp);
@@ -317,7 +317,7 @@ impl FileRoute {
                     fd,
                     auto_close: true,
                     resp,
-                    vm: bun_ptr::BackRef::new(server.vm()),
+                    vm: server.vm(),
                     file_type,
                     pollable,
                     offset,

@@ -295,33 +295,16 @@ impl DevServer {
         crate::bake::dev_server::memory_cost::memory_cost_detailed(self)
     }
 
-    /// Recover `&VirtualMachine` from the JSC_BORROW `vm` back-reference.
-    /// Safe `Deref` via [`BackRef`](bun_ptr::BackRef): vm is valid for
-    /// DevServer's entire lifetime.
+    /// The virtual machine (global object) to execute code in. Not a field: the watcher thread
+    /// borrows `DevServer` too, and the VM is `!Sync`.
     #[inline]
-    fn vm(&self) -> &VirtualMachine {
-        self.vm.get()
+    pub(crate) fn vm(&self) -> &'static VirtualMachine {
+        VirtualMachine::get()
     }
 
-    /// Safe `&'static JSGlobalObject` accessor — `self.vm().global()`.
-    /// `'static` so the borrow is decoupled from `&self` and may be held
-    /// across `&mut self` reborrows.
     #[inline]
     fn global(&self) -> &'static JSGlobalObject {
         self.vm().global()
-    }
-
-    /// Recover `&mut VirtualMachine` via the global singleton — `self.vm` is
-    /// `*const`. The VM is process-unique on the JS thread, so
-    /// `VirtualMachine::get()` returns the same instance with write provenance.
-    /// SAFETY: single JS thread; caller must not hold an aliasing `&mut`.
-    #[inline]
-    pub(crate) fn vm_mut(&self) -> &mut VirtualMachine {
-        debug_assert!(::core::ptr::eq(
-            self.vm.as_const_ptr(),
-            VirtualMachine::get()
-        ));
-        VirtualMachine::get_mut()
     }
 
     // ── transpiler accessors ───────────────────────────────────────────────
@@ -480,14 +463,6 @@ pub(crate) struct DevServer {
     /// Emebedding in client bundles and sent when the HMR Socket is opened;
     /// When the value mismatches the page is forcibly reloaded.
     pub(crate) configuration_hash_key: [u8; 16],
-    /// The virtual machine (global object) to execute code in.
-    /// JSC_BORROW (LIFETIMES.tsv): passed in via `Options.vm`; deinit no-op.
-    /// [`BackRef`](bun_ptr::BackRef) (not `&'a`) so `DevServer` is not
-    /// lifetime-generic — it is `Box`-owned by `ServerInstance` which outlives
-    /// the VM anyway. The back-reference invariant (pointee outlives holder)
-    /// is the JSC_BORROW guarantee: vm is valid for DevServer's entire
-    /// lifetime.
-    pub(crate) vm: bun_ptr::BackRef<VirtualMachine>,
     /// How the file-watcher thread submits hot-reload events to the VM.
     pub(crate) vm_handle: bun_jsc::VmHandle,
     /// May be `None` if not attached to an HTTP server yet. When no server is

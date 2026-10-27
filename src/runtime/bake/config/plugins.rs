@@ -13,14 +13,15 @@ pub(crate) fn set_config_plugins<'a>(
     names: Vec<Utf8Bytes<'static>>,
 ) {
     let global = cx.global();
-    let vm = global.bun_vm().as_mut();
+    let vm = global.bun_vm();
     // With none, the server sets up no plugins, unless bunfig.toml has some.
     if names.is_empty() {
         vm.bake_config_plugins.deinit();
     } else {
         vm.bake_config_plugins.set(global, plugins.to_js());
     }
-    vm.bake_config_plugin_names = names.into_iter().map(|name| Box::from(&*name)).collect();
+    vm.bake_config_plugin_names
+        .set(names.into_iter().map(|name| Box::from(&*name)).collect());
 }
 
 /// Set in the environment by the first start of `bun bake --check`, so that the process that a
@@ -55,7 +56,7 @@ pub(crate) fn is_restart() -> bool {
 /// When the restart fails, `reload_process` prints why and this exits 1: the kill signal handlers
 /// have run and the signal dispositions are reset, so the server cannot go on.
 pub(crate) fn restart_process(cx: &mut JsScope<'_>) {
-    cx.global().bun_vm().as_mut().restart_process(true);
+    cx.global().bun_vm().restart_process(true);
     // Not `process.exit()`: during a restart it tries the restart again, and panics when it fails.
     bun_core::Output::flush();
     bun_core::Global::exit(1);
@@ -72,13 +73,13 @@ pub(crate) fn is_restarting() -> bool {
 pub(crate) fn set_pages<'a>(cx: &mut JsScope<'a>, framework: JsLocal<'a>) {
     let global = cx.global();
     let framework = framework.to_js();
-    let vm = global.bun_vm().as_mut();
+    let vm = global.bun_vm();
     if framework.is_undefined_or_null() {
         vm.bake_framework.deinit();
     } else {
         vm.bake_framework.set(global, framework);
     }
-    vm.bake_pages = true;
+    vm.bake_pages.set(true);
 }
 
 /// `checkFramework(framework)`: throws the error that `Bun.serve()` would throw for this `framework`

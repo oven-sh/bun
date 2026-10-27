@@ -22,7 +22,7 @@ bun_output::declare_scope!(zlib, hidden);
 #[derive(Default)]
 pub(crate) struct CountedKeepAlive {
     pub(crate) keep_alive: KeepAlive,
-    pub(crate) ref_count: u32,
+    pub(crate) ref_count: Cell<u32>,
 }
 
 impl Drop for CountedKeepAlive {
@@ -72,16 +72,18 @@ fn jsv_to_u32(v: JSValue) -> u32 {
 }
 
 impl CountedKeepAlive {
-    fn ref_(&mut self, _vm: &VirtualMachine) {
-        if self.ref_count == 0 {
+    fn ref_(&self, _vm: &VirtualMachine) {
+        let ref_count = self.ref_count.get();
+        if ref_count == 0 {
             self.keep_alive.ref_(bun_io::js_vm_ctx());
         }
-        self.ref_count += 1;
+        self.ref_count.set(ref_count + 1);
     }
 
-    fn unref(&mut self, _vm: &VirtualMachine) {
-        self.ref_count -= 1;
-        if self.ref_count == 0 {
+    fn unref(&self, _vm: &VirtualMachine) {
+        let ref_count = self.ref_count.get() - 1;
+        self.ref_count.set(ref_count);
+        if ref_count == 0 {
             self.keep_alive.unref(bun_io::js_vm_ctx());
         }
     }
@@ -160,8 +162,8 @@ pub(crate) trait CompressionStreamImpl:
         );
     }
 
-    fn poll_ref(&self) -> &JsCell<CountedKeepAlive>;
-    fn this_value(&self) -> &JsCell<StrongOptional>;
+    fn poll_ref(&self) -> &CountedKeepAlive;
+    fn this_value(&self) -> &StrongOptional;
     fn task(&self) -> &JsCell<WorkPoolTask>;
     fn write_in_progress(&self) -> &Cell<bool>;
     fn pinned_buffers(&self) -> &Cell<u8>;
@@ -400,15 +402,14 @@ pub(crate) trait CompressionStreamImpl:
 
         // Only create the strong handle when we have a pending write
         // And make sure to clear it when we are done.
-        self.this_value()
-            .with_mut(|v| v.set(global_this, this_value));
+        self.this_value().set(global_this, this_value);
 
         let vm = global_this.bun_vm();
         self.task().set(WorkPoolTask {
             node: Default::default(),
             callback: async_job_run_task::<Self>,
         });
-        self.poll_ref().with_mut(|p| p.ref_(vm));
+        self.poll_ref().ref_(vm);
         self.ticket().set(Some(vm.ticket()));
         WorkPool::schedule(self.task().as_ptr());
 
@@ -613,7 +614,7 @@ pub(crate) trait CompressionStreamImpl:
         }
         self.pending_close().set(false);
         self.closed().set(true);
-        self.this_value().with_mut(|v| v.deinit());
+        self.this_value().deinit();
         self.stream().with_mut(|s| s.close());
         self.input_copy().set(InputCopy::default());
     }
@@ -674,7 +675,7 @@ pub(crate) trait CompressionStreamImpl:
         // The pending close handling below still runs either way.
         if let Some(callback) = Self::error_callback_get_cached(this_value) {
             let vm = global_this.bun_vm();
-            vm.event_loop_ref().run_callback(
+            vm.event_loop().run_callback(
                 bun_event_loop::ContextId::NONE,
                 callback,
                 global_this,
@@ -731,10 +732,10 @@ pub(crate) unsafe fn release_unrun<T: CompressionStreamImpl>(this_ptr: *mut T) {
     let global: &JSGlobalObject = this.global_this();
     let vm = global.bun_vm();
     this.write_in_progress().set(false);
-    if let Some(this_value) = this.this_value().with_mut(|v| v.try_swap()) {
+    if let Some(this_value) = this.this_value().try_swap() {
         this.unpin_pending_buffers(this_value);
     }
-    this.poll_ref().with_mut(|p| p.unref(vm));
+    this.poll_ref().unref(vm);
     // SAFETY: fn contract — the write's ref.
     unsafe { T::deref(this_ptr) };
 }
@@ -762,9 +763,9 @@ pub(crate) unsafe fn run_from_js_thread<T: CompressionStreamImpl>(this_ptr: *mut
     this.write_in_progress().set(false);
 
     // Clear the strong handle before we call any callbacks.
-    let Some(this_value) = this.this_value().with_mut(|v| v.try_swap()) else {
+    let Some(this_value) = this.this_value().try_swap() else {
         bun_output::scoped_log!(zlib, "this_value is null in runFromJSThread");
-        this.poll_ref().with_mut(|p| p.unref(vm));
+        this.poll_ref().unref(vm);
         // SAFETY: matching `ref_()` in `write()`; `this_ptr` is the heap
         // payload and is not accessed after this call.
         unsafe { T::deref(this_ptr) };
@@ -778,7 +779,7 @@ pub(crate) unsafe fn run_from_js_thread<T: CompressionStreamImpl>(this_ptr: *mut
     T::pending_output_set_cached(this_value, global, JSValue::ZERO);
 
     if !this.check_error(global, this_value) {
-        this.poll_ref().with_mut(|p| p.unref(vm));
+        this.poll_ref().unref(vm);
         // SAFETY: see above.
         unsafe { T::deref(this_ptr) };
         return;
@@ -796,7 +797,7 @@ pub(crate) unsafe fn run_from_js_thread<T: CompressionStreamImpl>(this_ptr: *mut
     // `init()` caches the JS write callback; a handle whose `init()` was
     // never called has none, so there is nothing to notify.
     if let Some(write_callback) = T::write_callback_get_cached(this_value) {
-        vm.event_loop_ref().run_callback(
+        vm.event_loop().run_callback(
             bun_event_loop::ContextId::NONE,
             write_callback,
             global,
@@ -809,7 +810,7 @@ pub(crate) unsafe fn run_from_js_thread<T: CompressionStreamImpl>(this_ptr: *mut
         this.close();
     }
 
-    this.poll_ref().with_mut(|p| p.unref(vm));
+    this.poll_ref().unref(vm);
     // SAFETY: matching `ref_()` in `write()`; `this_ptr` is the heap payload
     // and is not accessed after this call.
     unsafe { T::deref(this_ptr) };
@@ -897,13 +898,11 @@ macro_rules! __impl_compression_stream {
                 &self.stream
             }
             #[inline]
-            fn poll_ref(
-                &self,
-            ) -> &::bun_jsc::JsCell<$crate::node::node_zlib_binding::CountedKeepAlive> {
+            fn poll_ref(&self) -> &$crate::node::node_zlib_binding::CountedKeepAlive {
                 &self.poll_ref
             }
             #[inline]
-            fn this_value(&self) -> &::bun_jsc::JsCell<::bun_jsc::StrongOptional> {
+            fn this_value(&self) -> &::bun_jsc::StrongOptional {
                 &self.this_value
             }
             #[inline]

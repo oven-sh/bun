@@ -33,7 +33,7 @@ impl TimeoutObject {
         this_value: JsWrapper<'a, Self>,
         cx: &mut JsScope<'a>,
     ) -> JsWrapper<'a, Self> {
-        this.internals.cancel(cx.global().bun_vm_ptr());
+        this.internals.cancel(cx.global().bun_vm());
         this_value
     }
 

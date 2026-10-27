@@ -31,7 +31,7 @@ use bun_jsc::{JSGlobalObject, JSInternalPromise, JSValue, StringJsc as _, ZigSta
 /// `export fn Bun__isMainThreadVM() callconv(.c) bool { return get().is_main_thread; }`
 // HOST_EXPORT(Bun__isMainThreadVM, c)
 pub(crate) fn is_main_thread_vm() -> bool {
-    VirtualMachine::get().as_mut().is_main_thread
+    VirtualMachine::get().is_main_thread.get()
 }
 
 pub(crate) fn drain_microtasks(cx: &mut JsScope<'_>) {
@@ -39,32 +39,26 @@ pub(crate) fn drain_microtasks(cx: &mut JsScope<'_>) {
     // Hot path (~2×/request via cork callback chain): pass the incoming
     // `global` straight through instead of re-deriving it via
     // TLS→vm→event_loop→vm→global (4 dependent loads — perf root-cause #1).
-    // `as_mut()` ignores its receiver and re-reads the TLS slot anyway, so go
-    // straight to the thread-local for the VM.
-    let vm = VirtualMachine::get_mut();
+    let vm = VirtualMachine::get();
     let jsc_vm = global.vm();
-    let _ = vm
-        .event_loop_mut()
-        .drain_microtasks_with_global(global, jsc_vm);
+    let _ = vm.event_loop().drain_microtasks_with_global(global, jsc_vm);
 }
 
 /// `export fn Bun__logUnhandledException(exception: JSValue) void { get().runErrorHandler(exception, null); }`
 // HOST_EXPORT(Bun__logUnhandledException, c)
 pub(crate) fn log_unhandled_exception(exception: JSValue) {
-    VirtualMachine::get()
-        .as_mut()
-        .run_error_handler(exception, None);
+    VirtualMachine::get().run_error_handler(exception, None);
 }
 
 /// `export fn Bun__remapStackFramePositions(vm, frames, frames_count)` —
 /// **may run on the heap-collector thread** (see oven-sh/bun#17087); the
-/// underlying method serializes on `remap_stack_frames_mutex`.
+/// underlying method serializes on `remap_stack_frames_mutex`. So `vm` is not borrowed here.
 ///
 /// # Safety
-/// `frames` must point to a live array of `frames_count` `ZigStackFrame`s.
+/// `vm` must be live. `frames` must point to a live array of `frames_count` `ZigStackFrame`s.
 // HOST_EXPORT(Bun__remapStackFramePositions, c)
-pub(crate) fn remap_stack_frame_positions(
-    vm: &mut VirtualMachine,
+pub(crate) unsafe fn remap_stack_frame_positions(
+    vm: *const VirtualMachine,
     frames: *mut ZigStackFrame<'_>,
     frames_count: usize,
 ) {
@@ -73,9 +67,8 @@ pub(crate) fn remap_stack_frame_positions(
     // nothing else on that thread will.
     let on_js_thread = VirtualMachine::get_or_null().is_some();
     bun_core::output::Source::configure_thread();
-    // SAFETY: `frames[..frames_count]` is a live C++ array; the method takes
-    // the raw ptr because it forwards to the C++-side remapper.
-    unsafe { vm.remap_stack_frame_positions(frames, frames_count) };
+    // SAFETY: fn contract.
+    unsafe { VirtualMachine::remap_stack_frame_positions(vm, frames, frames_count) };
     if !on_js_thread {
         bun_core::output::flush();
     }
@@ -83,16 +76,16 @@ pub(crate) fn remap_stack_frame_positions(
 
 /// `export fn Bun__VirtualMachine__setOverrideModuleRunMain(vm, is_patched)`
 // HOST_EXPORT(Bun__VirtualMachine__setOverrideModuleRunMain, c)
-pub(crate) fn set_override_module_run_main(vm: &mut VirtualMachine, is_patched: bool) {
-    if vm.is_in_preload {
-        vm.has_patched_run_main = is_patched;
+pub(crate) fn set_override_module_run_main(vm: &VirtualMachine, is_patched: bool) {
+    if vm.is_in_preload.get() {
+        vm.has_patched_run_main.set(is_patched);
     }
 }
 
 /// `export fn Bun__VirtualMachine__setOverrideModuleRunMainPromise(vm, promise)`
 // HOST_EXPORT(Bun__VirtualMachine__setOverrideModuleRunMainPromise, c)
 pub(crate) fn set_override_module_run_main_promise(
-    vm: &mut VirtualMachine,
+    vm: &VirtualMachine,
     promise: *mut JSInternalPromise,
 ) {
     if vm.pending_internal_promise().is_none() {
@@ -102,32 +95,26 @@ pub(crate) fn set_override_module_run_main_promise(
 
 /// Exported as `Bun__VM__setEntryPointEvalResultESM`.
 // HOST_EXPORT(Bun__VM__setEntryPointEvalResultESM, c)
-pub(crate) fn set_entry_point_eval_result_esm(this: &mut VirtualMachine, result: JSValue) {
+pub(crate) fn set_entry_point_eval_result_esm(this: &VirtualMachine, result: JSValue) {
     // allow esm evaluate to set value multiple times
-    if !this.entry_point_result.cjs_set_value {
-        // `global()` returns `&'static`, decoupled from `this` for the
-        // disjoint `&mut this.entry_point_result` borrow.
-        let global = this.global();
-        this.entry_point_result.value.set(global, result);
+    if !this.entry_point_result.cjs_set_value.get() {
+        this.entry_point_result.value.set(this.global(), result);
     }
 }
 
 /// Exported as `Bun__VM__setEntryPointEvalResultCJS`.
 // HOST_EXPORT(Bun__VM__setEntryPointEvalResultCJS, c)
-pub(crate) fn set_entry_point_eval_result_cjs(this: &mut VirtualMachine, value: JSValue) {
+pub(crate) fn set_entry_point_eval_result_cjs(this: &VirtualMachine, value: JSValue) {
     if !this.entry_point_result.value.has() {
-        // `global()` returns `&'static`, decoupled from `this` for the
-        // disjoint `&mut this.entry_point_result` borrow.
-        let global = this.global();
-        this.entry_point_result.value.set(global, value);
-        this.entry_point_result.cjs_set_value = true;
+        this.entry_point_result.value.set(this.global(), value);
+        this.entry_point_result.cjs_set_value.set(true);
     }
 }
 
 /// Exported as `Bun__VM__specifierIsEvalEntryPoint`.
 // HOST_EXPORT(Bun__VM__specifierIsEvalEntryPoint, c)
-pub(crate) fn specifier_is_eval_entry_point(this: &mut VirtualMachine, specifier: JSValue) -> bool {
-    if let Some(eval_source) = this.module_loader.eval_source.as_ref() {
+pub(crate) fn specifier_is_eval_entry_point(this: &VirtualMachine, specifier: JSValue) -> bool {
+    if let Some(eval_source) = this.module_loader.eval_source() {
         let global = this.global();
         let specifier_str =
             bun_core::String::from_js(specifier, global).expect("unexpected exception");
@@ -139,8 +126,8 @@ pub(crate) fn specifier_is_eval_entry_point(this: &mut VirtualMachine, specifier
 /// Called once by JSCommonJSModule.cpp for the root CJS module so the run command reports
 /// origin `uncaughtException`. `main()` compare filters out an ESM entry that `import`s CJS.
 // HOST_EXPORT(Bun__VM__noteCommonJSEvaluation, c)
-pub(crate) fn note_commonjs_evaluation(this: &mut VirtualMachine, specifier: JSValue) {
-    if this.entry_point_result.evaluated_as_cjs {
+pub(crate) fn note_commonjs_evaluation(this: &VirtualMachine, specifier: JSValue) {
+    if this.entry_point_result.evaluated_as_cjs.get() {
         return;
     }
     let Some(main) = this.main() else {
@@ -153,7 +140,7 @@ pub(crate) fn note_commonjs_evaluation(this: &mut VirtualMachine, specifier: JSV
         return;
     };
     if specifier_str.eql_utf8(main) {
-        this.entry_point_result.evaluated_as_cjs = true;
+        this.entry_point_result.evaluated_as_cjs.set(true);
     }
 }
 
@@ -161,7 +148,7 @@ pub(crate) fn note_commonjs_evaluation(this: &mut VirtualMachine, specifier: JSV
 /// the next tick on the event loop.
 // HOST_EXPORT(Bun__closeChildIPC, c)
 pub(crate) fn close_child_ipc(global: &JSGlobalObject) {
-    let vm = global.bun_vm().as_mut();
+    let vm = global.bun_vm();
     if let Some(current_ipc) = crate::ipc_host::get_ipc_instance(vm) {
         // SAFETY: `get_ipc_instance` returns the live boxed `IPCInstance`.
         unsafe { (*current_ipc).data().disconnect() };
@@ -184,51 +171,14 @@ pub(crate) fn close_child_ipc(global: &JSGlobalObject) {
 
 mod sql_hooks {
     use super::*;
-    use bun_event_loop::EventLoopTimer::EventLoopTimer;
     use bun_sql_jsc::jsc::{RareData as SqlRareData, SqlRuntimeHooks};
 
-    unsafe fn sql_rare(_vm: *mut VirtualMachine) -> *mut SqlRareData {
-        let state = crate::jsc_hooks::runtime_state();
-        debug_assert!(!state.is_null(), "RuntimeState not installed");
-        // SAFETY: `state` is the boxed per-thread `RuntimeState`; `sql_rare` is
-        // an embedded field with stable address for the VM lifetime.
-        unsafe { core::ptr::addr_of_mut!((*state).sql_rare) }
-    }
-    unsafe fn timer_heap(_vm: *mut VirtualMachine) -> *mut c_void {
-        crate::jsc_hooks::timer_all().cast()
-    }
-    unsafe fn timer_insert(heap: *mut c_void, timer: *mut EventLoopTimer) {
-        // SAFETY: `heap` is `&runtime_state().timer` (live for the VM); `timer`
-        // is a live intrusive heap node owned by the caller. Route through
-        // `All::insert` (NOT the raw `.timers` field) so the fake-timers
-        // routing and the `(*timer).state` / `in_heap` bookkeeping happen.
-        unsafe { (*heap.cast::<crate::timer::All>()).insert(timer) };
-    }
-    unsafe fn timer_remove(heap: *mut c_void, timer: *mut EventLoopTimer) {
-        // SAFETY: `heap` is `&runtime_state().timer`; `timer` was previously
-        // inserted via `timer_insert`. Route through `All::remove` so
-        // `in_heap` is consulted and reset.
-        unsafe { (*heap.cast::<crate::timer::All>()).remove(timer) };
-    }
-    unsafe fn ssl_ctx_cache(_vm: *mut VirtualMachine) -> *mut c_void {
-        let state = crate::jsc_hooks::runtime_state();
-        debug_assert!(!state.is_null(), "RuntimeState not installed");
-        // SAFETY: `state` is the boxed per-thread `RuntimeState`; the embedded
-        // `SSLContextCache` has stable address for the VM lifetime.
-        unsafe { core::ptr::addr_of_mut!((*state).ssl_ctx_cache).cast::<c_void>() }
-    }
-    unsafe fn ssl_ctx_get_or_create(
-        cache: *mut c_void,
-        opts: &bun_uws::us_bun_socket_context_options_t,
-        err: &mut bun_uws::create_bun_socket_error_t,
-    ) -> Option<bun_boringssl_sys::OwnedSslCtx> {
-        // SAFETY: `cache` is `&runtime_state().ssl_ctx_cache`.
-        let cache = unsafe { &mut *cache.cast::<crate::api::SSLContextCache::SSLContextCache>() };
-        cache.get_or_create_opts(opts, err)
+    fn sql_rare(_vm: &VirtualMachine) -> &SqlRareData {
+        &crate::jsc_hooks::runtime_state().sql_rare
     }
     unsafe fn ssl_config_from_js(global: &JSGlobalObject, value: JSValue) -> *mut c_void {
         use crate::socket::SSLConfigFromJs;
-        match crate::socket::SSLConfig::from_js(global.bun_vm_ref(), global, value, false) {
+        match crate::socket::SSLConfig::from_js(global.bun_vm(), global, value, false) {
             Ok(Some(cfg)) => bun_core::heap::into_raw(Box::new(cfg)).cast::<c_void>(),
             Ok(None) => core::ptr::null_mut(),
             Err(bun_jsc::JsError::OutOfMemory) => {
@@ -263,11 +213,6 @@ mod sql_hooks {
     #[unsafe(no_mangle)]
     static __BUN_SQL_RUNTIME_HOOKS: SqlRuntimeHooks = SqlRuntimeHooks {
         sql_rare,
-        timer_heap,
-        timer_insert,
-        timer_remove,
-        ssl_ctx_cache,
-        ssl_ctx_get_or_create,
         ssl_config_from_js,
         ssl_config_free,
         ssl_config_as_usockets_client,
@@ -294,8 +239,7 @@ pub(crate) fn on_resolve_entry_point_result(cx: &mut JsScope<'_>, result: JsLoca
             1,
         );
     }
-    // SAFETY: bun_vm() never null for a Bun-owned global.
-    bun_core::Global::exit(u32::from(global.bun_vm().as_mut().exit_handler.exit_code));
+    bun_core::Global::exit(u32::from(global.bun_vm().exit_handler.exit_code.get()));
 }
 
 pub(crate) fn on_reject_entry_point_result(cx: &mut JsScope<'_>, result: JsLocal<'_>) {
@@ -314,8 +258,7 @@ pub(crate) fn on_reject_entry_point_result(cx: &mut JsScope<'_>, result: JsLocal
             1,
         );
     }
-    // SAFETY: bun_vm() never null for a Bun-owned global.
-    bun_core::Global::exit(u32::from(global.bun_vm().as_mut().exit_handler.exit_code));
+    bun_core::Global::exit(u32::from(global.bun_vm().exit_handler.exit_code.get()));
 }
 
 // `Bun__Chrome__autoDetect` / `Bun__Chrome__ensure` — exported from

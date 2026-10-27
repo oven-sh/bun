@@ -719,7 +719,7 @@ mod _async_tasks {
             cx: &bun_jsc::JsThread<'_>,
             binding: &Binding,
             task_args: ThreadIsolated<A>,
-            vm: &mut VirtualMachine,
+            vm: &VirtualMachine,
             callback: Option<JSValue>,
         ) -> JSValue {
             let task = Box::new(Self {
@@ -746,7 +746,7 @@ mod _async_tasks {
             task.r#ref.ref_(bun_io::js_vm_ctx());
             task.tracker.did_schedule(cx.global());
 
-            let loop_ = uv::Loop::get();
+            let loop_ = uv::Loop::get().as_ptr();
             task.req.data = core::ptr::from_mut::<Self>(task).cast::<c_void>();
 
             // The match resolves at compile time (`F` is a const generic), but
@@ -901,7 +901,7 @@ mod _async_tasks {
                         let task_ptr: *mut Self = task;
                         task.global_object()
                             .bun_vm()
-                            .event_loop_mut()
+                            .event_loop()
                             .enqueue_task(bun_jsc::Task::init(task_ptr));
                         return task.completion.value();
                     }
@@ -967,7 +967,7 @@ mod _async_tasks {
             let this_ptr: *mut Self = this;
             this.global_object()
                 .bun_vm()
-                .event_loop_mut()
+                .event_loop()
                 .enqueue_task(bun_jsc::Task::init(this_ptr));
         }
 
@@ -988,7 +988,7 @@ mod _async_tasks {
             let this_ptr: *mut Self = this;
             this.global_object()
                 .bun_vm()
-                .event_loop_mut()
+                .event_loop()
                 .enqueue_task(bun_jsc::Task::init(this_ptr));
         }
 
@@ -1436,7 +1436,7 @@ mod _async_tasks {
         }
 
         fn call(global: &JSGlobalObject, callback: JSValue, arguments: &[JSValue]) {
-            global.bun_vm().event_loop_mut().run_callback(
+            global.bun_vm().event_loop().run_callback(
                 bun_event_loop::ContextId::NONE,
                 callback,
                 global,
@@ -1524,7 +1524,7 @@ mod _async_tasks {
             cx: &bun_jsc::JsThread<'_>,
             _binding: &Binding,
             args: ThreadIsolated<A>,
-            vm: &mut VirtualMachine,
+            vm: &VirtualMachine,
             callback: Option<JSValue>,
         ) -> JSValue {
             let tracker = AsyncTaskTracker::init(vm);
@@ -1750,14 +1750,14 @@ mod _async_tasks {
             cx: &bun_jsc::JsThread<'_>,
             _binding: &Binding,
             cp_args: ThreadIsolated<args::Cp<'static>>,
-            vm: &mut VirtualMachine,
+            vm: &'static VirtualMachine,
         ) -> JSValue {
             let tracker = AsyncTaskTracker::init(vm);
             tracker.did_schedule(cx.global());
             let task = Self::schedule_new(
                 JSPromiseStrong::init(cx.global()),
                 cp_args,
-                EventLoopHandle::init(vm.event_loop.cast()),
+                vm.event_loop().handle(),
                 bun_jsc::ConcurrentPoster::Js(vm.ticket()),
                 tracker,
                 cx.context().id(),
@@ -1797,7 +1797,7 @@ mod _async_tasks {
             context: bun_event_loop::ContextId,
             shelltask: *mut ShellCpTask,
         ) -> *mut Self {
-            let mut task = Box::new(Self {
+            let task = Box::new(Self {
                 promise,
                 context,
                 args: cp_args,
@@ -1979,7 +1979,7 @@ mod _async_tasks {
             // SAFETY: caller guarantees `this` is the live Box-leaked allocation;
             // reclaim ownership (paired with the Box::leak in
             // schedule_new()).
-            let mut task = unsafe { bun_core::heap::take(this) };
+            let task = unsafe { bun_core::heap::take(this) };
             if !IS_SHELL {
                 let ctx = event_loop_handle_to_ctx(task.evtloop);
                 task.r#ref.unref(ctx);
@@ -2509,7 +2509,7 @@ mod _async_tasks {
         pub(crate) fn create(
             cx: &bun_jsc::JsThread<'_>,
             args: ThreadIsolated<args::Readdir<'static>>,
-            vm: &mut VirtualMachine,
+            vm: &VirtualMachine,
             callback: Option<JSValue>,
         ) -> JSValue {
             let tag = args.tag();
@@ -4718,7 +4718,7 @@ pub(crate) mod ret {
 pub(crate) struct NodeFS {
     /// Scratch for a temporary file path that might appear in a returned error message.
     pub(crate) sync_error_buf: bun_paths::path_buffer_pool::Guard,
-    pub(crate) vm: Option<NonNull<VirtualMachine>>,
+    pub(crate) vm: Option<&'static VirtualMachine>,
 }
 
 impl Default for NodeFS {
@@ -5576,7 +5576,7 @@ impl NodeFS {
             let mut req = UvFsReq::new();
             let rc = unsafe {
                 uv::uv_fs_futime(
-                    uv::Loop::get(),
+                    uv::Loop::get().as_ptr(),
                     &mut *req,
                     args.fd.uv(),
                     args.atime,
@@ -6030,7 +6030,7 @@ impl NodeFS {
             let mut req = UvFsReq::new();
             let rc = unsafe {
                 uv::uv_fs_mkdtemp(
-                    bun_io::Loop::get(),
+                    bun_io::Loop::get().as_ptr(),
                     &mut *req,
                     prefix_buf.as_ptr().cast(),
                     None,
@@ -7172,10 +7172,7 @@ impl NodeFS {
         // `Syscall::read` hands it straight to the kernel.
         use bun_collections::vec_ext::VecExt as _;
         let mut scratch = match self.vm {
-            // SAFETY: `self.vm` is the live owning `*mut VirtualMachine` (single-threaded VM), which outlives this call.
-            Some(vm) if flavor == Flavor::Sync => unsafe {
-                (*(*vm.as_ptr()).rare_data_ptr()).pipe_read_scratch.claim()
-            },
+            Some(vm) if flavor == Flavor::Sync => vm.rare_data().pipe_read_scratch.claim(),
             _ => None,
         };
         let mut heap_buffer: Vec<u8> = Vec::new();
@@ -7211,10 +7208,9 @@ impl NodeFS {
             return match args.encoding {
                 Encoding::Buffer => {
                     if flavor == Flavor::Sync && string_type == ReadFileStringType::Default {
-                        if let Some(vm) = self.vm.map(bun_ptr::BackRef::from) {
+                        if let Some(vm) = self.vm {
                             // Attempt to create the buffer in JSC's heap.
                             // This avoids creating a WastefulTypedArray.
-                            // `self.vm` is the live owning `VirtualMachine` (per-thread singleton) — `BackRef` invariant holds.
                             let global = vm.global();
                             let Ok(array_buffer) = bun_jsc::ArrayBuffer::create_buffer(
                                 global,
@@ -7651,7 +7647,7 @@ impl NodeFS {
             let mut req = UvFsReq::new();
             let rc = unsafe {
                 uv::uv_fs_realpath(
-                    bun_io::Loop::get(),
+                    bun_io::Loop::get().as_ptr(),
                     &mut *req,
                     args.path.slice_z(&mut self.sync_error_buf).as_ptr(),
                     None,
@@ -8119,7 +8115,7 @@ impl NodeFS {
             let mut req = UvFsReq::new();
             let rc = unsafe {
                 uv::uv_fs_utime(
-                    bun_io::Loop::get(),
+                    bun_io::Loop::get().as_ptr(),
                     &mut *req,
                     args.path.slice_z(&mut self.sync_error_buf).as_ptr(),
                     args.atime,
@@ -8150,7 +8146,7 @@ impl NodeFS {
             let mut req = UvFsReq::new();
             let rc = unsafe {
                 uv::uv_fs_lutime(
-                    bun_io::Loop::get(),
+                    bun_io::Loop::get().as_ptr(),
                     &mut *req,
                     args.path.slice_z(&mut self.sync_error_buf).as_ptr(),
                     args.atime,
@@ -9619,10 +9615,10 @@ pub(crate) unsafe extern "C" fn Bun__mkdirp(
 ) -> bool {
     // SAFETY: caller passes a NUL-terminated C string
     let path_bytes = unsafe { bun_core::ffi::cstr(path) }.to_bytes();
-    // SAFETY: `bun_vm()` returns the live VM; `node_fs()` returns its cached
-    // `*NodeFS` (type-erased to `*mut c_void` in `bun_jsc` to break the dep cycle).
-    let node_fs: &mut NodeFS =
-        unsafe { &mut *global_this.bun_vm().as_mut().node_fs().cast::<NodeFS>() };
+    // SAFETY: `node_fs()` returns the VM's boxed `NodeFS` (type-erased in `bun_jsc` to break the
+    // dep cycle). Every borrow of it lasts for one synchronous fs call, which runs no JS, so none
+    // is live here.
+    let node_fs: &mut NodeFS = unsafe { &mut *global_this.bun_vm().node_fs().cast::<NodeFS>() };
     node_fs
         .mkdir_recursive(&args::Mkdir {
             path: PathLike::borrowed(path_bytes),

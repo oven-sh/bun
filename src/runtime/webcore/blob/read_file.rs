@@ -937,9 +937,9 @@ impl ReadFile {
 // ──────────────────────────────────────────────────────────────────────────
 
 #[cfg(windows)]
-pub(crate) struct ReadFileUV<'a> {
+pub(crate) struct ReadFileUV {
     pub(crate) loop_: *mut libuv::uv_loop_t,
-    pub(crate) event_loop: &'a EventLoop,
+    pub(crate) event_loop: &'static EventLoop,
     pub(crate) file_store: FileStore,
     pub(crate) byte_store: ByteStore,
     pub(crate) store: RefPtr<Store>,
@@ -966,7 +966,7 @@ pub(crate) struct ReadFileUV<'a> {
 }
 
 #[cfg(windows)]
-impl<'a> FileOpener for ReadFileUV<'a> {
+impl FileOpener for ReadFileUV {
     fn opened_fd(&self) -> Fd {
         self.opened_fd
     }
@@ -997,7 +997,7 @@ impl<'a> FileOpener for ReadFileUV<'a> {
 }
 
 #[cfg(windows)]
-impl<'a> FileCloser for ReadFileUV<'a> {
+impl FileCloser for ReadFileUV {
     const IO_TAG: bun_io::Tag = bun_io::Tag::ReadFile;
     fn opened_fd(&self) -> Fd {
         self.opened_fd
@@ -1037,10 +1037,10 @@ impl<'a> FileCloser for ReadFileUV<'a> {
 }
 
 #[cfg(windows)]
-impl<'a> ReadFileUV<'a> {
+impl ReadFileUV {
     /// Typed entry: `C` supplies run/cancel for the erased completion.
     pub(crate) fn start<C: ReadFileCompletion>(
-        event_loop: *mut EventLoop,
+        event_loop: &'static EventLoop,
         context: &bun_jsc::ScriptExecutionContext,
         store: RefPtr<Store>,
         off: SizeType,
@@ -1060,7 +1060,7 @@ impl<'a> ReadFileUV<'a> {
     /// Raw entry — caller already has the type-erased `(fn, *anyopaque)` pair
     /// Shares the body with `start`.
     pub(crate) fn start_with_ctx(
-        event_loop: *mut EventLoop,
+        event_loop: &'static EventLoop,
         context: &bun_jsc::ScriptExecutionContext,
         store: RefPtr<Store>,
         off: SizeType,
@@ -1068,15 +1068,9 @@ impl<'a> ReadFileUV<'a> {
         completion: ReadFileCompletionFns,
     ) {
         log!("ReadFileUV.start");
-        // SAFETY: `event_loop` is the per-thread `EventLoop` singleton owned by
-        // the VM (`global.bun_vm().event_loop()`); it strictly outlives this
-        // async op, which additionally holds a keep-alive on it below.
-        let event_loop: &'a EventLoop = unsafe { &*event_loop };
         let file_store = store.data.as_file().clone();
         let this = Box::new(ReadFileUV {
-            // Projected through the helper to avoid materializing a
-            // `&VirtualMachine`.
-            loop_: event_loop.uv_loop().cast(),
+            loop_: event_loop.uv_loop().as_ptr(),
             event_loop,
             file_store,
             byte_store: ByteStore::default(),

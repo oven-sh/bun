@@ -811,7 +811,7 @@ pub(crate) extern "C" fn CompressionStreamCoder__transform(
         // escape this call (`step` copies whatever it leaves unconsumed).
         unsafe { core::slice::from_raw_parts(input, input_len) }
     };
-    let rare = global.bun_vm().as_mut().rare_data();
+    let rare = global.bun_vm().rare_data();
     let mut out = rare.take_compression_scratch();
     // SAFETY: `this` is the live coder owned by the calling JS cell; it is
     // only driven from the JS thread, so the call-scoped `&mut *this` has no
@@ -882,7 +882,7 @@ pub(crate) extern "C" fn CompressionStreamCoder__transformInto(
         // SAFETY: as in `CompressionStreamCoder__transform`.
         unsafe { core::slice::from_raw_parts(input, input_len) }
     };
-    let rare = global.bun_vm().as_mut().rare_data();
+    let rare = global.bun_vm().rare_data();
     let mut out = rare.take_compression_scratch();
     // SAFETY: as in `CompressionStreamCoder__transform`.
     let result = match unsafe { (*this).step(slice, finish, &mut out) } {

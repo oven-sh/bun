@@ -98,7 +98,7 @@ impl InternalMsgHolder {
         let cb = self.cb.get().unwrap();
         let worker = self.worker.get().unwrap();
 
-        let event_loop = global.bun_vm().event_loop_mut();
+        let event_loop = global.bun_vm().event_loop();
 
         event_loop.run_callback(
             bun_event_loop::ContextId::NONE,
@@ -920,7 +920,7 @@ pub(crate) struct SendQueue {
     pub(crate) waiting_for_ack: JsCell<Option<SendHandle>>,
 
     pub(crate) retry_count: Cell<u32>,
-    pub(crate) keep_alive: JsCell<KeepAlive>,
+    pub(crate) keep_alive: KeepAlive,
     #[cfg(debug_assertions)]
     pub(crate) has_written_version: Cell<u8>,
     pub(crate) mode: Mode,
@@ -963,11 +963,9 @@ impl SendQueueOwner {
         match self {
             // SAFETY: an attached owner is live (it holds a ref on the SendQueue).
             SendQueueOwner::Subprocess(p) => unsafe { p.as_ref() }.global_this.as_ptr(),
-            SendQueueOwner::Instance(_) => core::ptr::from_ref(
-                bun_jsc::virtual_machine::VirtualMachine::get()
-                    .as_mut()
-                    .global(),
-            ),
+            SendQueueOwner::Instance(_) => {
+                core::ptr::from_ref(bun_jsc::virtual_machine::VirtualMachine::get().global())
+            }
         }
     }
 
@@ -1048,7 +1046,7 @@ impl SendQueue {
             queue: JsCell::new(Vec::new()),
             waiting_for_ack: JsCell::new(None),
             retry_count: Cell::new(0),
-            keep_alive: JsCell::new(KeepAlive::default()),
+            keep_alive: KeepAlive::default(),
             #[cfg(debug_assertions)]
             has_written_version: Cell::new(0),
             mode,
@@ -1158,7 +1156,7 @@ impl SendQueue {
             }
             self.windows.with_mut(|w| w.windows_write = None);
         }
-        self.keep_alive.with_mut(|k| k.disable());
+        self.keep_alive.disable();
         let was_open = self.socket_is_open();
         self.socket.set(SocketUnion::Closed);
         // Only enqueue the close notification for the open→closed transition.
@@ -1179,7 +1177,7 @@ impl SendQueue {
         self.ref_();
         self.get_global_this()
             .bun_vm()
-            .event_loop_mut()
+            .event_loop()
             .enqueue_task(Task::init(self.root_ptr()));
     }
 
@@ -1464,14 +1462,11 @@ impl SendQueue {
         // break vtable), not `&VirtualMachine`; dispatch is
         // routed through `bun_io::get_vm_ctx` which `bun_runtime` registers.
         let ctx = bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js);
-        let should_ref = self.should_ref();
-        self.keep_alive.with_mut(|k| {
-            if should_ref {
-                k.ref_(ctx);
-            } else {
-                k.unref(ctx);
-            }
-        });
+        if self.should_ref() {
+            self.keep_alive.ref_(ctx);
+        } else {
+            self.keep_alive.unref(ctx);
+        }
     }
 
     fn continue_send(&self, global: &JSGlobalObject, reason: ContinueSendReason) {
@@ -1905,7 +1900,7 @@ impl SendQueue {
             bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<uv::Pipe>()));
         // SAFETY: ipc_pipe just allocated above.
         if let Some(err) =
-            unsafe { (*ipc_pipe).init(uv::Loop::get(), true) }.to_error(bun_sys::Tag::pipe)
+            unsafe { (*ipc_pipe).init(uv::Loop::get().as_ptr(), true) }.to_error(bun_sys::Tag::pipe)
         {
             // SAFETY: ipc_pipe was heap-allocated above and init failed before libuv took ownership.
             let _ = unsafe { bun_core::heap::take(ipc_pipe) };
@@ -2475,8 +2470,6 @@ pub(crate) mod IPCHandlers {
 
         pub(crate) fn on_data(send_queue: &SendQueue, _: Socket, all_data: &[u8]) {
             let global_this = send_queue.get_global_this();
-            // RAII: `enter()` now, `exit()` on drop. The guard holds the raw
-            // `*mut EventLoop` so `&mut EventLoop` isn't held across `on_data2`.
             let _scope = global_this.bun_vm().enter_event_loop_scope();
             on_data2(send_queue, all_data);
         }

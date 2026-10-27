@@ -655,7 +655,7 @@ pub(crate) fn execute_simple_s3_request(
         }
     };
 
-    let mut poll_ref = KeepAlive::init();
+    let poll_ref = KeepAlive::init();
     poll_ref.ref_(bun_io::posix_event_loop::get_vm_ctx(
         bun_io::AllocatorType::Js,
     ));

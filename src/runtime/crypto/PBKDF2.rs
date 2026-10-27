@@ -130,7 +130,7 @@ impl JobContext for Pbkdf2Job {
 
     fn then(mut this: Self, js: Pbkdf2Js, cx: &JsThread<'_>) -> JsResult<()> {
         let global_this = cx.global();
-        let event_loop = global_this.bun_vm().event_loop_mut();
+        let event_loop = global_this.bun_vm().event_loop();
         let callback = js.callback.get();
         if this.err {
             let err = global_this.create_error_instance(format_args!("PBKDF2 derivation failed"));

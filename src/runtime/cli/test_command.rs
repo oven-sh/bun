@@ -1397,7 +1397,7 @@ impl CommandLineReporter {
                 this.summary().fail += 1;
 
                 if this.summary().fail == this.jest.bail {
-                    this.bail_out(VirtualMachine::get().as_mut());
+                    this.bail_out(VirtualMachine::get());
                 }
             }
         }
@@ -1424,7 +1424,7 @@ impl CommandLineReporter {
     }
 
     /// Prints that `--bail` hit its failure count, then exits with code 1. Tears down the VM the same way `exec` does.
-    pub(crate) fn bail_out(&mut self, vm: &mut VirtualMachine) -> ! {
+    pub(crate) fn bail_out(&mut self, vm: &VirtualMachine) -> ! {
         self.print_summary();
         pretty_error!(
             "\nBailed out after {} failure{}<r>\n",
@@ -1435,14 +1435,12 @@ impl CommandLineReporter {
         self.write_junit_report_if_needed();
         self.write_timings_if_needed();
 
-        vm.exit_handler.exit_code = 1;
-        vm.exit_handler.skip_exit_listeners = skip_exit_listeners(self);
-        vm.exit_handler.requested = true;
-        let vm_ptr: *mut VirtualMachine = vm;
-        // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
-        // `run_with_api_lock` takes `&self` only, so the closure holds the
-        // unique mutable access on this single-threaded path.
-        vm.run_with_api_lock(|| unsafe { (*vm_ptr).on_exit() });
+        vm.exit_handler.exit_code.set(1);
+        vm.exit_handler
+            .skip_exit_listeners
+            .set(skip_exit_listeners(self));
+        vm.exit_handler.requested.set(true);
+        vm.run_with_api_lock(|| vm.on_exit());
         // Exit listeners need the runner, so release the `bun:test` GC roots and clear `RUNNER`
         // after they run. Finalizers in the teardown GC must not see a half-torn-down `TestRunner`.
         self.jest.bun_test_root.deinit_for_exit();
@@ -1451,8 +1449,7 @@ impl CommandLineReporter {
         unsafe {
             jest::Jest::RUNNER.write(None);
         }
-        // SAFETY: as above; `global_exit()` diverges, so the closure is the sole mutator.
-        vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() })
+        vm.run_with_api_lock(|| vm.global_exit())
     }
 
     /// Like the JUnit report, called before every exit path (including bail) so measured durations aren't lost.
@@ -1479,7 +1476,7 @@ impl CommandLineReporter {
     /// This process's coverage, one `Report` per instrumented file, sorted by
     /// path, with `coveragePathIgnorePatterns` applied.
     pub(crate) fn for_each_coverage_report(
-        vm: &mut VirtualMachine,
+        vm: &VirtualMachine,
         opts: &CodeCoverageOptions,
         mut each: impl FnMut(CodeCoverageReport<'_>),
     ) {
@@ -1515,7 +1512,7 @@ impl CommandLineReporter {
     /// Returns false if `lcov.info` could not be written.
     pub(crate) fn generate_code_coverage(
         &mut self,
-        vm: &mut VirtualMachine,
+        vm: &VirtualMachine,
         opts: &mut CodeCoverageOptions,
     ) -> bool {
         let _trace = bun::perf::trace("TestCommand.printCodeCoverage");
@@ -1732,13 +1729,7 @@ extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: &bun_core::Stri
     }
 
     let ext = bun_path::extension(slice);
-    // SAFETY: `VirtualMachine::get()` returns the process-lifetime VM pointer; only
-    // called from the JS thread once a VM exists.
-    let loader_by_ext = VirtualMachine::get()
-        .as_mut()
-        .transpiler
-        .options
-        .loader(ext);
+    let loader_by_ext = VirtualMachine::get().transpiler().options.loader(ext);
 
     // allow file loader just incase they use a custom loader with a non-standard extension
     if !(loader_by_ext.is_javascript_like() || loader_by_ext == bun_ast::Loader::File) {
@@ -1946,27 +1937,26 @@ impl TestCommand {
         }
 
         bun_ast::initialize_store();
-        // SAFETY: `init` returns the heap-allocated process-lifetime VM; deref once.
-        let vm: &mut VirtualMachine = unsafe {
-            &mut *VirtualMachine::init(jsc::virtual_machine::InitOptions {
-                // Clone (not take): ParallelRunner::run_as_coordinator → build_worker_argv
-                // reads ctx.args.{conditions,define,loaders,tsconfig_override,drop,
-                // main_fields,extension_order,feature_flags,preserve_symlinks,
-                // allow_addons,allow_ffi_cc,jsx} after this point to forward them
-                // to workers.
-                transform_options: ctx.args.clone(),
-                debugger: core::mem::take(&mut ctx.runtime_options.debugger),
-                log: core::ptr::NonNull::new(ctx.log),
-                env_loader: core::ptr::NonNull::new(&raw mut *env_loader),
-                smol: ctx.runtime_options.smol,
-                is_main_thread: true,
-                ..Default::default()
-            })?
-        };
-        vm.argv = core::mem::take(&mut ctx.passthrough);
+        let vm = VirtualMachine::init(jsc::virtual_machine::InitOptions {
+            // Clone (not take): ParallelRunner::run_as_coordinator → build_worker_argv
+            // reads ctx.args.{conditions,define,loaders,tsconfig_override,drop,
+            // main_fields,extension_order,feature_flags,preserve_symlinks,
+            // allow_addons,allow_ffi_cc,jsx} after this point to forward them
+            // to workers.
+            transform_options: ctx.args.clone(),
+            debugger: core::mem::take(&mut ctx.runtime_options.debugger),
+            log: core::ptr::NonNull::new(ctx.log),
+            env_loader: core::ptr::NonNull::new(&raw mut *env_loader),
+            smol: ctx.runtime_options.smol,
+            is_main_thread: true,
+            ..Default::default()
+        })?;
+        let _ = vm.argv.set(core::mem::take(&mut ctx.passthrough));
         // Clone (not take): build_worker_argv reads ctx.preloads to forward --preload.
-        vm.preload = ctx.preloads.clone();
-        vm.transpiler.options.rewrite_jest_for_tests = true;
+        vm.preload.replace(ctx.preloads.clone());
+        // SAFETY: nothing else borrows the transpiler: no script has run yet.
+        let transpiler = unsafe { vm.transpiler_mut() };
+        transpiler.options.rewrite_jest_for_tests = true;
         bun_http::EXPERIMENTAL_HTTP2_CLIENT_FROM_CLI.store(
             ctx.runtime_options.experimental_http2_fetch,
             core::sync::atomic::Ordering::Relaxed,
@@ -1975,8 +1965,7 @@ impl TestCommand {
             ctx.runtime_options.experimental_http3_fetch,
             core::sync::atomic::Ordering::Relaxed,
         );
-        vm.transpiler.options.env.behavior =
-            bun_bundler::options::EnvBehavior::LoadAllWithoutInlining;
+        transpiler.options.env.behavior = bun_bundler::options::EnvBehavior::LoadAllWithoutInlining;
 
         let node_env_entry = env_loader.map.get_or_put_without_value(b"NODE_ENV")?;
         if !node_env_entry.found_existing {
@@ -1986,23 +1975,25 @@ impl TestCommand {
             };
         }
 
-        vm.transpiler.configure_defines()?;
+        transpiler.configure_defines()?;
 
         vm.load_extra_env_and_source_code_printer();
-        vm.is_main_thread = true;
+        vm.is_main_thread.set(true);
         VirtualMachine::set_is_main_thread_vm(true);
 
         if ctx.test_options.isolate {
-            vm.test_isolation_enabled = true;
-            vm.auto_killer.enabled = true;
+            vm.test_isolation_enabled.set(true);
+            vm.auto_killer.enabled.set(true);
         }
 
         if ctx.test_options.coverage.enabled {
-            vm.transpiler.options.code_coverage = true;
-            vm.transpiler.options.minify_syntax = false;
-            vm.transpiler.options.minify_identifiers = false;
-            vm.transpiler.options.minify_whitespace = false;
-            vm.transpiler.options.dead_code_elimination = false;
+            // SAFETY: nothing else borrows the transpiler: no script has run yet.
+            let options = unsafe { &mut vm.transpiler_mut().options };
+            options.code_coverage = true;
+            options.minify_syntax = false;
+            options.minify_identifiers = false;
+            options.minify_whitespace = false;
+            options.dead_code_elimination = false;
             vm.global().vm().enable_control_flow_profiler();
         }
 
@@ -2012,8 +2003,7 @@ impl TestCommand {
             // We use the string "Etc/UTC" instead of "UTC" so there is no normalization difference.
             b"Etc/UTC";
 
-        // SAFETY: `vm.transpiler.env` is the process-lifetime DotEnv loader pointer.
-        if let Some(tz) = unsafe { (*vm.transpiler.env).get(b"TZ") } {
+        if let Some(tz) = vm.env_loader().get(b"TZ") {
             tz_name = tz;
         }
 
@@ -2022,20 +2012,22 @@ impl TestCommand {
                 .global()
                 .set_time_zone(&EncodedSlice::from_bytes(tz_name));
         }
-        if vm.test_isolation_enabled {
-            vm.test_isolation_state.time_zone = Some(Box::from(tz_name));
-            vm.test_isolation_state.proxy_env = Some(
-                bun_jsc::rare_data::ProxyEnvSnapshot::capture(&vm.env_loader().map),
-            );
-            vm.test_isolation_state.synthetic_allocation_limit =
-                Some(bun_jsc::virtual_machine::synthetic_allocation_limit());
+        if vm.test_isolation_enabled.get() {
+            let state = &vm.test_isolation_state;
+            let _ = state.time_zone.set(Box::from(tz_name));
+            let _ = state
+                .proxy_env
+                .set(bun_jsc::rare_data::ProxyEnvSnapshot::capture(
+                    &vm.env_loader().map,
+                ));
+            state
+                .synthetic_allocation_limit
+                .set(Some(bun_jsc::virtual_machine::synthetic_allocation_limit()));
         }
 
         if ctx.test_options.test_worker {
             // Worker mode: skip discovery; files arrive over stdin and
             // results go out over fd 3. Never returns.
-            // SAFETY: `vm` is the live per-thread VM; `reporter`/`ctx` outlive
-            // this never-returning call.
             ParallelRunner::run_as_worker(&mut reporter, vm, ctx);
         }
 
@@ -2043,7 +2035,7 @@ impl TestCommand {
         // But, don't block the main thread waiting if they used --inspect-wait.
         vm.ensure_debugger(false)?;
 
-        let mut scanner = Scanner::init(&vm.transpiler, ctx.positionals.len()).expect("oom");
+        let mut scanner = Scanner::init(vm.transpiler(), ctx.positionals.len()).expect("oom");
         // SAFETY: lifetime-erase; `path_ignore_patterns_view` lives in this never-returning
         // frame, underlying bytes live in `ctx` (process-lifetime).
         scanner.path_ignore_patterns =
@@ -2086,13 +2078,9 @@ impl TestCommand {
                                     bun_fmt::quote(arg)
                                 );
                             }
-                            vm.exit_handler.exit_code = 1;
-                            vm.is_shutting_down = true;
-                            let vm_ptr: *mut VirtualMachine = vm;
-                            // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
-                            // `run_with_api_lock` takes `&self` only and `global_exit()`
-                            // diverges, so the closure is the sole mutator.
-                            vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() });
+                            vm.exit_handler.exit_code.set(1);
+                            vm.is_shutting_down.set(true);
+                            vm.run_with_api_lock(|| vm.global_exit());
                         }
                     }
                 }
@@ -2195,13 +2183,9 @@ impl TestCommand {
                             bun_fmt::quote(dir_to_scan)
                         );
                     }
-                    vm.exit_handler.exit_code = 1;
-                    vm.is_shutting_down = true;
-                    let vm_ptr: *mut VirtualMachine = vm;
-                    // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
-                    // `run_with_api_lock` takes `&self` only and `global_exit()`
-                    // diverges, so the closure is the sole mutator.
-                    vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() });
+                    vm.exit_handler.exit_code.set(1);
+                    vm.is_shutting_down.set(true);
+                    vm.run_with_api_lock(|| vm.global_exit());
                 }
             }
         }
@@ -2324,7 +2308,7 @@ impl TestCommand {
         if !test_files.is_empty()
             || (ctx.test_options.changed.is_some() && all_test_files_count != 0)
         {
-            vm.hot_reload = ctx.debug.hot_reload;
+            vm.hot_reload.set(ctx.debug.hot_reload);
 
             // Install the --changed trigger collector BEFORE the watcher
             // thread starts so a file edit during runAllTests is still
@@ -2332,30 +2316,22 @@ impl TestCommand {
             // runAllTests (separate concern; see O_EVTONLY comment
             // below).
             if ctx.test_options.changed.is_some()
-                && vm.hot_reload == jsc::virtual_machine::HotReload::Watch
+                && vm.hot_reload.get() == jsc::virtual_machine::HotReload::Watch
             {
                 ChangedFilesFilter::init_watch_trigger();
             }
 
-            match vm.hot_reload {
+            match vm.hot_reload.get() {
                 jsc::virtual_machine::HotReload::Hot => {
-                    // SAFETY: `vm` is the process-lifetime main-thread VM; it
-                    // outlives the leaked reloader.
+                    // SAFETY: no borrow of the transpiler is live here.
                     unsafe {
-                        jsc::hot_reloader::HotReloader::enable_hot_module_reloading(
-                            std::ptr::from_mut::<VirtualMachine>(vm),
-                            None,
-                        );
+                        jsc::hot_reloader::HotReloader::enable_hot_module_reloading(vm, None);
                     }
                 }
                 jsc::virtual_machine::HotReload::Watch => {
-                    // SAFETY: `vm` is the process-lifetime main-thread VM; it
-                    // outlives the leaked reloader.
+                    // SAFETY: no borrow of the transpiler is live here.
                     unsafe {
-                        jsc::hot_reloader::WatchReloader::enable_hot_module_reloading(
-                            std::ptr::from_mut::<VirtualMachine>(vm),
-                            None,
-                        );
+                        jsc::hot_reloader::WatchReloader::enable_hot_module_reloading(vm, None);
                     }
                 }
                 _ => {}
@@ -2373,11 +2349,7 @@ impl TestCommand {
             if !vm.is_watcher_enabled() {
                 Global::exit(1);
             }
-            let vm_ptr: *mut VirtualMachine = vm;
-            // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
-            // `run_with_api_lock` takes `&self` only, so the closure holds the
-            // unique mutable access on this single-threaded path.
-            vm.run_with_api_lock(|| Self::run_event_loop_for_watch(unsafe { &mut *vm_ptr }));
+            vm.run_with_api_lock(|| Self::run_event_loop_for_watch(vm));
         }
 
         let mut coverage_options: CodeCoverageOptions = ctx.test_options.coverage.clone();
@@ -2432,8 +2404,7 @@ impl TestCommand {
             // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set by
             // `enable_hot_module_reloading`; non-null because
             // `is_watcher_enabled()` checked it.
-            let watcher =
-                unsafe { &mut *vm.bun_watcher.cast::<jsc::hot_reloader::ImportWatcher>() };
+            let watcher = unsafe { &mut *vm.bun_watcher.get() };
             for path in &changed_module_graph_files {
                 let _ = watcher.add_file_by_path_slow(path);
             }
@@ -2713,12 +2684,8 @@ impl TestCommand {
             reporter.write_timings_if_needed();
         }
 
-        if vm.hot_reload == jsc::virtual_machine::HotReload::Watch {
-            let vm_ptr: *mut VirtualMachine = vm;
-            // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
-            // `run_with_api_lock` takes `&self` only, so the closure holds the
-            // unique mutable access on this single-threaded path.
-            vm.run_with_api_lock(|| Self::run_event_loop_for_watch(unsafe { &mut *vm_ptr }));
+        if vm.hot_reload.get() == jsc::virtual_machine::HotReload::Watch {
+            vm.run_with_api_lock(|| Self::run_event_loop_for_watch(vm));
         }
         let summary = reporter.summary();
 
@@ -2733,18 +2700,14 @@ impl TestCommand {
             || !write_coverage_success
             || reporter.jest.unhandled_errors_between_tests > 0
         {
-            vm.exit_handler.exit_code = 1;
+            vm.exit_handler.exit_code.set(1);
         }
-        vm.exit_handler.skip_exit_listeners = skip_exit_listeners(&reporter);
-        vm.exit_handler.requested = exit_is_requested();
+        vm.exit_handler
+            .skip_exit_listeners
+            .set(skip_exit_listeners(&reporter));
+        vm.exit_handler.requested.set(exit_is_requested());
         // Must precede the GC-root release below: exit listeners are user JS and may touch still-live state.
-        {
-            let vm_ptr: *mut VirtualMachine = vm;
-            // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
-            // `run_with_api_lock` takes `&self` only, so the closure holds the
-            // unique mutable access on this single-threaded path.
-            vm.run_with_api_lock(|| unsafe { (*vm_ptr).on_exit() });
-        }
+        vm.run_with_api_lock(|| vm.on_exit());
         // on_exit() already set is_shutting_down; global_exit() asserts it.
         // Release `bun:test` GC roots before `global_exit()` so
         // `Zig__GlobalObject__destructOnExit()`'s `collectNow()` can reach the closures they pin
@@ -2760,47 +2723,41 @@ impl TestCommand {
         drop(reporter);
         // `global_exit()` does not return, so nothing is dropped after it.
         drop(all_test_files);
-        {
-            let vm_ptr: *mut VirtualMachine = vm;
-            // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
-            // `run_with_api_lock` takes `&self` only and `global_exit()`
-            // diverges, so the closure is the sole mutator.
-            vm.run_with_api_lock(|| unsafe { (*vm_ptr).global_exit() });
-        }
+        vm.run_with_api_lock(|| vm.global_exit());
         Ok(())
     }
 
-    fn run_event_loop_for_watch(vm: &mut VirtualMachine) {
-        vm.event_loop_ref().tick_possibly_forever();
+    fn run_event_loop_for_watch(vm: &VirtualMachine) {
+        vm.event_loop().tick_possibly_forever();
 
         loop {
             while vm.is_event_loop_alive() {
                 vm.tick();
-                vm.event_loop_ref().auto_tick_active();
+                vm.event_loop().auto_tick_active();
             }
 
-            vm.event_loop_ref().tick_possibly_forever();
+            vm.event_loop().tick_possibly_forever();
         }
     }
 
     pub(crate) fn run_all_tests(
         reporter_: &mut CommandLineReporter,
-        vm_: &mut VirtualMachine,
+        vm_: &VirtualMachine,
         files_: &[Interned],
     ) {
         struct Context<'a> {
             reporter: &'a mut CommandLineReporter,
-            vm: &'a mut VirtualMachine,
+            vm: &'a VirtualMachine,
             files: &'a [Interned],
         }
         impl<'a> Context<'a> {
             fn begin(&mut self) {
                 let reporter = &mut *self.reporter;
-                let vm = &mut *self.vm;
+                let vm = self.vm;
                 let files = self.files;
                 debug_assert!(!files.is_empty());
 
-                let isolate = vm.test_isolation_enabled;
+                let isolate = vm.test_isolation_enabled.get();
 
                 if files.len() > 1 {
                     for (i, file_name) in files[0..files.len() - 1].iter().enumerate() {
@@ -2854,35 +2811,28 @@ impl TestCommand {
         // No MimallocArena is wired through `vm.arena` on this serial run
         // path; the parallel worker path in runner.rs does wire one.
         // Reintroduce here if it shows up in profiles.
-        vm_.event_loop_ref().ensure_waker();
-        // SAFETY: run_with_api_lock(&self) only acquires the JSC API lock around the
-        // closure; ctx holds the unique &mut to the same VM and is the sole mutator.
-        let vm_ptr = std::ptr::from_mut::<VirtualMachine>(vm_);
+        vm_.event_loop().ensure_waker();
         let mut ctx = Context {
             reporter: reporter_,
             vm: vm_,
             files: files_,
         };
-        // SAFETY: `vm_ptr` was derived from `vm_` above; `ctx` holds the unique
-        // `&mut VirtualMachine` and `run_with_api_lock(&self)` only acquires the JSC lock.
-        unsafe { (*vm_ptr).run_with_api_lock(|| ctx.begin()) };
+        vm_.run_with_api_lock(|| ctx.begin());
     }
 
     pub(crate) fn run(
         reporter: &mut CommandLineReporter,
-        vm: &mut VirtualMachine,
+        vm: &VirtualMachine,
         file_name: &[u8],
         first_last: bun_test::FirstLast,
     ) -> crate::Result<()> {
-        // Capture the raw log pointer (Copy) so the guard does not borrow `vm`.
-        let vm_log = vm.log;
         scopeguard::defer! {
             bun_ast::Expr::data_store_reset();
             bun_ast::Stmt::data_store_reset();
 
-            if let Some(log_ptr) = vm_log {
-                // SAFETY: vm.log points at the VM-owned Log for the lifetime of the run.
-                let log = unsafe { &mut *log_ptr.as_ptr() };
+            // SAFETY: runs as `run` returns: no script is running, and no borrow of the log or
+            // the transpiler is live.
+            if let Some(log) = unsafe { vm.log_mut() } {
                 if log.errors > 0 {
                     let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(Output::error_writer()));
                     log.msgs.clear();
@@ -2902,7 +2852,9 @@ impl TestCommand {
         scopeguard::defer! { unsafe { (*reporter_ptr).jest.only = prev_only; } }
 
         let dot_slash = core::cell::OnceCell::new();
-        let resolution = vm.transpiler.resolve_entry_point(file_name, &dot_slash)?;
+        // SAFETY: no script is running between files, so nothing else borrows the transpiler.
+        let resolution =
+            unsafe { vm.transpiler_mut() }.resolve_entry_point(file_name, &dot_slash)?;
         vm.clear_entry_point()?;
 
         // `append_slice` interns into the process-static `FilenameStore` and
@@ -2927,8 +2879,9 @@ impl TestCommand {
 
         let repeat_count = reporter.repeat_count;
         let mut repeat_index: u32 = 0;
-        vm.on_unhandled_rejection_ctx = None;
-        vm.on_unhandled_rejection = jest::on_unhandled_rejection::on_unhandled_rejection;
+        vm.on_unhandled_rejection_ctx.set(None);
+        vm.on_unhandled_rejection
+            .set(jest::on_unhandled_rejection::on_unhandled_rejection);
 
         while repeat_index < repeat_count {
             // Clear the module cache before re-running (except for the first run)
@@ -2995,9 +2948,6 @@ impl TestCommand {
             // S012: `JSInternalPromise` is an `opaque_ffi!` ZST — safe `*mut → &mut` deref.
             match jsc::JSInternalPromise::opaque_mut(promise).status() {
                 jsc::js_promise::Status::Rejected => {
-                    // `vm.global()` returns `&'static`, decoupled from `vm`'s borrow so
-                    // `unhandled_rejection(&mut self, ...)` can reborrow.
-                    let global = vm.global();
                     let p = jsc::JSInternalPromise::opaque_mut(promise);
                     let (result, promise_js) = (p.result(global.vm()), p.to_js());
                     vm.unhandled_rejection(global, result, promise_js);
@@ -3013,12 +2963,12 @@ impl TestCommand {
                 _ => {}
             }
 
-            vm.event_loop_ref().tick();
+            vm.event_loop().tick();
 
             // Tests start after top-level mock.module() calls with a pending factory have patched their module.
             while bun_jsc::cpp::JSMock__hasPendingModulePatches(global) {
-                vm.event_loop_ref().auto_tick();
-                vm.event_loop_ref().tick();
+                vm.event_loop().auto_tick();
+                vm.event_loop().tick();
             }
 
             'blk: {
@@ -3039,29 +2989,27 @@ impl TestCommand {
                 bun_test::BunTest::run(&buntest_strong, vm.global())?;
 
                 // Process event loop while bun_test tests are running
-                vm.event_loop_ref().tick();
+                vm.event_loop().tick();
 
-                let mut prev_unhandled_count = vm.unhandled_error_counter;
+                let mut prev_unhandled_count = vm.unhandled_error_counter.get();
                 while buntest.phase != bun_test::Phase::Done {
                     if buntest.wants_wakeup {
                         buntest.wants_wakeup = false;
                         vm.wakeup();
                     }
-                    vm.event_loop_ref().auto_tick();
+                    vm.event_loop().auto_tick();
                     if buntest.phase == bun_test::Phase::Done {
                         break;
                     }
-                    vm.event_loop_ref().tick();
+                    vm.event_loop().tick();
 
-                    while prev_unhandled_count < vm.unhandled_error_counter {
+                    while prev_unhandled_count < vm.unhandled_error_counter.get() {
                         let _ = vm.global().handle_rejected_promises();
-                        prev_unhandled_count = vm.unhandled_error_counter;
+                        prev_unhandled_count = vm.unhandled_error_counter.get();
                     }
                 }
 
-                let el = vm.event_loop();
-                // SAFETY: el is the VM-owned event loop; vm is passed back as *mut.
-                unsafe { (*el).tick_immediate_tasks(vm) };
+                vm.event_loop().tick_immediate_tasks();
 
                 // Node parity: a node test file exits only when its loop drains.
                 // on_before_exit() drains and dispatches 'beforeExit' like `bun run`;
@@ -3080,7 +3028,7 @@ impl TestCommand {
                 Output::flush();
             }
 
-            if !vm.test_isolation_enabled {
+            if !vm.test_isolation_enabled.get() {
                 // Ensure these never linger across files. Under --isolate this
                 // is done by swapGlobalForTestIsolation() (kill+clear) and we
                 // need tracking to remain enabled and populated until then.

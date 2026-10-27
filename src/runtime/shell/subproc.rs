@@ -2115,14 +2115,7 @@ impl PipeReader {
     }
 
     pub(crate) fn r#loop(&self) -> *mut AsyncLoop {
-        #[cfg(windows)]
-        {
-            self.event_loop.uv_loop()
-        }
-        #[cfg(not(windows))]
-        {
-            self.event_loop.r#loop()
-        }
+        self.event_loop.native_loop().as_ptr()
     }
 
     // Helper accessor used above to paper over Arc<PipeReader> interior mutability.

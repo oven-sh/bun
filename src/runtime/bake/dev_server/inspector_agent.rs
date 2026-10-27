@@ -168,7 +168,7 @@ pub(crate) fn frontend_dev_server_agent_set_enabled(
 ) {
     // `VirtualMachine::get()` is valid here: the C++ inspector agent invokes
     // this on the JS thread, after the VM is initialized.
-    if let Some(dbg) = VirtualMachine::get().debugger.as_deref() {
+    if let Some(dbg) = VirtualMachine::get().debugger.get() {
         dbg.extension_agent.set_agent_ptr(agent.cast());
     }
 }
@@ -228,7 +228,7 @@ impl DevServer {
     /// `BunFrontendDevServer` domain is disabled. The agent's state is
     /// `Cell`-based, so a shared borrow suffices. JS-thread only.
     pub(crate) fn inspector(&self) -> Option<&BunFrontendDevServerAgent> {
-        if let Some(debugger) = self.vm().debugger.as_ref() {
+        if let Some(debugger) = self.vm().debugger.get() {
             bun_core::hint::cold();
             let agent = BunFrontendDevServerAgent::from_slot(&debugger.extension_agent);
             if agent.is_enabled() {

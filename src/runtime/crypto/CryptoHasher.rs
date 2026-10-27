@@ -19,16 +19,12 @@ use zig_crypto_algos::{Blake2s256, Sha3_224, Sha3_256, Sha3_384, Sha3_512, Shake
 
 const EVP_MAX_MD_SIZE_USIZE: usize = boring_ssl::EVP_MAX_MD_SIZE as usize;
 
-/// Local helper: dereference the raw `*mut VirtualMachine` to reach
-/// `RareData::boring_engine()` and cast the bun_jsc-local opaque `ENGINE`
+/// `RareData::boring_engine()`, cast from the bun_jsc-local opaque `ENGINE`
 /// to the real `bun_boringssl_sys::ENGINE` (both name the same C struct).
 #[inline]
 fn boring_engine(global: &JSGlobalObject) -> *mut boring_ssl::ENGINE {
-    // SAFETY: `bun_vm()` returns the raw `*mut VirtualMachine` for a Bun-owned
-    // global (never null, single-threaded JS heap), so deref-to-&mut is sound here.
     global
         .bun_vm()
-        .as_mut()
         .rare_data()
         .boring_engine()
         .cast::<boring_ssl::ENGINE>()

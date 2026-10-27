@@ -30,9 +30,7 @@ impl DevServer {
         framework_bundle: &mut route_bundle::Framework,
         params_js_value: JSValue,
     ) -> JsResult<FrameworkRequestArgs> {
-        // SAFETY: `this` is live; `vm` is a `BackRef` (safe Deref); `vm.global`
-        // is valid for VM lifetime.
-        let global = unsafe { &*(&(*this).vm).global };
+        let global = VirtualMachine::get().global();
         // SAFETY: place projections off `*this` — `router` / `server_graph` /
         // `route_bundles` are disjoint fields; each reborrow is scoped to its
         // expression so no two `&mut` overlap. `framework_bundle` lives in

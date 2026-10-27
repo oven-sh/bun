@@ -57,7 +57,7 @@ impl Drop for Entry {
 }
 
 impl ObjectURLRegistry {
-    pub(crate) fn register(&self, vm: &mut VirtualMachine, blob: &Blob) -> UUID {
+    pub(crate) fn register(&self, vm: &VirtualMachine, blob: &Blob) -> UUID {
         let uuid = vm.rare_data().next_uuid();
         let entry = Entry::init(blob);
 
@@ -115,7 +115,7 @@ fn uuid_from_pathname(pathname: &[u8]) -> Option<UUID> {
 
 pub(crate) fn create_object_url(object: BlobOrBuildArtifact<'_>) -> bun_core::String {
     let registry = ObjectURLRegistry::singleton();
-    let uuid = registry.register(VirtualMachine::get().as_mut(), object.blob());
+    let uuid = registry.register(VirtualMachine::get(), object.blob());
     bun_core::String::create_format(format_args!("blob:{}", uuid))
 }
 

@@ -44,7 +44,7 @@ pub(crate) type CertError = crate::socket::upgraded_duplex::CertError;
 
 type WrapperType = SSLWrapper<*mut WindowsNamedPipe>;
 
-use crate::jsc_hooks::timer_all_mut as timer_all;
+use crate::jsc_hooks::timer_all;
 
 pub(crate) struct WindowsNamedPipe {
     pub(crate) wrapper: JsCell<Option<WrapperType>>,
@@ -626,7 +626,7 @@ impl WindowsNamedPipe {
                 }
             }
         }
-        let uv_loop = self.vm.uv_loop();
+        let uv_loop = self.vm.uv_loop().as_ptr();
         let pipe = self.uv_pipe().unwrap();
         // SAFETY: live libuv handle alias; see `pipe`.
         if let Err(e) = unsafe { (*pipe).init(uv_loop, false) }.to_result(bun_sys::Tag::pipe) {
@@ -678,7 +678,7 @@ impl WindowsNamedPipe {
                 return result;
             }
         }
-        let uv_loop = self.vm.uv_loop();
+        let uv_loop = self.vm.uv_loop().as_ptr();
         let pipe = self.uv_pipe().unwrap();
         // SAFETY: live libuv handle alias; see `pipe`.
         if let Err(e) = unsafe { (*pipe).init(uv_loop, false) }.to_result(bun_sys::Tag::pipe) {
@@ -723,7 +723,7 @@ impl WindowsNamedPipe {
                 return result;
             }
         }
-        let uv_loop = self.vm.uv_loop();
+        let uv_loop = self.vm.uv_loop().as_ptr();
         // SAFETY: as above.
         if let Err(e) = unsafe { (*pipe).init(uv_loop, false) }.to_result(bun_sys::Tag::pipe) {
             self.discard_unadopted_pipe();
@@ -959,7 +959,9 @@ impl WindowsNamedPipe {
 
     pub(crate) fn set_timeout_in_milliseconds(&self, ms: c_uint) {
         if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
-            timer_all().remove(self.event_loop_timer.as_ptr());
+            // SAFETY: `ACTIVE` is linked: `on_timeout` marks the popped node `FIRED` before it
+            // calls anything.
+            unsafe { timer_all().remove(self.event_loop_timer.as_ptr()) };
         }
         self.current_timeout.set(ms);
 
@@ -978,11 +980,16 @@ impl WindowsNamedPipe {
                 nsec: next.nsec,
             };
         });
-        timer_all().insert(
-            core::ptr::addr_of!(self.event_loop_timer)
-                .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
-                .cast_mut(),
-        );
+        // SAFETY: unlinked above. The node is in a cell of `self`, which was written in place into
+        // its heap-allocated `WindowsNamedPipeContext` and is dropped with it; `Drop` unlinks the node
+        // (`release_resources`).
+        unsafe {
+            timer_all().insert(
+                core::ptr::addr_of!(self.event_loop_timer)
+                    .cast::<bun_event_loop::EventLoopTimer::EventLoopTimer>()
+                    .cast_mut(),
+            );
+        }
     }
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__set_timeout")]
@@ -1101,7 +1108,7 @@ impl bun_io::pipe_writer::WindowsWriterParent for WindowsNamedPipe {
     #[inline]
     unsafe fn loop_(this: *mut Self) -> *mut uv::Loop {
         // SAFETY: BACKREF set via `set_parent`; shared-only read.
-        unsafe { (*this).vm.uv_loop() }
+        unsafe { (*this).vm.uv_loop().as_ptr() }
     }
 }
 

@@ -135,7 +135,7 @@ impl<'a> Writable<'a> {
 
     pub(crate) fn init(
         stdio: &mut Stdio,
-        event_loop: &EventLoop,
+        event_loop: &'static EventLoop,
         subprocess: &mut Subprocess<'a>,
         result: StdioResult,
         promise_for_stream: &mut JSValue,
@@ -144,16 +144,7 @@ impl<'a> Writable<'a> {
 
         let global = event_loop.global_ref();
 
-        // `FileSink::create` / `StaticPipeWriter::create` take
-        // `bun_event_loop::EventLoopHandle`, not `&bun_jsc::EventLoop`; erase to
-        // the vtable-backed handle once and reuse for all arms (both platforms).
-        // `event_loop` is a `&jsc::EventLoop` for the live per-thread loop;
-        // erasing to `*mut ()` and back is the `EventLoopHandle::init` contract.
-        let evtloop = bun_event_loop::EventLoopHandle::init(
-            std::ptr::from_ref::<EventLoop>(event_loop)
-                .cast_mut()
-                .cast::<()>(),
-        );
+        let evtloop = event_loop.handle();
 
         #[cfg(windows)]
         {

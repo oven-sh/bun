@@ -37,17 +37,14 @@ const DEFAULT_SCALE_UP_AFTER_MS: i64 = 5;
 /// this to decide whether to run the serial coverage/JUnit reporters.
 pub(crate) fn run_as_coordinator(
     reporter: &mut CommandLineReporter,
-    vm: *mut VirtualMachine,
+    vm: &'static VirtualMachine,
     files: &[Interned],
     ctx: Command::Context,
     coverage_opts: &mut CodeCoverageOptions,
 ) -> crate::Result<bool> {
-    // SAFETY: caller guarantees `vm` is a valid live VM pointer for the duration.
-    // Kept as a raw pointer; dereferenced at each use site to sidestep borrowck
-    // around the self-referential Coordinator/Worker graph.
-    let vm_ptr = vm;
-    // SAFETY: env loader is initialized before the test runner runs.
-    let env = unsafe { &mut *(*vm_ptr).transpiler.env };
+    // SAFETY: the env loader is initialized before the test runner runs, and nothing else
+    // borrows it until the last use of `env` below: no script runs before `coord.drive()`.
+    let env = unsafe { &mut *vm.transpiler().env };
     let n: u32 = u32::try_from(files.len()).unwrap();
     let k: u32 = ctx.test_options.parallel.min(n);
     if k <= 1 {
@@ -55,8 +52,7 @@ pub(crate) fn run_as_coordinator(
         // tests can rely on the var whenever --parallel is passed.
         let _ = env.map.put(b"JEST_WORKER_ID", b"1");
         let _ = env.map.put(b"BUN_TEST_WORKER_ID", b"1");
-        // SAFETY: see vm_ptr note above.
-        TestCommand::run_all_tests(reporter, unsafe { &mut *vm_ptr }, files);
+        TestCommand::run_all_tests(reporter, vm, files);
         return Ok(false);
     }
 
@@ -144,12 +140,8 @@ pub(crate) fn run_as_coordinator(
     }
 
     let mut coord = Coordinator {
-        // SAFETY: see vm_ptr note above.
-        vm: unsafe { &*vm_ptr },
-        // SAFETY: see vm_ptr note above; `event_loop()` returns its live JS loop.
-        event_loop_handle: unsafe {
-            bun_jsc::EventLoopHandle::init((*vm_ptr).event_loop().cast::<()>())
-        },
+        vm,
+        event_loop_handle: vm.event_loop().handle(),
         reporter,
         files: sorted,
         costs,
@@ -210,10 +202,8 @@ pub(crate) fn run_as_coordinator(
         }
     }
 
-    // SAFETY: event_loop pointer is valid while vm lives.
-    unsafe { (*(*vm_ptr).event_loop()).ensure_waker() };
-    // SAFETY: see vm_ptr note above.
-    unsafe { &*vm_ptr }.run_with_api_lock(|| coord.drive());
+    vm.event_loop().ensure_waker();
+    vm.run_with_api_lock(|| coord.drive());
     coord.end_group();
 
     aggregate::replay_test_records(&mut coord);
@@ -518,14 +508,13 @@ impl ChannelOwner for WorkerCommands {
 // support method-bearing local structs that need to be named in a generic call.
 struct WorkerLoop<'a> {
     reporter: &'a mut CommandLineReporter,
-    vm: *mut VirtualMachine,
+    vm: &'static VirtualMachine,
     cmds: WorkerCommands,
 }
 
 impl<'a> WorkerLoop<'a> {
     fn begin(&mut self) {
-        // SAFETY: vm pointer is valid for the worker's lifetime.
-        let vm = unsafe { &mut *self.vm };
+        let vm = self.vm;
         if !Channel::adopt(&raw mut self.cmds.channel, vm, Fd::from_uv(3)) {
             bun_core::pretty_errorln!("<red>error<r>: test worker failed to adopt IPC fd");
             Global::exit(1);
@@ -540,9 +529,7 @@ impl<'a> WorkerLoop<'a> {
         // failures aren't reproducible from a test. Debug/ASAN builds only,
         // so a stray env var can't disable --parallel in a release build.
         if cfg!(any(debug_assertions, bun_asan)) {
-            // SAFETY: env loader is initialized before the test runner runs.
-            let env = unsafe { &*vm.transpiler.env };
-            if let Some(mode) = env.get(b"BUN_TEST_WORKER_EXIT_BEFORE_READY") {
+            if let Some(mode) = vm.env_loader().get(b"BUN_TEST_WORKER_EXIT_BEFORE_READY") {
                 bun_core::pretty_errorln!(
                     "test worker exiting before ready (BUN_TEST_WORKER_EXIT_BEFORE_READY)"
                 );
@@ -561,11 +548,11 @@ impl<'a> WorkerLoop<'a> {
 
         loop {
             while self.cmds.pending_idx.is_none() && !self.cmds.done {
-                vm.event_loop_ref().tick();
+                vm.event_loop().tick();
                 if self.cmds.pending_idx.is_some() || self.cmds.done {
                     break;
                 }
-                vm.event_loop_ref().auto_tick();
+                vm.event_loop().auto_tick();
             }
             let Some(idx) = self.cmds.pending_idx else {
                 break;
@@ -594,7 +581,7 @@ impl<'a> WorkerLoop<'a> {
             ) {
                 test_command::handle_top_level_test_error_before_javascript_start(&err);
             }
-            if vm.test_isolation_enabled {
+            if vm.test_isolation_enabled.get() {
                 crate::jsc_hooks::stop_active_handles_for_test_isolation(vm);
                 vm.swap_global_for_test_isolation();
                 self.reporter
@@ -633,31 +620,20 @@ impl<'a> WorkerLoop<'a> {
 
 /// Worker side: read framed commands from the IPC channel via the event loop,
 /// run each file with isolation, stream per-test events back. Never returns.
-///
-/// # Safety
-/// `vm` must be a valid, exclusively-accessed pointer to a live `VirtualMachine`
-/// for the entire duration of the call (i.e. for the rest of the process, since
-/// this never returns).
-// `vm` must stay a raw pointer: it is stored in `WorkerLoop`/`WorkerCommands`
-// while a `&mut` derived from it (`vm_ref`) is also live, so a reference param
-// would alias. The `# Safety` contract above documents the caller's obligation.
 pub(crate) fn run_as_worker(
     reporter: &mut CommandLineReporter,
-    vm: *mut VirtualMachine,
+    vm: &'static VirtualMachine,
     ctx: Command::Context,
 ) -> ! {
-    // SAFETY: caller guarantees `vm` is a valid live VM pointer for the duration.
-    let vm_ref = unsafe { &mut *vm };
-    vm_ref.test_isolation_enabled = ctx.test_options.isolate;
-    vm_ref.auto_killer.enabled = ctx.test_options.isolate;
+    vm.test_isolation_enabled.set(ctx.test_options.isolate);
+    vm.auto_killer.enabled.set(ctx.test_options.isolate);
 
     // `vm.arena` is currently a write-only backref: the `MimallocArena.gc()`
     // reader was dropped from the GC path (see web_worker.rs, which wires its
     // own arena the same way and notes the dropped read).
     let mut arena = bun_alloc::MimallocArena::new();
-    // SAFETY: event_loop pointer is valid while vm lives.
-    unsafe { (*vm_ref.event_loop()).ensure_waker() };
-    vm_ref.arena = Some(NonNull::from(&mut arena));
+    vm.event_loop().ensure_waker();
+    vm.arena.set(Some(NonNull::from(&mut arena)));
     // vm.allocator = arena.arena(); — allocator params dropped in Rust
 
     let mut wloop = WorkerLoop {
@@ -670,33 +646,32 @@ pub(crate) fn run_as_worker(
             done: false,
         },
     };
-    vm_ref.run_with_api_lock(|| wloop.begin());
+    vm.run_with_api_lock(|| wloop.begin());
 
-    worker_flush_aggregates(wloop.reporter, vm_ref, ctx, &mut wloop.cmds);
+    worker_flush_aggregates(wloop.reporter, vm, ctx, &mut wloop.cmds);
     // Drain any backpressure-buffered frames before exit so the coordinator
     // sees repeat_bufs / coverage_file.
-    vm_ref.run_with_api_lock(|| {
+    vm.run_with_api_lock(|| {
         while wloop.cmds.channel.has_pending_writes() && !wloop.cmds.channel.done.get() {
-            // SAFETY: event_loop pointer is valid while vm lives.
-            unsafe { (*vm_ref.event_loop()).tick() };
+            vm.event_loop().tick();
             if !wloop.cmds.channel.has_pending_writes() || wloop.cmds.channel.done.get() {
                 break;
             }
-            // SAFETY: event_loop pointer is valid while vm lives.
-            unsafe { (*vm_ref.event_loop()).auto_tick() };
+            vm.event_loop().auto_tick();
         }
     });
     // Mirror TestCommand::exec's exit path so BUN_DESTRUCT_VM_ON_EXIT teardown
     // (lastChanceToFinalize) runs; bypassing it leaks JSC-owned native state.
-    vm_ref.exit_handler.exit_code = 0;
-    vm_ref.exit_handler.skip_exit_listeners = test_command::skip_exit_listeners(wloop.reporter);
-    vm_ref.exit_handler.requested = test_command::exit_is_requested();
-    vm_ref.run_with_api_lock(|| {
-        // SAFETY: caller guarantees `vm` is a valid live VM pointer for the worker's lifetime.
-        unsafe {
-            (*vm).on_exit();
-            (*vm).global_exit()
-        }
+    vm.exit_handler.exit_code.set(0);
+    vm.exit_handler
+        .skip_exit_listeners
+        .set(test_command::skip_exit_listeners(wloop.reporter));
+    vm.exit_handler
+        .requested
+        .set(test_command::exit_is_requested());
+    vm.run_with_api_lock(|| {
+        vm.on_exit();
+        vm.global_exit()
     });
     {
         Global::exit(0);
@@ -705,7 +680,7 @@ pub(crate) fn run_as_worker(
 
 fn worker_flush_aggregates(
     reporter: &mut CommandLineReporter,
-    vm: &mut VirtualMachine,
+    vm: &VirtualMachine,
     ctx: &Command::ContextData,
     cmds: &mut WorkerCommands,
 ) {

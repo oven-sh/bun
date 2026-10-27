@@ -944,6 +944,31 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(Buffer.from(b64.replace(/(.{64})/g, "$1\x85"), encoding).toString("latin1")).toBe(expected);
       });
 
+      // Inputs of 64 characters and more are classified by per-architecture vector tables.
+      forEachBase64("lenient decoding of long inputs skips every non-alphabet character", encoding => {
+        const expected = Buffer.alloc(96, "foobar").toString("latin1");
+        const b64 = Buffer.alloc(128, "Zm9vYmFy").toString("latin1");
+        const noise = Buffer.alloc(64, "!").toString("latin1");
+        const decodedAsData = new Set();
+        for (let code = 0; code < 256; code++) {
+          if (/[A-Za-z0-9+/\-_=]/.test(String.fromCharCode(code))) continue;
+          for (const char of [String.fromCharCode(code), String.fromCharCode(0x100 | code)]) {
+            for (const at of [0, 63, 70, 128]) {
+              const text = b64.slice(0, at) + char + b64.slice(at);
+              if (Buffer.from(text, encoding).toString("latin1") !== expected) decodedAsData.add(code);
+              const written = Buffer.alloc(99);
+              if (written.write(text, encoding) !== 96 || written.toString("latin1", 0, 96) !== expected) {
+                decodedAsData.add(code);
+              }
+            }
+            for (const count of [1, 2, 3, 64]) {
+              if (Buffer.from(char.repeat(count) + noise.slice(count), encoding).length !== 0) decodedAsData.add(code);
+            }
+          }
+        }
+        expect([...decodedAsData]).toEqual([]);
+      });
+
       forEachBase64("write() only reports bytes actually written", encoding => {
         {
           const b = Buffer.alloc(3, 0xaa);

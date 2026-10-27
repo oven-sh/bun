@@ -2033,20 +2033,25 @@ describe("spawn().unref() with piped stdio", () => {
   });
 
   it("an unref'd child still delivers its output to a listener attached later", async () => {
-    // The child lives until stdin closes: its exit would flush a stdout that has no listener.
+    // The child writes to stdout, says so on stderr, and answers a ping. It lives
+    // until stdin closes: its exit would flush a stdout that has no listener.
     const c = spawn(
       bunExe(),
-      ["-e", `const fs = require("fs"); fs.writeSync(1, "hello"); fs.writeSync(2, "written"); process.stdin.resume();`],
+      [
+        "-e",
+        `const fs = require("fs"); fs.writeSync(1, "hello"); fs.writeSync(2, "written"); process.stdin.once("data", () => fs.writeSync(2, "pong"));`,
+      ],
       { env: bunEnv },
     );
+    // If the child dies, this gives its exit code, so the expect that follows fails at once.
+    const stderrChunk = async () => String((await Promise.race([once(c.stderr!, "data"), once(c, "close")]))[0]);
     try {
       c.unref();
-      await once(c.stderr!, "data");
-      // No listener on stdout yet, so the read that unref() started buffers the output.
-      const deadline = Date.now() + 1000;
-      while (c.stdout!.readableLength === 0 && Date.now() < deadline) {
-        await new Promise(resolve => setImmediate(resolve));
-      }
+      expect(await stderrChunk()).toBe("written");
+      // The answer comes at least one loop iteration later, so the loop has read stdout by then.
+      c.stdin!.write("ping");
+      expect(await stderrChunk()).toBe("pong");
+      // No listener on stdout yet: the read that unref() started holds the output.
       expect(c.stdout!.readableLength).toBe(5);
       let out = "";
       c.stdout!.setEncoding("utf8").on("data", chunk => (out += chunk));

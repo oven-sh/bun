@@ -1532,7 +1532,7 @@ impl Decoder {
         self.command_tree = self
             .command_trees
             .starts
-            .at(self.last_block_types[COMMAND][1] as usize)? as usize;
+            .at(self.last_block_types[COMMAND][1] as usize)?;
         Ok(())
     }
 
@@ -1717,7 +1717,7 @@ impl Decoder {
     fn take_last_distance(&mut self, code: i32) -> Checked {
         let offset = code - 3;
         if code <= 3 {
-            // A dictionary reference does not go into the ring buffer, and this makes up for that.
+            // A dictionary reference does not become a last distance, and this makes up for that.
             self.distance_context = 1 >> code;
             self.distance = self
                 .last_distances
@@ -1778,7 +1778,7 @@ impl Decoder {
         let code = read_symbol_maybe_safe::<SAFE>(distance_tree, br, input)?;
         self.block_length[DISTANCE] = self.block_length[DISTANCE].wrapping_sub(1);
         self.distance_context = 0;
-        if code & !0xF == 0 {
+        if code < NUM_DISTANCE_SHORT_CODES {
             self.take_last_distance(code as i32)?;
             return Ok(());
         }
@@ -1842,7 +1842,6 @@ impl Decoder {
     /// Writes what `distance`, which is past the data seen so far, refers to in one of the dictionaries: `length`
     /// bytes of the compound dictionary, as far as there is room, or a word of `length` bytes of the static one,
     /// transformed. Returns the position after it.
-    #[inline(never)]
     fn copy_from_dictionary(&mut self, ringbuffer: &mut [u8], pos: i32, length: i32) -> Step<i32> {
         if self.distance > MAX_ALLOWED_DISTANCE as i32 {
             return Err(E::FormatDistance);

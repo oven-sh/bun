@@ -316,8 +316,12 @@ impl Histogram {
                 // Node.js: what it is for the half-life that this one stands for, which is not always the same and
                 // which there is none of for 1.
                 alpha: if ewma.alpha <= 1.0 { ewma.alpha } else { 0.0 },
+                // The bytes do not say. `subtract` can leave averages and no values.
                 // Node.js: always, so the first value after an empty histogram is averaged with 0.
-                initialized: histogram.count > 0,
+                initialized: histogram.count > 0
+                    || ewma.mean != 0.0
+                    || ewma.variance != 0.0
+                    || ewma.error_rate != 0.0,
                 ..ewma
             }
         } else {

@@ -2313,6 +2313,14 @@ describe("export and importHistogram", () => {
     assert.strictEqual(hex(imported.export()), hex(h.export()));
   });
 
+  test("the moving averages of a histogram that was emptied", () => {
+    const h = filled([10], { halfLife: 1 });
+    h.subtract(h);
+    const imported = importHistogram(h.export());
+    for (const histogram of [h, imported]) histogram.record(20);
+    assert.deepStrictEqual([h.count, h.ewmaMean, imported.ewmaMean], [1, 15, 15]);
+  });
+
   // Node.js works out the half-life and the weight again: that is not always the same weight, and none at all for 1.
   test("the weight of the moving averages", notInNode, () => {
     for (const halfLife of [0.01, 0.1, 0.7, 1, 3, 7, 1000, 1e9]) {

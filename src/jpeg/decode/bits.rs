@@ -25,6 +25,8 @@ pub(crate) struct DerivedTable {
     /// By the next 8 bits: the length of the code they begin with in the high byte and its symbol in the low byte. The
     /// length is 9 if the code is longer than 8 bits.
     lookup: [u16; 1 << LOOKAHEAD],
+    /// For each length from 9 to 16: the least 16 bits that begin with no code of up to that length.
+    long_limits: [u16; 8],
 }
 
 /// What the symbols of a table stand for.
@@ -43,6 +45,7 @@ impl DerivedTable {
             valoffset: [0; 18],
             huffval: spec.huffval,
             lookup: [((LOOKAHEAD + 1) << LOOKAHEAD) as u16; 1 << LOOKAHEAD],
+            long_limits: [0; 8],
         });
 
         let mut code: u32 = 0;
@@ -76,6 +79,11 @@ impl DerivedTable {
             // No code is all ones, so one more than the last code still fits in `length` bits.
             if code >= 1 << length {
                 return Err(Error::BadHuffTable);
+            }
+            if let Some(limit) = (length.checked_sub(LOOKAHEAD as usize + 1))
+                .and_then(|i| table.long_limits.get_mut(i))
+            {
+                *limit = (code << (16 - length)) as u16;
             }
             code <<= 1;
         }
@@ -313,16 +321,16 @@ impl<'a> FastBitReader<'a> {
             self.bits.bits_left -= length;
             return symbol;
         }
-        let mut code = self.bits.get(length);
-        let mut length = length as usize;
-        while table.maxcode.get(length).is_some_and(|&max| code > max) {
-            code = (code << 1) | self.bits.get(1);
-            length += 1;
-        }
+        // Instead of going from length to length, which the branch predictor cannot follow.
+        let next = (self.bits.buf >> (self.bits.bits_left - 16)) as u16;
+        let too_short = table.long_limits.iter().filter(|&&limit| next >= limit);
+        let length = length + too_short.count() as u32;
+        self.bits.bits_left -= length;
         if length > 16 {
             return 0;
         }
-        let offset = table.valoffset.get(length).copied().unwrap_or(0);
+        let code = i32::from(next >> (16 - length));
+        let offset = table.valoffset.get(length as usize).copied().unwrap_or(0);
         table
             .huffval
             .get(((code + offset) & 0xff) as usize)

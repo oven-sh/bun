@@ -9,6 +9,15 @@ fn best<T>(n: usize, mut f: impl FnMut() -> T) -> f64 {
     }
     best * 1e3
 }
+/// The best of `n` runs of each, taking turns so that a change in the machine's speed hits both.
+fn best2<A, B>(n: usize, mut a: impl FnMut() -> A, mut b: impl FnMut() -> B) -> (f64, f64) {
+    let (mut best_a, mut best_b) = (f64::MAX, f64::MAX);
+    for _ in 0..n {
+        best_a = best_a.min(best(1, &mut a));
+        best_b = best_b.min(best(1, &mut b));
+    }
+    (best_a, best_b)
+}
 fn photo(w: usize, h: usize) -> Vec<u8> {
     // Smooth areas, edges and sensor noise, roughly what a photograph looks like to a codec.
     let mut x = 88172645463325252u64;
@@ -35,10 +44,13 @@ fn main() {
     let px = photo(w, h);
     let mp = (w * h) as f64 / 1e6;
     let mut inputs: Vec<(String, Vec<u8>)> = Vec::new();
-    // For a profiler: PROFILE=[ref-]decode|encode[-progressive] runs only that for a while, with bun_jpeg or with the reference.
+    // For a profiler: PROFILE=[ref-]decode|encode[-progressive] runs only that for a while, with bun_jpeg or with the reference. FILE=path decodes that file.
     if let Ok(what) = std::env::var("PROFILE") {
         let progressive = what.ends_with("-progressive");
-        let jpeg = jpegdiff::reference::encode(&px, w as u32, h as u32, 80, progressive, None).unwrap();
+        let jpeg = match std::env::var("FILE") {
+            Ok(file) => std::fs::read(file).unwrap(),
+            Err(_) => jpegdiff::reference::encode(&px, w as u32, h as u32, 80, progressive, None).unwrap(),
+        };
         for _ in 0..40 {
             if what.starts_with("ref-encode") {
                 std::hint::black_box(jpegdiff::reference::encode(&px, w as u32, h as u32, 80, progressive, None).unwrap());
@@ -53,16 +65,22 @@ fn main() {
         return;
     }
     for (q, p) in [(80u8, false), (95, false), (80, true)] {
-        let r = best(5, || jpegdiff::reference::encode(&px, w as u32, h as u32, q, p, None).unwrap());
-        let o = best(5, || bun_jpeg::encode(&px, w as u32, h as u32, &bun_jpeg::EncodeOptions { quality: q, progressive: p, icc_profile: None }).unwrap());
+        let (r, o) = best2(
+            12,
+            || jpegdiff::reference::encode(&px, w as u32, h as u32, q, p, None).unwrap(),
+            || bun_jpeg::encode(&px, w as u32, h as u32, &bun_jpeg::EncodeOptions { quality: q, progressive: p, icc_profile: None }).unwrap(),
+        );
         println!("encode q{q} progressive={p}: ref {r:.1} ms ({:.0} MP/s), ours {o:.1} ms ({:.0} MP/s), {:.2}x", mp / r * 1e3, mp / o * 1e3, o / r);
         inputs.push((format!("photo q{q} progressive={p}"), jpegdiff::reference::encode(&px, w as u32, h as u32, q, p, None).unwrap()));
     }
     for f in files { inputs.push((f.clone(), std::fs::read(&f).unwrap())); }
     for (name, bytes) in &inputs {
         for eighths in std::env::var("SCALES").map_or(vec![8u32, 4, 1], |s| s.split(',').map(|v| v.parse().unwrap()).collect()) {
-            let r = best(5, || jpegdiff::reference::decode(bytes, eighths, u64::MAX).ok().unwrap().pixels.len());
-            let o = best(5, || jpegdiff::ours(bytes, eighths, u64::MAX).ok().unwrap().pixels.len());
+            let (r, o) = best2(
+                12,
+                || jpegdiff::reference::decode(bytes, eighths, u64::MAX).ok().unwrap().pixels.len(),
+                || jpegdiff::ours(bytes, eighths, u64::MAX).ok().unwrap().pixels.len(),
+            );
             println!("decode {name} ({} KB) at {eighths}/8: ref {r:.1} ms, ours {o:.1} ms, {:.2}x", bytes.len() / 1024, o / r);
         }
     }

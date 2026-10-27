@@ -1343,6 +1343,53 @@ it.concurrent(
   },
 );
 
+// The same tagged error, and nothing replaces the module. The entry that the failed fetch stored the error in had no
+// load of its own, so a static import of the module waited for a fetch that nothing started.
+it.concurrent(
+  "a static import of a module whose onLoad rejected with another module's error loads the module",
+  async () => {
+    using dir = tempDir("plugin-onload-tagged-error-static-import", {
+      "x.late": ``,
+      "throws.ts": `throw new Error("another module threw");`,
+      "importer.ts": `export { from } from "./x.late";`,
+      "entry.ts": `
+      let calls = 0;
+      Bun.plugin({
+        name: "the first onLoad of x.late imports a module that throws",
+        setup(build) {
+          build.onLoad({ filter: /x\\.late$/ }, async () => {
+            if (++calls === 1) await import("./throws.ts");
+            return { contents: "export const from = 'onLoad';", loader: "ts" };
+          });
+        },
+      });
+      const settled = (promise: Promise<{ from: string }>) => promise.then(module => module.from, error => "rejected: " + error.message);
+
+      console.log("first:", await settled(import("./x.late")));
+      // Not awaited at the top level: an import() that never settles then ends the process with a line missing.
+      settled(import("./importer.ts")).then(async from => {
+        console.log("importer:", from);
+        console.log("next:", await settled(import("./x.late")));
+        console.log("onLoad calls:", calls);
+      });
+    `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "entry.ts"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "first: rejected: another module threw\nimporter: onLoad\nnext: onLoad\nonLoad calls: 2\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  },
+);
+
 it.concurrent(
   "import() after delete require.cache of a module that onResolve redirected a resolved path to",
   async () => {

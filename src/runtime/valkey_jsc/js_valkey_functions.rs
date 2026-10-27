@@ -321,11 +321,9 @@ impl JSValkeyClient {
 
         let mut args: Vec<JSArgument> = Vec::with_capacity(1 + arguments.len());
 
-        let arguments = arguments.iter().map(|arg| arg.convert(global));
-        for arg in core::iter::once(Ok(key)).chain(arguments) {
-            let arg = arg?;
+        let mut push = |arg: RedisArgument<'a>| -> JsResult<()> {
             if matches!(arg, RedisArgument::Missing) {
-                continue;
+                return Ok(());
             }
 
             let Some(another) = from_argument(global, arg)? else {
@@ -336,6 +334,11 @@ impl JSValkeyClient {
                 ));
             };
             args.push(another);
+            Ok(())
+        };
+        push(key)?;
+        for arg in arguments.iter() {
+            push(arg.convert(global)?)?;
         }
         method.send(
             self,

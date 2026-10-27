@@ -1784,8 +1784,8 @@ impl BlobExt for Blob {
 
         let mut blob_content_type = BlobContentType::default();
         if let BlobSliceBound::ContentType(content_type) = content_type {
-            let content_type = content_type.convert(global_this)?;
-            let slicer = content_type.to_utf8();
+            let content_type_view = content_type.to_js().to_js_string_view(global_this)?;
+            let slicer = content_type_view.to_utf8();
             let slice = slicer.slice();
             if is_valid_blob_type(slice) {
                 blob_content_type = match global_this.bun_vm().as_mut().mime_type(slice) {

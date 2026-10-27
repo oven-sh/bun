@@ -7,7 +7,7 @@ import { Request, Response } from "./response.bind.ts";
 export const chunkSize = b.f64.nullable.deferred;
 /** A string in place of `start` or `end` is the content type, and the strings after it are not read. */
 export const BlobSliceBound = b.union({
-  contentType: b.string.allowStringObject.deferred,
+  contentType: b.stringLike,
   offset: b.f64,
   other: b.ignored,
 });

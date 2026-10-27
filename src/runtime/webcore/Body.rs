@@ -913,24 +913,20 @@ impl Value {
         Ok(stream_value)
     }
 
-    fn from_string(str: BunString) -> Value {
-        if str.length() == 0 {
-            return Value::Empty;
-        }
-
-        debug_assert!(str.tag() == bun_core::Tag::WTFStringImpl);
-
-        // `leak_wtf_impl()` transfers the +1 ref out of the bun_core::String wrapper.
-        Value::WTFStringImpl(str.leak_wtf_impl())
-    }
-
     pub(crate) fn from_js(global_this: &JSGlobalObject, value: BodyInit<'_>) -> JsResult<Value> {
         let value = match value {
             BodyInit::Undefined | BodyInit::Null => return Ok(Value::Null),
 
-            BodyInit::Text(str) => return Ok(Self::from_string(str)),
-            BodyInit::StringObject(value) => {
-                return Ok(Self::from_string(value.to_js().to_bun_string(global_this)?));
+            BodyInit::Text(value) => {
+                let str = value.to_js().to_bun_string(global_this)?;
+                if str.length() == 0 {
+                    return Ok(Value::Empty);
+                }
+
+                debug_assert!(str.tag() == bun_core::Tag::WTFStringImpl);
+
+                // `leak_wtf_impl()` transfers the +1 ref out of the bun_core::String wrapper.
+                return Ok(Value::WTFStringImpl(str.leak_wtf_impl()));
             }
 
             BodyInit::Buffer(value) => {

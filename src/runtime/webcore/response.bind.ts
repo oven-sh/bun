@@ -47,8 +47,7 @@ export const BodyInit = b.union(
   {
     undefined: b.undefined,
     null: b.null,
-    text: b.string,
-    stringObject: b.stringObject,
+    text: b.stringLike,
     dataView: b.dataView,
     buffer: b.bufferSource.allowShared,
     formData: b.wrapped("WebCore::JSDOMFormData", "JSDOMFormData.h", {

@@ -227,7 +227,8 @@ export function hasBuildErrorIn(file: string): boolean {
 
 /** A hot update failed on an import of `file`. The tab waits if the overlay is on the page and lists that file. */
 export function waitForBuildErrorIn(file: string): boolean {
-  if (!hasBuildErrorIn(file) || !domShadowRoot.isConnected) return false;
+  // A framework route can get its script from before the save at a reload, so only the tab of an HTML page waits.
+  if (!config.main.endsWith(".html") || !hasBuildErrorIn(file) || !domShadowRoot.isConnected) return false;
   awaitedFile = file;
   hasFatalError = true;
   return true;

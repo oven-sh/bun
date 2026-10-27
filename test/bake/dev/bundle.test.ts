@@ -541,6 +541,32 @@ devTest("a tab whose page removed the error overlay does not wait above a build 
     await c.expectMessage("index v2 1");
   },
 });
+// A framework route can get its script from before the save at a reload, so its tab does not wait.
+// It reports the import and reloads at once, as before.
+devTest("a tab of a framework route does not wait above a build error", {
+  framework: {
+    fileSystemRouterTypes: [{ ...minimalFramework.fileSystemRouterTypes![0], clientEntryPoint: "./client.ts" }],
+  },
+  files: {
+    "routes/index.ts": `
+      export default function (request, meta) {
+        const scripts = meta.modules.map(src => '<script type="module" src="' + src + '"></script>').join("");
+        return new Response("<!doctype html><html><head></head><body>" + scripts + "</body></html>", {
+          headers: { "content-type": "text/html" },
+        });
+      }
+    `,
+    "client.ts": acceptingModule(`console.error = error => console.log("reported: " + error.message);`),
+    "broken.ts": brokenFile,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", { errors: [] });
+    await c.expectReload(async () => {
+      await dev.write("client.ts", importsBrokenFile("v2"), { errors: null });
+    });
+    await c.expectMessage("reported: Cannot load 'broken.ts' because it has a build error.");
+  },
+});
 // The dispose callback of widget.ts takes away what the timer of ticker.ts uses. Until the reload, the errors
 // of that timer come from the update that waits.
 devTest("a tab that waits above a build error does not report the errors of the page it left half updated", {

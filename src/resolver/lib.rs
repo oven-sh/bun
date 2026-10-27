@@ -1075,7 +1075,7 @@ pub mod fs {
             &mut self,
             dir_maybe_trail_slash: &[u8],
             maybe_handle: Option<Fd>,
-            generation: Generation,
+            mut generation: Generation,
             store_fd: bool,
             iterator: I,
         ) -> crate::CrateResult<&'static mut EntriesOption> {
@@ -1097,7 +1097,11 @@ pub mod fs {
                     // scrutinee directly so no second `&mut *cached_ptr` is materialized
                     // while the first is on the borrow stack (Stacked Borrows hygiene).
                     match unsafe { &mut *cached_ptr } {
-                        EntriesOption::Entries(e) if e.generation < generation => {
+                        EntriesOption::Entries(e) if e.generation < generation || !e.complete => {
+                            // A probe-only listing of an ancestor directory
+                            // (see `DirEntry::complete`) is read in full here,
+                            // in place, so every lookup below sees every entry.
+                            generation = generation.max(e.generation);
                             in_place = Some(std::ptr::from_mut::<DirEntry>(*e));
                         }
                         cached => return Ok(cached),
@@ -1460,6 +1464,27 @@ pub mod fs {
             index: bun_alloc::IndexType,
             generation: Generation,
         ) -> Option<&mut EntriesOption> {
+            self.entries_at_locked_impl(index, generation, false)
+        }
+
+        /// [`entries_at_locked`](Self::entries_at_locked) that hands out a
+        /// probe-only listing (`DirEntry::complete == false`) as it is. Only
+        /// for a caller that looks up one name and probes it itself when the
+        /// listing does not have it (`Resolver::dir_info_uncached`).
+        pub(crate) fn entries_at_locked_allow_partial(
+            &mut self,
+            index: bun_alloc::IndexType,
+            generation: Generation,
+        ) -> Option<&mut EntriesOption> {
+            self.entries_at_locked_impl(index, generation, true)
+        }
+
+        fn entries_at_locked_impl(
+            &mut self,
+            index: bun_alloc::IndexType,
+            generation: Generation,
+            allow_partial: bool,
+        ) -> Option<&mut EntriesOption> {
             debug_assert!(
                 self.entries_mutex.is_held_by_current_thread(),
                 "entries_at_locked: caller must hold entries_mutex",
@@ -1470,7 +1495,8 @@ pub mod fs {
             let result_ptr = std::ptr::from_mut::<EntriesOption>(self.entries.at_index(index)?);
             // SAFETY: BSSMap-owned slot; uniquely held under `entries_mutex`.
             if let EntriesOption::Entries(existing) = unsafe { &mut *result_ptr } {
-                if existing.generation < generation {
+                if existing.generation < generation || !(allow_partial || existing.complete) {
+                    let generation = generation.max(existing.generation);
                     let e_ptr: *mut DirEntry = std::ptr::from_mut::<DirEntry>(*existing);
                     // SAFETY: BSSMap-owned `DirEntry` (boxed/leaked into `EntriesOption`); `entries_mutex` held.
                     let dir = unsafe { (*e_ptr).dir };
@@ -1490,11 +1516,16 @@ pub mod fs {
                     // SAFETY: see above — exclusive `&mut` on the prev map for the duration of `readdir`.
                     let prev = Some(unsafe { &mut (*e_ptr).data });
                     match self.readdir(false, prev, dir, generation, handle, ()) {
-                        Ok(new_entry) => {
+                        Ok(mut new_entry) => {
                             // SAFETY: see above.
-                            unsafe { (*e_ptr).data.clear() };
-                            // SAFETY: see above — slot is exclusively owned here.
-                            unsafe { *e_ptr = new_entry };
+                            unsafe {
+                                // A listing fd kept for `bun run` stays valid
+                                // across the re-read: `openat` callers use it
+                                // as a base directory, not for iteration.
+                                new_entry.fd = (*e_ptr).fd;
+                                (*e_ptr).data.clear();
+                                *e_ptr = new_entry;
+                            }
                         }
                         Err(err) => {
                             // SAFETY: see above.

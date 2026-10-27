@@ -384,12 +384,29 @@ impl<T: DirEntryIterator + ?Sized> DirEntryIterator for &T {
     }
 }
 
+/// The names `Resolver::dir_info_uncached` looks up in a directory's own
+/// listing. A listing built from probes of these names (`complete == false`)
+/// is enough to build the `DirInfo` of an ancestor directory without reading
+/// every entry of it.
+pub(crate) const DIR_INFO_PROBE_NAMES: [&bun_core::ZStr; 4] = [
+    bun_core::zstr!("package.json"),
+    bun_core::zstr!("tsconfig.json"),
+    bun_core::zstr!("jsconfig.json"),
+    bun_core::zstr!("node_modules"),
+];
+
 pub struct DirEntry {
     // `dir` is interned in
     // DirnameStore (a process-lifetime BSSList), so `&'static` is correct.
     pub dir: &'static [u8],
     pub fd: Fd,
     pub(crate) generation: Generation,
+    /// `false` while `data` holds only the names that were probed one by one
+    /// (`add_probed_entry`), not every entry of the directory. Every accessor
+    /// that hands the listing out for a general lookup or an iteration reads
+    /// the directory in full first, the same way a stale `generation` is
+    /// refreshed.
+    pub(crate) complete: bool,
     pub data: dir_entry::EntryMap,
 }
 
@@ -400,7 +417,57 @@ impl DirEntry {
             data: dir_entry::EntryMap::default(),
             generation,
             fd: Fd::INVALID,
+            complete: true,
         }
+    }
+
+    /// Maps what `readdir` or `lstat` says about a name to the kind stored in
+    /// the entry. `None` means the kind is found out later by `stat`. Device,
+    /// pipe and socket entries are not part of a listing at all.
+    fn entry_kind_to_store(kind: bun_sys::FileKind) -> Option<Option<EntryKind>> {
+        use bun_sys::FileKind as DK;
+        match kind {
+            DK::Directory => Some(Some(EntryKind::Dir)),
+            DK::File => Some(Some(EntryKind::File)),
+
+            // For a symlink, we will need to stat the target later
+            DK::SymLink
+            // Some filesystems return `.unknown` from getdents() no matter the actual kind of the file
+            // (often because it would be slow to look up the kind). If we get this, then code that
+            // needs the kind will have to find it out later by calling stat().
+            | DK::Unknown => Some(None),
+
+            DK::BlockDevice
+            | DK::CharacterDevice
+            | DK::NamedPipe
+            | DK::UnixDomainSocket
+            | DK::Whiteout
+            | DK::Door
+            | DK::EventPort => None,
+        }
+    }
+
+    /// Adds one name to a listing that is not `complete`, from an `lstat` of
+    /// `dir_fd/name` (`Fd::INVALID` makes `name` relative to the process cwd,
+    /// so an absolute path works too). A name that does not exist, or that
+    /// `readdir` would not list either, adds nothing. Returns whether the
+    /// name was added.
+    pub(crate) fn add_probed_entry(
+        &mut self,
+        dir_fd: Fd,
+        name: &bun_core::ZStr,
+        filename_store: &mut FilenameStoreAppender,
+    ) -> crate::CrateResult<bool> {
+        debug_assert!(!self.complete);
+        let Ok(kind) = bun_sys::entry_kind_at(dir_fd, name) else {
+            return Ok(false);
+        };
+        let Some(found_kind) = Self::entry_kind_to_store(kind) else {
+            return Ok(false);
+        };
+        let base = bun_paths::basename(name.as_bytes());
+        self.add_entry_inner(None, base, found_kind, filename_store)?;
+        Ok(true)
     }
 
     // Compatibility wrapper for callers outside the `readdir` hot loop —
@@ -415,30 +482,30 @@ impl DirEntry {
         filename_store: &mut FilenameStoreAppender,
         iterator: I,
     ) -> crate::CrateResult<()> {
-        use bun_sys::FileKind as DK;
         // `entry.name.slice()` is OS-native (`&[u16]` on Windows); the
         // entry-store / hashmap key in `data` is UTF-8, so use the eagerly-
         // transcoded `slice_u8()`.
         let name_slice = entry.name.slice_u8();
-        let found_kind: Option<EntryKind> = match entry.kind {
-            DK::Directory => Some(EntryKind::Dir),
-            DK::File => Some(EntryKind::File),
-
-            // For a symlink, we will need to stat the target later
-            DK::SymLink
-            // Some filesystems return `.unknown` from getdents() no matter the actual kind of the file
-            // (often because it would be slow to look up the kind). If we get this, then code that
-            // needs the kind will have to find it out later by calling stat().
-            | DK::Unknown => None,
-
-            DK::BlockDevice
-            | DK::CharacterDevice
-            | DK::NamedPipe
-            | DK::UnixDomainSocket
-            | DK::Whiteout
-            | DK::Door
-            | DK::EventPort => return Ok(()),
+        let Some(found_kind) = Self::entry_kind_to_store(entry.kind) else {
+            return Ok(());
         };
+        let stored = self.add_entry_inner(prev_map, name_slice, found_kind, filename_store)?;
+
+        if !I::IS_VOID {
+            // SAFETY: just produced from EntryStore append or prev_map lookup
+            iterator.next(unsafe { &mut *stored }, self.fd);
+        }
+
+        Ok(())
+    }
+
+    fn add_entry_inner(
+        &mut self,
+        prev_map: Option<&mut dir_entry::EntryMap>,
+        name_slice: &[u8],
+        found_kind: Option<EntryKind>,
+        filename_store: &mut FilenameStoreAppender,
+    ) -> crate::CrateResult<*mut Entry> {
 
         // Lowercase the entry basename once. The same bytes drive the
         // previous-generation case-insensitive probe, the new entry's
@@ -556,9 +623,6 @@ impl DirEntry {
             }
         };
 
-        // SAFETY: just produced from EntryStore append or prev_map lookup
-        let stored_ref = unsafe { &mut *stored };
-
         // PERF: the
         // generic `put` here would heap-box a second key copy. `base_lowercase`
         // points either into the `Entry`'s inline `StringOrTinyString` buffer
@@ -575,11 +639,7 @@ impl DirEntry {
         // `name_hash` is its hash too — insert without re-hashing.
         self.data.put_static_key_hashed(name_hash, key, stored)?;
 
-        if !I::IS_VOID {
-            iterator.next(stored_ref, self.fd);
-        }
-
-        Ok(())
+        Ok(stored)
     }
 
     /// Debug-only contract check: every `.data` probe must run under

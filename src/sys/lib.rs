@@ -7306,6 +7306,27 @@ pub(crate) fn exists_at_type_w(dir: Fd, sub: &[u16]) -> Maybe<ExistsAtType> {
     let path = bun_paths::string_paths::to_nt_path16(&mut wbuf.0[..], sub).as_slice();
     exists_at_type_nt(dir, path)
 }
+/// Kind of the entry `sub` itself: a symlink (a reparse point on Windows) is
+/// reported as `FileKind::SymLink` and not followed. This is what one
+/// `readdir` record would say about the same name.
+pub fn entry_kind_at(dir: Fd, sub: &ZStr) -> Maybe<FileKind> {
+    #[cfg(unix)]
+    {
+        let st = lstatat(dir, sub)?;
+        Ok(kind_from_mode(st.st_mode as Mode))
+    }
+    #[cfg(windows)]
+    {
+        let attrs = get_file_attributes_at(dir, sub)?;
+        Ok(if attrs.is_reparse_point {
+            FileKind::SymLink
+        } else if attrs.is_directory {
+            FileKind::Directory
+        } else {
+            FileKind::File
+        })
+    }
+}
 /// `directoryExistsAt(dir, sub)`. ENOENT → `Ok(false)`.
 pub fn directory_exists_at(dir: impl AsFd, sub: &ZStr) -> Maybe<bool> {
     let dir = dir.as_fd();

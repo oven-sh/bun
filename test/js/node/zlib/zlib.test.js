@@ -508,6 +508,20 @@ describe("zlib", () => {
       });
     });
 
+    // libdeflate_test.bind.ts is only in a build with assertions: a debug build, CI's ASAN lane.
+    const internals = internalForTesting.libdeflate;
+
+    // An output that grows is decoded with more care before each step. One with room to spare is not. The results, if they differ.
+    const inflateEveryWay = stream => {
+      const grown = inflateSync(stream, { library });
+      const results = [{ written: grown.length, crc32: Bun.hash.crc32(grown) }];
+      if (internals) {
+        const { read, ...roomy } = internals.decompressToSlice(stream, { room: 200_000 });
+        if (!Bun.deepEquals(roomy, results[0])) results.push(roomy);
+      }
+      return results;
+    };
+
     describe("streams whose text is too long to spell out", () => {
       // 10000 each of "a", "b" and "c", then "d".
       const thirtyThousand =
@@ -546,11 +560,85 @@ describe("zlib", () => {
           35713,
           0xe8f2bd59,
         ],
+        [
+          "items of the most bits, in a block that starts with 1 bit at hand",
+          "4a1c05a360148c8251300a46c1281805a360148c8251300a46c1281805a36014d01c248d8251300a46c1281805a360148c8251300a46c1281805a360148c8251300a680e9247c1281805a360148c8251300a46c1281805a360148c8251300a46c1281805340729a360148c8251300a46c1281805a360148c8251300a46c1281805a360148c029a0300000000fffffdfffd9324499224c9fe413fff01f01ffcf453c34f00482c6a1ef933fc15ffea3ff00714fc0cf0bebf3f00008945cd23ab670f7e80f7fe80fffdefff3fffff8cfef7bfff7ff8ff3ffd0f",
+          20478,
+          0x4d3005d9,
+        ],
+        [
+          "literals of 15 bits, one after the other",
+          "e5e1fd9324499224c9fe8beffbfd8cc4a2e691f5ffff01fd4fbcef870800000000f07ff83ffe9ffecfff97ffebffedfffe7ff83ffe9ffecfff030000000000000000000000000000000000000000000000000000000000000000",
+          52,
+          0x64150bbe,
+        ],
       ])("%s", (_, hex, length, crc32) => {
-        // With bytes after its end, a stream is not near the end of the input, where decoding takes more care.
-        const text = inflateSync(Buffer.concat([Buffer.from(hex, "hex"), Buffer.alloc(32)]), { library });
-        expect([text.length, Bun.hash.crc32(text)]).toEqual([length, crc32]);
+        // How near the end of the input is decides which loop decodes the last items.
+        for (let after = 0; after <= 40; after++) {
+          expect(inflateEveryWay(Buffer.concat([Buffer.from(hex, "hex"), Buffer.alloc(after, 0xa5)]))).toEqual([
+            { written: length, crc32 },
+          ]);
+        }
       });
+    });
+
+    it("copies matches of all kinds of lengths from every short distance, and some long ones", () => {
+      const lengthBases = [
+        3, 4, 5, 6, 7, 8, 9, 10, 11, 13, 15, 17, 19, 23, 27, 31, 35, 43, 51, 59, 67, 83, 99, 115, 131, 163, 195, 227,
+        258,
+      ];
+      const distanceBases = [
+        1, 2, 3, 4, 5, 7, 9, 13, 17, 25, 33, 49, 65, 97, 129, 193, 257, 385, 513, 769, 1025, 1537, 2049, 3073,
+      ];
+      const range = (from, to) => Array.from({ length: to - from + 1 }, (_, i) => from + i);
+      // A match is copied 40 bytes at a time.
+      const lengths = [...range(3, 90), ...[120, 160, 200, 240, 256].flatMap(length => range(length - 2, length + 2))];
+      const stream = new Uint8Array(8192);
+      const text = new Uint8Array(32768);
+      for (const distance of [...range(1, 42), 47, 48, 49, 63, 64, 65, 300, 4000]) {
+        // One block of the static codes, and what it stands for.
+        let streamLength = 0;
+        let textLength = 0;
+        let bits = 0;
+        let count = 0;
+        const put = (value, length) => {
+          bits |= value << count;
+          for (count += length; count >= 8; count -= 8, bits >>>= 8) stream[streamLength++] = bits & 255;
+        };
+        const putCode = (code, length) => {
+          while (length-- > 0) put((code >> length) & 1, 1);
+        };
+        const putLiteral = byte => {
+          if (byte < 144) putCode(0x30 + byte, 8);
+          else putCode(0x190 + byte - 144, 9);
+          text[textLength++] = byte;
+        };
+        put(0b011, 3);
+        for (let i = 0; i < distance; i++) putLiteral((i * 7 + distance) & 255);
+        const distanceSymbol = distanceBases.findLastIndex(base => base <= distance);
+        for (const length of lengths) {
+          const lengthSymbol = lengthBases.findLastIndex(base => base <= length);
+          if (lengthSymbol < 23) putCode(lengthSymbol + 1, 7);
+          else putCode(0xc0 + lengthSymbol - 23, 8);
+          put(
+            length - lengthBases[lengthSymbol],
+            lengthSymbol < 8 || lengthSymbol === 28 ? 0 : (lengthSymbol >> 2) - 1,
+          );
+          putCode(distanceSymbol, 5);
+          put(distance - distanceBases[distanceSymbol], distanceSymbol < 4 ? 0 : (distanceSymbol >> 1) - 1);
+          for (const end = textLength + length; textLength < end; textLength++)
+            text[textLength] = text[textLength - distance];
+          // What the next match repeats is not what this one did.
+          putLiteral((length * 5) & 255);
+        }
+        putCode(0, 7);
+        put(0, 7);
+        // With bytes after its end, the stream is not near the end of the input, where another loop decodes.
+        expect([distance, ...inflateEveryWay(stream.subarray(0, streamLength + 64).fill(0, streamLength))]).toEqual([
+          distance,
+          { written: textLength, crc32: Bun.hash.crc32(text.subarray(0, textLength)) },
+        ]);
+      }
     });
 
     it("a match reaches 32768 bytes back and no further", () => {
@@ -565,8 +653,6 @@ describe("zlib", () => {
     });
 
     // Capacities, growth, reuse and what an error leaves, which Bun.gzipSync and the like do not show.
-    // libdeflate_test.bind.ts is only in a build with assertions: a debug build, CI's ASAN lane.
-    const internals = internalForTesting.libdeflate;
     describe.skipIf(!internals)("in Rust", () => {
       const levels = Array.from({ length: 13 }, (_, level) => level);
       const bytes = output => ({ written: output.length, crc32: Bun.hash.crc32(output) });

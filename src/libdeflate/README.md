@@ -93,3 +93,47 @@ the symbol in bits 20-16 and the codeword length in bits 2-0, and never need a s
 
 The extra bits of a length or offset come right after its codeword and are consumed with it. They are cut out of a copy
 of the bit buffer taken before: the low `entry & 0xFF` bits, shifted right by the `remaining` in bits 11-8.
+
+## The fast loop of the decompressor
+
+Nearly all the time of a decompression goes into `fast_loop`. A round of it decodes what a round of libdeflate's loop
+decodes. How it is written is about three things that C does not have to care about, or cares about less.
+
+**Registers.** Release builds keep the frame pointer, which leaves x86-64 fourteen registers, and without BMI2 a shift by
+a variable takes `cl`. The loop needs about that many, and what matters is which values the compiler then keeps on the
+stack. The output's pointer and length cost next to nothing there. `bitbuf`, `bitsleft` and `entry` are each the input of
+the next step, so storing and reloading one of them slows down every symbol. That is why:
+
+- The loop is a function of its own, not inlined, with only the state it changes (`Position`).
+- The copies that need a loop (`copy_match_slow`) are out of line and cold.
+- The input is a slice that shrinks from the front (`rest`), a pointer and a length, not a slice and an index. The
+  compiler also sees from `rest.len() > FASTLOOP_MAX_BYTES_READ` that no refill in the round can fail.
+- `FULL_LITLEN_TABLE` makes the size of the litlen table a constant when it is the full size, as it is for most text: one
+  register less, and no bounds checks on the lookups, since 2047 is less than `LITLEN_ENOUGH`. Worth 12%.
+- The mask for the extra bits is looked up (`BITMASKS`). Worth 6%.
+- There is one check for room, at the top of the loop, and `run` works out again which side ran out. Telling it costs 7%.
+  The check is also made before the first refill. So where C always does a first round, the refill can leave too little
+  input for one, and the other loop decodes that round, to the same result.
+
+**Where the jumps fall.** Skylake and its descendants up to Cascade Lake do not keep a jump in the cache of decoded
+instructions if it crosses a 32-byte boundary or ends on one (the fix for erratum SKX102, "JCC"). The bounds checks give
+this loop more jumps than C's has. On such a CPU the same code ran at 0.74 to 0.93 of the speed of C depending on nothing
+but its address, and C's own varied by 3%. So:
+
+- `#[rustc_align(64)]` makes the address a property of the source. Without it any change anywhere in Bun can move it.
+- To compare two versions of the loop, build both with `-Cllvm-args=-x86-branches-within-32B-boundaries`, which pads the
+  jumps away from the boundaries. That takes out the luck, and is about what other CPUs see. Then see what the better one
+  does without it, and nudge it if it is unlucky.
+- Use the other flags of a release build: `-Ctarget-cpu=nehalem -Cforce-frame-pointers=yes -Crelocation-model=static`.
+
+**Copying a match** without pointers. A match may overlap its own output: with offset 1 and length 100 it repeats one byte.
+
+- `copy_chunks` copies 40 bytes as 16, 16 and 8, each loaded whole and then stored, with one bounds check for all of them.
+  That is right if the offset is 16 or more, and also if the match is no longer than its offset, since then the bytes
+  that come out wrong are beyond its end. Nearly every match is one or the other, and at most 40 bytes long.
+- A longer match with an offset of 40 or more is that again and again.
+- Any other repeats its first `offset` bytes. They are loaded once and stored every `offset` bytes. Nothing that was just
+  written is read back, which would have to wait for the write. For an offset under 8 a word is first filled with whole
+  repeats, by a multiplication.
+
+A copy may write up to `COPY_BYTES - 1` bytes past the end of the match, which `FASTLOOP_MAX_BYTES_WRITTEN` allows for.

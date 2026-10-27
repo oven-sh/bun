@@ -48,7 +48,7 @@ const OFFSET_MAXBITS: u32 = MAX_OFFSET_CODEWORD_LEN + MAX_EXTRA_OFFSET_BITS;
 const OFFSET_MAXFASTBITS: u32 = OFFSET_TABLEBITS + MAX_EXTRA_OFFSET_BITS;
 
 /// The most the fast loop writes in one round: two literals, the longest match, and what the copy writes past its end.
-const FASTLOOP_MAX_BYTES_WRITTEN: usize = 2 + MAX_MATCH_LEN as usize + 5 * WORD_BYTES - 1;
+const FASTLOOP_MAX_BYTES_WRITTEN: usize = 2 + MAX_MATCH_LEN as usize + COPY_BYTES - 1;
 
 /// The most the fast loop reads in one round: the bits it can refill, and the word a refill loads.
 const FASTLOOP_MAX_BYTES_READ: usize =
@@ -431,53 +431,285 @@ fn bitmask(nbits: u32) -> BitBuf {
     (1 as BitBuf).wrapping_shl(nbits).wrapping_sub(1)
 }
 
+/// `bitmask` of 0 to 63. Without BMI2, looking one up takes a quarter of the instructions of computing it, and no register.
+#[allow(clippy::indexing_slicing, reason = "evaluated at compile time")]
+static BITMASKS: [BitBuf; BITBUF_NBITS as usize] = {
+    let mut masks = [0; BITBUF_NBITS as usize];
+    let mut nbits = 0;
+    while nbits < BITBUF_NBITS {
+        masks[nbits as usize] = (1 << nbits) - 1;
+        nbits += 1;
+    }
+    masks
+};
+
+/// How much of a match is copied at a time: two chunks and a word.
+const COPY_BYTES: usize = 2 * CHUNK_BYTES + WORD_BYTES;
+const CHUNK_BYTES: usize = 16;
+
+/// Copies the first `COPY_BYTES` of `window` to its last `COPY_BYTES`, which may overlap them if they start a chunk or more later.
 #[inline(always)]
-fn copy_word(out: &mut [u8], src: usize, dst: usize) -> Option<()> {
-    let word: [u8; WORD_BYTES] = *out.get(src..)?.first_chunk()?;
-    *out.get_mut(dst..)?.first_chunk_mut()? = word;
+fn copy_chunks(window: &mut [u8]) -> Option<()> {
+    let offset = window.len().checked_sub(COPY_BYTES)?;
+    let chunk: [u8; CHUNK_BYTES] = *window.first_chunk()?;
+    *window.get_mut(offset..)?.first_chunk_mut()? = chunk;
+    let chunk: [u8; CHUNK_BYTES] = *window.get(CHUNK_BYTES..)?.first_chunk()?;
+    *window.get_mut(offset + CHUNK_BYTES..)?.first_chunk_mut()? = chunk;
+    let word: [u8; WORD_BYTES] = *window.get(2 * CHUNK_BYTES..)?.first_chunk()?;
+    *window
+        .get_mut(offset + 2 * CHUNK_BYTES..)?
+        .first_chunk_mut()? = word;
     Some(())
 }
 
-/// Copies a match in the fast loop. May write up to `5 * WORD_BYTES - 1` bytes past its end.
+/// Writes the first `N` bytes of `window` every `stride` bytes from `stride` on, until `end` is covered.
 #[inline(always)]
-fn copy_match_fast(out: &mut [u8], dst: usize, offset: usize, length: usize) -> Option<()> {
-    let end = dst + length;
-    let (mut src, mut dst) = (dst - offset, dst);
-    if offset >= WORD_BYTES {
-        loop {
-            for _ in 0..5 {
-                copy_word(out, src, dst)?;
-                src += WORD_BYTES;
-                dst += WORD_BYTES;
-            }
-            if dst >= end {
-                break;
-            }
-        }
-    } else if offset == 1 {
-        let byte = *out.get(src)?;
-        out.get_mut(dst..dst + length.next_multiple_of(4 * WORD_BYTES))?
-            .fill(byte);
-    } else {
-        copy_word(out, src, dst)?;
-        src += offset;
-        dst += offset;
-        copy_word(out, src, dst)?;
-        src += offset;
-        dst += offset;
-        loop {
-            copy_word(out, src, dst)?;
-            src += offset;
-            dst += offset;
-            copy_word(out, src, dst)?;
-            src += offset;
-            dst += offset;
-            if dst >= end {
-                break;
-            }
-        }
+fn repeat_chunk<const N: usize>(window: &mut [u8], stride: usize, end: usize) -> Option<()> {
+    let chunk: [u8; N] = *window.first_chunk()?;
+    let mut at = stride;
+    while at < end {
+        *window.get_mut(at..)?.first_chunk_mut()? = chunk;
+        at += stride;
     }
     Some(())
+}
+
+/// For 2 to 7 bytes: what to multiply them by for as many whole repeats as fit a word, and how many bytes those are.
+static REPEATS_IN_WORD: [(BitBuf, u8); 6] = [
+    (0x0001_0001_0001_0001, 8),
+    (0x0100_0001, 6),
+    (0x0001_0000_0001, 8),
+    (1, 5),
+    (1, 6),
+    (1, 7),
+];
+
+/// Copies a match that starts `offset` bytes into `window`, from the start of it, and up to `COPY_BYTES - 1` bytes more. Cold and out of line for the fast loop's registers (README.md).
+#[cold]
+#[inline(never)]
+fn copy_match_slow(mut window: &mut [u8], offset: usize, length: usize) -> Option<()> {
+    let end = offset + length;
+    if offset == 1 {
+        let byte = *window.first()?;
+        window
+            .get_mut(1..1 + length.next_multiple_of(WORD_BYTES))?
+            .fill(byte);
+        Some(())
+    } else if offset >= COPY_BYTES {
+        let mut copied = 0;
+        while copied < length {
+            copy_chunks(window.get_mut(..offset + COPY_BYTES)?)?;
+            window = window.get_mut(COPY_BYTES..)?;
+            copied += COPY_BYTES;
+        }
+        Some(())
+    } else if offset > 2 * CHUNK_BYTES {
+        // The match repeats its first `offset` bytes. Nothing written is read again, which would have to wait for the write.
+        repeat_chunk::<COPY_BYTES>(window, offset, end)
+    } else if offset > CHUNK_BYTES {
+        repeat_chunk::<{ 2 * CHUNK_BYTES }>(window, offset, end)
+    } else if offset >= WORD_BYTES {
+        repeat_chunk::<CHUNK_BYTES>(window, offset, end)
+    } else {
+        let &(multiplier, stride) = REPEATS_IN_WORD.get(offset.checked_sub(2)?)?;
+        let first = BitBuf::from_le_bytes(*window.first_chunk()?) & bitmask(8 * offset as u32);
+        let word = first.wrapping_mul(multiplier).to_le_bytes();
+        let mut at = offset;
+        while at < end {
+            *window.get_mut(at..)?.first_chunk_mut()? = word;
+            at += usize::from(stride);
+        }
+        Some(())
+    }
+}
+
+/// Where the decoding loops are in the input and the output.
+#[derive(Clone, Copy)]
+struct Position {
+    in_pos: usize,
+    bitbuf: BitBuf,
+    bitsleft: u32,
+    out_pos: usize,
+}
+
+enum FastLoopEnd {
+    EndOfBlock,
+    /// Another round could go past the end of the input or the output.
+    NoRoom,
+}
+
+/// Decodes a Huffman block, checking once per round that there is room for the most a round reads and writes. `None` is bad data. README.md explains its shape.
+#[rustc_align(64)]
+#[inline(never)]
+fn fast_loop<const FULL_LITLEN_TABLE: bool>(
+    tables: &Tables,
+    input: &[u8],
+    out: &mut [u8],
+    position: &mut Position,
+) -> Option<FastLoopEnd> {
+    let Position {
+        in_pos,
+        mut bitbuf,
+        mut bitsleft,
+        mut out_pos,
+    } = *position;
+    let mut rest = input.get(in_pos..)?;
+    let litlen_tablemask = bitmask(if FULL_LITLEN_TABLE {
+        LITLEN_TABLEBITS
+    } else {
+        tables.litlen_tablebits
+    });
+
+    /// ORs in the next word of input above the bits that are left, and moves on past the bytes that fit whole.
+    macro_rules! refill_word {
+        () => {
+            bitbuf |= BitBuf::from_le_bytes(*rest.first_chunk()?).wrapping_shl(bitsleft);
+            rest = rest.get(WORD_BYTES - 1 - ((bitsleft >> 3) & 0x7) as usize..)?;
+            bitsleft |= MAX_BITSLEFT & !7;
+        };
+    }
+    macro_rules! consume {
+        ($nbits:expr) => {
+            bitbuf = bitbuf.wrapping_shr($nbits);
+            bitsleft = bitsleft.wrapping_sub($nbits);
+        };
+    }
+    macro_rules! litlen_entry {
+        ($index:expr) => {
+            *tables.litlen_decode_table.get(($index) as usize)?
+        };
+    }
+    macro_rules! offset_entry {
+        ($index:expr) => {
+            *tables.offset_decode_table.get(($index) as usize)?
+        };
+    }
+
+    macro_rules! has_room {
+        () => {
+            rest.len() > FASTLOOP_MAX_BYTES_READ && out_pos + FASTLOOP_MAX_BYTES_WRITTEN < out.len()
+        };
+    }
+    macro_rules! put_literal {
+        ($literal:expr) => {
+            *out.get_mut(out_pos)? = $literal as u8;
+            out_pos += 1;
+        };
+    }
+
+    let end = 'rounds: {
+        if !has_room!() {
+            break 'rounds FastLoopEnd::NoRoom;
+        }
+        refill_word!();
+        let mut entry = litlen_entry!(bitbuf & litlen_tablemask);
+        loop {
+            if !has_room!() {
+                break 'rounds FastLoopEnd::NoRoom;
+            }
+
+            // The extra bits of a length follow its codeword and are consumed with it.
+            let mut saved_bitbuf = bitbuf;
+            consume!(entry);
+
+            'item: {
+                if entry & HUFFDEC_LITERAL != 0 {
+                    // There are bits enough for two literals on top of the round's main item.
+                    let literal = entry >> 16;
+                    entry = litlen_entry!(bitbuf & litlen_tablemask);
+                    saved_bitbuf = bitbuf;
+                    consume!(entry);
+                    put_literal!(literal);
+                    if entry & HUFFDEC_LITERAL != 0 {
+                        let literal = entry >> 16;
+                        entry = litlen_entry!(bitbuf & litlen_tablemask);
+                        saved_bitbuf = bitbuf;
+                        consume!(entry);
+                        put_literal!(literal);
+                        if entry & HUFFDEC_LITERAL != 0 {
+                            // A third literal is the main item.
+                            let literal = entry >> 16;
+                            entry = litlen_entry!(bitbuf & litlen_tablemask);
+                            refill_word!();
+                            put_literal!(literal);
+                            break 'item;
+                        }
+                    }
+                }
+
+                if entry & HUFFDEC_EXCEPTIONAL != 0 {
+                    if entry & HUFFDEC_END_OF_BLOCK != 0 {
+                        break 'rounds FastLoopEnd::EndOfBlock;
+                    }
+                    // A subtable entry can be of any kind but a pointer.
+                    entry = litlen_entry!(subtable_index(entry, bitbuf));
+                    saved_bitbuf = bitbuf;
+                    consume!(entry);
+                    if entry & HUFFDEC_LITERAL != 0 {
+                        let literal = entry >> 16;
+                        entry = litlen_entry!(bitbuf & litlen_tablemask);
+                        refill_word!();
+                        put_literal!(literal);
+                        break 'item;
+                    }
+                    if entry & HUFFDEC_END_OF_BLOCK != 0 {
+                        break 'rounds FastLoopEnd::EndOfBlock;
+                    }
+                }
+
+                let length = base_plus_extra_bits(entry, saved_bitbuf)?;
+
+                // The bits at hand are enough to fetch the offset entry, but maybe not to consume it.
+                entry = offset_entry!(bitbuf & bitmask(OFFSET_TABLEBITS));
+                if entry & HUFFDEC_EXCEPTIONAL != 0 {
+                    if u32::from(bitsleft as u8) < OFFSET_MAXBITS + LITLEN_TABLEBITS - PRELOAD_SLACK
+                    {
+                        refill_word!();
+                    }
+                    consume!(OFFSET_TABLEBITS);
+                    entry = offset_entry!(subtable_index(entry, bitbuf));
+                } else if u32::from(bitsleft as u8)
+                    < OFFSET_MAXFASTBITS + LITLEN_TABLEBITS - PRELOAD_SLACK
+                {
+                    refill_word!();
+                }
+                saved_bitbuf = bitbuf;
+                consume!(entry);
+                let offset = base_plus_extra_bits(entry, saved_bitbuf)?;
+
+                entry = litlen_entry!(bitbuf & litlen_tablemask);
+                refill_word!();
+
+                let src = out_pos.checked_sub(offset)?;
+                if length <= COPY_BYTES && offset >= length.min(CHUNK_BYTES) {
+                    copy_chunks(out.get_mut(src..out_pos + COPY_BYTES)?)?;
+                } else {
+                    copy_match_slow(out.get_mut(src..)?, offset, length)?;
+                }
+                out_pos += length;
+            }
+        }
+    };
+    *position = Position {
+        in_pos: input.len() - rest.len(),
+        bitbuf,
+        bitsleft,
+        out_pos,
+    };
+    Some(end)
+}
+
+/// Where a subtable pointer and the bits after the main table's lead.
+#[inline(always)]
+fn subtable_index(entry: u32, bitbuf: BitBuf) -> BitBuf {
+    BitBuf::from(entry >> 16) + (bitbuf & bitmask((entry >> 8) & 0x3F))
+}
+
+/// The base value of a length or offset entry plus its extra bits, which follow the codeword in `bits`.
+#[inline(always)]
+fn base_plus_extra_bits(entry: u32, bits: BitBuf) -> Option<usize> {
+    let codeword_and_extra_bits = bits & BITMASKS.get((entry % BITBUF_NBITS) as usize)?;
+    Some((entry >> 16) as usize + codeword_and_extra_bits.wrapping_shr(entry >> 8) as usize)
 }
 
 impl Inflate {
@@ -501,7 +733,6 @@ impl Inflate {
         out: &mut [u8],
         growth: Growth,
     ) -> Result<Progress> {
-        let in_fastloop_end = input.len().saturating_sub(FASTLOOP_MAX_BYTES_READ);
         let out_fastloop_end = out.len().saturating_sub(FASTLOOP_MAX_BYTES_WRITTEN);
 
         let Self {
@@ -530,20 +761,13 @@ impl Inflate {
                 }
             };
         }
-        /// ORs in the next word of input above the bits that are left, and moves `in_pos` past the bytes that fit whole.
-        macro_rules! refill_word {
-            ($word:expr) => {
-                bitbuf |= $word.wrapping_shl(bitsleft);
-                in_pos += WORD_BYTES - 1;
-                in_pos -= ((bitsleft >> 3) & 0x7) as usize;
-                bitsleft |= MAX_BITSLEFT & !7;
-            };
-        }
         /// Makes `CONSUMABLE_NBITS` bits consumable, with up to a word of zero bytes past the end of the input.
         macro_rules! refill_bits {
             () => {
                 if let Some(word) = load_word(input, in_pos) {
-                    refill_word!(word);
+                    bitbuf |= word.wrapping_shl(bitsleft);
+                    in_pos += WORD_BYTES - 1 - ((bitsleft >> 3) & 0x7) as usize;
+                    bitsleft |= MAX_BITSLEFT & !7;
                 } else {
                     while u32::from(bitsleft as u8) < CONSUMABLE_NBITS {
                         if let Some(&byte) = input.get(in_pos) {
@@ -556,12 +780,6 @@ impl Inflate {
                         bitsleft = bitsleft.wrapping_add(8);
                     }
                 }
-            };
-        }
-        /// For where `in_pos < in_fastloop_end` was checked at the start of the round.
-        macro_rules! refill_bits_in_fastloop {
-            () => {
-                refill_word!(checked!(load_word(input, in_pos)));
             };
         }
         macro_rules! consume {
@@ -578,24 +796,6 @@ impl Inflate {
         macro_rules! offset_entry {
             ($index:expr) => {
                 *checked!(tables.offset_decode_table.get(($index) as usize))
-            };
-        }
-        macro_rules! subtable_index {
-            ($entry:expr) => {
-                BitBuf::from($entry >> 16) + (bitbuf & bitmask(($entry >> 8) & 0x3F))
-            };
-        }
-        /// The base value of a length or offset entry plus its extra bits, which follow the codeword in `$bits`.
-        macro_rules! base_plus_extra_bits {
-            ($entry:expr, $bits:expr) => {
-                ($entry >> 16) as usize
-                    + ($bits & bitmask($entry)).wrapping_shr($entry >> 8) as usize
-            };
-        }
-        macro_rules! put_literal {
-            ($literal:expr) => {
-                *checked!(out.get_mut(out_pos)) = $literal as u8;
-                out_pos += 1;
             };
         }
         macro_rules! needs_output {
@@ -757,98 +957,28 @@ impl Inflate {
                         needs_output!(FASTLOOP_MAX_BYTES_WRITTEN + 1);
                     }
 
-                    // The fast loop checks once per round that there is room for the most a round can read and write.
-                    if in_pos < in_fastloop_end && out_pos < out_fastloop_end {
-                        refill_bits_in_fastloop!();
-                        let mut entry = litlen_entry!(bitbuf & litlen_tablemask);
-                        loop {
-                            // The extra bits of a length follow its codeword and are consumed with it.
-                            let mut saved_bitbuf = bitbuf;
-                            consume!(entry);
-
-                            'item: {
-                                if entry & HUFFDEC_LITERAL != 0 {
-                                    // There are bits enough for two literals on top of the round's main item.
-                                    let literal = entry >> 16;
-                                    entry = litlen_entry!(bitbuf & litlen_tablemask);
-                                    saved_bitbuf = bitbuf;
-                                    consume!(entry);
-                                    put_literal!(literal);
-                                    if entry & HUFFDEC_LITERAL != 0 {
-                                        let literal = entry >> 16;
-                                        entry = litlen_entry!(bitbuf & litlen_tablemask);
-                                        saved_bitbuf = bitbuf;
-                                        consume!(entry);
-                                        put_literal!(literal);
-                                        if entry & HUFFDEC_LITERAL != 0 {
-                                            // A third literal is the main item.
-                                            let literal = entry >> 16;
-                                            entry = litlen_entry!(bitbuf & litlen_tablemask);
-                                            refill_bits_in_fastloop!();
-                                            put_literal!(literal);
-                                            break 'item;
-                                        }
-                                    }
-                                }
-
-                                if entry & HUFFDEC_EXCEPTIONAL != 0 {
-                                    if entry & HUFFDEC_END_OF_BLOCK != 0 {
-                                        break 'block;
-                                    }
-                                    // A subtable entry can be of any kind but a pointer.
-                                    entry = litlen_entry!(subtable_index!(entry));
-                                    saved_bitbuf = bitbuf;
-                                    consume!(entry);
-                                    if entry & HUFFDEC_LITERAL != 0 {
-                                        let literal = entry >> 16;
-                                        entry = litlen_entry!(bitbuf & litlen_tablemask);
-                                        refill_bits_in_fastloop!();
-                                        put_literal!(literal);
-                                        break 'item;
-                                    }
-                                    if entry & HUFFDEC_END_OF_BLOCK != 0 {
-                                        break 'block;
-                                    }
-                                }
-
-                                let length = base_plus_extra_bits!(entry, saved_bitbuf);
-
-                                // The bits at hand are enough to fetch the offset entry, but maybe not to consume it.
-                                entry = offset_entry!(bitbuf & bitmask(OFFSET_TABLEBITS));
-                                if entry & HUFFDEC_EXCEPTIONAL != 0 {
-                                    if u32::from(bitsleft as u8)
-                                        < OFFSET_MAXBITS + LITLEN_TABLEBITS - PRELOAD_SLACK
-                                    {
-                                        refill_bits_in_fastloop!();
-                                    }
-                                    consume!(OFFSET_TABLEBITS);
-                                    entry = offset_entry!(subtable_index!(entry));
-                                } else if u32::from(bitsleft as u8)
-                                    < OFFSET_MAXFASTBITS + LITLEN_TABLEBITS - PRELOAD_SLACK
-                                {
-                                    refill_bits_in_fastloop!();
-                                }
-                                saved_bitbuf = bitbuf;
-                                consume!(entry);
-                                let offset = base_plus_extra_bits!(entry, saved_bitbuf);
-
-                                safety_check!(offset <= out_pos);
-                                let dst = out_pos;
-                                out_pos += length;
-
-                                entry = litlen_entry!(bitbuf & litlen_tablemask);
-                                refill_bits_in_fastloop!();
-
-                                checked!(copy_match_fast(out, dst, offset, length));
-                            }
-
-                            if !(in_pos < in_fastloop_end && out_pos < out_fastloop_end) {
-                                break;
-                            }
-                        }
-                        if growth == Growth::Cheap && out_pos >= out_fastloop_end {
-                            needs_output!(FASTLOOP_MAX_BYTES_WRITTEN + 1);
-                        }
+                    let mut position = Position {
+                        in_pos,
+                        bitbuf,
+                        bitsleft,
+                        out_pos,
+                    };
+                    let end = checked!(if tables.litlen_tablebits == LITLEN_TABLEBITS {
+                        fast_loop::<true>(tables, input, out, &mut position)
+                    } else {
+                        fast_loop::<false>(tables, input, out, &mut position)
+                    });
+                    Position {
+                        in_pos,
+                        bitbuf,
+                        bitsleft,
+                        out_pos,
+                    } = position;
+                    if let FastLoopEnd::EndOfBlock = end {
+                        break 'block;
+                    }
+                    if growth == Growth::Cheap && out_pos >= out_fastloop_end {
+                        needs_output!(FASTLOOP_MAX_BYTES_WRITTEN + 1);
                     }
 
                     // The same without the assumptions, for the ends of the input and the output.
@@ -873,7 +1003,7 @@ impl Inflate {
                         let mut saved_bitbuf = bitbuf;
                         consume!(entry);
                         if entry & HUFFDEC_SUBTABLE_POINTER != 0 {
-                            entry = litlen_entry!(subtable_index!(entry));
+                            entry = litlen_entry!(subtable_index(entry, bitbuf));
                             saved_bitbuf = bitbuf;
                             consume!(entry);
                         }
@@ -888,7 +1018,7 @@ impl Inflate {
                         if entry & HUFFDEC_END_OF_BLOCK != 0 {
                             break 'block;
                         }
-                        let length = base_plus_extra_bits!(entry, saved_bitbuf);
+                        let length = checked!(base_plus_extra_bits(entry, saved_bitbuf));
                         if length > out.len() - out_pos {
                             out_of_space!(length);
                         }
@@ -896,9 +1026,9 @@ impl Inflate {
                         entry = offset_entry!(bitbuf & bitmask(OFFSET_TABLEBITS));
                         if entry & HUFFDEC_EXCEPTIONAL != 0 {
                             consume!(OFFSET_TABLEBITS);
-                            entry = offset_entry!(subtable_index!(entry));
+                            entry = offset_entry!(subtable_index(entry, bitbuf));
                         }
-                        let offset = base_plus_extra_bits!(entry, bitbuf);
+                        let offset = checked!(base_plus_extra_bits(entry, bitbuf));
                         consume!(entry);
 
                         safety_check!(offset <= out_pos);

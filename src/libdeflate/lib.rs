@@ -1,5 +1,6 @@
 //! DEFLATE and its wrappers, one whole buffer at a time, byte for byte as libdeflate does it. A port of it (LICENSE.md, README.md).
 
+#![feature(fn_align)]
 #![forbid(unsafe_code)]
 // Streams come from anywhere and the release profile aborts on a panic.
 #![deny(

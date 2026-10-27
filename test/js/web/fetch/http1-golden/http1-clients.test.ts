@@ -12,6 +12,8 @@ describe.each<[Client, Part, Delivery]>([
   ["fetch", "bodies", "in one write"],
   ["fetch", "bodies", "in small pieces"],
   ["ws", "heads", "in one write"],
+  ["ws", "heads", "in small pieces"],
+  ["ws", "bodies", "in one write"],
   ["ws", "bodies", "in small pieces"],
 ])("%s: %s %s", (client, part, delivery) => {
   const perTest = 48;

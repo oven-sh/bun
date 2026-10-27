@@ -17,6 +17,8 @@ pub use bun_http1::{ChunkedDecoder, ChunkedStatus};
 
 use bun_core::strings;
 
+bun_core::declare_scope!(picohttp, hidden);
+
 // ──────────────────────────────────────────────────────────────────────────
 // Header
 // ──────────────────────────────────────────────────────────────────────────
@@ -427,7 +429,7 @@ impl<'a> Response<'a> {
                 bytes_read: head.len,
             }),
             Err(bun_http1::ParseError::Malformed) => {
-                bun_core::debug!("Malformed HTTP response:\n{}", BStr::new(buf));
+                bun_core::scoped_log!(picohttp, "Malformed HTTP response:\n{}", BStr::new(buf));
                 Err(ParseResponseError::MalformedHttpResponse)
             }
             Err(bun_http1::ParseError::Incomplete) => Err(ParseResponseError::ShortRead),

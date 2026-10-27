@@ -6,7 +6,7 @@
  */
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
-import { chmodSync, mkdirSync, readFileSync, symlinkSync } from "fs";
+import { chmodSync, mkdirSync, readFileSync, statSync, symlinkSync } from "fs";
 import { mkdir, rm, stat } from "fs/promises";
 import {
   bunExe,
@@ -19,9 +19,22 @@ import {
   tempDirWithFiles,
   tmpdirSync,
 } from "harness";
-import { join, sep } from "path";
+import { dirname, join, sep } from "path";
 import { createTestBuilder, sortedShellOutput } from "./util";
 const TestBuilder = createTestBuilder(import.meta.path);
+
+// True when a process of another uid can traverse to `path` and execute it.
+function othersCanExecute(path: string) {
+  try {
+    if ((statSync(path).mode & 0o005) !== 0o005) return false;
+    for (let dir = dirname(path); ; dir = dirname(dir)) {
+      if ((statSync(dir).mode & 0o001) === 0) return false;
+      if (dir === dirname(dir)) return true;
+    }
+  } catch {
+    return false;
+  }
+}
 
 afterAll(() => console.error("After all RSS", rss() / 1024 / 1024));
 beforeAll(() => console.error("Before all RSS", rss() / 1024 / 1024));
@@ -765,45 +778,49 @@ describe("bunshell", () => {
       .stdout("\n/Documents\n")
       .runAsTest("empty $HOME or $USERPROFILE");
 
-    test.skipIf(isWindows)("unset $HOME falls back to the passwd home like os.homedir()", async () => {
+    // Runs `script` in the Bun shell with $HOME unset. Prints [home, output]: `home` is what
+    // os.homedir() gives, or null when the uid has no passwd entry.
+    async function tildeWithHomeUnset(script: string, spawnOptions: { uid?: number; gid?: number; cwd?: string } = {}) {
       const env: Record<string, string | undefined> = { ...bunEnv };
       delete env.HOME;
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),
           "-e",
-          `const { $ } = Bun; console.log(JSON.stringify([require("os").homedir(), (await $\`echo ~ a ~/x\`.text()).trim()]))`,
+          `let home = null; try { home = require("os").homedir(); } catch {}
+           console.log(JSON.stringify([home, (await Bun.$\`${script}\`.text()).trim()]))`,
         ],
         env,
         stderr: "pipe",
+        ...spawnOptions,
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    test.skipIf(isWindows)("unset $HOME falls back to the passwd home like os.homedir()", async () => {
+      const { stdout, stderr, exitCode } = await tildeWithHomeUnset("echo ~ a ~/x");
       expect(stderr).toBe("");
       const [home, expanded] = JSON.parse(stdout);
-      expect(home).not.toBe("");
-      expect(expanded).toBe(`${home} a ${home}/x`);
+      // A uid with no passwd entry has no home, and the ~ stays.
+      expect(expanded).toBe(home ? `${home} a ${home}/x` : "~ a ~/x");
       expect(exitCode).toBe(0);
     });
 
-    // Needs root: the child runs as a uid that has no passwd entry.
-    test.skipIf(isWindows || process.getuid?.() !== 0)(
+    // Needs root: the child runs as a uid that has no passwd entry, and that uid must reach the binary.
+    test.skipIf(isWindows || !isRoot || !othersCanExecute(bunExe()))(
       "unset $HOME and no passwd entry keeps the ~ instead of expanding it to nothing",
       async () => {
         const passwd = readFileSync("/etc/passwd", "utf8");
         let uid = 60123;
         while (passwd.includes(`:${uid}:`)) uid++;
-        const env: Record<string, string | undefined> = { ...bunEnv };
-        delete env.HOME;
-        await using proc = Bun.spawn({
-          cmd: [bunExe(), "-e", `console.log((await Bun.$\`echo ~ a ~/x ~"" ~$UNSET_VARIABLE\`.text()).trim())`],
-          env,
+        const { stdout, stderr, exitCode } = await tildeWithHomeUnset(`echo ~ a ~/x ~"" ~$UNSET_VARIABLE`, {
           uid,
           gid: uid,
-          stderr: "pipe",
+          cwd: "/",
         });
-        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
         expect(stderr).toBe("");
-        expect(stdout).toBe("~ a ~/x ~ ~\n");
+        expect(JSON.parse(stdout)).toEqual([null, "~ a ~/x ~ ~"]);
         expect(exitCode).toBe(0);
       },
     );

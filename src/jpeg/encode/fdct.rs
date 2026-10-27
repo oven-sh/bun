@@ -1,7 +1,7 @@
 //! The forward DCT and quantization (jcdctmgr.c, jfdctint.c).
 
 use super::Block;
-use crate::lanes::{I16x8, add16, add32, descale, madd, sub16, transpose, zip};
+use crate::lanes::{column, descale, from_columns, transpose};
 use crate::tables::NATURAL_ORDER;
 use crate::tables::dct::*;
 
@@ -50,89 +50,89 @@ impl Divisors {
     }
 }
 
-/// pmulhuw
+/// One dimension of the transform. With samples of 8 bits nothing here overflows.
 #[inline(always)]
-fn mul_high(a: [u16; 8], b: [u16; 8]) -> [u16; 8] {
-    zip(a, b, |a, b| ((u32::from(a) * u32::from(b)) >> 16) as u16)
-}
-
-/// One dimension of the transform, along the first index and for eight lanes at once. With samples of 8 bits nothing here
-/// overflows.
-#[inline(always)]
-fn pass<const FIRST: bool>([d0, d1, d2, d3, d4, d5, d6, d7]: [I16x8; 8]) -> [I16x8; 8] {
+fn fdct8<const FIRST: bool>([d0, d1, d2, d3, d4, d5, d6, d7]: [i16; 8]) -> [i16; 8] {
     let shift = if FIRST {
         CONST_BITS - PASS1_BITS
     } else {
         CONST_BITS + PASS1_BITS
     };
+    let madd = |a: i16, ca: i32, b: i16, cb: i32| i32::from(a) * ca + i32::from(b) * cb;
+    let rounded = |sum: i32| descale(sum + (1 << (shift - 1)), shift);
 
-    let (tmp0, tmp7) = (add16(d0, d7), sub16(d0, d7));
-    let (tmp1, tmp6) = (add16(d1, d6), sub16(d1, d6));
-    let (tmp2, tmp5) = (add16(d2, d5), sub16(d2, d5));
-    let (tmp3, tmp4) = (add16(d3, d4), sub16(d3, d4));
+    let (tmp0, tmp7) = (d0 + d7, d0 - d7);
+    let (tmp1, tmp6) = (d1 + d6, d1 - d6);
+    let (tmp2, tmp5) = (d2 + d5, d2 - d5);
+    let (tmp3, tmp4) = (d3 + d4, d3 - d4);
 
-    let (tmp10, tmp13) = (add16(tmp0, tmp3), sub16(tmp0, tmp3));
-    let (tmp11, tmp12) = (add16(tmp1, tmp2), sub16(tmp1, tmp2));
+    let (tmp10, tmp13) = (tmp0 + tmp3, tmp0 - tmp3);
+    let (tmp11, tmp12) = (tmp1 + tmp2, tmp1 - tmp2);
 
-    let rescale = |v: I16x8| {
+    let rescale = |v: i16| {
         if FIRST {
-            v.map(|v| v << PASS1_BITS)
+            v << PASS1_BITS
         } else {
-            v.map(|v| v.wrapping_add(1 << (PASS1_BITS - 1)) >> PASS1_BITS)
+            // -32768 is the sum of 64 samples of 0.
+            v.wrapping_add(1 << (PASS1_BITS - 1)) >> PASS1_BITS
         }
     };
-    let out0 = rescale(add16(tmp10, tmp11));
-    let out4 = rescale(sub16(tmp10, tmp11));
-    let out2 = descale(madd(tmp13, F_0_541 + F_0_765, tmp12, F_0_541), shift);
-    let out6 = descale(madd(tmp13, F_0_541, tmp12, F_0_541 - F_1_847), shift);
-
-    let z3 = add16(tmp4, tmp6);
-    let z4 = add16(tmp5, tmp7);
+    let z3 = tmp4 + tmp6;
+    let z4 = tmp5 + tmp7;
     let (z3, z4) = (
         madd(z3, F_1_175 - F_1_961, z4, F_1_175),
         madd(z3, F_1_175, z4, F_1_175 - F_0_390),
     );
-    let out7 = descale(
-        add32(madd(tmp4, F_0_298 - F_0_899, tmp7, -F_0_899), z3),
-        shift,
-    );
-    let out1 = descale(
-        add32(madd(tmp4, -F_0_899, tmp7, F_1_501 - F_0_899), z4),
-        shift,
-    );
-    let out5 = descale(
-        add32(madd(tmp5, F_2_053 - F_2_562, tmp6, -F_2_562), z4),
-        shift,
-    );
-    let out3 = descale(
-        add32(madd(tmp5, -F_2_562, tmp6, F_3_072 - F_2_562), z3),
-        shift,
-    );
 
-    [out0, out1, out2, out3, out4, out5, out6, out7]
+    [
+        rescale(tmp10.wrapping_add(tmp11)),
+        rounded(madd(tmp4, -F_0_899, tmp7, F_1_501 - F_0_899) + z4),
+        rounded(madd(tmp13, F_0_541 + F_0_765, tmp12, F_0_541)),
+        rounded(madd(tmp5, -F_2_562, tmp6, F_3_072 - F_2_562) + z3),
+        rescale(tmp10 - tmp11),
+        rounded(madd(tmp5, F_2_053 - F_2_562, tmp6, -F_2_562) + z4),
+        rounded(madd(tmp13, F_0_541, tmp12, F_0_541 - F_1_847)),
+        rounded(madd(tmp4, F_0_298 - F_0_899, tmp7, -F_0_899) + z3),
+    ]
+}
+
+/// Each column of `samples` is a row of the block, and so it is with the result.
+#[inline(never)]
+fn rows_pass(samples: &[[u8; 8]; 8]) -> [[i16; 8]; 8] {
+    from_columns(|lane| fdct8::<true>(column(samples, lane).map(|s| i16::from(s) - 128)))
+}
+
+#[inline(never)]
+fn columns_pass(data: &[[i16; 8]; 8]) -> [[i16; 8]; 8] {
+    from_columns(|lane| fdct8::<false>(column(data, lane)))
+}
+
+#[inline(never)]
+fn quantize(coefs: &[[i16; 8]; 8], divisors: &Divisors) -> [[i16; 8]; 8] {
+    // pmulhuw
+    let mul_high = |a: u16, b: u16| ((u32::from(a) * u32::from(b)) >> 16) as u16;
+    let mut out = [[0i16; 8]; 8];
+    for ((((out, &coef), &reciprocal), &correction), &scale) in out
+        .as_flattened_mut()
+        .iter_mut()
+        .zip(coefs.as_flattened())
+        .zip(divisors.reciprocal.as_flattened())
+        .zip(divisors.correction.as_flattened())
+        .zip(divisors.scale.as_flattened())
+    {
+        let magnitude = coef.unsigned_abs() + correction;
+        let quotient = mul_high(mul_high(magnitude, reciprocal), scale) as i16;
+        *out = if coef < 0 { -quotient } else { quotient };
+    }
+    out
 }
 
 /// The quantized coefficients of 8 rows of 8 samples, in zigzag order.
 #[inline]
 pub(crate) fn forward(samples: &[[u8; 8]; 8], divisors: &Divisors) -> Block {
-    let centered = samples.map(|row| row.map(|s| i16::from(s) - 128));
     // Rows first: the two passes round differently.
-    let coefs = pass::<false>(transpose(&pass::<true>(transpose(&centered))));
-
-    let mut quantized = [[0i16; 8]; 8];
-    for ((((out, coefs), &reciprocal), &correction), &scale) in quantized
-        .iter_mut()
-        .zip(coefs)
-        .zip(&divisors.reciprocal)
-        .zip(&divisors.correction)
-        .zip(&divisors.scale)
-    {
-        let magnitude = zip(coefs.map(i16::unsigned_abs), correction, u16::wrapping_add);
-        let quotient = mul_high(mul_high(magnitude, reciprocal), scale);
-        *out = zip(coefs, quotient, |coef, q| {
-            if coef < 0 { -(q as i16) } else { q as i16 }
-        });
-    }
+    let coefs = columns_pass(&transpose(&rows_pass(&transpose(samples))));
+    let quantized = quantize(&coefs, divisors);
 
     let quantized = quantized.as_flattened();
     let mut block = [0i16; 64];

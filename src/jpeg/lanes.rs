@@ -1,71 +1,43 @@
-//! Eight numbers at a time, named after the x86 instructions that do the same, in a form that compilers turn back into
-//! vector code.
+//! How the DCTs get to be vector code without a vector in sight.
+//!
+//! A transform of one dimension is written for one column of a matrix, with the widths, wrapping and saturation of one
+//! lane of libjpeg-turbo's assembly. `from_columns` runs it on every column, and the compiler turns that loop into vector
+//! code with a lane for each column. It only does so if that is all there is to the function. With a transposition in the
+//! same function it goes about it the wrong way and ends up with scalar code several times as slow. So every pass and
+//! every transposition is a function of its own, and `#[inline(never)]`.
 
-pub(crate) type I16x8 = [i16; 8];
-pub(crate) type I32x8 = [i32; 8];
-
+/// psraw by `shift` of a sum that has the rounding in it already, and packssdw.
 #[inline(always)]
-pub(crate) fn zip<A: Copy, B: Copy, C: Copy + Default, const N: usize>(
-    a: [A; N],
-    b: [B; N],
-    f: impl Fn(A, B) -> C,
-) -> [C; N] {
-    let mut out = [C::default(); N];
-    for ((out, a), b) in out.iter_mut().zip(a).zip(b) {
-        *out = f(a, b);
+pub(crate) fn descale(sum: i32, shift: u32) -> i16 {
+    (sum >> shift).clamp(-32768, 32767) as i16
+}
+
+/// A matrix whose column `lane` is `column(lane)`.
+#[inline(always)]
+pub(crate) fn from_columns<T: Copy + Default, const R: usize, const C: usize>(
+    column: impl Fn(usize) -> [T; R],
+) -> [[T; C]; R] {
+    let mut out = [[T::default(); C]; R];
+    for lane in 0..C {
+        for (row, v) in out.iter_mut().zip(column(lane)) {
+            if let Some(out) = row.get_mut(lane) {
+                *out = v;
+            }
+        }
     }
     out
 }
 
-/// pmullw
 #[inline(always)]
-pub(crate) fn mul16(a: I16x8, b: I16x8) -> I16x8 {
-    zip(a, b, i16::wrapping_mul)
+pub(crate) fn column<T: Copy + Default, const R: usize, const C: usize>(
+    m: &[[T; C]; R],
+    lane: usize,
+) -> [T; R] {
+    m.each_ref()
+        .map(|row| row.get(lane).copied().unwrap_or_default())
 }
 
-/// paddw
-#[inline(always)]
-pub(crate) fn add16(a: I16x8, b: I16x8) -> I16x8 {
-    zip(a, b, i16::wrapping_add)
-}
-
-/// psubw
-#[inline(always)]
-pub(crate) fn sub16(a: I16x8, b: I16x8) -> I16x8 {
-    zip(a, b, i16::wrapping_sub)
-}
-
-/// punpck[lh]wd and pmaddwd: `a * ca + b * cb`. With these constants the sum cannot overflow.
-#[inline(always)]
-pub(crate) fn madd(a: I16x8, ca: i32, b: I16x8, cb: i32) -> I32x8 {
-    zip(a, b, |a, b| i32::from(a) * ca + i32::from(b) * cb)
-}
-
-/// paddd
-#[inline(always)]
-pub(crate) fn add32(a: I32x8, b: I32x8) -> I32x8 {
-    zip(a, b, i32::wrapping_add)
-}
-
-/// psubd
-#[inline(always)]
-pub(crate) fn sub32(a: I32x8, b: I32x8) -> I32x8 {
-    zip(a, b, i32::wrapping_sub)
-}
-
-/// Sign extension and pslld.
-#[inline(always)]
-pub(crate) fn widen_shl(a: I16x8, n: u32) -> I32x8 {
-    a.map(|a| i32::from(a) << n)
-}
-
-/// paddd with the rounding constant, psrad and packssdw.
-#[inline(always)]
-pub(crate) fn descale(a: I32x8, n: u32) -> I16x8 {
-    a.map(|a| (a.wrapping_add(1 << (n - 1)) >> n).clamp(-32768, 32767) as i16)
-}
-
-#[inline(always)]
+#[inline(never)]
 pub(crate) fn transpose<T: Copy + Default, const R: usize, const C: usize>(
     m: &[[T; C]; R],
 ) -> [[T; R]; C] {

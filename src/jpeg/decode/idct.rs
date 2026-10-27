@@ -8,7 +8,7 @@
 //! - The other sizes ran as C with 64-bit `long`.
 
 use super::Block;
-use crate::lanes::{I16x8, add16, add32, descale, madd, mul16, sub16, sub32, transpose, widen_shl};
+use crate::lanes::{column, descale, from_columns, transpose};
 use crate::tables::dct::*;
 use core::ops::{Add, Mul, Shl, Sub};
 
@@ -31,132 +31,199 @@ fn rows<T>(block: &[T; 64]) -> &[[T; 8]] {
     block.as_chunks::<8>().0
 }
 
+// ---- The sizes that ran as assembly. See `lanes`.
+
 /// packsswb and paddb with 128.
 #[inline(always)]
 fn to_sample(a: i16) -> u8 {
     (a.clamp(-128, 127) + 128) as u8
 }
 
-/// The rows of the block times their multipliers, and whether the rows picked by `ac_rows` are all zero.
+/// pmullw of column `lane` of the coefficients and their multipliers.
 #[inline(always)]
-fn dequantize(coefs: &Block, table: &DctTable, ac_rows: [bool; 8]) -> ([I16x8; 8], bool) {
-    let mut out = [[0i16; 8]; 8];
-    let mut ac = 0i16;
-    for (((out, coefs), table), is_ac) in out
-        .iter_mut()
-        .zip(rows(coefs))
-        .zip(rows(table))
-        .zip(ac_rows)
-    {
-        *out = mul16(*coefs, *table);
-        if is_ac {
-            ac |= coefs.iter().fold(0, |acc, &c| acc | c);
+fn dequantize(coefs: &Block, table: &DctTable, lane: usize) -> [i16; 8] {
+    let at = |block: &[i16; 64], row: usize| block.get(row * 8 + lane).copied().unwrap_or(0);
+    core::array::from_fn(|row| at(coefs, row).wrapping_mul(at(table, row)))
+}
+
+/// Whether the coefficients in the rows and columns picked by `mask`, a bit for each in row-major order, are all zero.
+#[inline(always)]
+fn all_zero(coefs: &Block, mask: u64) -> bool {
+    // Four at a time. Masks are made of whole groups, but for the one with the DC coefficient.
+    let (quads, _) = coefs.as_chunks::<4>();
+    let mut any = 0u64;
+    for (i, quad) in quads.iter().enumerate() {
+        let [a, b, c, d] = quad.map(|coef| u64::from(coef as u16));
+        let picked = (mask >> (i * 4)) & 15;
+        if picked == 15 {
+            any |= a | b << 16 | c << 32 | d << 48;
+        } else if picked == 14 {
+            any |= b | c | d;
         }
     }
-    (out, ac == 0)
+    any == 0
+}
+
+const fn rows_mask(rows: u64) -> u64 {
+    let mut mask = 0;
+    let mut row = 0;
+    while row < 8 {
+        if rows >> row & 1 != 0 {
+            mask |= 0xff << (row * 8);
+        }
+        row += 1;
+    }
+    mask
 }
 
 #[inline(always)]
-fn idct8_pass([in0, in1, in2, in3, in4, in5, in6, in7]: [I16x8; 8], shift: u32) -> [I16x8; 8] {
+fn idct8([in0, in1, in2, in3, in4, in5, in6, in7]: [i16; 8], shift: u32) -> [i16; 8] {
+    let wide = i32::from;
+    // pmaddwd. With these constants the sum of the two products cannot overflow.
+    let madd = |a: i16, ca: i32, b: i16, cb: i32| wide(a) * ca + wide(b) * cb;
+    let round = 1 << (shift - 1);
+
     let tmp3 = madd(in2, F_0_541 + F_0_765, in6, F_0_541);
     let tmp2 = madd(in2, F_0_541, in6, F_0_541 - F_1_847);
-    let tmp0 = widen_shl(add16(in0, in4), CONST_BITS);
-    let tmp1 = widen_shl(sub16(in0, in4), CONST_BITS);
-    let tmp10 = add32(tmp0, tmp3);
-    let tmp13 = sub32(tmp0, tmp3);
-    let tmp11 = add32(tmp1, tmp2);
-    let tmp12 = sub32(tmp1, tmp2);
+    let tmp0 = (wide(in0.wrapping_add(in4)) << CONST_BITS) + round;
+    let tmp1 = (wide(in0.wrapping_sub(in4)) << CONST_BITS) + round;
+    let tmp10 = tmp0.wrapping_add(tmp3);
+    let tmp13 = tmp0.wrapping_sub(tmp3);
+    let tmp11 = tmp1.wrapping_add(tmp2);
+    let tmp12 = tmp1.wrapping_sub(tmp2);
 
-    let z3 = add16(in3, in7);
-    let z4 = add16(in1, in5);
+    let z3 = in3.wrapping_add(in7);
+    let z4 = in1.wrapping_add(in5);
     let (z3, z4) = (
         madd(z3, F_1_175 - F_1_961, z4, F_1_175),
         madd(z3, F_1_175, z4, F_1_175 - F_0_390),
     );
-    let tmp0 = add32(madd(in7, F_0_298 - F_0_899, in1, -F_0_899), z3);
-    let tmp3 = add32(madd(in7, -F_0_899, in1, F_1_501 - F_0_899), z4);
-    let tmp1 = add32(madd(in5, F_2_053 - F_2_562, in3, -F_2_562), z4);
-    let tmp2 = add32(madd(in5, -F_2_562, in3, F_3_072 - F_2_562), z3);
+    let tmp0 = madd(in7, F_0_298 - F_0_899, in1, -F_0_899).wrapping_add(z3);
+    let tmp3 = madd(in7, -F_0_899, in1, F_1_501 - F_0_899).wrapping_add(z4);
+    let tmp1 = madd(in5, F_2_053 - F_2_562, in3, -F_2_562).wrapping_add(z4);
+    let tmp2 = madd(in5, -F_2_562, in3, F_3_072 - F_2_562).wrapping_add(z3);
 
     [
-        descale(add32(tmp10, tmp3), shift),
-        descale(add32(tmp11, tmp2), shift),
-        descale(add32(tmp12, tmp1), shift),
-        descale(add32(tmp13, tmp0), shift),
-        descale(sub32(tmp13, tmp0), shift),
-        descale(sub32(tmp12, tmp1), shift),
-        descale(sub32(tmp11, tmp2), shift),
-        descale(sub32(tmp10, tmp3), shift),
+        tmp10.wrapping_add(tmp3),
+        tmp11.wrapping_add(tmp2),
+        tmp12.wrapping_add(tmp1),
+        tmp13.wrapping_add(tmp0),
+        tmp13.wrapping_sub(tmp0),
+        tmp12.wrapping_sub(tmp1),
+        tmp11.wrapping_sub(tmp2),
+        tmp10.wrapping_sub(tmp3),
     ]
+    .map(|sum| descale(sum, shift))
+}
+
+/// `idct8` of four numbers and four zeros.
+#[inline(always)]
+fn idct8_of_4([in0, in1, in2, in3]: [i16; 4], shift: u32) -> [i16; 8] {
+    idct8([in0, in1, in2, in3, 0, 0, 0, 0], shift)
+}
+
+const PASS1_SHIFT: u32 = CONST_BITS - PASS1_BITS;
+const PASS2_SHIFT: u32 = CONST_BITS + PASS1_BITS + 3;
+
+#[inline(never)]
+fn idct8x8_pass1(coefs: &Block, table: &DctTable) -> [[i16; 8]; 8] {
+    from_columns(|lane| idct8(dequantize(coefs, table, lane), PASS1_SHIFT))
+}
+
+/// Each column of `rows` is a row of the block, and so it is with the result.
+#[inline(never)]
+fn idct8x8_pass2(rows: &[[i16; 8]; 8]) -> [[u8; 8]; 8] {
+    from_columns(|lane| idct8(column(rows, lane), PASS2_SHIFT).map(to_sample))
+}
+
+/// Of the upper left quarter of the block.
+#[inline(never)]
+fn idct8x8_pass1_of_4x4(coefs: &Block, table: &DctTable) -> [[i16; 4]; 8] {
+    from_columns(|lane| {
+        let [in0, in1, in2, in3, ..] = dequantize(coefs, table, lane);
+        idct8_of_4([in0, in1, in2, in3], PASS1_SHIFT)
+    })
+}
+
+#[inline(never)]
+fn idct8x8_pass2_of_4(rows: &[[i16; 8]; 4]) -> [[u8; 8]; 8] {
+    from_columns(|lane| idct8_of_4(column(rows, lane), PASS2_SHIFT).map(to_sample))
 }
 
 pub(crate) fn idct8x8(coefs: &Block, table: &DctTable) -> [[u8; 8]; 8] {
-    let (input, dc_only) = dequantize(
-        coefs,
-        table,
-        [false, true, true, true, true, true, true, true],
-    );
-    let columns = if dc_only {
-        // This shortcut wraps where the full computation saturates.
-        let [in0, ..] = input;
-        in0.map(|dc| [dc.wrapping_shl(PASS1_BITS); 8])
+    const RIGHT_HALF: u64 = 0xf0f0_f0f0_f0f0_f0f0;
+
+    if all_zero(coefs, rows_mask(0b1111_1110)) {
+        // The assembly has this shortcut, which wraps where the full computation saturates. All the rows are the same.
+        let row = core::array::from_fn(|lane| {
+            let [dc, ..] = dequantize(coefs, table, lane);
+            dc.wrapping_shl(PASS1_BITS)
+        });
+        return [idct8(row, PASS2_SHIFT).map(to_sample); 8];
+    }
+
+    // Most blocks of most images have nothing but low frequencies. What is left out here is sums of zeros.
+    let transposed = if all_zero(coefs, rows_mask(0b1111_0000) | RIGHT_HALF) {
+        idct8x8_pass2_of_4(&transpose(&idct8x8_pass1_of_4x4(coefs, table)))
     } else {
-        transpose(&idct8_pass(input, CONST_BITS - PASS1_BITS))
+        idct8x8_pass2(&transpose(&idct8x8_pass1(coefs, table)))
     };
-    transpose(&idct8_pass(columns, CONST_BITS + PASS1_BITS + 3)).map(|row| row.map(to_sample))
+    transpose(&transposed)
 }
 
 /// Row or column 4 has no part in a 4-point result.
 #[inline(always)]
-fn idct4_pass([in0, in1, in2, in3, _, in5, in6, in7]: [I16x8; 8], shift: u32) -> [I16x8; 4] {
+fn idct4([in0, in1, in2, in3, in5, in6, in7]: [i16; 7], shift: u32) -> [i16; 4] {
     const F_0_211: i32 = 1730;
     const F_0_509: i32 = 4176;
     const F_0_601: i32 = 4926;
-    const F_0_765: i32 = 6270;
-    const F_0_899: i32 = 7373;
     const F_1_061: i32 = 8697;
     const F_1_451: i32 = 11893;
-    const F_1_847: i32 = 15137;
     const F_2_172: i32 = 17799;
-    const F_2_562: i32 = 20995;
 
-    let tmp2 = add32(
-        madd(in5, -F_0_601, in7, -F_0_509),
-        madd(in1, F_2_562, in3, F_0_899),
-    );
-    let tmp0 = add32(
-        madd(in5, F_1_451, in7, -F_0_211),
-        madd(in1, F_1_061, in3, -F_2_172),
-    );
-    let even0 = widen_shl(in0, CONST_BITS + 1);
+    let wide = i32::from;
+    let madd = |a: i16, ca: i32, b: i16, cb: i32| wide(a) * ca + wide(b) * cb;
+
+    let tmp2 = madd(in5, -F_0_601, in7, -F_0_509).wrapping_add(madd(in1, F_2_562, in3, F_0_899));
+    let tmp0 = madd(in5, F_1_451, in7, -F_0_211).wrapping_add(madd(in1, F_1_061, in3, -F_2_172));
+    let even0 = (wide(in0) << (CONST_BITS + 1)) + (1 << (shift - 1));
     let even2 = madd(in2, F_1_847, in6, -F_0_765);
-    let tmp10 = add32(even0, even2);
-    let tmp12 = sub32(even0, even2);
+    let tmp10 = even0.wrapping_add(even2);
+    let tmp12 = even0.wrapping_sub(even2);
     [
-        descale(add32(tmp10, tmp2), shift),
-        descale(add32(tmp12, tmp0), shift),
-        descale(sub32(tmp12, tmp0), shift),
-        descale(sub32(tmp10, tmp2), shift),
+        tmp10.wrapping_add(tmp2),
+        tmp12.wrapping_add(tmp0),
+        tmp12.wrapping_sub(tmp0),
+        tmp10.wrapping_sub(tmp2),
     ]
+    .map(|sum| descale(sum, shift))
+}
+
+#[inline(never)]
+fn idct4x4_pass1(coefs: &Block, table: &DctTable) -> [[i16; 8]; 4] {
+    from_columns(|lane| {
+        let [in0, in1, in2, in3, _, in5, in6, in7] = dequantize(coefs, table, lane);
+        idct4([in0, in1, in2, in3, in5, in6, in7], PASS1_SHIFT + 1)
+    })
+}
+
+#[inline(never)]
+fn idct4x4_pass2(rows: &[[i16; 4]; 8]) -> [[u8; 4]; 4] {
+    from_columns(|lane| {
+        let [in0, in1, in2, in3, _, in5, in6, in7] = column(rows, lane);
+        idct4([in0, in1, in2, in3, in5, in6, in7], PASS2_SHIFT + 1).map(to_sample)
+    })
 }
 
 pub(crate) fn idct4x4(coefs: &Block, table: &DctTable) -> [[u8; 4]; 4] {
-    let (input, dc_only) = dequantize(
-        coefs,
-        table,
-        [false, true, true, true, false, true, true, true],
-    );
-    let columns: [[i16; 4]; 8] = if dc_only {
-        let [in0, ..] = input;
-        in0.map(|dc| [dc.wrapping_shl(PASS1_BITS); 4])
-    } else {
-        transpose(&idct4_pass(input, CONST_BITS - PASS1_BITS + 1))
-    };
-    // Four of the eight lanes are in use.
-    let columns = columns.map(|[a, b, c, d]| [a, b, c, d, 0, 0, 0, 0]);
-    let out =
-        idct4_pass(columns, CONST_BITS + PASS1_BITS + 3 + 1).map(|[a, b, c, d, ..]| [a, b, c, d]);
-    transpose(&out).map(|row| row.map(to_sample))
+    if all_zero(coefs, rows_mask(0b1110_1110)) {
+        let row = [0, 1, 2, 3, 5, 6, 7].map(|lane| {
+            let [dc, ..] = dequantize(coefs, table, lane);
+            dc.wrapping_shl(PASS1_BITS)
+        });
+        return [idct4(row, PASS2_SHIFT + 1).map(to_sample); 4];
+    }
+    transpose(&idct4x4_pass2(&transpose(&idct4x4_pass1(coefs, table))))
 }
 
 pub(crate) fn idct2x2(coefs: &Block, table: &DctTable) -> [[u8; 2]; 2] {
@@ -164,20 +231,23 @@ pub(crate) fn idct2x2(coefs: &Block, table: &DctTable) -> [[u8; 2]; 2] {
     const F_0_850: i32 = 6967;
     const F_1_272: i32 = 10426;
     const F_3_624: i32 = 29692;
-    const DESCALE_P1: u32 = CONST_BITS - PASS1_BITS + 2;
-    const DESCALE_P2: u32 = CONST_BITS + PASS1_BITS + 3 + 2;
+    const DESCALE_P1: u32 = PASS1_SHIFT + 2;
+    const DESCALE_P2: u32 = PASS2_SHIFT + 2;
 
-    let ([in0, in1, _, in3, _, in5, _, in7], _) = dequantize(coefs, table, [false; 8]);
-    let tmp0 = add32(
-        madd(in1, F_3_624, in3, -F_1_272),
-        madd(in5, F_0_850, in7, -F_0_720),
-    );
-    let tmp10 = widen_shl(in0, CONST_BITS + 2);
     let round_shift = |v: i32, n: u32| v.wrapping_add(1 << (n - 1)) >> n;
 
-    [add32(tmp10, tmp0), sub32(tmp10, tmp0)].map(|row| {
+    let mut workspace = [[0i32; 8]; 2];
+    let [upper, lower] = &mut workspace;
+    for (lane, (upper, lower)) in upper.iter_mut().zip(lower).enumerate() {
+        let [in0, in1, _, in3, _, in5, _, in7] = dequantize(coefs, table, lane).map(i32::from);
+        let tmp0 = (in1 * F_3_624 - in3 * F_1_272).wrapping_add(in5 * F_0_850 - in7 * F_0_720);
+        let tmp10 = in0 << (CONST_BITS + 2);
+        *upper = round_shift(tmp10.wrapping_add(tmp0), DESCALE_P1);
+        *lower = round_shift(tmp10.wrapping_sub(tmp0), DESCALE_P1);
+    }
+
+    workspace.map(|[c0, c1, _, c3, _, c5, _, c7]| {
         // Column 0 stays 32 bits wide, the others are packed with saturation.
-        let [c0, c1, _, c3, _, c5, _, c7] = row.map(|v| round_shift(v, DESCALE_P1));
         let [c1, c3, c5, c7] = [c1, c3, c5, c7].map(|v| v.clamp(-32768, 32767));
         let tmp0 = (c1 * F_3_624 - c3 * F_1_272).wrapping_add(c5 * F_0_850 - c7 * F_0_720);
         let tmp10 = c0.wrapping_shl(CONST_BITS + 2);

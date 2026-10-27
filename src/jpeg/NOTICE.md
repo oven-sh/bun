@@ -1,0 +1,230 @@
+# Where `src/jpeg` comes from
+
+`src/jpeg` is a translation to Rust, by the Bun contributors in 2026, of parts of libjpeg-turbo 3.2.0
+(<https://github.com/libjpeg-turbo/libjpeg-turbo>, commit c85e6b905bf237038faa936dab160ebfc5da0344). None of the files
+is an unmodified copy. [LICENSE.md](LICENSE.md) and [README.ijg](README.ijg) are libjpeg-turbo's, unaltered, and apply.
+
+This software is based in part on the work of the Independent JPEG Group.
+
+The description at the top of each Rust module names the files it derives from. Their copyright notices:
+
+- `src/jdapimin.c`
+  - Copyright (C) 1994-1998, Thomas G. Lane.
+  - Copyright (C) 1999, Ken Murchison.
+  - Copyright (C) 2016, 2022, 2024-2025, D. R. Commander.
+- `src/jdapistd.c`
+  - Copyright (C) 1994-1996, Thomas G. Lane.
+  - Copyright (C) 2010, 2015-2020, 2022-2026, D. R. Commander.
+  - Copyright (C) 2015, Google, Inc.
+- `src/jdmaster.c`
+  - Copyright (C) 1991-1997, Thomas G. Lane.
+  - Copyright (C) 1999, Ken Murchison.
+  - Copyright (C) 2009-2011, 2016, 2019, 2022-2024, 2026, D. R. Commander.
+  - Copyright (C) 2013, Linaro Limited.
+  - Copyright (C) 2015, Google, Inc.
+- `src/jdinput.c`
+  - Copyright (C) 1991-1997, Thomas G. Lane.
+  - Copyright (C) 1999, Ken Murchison.
+  - Copyright (C) 2010, 2016, 2018, 2022, 2024, D. R. Commander.
+  - Copyright (C) 2015, Google, Inc.
+- `src/jdmarker.c`
+  - Copyright (C) 1991-1998, Thomas G. Lane.
+  - Copyright (C) 1999, Ken Murchison.
+  - Copyright (C) 2012, 2015, 2022, 2024, 2026, D. R. Commander.
+- `src/jdicc.c`
+  - Copyright (C) 1997-1998, Thomas G. Lane, Todd Newman.
+  - Copyright (C) 2017, D. R. Commander.
+- `src/jdhuff.c`
+  - Copyright (C) 1991-1997, Thomas G. Lane.
+  - Copyright (C) 1999, Ken Murchison.
+  - Copyright (C) 2009-2011, 2016, 2018-2019, 2022, D. R. Commander.
+  - Copyright (C) 2018, Matthias Räncker.
+- `src/jdhuff.h`
+  - Copyright (C) 1991-1997, Thomas G. Lane.
+  - Copyright (C) 1999, Ken Murchison.
+  - Copyright (C) 2010-2011, 2015-2016, 2021, D. R. Commander.
+  - Copyright (C) 2018, Matthias Räncker.
+- `src/jdphuff.c`
+  - Copyright (C) 1995-1997, Thomas G. Lane.
+  - Copyright (C) 1999, Ken Murchison.
+  - Copyright (C) 2015-2016, 2018-2022, D. R. Commander.
+- `src/jdarith.c`
+  - Copyright (C) 2015-2020, 2022, D. R. Commander.
+- `src/jaricom.c`
+  - Copyright (C) 2015, 2018, D. R. Commander.
+- `src/jdlhuff.c`
+  - Copyright (C) 1991-1997, Thomas G. Lane.
+  - Copyright (C) 1999, Ken Murchison.
+  - Copyright (C) 2022, D. R. Commander.
+- `src/jdlossls.c`
+  - Copyright (C) 1998, Thomas G. Lane.
+  - Copyright (C) 1999, Ken Murchison.
+  - Copyright (C) 2022, 2024, 2026, D. R. Commander.
+- `src/jddiffct.c`
+  - Copyright (C) 1994-1997, Thomas G. Lane.
+  - Copyright (C) 1999, Ken Murchison.
+  - Copyright (C) 2022, 2024, D. R. Commander.
+- `src/jdcoefct.c`
+  - Copyright (C) 1994-1997, Thomas G. Lane.
+  - Copyright 2009 Pierre Ossman <ossman@cendio.se> for Cendio AB
+  - Copyright (C) 2010, 2015-2016, 2019-2020, 2022-2026, D. R. Commander.
+  - Copyright (C) 2015, 2020, Google, Inc.
+- `src/jdcoefct.h`
+  - Copyright (C) 1994-1997, Thomas G. Lane.
+  - Copyright 2009 Pierre Ossman <ossman@cendio.se> for Cendio AB
+  - Copyright (C) 2020, Google, Inc.
+  - Copyright (C) 2022, D. R. Commander.
+- `src/jddctmgr.c`
+  - Copyright (C) 1994-1996, Thomas G. Lane.
+  - Copyright 2009 Pierre Ossman <ossman@cendio.se> for Cendio AB
+  - Copyright (C) 2010, 2015, 2022, 2025-2026, D. R. Commander.
+- `src/jidctint.c`
+  - Copyright (C) 1991-1998, Thomas G. Lane.
+  - Copyright (C) 2015, 2020, 2022, 2026, D. R. Commander.
+- `src/jidctred.c`
+  - Copyright (C) 1994-1998, Thomas G. Lane.
+  - Copyright (C) 2015, 2022, 2026, D. R. Commander.
+- `src/jdsample.c`
+  - Copyright (C) 1991-1996, Thomas G. Lane.
+  - Copyright 2009 Pierre Ossman <ossman@cendio.se> for Cendio AB
+  - Copyright (C) 2010, 2015-2016, 2022, 2024-2026, D. R. Commander.
+  - Copyright (C) 2015, Google, Inc.
+  - Copyright (C) 2019-2020, Arm Limited.
+- `src/jdcolor.c`
+  - Copyright (C) 1991-1997, Thomas G. Lane.
+  - Copyright 2009 Pierre Ossman <ossman@cendio.se> for Cendio AB
+  - Copyright (C) 2009, 2011-2012, 2014-2015, 2022, 2024-2025, D. R. Commander.
+  - Copyright (C) 2013, Linaro Limited.
+- `src/jdcolext.c`
+  - Copyright (C) 1991-1997, Thomas G. Lane.
+  - Copyright (C) 2009, 2011, 2015, 2022-2023, 2025, D. R. Commander.
+- `src/jdmainct.c`
+  - Copyright (C) 1994-1996, Thomas G. Lane.
+  - Copyright (C) 2010, 2016, 2022, 2024, 2026, D. R. Commander.
+- `src/jdpostct.c`
+  - Copyright (C) 1994-1996, Thomas G. Lane.
+  - Copyright (C) 2022-2024, D. R. Commander.
+- `src/jdatasrc-tj.c`
+  - Copyright (C) 1994-1996, Thomas G. Lane.
+  - Copyright (C) 2011, 2016, 2019, 2023, D. R. Commander.
+- `src/jutils.c`
+  - Copyright (C) 1991-1996, Thomas G. Lane.
+  - Copyright (C) 2022, D. R. Commander.
+- `src/jstdhuff.c`
+  - Copyright (C) 1991-1998, Thomas G. Lane.
+  - Copyright (C) 2013, 2022, 2024, D. R. Commander.
+- `src/jcomapi.c`
+  - Copyright (C) 1994-1997, Thomas G. Lane.
+  - Copyright (C) 2024-2026, D. R. Commander.
+- `src/jerror.h`
+  - Copyright (C) 1994-1997, Thomas G. Lane.
+  - Copyright (C) 1999, Ken Murchison.
+  - Copyright (C) 2014, 2017, 2021-2023, 2026, D. R. Commander.
+- `src/turbojpeg.c`
+  - Copyright (C) 2009-2026 D. R. Commander
+  - Copyright (C) 2021 Alex Richardson
+  - - Redistributions of source code must retain the above copyright notice,
+  - - Redistributions in binary form must reproduce the above copyright notice,
+- `src/turbojpeg-mp.c`
+  - Copyright (C) 2009-2026 D. R. Commander
+  - - Redistributions of source code must retain the above copyright notice,
+  - - Redistributions in binary form must reproduce the above copyright notice,
+- `src/jcapimin.c`
+  - Copyright (C) 1994-1998, Thomas G. Lane.
+  - Copyright (C) 2022, 2024-2025, D. R. Commander.
+- `src/jcapistd.c`
+  - Copyright (C) 1994-1996, Thomas G. Lane.
+  - Copyright (C) 2022, 2024, D. R. Commander.
+- `src/jcparam.c`
+  - Copyright (C) 1991-1998, Thomas G. Lane.
+  - Copyright (C) 1999, Ken Murchison.
+  - Copyright (C) 2009-2011, 2018, 2023-2024, D. R. Commander.
+- `src/jcmaster.c`
+  - Copyright (C) 1991-1997, Thomas G. Lane.
+  - Copyright (C) 1999, Ken Murchison.
+  - Copyright (C) 2010, 2016, 2018, 2022-2024, 2026, D. R. Commander.
+- `src/jcmarker.c`
+  - Copyright (C) 1991-1998, Thomas G. Lane.
+  - Copyright (C) 1999, Ken Murchison.
+  - Copyright (C) 2010, 2022, D. R. Commander.
+- `src/jcicc.c`
+  - Copyright (C) 1997-1998, Thomas G. Lane, Todd Newman.
+  - Copyright (C) 2017, D. R. Commander.
+- `src/jcmainct.c`
+  - Copyright (C) 1994-1996, Thomas G. Lane.
+  - Copyright (C) 1999, Ken Murchison.
+  - Copyright (C) 2022, 2024, D. R. Commander.
+- `src/jcprepct.c`
+  - Copyright (C) 1994-1996, Thomas G. Lane.
+  - Copyright (C) 1999, Ken Murchison.
+  - Copyright (C) 2022, 2024-2026, D. R. Commander.
+- `src/jccolor.c`
+  - Copyright (C) 1991-1996, Thomas G. Lane.
+  - Copyright 2009 Pierre Ossman <ossman@cendio.se> for Cendio AB
+  - Copyright (C) 2009-2012, 2015, 2022, 2024-2025, D. R. Commander.
+- `src/jccolext.c`
+  - Copyright (C) 1991-1996, Thomas G. Lane.
+  - Copyright (C) 2009-2012, 2015, 2022, 2025, D. R. Commander.
+- `src/jcsample.c`
+  - Copyright (C) 1991-1996, Thomas G. Lane.
+  - Copyright (C) 1999, Ken Murchison.
+  - Copyright 2009 Pierre Ossman <ossman@cendio.se> for Cendio AB
+  - Copyright (C) 2015, 2019, 2022, 2024-2026, D. R. Commander.
+- `src/jccoefct.c`
+  - Copyright (C) 1994-1997, Thomas G. Lane.
+  - Copyright (C) 2022, 2024-2025, D. R. Commander.
+- `src/jcdctmgr.c`
+  - Copyright (C) 1994-1996, Thomas G. Lane.
+  - Copyright (C) 1999-2006, MIYASAKA Masaru.
+  - Copyright 2009 Pierre Ossman <ossman@cendio.se> for Cendio AB
+  - Copyright (C) 2011, 2014-2015, 2022, 2024-2026, D. R. Commander.
+- `src/jfdctint.c`
+  - Copyright (C) 1991-1996, Thomas G. Lane.
+  - Copyright (C) 2015, 2020, 2022, D. R. Commander.
+- `src/jchuff.c`
+  - Copyright (C) 1991-1997, Thomas G. Lane.
+  - Copyright (C) 1999, Ken Murchison.
+  - Copyright (C) 2009-2011, 2014-2016, 2018-2026, D. R. Commander.
+  - Copyright (C) 2015, Matthieu Darbois.
+  - Copyright (C) 2018, Matthias Räncker.
+  - Copyright (C) 2020, Arm Limited.
+  - Copyright (C) 2022, Felix Hanau.
+- `src/jcphuff.c`
+  - Copyright (C) 1995-1997, Thomas G. Lane.
+  - Copyright (C) 1999, Ken Murchison.
+  - Copyright (C) 2011, 2015, 2018, 2021-2022, 2024-2025, D. R. Commander.
+  - Copyright (C) 2016, 2018, 2022, Matthieu Darbois.
+  - Copyright (C) 2020, Arm Limited.
+  - Copyright (C) 2021, Alex Richardson.
+- `simd/x86_64/jidctint-sse2.asm`
+  - Copyright 2009 Pierre Ossman <ossman@cendio.se> for Cendio AB
+  - Copyright (C) 2009, 2016, 2020, 2024-2025, D. R. Commander.
+  - Copyright (C) 2018, Matthias Räncker.
+  - Copyright (C) 2023, Aliaksiej Kandracienka.
+  - Copyright (C) 1999-2006, MIYASAKA Masaru.
+  - For conditions of distribution and use, see copyright notice in jsimdext.inc
+- `simd/x86_64/jidctint-avx2.asm`
+  - Copyright 2009 Pierre Ossman <ossman@cendio.se> for Cendio AB
+  - Copyright (C) 2009, 2016, 2018, 2020, 2024-2025, D. R. Commander.
+  - Copyright (C) 2018, Matthias Räncker.
+  - Copyright (C) 1999-2006, MIYASAKA Masaru.
+  - For conditions of distribution and use, see copyright notice in jsimdext.inc
+- `simd/x86_64/jidctred-sse2.asm`
+  - Copyright 2009 Pierre Ossman <ossman@cendio.se> for Cendio AB
+  - Copyright (C) 2009, 2016, 2024-2025, D. R. Commander.
+  - Copyright (C) 2018, Matthias Räncker.
+  - Copyright (C) 2023, Aliaksiej Kandracienka.
+  - Copyright (C) 1999-2006, MIYASAKA Masaru.
+  - For conditions of distribution and use, see copyright notice in jsimdext.inc
+- `simd/x86_64/jfdctint-sse2.asm`
+  - Copyright 2009 Pierre Ossman <ossman@cendio.se> for Cendio AB
+  - Copyright (C) 2009, 2016, 2020, 2024-2025, D. R. Commander.
+  - Copyright (C) 2023, Aliaksiej Kandracienka.
+  - Copyright (C) 1999-2006, MIYASAKA Masaru.
+  - For conditions of distribution and use, see copyright notice in jsimdext.inc
+- `simd/x86_64/jquanti-sse2.asm`
+  - Copyright 2009 Pierre Ossman <ossman@cendio.se> for Cendio AB
+  - Copyright (C) 2009, 2016, 2024-2025, D. R. Commander.
+  - Copyright (C) 2018, Matthias Räncker.
+  - Copyright (C) 1999-2006, MIYASAKA Masaru.
+  - For conditions of distribution and use, see copyright notice in jsimdext.inc

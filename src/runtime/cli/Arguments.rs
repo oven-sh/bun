@@ -317,6 +317,11 @@ const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!("--trace-exit"),
     parse_param!("--expose-internals"),
     parse_param!("--stack-trace-limit <STR>"),
+    // node:net reads these two from `process.execArgv`. Its
+    // `--[no-][enable-]network-family-autoselection` flags have no value to
+    // bind, and a row for them would reject `--flag=x`, which Node.js accepts.
+    parse_param!("--network-family-autoselection-attempt-timeout <STR>"),
+    parse_param!("--tls-keylog <STR>"),
 ];
 
 const AUTO_OR_RUN_PARAMS: &[ParamType] = &[

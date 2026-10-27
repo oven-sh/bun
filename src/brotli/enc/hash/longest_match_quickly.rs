@@ -2,69 +2,69 @@
 
 use super::{
     HASH_MUL_64, HasherImpl, HasherSearchResult, StaticDictionarySearch, backward_reference_score,
-    backward_reference_score_using_last_distance, search_in_static_dictionary,
+    backward_reference_score_using_last_distance, for_each_position, search_in_static_dictionary,
 };
 use crate::enc::Fallible;
 use crate::enc::find_match_length::find_match_length_with_limit;
-use crate::util::{Checked, SliceExt, load_u64_le, try_zeroed};
+use crate::util::{Bug, Checked, SliceExt, load_u64_le, try_zeroed};
 
-/// `1 << BUCKET_BITS` positions. A position whose first `HASH_LEN` bytes hash to `key` is in one of the
-/// `1 << BUCKET_SWEEP_BITS` entries `key`, `key + 8`, `key + 16`...
+/// `BUCKET_SIZE` positions, a power of 2. A position whose first `HASH_LEN` bytes hash to `key` is in one of the
+/// `BUCKET_SWEEP` entries `key`, `key + 8`, `key + 16`...
 pub(crate) struct HashLongestMatchQuickly<
-    const BUCKET_BITS: u32,
-    const BUCKET_SWEEP_BITS: u32,
+    const BUCKET_SIZE: usize,
+    const BUCKET_SWEEP: usize,
     const HASH_LEN: u32,
     const USE_DICTIONARY: bool,
 > {
-    buckets: Vec<u32>,
+    buckets: Box<[u32; BUCKET_SIZE]>,
+    /// Nothing was written to `buckets` since they were made.
+    is_clear: bool,
 }
 
 impl<
-    const BUCKET_BITS: u32,
-    const BUCKET_SWEEP_BITS: u32,
+    const BUCKET_SIZE: usize,
+    const BUCKET_SWEEP: usize,
     const HASH_LEN: u32,
     const USE_DICTIONARY: bool,
-> HashLongestMatchQuickly<BUCKET_BITS, BUCKET_SWEEP_BITS, HASH_LEN, USE_DICTIONARY>
+> HashLongestMatchQuickly<BUCKET_SIZE, BUCKET_SWEEP, HASH_LEN, USE_DICTIONARY>
 {
-    const BUCKET_SIZE: usize = 1 << BUCKET_BITS;
-    const BUCKET_MASK: usize = Self::BUCKET_SIZE - 1;
-    const BUCKET_SWEEP: usize = 1 << BUCKET_SWEEP_BITS;
-    const BUCKET_SWEEP_MASK: usize = (Self::BUCKET_SWEEP - 1) << 3;
+    const BUCKET_BITS: u32 = BUCKET_SIZE.trailing_zeros();
+    const BUCKET_MASK: usize = BUCKET_SIZE - 1;
+    const BUCKET_SWEEP_MASK: usize = (BUCKET_SWEEP - 1) << 3;
 
     pub(crate) fn new() -> Fallible<Self> {
+        let buckets = try_zeroed(BUCKET_SIZE)?.into_boxed_slice();
         Ok(Self {
-            buckets: try_zeroed(Self::BUCKET_SIZE)?,
+            buckets: buckets.try_into().map_err(|_| Bug)?,
+            is_clear: true,
         })
     }
 
     #[inline(always)]
     fn hash_bytes(data: &[u8], pos: usize) -> Checked<usize> {
-        let h = (load_u64_le(data, pos)? << (64 - 8 * HASH_LEN)).wrapping_mul(HASH_MUL_64);
-        Ok((h >> (64 - BUCKET_BITS)) as usize)
+        Ok(Self::hash(load_u64_le(data, pos)?))
+    }
+
+    /// A hash of the low `HASH_LEN` bytes of `bytes`.
+    #[inline(always)]
+    fn hash(bytes: u64) -> usize {
+        let h = (bytes << (64 - 8 * HASH_LEN)).wrapping_mul(HASH_MUL_64);
+        (h >> (64 - Self::BUCKET_BITS)) as usize
     }
 }
 
 impl<
-    const BUCKET_BITS: u32,
-    const BUCKET_SWEEP_BITS: u32,
+    const BUCKET_SIZE: usize,
+    const BUCKET_SWEEP: usize,
     const HASH_LEN: u32,
     const USE_DICTIONARY: bool,
-> HasherImpl for HashLongestMatchQuickly<BUCKET_BITS, BUCKET_SWEEP_BITS, HASH_LEN, USE_DICTIONARY>
+> HasherImpl for HashLongestMatchQuickly<BUCKET_SIZE, BUCKET_SWEEP, HASH_LEN, USE_DICTIONARY>
 {
     const HASH_TYPE_LENGTH: usize = 8;
     const STORE_LOOKAHEAD: usize = 8;
 
-    fn prepare(&mut self, one_shot: bool, input_size: usize, data: &[u8]) -> Checked {
-        // Clearing an entry at a time is 100 times slower for each of them.
-        let partial_prepare_threshold = Self::BUCKET_SIZE >> 5;
-        if one_shot && input_size <= partial_prepare_threshold {
-            for i in 0..input_size {
-                let key = Self::hash_bytes(data, i)?;
-                for j in 0..Self::BUCKET_SWEEP {
-                    self.buckets.put((key + (j << 3)) & Self::BUCKET_MASK, 0)?;
-                }
-            }
-        } else {
+    fn prepare(&mut self, _one_shot: bool, _input_size: usize, _data: &[u8]) -> Checked {
+        if !core::mem::take(&mut self.is_clear) {
             self.buckets.fill(0);
         }
         Ok(())
@@ -76,6 +76,15 @@ impl<
         // Which of the entries is taken depends on the position.
         let off = ix & Self::BUCKET_SWEEP_MASK;
         self.buckets.put((key + off) & Self::BUCKET_MASK, ix as u32)
+    }
+
+    #[inline(always)]
+    fn store_range(&mut self, data: &[u8], mask: usize, ix_start: usize, ix_end: usize) -> Checked {
+        for_each_position(data, mask, ix_start, ix_end, |ix, bytes| {
+            let key = Self::hash(u64::from_le_bytes(*bytes));
+            let off = ix & Self::BUCKET_SWEEP_MASK;
+            self.buckets.put((key + off) & Self::BUCKET_MASK, ix as u32)
+        })
     }
 
     #[inline(always)]
@@ -95,7 +104,7 @@ impl<
         max_distance: usize,
         out: &mut HasherSearchResult,
     ) -> Checked {
-        let buckets = self.buckets.as_mut_slice();
+        let buckets = &mut *self.buckets;
         let best_len_in = out.len;
         let cur_ix_masked = cur_ix & ring_buffer_mask;
         let current = data.sub(cur_ix_masked..)?;
@@ -118,7 +127,7 @@ impl<
                         out.len = len;
                         out.distance = cached_backward;
                         out.score = score;
-                        if Self::BUCKET_SWEEP == 1 {
+                        if BUCKET_SWEEP == 1 {
                             return buckets.put(key, cur_ix as u32);
                         }
                         best_len = len;
@@ -128,7 +137,7 @@ impl<
                 }
             }
         }
-        if Self::BUCKET_SWEEP == 1 {
+        if BUCKET_SWEEP == 1 {
             // Only one to look at.
             let entry = buckets.at_mut(key)?;
             prev_ix = *entry as usize;
@@ -153,8 +162,12 @@ impl<
                 }
             }
         } else {
-            for i in 0..Self::BUCKET_SWEEP {
-                prev_ix = buckets.at((key + (i << 3)) & Self::BUCKET_MASK)? as usize;
+            let mut candidates = [0; BUCKET_SWEEP];
+            for (i, candidate) in candidates.iter_mut().enumerate() {
+                *candidate = buckets.at((key + (i << 3)) & Self::BUCKET_MASK)?;
+            }
+            for candidate in candidates {
+                prev_ix = candidate as usize;
                 let backward = cur_ix.wrapping_sub(prev_ix);
                 prev_ix &= ring_buffer_mask as u32 as usize;
                 if compare_char != data.at(prev_ix + best_len)? {
@@ -188,7 +201,7 @@ impl<
                 true,
             )?;
         }
-        if Self::BUCKET_SWEEP != 1 {
+        if BUCKET_SWEEP != 1 {
             let key_out = (key + (cur_ix & Self::BUCKET_SWEEP_MASK)) & Self::BUCKET_MASK;
             buckets.put(key_out, cur_ix as u32)?;
         }

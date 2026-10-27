@@ -3,8 +3,8 @@
 
 use super::{
     HASH_MUL_32, HASH_MUL_64, HasherImpl, HasherSearchResult, StaticDictionarySearch,
-    backward_reference_score, find_longest_match_at_last_distances, prepare_distance_cache,
-    search_in_static_dictionary,
+    backward_reference_score, find_longest_match_at_last_distances, for_each_position,
+    prepare_distance_cache, search_in_static_dictionary,
 };
 use crate::enc::find_match_length::find_match_length_with_limit;
 use crate::util::{
@@ -182,17 +182,36 @@ impl<const LONG: bool, const N: usize, B: Buckets<N>> HashLongestMatchTagged<LON
         })
     }
 
-    /// The bucket and the tag.
+    /// The bucket and the tag of the bytes at `pos`.
     #[inline(always)]
     fn hash_bytes(data: &[u8], pos: usize) -> Checked<(usize, u8)> {
+        Ok(if LONG {
+            Self::hash(load_u64_le(data, pos)?)
+        } else {
+            Self::hash(u64::from(load_u32_le(data, pos)?))
+        })
+    }
+
+    /// The bucket and the tag of the low 5 bytes of `bytes` if `LONG`, else of the low 4.
+    #[inline(always)]
+    fn hash(bytes: u64) -> (usize, u8) {
         let hash = if LONG {
-            let h = load_u64_le(data, pos)?.wrapping_mul(HASH_MUL_64 << (64 - 5 * 8));
+            let h = bytes.wrapping_mul(HASH_MUL_64 << (64 - 5 * 8));
             (h >> (64 - Self::BUCKET_BITS - TAG_HASH_BITS)) as u32
         } else {
-            let h = load_u32_le(data, pos)?.wrapping_mul(HASH_MUL_32);
+            let h = (bytes as u32).wrapping_mul(HASH_MUL_32);
             h >> (32 - Self::BUCKET_BITS - TAG_HASH_BITS)
         };
-        Ok(((hash >> TAG_HASH_BITS) as usize, hash as u8))
+        ((hash >> TAG_HASH_BITS) as usize, hash as u8)
+    }
+
+    #[inline(always)]
+    fn add(&mut self, key: usize, tag: u8, ix: usize) -> Checked {
+        let (added, block) = self.buckets.bucket_mut(key)?;
+        let slot = usize::from(!*added) & (N - 1);
+        *added = added.wrapping_add(1);
+        block.positions.put(slot, ix as u32)?;
+        block.tags.put(slot, tag)
     }
 }
 
@@ -236,11 +255,22 @@ impl<const LONG: bool, const N: usize, B: Buckets<N>> HasherImpl
     #[inline(always)]
     fn store(&mut self, data: &[u8], mask: usize, ix: usize) -> Checked {
         let (key, tag) = Self::hash_bytes(data, ix & mask)?;
-        let (added, block) = self.buckets.bucket_mut(key)?;
-        let slot = usize::from(!*added) & (N - 1);
-        *added = added.wrapping_add(1);
-        block.positions.put(slot, ix as u32)?;
-        block.tags.put(slot, tag)
+        self.add(key, tag, ix)
+    }
+
+    #[inline(always)]
+    fn store_range(&mut self, data: &[u8], mask: usize, ix_start: usize, ix_end: usize) -> Checked {
+        if LONG {
+            for_each_position(data, mask, ix_start, ix_end, |ix, bytes| {
+                let (key, tag) = Self::hash(u64::from_le_bytes(*bytes));
+                self.add(key, tag, ix)
+            })
+        } else {
+            for_each_position(data, mask, ix_start, ix_end, |ix, bytes| {
+                let (key, tag) = Self::hash(u64::from(u32::from_le_bytes(*bytes)));
+                self.add(key, tag, ix)
+            })
+        }
     }
 
     #[inline(always)]

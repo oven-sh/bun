@@ -167,10 +167,37 @@ fn search_in_static_dictionary(
     out: &mut HasherSearchResult,
     shallow: bool,
 ) -> Checked {
-    let common = &mut *dictionary.common;
+    let common = &*dictionary.common;
     if common.dict_num_matches < (common.dict_num_lookups >> 7) {
         return Ok(());
     }
+    // A copy, so that `out` itself can stay in registers.
+    let mut result = *out;
+    look_up_in_static_dictionary(
+        dictionary,
+        data,
+        max_length,
+        max_backward,
+        max_distance,
+        &mut result,
+        shallow,
+    )?;
+    *out = result;
+    Ok(())
+}
+
+/// Kept out of the loops that look for matches, which are faster without it.
+#[inline(never)]
+fn look_up_in_static_dictionary(
+    dictionary: &mut StaticDictionarySearch<'_>,
+    data: &[u8],
+    max_length: usize,
+    max_backward: usize,
+    max_distance: usize,
+    out: &mut HasherSearchResult,
+    shallow: bool,
+) -> Checked {
+    let common = &mut *dictionary.common;
     let key = (hash14(data)? << 1) as usize;
     for key in key..key + if shallow { 1 } else { 2 } {
         common.dict_num_lookups += 1;
@@ -292,6 +319,29 @@ impl BackwardMatch {
     }
 }
 
+/// Calls `f` with each position from `ix_start` up to `ix_end` and the `N` bytes of the ring buffer `data` there.
+#[inline(always)]
+fn for_each_position<const N: usize>(
+    data: &[u8],
+    mask: usize,
+    ix_start: usize,
+    ix_end: usize,
+    mut f: impl FnMut(usize, &[u8; N]) -> Checked,
+) -> Checked {
+    let mut ix = ix_start;
+    while ix < ix_end {
+        // Up to the end of the ring buffer. After it there is a copy of its start.
+        let masked = ix & mask;
+        let count = (ix_end - ix).min(mask + 1 - masked);
+        let bytes = data.sub(masked..)?.sub(..count + N - 1)?;
+        for (ix, bytes) in (ix..).zip(bytes.array_windows()) {
+            f(ix, bytes)?;
+        }
+        ix += count;
+    }
+    Ok(())
+}
+
 /// A table of the positions of the input, by a hash of the bytes there.
 pub(crate) trait HasherImpl {
     /// How many bytes a lookup hashes.
@@ -353,15 +403,15 @@ pub(crate) trait HasherImpl {
 }
 
 // With a sweep of 1, looking things up in the dictionary makes compression of small text a little faster and denser.
-pub(crate) type H2 = HashLongestMatchQuickly<16, 0, 5, true>;
-pub(crate) type H3 = HashLongestMatchQuickly<16, 1, 5, false>;
-pub(crate) type H4 = HashLongestMatchQuickly<17, 2, 5, true>;
+pub(crate) type H2 = HashLongestMatchQuickly<{ 1 << 16 }, 1, 5, true>;
+pub(crate) type H3 = HashLongestMatchQuickly<{ 1 << 16 }, 2, 5, false>;
+pub(crate) type H4 = HashLongestMatchQuickly<{ 1 << 17 }, 4, 5, true>;
 pub(crate) type H5 = HashLongestMatch<false>;
 pub(crate) type H6 = HashLongestMatch<true>;
 pub(crate) type H40 = HashForgetfulChain<15, 1, 16, 4>;
 pub(crate) type H41 = HashForgetfulChain<15, 1, 16, 10>;
 pub(crate) type H42 = HashForgetfulChain<15, 512, 9, 16>;
-pub(crate) type H54 = HashLongestMatchQuickly<20, 2, 7, false>;
+pub(crate) type H54 = HashLongestMatchQuickly<{ 1 << 20 }, 4, 7, false>;
 pub(crate) type H58<const N: usize> = HashLongestMatchTagged<false, N, DenseBuckets<N>>;
 pub(crate) type H58Sparse<const N: usize> = HashLongestMatchTagged<false, N, SparseBuckets<N>>;
 pub(crate) type H68<const N: usize> = HashLongestMatchTagged<true, N, DenseBuckets<N>>;

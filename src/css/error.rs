@@ -269,8 +269,6 @@ pub enum ParserError {
     invalid_declaration,
     /// A media query was invalid.
     invalid_media_query,
-    /// Invalid CSS nesting.
-    invalid_nesting,
     /// The @nest rule is deprecated.
     deprecated_nest_rule,
     /// An invalid selector in an `@page` rule.
@@ -305,7 +303,6 @@ impl fmt::Display for ParserError {
             Self::end_of_input => f.write_str("Unexpected end of input"),
             Self::invalid_declaration => f.write_str("Invalid declaration"),
             Self::invalid_media_query => f.write_str("Invalid media query"),
-            Self::invalid_nesting => f.write_str("Invalid CSS nesting"),
             Self::deprecated_nest_rule => {
                 f.write_str("The @nest rule is deprecated, use standard CSS nesting instead")
             }

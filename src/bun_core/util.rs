@@ -1371,10 +1371,6 @@ pub mod fd {
     pub(crate) static WINDOWS_CACHED_STDOUT: crate::Once<Fd> = crate::Once::new();
     #[cfg(windows)]
     pub(crate) static WINDOWS_CACHED_STDERR: crate::Once<Fd> = crate::Once::new();
-    #[cfg(windows)]
-    #[cfg(debug_assertions)]
-    pub(crate) static WINDOWS_CACHED_FD_SET: core::sync::atomic::AtomicBool =
-        core::sync::atomic::AtomicBool::new(false);
 
     #[cfg(windows)]
     unsafe extern "C" {

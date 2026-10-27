@@ -250,7 +250,7 @@ extern "C" fn on_data(
         let span = hostname.unwrap();
         let hostname_string = match scope_id {
             Some(id) => scoped_address(span, id),
-            None => BunString::from_bytes(span),
+            None => BunString::clone_utf8(span),
         };
 
         let loop_ = VirtualMachine::get().event_loop_mut();

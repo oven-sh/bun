@@ -7,6 +7,7 @@
 #include "JavaScriptCore/ArrayConstructor.h"
 #include "JavaScriptCore/JSArrayBufferView.h"
 #include "JavaScriptCore/JSObjectInlines.h"
+#include "JavaScriptCore/MathCommon.h"
 #include "JavaScriptCore/TypedArrayType.h"
 #include <cmath>
 #include <limits>
@@ -204,7 +205,7 @@ template<typename Arguments> ALWAYS_INLINE JSC::EncodedJSValue validatePort(JSC:
 
     if (std::isnan(port_num)) return Bun::ERR::SOCKET_BAD_PORT(scope, globalObject, name, port, allowZero_b);
     if (std::isinf(port_num)) return Bun::ERR::SOCKET_BAD_PORT(scope, globalObject, name, port, allowZero_b);
-    if (std::fmod(port_num, 1.0) != 0) return Bun::ERR::SOCKET_BAD_PORT(scope, globalObject, name, port, allowZero_b);
+    if (!JSC::isInteger(port_num)) return Bun::ERR::SOCKET_BAD_PORT(scope, globalObject, name, port, allowZero_b);
     if (port_num < 0) return Bun::ERR::SOCKET_BAD_PORT(scope, globalObject, name, port, allowZero_b);
     if (port_num > 0xffff) return Bun::ERR::SOCKET_BAD_PORT(scope, globalObject, name, port, allowZero_b);
     if (port_num == 0 && !allowZero_b) return Bun::ERR::SOCKET_BAD_PORT(scope, globalObject, name, port, allowZero_b);

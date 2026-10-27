@@ -4233,6 +4233,34 @@ describe("Buffer.fill offset/end argument handling", () => {
   });
 });
 
+it("write() with a non-integer offset or length throws ERR_OUT_OF_RANGE", () => {
+  // Node routes offset and length through validateOffset (= validateInteger).
+  const outOfRange = (name, expected, received) =>
+    expect.objectContaining({
+      code: "ERR_OUT_OF_RANGE",
+      message: `The value of "${name}" is out of range. It must be ${expected}. Received ${received}`,
+    });
+  for (const value of [1.5, -1.5, NaN, Infinity, -Infinity]) {
+    expect(() => Buffer.alloc(8).write("abc", value)).toThrow(outOfRange("offset", "an integer", value));
+    expect(() => Buffer.alloc(8).write("abc", 0, value)).toThrow(outOfRange("length", "an integer", value));
+    expect(() => Buffer.alloc(8).write("abc", value, "utf8")).toThrow(outOfRange("offset", "an integer", value));
+  }
+
+  // -0 and integral doubles are integers.
+  const buf = Buffer.alloc(8, "x");
+  expect(buf.write("abc", -0)).toBe(3);
+  expect(buf.write("abc", 10 / 2, 6 / 2)).toBe(3);
+  expect(buf.toString()).toBe("abcxxabc");
+
+  // An integral double past the buffer still gets the range message.
+  expect(() => Buffer.alloc(8).write("abc", 2 ** 53)).toThrow(
+    outOfRange("offset", ">= 0 && <= 8", "9_007_199_254_740_992"),
+  );
+  expect(() => Buffer.alloc(8).write("abc", 0, 2 ** 53)).toThrow(
+    outOfRange("length", ">= 0 && <= 8", "9_007_199_254_740_992"),
+  );
+});
+
 describe("*Write methods with NaN/invalid offset and length", () => {
   // Regression test: NaN offset/length values must be handled safely.
   // NaN offset should be treated as 0, and length should be clamped to buffer size.

@@ -80,7 +80,7 @@ fn create_backward_references_with<H: LongestMatchHasher, const COMPOUND: bool>(
         let mut max_length = pos_end - position;
         let mut max_distance = position.min(max_backward_limit);
         let mut dictionary_start = (position + position_offset).min(max_backward_limit);
-        let mut sr = HasherSearchResult {
+        let mut best = HasherSearchResult {
             len: 0,
             len_code_delta: 0,
             distance: 0,
@@ -96,7 +96,7 @@ fn create_backward_references_with<H: LongestMatchHasher, const COMPOUND: bool>(
             max_distance,
             dictionary_start + gap,
             params.dist.max_distance,
-            &mut sr,
+            &mut best,
         )?;
         if COMPOUND {
             lookup_compound_dictionary_match(
@@ -108,18 +108,18 @@ fn create_backward_references_with<H: LongestMatchHasher, const COMPOUND: bool>(
                 max_length,
                 dictionary_start,
                 params.dist.max_distance,
-                &mut sr,
+                &mut best,
             )?;
         }
-        if sr.score > MIN_SCORE {
+        if best.score > MIN_SCORE {
             // Found a match. There may be a better one right after.
             let mut delayed_backward_references_in_row = 0;
             max_length -= 1;
             loop {
                 const COST_DIFF_LAZY: usize = 175;
-                let mut sr2 = HasherSearchResult {
+                let mut next = HasherSearchResult {
                     len: if params.quality < MIN_QUALITY_FOR_EXTENSIVE_REFERENCE_SEARCH {
-                        (sr.len - 1).min(max_length)
+                        (best.len - 1).min(max_length)
                     } else {
                         0
                     },
@@ -139,7 +139,7 @@ fn create_backward_references_with<H: LongestMatchHasher, const COMPOUND: bool>(
                     max_distance,
                     dictionary_start + gap,
                     params.dist.max_distance,
-                    &mut sr2,
+                    &mut next,
                 )?;
                 if COMPOUND {
                     lookup_compound_dictionary_match(
@@ -151,14 +151,14 @@ fn create_backward_references_with<H: LongestMatchHasher, const COMPOUND: bool>(
                         max_length,
                         dictionary_start,
                         params.dist.max_distance,
-                        &mut sr2,
+                        &mut next,
                     )?;
                 }
-                if sr2.score >= sr.score + COST_DIFF_LAZY {
+                if next.score >= best.score + COST_DIFF_LAZY {
                     // Write one literal, and start the match at the next byte.
                     position += 1;
                     insert_length += 1;
-                    sr = sr2;
+                    best = next;
                     delayed_backward_references_in_row += 1;
                     if delayed_backward_references_in_row < 4
                         && position + H::HASH_TYPE_LENGTH < pos_end
@@ -169,22 +169,22 @@ fn create_backward_references_with<H: LongestMatchHasher, const COMPOUND: bool>(
                 }
                 break;
             }
-            apply_random_heuristics = position + 2 * sr.len + random_heuristics_window_size;
+            apply_random_heuristics = position + 2 * best.len + random_heuristics_window_size;
             dictionary_start = (position + position_offset).min(max_backward_limit);
             let distance_code =
-                compute_distance_code(sr.distance, dictionary_start + gap, dist_cache);
-            if sr.distance <= dictionary_start + gap && distance_code > 0 {
+                compute_distance_code(best.distance, dictionary_start + gap, dist_cache);
+            if best.distance <= dictionary_start + gap && distance_code > 0 {
                 dist_cache[3] = dist_cache[2];
                 dist_cache[2] = dist_cache[1];
                 dist_cache[1] = dist_cache[0];
-                dist_cache[0] = sr.distance as i32;
+                dist_cache[0] = best.distance as i32;
                 hasher.prepare_distance_cache(dist_cache);
             }
             commands.push(Command::new(
                 &params.dist,
                 insert_length,
-                sr.len,
-                sr.len_code_delta,
+                best.len,
+                best.len_code_delta,
                 distance_code,
             ));
             *num_literals += insert_length;
@@ -192,13 +192,13 @@ fn create_backward_references_with<H: LongestMatchHasher, const COMPOUND: bool>(
             // Add the positions of the copy to the table, as far as there are enough bytes left to hash. Not all of
             // them for a run, which would fill the table with the same thing.
             let mut range_start = position + 2;
-            let range_end = (position + sr.len).min(store_end);
-            if sr.distance < (sr.len >> 2) {
+            let range_end = (position + best.len).min(store_end);
+            if best.distance < (best.len >> 2) {
                 range_start =
-                    range_end.min(range_start.max(position + sr.len - (sr.distance << 2)));
+                    range_end.min(range_start.max(position + best.len - (best.distance << 2)));
             }
             hasher.store_range(ringbuffer, ringbuffer_mask, range_start, range_end)?;
-            position += sr.len;
+            position += best.len;
         } else {
             insert_length += 1;
             position += 1;

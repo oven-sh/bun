@@ -77,8 +77,18 @@ impl ZopfliNode {
     }
 
     #[inline(always)]
+    fn set_shortcut(&mut self, shortcut: u32) {
+        self.cost_or_link = shortcut;
+    }
+
+    #[inline(always)]
     fn next_command_length(&self) -> u32 {
         self.cost_or_link
+    }
+
+    #[inline(always)]
+    fn set_next_command_length(&mut self, length: u32) {
+        self.cost_or_link = length;
     }
 
     #[inline(always)]
@@ -447,8 +457,8 @@ fn evaluate_node(
     nodes: &mut [ZopfliNode],
 ) -> Checked {
     let node_cost = nodes.at(pos)?.cost();
-    nodes.at_mut(pos)?.cost_or_link =
-        compute_distance_shortcut(block_start, pos, max_backward_limit, gap, nodes)?;
+    let shortcut = compute_distance_shortcut(block_start, pos, max_backward_limit, gap, nodes)?;
+    nodes.at_mut(pos)?.set_shortcut(shortcut);
     if node_cost <= model.literal_costs(0, pos)? {
         queue.push(PosData {
             pos,
@@ -665,11 +675,11 @@ fn compute_shortest_path_from_nodes(num_bytes: usize, nodes: &mut [ZopfliNode]) 
         }
         index = index.wrapping_sub(1);
     }
-    nodes.at_mut(index)?.cost_or_link = u32::MAX;
+    nodes.at_mut(index)?.set_next_command_length(u32::MAX);
     while index != 0 {
         let len = nodes.at(index)?.command_length();
         index = index.wrapping_sub(len as usize);
-        nodes.at_mut(index)?.cost_or_link = len;
+        nodes.at_mut(index)?.set_next_command_length(len);
         num_commands += 1;
     }
     Ok(num_commands)

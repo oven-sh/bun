@@ -29,16 +29,6 @@ fn paeth(a: u8, b: u8, c: u8) -> u8 {
     }
 }
 
-/// A row handed to `undo()` is followed by this many bytes of any value, because a pixel is read as 1, 2, 4 or 8 bytes.
-pub(crate) const PADDING: usize = 2;
-
-/// The pixels of a row of `SRC` bytes each. A pixel of 3 or 6 bytes comes with the start of the next one.
-#[inline(always)]
-fn pixels<const SRC: usize>(line: &[u8]) -> impl Iterator<Item = &[u8]> {
-    #[allow(clippy::disallowed_methods, reason = "not a search")]
-    line.windows(SRC.next_power_of_two()).step_by(SRC)
-}
-
 /// Eight numbers side by side. Eight, whatever the pixel's size, because they fill a vector register.
 #[derive(Clone, Copy)]
 struct Wide([i16; 8]);
@@ -71,94 +61,23 @@ impl Wide {
         self
     }
 
-    /// All bits of a lane set where `self <= other`.
-    #[inline(always)]
-    fn le(self, other: Self) -> Self {
-        self.zip(other, |x, y| if x <= y { -1 } else { 0 })
-    }
-
-    /// `self` is what `le()` returned.
+    /// `self` has all bits of a lane set, or none.
     #[inline(always)]
     fn select(self, then: Self, otherwise: Self) -> Self {
         let then = then.zip(self, |x, mask| x & mask);
         then.zip(otherwise.zip(self, |x, mask| x & !mask), |x, y| x | y)
     }
-
-    #[inline(always)]
-    fn add_bytes(self, other: Self) -> Self {
-        self.zip(other, |x, y| (x + y) & 0xff)
-    }
 }
 
-#[inline(always)]
-fn add_bytes(mut x: [u8; 16], y: [u8; 16]) -> [u8; 16] {
-    for (x, y) in x.iter_mut().zip(y) {
-        *x = x.wrapping_add(y);
-    }
-    x
-}
+/// `undo()` for pixels of `SIZE` bytes. Plain and out of line, or a pixel does not stay in one vector register: after
+/// a change, run bench/image/bench-png.mjs.
+struct Undo<const SIZE: usize>;
 
-/// `undo()` for one size of pixel. `DST` is `SRC`, or 4 for an `SRC` of 3: RGB comes out as opaque RGBA.
-///
-/// In Sub, Average and Paeth a pixel cannot be started before the one to its left is done, so what counts is how
-/// many operations lie between the two. The loops are written for what the compiler makes of them, and none is
-/// inlined, because it makes something else of them inside a caller.
-struct Undo<const SRC: usize, const DST: usize>;
-
-impl<const SRC: usize, const DST: usize> Undo<SRC, DST> {
+impl<const SIZE: usize> Undo<SIZE> {
+    /// `a` is the pixel before `row`.
     #[inline(never)]
-    fn none(line: &[u8], out: &mut [u8]) {
-        if SRC == DST {
-            for (out, x) in out.iter_mut().zip(line) {
-                *out = *x;
-            }
-            return;
-        }
-        // Four pixels at a time.
-        let (wide_out, rest) = out.as_chunks_mut::<16>();
-        for (out, x) in wide_out.iter_mut().zip(line.as_chunks::<12>().0) {
-            let [r0, g0, b0, r1, g1, b1, r2, g2, b2, r3, g3, b3] = *x;
-            *out = [
-                r0, g0, b0, 255, r1, g1, b1, 255, r2, g2, b2, 255, r3, g3, b3, 255,
-            ];
-        }
-        let line = line.get(wide_out.len() * 12..).unwrap_or_default();
-        for (out, x) in rest
-            .as_chunks_mut::<DST>()
-            .0
-            .iter_mut()
-            .zip(pixels::<SRC>(line))
-        {
-            Wide::load(x).store(out);
-        }
-    }
-
-    #[inline(never)]
-    fn sub(line: &[u8], out: &mut [u8]) {
-        Self::none(line, out);
-        let mut rest = out;
-        let mut a = [0u8; DST];
-        if DST == 4 {
-            // Four pixels at a time: each takes on the one before it, then the two before those, then the last
-            // of the four before.
-            let (fours, few) = rest.as_chunks_mut::<16>();
-            let mut last = [0u8; 16];
-            for four in fours {
-                let [p0, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, ..] = *four;
-                let one_before = [0, 0, 0, 0, p0, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11];
-                let sums = add_bytes(*four, one_before);
-                let [p0, p1, p2, p3, p4, p5, p6, p7, ..] = sums;
-                let two_before = [0, 0, 0, 0, 0, 0, 0, 0, p0, p1, p2, p3, p4, p5, p6, p7];
-                *four = add_bytes(add_bytes(sums, two_before), last);
-                let [.., r, g, b, a] = *four;
-                last = [r, g, b, a, r, g, b, a, r, g, b, a, r, g, b, a];
-            }
-            for (a, last) in a.iter_mut().zip(last) {
-                *a = last;
-            }
-            rest = few;
-        }
-        for pixel in rest.as_chunks_mut::<DST>().0 {
+    fn sub(mut a: [u8; SIZE], row: &mut [u8]) {
+        for pixel in row.as_chunks_mut::<SIZE>().0 {
             for (x, a) in pixel.iter_mut().zip(&mut a) {
                 *x = x.wrapping_add(*a);
                 *a = *x;
@@ -167,104 +86,134 @@ impl<const SRC: usize, const DST: usize> Undo<SRC, DST> {
     }
 
     #[inline(never)]
-    fn up(line: &[u8], above: &[u8], out: &mut [u8]) {
-        if SRC == DST {
-            for ((out, x), b) in out.iter_mut().zip(line).zip(above) {
-                *out = x.wrapping_add(*b);
-            }
-            return;
-        }
-        Self::none(line, out);
-        for (out, b) in out.iter_mut().zip(above) {
-            *out = out.wrapping_add(*b);
-        }
-    }
-
-    #[inline(never)]
-    fn average(line: &[u8], above: &[u8], out: &mut [u8]) {
+    fn average(row: &mut [u8], above: &[u8]) {
         let mut a = Wide::ZERO;
-        let out = out.as_chunks_mut::<DST>().0.iter_mut();
-        for ((out, x), b) in out.zip(pixels::<SRC>(line)).zip(above.as_chunks::<DST>().0) {
+        let pixels = row.as_chunks_mut::<SIZE>().0.iter_mut();
+        for (x, b) in pixels.zip(above.as_chunks::<SIZE>().0) {
             // x + (a + b) / 2 is (a + b + 2x) / 2, and b + 2x does not wait for `a`.
             let known = Wide::load(x).zip(Wide::load(b), |x, b| 2 * x + b);
             a = a.zip(known, |a, known| ((a + known) >> 1) & 0xff);
-            a.store(out);
+            a.store(x);
         }
     }
 
+    /// `a` is the pixel before `row` and `c` the one before `above`.
     #[inline(never)]
-    fn paeth(line: &[u8], above: &[u8], out: &mut [u8]) {
-        let Some((first, above)) = above.as_chunks::<DST>().0.split_first() else {
+    fn paeth(a: &[u8; SIZE], c: &[u8; SIZE], row: &mut [u8], above: &[u8]) {
+        /// `rest` is b - 2c.
+        #[inline(always)]
+        fn next(x: &[u8], a: Wide, b: Wide, c: Wide, rest: Wide) -> Wide {
+            let pa = b.zip(c, |b, c| (b - c).abs());
+            let pb = a.zip(c, |a, c| (a - c).abs());
+            let pc = a.zip(rest, |a, rest| (a + rest).abs());
+            let not_b = pb.zip(pc, |pb, pc| if pb > pc { -1 } else { 0 });
+            let not_a = pa.zip(
+                pb.zip(pc, i16::min),
+                |pa, least| if pa > least { -1 } else { 0 },
+            );
+            let nearest = not_a.select(not_b.select(c, b), a);
+            Wide::load(x).zip(nearest, |x, nearest| (x + nearest) & 0xff)
+        }
+        let Some((last, pixels)) = row.as_chunks_mut::<SIZE>().0.split_last_mut() else {
             return;
         };
-        let mut a = Wide::ZERO;
-        let mut b = Wide::load(first);
-        let mut c = Wide::ZERO;
-        // 3c - b, worked out one pixel ahead.
-        let mut known = Wide::ZERO.zip(b, |zero, b| zero - b);
-        let out = out.as_chunks_mut::<DST>().0.iter_mut();
-        let next_b = above.iter().chain(core::iter::once(&[0; DST]));
-        for ((out, x), next_b) in out.zip(pixels::<SRC>(line)).zip(next_b) {
-            // stb_image's way to the predictor, the same for all a, b and c:
-            //   threshold = 3c - (a + b)
-            //   if threshold <= min(a, b) { max(a, b) } else if max(a, b) <= threshold { min(a, b) } else { c }
-            // x is added to a, b and c before one is picked, not to the one picked.
-            let x = Wide::load(x);
-            let (with_a, with_b, with_c) = (x.add_bytes(a), x.add_bytes(b), x.add_bytes(c));
-            let threshold = known.zip(a, |known, a| known - a);
-            let a_is_min = a.le(b);
-            let min = a.zip(b, i16::min);
-            let max = a.zip(b, i16::max);
-            let with_min = a_is_min.select(with_a, with_b);
-            let with_max = a_is_min.select(with_b, with_a);
-            let otherwise = max.le(threshold).select(with_min, with_c);
-            a = threshold.le(min).select(with_max, otherwise);
-            a.store(out);
-
-            let next_b = Wide::load(next_b);
-            known = b.zip(next_b, |c, b| 3 * c - b);
+        let Some((b, later_b)) = above.as_chunks::<SIZE>().0.split_first() else {
+            return;
+        };
+        let (mut a, mut b, mut c) = (Wide::load(a), Wide::load(b), Wide::load(c));
+        // Worked out one pixel ahead, or the compiler puts it on the way from one `a` to the next.
+        let mut rest = b.zip(c, |b, c| b - 2 * c);
+        for (x, next_b) in pixels.iter_mut().zip(later_b) {
+            a = next(x, a, b, c, rest);
+            a.store(x);
             c = b;
-            b = next_b;
+            b = Wide::load(next_b);
+            rest = b.zip(c, |b, c| b - 2 * c);
+        }
+        next(last, a, b, c, rest).store(last);
+    }
+
+    /// Where the row above repeats a pixel, b = c, so a is the nearest and Paeth is Sub, at a tenth of the cost.
+    fn paeth_or_sub(row: &mut [u8], above: &[u8]) {
+        const BLOCK: usize = 48;
+        // After a block that is not flat this much is not looked at, or a photo would pay for the looking.
+        const STRETCH: usize = 5 * BLOCK;
+        const { assert!(BLOCK.is_multiple_of(SIZE)) };
+        let is_flat = |at: usize| {
+            let block = above.get(at..).and_then(|rest| rest.first_chunk::<BLOCK>());
+            let shifted = at.checked_sub(SIZE).and_then(|at| above.get(at..));
+            block.is_some() && block == shifted.and_then(|rest| rest.first_chunk::<BLOCK>())
+        };
+        fn last_pixel<const SIZE: usize>(bytes: &[u8]) -> &[u8; SIZE] {
+            bytes.last_chunk().unwrap_or(&[0; SIZE])
+        }
+        let mut start = 0;
+        while start < row.len() {
+            let flat = is_flat(start);
+            // Left of the row is not what the row above starts with, but after one pixel that is over.
+            let busy = if start == 0 { SIZE } else { STRETCH };
+            let mut end = start + if flat { BLOCK } else { busy };
+            while flat && is_flat(end) {
+                end += BLOCK;
+            }
+            let (done, rest) = row.split_at_mut_checked(start).unwrap_or_default();
+            let len = rest.len().min(end - start);
+            let part = rest.get_mut(..len).unwrap_or_default();
+            if flat {
+                Self::sub(*last_pixel(done), part);
+            } else {
+                let (above_done, above_rest) = above.split_at_checked(start).unwrap_or_default();
+                Self::paeth(last_pixel(done), last_pixel(above_done), part, above_rest);
+            }
+            start = end;
         }
     }
 
-    fn undo(filter: u8, line: &[u8], above: &[u8], out: &mut [u8]) -> Result<()> {
+    fn undo(filter: u8, row: &mut [u8], above: &[u8]) -> Result<()> {
         match filter {
-            NONE => Self::none(line, out),
-            SUB => Self::sub(line, out),
-            UP => Self::up(line, above, out),
-            AVERAGE => Self::average(line, above, out),
-            PAETH => Self::paeth(line, above, out),
-            _ => return Err(Error::InvalidFilter),
-        }
-        // Not done pixel by pixel above: with a byte of four that does not count, the compiler gives up on vectors.
-        if SRC != DST {
-            for pixel in out.as_chunks_mut::<DST>().0 {
-                if let Some(alpha) = pixel.last_mut() {
-                    *alpha = 255;
+            NONE => {}
+            SUB => Self::sub([0; SIZE], row),
+            UP => {
+                for (x, b) in row.iter_mut().zip(above) {
+                    *x = x.wrapping_add(*b);
                 }
             }
+            AVERAGE => Self::average(row, above),
+            PAETH => Self::paeth_or_sub(row, above),
+            _ => return Err(Error::InvalidFilter),
         }
         Ok(())
     }
 }
 
-/// Turns the filtered row at the start of `line` into the pixels of `out`. `above` is the row before it, turned
-/// back already, and as long as `out`. Pixels of 3 bytes become 4 in `out` and `above`: opaque RGBA.
-pub(crate) fn undo(
-    filter: u8,
-    bytes_per_pixel: usize,
-    line: &[u8],
-    above: &[u8],
-    out: &mut [u8],
-) -> Result<()> {
+/// Turns the filtered `row` back into pixels of `bytes_per_pixel`. `above` is the row before it, turned back already.
+pub(crate) fn undo(filter: u8, bytes_per_pixel: usize, row: &mut [u8], above: &[u8]) -> Result<()> {
     match bytes_per_pixel {
-        1 => Undo::<1, 1>::undo(filter, line, above, out),
-        2 => Undo::<2, 2>::undo(filter, line, above, out),
-        3 => Undo::<3, 4>::undo(filter, line, above, out),
-        4 => Undo::<4, 4>::undo(filter, line, above, out),
-        6 => Undo::<6, 6>::undo(filter, line, above, out),
-        _ => Undo::<8, 8>::undo(filter, line, above, out),
+        1 => Undo::<1>::undo(filter, row, above),
+        2 => Undo::<2>::undo(filter, row, above),
+        4 => Undo::<4>::undo(filter, row, above),
+        6 => Undo::<6>::undo(filter, row, above),
+        8 => Undo::<8>::undo(filter, row, above),
+        // 3 is not among them: see `push_rgb_as_rgba()`.
+        _ => Err(Error::InvalidFilter),
+    }
+}
+
+/// The alpha does not count: see `make_opaque()`. `rgba` has the room.
+pub(crate) fn push_rgb_as_rgba(rgb: &[u8], rgba: &mut Vec<u8>) {
+    // Four pixels at a time.
+    let (fours, rest) = rgb.as_chunks::<12>();
+    for &[r0, g0, b0, r1, g1, b1, r2, g2, b2, r3, g3, b3] in fours {
+        rgba.extend_from_slice(&[r0, g0, b0, 0, r1, g1, b1, 0, r2, g2, b2, 0, r3, g3, b3, 0]);
+    }
+    for &[r, g, b] in rest.as_chunks().0 {
+        rgba.extend_from_slice(&[r, g, b, 0]);
+    }
+}
+
+pub(crate) fn make_opaque(rgba: &mut [u8]) {
+    for [.., alpha] in rgba.as_chunks_mut::<4>().0 {
+        *alpha = 255;
     }
 }
 
@@ -318,9 +267,8 @@ impl Lines {
     /// `row` behind filter byte 0.
     pub(crate) fn unfiltered(&mut self, row: &[u8]) -> &[u8] {
         let [none, ..] = &mut self.lines;
-        for (out, x) in none.iter_mut().skip(1).zip(row) {
-            *out = *x;
-        }
+        none.truncate(1);
+        none.extend_from_slice(row);
         none
     }
 

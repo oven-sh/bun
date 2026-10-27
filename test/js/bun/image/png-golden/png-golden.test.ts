@@ -10,7 +10,7 @@ const files = new Map(cases.decode.map(c => [c.name, Buffer.from(c.data, "base64
 
 describe("Bun.Image reads and writes PNG the way it was recorded to", () => {
   test("decode", async () => {
-    expect(cases.decode.length).toBeGreaterThan(700);
+    expect(cases.decode.length).toBe(833);
     const results = await Promise.all(
       cases.decode.map(async c => ({
         name: c.name,
@@ -22,7 +22,7 @@ describe("Bun.Image reads and writes PNG the way it was recorded to", () => {
   });
 
   test("encode", async () => {
-    expect(cases.encode.length).toBeGreaterThan(190);
+    expect(cases.encode.length).toBe(200);
     const results = await Promise.all(
       cases.encode.map(async c => ({
         name: `${c.source} ${JSON.stringify(c.options)}`,
@@ -143,6 +143,13 @@ describe("chunks before the image", () => {
       await rejects(indexed, palette, chunk(type, [...good]), palette, indices, iend);
       expect((await pixels(indexed, palette, chunk(type, [...bad]), palette, indices, iend)).length).toBe(4);
     }
+    // Nor where PLTE only suggests colors.
+    const rgb = [ihdr(1, 1, 8, RGB), idat([1, 2, 3]), iend] as const;
+    await rejects(rgb[0], chunk("tRNS", [0, 9, 0, 9, 0, 9]), palette, rgb[1], iend);
+    await rejects(rgb[0], chunk("bKGD", [0, 9, 0, 9, 0, 9]), palette, rgb[1], iend);
+    for (const length of [5, 7]) {
+      expect(await pixels(rgb[0], chunk("bKGD", Buffer.alloc(length)), palette, rgb[1], iend)).toEqual(["010203ff"]);
+    }
   });
 
   test("tRNS gives the first palette entries their alpha", async () => {
@@ -212,7 +219,7 @@ describe("chunks before the image", () => {
         { pixels: ["01020304"], profile: null },
       ]);
     }
-    for (const name of ["a", "a b", "\xa1\xff", Buffer.alloc(79, "a").toString()]) {
+    for (const name of ["a", "a b", "q q~\xa1", "\xa1\xff", Buffer.alloc(79, "a").toString()]) {
       expect(await profile(rgba[0], iccp("profile", name), rgba[1], iend)).toBe("profile");
     }
     // The checksum has to be there, not to be right.
@@ -317,52 +324,64 @@ describe("the image", () => {
     await rejects(header, iend);
   });
 
-  test("every filter, for every size of pixel, in rows of several lengths", async () => {
-    let seed = 1;
-    const random = () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) >>> 24;
+  const randomBytes = (seed: number) => () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) >>> 24;
+  const layouts = [
+    [GRAY, 8, 1],
+    [4, 8, 2],
+    [RGB, 8, 3],
+    [RGBA, 8, 4],
+    [RGB, 16, 3],
+    [RGBA, 16, 4],
+  ];
+
+  /** A file whose rows have `filters` and the bytes that `filtered(bytesPerPixel)` gives, with what it decodes to. */
+  function filteredImage(layout: number[], width: number, filters: number[], filtered: (bpp: number) => number) {
     const paeth = (a: number, b: number, c: number) => {
-      const [pa, pb, pc] = [Math.abs(b - c), Math.abs(a - c), Math.abs(a + b - 2 * c)];
+      const pa = Math.abs(b - c);
+      const pb = Math.abs(a - c);
+      const pc = Math.abs(a + b - 2 * c);
       return pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
     };
-    const images: { name: string; file: Buffer; expected: string }[] = [];
-    for (const [colorType, depth, channels] of [
-      [GRAY, 8, 1],
-      [4, 8, 2],
-      [RGB, 8, 3],
-      [RGBA, 8, 4],
-      [RGB, 16, 3],
-      [RGBA, 16, 4],
-    ]) {
-      const bpp = (channels * depth) / 8;
-      // Some filters are undone four pixels at a time.
-      for (const width of [1, 2, 3, 4, 5, 7, 8, 9, 13]) {
-        // Twice each, so that each also comes after a row that is not zeros.
-        const filters = [4, 3, 2, 1, 0, 1, 2, 3, 4, 0];
-        const lines: number[] = [];
-        let above: number[] = Array(width * bpp).fill(0);
-        const rgba: number[] = [];
-        for (const filter of filters) {
-          const row: number[] = [];
-          lines.push(filter);
-          for (let i = 0; i < width * bpp; i++) {
-            const x = random();
-            lines.push(x);
-            const [a, b, c] = [row[i - bpp] ?? 0, above[i], above[i - bpp] ?? 0];
-            row.push((x + [0, a, b, (a + b) >> 1, paeth(a, b, c)][filter]) & 255);
-          }
-          for (let x = 0; x < width; x++) {
-            const [s0, s1, s2, s3] = Array.from({ length: channels }, (_, ch) => row[x * bpp + (ch * depth) / 8]);
-            rgba.push(...(channels <= 2 ? [s0, s0, s0, s1 ?? 255] : [s0, s1, s2, s3 ?? 255]));
-          }
-          above = row;
-        }
-        images.push({
-          name: `color type ${colorType}, depth ${depth}, width ${width}`,
-          file: png(ihdr(width, filters.length, depth, colorType), chunk("IDAT", zlib.deflateSync(Buffer.from(lines)))),
-          expected: Buffer.from(rgba).toString("hex") + "\n",
-        });
+    const [colorType, depth, channels] = layout;
+    const bpp = (channels * depth) / 8;
+    const lines: number[] = [];
+    let above: number[] = Array(width * bpp).fill(0);
+    const rgba: number[] = [];
+    for (const filter of filters) {
+      const row: number[] = [];
+      lines.push(filter);
+      for (let i = 0; i < width * bpp; i++) {
+        const x = filtered(bpp);
+        lines.push(x);
+        const a = i < bpp ? 0 : row[i - bpp];
+        const b = above[i];
+        const predicted =
+          filter === 4
+            ? paeth(a, b, i < bpp ? 0 : above[i - bpp])
+            : filter === 3
+              ? (a + b) >> 1
+              : filter === 2
+                ? b
+                : filter === 1
+                  ? a
+                  : 0;
+        row.push((x + predicted) & 255);
       }
+      for (let x = 0; x < width; x++) {
+        const sample = (channel: number) => (channel < channels ? row[x * bpp + (channel * depth) / 8] : 255);
+        if (channels <= 2) rgba.push(sample(0), sample(0), sample(0), sample(1));
+        else rgba.push(sample(0), sample(1), sample(2), sample(3));
+      }
+      above = row;
     }
+    return {
+      name: `color type ${colorType}, depth ${depth}, width ${width}`,
+      file: png(ihdr(width, filters.length, depth, colorType), chunk("IDAT", zlib.deflateSync(Buffer.from(lines)))),
+      expected: Buffer.from(rgba).toString("hex") + "\n",
+    };
+  }
+
+  async function expectToDecode(images: ReturnType<typeof filteredImage>[]) {
     const results = await Promise.all(
       images.map(async ({ name, file, expected }) => ({
         name,
@@ -371,6 +390,42 @@ describe("the image", () => {
       })),
     );
     expect(differences(results)).toBe("");
+  }
+
+  test("every filter, for every size of pixel, in rows of several lengths", async () => {
+    // Twice each, so that each also comes after a row that is not zeros.
+    const filters = [4, 3, 2, 1, 0, 1, 2, 3, 4, 0];
+    const random = randomBytes(1);
+    await expectToDecode(
+      layouts.flatMap(layout =>
+        [1, 2, 3, 4, 5, 7, 8, 9, 13].map(width => filteredImage(layout, width, filters, random)),
+      ),
+    );
+  });
+
+  test("Paeth under a row that is the same pixel over and over in places", async () => {
+    const random = randomBytes(2);
+    // None, so the bytes are the row: first stretches of one pixel, of two or three taking turns and of noise, then
+    // one pixel all the way. Under Paeth, zeros keep what the row above has and anything else breaks it up.
+    const filters = [0, 4, 4, 0, 4, 4];
+    await expectToDecode(
+      layouts.flatMap(layout => {
+        const bpp = (layout[1] * layout[2]) / 8;
+        return [50, 100, 340, 620].map(bytes => {
+          const width = Math.ceil(bytes / bpp);
+          let [at, left, pixels] = [0, 0, [] as number[]];
+          return filteredImage(layout, width, filters, () => {
+            const row = Math.floor(at++ / (width * bpp));
+            if (filters[row] === 4) return random() < 2 ? random() : 0;
+            if (left === 0) {
+              left = row === 0 ? bpp * (1 + (random() % Math.ceil(200 / bpp))) : width * bpp;
+              pixels = Array.from({ length: bpp * [1, 1, 1, 2, 3, 200][row === 0 ? random() % 6 : 0] }, random);
+            }
+            return pixels[--left % pixels.length];
+          });
+        });
+      }),
+    );
   });
 });
 

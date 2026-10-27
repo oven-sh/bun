@@ -274,7 +274,7 @@ visitor.reportExtraMemoryVisited(thisObject->wrapped().byteSize());
 - If the size changes over time, report the delta on growth (`reportExtraMemoryAllocated(cell, newSize - oldSize)`) and report the current size in `visitChildren`.
 - `deprecatedReportExtraMemory` exists for callers that can't satisfy the visit-side half — avoid it.
 
-In a `.bind.ts` class, `estimatedSize: true` generates both sides; you implement `estimated_size()` in Rust, which marking threads call. For growth after the object is created you still call `vm.report_extra_memory`.
+In a `.bind.ts` class, `estimatedSize: true` generates both sides; you implement `estimated_size()` in Rust, which marking threads call. For growth after the object is created you still call `heap.report_extra_memory(this, grown)`, or `vm.report_extra_memory_allocated(owner, grown)` where there is no `JsHeap`.
 
 ## `HeapAnalyzer` — heap snapshots and labelling
 

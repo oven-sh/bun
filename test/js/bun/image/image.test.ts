@@ -1,6 +1,7 @@
 import { S3Client } from "bun";
+import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { afterAll, describe, expect, test } from "bun:test";
-import { isMacOS, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isMacOS, isWindows, tempDir } from "harness";
 import zlib from "node:zlib";
 import { join } from "path";
 
@@ -191,6 +192,52 @@ describe("Bun.Image", () => {
     const res = new Response(new Bun.Image(Bun.file(p)).resize(2, 2).webp());
     expect(res.headers.get("content-type")).toBe("image/webp");
     expect((await res.bytes()).subarray(8, 12)).toEqual(Buffer.from("WEBP"));
+  });
+
+  test("the size given to the GC follows the source as it is replaced", async () => {
+    using dir = tempDir("image-gc-size", {});
+    const p = join(String(dir), "src.png");
+    await Bun.write(p, cornersPng);
+    // A borrowed buffer is the caller's, so this is the object alone.
+    const empty = estimateShallowMemoryUsageOf(new Bun.Image(cornersPng));
+    const owned = (img: Bun.Image) => estimateShallowMemoryUsageOf(img) - empty;
+
+    expect(owned(new Bun.Image(p))).toBe(Buffer.byteLength(p));
+    expect(owned(new Blob([cornersPng]).image())).toBe(cornersPng.length);
+    expect(owned(new Bun.Image("data:image/png;base64," + Buffer.from(cornersPng).toString("base64")))).toBe(
+      cornersPng.length,
+    );
+
+    const read = Bun.file(p).image();
+    expect(owned(read)).toBe(0);
+    await read.metadata();
+    expect(owned(read)).toBe(cornersPng.length);
+
+    const body = Bun.file(p).image();
+    new Response(body);
+    expect(owned(body)).toBe(Buffer.byteLength(p));
+  });
+
+  test("dropped Bun.file() images do not pile up until something else collects them", async () => {
+    using dir = tempDir("image-gc-growth", {
+      // metadata() stops at the header; the rest is weight that the image keeps.
+      "src.png": Buffer.concat([cornersPng, Buffer.alloc(1024 * 1024)]),
+      "index.js": `
+        Bun.gc(true); // heapStats() collects by itself in a process that never has
+        for (let i = 0; i < 256; i++) await Bun.file("src.png").image().metadata();
+        console.log(require("bun:jsc").heapStats().objectTypeCounts.Image < 128);
+      `,
+    });
+    // Its own process: how much the GC lets pass before it collects grows with the live heap.
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("true\n");
+    expect(exitCode).toBe(0);
   });
 
   // Store-backed Blob sources are read at terminal time through the Blob's

@@ -878,7 +878,7 @@ void JSDOMURL::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_searchParams);
     visitor.append(thisObject->m_href);
-    visitor.reportExtraMemoryVisited(thisObject->protectedWrapped()->memoryCostForGC());
+    visitor.reportExtraMemoryVisited(thisObject->wrapped().memoryCostForGC());
 }
 
 DEFINE_VISIT_CHILDREN(JSDOMURL);

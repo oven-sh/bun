@@ -10,6 +10,7 @@
 
 use core::cell::Cell;
 use core::mem;
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
@@ -54,7 +55,7 @@ use crate::generated_bindgen::image::js_Image as js;
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). `max_pixels`
 // / `auto_orient` are read-only after construction so stay bare.
 pub(crate) struct Image {
-    source: JsCell<Source>,
+    source: SourceCell,
     pipeline: Cell<Pipeline>,
     /// Decompression-bomb guard. Checked against the *header* dimensions before
     /// any RGBA buffer is allocated. Mirrors Sharp's `limitInputPixels`.
@@ -77,7 +78,7 @@ pub(crate) struct Image {
 impl Default for Image {
     fn default() -> Self {
         Self {
-            source: JsCell::new(Source::JsBuffer),
+            source: SourceCell::new(Source::JsBuffer),
             pipeline: Cell::new(Pipeline::default()),
             max_pixels: codecs::DEFAULT_MAX_PIXELS,
             auto_orient: true,
@@ -117,6 +118,47 @@ pub(crate) enum Source {
 
 // `Vec<u8>`, `ZString`, and
 // `Strong` all implement `Drop`, so no explicit `Drop` body is needed.
+
+impl Source {
+    /// `JsBuffer` is the caller's ArrayBuffer, already counted via the cached value slot.
+    fn owned_bytes(&self) -> usize {
+        match self {
+            Source::JsBuffer | Source::Blob(_) => 0,
+            Source::Owned(b) => b.len(),
+            Source::Path(p) => p.len(),
+        }
+    }
+}
+
+/// `owned_bytes` is all a marking thread reads: the JS thread replaces `source` while it runs.
+struct SourceCell {
+    source: JsCell<Source>,
+    owned_bytes: AtomicUsize,
+}
+
+impl SourceCell {
+    fn new(source: Source) -> Self {
+        Self {
+            owned_bytes: AtomicUsize::new(source.owned_bytes()),
+            source: JsCell::new(source),
+        }
+    }
+
+    #[inline]
+    fn get(&self) -> &Source {
+        self.source.get()
+    }
+
+    /// `owner` is the image's JS object. This can collect.
+    fn replace(&self, source: Source, owner: JSValue, global: &JSGlobalObject) {
+        let size = source.owned_bytes();
+        let before = self.owned_bytes.swap(size, Ordering::Relaxed);
+        self.source.set(source);
+        global
+            .vm()
+            .report_extra_memory_allocated(owner, size.saturating_sub(before));
+    }
+}
 
 // These C++ helpers are
 // Image-specific (they pin/adopt typed-array storage for the off-thread
@@ -262,8 +304,10 @@ impl Image {
                 "Image() expects a path, ArrayBuffer, TypedArray, Blob or data: URL",
             )));
         }
-        let mut img = Image::default();
-        img.source.set(source_from_js(global, input)?);
+        let mut img = Image {
+            source: SourceCell::new(source_from_js(global, input)?),
+            ..Default::default()
+        };
         apply_options(&mut img, global, options.to_js())?;
         let borrows_input = matches!(img.source.get(), Source::JsBuffer);
         let this_value = structure.create(&cx.heap, img);
@@ -285,20 +329,14 @@ impl Image {
         // For Blob receivers `source_from_js` either dupes (in-memory blob) or
         // creates a Strong (file/S3); the cached `sourceJS` slot is only used
         // for the `.js_buffer` path, which a Blob never produces.
-        img.source.set(source_from_js(global, blob_value)?);
+        img.source = SourceCell::new(source_from_js(global, blob_value)?);
         debug_assert!(!matches!(img.source.get(), Source::JsBuffer));
         Ok(img.to_js(global))
     }
 
     pub(crate) fn estimated_size(&self) -> usize {
-        // Only the bytes WE own. .js_buffer is the caller's ArrayBuffer (already
-        // counted via the cached value slot); the worker's RGBA scratch is
-        // task-scoped and freed before any GC could observe it.
-        match self.source.get() {
-            Source::JsBuffer | Source::Blob(_) => 0,
-            Source::Owned(b) => b.len(),
-            Source::Path(p) => p.len(),
-        }
+        // The worker's RGBA scratch is task-scoped and freed before any GC could observe it.
+        self.source.owned_bytes.load(Ordering::Relaxed)
     }
 }
 
@@ -837,7 +875,7 @@ impl Image {
                 Err(_) => return Ok(None),
             };
             let img = Image {
-                source: JsCell::new(Source::Owned(bytes)),
+                source: SourceCell::new(Source::Owned(bytes)),
                 ..Default::default()
             };
             return Ok(Some(img.into_js(&cx.heap)));
@@ -1165,7 +1203,7 @@ impl Image {
                     if let PathOrFileDescriptor::Path(path) = &file.pathlike {
                         let p = ZBox::from_bytes(path.slice());
                         // `Source::Blob`'s `Strong` Drop releases the JS ref.
-                        self.source.set(Source::Path(p));
+                        self.source.replace(Source::Path(p), this_value, global);
                     } else {
                         return Err(global.throw(format_args!("{REFUSE}")));
                     }
@@ -1307,19 +1345,6 @@ impl<'a> BlobReadChain<'a> {
 
         match r {
             ReadBytesResult::Ok(bytes) => {
-                // Concurrent terminals can have started multiple BlobReadChains
-                // (no in-flight serialisation — `start()` re-enters every time
-                // it sees `.blob`). The FIRST resolver wins and swaps to
-                // `.owned`; that buffer is then *borrowed* by `pin_for_task`
-                // into a worker-thread PipelineTask. A later resolver MUST NOT
-                // drop the source (it would free what the worker is reading)
-                // — drop the redundant read instead and re-enter `schedule()`
-                // on the already-swapped source.
-                if matches!(image.source.get(), Source::Blob(_)) {
-                    image.source.set(Source::Owned(bytes));
-                } else {
-                    drop(bytes);
-                }
                 let Some(this_value) = image.this_ref.get().try_get() else {
                     drop(deliver);
                     return outer.reject(
@@ -1329,6 +1354,21 @@ impl<'a> BlobReadChain<'a> {
                         ))),
                     );
                 };
+                // Concurrent terminals can have started multiple BlobReadChains
+                // (no in-flight serialisation — `start()` re-enters every time
+                // it sees `.blob`). The FIRST resolver wins and swaps to
+                // `.owned`; that buffer is then *borrowed* by `pin_for_task`
+                // into a worker-thread PipelineTask. A later resolver MUST NOT
+                // drop the source (it would free what the worker is reading)
+                // — drop the redundant read instead and re-enter `schedule()`
+                // on the already-swapped source.
+                if matches!(image.source.get(), Source::Blob(_)) {
+                    image
+                        .source
+                        .replace(Source::Owned(bytes), this_value, global);
+                } else {
+                    drop(bytes);
+                }
                 // Source is now `.owned`; this re-entry takes the regular path. If `schedule()` threw,
                 // `deliver` was already dropped there and the pending exception is the rejection.
                 let inner = image.schedule(

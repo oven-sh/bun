@@ -1,5 +1,5 @@
 use core::ffi::{CStr, c_int};
-use core::ptr;
+use core::{mem, ptr};
 
 use bun_brotli::{
     Decoder, DecoderErrorCode, DecoderParameter, DecoderResult, Encoder, EncoderOperation as Op,
@@ -25,6 +25,8 @@ const _: fn() = || {
 pub(crate) struct Context {
     pub(crate) mode: bun_zlib::NodeMode,
     pub(crate) state: State,
+    /// The parameters that were set, for `reset()`.
+    pub(crate) params: Vec<(u32, u32)>,
 
     pub(crate) next_in: *const u8,
     pub(crate) next_out: *mut u8,
@@ -45,6 +47,7 @@ impl Default for Context {
         Self {
             mode: bun_zlib::NodeMode::NONE,
             state: State::None,
+            params: Vec::new(),
             next_in: ptr::null(),
             next_out: ptr::null_mut(),
             avail_in: 0,
@@ -280,8 +283,9 @@ mod _impl {
         pub(crate) fn init(&mut self, dictionary: Option<&[u8]>) -> Error {
             // Mirrors node's Init(): the previous instance and its dictionary
             // go before new ones are built. `init` is JS-reachable twice on one
-            // handle, and ResetStream() lands here with no dictionary.
+            // handle.
             self.state = State::None;
+            self.params.clear();
             let dictionary = dictionary.filter(|d| !d.is_empty());
             match self.mode {
                 bun_zlib::NodeMode::BROTLI_ENCODE => {
@@ -340,13 +344,39 @@ mod _impl {
                     c"ERR_BROTLI_PARAM_SET_FAILED".as_ptr(),
                 );
             }
+            self.params.push((key, value));
             Error::ok()
         }
 
+        /// As in node, the new stream has the dictionary and the parameters of the old one.
         pub(crate) fn reset(&mut self) -> Error {
-            // Matches node's `BrotliContext::ResetStream()`, which calls `Init()`
-            // with its default (empty) dictionary — a reset drops the dictionary.
-            self.init(None)
+            let old = mem::take(&mut self.state);
+            let params = mem::take(&mut self.params);
+            let err = self.init(None);
+            if err.is_error() {
+                return err;
+            }
+            let attached = match (old, &mut self.state) {
+                (State::Encoder(old), State::Encoder(new)) => old
+                    .into_prepared_dictionaries()
+                    .into_iter()
+                    .all(|dictionary| new.attach_prepared_dictionary(dictionary)),
+                (State::Decoder(old), State::Decoder(new)) => old
+                    .into_dictionaries()
+                    .into_iter()
+                    .all(|dictionary| new.attach_dictionary(dictionary)),
+                _ => true,
+            };
+            if !attached {
+                return Self::dictionary_error(c"Failed to attach brotli dictionary");
+            }
+            for (key, value) in params {
+                let err = self.set_params(key, value);
+                if err.is_error() {
+                    return err;
+                }
+            }
+            Error::ok()
         }
 
         pub(crate) fn set_buffers(&mut self, in_: Option<&[u8]>, out: Option<&mut [u8]>) {
@@ -469,6 +499,7 @@ mod _impl {
 
         pub(crate) fn close(&mut self) {
             self.state = State::None;
+            self.params = Vec::new();
             self.mode = bun_zlib::NodeMode::NONE;
         }
     }

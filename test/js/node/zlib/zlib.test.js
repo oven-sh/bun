@@ -621,6 +621,55 @@ describe("zlib.brotli", () => {
     }
   });
 
+  describe("reset()", () => {
+    const c = zlib.constants;
+    const input = Buffer.from("the quick brown fox jumps over the lazy dog ".repeat(100));
+    const dictionary = input.subarray(0, 1760);
+    const through = async (stream, data) => {
+      stream.reset();
+      stream.end(data);
+      return Buffer.concat(await stream.toArray());
+    };
+
+    it.each([
+      ["the quality", { params: { [c.BROTLI_PARAM_QUALITY]: 0 } }],
+      ["the dictionary", { dictionary }],
+      ["both", { dictionary, params: { [c.BROTLI_PARAM_QUALITY]: 5, [c.BROTLI_PARAM_LGWIN]: 16 } }],
+    ])("keeps %s of a compressor", async (_, options) => {
+      expect(await through(zlib.createBrotliCompress(options), input)).toEqual(zlib.brotliCompressSync(input, options));
+    });
+
+    it("keeps the dictionary and the parameters of a decompressor", async () => {
+      const compressed = zlib.brotliCompressSync(input, {
+        dictionary,
+        params: { [c.BROTLI_PARAM_LARGE_WINDOW]: 1, [c.BROTLI_PARAM_LGWIN]: 26 },
+      });
+      const options = { dictionary, params: { [c.BROTLI_DECODER_PARAM_LARGE_WINDOW]: 1 } };
+      expect(await through(zlib.createBrotliDecompress(options), compressed)).toEqual(input);
+    });
+  });
+
+  it("continues a copy from the dictionary in a stream that starts at an offset", () => {
+    const c = zlib.constants;
+    const dictionary = pbkdf2Sync("dictionary", "", 1, 75_000, "sha256");
+    // node:zlib has no constant for it.
+    const BROTLI_PARAM_STREAM_OFFSET = 9;
+    const params = { [c.BROTLI_PARAM_QUALITY]: 5, [c.BROTLI_PARAM_LGWIN]: 22 };
+    const first = pbkdf2Sync("first", "", 1, 1000, "sha256");
+    // A copy from the dictionary that goes on past the 64 KiB that the encoder takes at a time. After those comes what
+    // the dictionary has `first.length` earlier.
+    const [from, block] = [5000, 65536 + 2];
+    const second = Buffer.concat([
+      dictionary.subarray(from, from + block),
+      dictionary.subarray(from + block - first.length, from + block - first.length + 3000),
+    ]);
+    const stream = Buffer.concat([
+      zlib.brotliCompressSync(first, { params, dictionary, finishFlush: c.BROTLI_OPERATION_FLUSH }),
+      zlib.brotliCompressSync(second, { params: { ...params, [BROTLI_PARAM_STREAM_OFFSET]: first.length }, dictionary }),
+    ]);
+    expect(zlib.brotliDecompressSync(stream, { dictionary }).equals(Buffer.concat([first, second]))).toBe(true);
+  });
+
   // The thread pool reads the caller's buffer, which JS can still write to.
   describe("with an input that changes while it is read", () => {
     const noise = pbkdf2Sync("noise", "", 1, 64 * 1024, "sha256");

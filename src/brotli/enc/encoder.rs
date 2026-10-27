@@ -757,6 +757,11 @@ impl Encoder {
         self.broken.is_none() && self.params.dictionary.attach(dictionary)
     }
 
+    /// The dictionaries that were attached, in that order, for another encoder.
+    pub fn into_prepared_dictionaries(self) -> Vec<PreparedDictionary> {
+        self.params.dictionary.chunks
+    }
+
     /// `BrotliEncoderIsFinished`.
     pub fn is_finished(&self) -> bool {
         self.stream_state == StreamState::Finished && !self.has_more_output()

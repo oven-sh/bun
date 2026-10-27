@@ -1272,6 +1272,12 @@ impl Decoder {
         }
     }
 
+    /// The dictionaries that were attached, in that order, for another decoder.
+    pub fn into_dictionaries(self) -> Vec<Box<[u8]>> {
+        self.compound_dictionary
+            .map_or_else(Vec::new, |compound| compound.chunks)
+    }
+
     /// Why the last call of [`Self::decompress_stream`] returned.
     pub fn error_code(&self) -> E {
         self.error_code

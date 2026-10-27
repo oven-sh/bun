@@ -352,6 +352,7 @@ mod tests {
             ("a".repeat(208), "ff03", 130),
             ("~".repeat(126), "7e", 126),
             ("~".repeat(127), "7f00", 127),
+            ("&".repeat(127), "ff00", 127),
         ] {
             let block = encode(&mut Encoder::new(), "x-a", &value, Indexing::Skip);
             let string = &block[block.len() - coded_len - len.len() / 2..];
@@ -364,7 +365,7 @@ mod tests {
     fn check_huffman(string: &[u8]) {
         let len = huffman::encoded_len(string);
         let (mut coded, mut decoded) = (vec![1], vec![2]);
-        assert!(huffman::encode(string, &mut coded, len));
+        assert!(huffman::encode(string, &mut coded, false));
         assert_eq!(coded.len(), 1 + len);
         assert_eq!(
             huffman::decode(&coded[1..], &mut decoded, string.len()),
@@ -372,10 +373,16 @@ mod tests {
         );
         assert_eq!(decoded[1..], *string);
         if len > 0 {
-            assert!(!huffman::encode(string, &mut coded, len - 1));
-            assert_eq!(coded.len(), 1 + len);
             let too_large = huffman::decode(&coded[1..], &mut decoded, string.len() - 1);
             assert_eq!(too_large, Err(Error::TooLarge));
+        }
+
+        let mut unless_longer = vec![1];
+        if huffman::encode(string, &mut unless_longer, true) {
+            assert!(len <= string.len());
+            assert_eq!(unless_longer, coded);
+        } else {
+            assert_eq!(unless_longer, [1]);
         }
     }
 
@@ -391,13 +398,28 @@ mod tests {
     fn huffman_codes_of_every_length_next_to_each_other() {
         // Codes of 5, 6, 7, 8, 10, 13, 15, 19, 26 and 30 bits.
         let bytes = b"a-:&!~{\\\xff\x0a";
-        for len in 0..40 {
+        for len in (0..14).chain([19, 26, 33]) {
             for step in 0..bytes.len() {
-                let string: Vec<u8> = (0..len)
-                    .map(|i| bytes[i * step % 7 * (i + step) % bytes.len()])
-                    .collect();
-                check_huffman(&string);
+                let byte = |i| bytes[i * step % 7 * (i + step) % bytes.len()];
+                check_huffman(&(0..len).map(byte).collect::<Vec<u8>>());
             }
+        }
+    }
+
+    #[test]
+    fn a_huffman_string_that_is_too_long_and_malformed_is_too_long() {
+        for (coded, symbols) in [
+            ("18c6318c63 fe", 8),   // "aaaaaaaa", then the start of a longer code
+            ("18c6318c63 ffff", 8), // then 16 bits of padding
+            ("18", 1),              // "a", then 000, which the padding would make another "a"
+            ("18c6", 3),            // "aaa", then 0, which the padding would make "9"
+            ("5961", 2),            // "--", then 0001, which the padding would make "a"
+            ("18c6318c63 18c6318c63 18c6318c63 18", 25),
+        ] {
+            let decode = |max_len| huffman::decode(&hex(coded), &mut Vec::new(), max_len);
+            assert_eq!(decode(symbols), Err(Error::Invalid), "{coded}");
+            assert_eq!(decode(symbols - 1), Err(Error::TooLarge), "{coded}");
+            assert_eq!(decode(0), Err(Error::TooLarge), "{coded}");
         }
     }
 

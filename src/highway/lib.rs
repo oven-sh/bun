@@ -1149,7 +1149,10 @@ pub fn has_hpack_huffman_kernel() -> bool {
     false
 }
 
-/// Returns the bit it stopped at and how many bytes of `out` it filled. See `src/hpack/huffman_simd.md`.
+/// What [`hpack_huffman_decode_short`] writes at a time: `kMaxSymbols` in `highway_hpack.cpp`.
+pub const HPACK_HUFFMAN_SPARE_OUT: usize = 16;
+
+/// Returns the bit it stopped at and how many symbols it put in `out`, where it may overwrite [`HPACK_HUFFMAN_SPARE_OUT`] bytes more. See `src/hpack/huffman_simd.md`.
 #[inline(always)]
 pub fn hpack_huffman_decode_short(src: &[u8], bit_pos: usize, out: &mut [u8]) -> (usize, usize) {
     #[cfg(all(target_arch = "x86_64", not(miri)))]

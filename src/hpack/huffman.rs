@@ -2,6 +2,20 @@
 
 use crate::{Error, Result};
 
+#[cfg(not(test))]
+use bun_highway::{has_hpack_huffman_kernel, hpack_huffman_decode_short};
+
+/// The SIMD kernel is C++, which this crate's own tests are not linked with.
+#[cfg(test)]
+fn has_hpack_huffman_kernel() -> bool {
+    false
+}
+
+#[cfg(test)]
+fn hpack_huffman_decode_short(_: &[u8], bit_pos: usize, _: &mut [u8]) -> (usize, usize) {
+    (bit_pos, 0)
+}
+
 const EOS: usize = 256;
 
 /// `(code, length in bits)` of each byte, then of EOS.
@@ -87,81 +101,75 @@ struct Writer<'a> {
     /// The low `pending` bits are not written yet: under 8 between calls.
     bits: u64,
     pending: u32,
-    out: &'a mut [u8],
-    written: usize,
+    out: &'a mut Vec<u8>,
 }
 
 impl Writer<'_> {
-    /// `len` is at most 56. `None` if there is no room.
+    /// `len` is at most 56.
     #[inline(always)]
-    fn put(&mut self, code: u64, len: u32) -> Option<()> {
+    fn put(&mut self, (code, len): (u64, u32)) {
         self.bits = (self.bits << len) | code;
         self.pending += len;
-        // All of them are written, and those that do not fill a byte yet are written again.
-        self.out
-            .get_mut(self.written..self.written + 8)?
-            .copy_from_slice(&(self.bits << (64 - self.pending)).to_be_bytes());
-        self.written += (self.pending / 8) as usize;
+        // All of them are written. Those that do not fill a byte yet are written again next time.
+        let whole = self.out.len() + (self.pending / 8) as usize;
+        let bytes = (self.bits << (64 - self.pending)).to_be_bytes();
+        self.out.extend_from_slice(&bytes);
+        self.out.truncate(whole);
         self.pending %= 8;
-        Some(())
-    }
-
-    fn put_all(&mut self, src: &[u8]) -> Option<()> {
-        let code = |byte| {
-            let (code, len) = code(byte);
-            (u64::from(code), u32::from(len))
-        };
-        let (groups, rest) = src.as_chunks::<4>();
-        for group in groups {
-            let [a, b, c, d] = group.map(code);
-            let len = a.1 + b.1 + c.1 + d.1;
-            if len <= 56 {
-                // Put together as two pairs, neither of which waits for the other.
-                let (ab, cd) = ((a.0 << b.1) | b.0, (c.0 << d.1) | d.0);
-                self.put((ab << (c.1 + d.1)) | cd, len)?;
-            } else {
-                for (code, len) in [a, b, c, d] {
-                    self.put(code, len)?;
-                }
-            }
-        }
-        for (code, len) in rest.iter().copied().map(code) {
-            self.put(code, len)?;
-        }
-        if self.pending > 0 {
-            // The last byte is filled up with the start of EOS, which is all ones.
-            let padding = 8 - self.pending;
-            self.put((1 << padding) - 1, padding)?;
-        }
-        Some(())
     }
 }
 
-/// Appends the code of `src` if that is at most `max_len` bytes. If not, `out` stays as it is.
-pub(crate) fn encode(src: &[u8], out: &mut Vec<u8>, max_len: usize) -> bool {
+/// Appends the code of `src`. With `give_up`, not if at some point it is longer than what it stands for.
+pub(crate) fn encode(src: &[u8], out: &mut Vec<u8>, give_up: bool) -> bool {
     let start = out.len();
-    // A write is 8 bytes, however many of them count.
-    out.resize(start + max_len + 8, 0);
     let mut writer = Writer {
         bits: 0,
         pending: 0,
-        out: out.get_mut(start..).unwrap_or_default(),
-        written: 0,
+        out,
     };
-    let fits = writer.put_all(src).is_some() && writer.written <= max_len;
-    let written = if fits { writer.written } else { 0 };
-    out.truncate(start + written);
-    fits
+    let code = |byte| {
+        let (code, len) = code(byte);
+        (u64::from(code), u32::from(len))
+    };
+    let (groups, rest) = src.as_chunks::<4>();
+    for (i, group) in groups.iter().enumerate() {
+        let [a, b, c, d] = group.map(code);
+        let len = a.1 + b.1 + c.1 + d.1;
+        if len <= 56 {
+            // Put together as two pairs, neither of which waits for the other.
+            let (ab, cd) = ((a.0 << b.1) | b.0, (c.0 << d.1) | d.0);
+            writer.put(((ab << (c.1 + d.1)) | cd, len));
+        } else {
+            for code in [a, b, c, d] {
+                writer.put(code);
+            }
+        }
+        if give_up && writer.out.len() - start > (i + 1) * 4 {
+            writer.out.truncate(start);
+            return false;
+        }
+    }
+    for &byte in rest {
+        writer.put(code(byte));
+    }
+    if writer.pending > 0 {
+        // The last byte is filled up with the start of EOS, which is all ones.
+        let padding = 8 - writer.pending;
+        writer.put(((1 << padding) - 1, padding));
+    }
+    if give_up && out.len() - start > src.len() {
+        out.truncate(start);
+        return false;
+    }
+    true
 }
 
 /// The code has 257 leaves, so its tree has 256 inner nodes and a node fits a `u8`.
 const NODES: usize = 256;
-/// In [`CHILDREN`], values from here on are leaves: `LEAF + symbol`.
+/// Among the children of a node, values from here on are leaves: `LEAF + symbol`.
 const LEAF: u16 = NODES as u16;
 
 /// The code tree: where a 0 and a 1 lead from each inner node. Node 0 is the root.
-static CHILDREN: [[u16; 2]; NODES] = build_children();
-
 #[allow(clippy::indexing_slicing, reason = "evaluated at compile time")]
 const fn build_children() -> [[u16; 2]; NODES] {
     // No node has the root as a child, so 0 also means "none yet".
@@ -196,7 +204,7 @@ const PREFIX_BITS: u32 = 13;
 /// What the next [`PREFIX_BITS`] bits of the input start with.
 #[derive(Clone, Copy)]
 struct Prefix {
-    /// One or two whole symbols. If not even one fits, `symbols[0]` is the node the bits lead to.
+    /// One or two whole symbols, if that many fit.
     symbols: [u8; 2],
     /// How many symbols.
     count: u8,
@@ -204,20 +212,23 @@ struct Prefix {
     bits: u8,
 }
 
+impl Prefix {
+    const NONE: Self = Self {
+        symbols: [0; 2],
+        count: 0,
+        bits: 0,
+    };
+}
+
 static PREFIXES: [Prefix; 1 << PREFIX_BITS] = build_prefixes();
 
 #[allow(clippy::indexing_slicing, reason = "evaluated at compile time")]
 const fn build_prefixes() -> [Prefix; 1 << PREFIX_BITS] {
     let children = build_children();
-    let none = Prefix {
-        symbols: [0; 2],
-        count: 0,
-        bits: 0,
-    };
-    let mut prefixes = [none; 1 << PREFIX_BITS];
+    let mut prefixes = [Prefix::NONE; 1 << PREFIX_BITS];
     let mut input = 0;
     while input < prefixes.len() {
-        let mut prefix = none;
+        let mut prefix = Prefix::NONE;
         let mut node = 0;
         let mut bit = PREFIX_BITS;
         while bit > 0 && prefix.count < 2 {
@@ -233,9 +244,6 @@ const fn build_prefixes() -> [Prefix; 1 << PREFIX_BITS] {
                 node = 0;
             }
         }
-        if prefix.count == 0 {
-            prefix.symbols[0] = node as u8;
-        }
         prefixes[input] = prefix;
         input += 1;
     }
@@ -243,10 +251,19 @@ const fn build_prefixes() -> [Prefix; 1 << PREFIX_BITS] {
 }
 
 /// How many lookups the 57 bits of a window are good for.
-const STEPS: u32 = (64 - 7) / PREFIX_BITS;
+const STEPS: u32 = 57 / PREFIX_BITS;
+
+/// After how many of them the window still has the 30 bits of the longest code.
+const STEPS_BEFORE_LONG_SYMBOL: u32 = (57 - 30) / PREFIX_BITS;
 
 /// What [`Decoder::out`] has beyond what may come out, so that symbols can be written in groups.
-const SPARE_OUT: usize = 16;
+const SPARE_OUT: usize = bun_highway::HPACK_HUFFMAN_SPARE_OUT;
+
+/// Under this many bits of input, the SIMD kernel is no faster.
+const KERNEL_MIN_BITS: usize = 40;
+
+/// A call of the SIMD kernel pays off from this many symbols on.
+const KERNEL_MIN_SYMBOLS: isize = 12;
 
 struct Decoder<'a> {
     src: &'a [u8],
@@ -254,17 +271,30 @@ struct Decoder<'a> {
     pos: usize,
     out: &'a mut [u8],
     written: usize,
+    /// How many symbols the SIMD kernel is ahead of paying off. Negative if there is none.
+    kernel_credit: isize,
 }
 
 impl Decoder<'_> {
+    /// Lets the SIMD kernel go on from `window`, the bits that come next. Returns whether it got anywhere.
+    #[inline(always)]
+    fn run_kernel(&mut self, window: u64) -> bool {
+        // It stops at a code of more than 8 bits. All of those start with 7 ones.
+        if self.kernel_credit < 0 || window >> 57 == 0x7f {
+            return false;
+        }
+        let out = self.out.get_mut(self.written..).unwrap_or_default();
+        let (pos, written) = hpack_huffman_decode_short(self.src, self.pos, out);
+        self.pos = pos;
+        self.written += written;
+        self.kernel_credit += written as isize - KERNEL_MIN_SYMBOLS;
+        written > 0
+    }
+
     #[inline(always)]
     fn prefix(window: u64) -> Prefix {
         let index = (window >> (64 - PREFIX_BITS)) as usize;
-        PREFIXES.get(index).copied().unwrap_or(Prefix {
-            symbols: [0; 2],
-            count: 0,
-            bits: 0,
-        })
+        PREFIXES.get(index).copied().unwrap_or(Prefix::NONE)
     }
 
     #[inline(always)]
@@ -281,26 +311,17 @@ impl Decoder<'_> {
     /// All but the last 7 bytes or less of `src`, if not all.
     #[inline(always)]
     fn decode_most(&mut self) -> Result<()> {
-        let has_kernel = bun_highway::has_hpack_huffman_kernel();
-        loop {
-            if has_kernel {
-                let out = self.out.get_mut(self.written..).unwrap_or_default();
-                let (pos, written) =
-                    bun_highway::hpack_huffman_decode_short(self.src, self.pos, out);
-                self.pos = pos;
-                self.written += written;
-            }
-            let Some(bytes) = self.src.get(self.pos / 8..).and_then(<[u8]>::first_chunk) else {
-                return Ok(());
-            };
+        while let Some(bytes) = self.src.get(self.pos / 8..).and_then(<[u8]>::first_chunk) {
             // 57 bits or more, from the top.
             let mut window = u64::from_be_bytes(*bytes) << (self.pos % 8);
+            if self.run_kernel(window) {
+                continue;
+            }
             for step in 0..STEPS {
                 let prefix = Self::prefix(window);
                 if prefix.count == 0 {
-                    // The longest code has 30 bits, so it takes a window that is whole.
-                    if step == 0 {
-                        self.write(long_symbol(prefix.symbols[0], window)?)?;
+                    if step <= STEPS_BEFORE_LONG_SYMBOL {
+                        self.write(long_symbol(window)?)?;
                     }
                     break;
                 }
@@ -308,6 +329,7 @@ impl Decoder<'_> {
                 window <<= prefix.bits;
             }
         }
+        Ok(())
     }
 
     /// The last 7 bytes or less of `src`.
@@ -321,6 +343,10 @@ impl Decoder<'_> {
                 .iter()
                 .fold(0, |last, &byte| last << 8 | u64::from(byte)),
         };
+        let left = end - self.pos;
+        if left >= KERNEL_MIN_BITS {
+            self.run_kernel(last << (64 - left));
+        }
         // All that is left, from the top, then ones, like the padding.
         let mut window = (!last)
             .checked_shl((64 - (end - self.pos)) as u32)
@@ -329,10 +355,15 @@ impl Decoder<'_> {
         while window != u64::MAX {
             let mut prefix = Self::prefix(window);
             if prefix.count == 0 {
-                prefix = long_symbol(prefix.symbols[0], window)?;
+                prefix = long_symbol(window)?;
             }
             if self.pos + usize::from(prefix.bits) > end {
-                return Err(Error::Invalid);
+                // The first of two may still be whole, and counts towards the length.
+                prefix.count = 1;
+                prefix.bits = code(prefix.symbols[0]).1;
+                if self.pos + usize::from(prefix.bits) > end {
+                    return Err(Error::Invalid);
+                }
             }
             self.write(prefix)?;
             window = !(!window << prefix.bits);
@@ -344,29 +375,80 @@ impl Decoder<'_> {
     }
 }
 
-/// A symbol whose code is longer than [`PREFIX_BITS`], the first of which lead to `node`.
-#[cold]
-fn long_symbol(node: u8, window: u64) -> Result<Prefix> {
-    let mut node = u16::from(node);
-    let mut rest = window << PREFIX_BITS;
-    let mut bits = PREFIX_BITS as u8;
-    while node < LEAF {
-        let side = usize::from(rest >> 63 != 0);
-        node = CHILDREN
-            .get(usize::from(node))
-            .and_then(|children| children.get(side))
-            .copied()
-            .ok_or(Error::Invalid)?;
-        rest <<= 1;
-        bits += 1;
+/// The codes of one length. The code is canonical: they count up, and go on in the next length.
+#[derive(Clone, Copy)]
+struct Length {
+    /// The first of them and what follows the last, both from the top of 32 bits.
+    first: u32,
+    end: u32,
+    /// Where in [`LongCodes::symbols`] theirs start.
+    symbols: u8,
+}
+
+/// The codes that are longer than [`PREFIX_BITS`], but for EOS.
+struct LongCodes {
+    lengths: [Length; (30 - PREFIX_BITS) as usize],
+    /// In the order of the codes.
+    symbols: [u8; EOS],
+}
+
+static LONG_CODES: LongCodes = build_long_codes();
+
+#[allow(clippy::indexing_slicing, reason = "evaluated at compile time")]
+const fn build_long_codes() -> LongCodes {
+    let mut length = Length {
+        first: 0,
+        end: 0,
+        symbols: 0,
+    };
+    let mut codes = LongCodes {
+        lengths: [length; (30 - PREFIX_BITS) as usize],
+        symbols: [0; EOS],
+    };
+    let mut i = 0;
+    while i < codes.lengths.len() {
+        let bits = PREFIX_BITS + 1 + i as u32;
+        length.first = length.end;
+        let mut symbol = 0;
+        let mut count = 0;
+        while symbol < EOS {
+            let (code, len) = CODES[symbol];
+            if len as u32 == bits {
+                if count == 0 {
+                    length.first = code << (32 - bits);
+                }
+                codes.symbols[length.symbols as usize + count] = symbol as u8;
+                count += 1;
+                length.end = (code + 1) << (32 - bits);
+            }
+            symbol += 1;
+        }
+        codes.lengths[i] = length;
+        length.symbols += count as u8;
+        i += 1;
     }
-    // EOS does not fit a `u8`. It is a decoding error to find it in the input.
-    let symbol = u8::try_from(node - LEAF).map_err(|_| Error::Invalid)?;
-    Ok(Prefix {
-        symbols: [symbol, 0],
-        count: 1,
-        bits,
-    })
+    codes
+}
+
+/// A symbol whose code is longer than [`PREFIX_BITS`].
+#[cold]
+fn long_symbol(window: u64) -> Result<Prefix> {
+    let code = (window >> 32) as u32;
+    for (length, bits) in LONG_CODES.lengths.iter().zip(PREFIX_BITS as u8 + 1..) {
+        if code < length.end {
+            let nth = code.checked_sub(length.first).ok_or(Error::Invalid)? >> (32 - bits);
+            let symbol = LONG_CODES
+                .symbols
+                .get(usize::from(length.symbols) + nth as usize);
+            return Ok(Prefix {
+                symbols: [*symbol.ok_or(Error::Invalid)?, 0],
+                count: 1,
+                bits,
+            });
+        }
+    }
+    // It is a decoding error to find EOS in the input.
+    Err(Error::Invalid)
 }
 
 /// Appends what `src` decodes to, at most `max_len` bytes.
@@ -380,13 +462,15 @@ pub(crate) fn decode(src: &[u8], out: &mut Vec<u8>, max_len: usize) -> Result<()
         pos: 0,
         out: out.get_mut(start..).unwrap_or_default(),
         written: 0,
+        kernel_credit: if has_hpack_huffman_kernel() { 0 } else { -1 },
     };
-    decoder.decode_most()?;
-    decoder.decode_rest()?;
+    let result = decoder.decode_most().and_then(|()| decoder.decode_rest());
     let written = decoder.written;
+    // Whatever comes after that many symbols.
     if written > max_len {
         return Err(Error::TooLarge);
     }
+    result?;
     out.truncate(start + written);
     Ok(())
 }

@@ -541,7 +541,7 @@ describe("hpackHuffmanDecodeShort", () => {
     const stopped = hw("hpackHuffmanDecodeShort", src, out.subarray(0, room));
     let count = 0;
     let bit = skipped.length;
-    while (bit < stopped) bit += codes.get(text[count++])!.length;
+    while (bit < stopped && count < text.length) bit += codes.get(text[count++])!.length;
     expect(bit, at).toBe(stopped);
     expect(Buffer.from(out.subarray(0, count)).toString(), at).toBe(text.slice(0, count));
     expect(out[room], at).toBe(0xaa);
@@ -571,11 +571,16 @@ describe("hpackHuffmanDecodeShort", () => {
   it.skipIf(!hasKernel)("leaves out a code that the input ends in the middle of", () => {
     for (let length = 0; length <= 40; length++) {
       const text = textOf(length, 3);
-      const bits = Array.from(text, symbol => codes.get(symbol)).join("").length;
+      const lengths = Array.from(text, symbol => codes.get(symbol)!.length);
+      const bits = lengths.reduce((a, b) => a + b, 0);
       // With ones after it, this would be "1", "9" or "Y".
       const rest = "0".repeat(8 - (bits % 8));
       if (rest.length > 4) continue;
-      expect(decode("", text, rest, `length=${length}`)).toBeLessThanOrEqual(length);
+      // It gives up on the block that this is in, the last 7 bytes at most.
+      let sure = 0;
+      for (let bit = 0; bit < bits + rest.length - 56; bit += lengths[sure++]);
+      const count = decode("", text, rest, `length=${length}`);
+      expect(count, `length=${length}`).toBeWithin(sure, length + 1);
     }
   });
 

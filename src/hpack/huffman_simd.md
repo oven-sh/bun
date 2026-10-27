@@ -36,10 +36,22 @@ stops there, and so does the kernel.
 ## What the kernel does not do
 
 It reports no errors. It stops before a code of more than 8 bits, before the padding, before a code
-that the input ends in the middle of, and when the output has no room for a block. `huffman.rs` goes
-on from the bit it stopped at: it decodes the long code and calls the kernel again, or checks the
-padding. So what is accepted, what is refused and with which error does not depend on the CPU, with
-one exception: a string that is both longer than allowed and malformed may be refused as either.
+that the input ends in the middle of, and when the output has no room for a block (16 bytes, of
+which it may fill fewer: the rest is overwritten with whatever the shuffle left there). `huffman.rs`
+goes on from the bit it stopped at: it decodes the long code and tries the kernel again, or checks
+the padding. So what is accepted, what is refused and with which error does not depend on the CPU.
+
+## When it is called
+
+A call costs about 15 ns before the first symbol, which pays off from about a dozen symbols on.
+`huffman.rs` does not call it
+
+- for under 5 bytes of input,
+- where a code of more than 8 bits comes next,
+- once its calls on this string have yielded under 12 symbols on average, which is what happens in
+  text that is dense in such codes, like JSON.
+
+That leaves one call wasted on such text.
 
 ## Which CPUs
 
@@ -49,44 +61,51 @@ and is not called.
 
 Without a 64-entry byte shuffle, one jump table costs more than the lookups it replaces: 4 `pshufb`
 and as many blends per 16 lanes. NEON has that shuffle (`TBL`/`TBX` with four registers), which
-Highway does not expose. It has not been tried.
+Highway has no operation for. It has not been tried.
 
 ## Numbers
 
-Xeon (Sapphire Rapids) at 2.1 GHz, compiled with `-march=nehalem` like every x64 build.
+Xeon (Sapphire Rapids) at 2.1 GHz, compiled like a release build (`-march=nehalem`, LTO). One field
+with a name from the static table and a Huffman coded value, 512 different values per row, in ns.
+"Before" is the decoder this replaced: 32 bits at a time, the same 13-bit table, long codes bit by
+bit.
 
-The whole decoder on http2jp/hpack-test-case, per field:
+| value                                    | before | scalar | kernel |
+| ---------------------------------------- | ------ | ------ | ------ |
+| 4 characters with codes of up to 8 bits  | 44     | 38     | 38     |
+| 8                                        | 56     | 50     | 36     |
+| 16                                       | 85     | 65     | 41     |
+| 32                                       | 139    | 111    | 58     |
+| 100                                      | 382    | 298    | 127    |
+| 1000                                     | 3749   | 2750   | 1034   |
+| 65, 1 in 40 with a code of 10 to 19 bits | 264    | 201    | 147    |
+| 65, 1 in 10                              | 302    | 219    | 220    |
+| 65, 1 in 2                               | 464    | 409    | 436    |
+| 30 bytes from 0x80 up                    | 1177   | 604    | 615    |
+| `gzip, deflate, br`                      | 62     | 49     | 39     |
+| `{"a":1,"b":[true,null],"c":"x"}`        | 131    | 130    | 146    |
+| the values in http2jp/hpack-test-case    | 108    | 96     | 68     |
 
-| wire                                     | scalar | kernel | ls-hpack |
-| ---------------------------------------- | ------ | ------ | -------- |
-| nghttp2's: Huffman and the dynamic table | 58 ns  | 43 ns  | 78 ns    |
-| go-hpack's: Huffman, nearly all literals | 116 ns | 79 ns  | 111 ns   |
-
-Prototypes of both on the 10,654 strings that its requests and responses send as literals, 26 bytes
-on average, per string:
-
-|                                      | scalar     | kernel     |
-| ------------------------------------ | ---------- | ---------- |
-| in a loop                            | 77 ns      | 40 ns      |
-| 8 at a time, 1 MB touched in between | 299 cycles | 155 cycles |
-| 8 at a time, 8 MB touched in between | 842 cycles | 317 cycles |
-
-The scalar decoder's table is 32 KB. The kernel's tables are 448 bytes.
+With cold caches the kernel is further ahead. Prototypes of both, 8 strings at a time with 1 MB
+touched in between: 299 cycles a string against 155. With 8 MB: 842 against 317. The scalar decoder's
+table is 32 KB, the kernel's tables are 448 bytes.
 
 ## What else was tried
 
-Measured on the same strings, against the scalar code of the time.
+On the 10,654 strings that hpack-test-case sends as literals, 26 bytes on average, per string,
+against the scalar code of the time.
 
-| what                                                   | result                                  |
-| ------------------------------------------------------ | --------------------------------------- |
-| encoded length, `pshufb` rows (SSE4)                   | 20 ns against 12.5: slower              |
-| encoded length, `vpermi2b` (AVX-512 VBMI)              | 5.3 ns against 12.5                     |
-| encoder, `pshufb` rows, lanes merged to 32 bits (SSE4) | 55 ns against 54                        |
-| encoder, the same with 64-bit lanes (AVX2)             | 45 ns                                   |
-| encoder, `vpermi2b`, 64-bit lanes (AVX-512 VBMI)       | 38 ns                                   |
-| encoder, scalar, one pass, four codes per write        | 40.5 ns: this is what `huffman.rs` does |
-| the whole crate compiled for AVX-512                   | no change, encoder or decoder           |
-| wyhash replaced by one multiplication                  | no change                               |
+| what                                                   | result                     |
+| ------------------------------------------------------ | -------------------------- |
+| encoded length, `pshufb` rows (SSE4)                   | 20 ns against 12.5: slower |
+| encoded length, `vpermi2b` (AVX-512 VBMI)              | 5.3 ns against 12.5        |
+| encoder, `pshufb` rows, lanes merged to 32 bits (SSE4) | 55 ns against 54           |
+| encoder, the same with 64-bit lanes (AVX2)             | 45 ns                      |
+| encoder, `vpermi2b`, 64-bit lanes (AVX-512 VBMI)       | 38 ns                      |
+| encoder, scalar, one pass, four codes per write        | 40.5 ns: what is used now  |
+| the whole crate compiled for AVX-512                   | no change either way       |
+| wyhash replaced by one multiplication                  | no change                  |
+| calling the kernel unless 7 ones in a row come up      | `p,` has 7 ones in a row   |
 
 The encoder's codes have to be joined bit by bit whatever finds them, and header strings are too
 short for the lookups to matter.

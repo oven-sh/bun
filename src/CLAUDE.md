@@ -189,7 +189,8 @@ of `<[u8]>::contains`, `iter().position/rposition/any(|b| b == b'x')` and
 `.split(|b| ..)` are rejected by `test/internal/source-lints/byte-search.test.ts`.
 Highway is the only SIMD in the Rust sources: both also ban `std::simd`, and the
 source lint bans the `core::arch` intrinsics. A new kernel goes in
-`src/jsc/bindings/highway_strings.cpp`, with its safe wrapper in `src/highway/lib.rs`.
+`src/jsc/bindings/highway_strings.cpp` (or a `highway_*.cpp` of its own next to it), with its safe
+wrapper in `src/highway/lib.rs`.
 
 ```rust
 use bun_core::strings;

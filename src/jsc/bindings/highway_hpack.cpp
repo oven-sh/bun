@@ -70,13 +70,14 @@ size_t HpackHuffmanDecodeShortImpl(const uint8_t* HWY_RESTRICT src, size_t src_l
 {
     using bun::hpack_huffman::kTables;
     constexpr size_t kBlockBits = 56;
+    // HPACK_HUFFMAN_SPARE_OUT in src/highway/lib.rs
     constexpr size_t kMaxSymbols = 16;
 
     const hn::FixedTag<uint8_t, 64> d;
     const hn::FixedTag<uint8_t, 16> d16;
     const hn::FixedTag<uint64_t, 8> d64;
-    const auto lookup = [d](auto table, auto index) { return hn::TableLookupLanes(table, hn::IndicesFromVec(d, index)); };
-    const auto lookup2 = [d](auto low, auto high, auto index) { return hn::TwoTablesLookupLanes(d, low, high, hn::IndicesFromVec(d, index)); };
+    const auto lookup = [d](auto table, auto index) HWY_ATTR { return hn::TableLookupLanes(table, hn::IndicesFromVec(d, index)); };
+    const auto lookup2 = [d](auto low, auto high, auto index) HWY_ATTR { return hn::TwoTablesLookupLanes(d, low, high, hn::IndicesFromVec(d, index)); };
 
     const auto offsets = hn::Iota(d, 0);
     const auto lanes = hn::Load(d, kTables.lanes);

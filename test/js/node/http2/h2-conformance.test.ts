@@ -3183,27 +3183,70 @@ describe("HPACK (RFC 7541)", () => {
     }
   });
 
-  test("values of every length survive Huffman coding", async () => {
+  // The codes of printable ASCII in RFC 7541 Appendix B. They count up, the shortest first.
+  const huffmanCodes = new Map<string, string>();
+  let nextCode = 0;
+  let nextLength = 5;
+  for (const [length, symbols] of [
+    [5, "012aceiost"],
+    [6, " %-./3456789=A_bdfghlmnpru"],
+    [7, ":BCDEFGHIJKLMNOPQRSTUVWYjkqvwxyz"],
+    [8, "&*,;XZ"],
+    [10, '!"()?'],
+    [11, "'+|"],
+    [12, "#>"],
+    [13, "\0$@[]~"],
+    [14, "^}"],
+    [15, "<`{"],
+    [19, "\\"],
+  ] as const) {
+    nextCode <<= length - nextLength;
+    nextLength = length;
+    for (const symbol of symbols) huffmanCodes.set(symbol, (nextCode++).toString(2).padStart(length, "0"));
+  }
+
+  /** HPACK string literal, Huffman coded, of under 127 bytes. */
+  function huffmanLiteral(str: string): Buffer {
+    const bits = Array.from(str, symbol => huffmanCodes.get(symbol)!).join("");
+    const bytes = bits.padEnd(Math.ceil(bits.length / 8) * 8, "1").match(/.{8}/g) ?? [];
+    return Buffer.from([0x80 | bytes.length, ...bytes.map(byte => parseInt(byte, 2))]);
+  }
+
+  // Codes of over 8 bits nowhere, here and there, and all over.
+  test.each([1000, 29, 5])("Huffman coded values of every length, 1 long code in %d", async every => {
+    const short = "012aceiost%-./3456789=A_bdfghlmnpru:BCDEFGHIJKLMNOPQRSTUVWYjkqvwxyz&*,;XZ";
+    const long = "!\"()?'+|#>$@[]~^}<`{\\";
+    const headers: Record<string, string> = {};
+    for (let length = 0; length <= 110; length++) {
+      let value = "";
+      for (let i = 0; i < length; i++) {
+        const n = i * 31 + length * 7;
+        value += n % every === every - 1 ? long[n % long.length] : short[n % short.length];
+      }
+      headers[`x-${length}`] = value;
+    }
+
     const { srv, seen, port } = await listen();
+    const c = await RawH2.connect(port);
     const client = http2.connect(`http://127.0.0.1:${port}`);
     try {
-      // Codes of 5 to 8 bits, which most text is made of, and of 10 to 19 bits.
-      const short = "012aceiost%-./3456789=A_bdfghlmnpru:BCDEFGHIJKLMNOPQRSTUVWYjkqvwxyz&*,;XZ";
-      const long = "!\"()?'+|#>$@[]~^}<`{\\";
-      for (const every of [1000, 29, 5]) {
-        const headers: Record<string, string> = {};
-        for (let length = 0; length <= 110; length++) {
-          let value = "";
-          for (let i = 0; i < length; i++) {
-            const n = i * 31 + length * 7;
-            value += n % every === every - 1 ? long[n % long.length] : short[n % short.length];
-          }
-          headers[`x-${length}`] = value;
-        }
-        await get(client, { ":path": "/", ...headers });
-        expect(seen.pop()).toMatchObject(headers);
-      }
+      // Coded here.
+      c.sendPreface();
+      c.sendEmptySettings();
+      const fields = Object.entries(headers).flatMap(([name, value]) => [
+        Buffer.from([0x00]),
+        hpackLiteral(name),
+        huffmanLiteral(value),
+      ]);
+      c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET", Buffer.concat(fields)));
+      expect((await c.waitFor(headersOrGoaway(1))).type).toBe(FrameType.HEADERS);
+      expect(seen.pop()).toMatchObject(headers);
+
+      // Coded by the client.
+      await get(client, { ":path": "/", ...headers });
+      expect(seen.pop()).toMatchObject(headers);
     } finally {
+      c.destroy();
       client.destroy();
       srv.close();
     }

@@ -265,13 +265,13 @@ describe("blob: URL of an S3File in a Worker", () => {
     "as the entry point, a %s key gives the Worker an error event and sends no request",
     async key => {
       using s3 = s3StandIn();
-      const url = URL.createObjectURL(s3.file(key));
-      const worker = new Worker(url);
+      using cleanup = new DisposableStack();
+      const url = cleanup.adopt(URL.createObjectURL(s3.file(key)), URL.revokeObjectURL);
+      const worker = cleanup.adopt(new Worker(url), worker => worker.terminate());
       const { promise, resolve } = Promise.withResolvers<Event>();
       worker.onerror = worker.onmessage = resolve;
       worker.addEventListener("close", resolve);
       const event = await promise;
-      URL.revokeObjectURL(url);
 
       // The message of the event is the printed error. Its first line has the name and the message.
       expect({ type: event.type, message: (event as ErrorEvent).message?.split("\n")[0] }).toEqual({
@@ -284,8 +284,9 @@ describe("blob: URL of an S3File in a Worker", () => {
 
   test("import() in a Worker refuses it and sends no request", async () => {
     using s3 = s3StandIn();
-    const url = URL.createObjectURL(s3.file("module.mjs"));
-    const worker = new Worker(
+    using cleanup = new DisposableStack();
+    const url = cleanup.adopt(URL.createObjectURL(s3.file("module.mjs")), URL.revokeObjectURL);
+    const script = cleanup.adopt(
       URL.createObjectURL(
         new Blob(
           [
@@ -301,16 +302,15 @@ describe("blob: URL of an S3File in a Worker", () => {
           { type: "application/javascript" },
         ),
       ),
+      URL.revokeObjectURL,
     );
+    const worker = cleanup.adopt(new Worker(script), worker => worker.terminate());
     const { promise, resolve, reject } = Promise.withResolvers<unknown>();
     worker.onmessage = event => resolve(event.data);
     worker.onerror = event => reject(new Error(event.message));
     worker.postMessage(url);
-    const outcome = await promise;
-    worker.terminate();
-    URL.revokeObjectURL(url);
 
-    expect(outcome).toEqual({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE", message: refusal(url) });
+    expect(await promise).toEqual({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE", message: refusal(url) });
     expect(await s3.requestsAfterOneRead()).toEqual(["GET /bucket/after"]);
   });
 });

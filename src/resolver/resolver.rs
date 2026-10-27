@@ -2069,7 +2069,7 @@ impl<'a> Resolver<'a> {
         rest.is_empty() || ResolvePath::is_sep_any(rest[rest.len() - 1])
     }
 
-    /// Node's `path.resolve(entry)` for a relative `paths` entry, and whether a miss there may install.
+    /// Node's `path.resolve(entry)` for a relative `paths` entry, and whether that is in the cwd.
     fn custom_dir<'b>(&self, entry: &[u8], buf: &'b mut PathBuffer) -> Option<(&'b [u8], bool)> {
         use ::bun_paths::resolve_path::{ParentEqual, is_parent_or_equal};
         let cwd = self.fs_ref().top_level_dir();
@@ -2092,7 +2092,6 @@ impl<'a> Resolver<'a> {
                 .map_or(root_len, |separator| separator.max(root_len));
             return Some((&path[..cut], false));
         }
-        // A miss outside the cwd says nothing about the project, so it installs nothing.
         let in_cwd = is_parent_or_equal(cwd, path) != ParentEqual::Unrelated;
         Some((path, in_cwd))
     }
@@ -2107,27 +2106,33 @@ impl<'a> Resolver<'a> {
         kind: ast::ImportKind,
         global_cache: GlobalCache,
     ) -> ResultUnion {
+        let mut entry_in_cwd = false;
         for custom_path in custom_paths {
             let custom_utf8 = custom_path.to_utf8();
             let entry = custom_utf8.slice();
-            let mut buf;
-            let (dir, cache) = if bun_paths::is_absolute(entry) {
-                (entry, global_cache)
+            let result = if bun_paths::is_absolute(entry) {
+                self.check_package_path(entry, import_path, kind, global_cache)
             } else {
-                buf = bun_paths::path_buffer_pool::get();
-                match self.custom_dir(entry, &mut buf) {
-                    Some((dir, true)) => (dir, global_cache),
-                    // `force` never reads node_modules, so it has no search that installs nothing.
-                    Some((dir, false)) if global_cache != GlobalCache::force => {
-                        (dir, GlobalCache::disable)
-                    }
-                    _ => continue,
+                let mut buf = bun_paths::path_buffer_pool::get();
+                let Some((dir, in_cwd)) = self.custom_dir(entry, &mut buf) else {
+                    continue;
+                };
+                entry_in_cwd |= in_cwd;
+                // A relative entry installs nothing, and a search under `force` always ends in an install.
+                if global_cache == GlobalCache::force {
+                    continue;
                 }
+                self.check_package_path(dir, import_path, kind, GlobalCache::disable)
             };
-            match self.check_package_path(dir, import_path, kind, cache) {
+            match result {
                 ResultUnion::NotFound => {}
                 found => return found,
             }
+        }
+        // Every entry missed. A relative entry installs only through this search, from the project of the cwd.
+        if entry_in_cwd {
+            let cwd = self.fs_ref().top_level_dir();
+            return self.check_package_path(cwd, import_path, kind, global_cache);
         }
         ResultUnion::NotFound
     }
@@ -2287,6 +2292,7 @@ impl<'a> Resolver<'a> {
         kind: ast::ImportKind,
         global_cache: GlobalCache,
     ) -> ResultUnion {
+        debug_assert!(bun_paths::is_absolute(source_dir));
         let mut import_path = unremapped_import_path;
         let mut source_dir_info: DirInfoRef = match self.dir_info_cached(source_dir) {
             Err(_) => return ResultUnion::NotFound,

@@ -243,6 +243,38 @@ test("Module._resolveFilename reads options.paths one entry at a time for a rela
   }
 });
 
+test("a non-string options.paths entry throws the error of path.resolve(entry)", () => {
+  const { path: dir, cleanup } = createTempDir("module-resolve-paths-entry-type", {
+    "node_modules/resolve-test-pkg/index.js": "",
+    "target.js": "",
+  });
+
+  try {
+    const fakeParent = new Module(join(dir, "file.js"));
+    fakeParent.filename = join(dir, "file.js");
+    fakeParent.paths = Module._nodeModulePaths(dir);
+    const errorOf = resolveIt => {
+      try {
+        return resolveIt();
+      } catch (error) {
+        return `${error.code}: ${error.message}`;
+      }
+    };
+    // The entry is the one argument of path.resolve(), so Node names it "paths[0]" at every index.
+    const invalid = received =>
+      `ERR_INVALID_ARG_TYPE: The "paths[0]" argument must be of type string. Received ${received}`;
+    expect([
+      errorOf(() => Module._resolveFilename("resolve-test-pkg", fakeParent, false, { paths: [dir, null] })),
+      errorOf(() => require.resolve("resolve-test-pkg", { paths: [dir, null] })),
+      // The request can be an object that converts to a string, or an absolute path.
+      errorOf(() => Module._resolveFilename(new String("resolve-test-pkg"), fakeParent, false, { paths: [0] })),
+      errorOf(() => Module._resolveFilename(join(dir, "target.js"), fakeParent, false, { paths: [dir, dir, 5] })),
+    ]).toEqual([invalid("null"), invalid("null"), invalid("type number (0)"), invalid("type number (5)")]);
+  } finally {
+    cleanup();
+  }
+});
+
 // Node turns each `options.paths` entry into a directory with path.resolve(), so a relative entry
 // is relative to process.cwd() and not to the calling file. The probe is in `sub/` and runs with
 // the fixture root as the cwd, in a child process so that the resolver starts with empty caches.
@@ -335,10 +367,13 @@ function resolveRowsInChild(order) {
     ["./file.js", ["plugins"], file],
     ["./file.js", ["nowhere"], missing],
     ["../plugins/file.js", ["nowhere"], file],
-    // A builtin id is resolved before `paths` is read. Any other bare request needs strings.
+    // A builtin id is resolved before `paths` is read. Any other request that is not relative
+    // needs strings, also an absolute one, which does not use the entries.
     ["node:fs", [0], "node:fs"],
     ["plugroot", [0], "ERR_INVALID_ARG_TYPE"],
     ["plugroot", [".", null], "ERR_INVALID_ARG_TYPE"],
+    [join(dir, "plugins", "file.js"), ["nowhere"], file],
+    [join(dir, "plugins", "file.js"), [0], "ERR_INVALID_ARG_TYPE"],
   ];
   if (isWindows) {
     rows.push(["plug", ["plugins\\"], plug], ["plug", [".\\plugins"], plug]);
@@ -404,27 +439,43 @@ test("options.paths entries resolve the same in the reverse call order", () => {
 });
 
 if (isBun) {
-  // Runs `source` with `a/b/project` as the cwd. No directory from there up to the root has a
-  // node_modules directory, so Bun's auto-install is on. `a/b/modules` has one, so it is off there.
-  // The registry answers 404 and records each request.
-  async function runInProject(args, source) {
+  // Runs `source` as `index.cjs` of the directory `cwd` in the tree `files`. No directory from the
+  // temporary root up has a node_modules directory, so Bun's auto-install is on where the tree has
+  // none. The registry records each request. It serves test/cli/install/registry/packages when
+  // `packages` is true (no-deps has 2.0.0 as its latest version), and answers 404 when not.
+  async function runInProject({ args = [], cwd, files, packages = false, source }) {
+    const fixtures = join(import.meta.dir, "..", "..", "..", "cli", "install", "registry", "packages");
     const requests = [];
     const registry = Bun.serve({
       port: 0,
-      fetch(request) {
-        requests.push(new URL(request.url).pathname);
+      async fetch(request) {
+        const { pathname } = new URL(request.url);
+        requests.push(pathname);
+        const tarball = pathname.match(/^\/([a-z\d-]+)\/-\/(\1-[a-z\d.-]+\.tgz)$/);
+        if (packages && tarball) return new Response(Bun.file(join(fixtures, tarball[1], tarball[2])));
+        const manifest = Bun.file(join(fixtures, pathname.slice(1), "package.json"));
+        if (packages && /^\/[a-z\d-]+$/.test(pathname) && (await manifest.exists())) {
+          return new Response((await manifest.text()).replaceAll("http://localhost:4873/", url), {
+            headers: { "content-type": "application/json" },
+          });
+        }
         return new Response("not found", { status: 404 });
       },
     });
+    const url = `http://127.0.0.1:${registry.port}/`;
     try {
       const { path: dir, cleanup } = createTempDir("resolve-paths-install", {
-        "a/b/project/plugins/node_modules/no-deps/index.js": "",
-        "a/b/modules/node_modules/local-dep/index.js": "",
-        "a/b/project/index.cjs": `
+        ...files,
+        [cwd + "/index.cjs"]: `
           const path = require("node:path");
+          const shown = file => {
+            const fromCache = path.relative(process.env.BUN_INSTALL_CACHE_DIR, file);
+            const shownFile = fromCache.startsWith("..") ? path.relative(process.cwd(), file) : "<cache>/" + fromCache;
+            return shownFile.split(path.sep).join("/");
+          };
           const resolve = (request, paths) => {
             try {
-              return path.relative(process.cwd(), require.resolve(request, { paths })).split(path.sep).join("/");
+              return shown(require.resolve(request, { paths }));
             } catch (error) {
               return error.code;
             }
@@ -435,13 +486,13 @@ if (isBun) {
       try {
         const proc = Bun.spawn({
           cmd: [childExe, ...args, "index.cjs"],
-          cwd: join(dir, "a", "b", "project"),
-          env: { ...childEnv, BUN_CONFIG_REGISTRY: registry.url.href, BUN_INSTALL_CACHE_DIR: join(dir, "cache") },
+          cwd: join(dir, cwd),
+          env: { ...childEnv, BUN_CONFIG_REGISTRY: url, BUN_INSTALL_CACHE_DIR: join(dir, "cache") },
           stdout: "pipe",
           stderr: "pipe",
         });
         const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-        return { stdout, stderr, exitCode, requests };
+        return { stdout: stdout.trim().split("\n"), stderr, exitCode, requests };
       } finally {
         cleanup();
       }
@@ -450,55 +501,130 @@ if (isBun) {
     }
   }
 
-  test("options.paths: only a relative entry in the cwd installs a package", async () => {
-    const isPosix = process.platform !== "win32";
-    const result = await runInProject(
-      [],
-      `
-        // "../.." misses and is outside the cwd. "./plugins" has the package.
+  const isPosix = process.platform !== "win32";
+  // `project` has no node_modules directory up to the root. `modules` has one.
+  const projects = {
+    "a/b/project/plugins/node_modules/no-deps/index.js": "module.exports = 'on disk';",
+    "a/b/project/sub/file.js": "",
+    "a/b/modules/node_modules/local-dep/index.js": "",
+  };
+
+  test("options.paths: a relative entry installs nothing, and a miss at one in the cwd installs from the cwd", async () => {
+    const result = await runInProject({
+      cwd: "a/b/project",
+      files: projects,
+      source: `
+        // "../.." is outside the cwd and misses. "./plugins" has the package.
         console.log(resolve("no-deps", ["../..", "./plugins"]));
-        // On POSIX "plugins\\\\" names a directory that does not exist, and the search goes on above it.
-        if (${isPosix}) console.log(resolve("no-deps-2", ["plugins\\\\"]), resolve("no-deps-2", ["plugins\\\\", "plugins"]));
-        // A project with a node_modules directory looks for an optional package that is absent.
+        // An entry outside the cwd is searched, also when the directory does not exist.
+        console.log(resolve("local-dep", ["../modules"]), resolve("local-dep", ["../modules/nowhere"]));
+        console.log(resolve("no-deps-1", [".."]), resolve("no-deps-1", ["../project-2"]));
+        // On POSIX a backslash is a file name character: no such directory, and the search goes on above it.
+        if (${isPosix}) console.log(resolve("no-deps", ["plugins/a\\\\b"]), resolve("no-deps-2", ["plugins\\\\"]));
+        // The second argument of require() is Bun's own. It takes the same entries.
+        console.log(require("no-deps", { paths: ["plugins"] }));
+        // A project with a node_modules directory does not install.
         process.chdir("../modules");
-        console.log(resolve("local-dep", ["."]), resolve("no-deps-3", ["../..", "."]));
-        // "../project-2" is next to the cwd, not in it.
+        console.log(resolve("no-deps-3", ["../..", "."]));
+        // Without one, a miss at an entry in the cwd installs from the cwd, as the absolute cwd does.
         process.chdir("../project");
-        console.log(resolve("no-deps-4", ["../project-2"]));
-        // An entry in the cwd is the same as its absolute form.
-        console.log(resolve("no-deps-5", ["."]), resolve("no-deps-6", [process.cwd()]));
+        console.log(resolve("no-deps-4", ["."]), resolve("no-deps-5", [process.cwd()]));
+        console.log(resolve("no-deps-6", ["sub"]), resolve("no-deps-7", ["./sub", "../.."]));
       `,
-    );
+    });
+    const missing = "MODULE_NOT_FOUND";
     expect(result).toEqual({
-      stdout:
-        "plugins/node_modules/no-deps/index.js\n" +
-        (isPosix ? "MODULE_NOT_FOUND MODULE_NOT_FOUND\n" : "") +
-        "node_modules/local-dep/index.js MODULE_NOT_FOUND\n" +
-        "MODULE_NOT_FOUND\n" +
-        "MODULE_NOT_FOUND MODULE_NOT_FOUND\n",
+      stdout: [
+        "plugins/node_modules/no-deps/index.js",
+        "../modules/node_modules/local-dep/index.js ../modules/node_modules/local-dep/index.js",
+        `${missing} ${missing}`,
+        ...(isPosix ? [`plugins/node_modules/no-deps/index.js ${missing}`] : []),
+        "on disk",
+        missing,
+        `${missing} ${missing}`,
+        `${missing} ${missing}`,
+      ],
       stderr: "",
       exitCode: 0,
-      requests: ["/no-deps-5", "/no-deps-6"],
+      requests: ["/no-deps-4", "/no-deps-5", "/no-deps-6", "/no-deps-7"],
+    });
+  });
+
+  test("options.paths: a package on disk under any entry wins over the registry", async () => {
+    const result = await runInProject({
+      cwd: "a/b/project",
+      files: {
+        ...projects,
+        // https://github.com/oven-sh/bun/issues/19419: nest-typed-config loads two of the project's
+        // dependencies in this way, from its own file in node_modules.
+        "a/b/modules/node_modules/typed-config/index.js": `module.exports = require.resolve("no-deps", { paths: ["../..", "."] });`,
+        "a/b/modules/node_modules/no-deps/index.js": "",
+      },
+      packages: true,
+      source: `
+        // The registry has no-deps too. Each list has it on disk.
+        console.log(resolve("no-deps", ["nowhere", "plugins"]), resolve("no-deps", ["./nowhere", "./plugins"]));
+        console.log(resolve("no-deps", [".", "plugins"]), resolve("no-deps", ["./plugins", "."]));
+        process.chdir("../modules");
+        console.log(shown(require(path.resolve("node_modules/typed-config"))));
+        // No entry has it: the cwd installs it, once.
+        process.chdir("../project");
+        console.log(resolve("no-deps", ["nowhere"]), resolve("no-deps", ["sub", "../.."]));
+      `,
+    });
+    const onDisk = "plugins/node_modules/no-deps/index.js";
+    expect(result).toEqual({
+      stdout: [`${onDisk} ${onDisk}`, `${onDisk} ${onDisk}`, "node_modules/no-deps/index.js", expect.any(String)],
+      stderr: "",
+      exitCode: 0,
+      requests: ["/no-deps", "/no-deps/-/no-deps-2.0.0.tgz"],
+    });
+    const [first, second] = result.stdout[3].split(" ");
+    expect({ first: first.startsWith("<cache>/no-deps@2.0.0"), second }).toEqual({ first: true, second: first });
+  });
+
+  test("options.paths: the project of the cwd decides whether a miss installs", async () => {
+    const result = await runInProject({
+      cwd: "root/app",
+      files: {
+        // The scanner turns auto-install off for the project "root". "sub" is a project of its own.
+        "root/bunfig.toml": `[install.security]\nscanner = "./scanner.ts"\n`,
+        "root/package.json": JSON.stringify({ name: "root" }),
+        "root/app/sub/package.json": JSON.stringify({ name: "nested" }),
+        "root/app/conf/file.js": "",
+        "tool/node_modules/no-deps/index.js": "",
+      },
+      source: `
+        console.log(resolve("no-deps-1", ["./sub"]), resolve("no-deps-2", ["sub"]));
+        // The refusal to install does not hide the package that the next entry has.
+        console.log(resolve("no-deps", ["conf", path.resolve("../../tool")]));
+      `,
+    });
+    expect(result).toEqual({
+      stdout: ["MODULE_NOT_FOUND MODULE_NOT_FOUND", "../../tool/node_modules/no-deps/index.js"],
+      stderr: "",
+      exitCode: 0,
+      requests: [],
     });
   });
 
   test("options.paths: --install=force does not read the node_modules of an entry", async () => {
-    const result = await runInProject(
-      ["--install=force"],
-      `
-        console.log(resolve("no-deps", ["./plugins"]));
-        console.log(resolve("no-deps", ["./plugins", "."]));
+    const result = await runInProject({
+      args: ["--install=force"],
+      cwd: "a/b/project",
+      files: projects,
+      source: `
+        // The registry has neither package, so the calls miss. plugins/node_modules has no-deps.
+        console.log(resolve("no-deps", ["./plugins"]), resolve("no-deps-1", ["plugins", "."]));
+        // "../modules" is outside the cwd: it installs nothing, and this mode has no other search.
         console.log(resolve("local-dep", ["../modules"]));
       `,
-    );
-    // The registry has no such package, so the calls miss. A read of plugins/node_modules or of
-    // ../modules/node_modules would find the local copy. "../modules" is outside the cwd, so it
-    // installs nothing.
+    });
     expect(result).toEqual({
-      stdout: "MODULE_NOT_FOUND\nMODULE_NOT_FOUND\nMODULE_NOT_FOUND\n",
+      stdout: ["MODULE_NOT_FOUND MODULE_NOT_FOUND", "MODULE_NOT_FOUND"],
       stderr: "",
       exitCode: 0,
-      requests: ["/no-deps"],
+      requests: ["/no-deps", "/no-deps-1"],
     });
   });
 }

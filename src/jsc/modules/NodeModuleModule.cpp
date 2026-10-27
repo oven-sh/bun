@@ -355,13 +355,17 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
 
         // Like Node: a builtin id wins before `paths` is read; any other non-relative request needs string entries.
         bool entriesMustBeStrings = false;
-        if (!pathsValue.isUndefinedOrNull() && moduleName.isString()) {
+        if (!pathsValue.isUndefinedOrNull()) {
+            bool isPrimitive = moduleName.isString();
             auto request = moduleName.toWTFString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
-            if (Bun::isBuiltinModule(request))
+            if (isPrimitive && Bun::isBuiltinModule(request)) {
                 pathsValue = JSC::jsUndefined();
-            else
+            } else {
                 entriesMustBeStrings = !isRelativeRequest(request);
+                if (!isPrimitive)
+                    moduleName = JSC::jsString(vm, request);
+            }
         }
 
         // If paths are provided, use Bun__resolveSyncWithPaths
@@ -377,18 +381,17 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionResolveFileName,
             }
 
             WTF::Vector<BunString> paths;
-            size_t index = 0;
 
             // Iterate through the array using forEachInIterable
             forEachInIterable(globalObject, pathsValue, [&](JSC::VM&, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue item) {
                 if (scope.exception())
                     return;
 
+                // Node's name is the argument of path.resolve(entry), "paths[0]" for every entry: https://github.com/nodejs/node/blob/v26.3.0/lib/path.js#L1257
                 if (entriesMustBeStrings && !item.isString()) {
-                    Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, makeString("paths["_s, index, "]"_s), "string"_s, item);
+                    Bun::ERR::INVALID_ARG_TYPE(scope, lexicalGlobalObject, "paths[0]"_s, "string"_s, item);
                     return;
                 }
-                index++;
 
                 WTF::String pathStr = item.toWTFString(lexicalGlobalObject);
                 if (scope.exception())

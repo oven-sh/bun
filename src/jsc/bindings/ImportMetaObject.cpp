@@ -295,8 +295,9 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSyncPrivate(JSC::JSGlo
                     JSValue path = userPathListArray->getIndex(globalObject, i);
                     if (scope.exception()) [[unlikely]]
                         goto cleanup;
+                    // Node's name is the argument of path.resolve(entry), "paths[0]" for every entry: https://github.com/nodejs/node/blob/v26.3.0/lib/path.js#L1257
                     if (!path.isString()) {
-                        Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, makeString("paths["_s, i, "]"_s), "string"_s, path);
+                        Bun::ERR::INVALID_ARG_TYPE(scope, globalObject, "paths[0]"_s, "string"_s, path);
                         goto cleanup;
                     }
                     WTF::String pathStr = path.toWTFString(globalObject);

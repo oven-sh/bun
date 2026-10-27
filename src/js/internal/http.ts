@@ -66,6 +66,7 @@ const http1ServerPipeline: {
   maybePauseFallbackReads?: (socket: unknown) => void;
   resumeFallbackReadsOnDrain?: (socket: unknown) => void;
   finishDrainedResponse?: (res: unknown) => void;
+  runWhereWriteWaited?: <Arg>(res: unknown, fn: (res: unknown, arg: Arg) => void, arg: Arg) => void;
   kMustCloseConnection?: symbol;
 } = {};
 

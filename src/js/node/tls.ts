@@ -802,10 +802,16 @@ TLSSocket.prototype._start = function _start() {
   // Node sends the ClientHello of a constructor wrap here (the mysql driver calls it). Ours went out in the constructor.
 };
 
+// A `_final` that waited for the handshake runs in the async context it was called in, as Node's shutdown request does.
+function finalInFrame(callback, frame) {
+  if (frame === $getInternalField($asyncContext, 0)) return NetSocket.prototype._final.$call(this, callback);
+  return require("internal/async_context_frame").runInSameGraph(frame, NetSocket.prototype._final, this, callback);
+}
+
 TLSSocket.prototype._final = function _final(callback) {
   // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1119-L1133
   if (this.secureConnecting && this[kPreHandshakeWrite]) {
-    return this.once(kSecureConnectDone, NetSocket.prototype._final.bind(this, callback));
+    return this.once(kSecureConnectDone, finalInFrame.bind(this, callback, $getInternalField($asyncContext, 0)));
   }
   // https://github.com/nodejs/node/blob/v26.3.0/src/crypto/crypto_tls.cc#L1203-L1213
   return NetSocket.prototype._final.$call(this, callback);

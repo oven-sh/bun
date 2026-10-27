@@ -247,6 +247,7 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   fillBuffer: $bindgen("bindgen_test.bind.ts", "fillBuffer"),
   stringOrObjectEcho: $bindgen("bindgen_test.bind.ts", "stringOrObjectEcho"),
   stringViewEcho: $bindgen("bindgen_test.bind.ts", "stringViewEcho"),
+  stringViewCloneOutlivesBytes: $bindgen("bindgen_test.bind.ts", "stringViewCloneOutlivesBytes"),
   stringOrObjectViewEcho: $bindgen("bindgen_test.bind.ts", "stringOrObjectViewEcho"),
   sumBeforeAndAfterCallback: $bindgen("bindgen_test.bind.ts", "sumBeforeAndAfterCallback"),
   callOr: $bindgen("bindgen_test.bind.ts", "callOr"),

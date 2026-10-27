@@ -1241,23 +1241,19 @@ impl<'a> Resolver<'a> {
 
     // var tracing_start: i128 — unused; dropped.
 
-    pub fn resolve_and_auto_install(
+    pub fn resolve_and_auto_install<'r>(
         &mut self,
         source_dir: &[u8],
-        import_path: &[u8],
+        import_path: &'r [u8],
         kind: ast::ImportKind,
         global_cache: GlobalCache,
-    ) -> ResultUnion {
-        // SAFETY: `import_path` is caller-interned (source text / DirnameStore)
-        // and outlives the returned Result.
-        // TODO: thread an explicit lifetime through Result instead.
-        let import_path: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(import_path) };
+    ) -> ResultUnion<'r> {
         let _tracer = ::bun_perf::trace(::bun_perf::PerfEvent::ModuleResolverResolve);
 
         // Only setting 'current_action' in debug mode because module resolution
         // is done very often, and has a very low crash rate.
         #[cfg(debug_assertions)]
-        let _crash_guard = ::bun_crash_handler::set_current_action_resolver();
+        ::bun_crash_handler::scoped_action!(::bun_crash_handler::Action::Resolver);
 
         #[cfg(debug_assertions)]
         if bun_core::debug_flags::has_resolve_breakpoint(import_path) {
@@ -1349,7 +1345,7 @@ impl<'a> Resolver<'a> {
                 return ResultUnion::Success(Result {
                     import_kind: kind,
                     path_pair: PathPair {
-                        primary: Path::init(import_path),
+                        primary: Fs::Path::init(import_path),
                         secondary: None,
                     },
                     module_type: options::ModuleType::Cjs,
@@ -1417,7 +1413,7 @@ impl<'a> Resolver<'a> {
             return ResultUnion::Success(Result {
                 import_kind: kind,
                 path_pair: PathPair {
-                    primary: Path::init(import_path),
+                    primary: Fs::Path::init(import_path),
                     secondary: None,
                 },
                 module_type: if !kind.is_from_css() {
@@ -1444,7 +1440,7 @@ impl<'a> Resolver<'a> {
                     return ResultUnion::Success(Result {
                         import_kind: kind,
                         path_pair: PathPair {
-                            primary: Path::init(import_path),
+                            primary: Fs::Path::init(import_path),
                             secondary: None,
                         },
                         module_type: options::ModuleType::Unknown,
@@ -1472,7 +1468,7 @@ impl<'a> Resolver<'a> {
                     self.extension_order = original_order;
                     return ResultUnion::Success(Result {
                         path_pair: PathPair {
-                            primary: Path::init_with_namespace(import_path, b"dataurl"),
+                            primary: Fs::Path::init_with_namespace(import_path, b"dataurl"),
                             secondary: None,
                         },
                         ..Default::default()
@@ -1488,7 +1484,7 @@ impl<'a> Resolver<'a> {
                 self.extension_order = original_order;
                 return ResultUnion::Success(Result {
                     path_pair: PathPair {
-                        primary: Path::init_with_namespace(import_path, b"dataurl"),
+                        primary: Fs::Path::init_with_namespace(import_path, b"dataurl"),
                         secondary: None,
                     },
                     flags: ResultFlags::IS_EXTERNAL,
@@ -1691,12 +1687,12 @@ impl<'a> Resolver<'a> {
         ret
     }
 
-    pub fn resolve(
+    pub fn resolve<'r>(
         &mut self,
         source_dir: &[u8],
-        import_path: &[u8],
+        import_path: &'r [u8],
         kind: ast::ImportKind,
-    ) -> crate::CrateResult<Result> {
+    ) -> crate::CrateResult<Result<'r>> {
         match self.resolve_and_auto_install(source_dir, import_path, kind, GlobalCache::disable) {
             ResultUnion::Success(result) => Ok(result),
             ResultUnion::Pending(_) | ResultUnion::NotFound => Err(crate::Error::ModuleNotFound),
@@ -1706,15 +1702,12 @@ impl<'a> Resolver<'a> {
 
     /// Runs a resolution but also checking if a Bun Bake framework has an
     /// override. This is used in one place in the bundler.
-    pub fn resolve_with_framework(
+    pub fn resolve_with_framework<'r>(
         &mut self,
         source_dir: &[u8],
-        import_path: &[u8],
+        import_path: &'r [u8],
         kind: ast::ImportKind,
-    ) -> crate::CrateResult<Result> {
-        // SAFETY: `import_path` is caller-interned (source text / DirnameStore)
-        // and outlives the returned Result. TODO: thread an explicit lifetime.
-        let import_path: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(import_path) };
+    ) -> crate::CrateResult<Result<'r>> {
         if let Some(f) = self.opts.framework.as_ref() {
             if let Some(mod_) = f.built_in_modules.get(import_path) {
                 match mod_ {
@@ -2023,13 +2016,13 @@ impl<'a> Resolver<'a> {
         stale || stale_config || found
     }
 
-    pub(crate) fn resolve_without_symlinks(
+    pub(crate) fn resolve_without_symlinks<'r>(
         &mut self,
         source_dir: &[u8],
-        input_import_path: &'static [u8],
+        input_import_path: &'r [u8],
         kind: ast::ImportKind,
         global_cache: GlobalCache,
-    ) -> ResultUnion {
+    ) -> ResultUnion<'r> {
         debug_assert!(bun_paths::is_absolute(source_dir));
 
         let mut import_path = input_import_path;
@@ -2123,7 +2116,7 @@ impl<'a> Resolver<'a> {
 
                 return ResultUnion::Success(Result {
                     path_pair: PathPair {
-                        primary: Path::init(import_path),
+                        primary: Fs::Path::init(import_path),
                         secondary: None,
                     },
                     flags: ResultFlags::IS_EXTERNAL,
@@ -2195,7 +2188,7 @@ impl<'a> Resolver<'a> {
         if check_package {
             if self.opts.polyfill_node_globals {
                 let had_node_prefix = import_path.starts_with(b"node:");
-                let import_path_without_node_prefix: &'static [u8] = if had_node_prefix {
+                let import_path_without_node_prefix: &[u8] = if had_node_prefix {
                     &import_path[b"node:".len()..]
                 } else {
                     import_path
@@ -2288,7 +2281,7 @@ impl<'a> Resolver<'a> {
                         }
                         return ResultUnion::Success(Result {
                             path_pair: PathPair {
-                                primary: Path::init(query),
+                                primary: Fs::Path::init(query),
                                 secondary: None,
                             },
                             flags: ResultFlags::IS_EXTERNAL,
@@ -2359,7 +2352,7 @@ impl<'a> Resolver<'a> {
         import_path: &[u8],
         kind: ast::ImportKind,
         global_cache: GlobalCache,
-    ) -> ResultUnion {
+    ) -> ResultUnion<'static> {
         let Some(abs_path) = self
             .fs_ref()
             .abs_buf_checked(&[source_dir, import_path], bufs!(relative_abs_path))
@@ -2501,13 +2494,13 @@ impl<'a> Resolver<'a> {
         ret
     }
 
-    pub(crate) fn check_package_path(
+    pub(crate) fn check_package_path<'r>(
         &mut self,
         source_dir: &[u8],
-        unremapped_import_path: &'static [u8],
+        unremapped_import_path: &'r [u8],
         kind: ast::ImportKind,
         global_cache: GlobalCache,
-    ) -> ResultUnion {
+    ) -> ResultUnion<'r> {
         let mut import_path = unremapped_import_path;
         let mut source_dir_info: DirInfoRef = match self.dir_info_cached(source_dir) {
             Err(_) => return ResultUnion::NotFound,
@@ -2594,7 +2587,7 @@ impl<'a> Resolver<'a> {
                                 // "browser": {"module": false}
                                 // the module doesn't exist and it's disabled
                                 // so we should just not try to load it
-                                let mut primary = Path::init(import_path);
+                                let mut primary = Fs::Path::init(import_path);
                                 primary.is_disabled = true;
                                 return ResultUnion::Success(Result {
                                     path_pair: PathPair {

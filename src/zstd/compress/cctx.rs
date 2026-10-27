@@ -19,9 +19,9 @@ use super::internal::{
 };
 use super::literals::min_literals_to_compress;
 use super::params::{
-    CCtxParams, CParamMode, Format, MatchStateSizes, adjust_c_params_internal,
-    allocate_chain_table, cdict_indices_are_tagged, compress_bound, cycle_log,
-    get_c_params_from_cctx_params, max_nb_seq, resolve_row_match_finder_mode,
+    CCtxParams, CParamMode, Format, MatchStateSizes, Workspace, WorkspaceNeeds,
+    adjust_c_params_internal, allocate_chain_table, cdict_indices_are_tagged, compress_bound,
+    cycle_log, get_c_params_from_cctx_params, max_nb_seq, resolve_row_match_finder_mode,
     row_match_finder_used,
 };
 use super::superblock::compress_super_block;
@@ -295,7 +295,7 @@ fn overflow_correct_if_needed(ms: &mut MatchState, params: &CCtxParams, ip: usiz
         let correction = ms.window.correct_overflow(cycle_log, max_dist, ip);
         reduce_index(ms, params, correction);
         ms.next_to_update = ms.next_to_update.saturating_sub(correction);
-        // The dictionary is out of reach by now.
+        // Even if the dictionary is still within the window.
         ms.loaded_dict_end = 0;
         ms.has_dict_match_state = false;
     }
@@ -810,6 +810,8 @@ pub(crate) struct FrameCompressor {
     pub(crate) applied_params: CCtxParams,
     pub(crate) dict_id: u32,
     pub(crate) dict_content_size: usize,
+    /// `None` for a worker, see [`Self::for_worker`].
+    workspace: Option<Workspace>,
     /// For how many frames in a row the tables have been much larger than it takes.
     oversized_duration: usize,
     pub(crate) block_size_max: usize,
@@ -857,6 +859,7 @@ impl FrameCompressor {
             applied_params: CCtxParams::new(0),
             dict_id: 0,
             dict_content_size: 0,
+            workspace: Some(Workspace::new()),
             oversized_duration: 0,
             block_size_max: 0,
             pledged_src_size_plus_one: 0,
@@ -875,6 +878,15 @@ impl FrameCompressor {
         }
     }
 
+    /// For the jobs of one worker. Which context a job goes to is a matter of timing in the C code, so what its contexts
+    /// have been through cannot show in the output.
+    pub(crate) fn for_worker() -> Self {
+        Self {
+            workspace: None,
+            ..Self::new()
+        }
+    }
+
     /// `ZSTD_resetCCtx_internal`
     fn reset_internal(
         &mut self,
@@ -884,6 +896,8 @@ impl FrameCompressor {
         crp: CompResetPolicy,
         buffered: bool,
     ) -> Result<BufferSizes> {
+        // Until this is through: if it fails, the next frame starts from nothing.
+        let initialized = core::mem::take(&mut self.initialized);
         self.is_first_block = true;
         self.applied_params = *params;
         if self.applied_params.ldm_params.enable_ldm == ParamSwitch::Enable {
@@ -912,8 +926,22 @@ impl FrameCompressor {
 
         let index_too_close = index_too_close_to_max(&self.match_state.window);
         let dict_too_big = loaded_dict_size > ZSTD_CHUNKSIZE_MAX as usize;
-        // Whether indices go on or start again does not show: what the tables hold from before is too low to be valid.
-        let needs_index_reset = if index_too_close || dict_too_big || !self.initialized {
+        // Where indices start shows in where they get to the limit, which is where a dictionary is let go of.
+        let new_workspace = self.workspace.as_mut().is_some_and(|workspace| {
+            if !initialized {
+                *workspace = Workspace::new();
+            }
+            workspace.reset(&WorkspaceNeeds {
+                c_params: &params.c_params,
+                ldm_params: &params.ldm_params,
+                use_row_match_finder: params.use_row_match_finder,
+                buff_in_size: sizes.buff_in_size,
+                buff_out_size: sizes.buff_out_size,
+                block_size,
+            })
+        });
+        let needs_index_reset = if index_too_close || dict_too_big || !initialized || new_workspace
+        {
             IndexResetPolicy::Reset
         } else {
             IndexResetPolicy::Continue

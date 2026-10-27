@@ -3,13 +3,15 @@
 use core::ops::RangeInclusive;
 
 use super::internal::{
-    CompressionParameters, LdmParams, ParamSwitch, Strategy, ZSTD_SHORT_CACHE_TAG_BITS,
+    CompressionParameters, LdmParams, ParamSwitch, Strategy, ZSTD_OPT_SIZE,
+    ZSTD_SHORT_CACHE_TAG_BITS,
 };
 use super::lazy::ZSTD_ROW_HASH_TAG_BITS;
-use super::row_match_finder_supported;
+use super::{ldm, row_match_finder_supported};
 use crate::common::{
-    ZSTD_BLOCKSIZE_MAX, ZSTD_CONTENTSIZE_UNKNOWN, ZSTD_WINDOWLOG_ABSOLUTEMIN,
-    ZSTD_WINDOWLOG_LIMIT_DEFAULT, ZSTD_WINDOWLOG_MAX,
+    LITBITS, MAX_LL, MAX_ML, MAX_OFF, WILDCOPY_OVERLENGTH, ZSTD_BLOCKSIZE_MAX,
+    ZSTD_CONTENTSIZE_UNKNOWN, ZSTD_WINDOWLOG_ABSOLUTEMIN, ZSTD_WINDOWLOG_LIMIT_DEFAULT,
+    ZSTD_WINDOWLOG_MAX, ZSTD_WORKSPACETOOLARGE_FACTOR, ZSTD_WORKSPACETOOLARGE_MAXDURATION,
 };
 use crate::error::{ErrorCode, Result};
 use crate::util::highbit32;
@@ -620,6 +622,25 @@ pub const fn compress_bound(src_size: usize) -> usize {
     src_size + (src_size >> 8) + margin
 }
 
+// ── the size of the workspace ────────────────────────────────────────────────
+//
+// The C code carves all the tables and buffers of a context out of one allocation. A context only goes on counting
+// indexes from where the previous frame left them as long as that allocation is kept, so this keeps its books.
+
+const SIZEOF_COMPRESSED_BLOCK_STATE: usize = 5632;
+const TMP_WORKSPACE_SIZE: usize = 8920;
+const SIZEOF_SEQ_DEF: usize = 8;
+const SIZEOF_MATCH: usize = 8;
+const SIZEOF_OPTIMAL: usize = 28;
+const SIZEOF_RAW_SEQ: usize = 12;
+const SIZEOF_LDM_ENTRY: usize = 8;
+const ZSTD_CWKSP_ALIGNMENT_BYTES: usize = 64;
+
+/// `ZSTD_cwksp_aligned64_alloc_size`
+const fn aligned64(size: usize) -> usize {
+    size.next_multiple_of(ZSTD_CWKSP_ALIGNMENT_BYTES)
+}
+
 /// `ZSTD_maxNbSeq`
 pub(crate) const fn max_nb_seq(block_size: usize, min_match: u32) -> usize {
     block_size / if min_match == 3 { 3 } else { 4 }
@@ -654,6 +675,103 @@ impl MatchStateSizes {
             hash_log3,
             h3_size: if hash_log3 != 0 { 1 << hash_log3 } else { 0 },
         }
+    }
+}
+
+/// The books of a `ZSTD_cwksp`, as offsets from its start, which is taken to be aligned.
+pub(crate) struct Workspace {
+    size: usize,
+    object_end: usize,
+    table_end: usize,
+    alloc_start: usize,
+    oversized_duration: usize,
+}
+
+/// What a context needs room for.
+pub(crate) struct WorkspaceNeeds<'a> {
+    pub(crate) c_params: &'a CompressionParameters,
+    pub(crate) ldm_params: &'a LdmParams,
+    pub(crate) use_row_match_finder: ParamSwitch,
+    pub(crate) buff_in_size: usize,
+    pub(crate) buff_out_size: usize,
+    pub(crate) block_size: usize,
+}
+
+impl WorkspaceNeeds<'_> {
+    /// The tables, which the C code allocates from the bottom.
+    fn tables(&self) -> usize {
+        let sizes = MatchStateSizes::new(self.c_params, self.use_row_match_finder, true);
+        (sizes.chain_size + sizes.h_size + sizes.h3_size) * size_of::<u32>()
+    }
+
+    /// Everything else, which the C code allocates from the top.
+    fn allocs(&self) -> usize {
+        let max_nb_seq = max_nb_seq(self.block_size, self.c_params.min_match);
+        let mut total = 0;
+        if row_match_finder_used(self.c_params.strat(), self.use_row_match_finder) {
+            total += aligned64(1 << self.c_params.hash_log);
+        }
+        if self.c_params.strat() >= Strategy::BtOpt {
+            total += aligned64((MAX_ML as usize + 1) * size_of::<u32>())
+                + aligned64((MAX_LL as usize + 1) * size_of::<u32>())
+                + aligned64((MAX_OFF as usize + 1) * size_of::<u32>())
+                + aligned64((1 << LITBITS) * size_of::<u32>())
+                + aligned64(ZSTD_OPT_SIZE * SIZEOF_MATCH)
+                + aligned64(ZSTD_OPT_SIZE * SIZEOF_OPTIMAL);
+        }
+        total += aligned64(max_nb_seq * SIZEOF_SEQ_DEF);
+        if self.ldm_params.enable_ldm == ParamSwitch::Enable {
+            total += aligned64((1usize << self.ldm_params.hash_log) * SIZEOF_LDM_ENTRY)
+                + aligned64(
+                    ldm::get_max_nb_seq(*self.ldm_params, self.block_size) * SIZEOF_RAW_SEQ,
+                )
+                + (1usize << (self.ldm_params.hash_log - self.ldm_params.bucket_size_log));
+        }
+        total
+            + (self.block_size + WILDCOPY_OVERLENGTH)
+            + self.buff_in_size
+            + self.buff_out_size
+            + 3 * max_nb_seq
+    }
+
+    /// `ZSTD_estimateCCtxSize_usingCCtxParams_internal`
+    fn needed_space(&self) -> usize {
+        let objects = TMP_WORKSPACE_SIZE + 2 * SIZEOF_COMPRESSED_BLOCK_STATE;
+        let slack_space = ZSTD_CWKSP_ALIGNMENT_BYTES * 2;
+        objects + self.tables() + self.allocs() + slack_space
+    }
+}
+
+impl Workspace {
+    pub(crate) const fn new() -> Self {
+        Self {
+            size: 0,
+            object_end: 0,
+            table_end: 0,
+            alloc_start: 0,
+            oversized_duration: 0,
+        }
+    }
+
+    /// What `ZSTD_resetCCtx_internal` does to the workspace. Returns whether it made a new one.
+    pub(crate) fn reset(&mut self, needs: &WorkspaceNeeds<'_>) -> bool {
+        let needed_space = needs.needed_space();
+        self.oversized_duration += 1;
+        let too_small = self.size < needed_space;
+        let wasteful = self.alloc_start - self.table_end
+            >= needed_space.saturating_mul(ZSTD_WORKSPACETOOLARGE_FACTOR)
+            && self.oversized_duration > ZSTD_WORKSPACETOOLARGE_MAXDURATION;
+        let resize = too_small || wasteful;
+        if resize {
+            self.size = needed_space;
+            self.object_end = aligned64(TMP_WORKSPACE_SIZE + 2 * SIZEOF_COMPRESSED_BLOCK_STATE);
+            self.oversized_duration = 0;
+        }
+        self.table_end = self.object_end + needs.tables();
+        self.alloc_start =
+            (self.size - self.size % ZSTD_CWKSP_ALIGNMENT_BYTES).saturating_sub(needs.allocs());
+        self.alloc_start = self.alloc_start.max(self.table_end);
+        resize
     }
 }
 

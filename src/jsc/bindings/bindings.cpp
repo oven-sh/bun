@@ -5320,11 +5320,9 @@ extern "C" void JSGlobalObject__throwStackOverflow(JSC::JSGlobalObject* globalOb
 static JSC::JSValue getNativeGetterValueForDisplay(JSC::JSGlobalObject* globalObject, const JSC::PropertySlot& slot, JSC::PropertyName property)
 {
     auto* rejections = defaultGlobalObject(globalObject);
-    auto* newestBefore = rejections->newestQueuedRejection();
+    size_t queuedBefore = rejections->queuedRejectionCountBeforeRead();
     JSC::JSValue value = slot.getValue(globalObject, property);
-    auto* newest = rejections->newestQueuedRejection();
-    if (newest && newest != newestBefore && value == JSC::JSValue(newest)) [[unlikely]]
-        newest->markAsHandled();
+    rejections->handleRejectionOfRead(queuedBefore, value);
     return value;
 }
 

@@ -1639,6 +1639,61 @@ describe("a native getter that rejects for the printed object", () => {
     expect(exitCode).toBe(0);
   });
 
+  it.concurrent("leaves an older rejection reported when the getter handles a newer one", async () => {
+    const { stdout, exitCode } = await run(`${collectRejections}
+      const older = Promise.reject(new Error("older"));
+      const newer = Promise.reject(new Error("newer"));
+      // console._stdout is a native getter that reads process.stdout.
+      Object.defineProperty(process, "stdout", {
+        configurable: true,
+        get() {
+          newer.catch(() => {});
+          return older;
+        },
+      });
+      Bun.inspect(console);
+      // The rejection of this read is handled while "older" is still in the queue.
+      Bun.inspect(Object.create(ReadableStreamDefaultReader.prototype));`);
+    expect(JSON.parse(stdout)).toEqual(["older"]);
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("reports no unhandled rejection for many prints in one turn", async () => {
+    const { stdout, exitCode } = await run(`${collectRejections}
+      for (let i = 0; i < 200; i++) Bun.inspect(Object.create(WritableStreamDefaultWriter.prototype));`);
+    expect(JSON.parse(stdout)).toEqual([]);
+    expect(exitCode).toBe(0);
+  });
+
+  // The queue of rejected promises drops its handled entries when it is full.
+  it.concurrent.each([64, 128])(
+    "reports no unhandled rejection when %d handled rejections fill the queue",
+    async count => {
+      const { stdout, exitCode } = await run(`${collectRejections}
+      const promises = Array.from({ length: ${count} }, (_, i) => Promise.reject(new Error("rejection " + i)));
+      for (let i = 0; i < ${count} - 1; i++) promises[i].catch(() => {});
+      Bun.inspect(Object.create(ReadableStreamDefaultReader.prototype));
+      promises[${count} - 1].catch(() => {});`);
+      expect(JSON.parse(stdout)).toEqual([]);
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  it.concurrent("reports no unhandled rejection in a loop that handles each rejection one step late", async () => {
+    const { stdout, exitCode } = await run(`${collectRejections}
+      const value = Object.create(ReadableStreamDefaultReader.prototype);
+      let previous = Promise.reject(new Error("rejection 0"));
+      for (let i = 1; i <= 300; i++) {
+        const next = Promise.reject(new Error("rejection " + i));
+        previous.catch(() => {});
+        Bun.inspect(value);
+        previous = next;
+      }
+      previous.catch(() => {});`);
+    expect(JSON.parse(stdout)).toEqual([]);
+    expect(exitCode).toBe(0);
+  });
+
   // After the wait for a child failed, each read of Subprocess.exited returns a new rejected promise. Its error has
   // no native getter flag. Here libc's waitpid() takes the exit status first, so the wait of bun fails with ECHILD.
   it.skipIf(!isLinux).concurrent("handles a rejection that has no native getter flag", async () => {

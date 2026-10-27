@@ -23,6 +23,12 @@ NEVER_INLINE void RejectedPromiseQueue::makeRoom()
         m_entries.reserveCapacity(std::max<size_t>(16, capacity * 2));
 }
 
+NEVER_INLINE void RejectedPromiseQueue::makeRoomBeforeRead(JSC::JSCell* owner)
+{
+    WTF::Locker locker { owner->cellLock() };
+    makeRoom();
+}
+
 void RejectedPromiseQueue::markReported(JSC::JSGlobalObject* owner, JSC::JSPromise* promise)
 {
     JSC::VM& vm = owner->vm();

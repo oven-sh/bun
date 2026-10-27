@@ -25,8 +25,11 @@ public:
     void markReported(JSC::JSGlobalObject* owner, JSC::JSPromise*);
     template<typename Visitor> void visit(JSC::JSCell* owner, Visitor&);
     bool isEmpty() const { return m_entries.isEmpty(); }
-    // The last rejection to enter, or null. JS thread only.
-    JSC::JSPromise* newest() const { return m_entries.isEmpty() ? nullptr : static_cast<JSC::JSPromise*>(m_entries.last().promise.get().asCell()); }
+    // For a read that only its caller asked for. Entries enter at the end and never move up, so the queue is longer after
+    // the read only if its newest entry entered during it. Makes room first: an append to a full queue can drop handled entries.
+    size_t sizeBeforeRead(JSC::JSCell* owner);
+    // If the queue is longer than `sizeBefore` and its newest entry holds `returned`, that promise is marked as handled.
+    void handleRejectionOfRead(size_t sizeBefore, JSC::JSValue returned);
 
 private:
     struct Entry {
@@ -36,8 +39,10 @@ private:
     static bool isHandled(const Entry& entry) { return static_cast<JSC::JSPromise*>(entry.promise.get().asCell())->isHandled(); }
     bool wasReported(JSC::JSPromise*);
     void makeRoom();
+    void makeRoomBeforeRead(JSC::JSCell* owner);
 
-    // In rejection order. A handled promise stays until it is at the end, makeRoom() runs, or the drain.
+    // In rejection order. A promise that gets a handler stays until it is at the end, makeRoom() runs, or the drain.
+    // One that native code only marks as handled stays at the end too.
     WTF::Vector<Entry> m_entries;
     // Promises reported as unhandled. Weak: a reported promise that dies leaves it.
     JSC::WriteBarrier<JSC::JSWeakSet> m_reported;
@@ -64,6 +69,19 @@ ALWAYS_INLINE bool RejectedPromiseQueue::didHandle(JSC::JSCell* owner, JSC::JSPr
         return false;
     }
     return m_reported && wasReported(promise);
+}
+
+ALWAYS_INLINE size_t RejectedPromiseQueue::sizeBeforeRead(JSC::JSCell* owner)
+{
+    if (m_entries.size() == m_entries.capacity() && !m_entries.isEmpty()) [[unlikely]]
+        makeRoomBeforeRead(owner);
+    return m_entries.size();
+}
+
+ALWAYS_INLINE void RejectedPromiseQueue::handleRejectionOfRead(size_t sizeBefore, JSC::JSValue returned)
+{
+    if (m_entries.size() > sizeBefore && m_entries.last().promise.get() == returned) [[unlikely]]
+        static_cast<JSC::JSPromise*>(returned.asCell())->markAsHandled();
 }
 
 } // namespace Bun

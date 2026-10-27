@@ -317,7 +317,8 @@ public:
     uint8_t drainMicrotasks();
 
     void handleRejectedPromises();
-    JSC::JSPromise* newestQueuedRejection() const { return m_aboutToBeNotifiedRejectedPromises.newest(); }
+    size_t queuedRejectionCountBeforeRead() { return m_aboutToBeNotifiedRejectedPromises.sizeBeforeRead(this); }
+    void handleRejectionOfRead(size_t countBefore, JSC::JSValue returned) { m_aboutToBeNotifiedRejectedPromises.handleRejectionOfRead(countBefore, returned); }
     ALWAYS_INLINE void* bunVM() const { return m_bunVM; }
 #if OS(WINDOWS)
     uv_loop_t* uvLoop() const

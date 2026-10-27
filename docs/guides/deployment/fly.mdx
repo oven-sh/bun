@@ -15,7 +15,7 @@ Fly.io supports Bun out of the box. `fly launch` detects Bun from your `bun.lock
 
 - A Bun application ready for deployment
 - A [Fly.io account](https://fly.io/app/sign-up)
-- The [`flyctl` CLI](https://fly.io/docs/flyctl/install/)
+- The [`flyctl` CLI](https://docs.fly.io/flyctl/install)
 
 ---
 
@@ -83,7 +83,7 @@ fly deploy
 
 <Steps>
 <Step title="Step 1">
-Create a [Managed Postgres](https://fly.io/docs/mpg/) cluster.
+Create a [Managed Postgres](https://docs.fly.io/postgres) cluster.
 
 ```bash terminal icon="terminal"
 fly mpg create
@@ -169,4 +169,4 @@ Set environment variables for your app with `fly secrets set`:
 fly secrets set API_KEY=your-api-key
 ```
 
-For more settings, such as regions, Machine sizes, and auto-stopping idle Machines, see the [`fly.toml` reference](https://fly.io/docs/reference/configuration/).
+For more settings, such as regions, Machine sizes, and auto-stopping idle Machines, see the [`fly.toml` reference](https://docs.fly.io/reference/configuration).

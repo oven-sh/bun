@@ -1,0 +1,14 @@
+--- a/c/enc/encode.c
++++ b/c/enc/encode.c
+@@ -1499,6 +1499,11 @@
+         *next_out += out_bytes;
+         *available_out -= out_bytes;
+         s->total_out_ += out_bytes;
++        /* Upstream leaves next_out_ stale here. After a metadata block whose
++           last 14 to 16 bytes went through tiny_buf_, it points at the end of
++           tiny_buf_, and InjectBytePaddingBlock then writes past it, over
++           remaining_metadata_bytes_, which makes every later call fail. */
++        s->next_out_ = NULL;
+         SetTotalOut(s, total_out);
+       } else {
+         size_t out_bytes = storage_ix >> 3;

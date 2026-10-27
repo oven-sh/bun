@@ -1,0 +1,20 @@
+[package]
+name = "brotli-differential"
+version = "0.0.0"
+edition = "2024"
+
+[[bin]]
+name = "harness"
+path = "src/main.rs"
+
+[dependencies]
+bun_brotli = { path = "../../src/brotli" }
+
+[profile.release]
+debug = "line-tables-only"
+overflow-checks = false
+
+[profile.dev]
+opt-level = 1
+
+[workspace]

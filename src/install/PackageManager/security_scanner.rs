@@ -747,7 +747,7 @@ fn attempt_security_scan(
     )?;
     let code = replace_first(&code, b"__SCANNER_MODULE__", &quoted);
 
-    let event_loop_handle = EventLoopHandle::from_any(&mut manager.event_loop);
+    let event_loop_handle = EventLoopHandle::from_any(manager.event_loop);
     let mut scanner = Box::new(SecurityScanSubprocess {
         manager,
         event_loop_handle,
@@ -772,8 +772,8 @@ fn attempt_security_scan(
     }
     let mgr: *mut PackageManager = scanner.manager;
     // SAFETY: `scanner.manager` is the live exclusive `&mut PackageManager`
-    // borrow held by the subprocess; `sleep_until` + `tick_raw` hold no
-    // `&mut PackageManager` across `scanner_is_done`.
+    // borrow held by the subprocess; `sleep_until` holds no borrow of the
+    // `PackageManager` across `scanner_is_done`.
     unsafe { PackageManager::sleep_until(mgr, &mut scanner, scanner_is_done) };
 
     scanner.handle_results(
@@ -1027,7 +1027,7 @@ impl<'a> SecurityScanSubprocess<'a> {
             cwd: Box::from(FileSystem::instance().top_level_dir()),
             extra_fds,
             windows: spawn::WindowsOptions {
-                loop_: EventLoopHandle::from_any(&mut self.manager.event_loop),
+                loop_: EventLoopHandle::from_any(self.manager.event_loop),
                 ..Default::default()
             },
             ..Default::default()
@@ -1096,7 +1096,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         // `to_process` consumes `SpawnResult` by value on POSIX (and
         // `&mut self` on Windows); take ownership of the result and let the
         // moved-from `*spawned` drop empty (`extra_pipes` already read).
-        let event_loop = EventLoopHandle::from_any(&mut self.manager.event_loop);
+        let event_loop = EventLoopHandle::from_any(self.manager.event_loop);
         let process_handle = std::mem::take(spawned).to_process_handle(event_loop);
         let process: *mut Process = process_handle.as_ptr();
 
@@ -1187,7 +1187,7 @@ impl<'a> SecurityScanSubprocess<'a> {
     }
 
     pub(crate) fn loop_(&mut self) -> *mut AsyncLoop {
-        self.manager.event_loop.native_loop()
+        self.manager.event_loop.native_loop().as_ptr()
     }
 
     pub(crate) fn on_reader_done(&mut self) {

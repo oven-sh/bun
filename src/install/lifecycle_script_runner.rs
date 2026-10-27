@@ -728,7 +728,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
                 #[cfg(windows)]
                 windows: bun_spawn::WindowsOptions {
-                    loop_: bun_event_loop::EventLoopHandle::from_any(&mut (*manager).event_loop),
+                    loop_: bun_event_loop::EventLoopHandle::from_any((*manager).event_loop),
                     ..Default::default()
                 },
 
@@ -845,7 +845,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 }
             }
 
-            let event_loop = bun_event_loop::EventLoopHandle::from_any(&mut (*manager).event_loop);
+            let event_loop = bun_event_loop::EventLoopHandle::from_any((*manager).event_loop);
             debug_assert!((*this).process.is_none(), "forgot to call `reset_polls`");
             let process: *mut Process = (*this)
                 .process
@@ -1301,9 +1301,9 @@ bun_io::impl_buffered_reader_parent! {
     has_on_read_chunk = false;
     on_reader_done  = |this| (*this).on_reader_done();
     on_reader_error = |this, err| (*this).on_reader_error(&err);
-    loop_           = |this| (*(*this).manager.as_ptr()).event_loop.native_loop();
+    loop_           = |this| (*(*this).manager.as_ptr()).event_loop.native_loop().as_ptr();
     event_loop = |this| bun_event_loop::EventLoopHandle::from_any(
-        &mut (*(*this).manager.as_ptr()).event_loop,
+        (*(*this).manager.as_ptr()).event_loop,
     ).as_event_loop_ctx();
 }
 

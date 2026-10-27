@@ -7,6 +7,7 @@
 //! read/written directly by C (loop.c walks `head_sockets`/`iterator`,
 //! context.c flips `linked`).
 
+use core::cell::Cell;
 use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
 
@@ -15,28 +16,30 @@ use crate::{
     us_bun_verify_error_t, us_socket_t,
 };
 
+/// C and the callbacks it dispatches (`close_all` runs `on_close`) write these fields while Rust
+/// borrows the group, so each is a `Cell`, which has the layout of what it holds.
 #[repr(C)]
 pub struct SocketGroup {
-    pub loop_: *mut Loop,
-    pub vtable: Option<&'static VTable>,
+    pub loop_: Cell<*mut Loop>,
+    pub vtable: Cell<Option<&'static VTable>>,
     /// Embedding owner — typed access via `owner<T>()`. `*mut c_void` only
     /// because the C ABI slot is heterogenous (Listener / uWS App / RareData /
     /// null); never read this field directly — go through `owner::<T>()`.
-    ext: *mut c_void,
-    pub head_sockets: *mut us_socket_t,
-    pub head_connecting_sockets: *mut ConnectingSocket,
-    pub head_listen_sockets: *mut ListenSocket,
-    pub iterator: *mut us_socket_t,
-    pub prev: *mut SocketGroup,
-    pub next: *mut SocketGroup,
-    pub global_tick: u32,
+    ext: Cell<*mut c_void>,
+    pub head_sockets: Cell<*mut us_socket_t>,
+    pub head_connecting_sockets: Cell<*mut ConnectingSocket>,
+    pub head_listen_sockets: Cell<*mut ListenSocket>,
+    pub iterator: Cell<*mut us_socket_t>,
+    pub prev: Cell<*mut SocketGroup>,
+    pub next: Cell<*mut SocketGroup>,
+    pub global_tick: Cell<u32>,
     /// Sockets currently parked in `loop.data.low_prio_head` with
     /// `s->group == this`. They are NOT in `head_sockets` while queued, so
     /// `close_all`/`destroy` must account for them separately.
-    pub low_prio_count: u16,
-    pub timestamp: u8,
-    pub long_timestamp: u8,
-    pub linked: u8,
+    pub low_prio_count: Cell<u16>,
+    pub timestamp: Cell<u8>,
+    pub long_timestamp: Cell<u8>,
+    pub linked: Cell<u8>,
 }
 
 #[repr(C)]
@@ -92,20 +95,13 @@ impl SocketGroup {
     /// recovers inside handlers — pass the embedding struct so dispatch can
     /// find it from a raw `*us_socket_t`.
     // Callers cast to `*mut c_void` at the call site.
-    pub fn init(&mut self, loop_: *mut Loop, vt: Option<&'static VTable>, owner_ptr: *mut c_void) {
-        // SAFETY: C initializes all fields of `self` in-place; `self` is a valid
-        // `#[repr(C)]` slot embedded in the caller.
-        unsafe {
-            us_socket_group_init(
-                self,
-                loop_,
-                match vt {
-                    Some(v) => std::ptr::from_ref::<VTable>(v),
-                    None => ptr::null(),
-                },
-                owner_ptr,
-            );
-        }
+    pub fn init(&self, loop_: &'static Loop, vt: Option<&'static VTable>, owner_ptr: *mut c_void) {
+        us_socket_group_init(self, loop_, vt, owner_ptr);
+    }
+
+    #[inline]
+    pub fn as_ptr(&self) -> *mut SocketGroup {
+        ptr::from_ref(self).cast_mut()
     }
 
     // Not `impl Drop`. SocketGroup is `#[repr(C)]`, embedded
@@ -122,9 +118,8 @@ impl SocketGroup {
         unsafe { us_socket_group_deinit(this) }
     }
 
-    pub fn close_all(&mut self) {
-        // SAFETY: forwarding to C; `self` is a valid initialized group.
-        unsafe { us_socket_group_close_all(self) }
+    pub fn close_all(&self) {
+        us_socket_group_close_all(self)
     }
 
     /// Recover the embedding owner. Only valid for groups whose `init` passed a
@@ -136,12 +131,12 @@ impl SocketGroup {
     /// passed to `init`) — that obligation lives at the deref site, not here,
     /// so this accessor is a safe fn.
     pub fn owner<T>(&self) -> *mut T {
-        debug_assert!(!self.ext.is_null());
-        self.ext.cast::<T>()
+        debug_assert!(!self.ext.get().is_null());
+        self.ext.get().cast::<T>()
     }
 
     pub fn listen(
-        &mut self,
+        &self,
         kind: SocketKind,
         ssl_ctx: Option<*mut SslCtx>,
         host: Option<&core::ffi::CStr>,
@@ -153,7 +148,7 @@ impl SocketGroup {
         // SAFETY: forwarding to C; all pointers are valid or null as documented.
         unsafe {
             us_socket_group_listen(
-                self,
+                self.as_ptr(),
                 kind as u8,
                 ssl_ctx.unwrap_or(ptr::null_mut()),
                 host.map_or(ptr::null(), |h| h.as_ptr()),
@@ -166,7 +161,7 @@ impl SocketGroup {
     }
 
     pub fn listen_unix(
-        &mut self,
+        &self,
         kind: SocketKind,
         ssl_ctx: Option<*mut SslCtx>,
         path: &[u8],
@@ -177,7 +172,7 @@ impl SocketGroup {
         // SAFETY: forwarding to C; `path` ptr+len derived from a valid slice.
         unsafe {
             us_socket_group_listen_unix(
-                self,
+                self.as_ptr(),
                 kind as u8,
                 ssl_ctx.unwrap_or(ptr::null_mut()),
                 path.as_ptr(),
@@ -190,7 +185,7 @@ impl SocketGroup {
     }
 
     pub fn listen_fd(
-        &mut self,
+        &self,
         kind: SocketKind,
         ssl_ctx: Option<*mut SslCtx>,
         fd: LIBUS_SOCKET_DESCRIPTOR,
@@ -202,7 +197,7 @@ impl SocketGroup {
         // SAFETY: forwarding to C; all pointers are valid or null as documented.
         unsafe {
             us_socket_group_listen_fd(
-                self,
+                self.as_ptr(),
                 kind as u8,
                 ssl_ctx.unwrap_or(ptr::null_mut()),
                 fd,
@@ -215,7 +210,7 @@ impl SocketGroup {
     }
 
     pub fn connect(
-        &mut self,
+        &self,
         kind: SocketKind,
         ssl_ctx: Option<*mut SslCtx>,
         host: &core::ffi::CStr,
@@ -232,7 +227,7 @@ impl SocketGroup {
         // SAFETY: forwarding to C; `host` is a valid NUL-terminated C string.
         let ptr = unsafe {
             us_socket_group_connect(
-                self,
+                self.as_ptr(),
                 kind as u8,
                 ssl_ctx.unwrap_or(ptr::null_mut()),
                 host.as_ptr(),
@@ -255,7 +250,7 @@ impl SocketGroup {
     }
 
     pub fn connect_unix(
-        &mut self,
+        &self,
         kind: SocketKind,
         ssl_ctx: Option<*mut SslCtx>,
         path: &[u8],
@@ -265,7 +260,7 @@ impl SocketGroup {
         // SAFETY: forwarding to C; `path` ptr+len derived from a valid slice.
         unsafe {
             us_socket_group_connect_unix(
-                self,
+                self.as_ptr(),
                 kind as u8,
                 ssl_ctx.unwrap_or(ptr::null_mut()),
                 path.as_ptr(),
@@ -277,7 +272,7 @@ impl SocketGroup {
     }
 
     pub fn from_fd(
-        &mut self,
+        &self,
         kind: SocketKind,
         ssl_ctx: Option<*mut SslCtx>,
         socket_ext_size: c_int,
@@ -288,7 +283,7 @@ impl SocketGroup {
         // SAFETY: forwarding to C.
         unsafe {
             us_socket_from_fd(
-                self,
+                self.as_ptr(),
                 kind as u8,
                 ssl_ctx.unwrap_or(ptr::null_mut()),
                 socket_ext_size,
@@ -301,18 +296,17 @@ impl SocketGroup {
 }
 
 unsafe extern "C" {
-    fn us_socket_group_init(
-        group: *mut SocketGroup,
-        loop_: *mut Loop,
-        vt: *const VTable,
+    // `ext` is stored, not read.
+    safe fn us_socket_group_init(
+        group: &SocketGroup,
+        loop_: &'static Loop,
+        vt: Option<&'static VTable>,
         ext: *mut c_void,
     );
     fn us_socket_group_deinit(group: *mut SocketGroup);
-    // `SocketGroup` is a sized `#[repr(C)]` mirror (not an opaque ZST) — keep
-    // raw `*mut` so the FFI boundary does not emit `noalias` over real fields;
-    // `close_all` reenters Rust callbacks that touch this group via aliasing
-    // pointers (`us_socket_group(s)`).
-    fn us_socket_group_close_all(group: *mut SocketGroup);
+    // Re-enters Rust callbacks that reach this group through `us_socket_group(s)`: every field is
+    // a `Cell`, so `&SocketGroup` is not `noalias`.
+    safe fn us_socket_group_close_all(group: &SocketGroup);
     fn us_socket_group_listen(
         group: *mut SocketGroup,
         kind: u8,

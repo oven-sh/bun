@@ -95,7 +95,7 @@ impl FilePoll {
         self.deinit()
     }
 
-    pub(crate) fn unregister(&mut self, _loop: &mut WindowsLoop) -> bool {
+    pub(crate) fn unregister(&mut self, _loop: &WindowsLoop) -> bool {
         // TODO: This cast is extremely suspicious. At best, `fd` is
         // the wrong type (it should be a uv handle), at worst this code is a
         // crash due to invalid memory access.
@@ -114,7 +114,7 @@ impl FilePoll {
         true
     }
 
-    fn deinit_possibly_defer(&mut self, vm: EventLoopCtx, loop_: &mut WindowsLoop) {
+    fn deinit_possibly_defer(&mut self, vm: EventLoopCtx, loop_: &WindowsLoop) {
         if self.is_registered() {
             let _ = self.unregister(loop_);
         }
@@ -135,13 +135,10 @@ impl FilePoll {
     }
 
     pub(crate) fn deinit_with_vm(&mut self, vm: EventLoopCtx) {
-        // `loop_mut()` — crate-private nonnull-asref accessor (single deref in
-        // `EventLoopCtx`); the uws loop is a disjoint allocation from `self`.
         // Stacked-Borrows: `self` may live inside `Store.hive`'s inline buffer,
         // so `&mut Store` is materialised only *after* `&mut self` is retired
         // inside `deinit_possibly_defer` (via `file_polls_mut()`).
-        let loop_ = vm.loop_mut();
-        self.deinit_possibly_defer(vm, loop_);
+        self.deinit_possibly_defer(vm, vm.platform_event_loop());
     }
 
     pub(crate) fn enable_keeping_process_alive(&mut self, vm: EventLoopCtx) {

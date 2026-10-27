@@ -1395,7 +1395,7 @@ pub fn spawn_opts(
     new_folder: &[u8],
     cwd: &ZStr,
     git: &ZStr,
-    loop_: &mut bun_event_loop::AnyEventLoop,
+    loop_: bun_event_loop::EventLoopHandle,
 ) -> (bun_spawn::sync::Options, GitDiffEnv) {
     let argv: Vec<Box<[u8]>> = {
         const ARGS: [&[u8]; 11] = [
@@ -1456,9 +1456,7 @@ pub fn spawn_opts(
         // zeroed.
         #[cfg(windows)]
         windows: bun_spawn::sync::WindowsOptions {
-            // `as_handle` owns the handle conversion so variant internals
-            // stay encapsulated.
-            loop_: bun_event_loop::AnyEventLoop::as_handle(loop_),
+            loop_,
             ..Default::default()
         },
         ..Default::default()
@@ -1512,7 +1510,7 @@ pub fn git_diff_preprocess_paths(old_folder: &[u8], new_folder: &[u8]) -> [Vec<u
 pub fn git_diff_internal(
     old_folder_: &[u8],
     new_folder_: &[u8],
-    loop_: &mut bun_event_loop::AnyEventLoop,
+    loop_: bun_event_loop::EventLoopHandle,
 ) -> crate::Result<core::result::Result<Vec<u8>, Vec<u8>>> {
     let paths = git_diff_preprocess_paths(old_folder_, new_folder_);
     let old_folder = &paths[0][..];

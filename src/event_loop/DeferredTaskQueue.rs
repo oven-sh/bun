@@ -35,6 +35,7 @@
 //! buffer to its own fd or socket, so relative order within a pass has no correctness effect, and
 //! anything a pass skips runs on the next one.
 
+use core::cell::UnsafeCell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
@@ -47,16 +48,21 @@ use bun_collections::ArrayHashMap;
 // `AutoFlusher::erase_flush_callback`).
 pub type DeferredRepeatingTask = unsafe extern "C" fn(*mut c_void) -> bool;
 
+type Key = Option<NonNull<c_void>>;
+
+/// Changed through `&self`, because a callback `run()` calls can post and unregister. Every borrow
+/// of the map is inside one of the private methods below, which copy a key or a value in or out and
+/// call nothing but the map: hashing and comparing a pointer, and the allocator, cannot come back
+/// here. `run()` holds none across a callback.
 #[derive(Default)]
 pub struct DeferredTaskQueue {
-    pub(crate) map: ArrayHashMap<Option<NonNull<c_void>>, DeferredRepeatingTask>,
+    map: UnsafeCell<ArrayHashMap<Key, DeferredRepeatingTask>>,
 }
 
 impl DeferredTaskQueue {
-    pub fn post_task(&mut self, ctx: Option<NonNull<c_void>>, task: DeferredRepeatingTask) -> bool {
-        // `ArrayHashMap` is currently aliased to std `HashMap`; the entry API
-        // gives insert-if-absent + report-existing semantics.
-        match self.map.entry(ctx) {
+    pub fn post_task(&self, ctx: Key, task: DeferredRepeatingTask) -> bool {
+        // SAFETY: see the type.
+        match unsafe { &mut *self.map.get() }.entry(ctx) {
             bun_collections::hash_map::Entry::Occupied(_) => true,
             bun_collections::hash_map::Entry::Vacant(v) => {
                 v.insert(task);
@@ -65,27 +71,49 @@ impl DeferredTaskQueue {
         }
     }
 
-    pub fn unregister_task(&mut self, ctx: Option<NonNull<c_void>>) -> bool {
+    pub fn unregister_task(&self, ctx: Key) -> bool {
         // Order is irrelevant for this map's contract (see file doc), so
         // swap-remove is fine and O(1).
-        self.map.swap_remove(&ctx)
+        // SAFETY: see the type.
+        unsafe { &mut *self.map.get() }.swap_remove(&ctx)
     }
 
-    pub fn run(&mut self) {
-        // Callbacks may re-entrantly mutate `self.map` (see the re-entrancy
+    fn len(&self) -> usize {
+        // SAFETY: see the type.
+        unsafe { &*self.map.get() }.len()
+    }
+
+    fn at(&self, index: usize) -> Option<(Key, DeferredRepeatingTask)> {
+        // SAFETY: see the type.
+        let map = unsafe { &*self.map.get() };
+        Some((*map.keys().get(index)?, map.values()[index]))
+    }
+
+    fn swap_remove_at(&self, index: usize) {
+        // SAFETY: see the type.
+        unsafe { &mut *self.map.get() }.swap_remove_at(index);
+    }
+
+    /// Frees the map's storage without running anything.
+    pub fn clear_and_free(&self) {
+        // SAFETY: see the type. Keys and values are `Copy`, so the old map's drop only frees.
+        unsafe { *self.map.get() = ArrayHashMap::default() };
+    }
+
+    pub fn run(&self) {
+        // Callbacks may re-entrantly mutate the map (see the re-entrancy
         // note in the file doc), so re-read `len()` every iteration and
         // re-check slot `i` after each callback. `remaining` is a livelock bound.
         let mut i: usize = 0;
-        let mut remaining = self.map.len();
-        while remaining > 0 && i < self.map.len() {
+        let mut remaining = self.len();
+        while remaining > 0 {
+            let Some((key, task)) = self.at(i) else { break };
             remaining -= 1;
-            let key = self.map.keys()[i];
             let Some(nn) = key else {
-                self.map.swap_remove_at(i);
+                self.swap_remove_at(i);
                 continue;
             };
 
-            let task = self.map.values()[i];
             // SAFETY: `nn` is the live `*mut T` registered by the caller; the
             // callback contract (`HasAutoFlusher::on_auto_flush`) is that
             // `task` may be invoked with exactly that pointer until it returns
@@ -94,8 +122,8 @@ impl DeferredTaskQueue {
             if !keep {
                 // `key` may already be gone (callback unregistered it) or may
                 // have moved; remove by key, not index.
-                self.map.swap_remove(&key);
-            } else if self.map.keys().get(i) == Some(&key) {
+                self.unregister_task(key);
+            } else if self.at(i).is_some_and(|(now, _)| now == key) {
                 i += 1;
             }
         }

@@ -335,32 +335,34 @@ union active_reqs_u {
     unused: *mut c_void,
     count: c_uint,
 }
+/// libuv and the callbacks it runs write these fields while `tick()` borrows the loop, so each is a
+/// `Cell`, which has the layout of what it holds.
 #[repr(C)]
 pub struct Loop {
-    pub data: *mut c_void,
-    pub active_handles: c_uint,
-    pub handle_queue: uv__queue,
-    active_reqs: active_reqs_u,
-    pub internal_fields: *mut c_void,
-    pub stop_flag: c_uint,
-    pub iocp: HANDLE,
-    pub time: u64,
-    pub pending_reqs_tail: *mut uv_req_t,
-    pub endgame_handles: *mut uv_handle_t,
-    pub timer_heap: *mut c_void,
-    pub prepare_handles: *mut uv_prepare_t,
-    pub check_handles: *mut uv_check_t,
-    pub idle_handles: *mut uv_idle_t,
-    pub next_prepare_handle: *mut uv_prepare_t,
-    pub next_check_handle: *mut uv_check_t,
-    pub next_idle_handle: *mut uv_idle_t,
-    pub poll_peer_sockets: [SOCKET; 4],
-    pub active_tcp_streams: c_uint,
-    pub active_udp_streams: c_uint,
-    pub timer_counter: u64,
-    pub wq: uv__queue,
-    pub wq_mutex: uv_mutex_t,
-    pub wq_async: uv_async_t,
+    pub data: Cell<*mut c_void>,
+    pub active_handles: Cell<c_uint>,
+    pub handle_queue: Cell<uv__queue>,
+    active_reqs: Cell<active_reqs_u>,
+    pub internal_fields: Cell<*mut c_void>,
+    pub stop_flag: Cell<c_uint>,
+    pub iocp: Cell<HANDLE>,
+    pub time: Cell<u64>,
+    pub pending_reqs_tail: Cell<*mut uv_req_t>,
+    pub endgame_handles: Cell<*mut uv_handle_t>,
+    pub timer_heap: Cell<*mut c_void>,
+    pub prepare_handles: Cell<*mut uv_prepare_t>,
+    pub check_handles: Cell<*mut uv_check_t>,
+    pub idle_handles: Cell<*mut uv_idle_t>,
+    pub next_prepare_handle: Cell<*mut uv_prepare_t>,
+    pub next_check_handle: Cell<*mut uv_check_t>,
+    pub next_idle_handle: Cell<*mut uv_idle_t>,
+    pub poll_peer_sockets: Cell<[SOCKET; 4]>,
+    pub active_tcp_streams: Cell<c_uint>,
+    pub active_udp_streams: Cell<c_uint>,
+    pub timer_counter: Cell<u64>,
+    pub wq: Cell<uv__queue>,
+    pub wq_mutex: Cell<uv_mutex_t>,
+    pub wq_async: Cell<uv_async_t>,
 }
 pub type uv_loop_t = Loop;
 
@@ -395,8 +397,8 @@ impl Loop {
     /// libuv loop, lazily `uv_loop_init`ing it on first call. Each thread owns
     /// its own loop; sharing `uv_default_loop()` across worker threads is
     /// unsound for the per-worker shutdown path.
-    pub fn get() -> *mut Loop {
-        THREADLOCAL_LOOP.with(|slot| {
+    pub fn get() -> &'static Loop {
+        let loop_ = THREADLOCAL_LOOP.with(|slot| {
             let existing = slot.get();
             if !existing.is_null() {
                 return existing;
@@ -409,7 +411,10 @@ impl Loop {
             }
             slot.set(ptr_);
             ptr_
-        })
+        });
+        // SAFETY: initialized above, and lives until `close_thread_loop`, whose caller promises
+        // that nothing uses the loop afterwards.
+        unsafe { &*loop_ }
     }
 
     /// Complete every in-flight request on this thread's loop (fs, write,
@@ -428,8 +433,11 @@ impl Loop {
             // SAFETY: live per-thread loop; `count` is the active arm of the
             // union whenever the loop is initialised (uv/win.h).
             unsafe {
-                while (*loop_).active_reqs.count > 0 {
-                    log!("drain_requests: {} in flight", (*loop_).active_reqs.count);
+                while (*loop_).active_reqs.get().count > 0 {
+                    log!(
+                        "drain_requests: {} in flight",
+                        (*loop_).active_reqs.get().count
+                    );
                     uv_run(loop_, RunMode::Once);
                     ran = true;
                 }
@@ -446,7 +454,10 @@ impl Loop {
     /// closed while its owner was alive; what remains here is uSockets' own
     /// pre/check/async/timer, closed by us_loop_free and freed by their close
     /// callbacks when the loop next turns.
-    pub fn close_thread_loop() {
+    ///
+    /// # Safety
+    /// No reference [`get`](Self::get) returned on this thread is used again.
+    pub unsafe fn close_thread_loop() {
         /// Caps how long `terminate()` and process exit wait for a close that
         /// never completes. A healthy teardown finishes in milliseconds.
         const CLOSE_THREAD_LOOP_DEADLINE: Duration = Duration::from_secs(10);
@@ -508,30 +519,39 @@ impl Loop {
     /// (avoid underflow during teardown when Bun's virtual keep-alive refs and
     /// libuv's own accounting momentarily disagree).
     #[inline]
-    pub fn sub_active(&mut self, value: u32) {
-        log!("subActive({}) - {}", value, self.active_handles);
-        self.active_handles = self.active_handles.saturating_sub(value);
+    pub fn sub_active(&self, value: u32) {
+        let active_handles = self.active_handles.get();
+        log!("subActive({}) - {}", value, active_handles);
+        self.active_handles
+            .set(active_handles.saturating_sub(value));
     }
     #[inline]
-    pub fn add_active(&mut self, value: u32) {
+    pub fn add_active(&self, value: u32) {
         log!("addActive({})", value);
-        self.active_handles = self.active_handles.saturating_add(value);
+        self.active_handles
+            .set(self.active_handles.get().saturating_add(value));
     }
     #[inline]
-    pub fn inc(&mut self) {
-        log!("inc - {}", self.active_handles.saturating_add(1));
-        self.active_handles = self.active_handles.saturating_add(1);
+    pub fn inc(&self) {
+        let active_handles = self.active_handles.get().saturating_add(1);
+        log!("inc - {}", active_handles);
+        self.active_handles.set(active_handles);
     }
     #[inline]
-    pub fn dec(&mut self) {
+    pub fn dec(&self) {
         log!("dec");
-        self.active_handles = self.active_handles.saturating_sub(1);
+        self.active_handles
+            .set(self.active_handles.get().saturating_sub(1));
     }
     #[inline]
-    pub fn stop(&mut self) {
+    pub fn as_ptr(&self) -> *mut Loop {
+        ptr::from_ref(self).cast_mut()
+    }
+    #[inline]
+    pub fn stop(&self) {
         log!("stop");
         // SAFETY: self is a live loop.
-        unsafe { uv_stop(self) };
+        unsafe { uv_stop(self.as_ptr()) };
     }
     #[inline]
     pub fn is_active(&self) -> bool {
@@ -539,9 +559,9 @@ impl Loop {
         unsafe { uv_loop_alive(self) != 0 }
     }
     #[inline]
-    pub fn tick(&mut self) {
+    pub fn tick(&self) {
         // SAFETY: self is a live loop.
-        let _ = unsafe { uv_run(self, RunMode::Default) };
+        let _ = unsafe { uv_run(self.as_ptr(), RunMode::Default) };
     }
 }
 

@@ -104,21 +104,11 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
     });
     let result = bun_core::heap::into_raw(result);
 
-    // `worker.ctx` is a `BackRef<BundleV2>` (safe `Deref`); the BACKREF deref
-    // of `linker.r#loop` is centralised in `LinkerContext::any_loop_mut`.
-    //
-    // The loop is effectively non-optional — `BundleV2::init`
-    // always sets `linker.r#loop` before scheduling any ServerComponentParseTask.
     // Running `on_complete` inline on the worker thread would violate
     // `BundleV2::on_parse_task_complete`'s threading contract (it mutates the
     // bundler graph, which is owned by the main/bundler thread).
-    match worker
-        .ctx
-        .linker
-        .any_loop_mut()
-        .expect("BundleV2.linker.loop must be set before scheduling ServerComponentParseTask")
-    {
-        bun_event_loop::AnyEventLoop::Js { .. } => {
+    match worker.ctx.mini_poster {
+        None => {
             let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::create_from(result);
             let poster = worker
                 .ctx
@@ -134,11 +124,12 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
                 }
             }
         }
-        bun_event_loop::AnyEventLoop::Mini(mini) => {
+        Some(mini) => {
             // SAFETY: `result` is a freshly Box-leaked `parse_task::Result` (above) and
             // `offset_of!(parse_task::Result, task)` is the intrusive task field within it.
+            // `mini` is live: see `BundleV2::mini_poster`.
             unsafe {
-                mini.enqueue_task_concurrent_with_extra_ctx::<parse_task::Result, BundleV2<'static>>(
+                mini.as_ref().enqueue_task_concurrent_with_extra_ctx::<parse_task::Result, BundleV2<'static>>(
                     result,
                     on_complete_mini,
                     offset_of!(parse_task::Result, task),

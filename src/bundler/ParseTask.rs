@@ -2907,21 +2907,11 @@ pub mod parse_worker {
         // `ParseTask` is arena-owned (no Drop); `jsx` may hold owned slices from tsconfig.
         drop(core::mem::take(&mut this.jsx));
 
-        // `worker.ctx` is a `BackRef<BundleV2>` (safe `Deref`); the BACKREF deref
-        // of `linker.r#loop` is centralised in `LinkerContext::any_loop_mut`.
-        //
-        // The loop is effectively non-optional — `BundleV2::init`
-        // always sets `linker.r#loop` before scheduling any ParseTask. Running
-        // `on_complete` inline on the worker thread would violate
+        // Running `on_complete` inline on the worker thread would violate
         // `BundleV2::on_parse_task_complete`'s threading contract (it mutates the
         // bundler graph, which is owned by the main/bundler thread).
-        match worker
-            .ctx
-            .linker
-            .any_loop_mut()
-            .expect("BundleV2.linker.loop must be set before scheduling ParseTask")
-        {
-            bun_event_loop::AnyEventLoop::Js { .. } => {
+        match worker.ctx.mini_poster {
+            None => {
                 let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::create_from(result);
                 let poster = worker
                     .ctx
@@ -2937,15 +2927,17 @@ pub mod parse_worker {
                     }
                 }
             }
-            bun_event_loop::AnyEventLoop::Mini(mini) => {
+            Some(mini) => {
                 // SAFETY: `result` is a valid heap pointer with `task` at the given offset;
                 // ownership transfers to the mini event loop which frees it after `on_complete_mini`.
+                // `mini` is live: see `BundleV2::mini_poster`.
                 unsafe {
-                    mini.enqueue_task_concurrent_with_extra_ctx::<Result, BundleV2<'static>>(
-                        result,
-                        on_complete_mini,
-                        offset_of!(Result, task),
-                    );
+                    mini.as_ref()
+                        .enqueue_task_concurrent_with_extra_ctx::<Result, BundleV2<'static>>(
+                            result,
+                            on_complete_mini,
+                            offset_of!(Result, task),
+                        );
                 }
             }
         }

@@ -65,18 +65,19 @@ impl DeferredBatchTask {
     fn come_back(&mut self) {
         let this: *mut Self = self;
         let bv2 = self.get_bundle_v2();
-        match bv2.any_loop_mut() {
+        match bv2.mini_poster {
             // bake: the plugins run on the loop that runs the bundle; already there.
-            bun_event_loop::AnyEventLoop::Js { .. } => bv2.decrement_scan_counter(),
-            bun_event_loop::AnyEventLoop::Mini(mini) => {
+            None => bv2.decrement_scan_counter(),
+            Some(mini) => {
                 // SAFETY: `returned` is this struct's own node; `BundleV2` (and so `self`) is alive until
-                // the bundle thread runs this.
+                // the bundle thread runs this. `mini` is live: see `BundleV2::mini_poster`.
                 unsafe {
-                    mini.enqueue_task_concurrent_with_extra_ctx::<Self, BundleV2<'static>>(
-                        this,
-                        |_, bv2| (*bv2).decrement_scan_counter(),
-                        core::mem::offset_of!(Self, returned),
-                    );
+                    mini.as_ref()
+                        .enqueue_task_concurrent_with_extra_ctx::<Self, BundleV2<'static>>(
+                            this,
+                            |_, bv2| (*bv2).decrement_scan_counter(),
+                            core::mem::offset_of!(Self, returned),
+                        );
                 }
             }
         }

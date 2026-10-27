@@ -1561,7 +1561,7 @@ pub mod ssl_wrapper {
 // from bun_uws_sys so `bun_uws::Loop` and `bun_uws_sys::Loop` are the same
 // type (bun_io's EventLoopCtxVTable is typed against the uws_sys version).
 pub use bun_uws_sys::loop_::{LoopHandler, us_wakeup_loop};
-pub use bun_uws_sys::{InternalLoopData, Loop, NOW_NS_UNKNOWN};
+pub use bun_uws_sys::{InternalLoopData, Loop, NOW_NS_UNKNOWN, OwnedLoop};
 
 /// Extension methods on the re-exported `bun_uws_sys::InternalLoopData` for the
 /// typed parent-loop accessors. The sys crate only stores tag+ptr; this tier

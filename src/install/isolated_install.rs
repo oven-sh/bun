@@ -2668,8 +2668,8 @@ pub(crate) fn install_isolated_packages(
                 err: None,
             };
             // SAFETY: `mgr` is the same raw `manager_ptr` stored in
-            // `installer.manager`; `sleep_until` + `tick_raw` hold no
-            // `&mut PackageManager` across `Wait::is_done`.
+            // `installer.manager`; `sleep_until` holds no borrow of the
+            // `PackageManager` across `Wait::is_done`.
             unsafe { PackageManager::sleep_until(mgr, &mut wait, Wait::is_done) };
 
             if let Some(err) = wait.err {

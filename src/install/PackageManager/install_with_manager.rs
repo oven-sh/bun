@@ -73,7 +73,7 @@ pub fn install_with_manager(
         let scope_url = manager.options.scope.url.url();
         if !scope_url.hostname.is_empty() && !scope_url.is_ip_address() {
             bun_dns::internal::prefetch(
-                manager.event_loop.loop_(),
+                manager.event_loop.loop_().as_ptr(),
                 scope_url.hostname,
                 scope_url.get_port_auto(),
             );
@@ -1167,10 +1167,10 @@ impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
 {
     fn is_done(closure: &mut Self) -> bool {
         // SAFETY: `closure.manager` is the raw provenance root set in `run_and_wait`.
-        // `sleep_until` is now an associated fn taking `*mut PackageManager` and
-        // `AnyEventLoop::tick_raw` reborrows the event loop only *between* `is_done`
-        // calls, so this `&mut PackageManager` is the unique live borrow for the
-        // duration of the callback (no `&mut event_loop` straddles it). The original
+        // `sleep_until` is an associated fn taking `*mut PackageManager` and the
+        // event loop it ticks is outside the `PackageManager`, so this
+        // `&mut PackageManager` is the unique live borrow for the
+        // duration of the callback. The original
         // `this: &mut` in `run_and_wait` is dead past the `let mgr = ...` line.
         let this = unsafe { &mut *closure.manager };
         loop {
@@ -1239,8 +1239,8 @@ impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
 
         // SAFETY: `mgr` was just derived from the live exclusive `this` borrow above and
         // is the sole access path for the manager from here on. `sleep_until` takes the
-        // raw pointer directly (no `&mut self` receiver) and `tick_raw` holds no
-        // `&mut event_loop` across `is_done`, so `closure.manager`'s reborrow inside the
+        // raw pointer directly (no `&mut self` receiver) and the event loop it ticks is
+        // outside the `PackageManager`, so `closure.manager`'s reborrow inside the
         // callback never invalidates a live tag.
         unsafe { PackageManager::sleep_until(mgr, &mut closure, Self::is_done) };
 

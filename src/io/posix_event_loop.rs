@@ -13,22 +13,6 @@ use bun_uws_sys::Loop as UwsLoop;
 
 pub type Loop = UwsLoop;
 
-// Note: `bun_uws_sys::Loop` only exposes `inc`/`dec`/`ref_`/`unref`. The
-// `active` counter is a public field, so inline the saturating math here until
-// `bun_uws_sys` grows `add_active`/`sub_active`. On Windows the uws loop has no
-// such counter (libuv tracks active handles itself); `posix_event_loop` is only
-// reachable from non-Windows `Loop` consumers, so the Windows arm is a no-op.
-#[cfg(not(windows))]
-#[inline]
-fn loop_add_active(loop_: &mut Loop, value: u32) {
-    loop_.active = loop_.active.saturating_add(value);
-}
-#[cfg(not(windows))]
-#[inline]
-fn loop_sub_active(loop_: &mut Loop, value: u32) {
-    loop_.active = loop_.active.saturating_sub(value);
-}
-
 #[cfg(not(windows))]
 use bun_sys::syslog;
 
@@ -335,11 +319,6 @@ impl FilePoll {
         FileType::Pipe
     }
 
-    // Note: these handlers take no loop parameter: holding a
-    // protected `&mut Loop` across `on_update` would alias the fresh `&mut Loop`
-    // that downstream `__bun_run_file_poll` handlers conjure via
-    // `EventLoopCtx::platform_event_loop()` when they re-enter the loop
-    // (`register_with_fd`/`unregister`/`deinit`).
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     pub(crate) fn on_kqueue_event(&mut self, kqueue_event: &KQueueEvent) {
         self.update_flags(Flags::from_kqueue_event(kqueue_event));
@@ -390,10 +369,7 @@ impl FilePoll {
     }
 
     fn deinit_possibly_defer(&mut self, vm: EventLoopCtx, force_unregister: bool) {
-        // `loop_mut()` is the crate-private nonnull-asref accessor (single
-        // deref in `EventLoopCtx`); the `&mut Loop` is consumed by `unregister`
-        // and dropped before any `&mut Store` is materialised.
-        let _ = self.unregister(vm.loop_mut(), force_unregister);
+        let _ = self.unregister(vm.platform_event_loop(), force_unregister);
 
         self.owner.clear();
         let was_ever_registered = self.flags.contains(Flags::WasEverRegistered);
@@ -475,22 +451,19 @@ impl FilePoll {
     }
 
     /// Only intended to be used from EventLoop.Pollable
-    fn deactivate(&mut self, loop_: &mut Loop) {
+    fn deactivate(&mut self, loop_: &Loop) {
         if self.flags.contains(Flags::HasIncrementedPollCount) {
             loop_.dec();
         }
         self.flags.remove(Flags::HasIncrementedPollCount);
 
-        loop_sub_active(
-            loop_,
-            self.flags.contains(Flags::HasIncrementedActiveCount) as u32,
-        );
+        loop_.sub_active(self.flags.contains(Flags::HasIncrementedActiveCount) as u32);
         self.flags.remove(Flags::KeepsEventLoopAlive);
         self.flags.remove(Flags::HasIncrementedActiveCount);
     }
 
     /// Only intended to be used from EventLoop.Pollable
-    fn activate(&mut self, loop_: &mut Loop) {
+    fn activate(&mut self, loop_: &Loop) {
         self.flags.remove(Flags::Closed);
 
         if !self.flags.contains(Flags::HasIncrementedPollCount) {
@@ -499,10 +472,7 @@ impl FilePoll {
         self.flags.insert(Flags::HasIncrementedPollCount);
 
         if self.flags.contains(Flags::KeepsEventLoopAlive) {
-            loop_add_active(
-                loop_,
-                (!self.flags.contains(Flags::HasIncrementedActiveCount)) as u32,
-            );
+            loop_.add_active((!self.flags.contains(Flags::HasIncrementedActiveCount)) as u32);
             self.flags.insert(Flags::HasIncrementedActiveCount);
         }
     }
@@ -547,7 +517,7 @@ impl FilePoll {
         poll
     }
 
-    pub fn register(&mut self, loop_: &mut Loop, flag: Flags, one_shot: bool) -> sys::Result<()> {
+    pub fn register(&mut self, loop_: &Loop, flag: Flags, one_shot: bool) -> sys::Result<()> {
         self.register_with_fd(
             loop_,
             flag,
@@ -562,7 +532,7 @@ impl FilePoll {
 
     pub fn register_with_fd(
         &mut self,
-        loop_: &mut Loop,
+        loop_: &Loop,
         flag: Flags,
         one_shot: OneShotFlag,
         fd: Fd,
@@ -594,12 +564,12 @@ impl FilePoll {
     ))]
     fn register_with_fd_impl(
         &mut self,
-        loop_: &mut Loop,
+        loop_: &Loop,
         flag: Flags,
         one_shot: OneShotFlag,
         fd: Fd,
     ) -> sys::Result<()> {
-        let watcher_fd = loop_.fd;
+        let watcher_fd = loop_.fd.get();
 
         syslog!(
             "register: FilePoll(0x{:x}, generation_number={}) {} ({})",
@@ -863,13 +833,13 @@ impl FilePoll {
         sys::Result::Ok(())
     }
 
-    pub fn unregister(&mut self, loop_: &mut Loop, force_unregister: bool) -> sys::Result<()> {
+    pub fn unregister(&mut self, loop_: &Loop, force_unregister: bool) -> sys::Result<()> {
         self.unregister_with_fd(loop_, self.fd, force_unregister)
     }
 
     pub(crate) fn unregister_with_fd(
         &mut self,
-        loop_: &mut Loop,
+        loop_: &Loop,
         fd: Fd,
         force_unregister: bool,
     ) -> sys::Result<()> {
@@ -904,7 +874,7 @@ impl FilePoll {
     ))]
     fn unregister_with_fd_impl(
         &mut self,
-        loop_: &mut Loop,
+        loop_: &Loop,
         fd: Fd,
         force_unregister: bool,
     ) -> sys::Result<()> {
@@ -921,7 +891,7 @@ impl FilePoll {
             return sys::Result::Ok(());
         }
 
-        let watcher_fd = loop_.fd;
+        let watcher_fd = loop_.fd.get();
         let both_directions = disarmed_only
             || (self.flags.contains(Flags::PollReadable)
                 && self.flags.contains(Flags::PollWritable));
@@ -1472,12 +1442,8 @@ impl Pollable {
 ))]
 #[unsafe(no_mangle)]
 /// # Safety
-/// uWS C callback: `loop_` is the live per-thread `us_loop_t`; `tagged_pointer`
-/// was registered via `Pollable::init` in `register_with_fd`.
-unsafe extern "C" fn Bun__internal_dispatch_ready_poll(
-    loop_: *mut Loop,
-    tagged_pointer: *mut c_void,
-) {
+/// uWS C callback: `tagged_pointer` was registered via `Pollable::init` in `register_with_fd`.
+unsafe extern "C" fn Bun__internal_dispatch_ready_poll(loop_: &Loop, tagged_pointer: *mut c_void) {
     let tag = Pollable::from(tagged_pointer);
 
     if tag.tag() != Pollable::FILE_POLL_TAG {
@@ -1490,14 +1456,7 @@ unsafe extern "C" fn Bun__internal_dispatch_ready_poll(
         return;
     }
 
-    // SAFETY: `loop_` is the live uws loop. Do *not* materialize `&mut *loop_`
-    // here — `on_update` (via `__bun_run_file_poll`) re-enters the loop and conjures
-    // a fresh `&mut Loop` through `EventLoopCtx::platform_event_loop()`; a
-    // protected `&mut Loop` spanning that call would be SB-UB. Take a short-lived
-    // `&*loop_` only to copy the POD event onto the stack (the `BackRef`-style
-    // accessor returns by value), then drop the borrow before dispatching so the
-    // handler is free to form its own `&mut Loop`.
-    let ev = unsafe { &*loop_ }.current_ready_event();
+    let ev = loop_.current_ready_event();
 
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     file_poll.on_kqueue_event(&ev);

@@ -95,6 +95,11 @@ pub struct BundleV2<'a> {
     /// When this bundle's owning loop is a JS event loop (bake / dev server):
     /// how parse worker threads deliver work back to it.
     pub js_poster: Option<bun_event_loop::JsPoster>,
+    /// When this bundle's owning loop is a mini loop (`bun build`, `Bun.build`'s bundle thread):
+    /// the part of it that other threads deliver work to. It points into the `AnyEventLoop` given
+    /// to `init`, which outlives the bundle. Every task posted here is one of the bundle's pending
+    /// items, so the bundle does not end before its thread has run the task.
+    pub mini_poster: Option<NonNull<bun_event_loop::MiniEventLoop::Shared>>,
     /// Whose script the plugins' `onResolve` / `onLoad` callbacks continue: the context that called
     /// `Bun.build`. Once it has stopped a request is answered as cancelled instead of reaching them.
     pub plugin_context: bun_event_loop::ContextId,
@@ -170,18 +175,8 @@ impl<'a> BundleV2<'a> {
     }
 
     #[inline]
-    pub fn r#loop(&mut self) -> &mut EventLoop {
+    pub fn r#loop(&mut self) -> &EventLoop {
         &mut self.linker.r#loop
-    }
-
-    /// `switch (this.loop().*)` — `linker.loop` is a non-owning backref to the
-    /// `AnyEventLoop` that owns this bundle pass and outlives it.
-    #[inline]
-    pub(crate) fn any_loop_mut(&mut self) -> &mut bun_event_loop::AnyEventLoop {
-        // BACKREF deref centralised in `LinkerContext::any_loop_mut`.
-        self.linker
-            .any_loop_mut()
-            .expect("BundleV2.linker.loop must be set before plugins run")
     }
 
     #[inline]
@@ -1925,7 +1920,6 @@ pub mod bv2_impl {
             }
             // From bake where the loop running the bundle is also the loop running
             // the plugins.
-            // `any_loop_mut` centralises the BACKREF deref of `linker.r#loop`.
             let poster = self
                 .js_poster
                 .as_ref()
@@ -2478,24 +2472,19 @@ pub mod bv2_impl {
         }
 
         pub(crate) fn wait_for_parse(&mut self) {
-            // `tick_raw` (not `tick`) — `is_done` reborrows `*ctx` as
-            // `&mut BundleV2`, and `BundleV2` (via `linker.r#loop`) owns the
-            // `AnyEventLoop` slot, so holding `&mut AnyEventLoop` across the
-            // callback would be a Stacked-Borrows violation.
             let self_ptr: *mut Self = self;
             let any_loop = self
                 .r#loop()
-                .expect("event loop not initialized for waitForParse")
-                .as_ptr();
-            // SAFETY: `any_loop` points into `self.linker.r#loop`, valid for the
-            // duration of this call; `self_ptr` is the live `&mut self`. The
-            // callback's `'static` lifetime erasure is storage-only —
-            // `is_done` only touches by-value fields.
-            unsafe {
-                bun_event_loop::AnyEventLoop::tick_raw(any_loop, self_ptr.cast(), |ctx| {
-                    (*ctx.cast::<BundleV2<'static>>()).is_done()
-                });
-            }
+                .expect("event loop not initialized for waitForParse");
+            // SAFETY: the loop given to `init` outlives the bundle, is outside `*self`, and this
+            // is its thread.
+            let any_loop = unsafe { any_loop.as_ref() };
+            any_loop.tick(self_ptr.cast(), |ctx| {
+                // SAFETY: `ctx` is `self_ptr`, the live `&mut self`. The `'static`
+                // lifetime erasure is storage-only — `is_done` only touches
+                // by-value fields.
+                unsafe { (*ctx.cast::<BundleV2<'static>>()).is_done() }
+            });
             bun_core::scoped_log!(
                 Bundle,
                 "Parsed {} files, producing {} ASTs",
@@ -3239,6 +3228,11 @@ pub mod bv2_impl {
                 // SAFETY: `event_loop`, when set, points at the caller's live loop
                 // (owning thread == this thread).
                 js_poster: event_loop.and_then(|l| unsafe { l.as_ref() }.js_poster()),
+                // SAFETY: as above.
+                mini_poster: event_loop.and_then(|l| match unsafe { l.as_ref() } {
+                    bun_event_loop::AnyEventLoop::Js { .. } => None,
+                    bun_event_loop::AnyEventLoop::Mini(mini) => Some(NonNull::from(&mini.shared)),
+                }),
                 plugin_context: bun_event_loop::ContextId::NONE,
                 dev_server: None,
                 file_map: None,
@@ -4871,8 +4865,8 @@ pub mod bv2_impl {
             // For `Bun.build` this is a Mini loop running on the bundler thread, so
             // `on_load` must land there — not on the JS plugin loop — or it will
             // mutate `graph` / allocate from `graph.heap` off-thread.
-            match self.any_loop_mut() {
-                bun_event_loop::AnyEventLoop::Js { .. } => {
+            match self.mini_poster {
+                None => {
                     let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::create_from(
                         std::ptr::from_mut(load).cast::<jsc_api::JSBundler::LoadAnswered>(),
                     );
@@ -4888,11 +4882,12 @@ pub mod bv2_impl {
                         };
                     }
                 }
-                bun_event_loop::AnyEventLoop::Mini(mini) => {
+                Some(mini) => {
                     // SAFETY: `load` is a valid &mut for the duration of the enqueue;
                     // the mini loop dispatches `on_load_mini` on the bundler thread.
+                    // `mini` is live: see `BundleV2::mini_poster`.
                     unsafe {
-                        mini.enqueue_task_concurrent_with_extra_ctx::<jsc_api::JSBundler::Load, BundleV2<'static>>(
+                        mini.as_ref().enqueue_task_concurrent_with_extra_ctx::<jsc_api::JSBundler::Load, BundleV2<'static>>(
                             std::ptr::from_mut(load),
                             on_load_mini,
                             core::mem::offset_of!(jsc_api::JSBundler::Load, task),
@@ -4904,8 +4899,8 @@ pub mod bv2_impl {
 
         pub fn on_resolve_async(&mut self, resolve: &mut jsc_api::JSBundler::Resolve) {
             // See `on_load_async` — must dispatch on the bundler's own loop.
-            match self.any_loop_mut() {
-                bun_event_loop::AnyEventLoop::Js { .. } => {
+            match self.mini_poster {
+                None => {
                     let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::create_from(
                         std::ptr::from_mut(resolve).cast::<jsc_api::JSBundler::ResolveAnswered>(),
                     );
@@ -4921,11 +4916,12 @@ pub mod bv2_impl {
                         };
                     }
                 }
-                bun_event_loop::AnyEventLoop::Mini(mini) => {
+                Some(mini) => {
                     // SAFETY: `resolve` is a valid &mut for the duration of the enqueue;
                     // the mini loop dispatches `on_resolve_mini` on the bundler thread.
+                    // `mini` is live: see `BundleV2::mini_poster`.
                     unsafe {
-                        mini.enqueue_task_concurrent_with_extra_ctx::<jsc_api::JSBundler::Resolve, BundleV2<'static>>(
+                        mini.as_ref().enqueue_task_concurrent_with_extra_ctx::<jsc_api::JSBundler::Resolve, BundleV2<'static>>(
                             std::ptr::from_mut(resolve),
                             on_resolve_mini,
                             core::mem::offset_of!(jsc_api::JSBundler::Resolve, task),
@@ -8051,11 +8047,6 @@ pub mod bv2_impl {
             if diff < 0 {
                 this.on_after_decrement_scan_counter();
             }
-        }
-
-        /// To satisfy the interface from NewHotReloader()
-        pub fn bust_dir_cache(&mut self, path: &[u8]) -> bool {
-            self.transpiler.resolver.bust_dir_cache(path)
         }
     }
 

@@ -324,7 +324,7 @@ pub fn populate_manifest_cache(
         impl RunClosure {
             fn is_done(closure: &mut Self) -> bool {
                 // SAFETY: `closure.manager` is the raw provenance root set
-                // below; `sleep_until`/`tick_raw` hold no `&mut` across this
+                // below; `sleep_until` holds no borrow of it across this
                 // callback, so this is the unique live borrow.
                 let manager = unsafe { &mut *closure.manager };
                 let log_level = manager.options.log_level;
@@ -359,7 +359,7 @@ pub fn populate_manifest_cache(
         };
         // SAFETY: `mgr` is derived from the live exclusive `manager` borrow;
         // `sleep_until` is an associated fn taking `*mut PackageManager` and
-        // `tick_raw` holds no `&mut event_loop` across `is_done`, so the
+        // the event loop it ticks is outside the `PackageManager`, so the
         // callback's `&mut *run_closure.manager` is the unique live borrow.
         unsafe { PackageManager::sleep_until(mgr, &mut run_closure, RunClosure::is_done) };
 

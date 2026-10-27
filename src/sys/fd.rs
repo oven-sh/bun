@@ -160,7 +160,7 @@ impl FdExt for Fd {
                         // SAFETY: synchronous libuv fs call (cb = None); req lives on the
                         // stack for the duration of the call.
                         let rc = unsafe {
-                            uv::uv_fs_close(uv::Loop::get(), &mut req, file_number, None)
+                            uv::uv_fs_close(uv::Loop::get().as_ptr(), &mut req, file_number, None)
                         };
                         // fs_t has no Drop impl, so cleanup
                         // must be explicit (uv_fs_req_cleanup).

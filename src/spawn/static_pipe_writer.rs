@@ -80,7 +80,7 @@ bun_io::impl_buffered_writer_parent! {
     // lifetime parameter.
     get_buffer = |this| &*(*this).buffer.as_ptr(),
     event_loop = |this| (*this).io_evtloop(),
-    uv_loop    = |this| (*this).event_loop.uv_loop(),
+    uv_loop    = |this| (*this).event_loop.uv_loop().as_ptr(),
     ref_       = |this| RefCount::<Self>::ref_(this),
     deref      = |this| RefCount::<Self>::deref(this),
 }

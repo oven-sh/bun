@@ -573,21 +573,23 @@ pub struct Resolver<'a> {
     pub custom_dir_paths: Option<&'a [bun_core::String]>,
 }
 
-/// RAII guard returned by [`Resolver::scoped_log`]. Restores the previous
-/// `Resolver::log` pointer on drop.
-pub struct ResolverLogScope {
-    slot: *mut NonNull<bun_ast::Log>,
-    prev: NonNull<bun_ast::Log>,
-}
-
-impl Drop for ResolverLogScope {
-    #[inline]
-    fn drop(&mut self) {
-        // SAFETY: `slot` was derived via `addr_of_mut!` from the raw resolver
-        // pointer in `scoped_log` (SharedReadWrite provenance); caller contract
-        // guarantees the resolver outlives this guard.
-        unsafe { *self.slot = self.prev };
-    }
+/// Bust the directory cache for the given path, which may end in a separator. Any thread: both
+/// caches are the process's, shared by every `Resolver`, and each is changed under its own mutex.
+pub fn bust_dir_cache(path: &[u8]) -> bool {
+    let path = strings::without_trailing_slash_windows_path(path);
+    Resolver::assert_valid_cache_key(path);
+    let first_bust = Fs::FileSystem::instance().fs.bust_entries_cache(path);
+    // SAFETY: never freed. `remove` touches the map's `index` alone, under the map's mutex, as
+    // does everything else that reads or writes `index`.
+    let second_bust = unsafe { &mut *DirInfo::hash_map_instance() }.remove(path);
+    bun_core::scoped_log!(
+        ResolverDev,
+        "Bust {} = {}, {}",
+        bstr::BStr::new(path),
+        first_bust,
+        second_bust
+    );
+    first_bust || second_bust
 }
 
 impl<'a> Resolver<'a> {
@@ -678,22 +680,6 @@ impl<'a> Resolver<'a> {
         unsafe { &*self.fs }
     }
 
-    /// Unique-borrow of the `FileSystem` singleton. Centralizes the
-    /// `unsafe { &mut *self.fs() }` retag for call sites that hold no other
-    /// borrow of `self` across the call. Sites that need `&mut FileSystem`
-    /// while also borrowing a disjoint `self.<field>` (e.g.
-    /// `self.caches.fs.read_file_with_allocator`) cannot route through
-    /// `&mut self` and continue to narrow-retag via the raw [`fs()`](Self::fs)
-    /// accessor — same caveat as [`log_mut`](Self::log_mut).
-    #[inline(always)]
-    pub(crate) fn fs_mut(&mut self) -> &mut Fs::FileSystem {
-        // SAFETY: BACKREF — `self.fs` is the never-null process-global
-        // `FileSystem` singleton (set in `init1`); resolver mutex serializes
-        // all mutation across worker clones; `&mut self` rules out
-        // intra-instance aliasing.
-        unsafe { &mut *self.fs }
-    }
-
     /// Raw-pointer projection to the inner `RealFS` (`self.fs.fs`).
     ///
     /// NOTE (Stacked Borrows): derived directly from the raw `*mut
@@ -720,35 +706,11 @@ impl<'a> Resolver<'a> {
         self.log.as_ptr()
     }
 
-    /// Temporarily redirect `self.log` to `log`, returning a guard that
-    /// restores the previous pointer on drop.
-    ///
-    /// Takes a raw `*mut Self` (not `&mut self`) so the stored slot pointer
-    /// carries SharedReadWrite provenance and stays valid under Stacked
-    /// Borrows when the caller subsequently reborrows the resolver
-    /// (`read_dir_info` etc.) before the guard drops.
-    ///
-    /// # Safety
-    /// `self_` must point at a `Resolver` that outlives the returned guard,
-    /// and `log` must remain valid for that same duration (declare the guard
-    /// *after* the temporary `Log` so it drops first).
-    #[inline]
-    pub unsafe fn scoped_log(self_: *mut Self, log: NonNull<bun_ast::Log>) -> ResolverLogScope {
-        // SAFETY: caller contract — `self_` is live; `addr_of_mut!` projects
-        // the field place without an intermediate `&mut Resolver`.
-        let slot = unsafe { core::ptr::addr_of_mut!((*self_).log) };
-        // SAFETY: `slot` just derived from a live resolver.
-        let prev = unsafe { *slot };
-        // SAFETY: same as above — `slot` points at a live resolver field.
-        unsafe { *slot = log };
-        ResolverLogScope { slot, prev }
-    }
-
     /// Shared-borrow of the resolver's `Log` for read-only inspection
     /// (e.g. `log.level`). Preferred over `unsafe { &*self.log() }`.
     #[inline(always)]
     pub(crate) fn log_ref(&self) -> &bun_ast::Log {
-        // SAFETY: BACKREF — `self.log` is set in `init1` / `scoped_log`,
+        // SAFETY: BACKREF — `self.log` is set in `init1` or by the owner,
         // owner-allocated, outlives the Resolver. Resolver mutex serializes
         // mutation; a Shared `&` here pushes no Unique tag and so cannot
         // alias-UB with the narrow `log_mut()` retags elsewhere (none are live
@@ -770,9 +732,9 @@ impl<'a> Resolver<'a> {
     /// narrow-retag via the raw [`log()`](Self::log) accessor.
     #[inline(always)]
     pub fn log_mut(&mut self) -> &mut bun_ast::Log {
-        // SAFETY: BACKREF — `self.log` is set in `init1` / `scoped_log`; the
-        // pointee (owner-allocated `Log`, or a stack `Log` pinned by a live
-        // `ResolverLogScope`) outlives every borrow returned here. Resolver
+        // SAFETY: BACKREF — `self.log` is set in `init1` or by the owner; the
+        // pointee (owner-allocated `Log`, or a stack `Log` that the owner swaps
+        // out again before it goes) outlives every borrow returned here. Resolver
         // mutex serializes mutation across worker clones.
         unsafe { self.log.as_mut() }
     }
@@ -2473,20 +2435,9 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    /// Bust the directory cache for the given path, which may end in a separator.
+    /// See [`bust_dir_cache`].
     pub fn bust_dir_cache(&mut self, path: &[u8]) -> bool {
-        let path = strings::without_trailing_slash_windows_path(path);
-        Self::assert_valid_cache_key(path);
-        let first_bust = self.fs_mut().fs.bust_entries_cache(path);
-        let second_bust = self.dir_cache_mut().remove(path);
-        bun_core::scoped_log!(
-            ResolverDev,
-            "Bust {} = {}, {}",
-            bstr::BStr::new(path),
-            first_bust,
-            second_bust
-        );
-        first_bust || second_bust
+        bust_dir_cache(path)
     }
 
     /// bust both the named file and a parent directory, because `./hello` can resolve

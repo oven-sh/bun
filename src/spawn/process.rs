@@ -125,10 +125,9 @@ pub struct Process {
     pub(crate) ref_count: bun_ptr::ThreadSafeRefCount<Process>,
     pub exit_handler: ProcessExitHandler,
     pub(crate) event_loop: EventLoopHandle,
-    /// How the waiter thread delivers this process's exit to a JS VM
-    /// (`None` when owned by a mini event loop, which it posts to directly).
+    /// How the waiter thread delivers this process's exit to `event_loop`.
     #[cfg(unix)]
-    pub(crate) js_poster: Option<bun_event_loop::JsPoster>,
+    pub(crate) poster: bun_event_loop::Poster,
 }
 
 impl Drop for Process {
@@ -288,7 +287,7 @@ impl Process {
             pid: posix.pid,
             #[cfg(any(target_os = "linux", target_os = "android"))]
             pidfd: posix.pidfd.unwrap_or(0),
-            js_poster: event_loop.js_poster(),
+            poster: event_loop.poster(),
             event_loop,
             poller: Poller::Detached,
             status,
@@ -510,11 +509,10 @@ impl Process {
             // Borrow scoped to the call.
             unsafe { (*poll).enable_keeping_process_alive(ctx) };
 
-            // SAFETY: poll is live and `platform_event_loop` returns the live
-            // uws loop; both `&mut`s are scoped to the `register` call.
+            // SAFETY: poll is live; the `&mut` is scoped to the `register` call.
             match unsafe {
                 (*poll).register(
-                    &mut *self.event_loop.platform_event_loop(),
+                    self.event_loop.platform_event_loop(),
                     bun_io::PollKind::Process,
                     PROCESS_POLL_ONE_SHOT,
                 )
@@ -554,10 +552,8 @@ impl Process {
         }
 
         if let Some(fd) = self.poller.fd_poll_mut() {
-            // SAFETY: `platform_event_loop` returns the live uws loop; borrow
-            // scoped to the `register` call.
             let maybe = fd.register(
-                unsafe { &mut *self.event_loop.platform_event_loop() },
+                self.event_loop.platform_event_loop(),
                 bun_io::PollKind::Process,
                 PROCESS_POLL_ONE_SHOT,
             );
@@ -1181,9 +1177,8 @@ pub mod waiter_thread_posix {
         /// `jsc::Task` tag for this `T`'s `ResultTask`; callers supply it.
         const TASK_TAG: TaskTag;
         fn pid(&self) -> PidT;
-        fn event_loop(&self) -> EventLoopHandle;
-        /// The poster for a JS-owned process (see `Process::js_poster`).
-        fn js_poster(&self) -> Option<&bun_event_loop::JsPoster>;
+        /// See `Process::poster`.
+        fn poster(&self) -> &bun_event_loop::Poster;
         /// Waiter thread, VM gone: release the strong ref the result would have
         /// consumed on the JS thread.
         ///
@@ -1206,12 +1201,8 @@ pub mod waiter_thread_posix {
             self.pid
         }
         #[inline]
-        fn event_loop(&self) -> EventLoopHandle {
-            self.event_loop
-        }
-        #[inline]
-        fn js_poster(&self) -> Option<&bun_event_loop::JsPoster> {
-            self.js_poster.as_ref()
+        fn poster(&self) -> &bun_event_loop::Poster {
+            &self.poster
         }
         #[inline]
         unsafe fn release_ref_from_waiter_thread(this: *mut Self) {
@@ -1317,15 +1308,14 @@ pub mod waiter_thread_posix {
     ) {
         // SAFETY: caller contract — the +1 ref keeps the pointee live.
         let process_ref = unsafe { &*process };
-        match T::event_loop(process_ref) {
-            EventLoopHandle::Js { .. } => {
+        match T::poster(process_ref) {
+            bun_event_loop::Poster::Js(poster) => {
                 let rt = ResultTask::<T>::new(ResultTask {
                     result,
                     subprocess: process,
                     rusage: *rusage,
                 });
                 let ct = ConcurrentTask::create(Task::init(rt));
-                let poster = T::js_poster(process_ref).expect("JS-owned process has a poster");
                 if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {
                     // VM torn down: nobody will observe this exit. Free the
                     // task and drop the ref its delivery would have released.
@@ -1337,7 +1327,7 @@ pub mod waiter_thread_posix {
                     }
                 }
             }
-            EventLoopHandle::Mini(mut mini) => {
+            bun_event_loop::Poster::Mini(mini) => {
                 let out = ResultTaskMini::<T>::new(ResultTaskMini {
                     result,
                     subprocess: process,
@@ -1349,10 +1339,9 @@ pub mod waiter_thread_posix {
                         out,
                         ResultTaskMini::<T>::run_from_main_thread_mini,
                     );
-                    mini.get_mut()
-                        .enqueue_task_concurrent(core::ptr::NonNull::new_unchecked(
-                            core::ptr::addr_of_mut!((*out).task),
-                        ));
+                    mini.enqueue_task_concurrent(core::ptr::NonNull::new_unchecked(
+                        core::ptr::addr_of_mut!((*out).task),
+                    ));
                 }
                 // `out` is now owned by the mini queue; freed in `run_from_main_thread_mini`.
             }
@@ -2002,12 +1991,11 @@ mod spawn_process_body {
         // `WindowsOptions::default()` leaves `loop_` zeroed (every
         // `bun.spawnSync` call site sets it explicitly). A zeroed
         // `EventLoopHandle` is discriminant 0 (`Js`) with a null inner pointer,
-        // so `platform_event_loop()` returns null and the deref below segfaults
-        // at the `.uv_loop` field offset. Catch that with a clear panic instead
-        // of an opaque exit-code-3. Release-build assert: this is the contract
-        // boundary, not a debug aid.
+        // which `uv_loop()` below would dereference. Catch that with a clear
+        // panic instead of an opaque exit-code-3. Release-build assert: this is
+        // the contract boundary, not a debug aid.
         assert!(
-            !options.windows.loop_.platform_event_loop().is_null(),
+            !options.windows.loop_.into_tag_ptr().1.is_null(),
             "spawn_process_windows: WindowsSpawnOptions.windows.loop_ was not set. \
          WindowsOptions::default() leaves it zeroed (Zig spec: `= undefined`); \
          every caller must populate it — see src/CLAUDE.md §Spawning Subprocesses \
@@ -2015,7 +2003,7 @@ mod spawn_process_body {
         );
         // Non-null verified above; `EventLoopHandle::uv_loop` is the centralized
         // accessor for the set-once `.uv_loop` field of the `uws::WindowsLoop`.
-        let loop_ = options.windows.loop_.uv_loop();
+        let loop_ = options.windows.loop_.uv_loop().as_ptr();
 
         let cwd = match bun_sys::to_posix_path(&options.cwd) {
             Ok(p) => p,
@@ -2850,9 +2838,7 @@ mod spawn_process_body {
             // SAFETY: read-only field access between uv ticks; the uv exit
             // callback's `&mut Process` does not overlap this `&Process`.
             while !unsafe { (*process).has_exited() } {
-                // SAFETY: `loop_` is the live `uws::WindowsLoop*` from
-                // `EventLoopHandle::platform_event_loop`.
-                unsafe { (*loop_).run() };
+                (*loop_).run();
             }
 
             Ok(Ok(Result {
@@ -2947,8 +2933,7 @@ mod spawn_process_body {
             // SAFETY: read-only field access between uv ticks; callbacks fired
             // inside `tick()` write through the same `this_ptr` root.
             while unsafe { (*this_ptr).waiting_count } > 0 {
-                // SAFETY: `loop_` wraps a live `uws::WindowsLoop*`.
-                unsafe { (*loop_.platform_event_loop()).tick() };
+                (*loop_.platform_event_loop()).tick();
             }
 
             // SAFETY: loop drained (waiting_count == 0); no further uv callback

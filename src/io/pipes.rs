@@ -99,7 +99,7 @@ impl PollOrFd {
             #[cfg(windows)]
             {
                 if close_fd {
-                    crate::closer::Closer::close(fd, bun_sys::windows::libuv::Loop::get());
+                    crate::closer::Closer::close(fd, bun_sys::windows::libuv::Loop::get().as_ptr());
                 }
             }
             #[cfg(not(windows))]

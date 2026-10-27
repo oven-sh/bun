@@ -17,8 +17,7 @@ use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
 use bun_dotenv as dot_env;
 use bun_event_loop::MiniEventLoop as mini_event_loop;
-use bun_event_loop::MiniEventLoop::MiniEventLoop;
-use bun_event_loop::{self, AnyEventLoop, EventLoopHandle};
+use bun_event_loop::{self, AnyEventLoop, EventLoopHandle, LoopWaker};
 use bun_http as http;
 use bun_ini as ini;
 use bun_paths::resolve_path::{self, PosixToWinNormalizer, platform};
@@ -577,7 +576,10 @@ pub struct PackageManager {
     // that the project's own package.json files declare.
     pub(crate) known_npm_aliases: NpmAliasMap,
 
-    pub(crate) event_loop: AnyEventLoop,
+    /// In its own allocation: it is borrowed while its tasks borrow the whole `PackageManager`.
+    pub(crate) event_loop: &'static AnyEventLoop,
+    /// Wakes `event_loop`. Task threads use this: `event_loop` belongs to the main thread.
+    event_loop_waker: LoopWaker,
 
     // During `installPackages` we learn exactly what dependencies from --trust
     // actually have scripts to run, and we add them to this list
@@ -1176,23 +1178,20 @@ impl PackageManager {
     /// `isolated_install::Installer::Task::callback`). Never materializes
     /// `&mut PackageManager`, so two task threads finishing simultaneously do
     /// not hold aliased exclusive borrows. `on_wake` is read-only; the handler
-    /// receives the raw `*mut`;
-    /// `event_loop.wakeup()` is the cross-thread signal and is
-    /// internally synchronized — we reach it via `addr_of_mut!` so the `&mut`
-    /// covers only the event-loop field, never the whole `PackageManager`.
+    /// receives the raw `*mut`; `event_loop_waker` is the cross-thread signal.
     ///
     /// # Safety
     /// `this` must point to a live `PackageManager` (BACKREF).
     pub(crate) unsafe fn wake_raw(this: *mut Self) {
         // SAFETY: caller guarantees `this` points to a live `PackageManager`; we
-        // only form field pointers via `addr_of!`/`addr_of_mut!` (no whole-struct
-        // borrow) and `wakeup()` is internally synchronized for cross-thread use.
+        // only form field pointers via `addr_of!` (no whole-struct borrow), and
+        // `LoopWaker` is `Sync`.
         unsafe {
             if let Some(wake) = (*core::ptr::addr_of!((*this).on_wake)).0 {
                 // `bun_install_types` cannot name `PackageManager`: the second arg is erased.
                 (wake.handler)(wake.context.as_ptr(), this.cast::<c_void>());
             }
-            (*core::ptr::addr_of_mut!((*this).event_loop)).wakeup();
+            (*core::ptr::addr_of!((*this).event_loop_waker)).wake();
             if *core::ptr::addr_of!((*this).options.runtime_auto_install) {
                 crate::auto_installer::Parked::wake_all();
             }
@@ -1203,19 +1202,18 @@ impl PackageManager {
     /// `is_done_fn` body in this crate reborrows the *whole* `PackageManager`
     /// from a raw pointer stashed in `C` (`&mut *closure.manager`). If this
     /// were a `&mut self` method, that whole-struct Unique retag would pop
-    /// `self`'s tag (and the `&mut self.event_loop` borrow `tick` holds) under
-    /// Stacked Borrows, making the next loop-iteration deref UB.
+    /// `self`'s tag under Stacked Borrows.
     ///
-    /// SAFETY: `this` must be valid for `&mut` access between callback
-    /// invocations; while `is_done_fn` runs, the callback owns the unique
-    /// `&mut PackageManager` and `sleep_until`/`tick_raw` hold no borrow.
+    /// SAFETY: `this` must be valid for reads on entry; while `is_done_fn` runs,
+    /// the callback owns the unique `&mut PackageManager` and `sleep_until`
+    /// holds no borrow of it.
     pub(crate) unsafe fn sleep_until<C>(
         this: *mut PackageManager,
         closure: &mut C,
         is_done_fn: fn(&mut C) -> bool,
     ) {
         Output::flush();
-        // `AnyEventLoop::tick_raw` takes the type-erased
+        // `AnyEventLoop::tick` takes the type-erased
         // `(*mut c_void, fn(*mut c_void) -> bool)`; trampoline through a small wrapper so
         // `is_done_fn` receives `&mut C` and can drive `run_tasks` / record `err`.
         struct Erased<C> {
@@ -1224,12 +1222,12 @@ impl PackageManager {
         }
         fn trampoline<C>(p: *mut c_void) -> bool {
             let erased = p as *const Erased<C>;
-            // SAFETY: `p` is the `Erased<C>` local we pass to `tick_raw` below. We only
+            // SAFETY: `p` is the `Erased<C>` local we pass to `tick` below. We only
             // read its two POD fields here (no `&mut Erased` materialized — the local
             // `&mut erased` borrow in the caller is still notionally live across the call).
             let (ctx_ptr, is_done) = unsafe { ((*erased).ctx, (*erased).is_done) };
             // SAFETY: `ctx_ptr` was derived from the caller's exclusive `closure: &mut C`
-            // and the caller does not touch `closure` again until `tick_raw` returns, so
+            // and the caller does not touch `closure` again until `tick` returns, so
             // this is the unique live `&mut C` for the duration of the callback.
             let ctx = unsafe { &mut *ctx_ptr };
             is_done(ctx)
@@ -1238,22 +1236,9 @@ impl PackageManager {
             ctx: std::ptr::from_mut::<C>(closure),
             is_done: is_done_fn,
         };
-        // Derive the event-loop pointer through `this`'s raw provenance (NOT
-        // via a `&mut self.event_loop` reborrow) so it shares `this`'s SRW tag
-        // and survives the callback's `&mut *this` retag.
-        // SAFETY: `this` is valid per fn contract; `&raw mut` does not create a
-        // reference, only a place projection.
-        let event_loop: *mut AnyEventLoop = unsafe { &raw mut (*this).event_loop };
-        // SAFETY: `tick_raw` reborrows `*event_loop` only between `is_done`
-        // calls (never across them), so the callback's `&mut PackageManager`
-        // never overlaps a live `&mut AnyEventLoop`.
-        unsafe {
-            AnyEventLoop::tick_raw(
-                event_loop,
-                (&raw mut erased).cast::<c_void>(),
-                trampoline::<C>,
-            )
-        };
+        // SAFETY: `this` is valid per fn contract; copies the field out.
+        let event_loop = unsafe { (*this).event_loop };
+        event_loop.tick((&raw mut erased).cast::<c_void>(), trampoline::<C>);
     }
 
     pub(crate) fn ensure_temp_node_gyp_script(&mut self) -> Result<(), Error> {
@@ -1589,7 +1574,12 @@ fn allocate_package_manager(
     #[cfg(bun_asan)]
     bun_core::add_exit_callback(deinit_caches_at_exit);
 
-    let runtime_auto_install = options.runtime_auto_install;
+    // As long-lived as the `PackageManager` itself, which is never freed.
+    let event_loop: &'static AnyEventLoop = Box::leak(Box::new(if options.runtime_auto_install {
+        AnyEventLoop::js_current()
+    } else {
+        AnyEventLoop::init()
+    }));
     // SAFETY: `p` points to uninitialized memory, fully initialized here field-by-field via
     // `addr_of_mut!((*p).field).write(..)`. No reference to it is formed before that: an uninit
     // bit pattern is invalid for its niche-bearing fields (`Box`, `Vec`, `Option<NonNull<_>>`).
@@ -1642,14 +1632,8 @@ fn allocate_package_manager(
         );
         wr!(resolve_tasks, ResolveTaskQueue::default());
         wr!(lockfile, Box::new(Lockfile::default()));
-        wr!(
-            event_loop,
-            if runtime_auto_install {
-                AnyEventLoop::js_current()
-            } else {
-                AnyEventLoop::init()
-            }
-        );
+        wr!(event_loop, event_loop);
+        wr!(event_loop_waker, event_loop.waker());
         wr!(
             original_package_json_path,
             ZBox::from_vec_with_nul(original_package_json_path)
@@ -2783,15 +2767,10 @@ pub fn init(
     {
         // SAFETY: singleton fully initialized; main thread, no workers yet.
         let manager = unsafe { &mut *manager_ptr };
-        // `r#loop()` returns the process-global `*mut uws::Loop`; build the
-        // handle from `&mut manager.event_loop` and write it back as the loop's
-        // parent so uSockets timers / lifecycle subprocess waiters can find the
-        // mini event loop on tick.
-        let uws_loop = manager.event_loop.r#loop();
-        // SAFETY: `uws_loop` is the live process-global `uws::Loop` (`r#loop()` above);
-        // the handle's backref is `manager.event_loop`, owned by the singleton.
-        let uws_loop = unsafe { &mut *uws_loop };
-        EventLoopHandle::from_any(&mut manager.event_loop).set_as_parent_of(uws_loop);
+        // Write the handle back as the loop's parent so uSockets timers /
+        // lifecycle subprocess waiters can find the mini event loop on tick.
+        let handle = EventLoopHandle::from_any(manager.event_loop);
+        handle.set_as_parent_of(manager.event_loop.r#loop());
     }
     {
         // make sure folder packages can find the root package without creating a new one
@@ -2820,9 +2799,8 @@ pub fn init(
     // (`bun_event_loop::mini_event_loop::GLOBAL`).
     {
         // SAFETY: singleton fully initialized; main thread, no workers yet.
-        let evl = unsafe { &mut (*manager_ptr).event_loop };
+        let evl = unsafe { (*manager_ptr).event_loop };
         if let AnyEventLoop::Mini(mini) = evl {
-            let mini_ptr: *mut MiniEventLoop = &raw mut **mini;
             // Set ONLY `MiniEventLoop.global`,
             // NOT `globalInitialized`. The distinction is load-bearing: a later
             // `initGlobal(env, top_level_dir)` (e.g. from `bun pm pack` /
@@ -2834,7 +2812,7 @@ pub fn init(
             // without top_level_dir, and (on Windows) without going through
             // `init_global`'s uv-loop setup. The shell's IOWriter then opens
             // stdout/stderr against an under-initialised loop → EBADF (exit 9).
-            mini_event_loop::GLOBAL.with(|g| g.set(mini_ptr));
+            mini_event_loop::GLOBAL.set(Some(mini));
         }
     }
     {

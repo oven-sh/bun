@@ -783,8 +783,13 @@ fn diff_against_cache(
         &from_cwd(cwd.as_bytes(), old_folder),
         &from_cwd(cwd.as_bytes(), new_folder),
     );
-    let (opts, _envp_guard) =
-        bun_patch::spawn_opts(&paths[0], &paths[1], cwd, git, &mut manager.event_loop);
+    let (opts, _envp_guard) = bun_patch::spawn_opts(
+        &paths[0],
+        &paths[1],
+        cwd,
+        git,
+        bun_event_loop::EventLoopHandle::from_any(manager.event_loop),
+    );
 
     let mut spawn_result = match bun_spawn::sync::spawn(&opts) {
         Err(e) => {

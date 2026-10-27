@@ -237,7 +237,7 @@ impl File {
         unsafe {
             let fs_ptr = core::ptr::from_mut::<File>(self).cast::<uv::fs_t>();
             uv::uv_fs_close(
-                uv::Loop::get(),
+                uv::Loop::get().as_ptr(),
                 fs_ptr,
                 self.file,
                 Some(Self::on_close_complete),

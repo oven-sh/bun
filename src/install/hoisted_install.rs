@@ -93,7 +93,7 @@ fn run_tasks_until_done(
     impl<'a, 'b> Closure<'a, 'b> {
         fn is_done(closure: &mut Self) -> bool {
             // SAFETY: `closure.manager` is the raw provenance root set
-            // below; `sleep_until`/`tick_raw` hold no `&mut` across
+            // below; `sleep_until` holds no borrow of it across
             // this callback, so this is the unique live borrow.
             let manager = unsafe { &mut *closure.manager };
             let log_level = manager.options.log_level;
@@ -144,7 +144,7 @@ fn run_tasks_until_done(
     // If we call sleep() instead of sleep_until(), it will wait forever until there are no more lifecycle scripts
     // which means it will not call run_tasks until _all_ current lifecycle scripts have finished running
     // SAFETY: `mgr` is the caller's provenance root for its live exclusive borrow;
-    // `sleep_until` + `tick_raw` hold no `&mut PackageManager` across
+    // `sleep_until` holds no borrow of the `PackageManager` across
     // `Closure::is_done`, so the callback's `&mut *closure.manager`
     // is the unique live borrow.
     unsafe { PackageManager::sleep_until(mgr, &mut closure, Closure::is_done) };

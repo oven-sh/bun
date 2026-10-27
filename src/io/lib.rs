@@ -280,21 +280,16 @@ pub use windows_event_loop::{FilePoll, Loop};
 ///
 /// On POSIX `bun_io::Loop` **is** `bun_uws_sys::Loop` (nominal identity), so
 /// this is the identity. On Windows the wrapper stores the libuv loop in its
-/// `uv_loop` field — set once in C at `us_create_loop` and immutable
-/// thereafter — which we project here so callers needn't open an `unsafe`
-/// block per site just to read a set-once field.
+/// `uv_loop` field.
 #[inline]
-pub fn uws_to_native(uws: *mut bun_uws_sys::Loop) -> *mut Loop {
+pub fn uws_to_native(uws: &bun_uws_sys::Loop) -> &Loop {
     #[cfg(not(windows))]
     {
         uws
     }
     #[cfg(windows)]
-    // SAFETY: `uws` is the live `us_loop` allocated by `us_create_loop`;
-    // `uv_loop` is initialised in C before any Rust caller can observe the
-    // handle and is never mutated.
     {
-        unsafe { (*uws).uv_loop }
+        uws.uv()
     }
 }
 
@@ -310,7 +305,7 @@ pub type OpaqueCallback = unsafe extern "C" fn(*mut core::ffi::c_void);
 // wrapper — `PosixLoop`/`WindowsLoop`), NOT the cfg-aliased `crate::Loop`
 // re-export. On POSIX those coincide, but on Windows `crate::Loop` is the raw
 // `uv_loop_t` whereas the impl bodies
-// (`VirtualMachine::uws_loop` / `MiniEventLoop::loop_ptr`) hand back the wrapper.
+// (`VirtualMachine::uws_loop` / `MiniEventLoop::loop_`) hand back the wrapper.
 bun_dispatch::link_interface! {
     pub EventLoopCtx[Js, Mini, SpawnSync] {
         fn platform_event_loop_ptr() -> *mut bun_uws_sys::Loop;
@@ -331,40 +326,11 @@ bun_dispatch::link_interface! {
 }
 
 impl EventLoopCtx {
-    /// SAFETY: caller must not hold another live `&mut` to the same loop
-    /// across this borrow (resolver-style accessor; the loop is per-thread).
     #[inline]
-    pub unsafe fn platform_event_loop(&self) -> &'static mut bun_uws_sys::Loop {
-        // Route through the single nonnull-asref accessor below; the `unsafe`
-        // on this fn's signature is the caller-side aliasing contract — the
-        // body itself needs no extra `unsafe`.
-        self.loop_mut()
-    }
-
-    // ── safe leaf wrappers (nonnull-asref) ──────────────────────────────
-    // The platform loop / poll store are per-thread, set-once back-pointers
-    // (`BackRef`-shaped). [`platform_event_loop`] cannot be a safe fn because
-    // handing out `&mut Loop` from `&self` would let a caller alias two
-    // copies; these wrappers instead perform one counter adjustment and drop
-    // the borrow before returning, so no `&mut` escapes. Collapses N
-    // identical `ctx.platform_event_loop().op()` call sites into the single
-    // deref inside [`loop_mut`].
-    //
-    // `loop_mut` is the single nonnull-asref accessor: `pub(crate)`,
-    // `&self → &mut` (so it must NOT be called twice with overlapping live
-    // results). Every in-crate caller is a leaf op — counter bump,
-    // `FilePoll::activate`/`deactivate`, `unregister` — that consumes the
-    // borrow before returning and never re-enters `EventLoopCtx`, so no two
-    // `&mut Loop` ever coexist. Widened from impl-private to crate-private so
-    // `posix_event_loop`/`windows_event_loop` route their N identical
-    // `ctx.platform_event_loop()` derefs through this single accessor.
-    #[inline]
-    fn loop_mut(&self) -> &'static mut bun_uws_sys::Loop {
-        // SAFETY: per-thread set-once pointer (the uws loop singleton); the
-        // event loop is single-threaded so no concurrent `&mut` exists, and
-        // every crate-internal caller is a leaf op that drops the borrow
-        // before returning — see block comment above.
-        unsafe { &mut *self.platform_event_loop_ptr() }
+    pub fn platform_event_loop(&self) -> &bun_uws_sys::Loop {
+        // SAFETY: whoever made this ctx promised that its owner, and so the owner's loop, outlives
+        // it (`EventLoopCtx::new`). A ctx is `!Send`, so this is the loop's thread.
+        unsafe { &*self.platform_event_loop_ptr() }
     }
     /// Single backref-deref accessor for the per-thread `Store`. Same contract
     /// as [`loop_mut`]: `pub(crate)`, `&self → &mut`, must NOT be called while
@@ -389,25 +355,25 @@ impl EventLoopCtx {
     }
     #[inline]
     pub(crate) fn loop_ref(&self) {
-        self.loop_mut().ref_();
+        self.platform_event_loop().ref_();
     }
     #[inline]
     #[cfg(not(windows))]
     pub(crate) fn loop_unref(&self) {
-        self.loop_mut().unref();
+        self.platform_event_loop().unref();
     }
     #[inline]
     #[cfg(windows)]
     pub(crate) fn loop_dec(&self) {
-        self.loop_mut().dec();
+        self.platform_event_loop().dec();
     }
     #[inline]
     pub(crate) fn loop_add_active(&self, n: u32) {
-        self.loop_mut().add_active(n);
+        self.platform_event_loop().add_active(n);
     }
     #[inline]
     pub(crate) fn loop_sub_active(&self, n: u32) {
-        self.loop_mut().sub_active(n);
+        self.platform_event_loop().sub_active(n);
     }
     #[cfg(not(windows))]
     #[inline]
@@ -432,8 +398,8 @@ impl EventLoopCtx {
     /// Platform-native loop pointer (`us_loop_t*` / `uv_loop_t*`); see
     /// [`uws_to_native`].
     #[inline]
-    pub fn native_loop(&self) -> *mut Loop {
-        uws_to_native(self.platform_event_loop_ptr())
+    pub fn native_loop(&self) -> &Loop {
+        uws_to_native(self.platform_event_loop())
     }
 }
 #[cfg(not(windows))]
@@ -2193,10 +2159,7 @@ pub mod waker {
 
         pub fn init() -> crate::error::Result<Self> {
             Ok(Self {
-                loop_: Some(bun_ptr::BackRef::from(
-                    core::ptr::NonNull::new(bun_uws_sys::WindowsLoop::get())
-                        .expect("WindowsLoop::get() singleton"),
-                )),
+                loop_: Some(bun_ptr::BackRef::new(bun_uws_sys::WindowsLoop::get())),
             })
         }
 
@@ -2244,7 +2207,7 @@ pub mod waker {
         pub fn uv_loop(&self) -> *mut bun_sys::windows::libuv::Loop {
             // `BackRef` deref is safe (process-lifetime singleton); `uv_loop`
             // is a `Copy` field set once by C `us_create_loop`.
-            self.loop_ref().uv_loop
+            self.loop_ref().uv_loop.get()
         }
     }
 }

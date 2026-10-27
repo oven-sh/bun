@@ -826,7 +826,7 @@ pub(crate) struct GitSubprocess {
 impl GitSubprocess {
     fn start(manager: &mut PackageManager, task: NonNull<Task::Task<'static>>) {
         let cache_dir = manager.get_cache_directory();
-        let event_loop = EventLoopHandle::from_any(&mut manager.event_loop);
+        let event_loop = EventLoopHandle::from_any(manager.event_loop);
         // SAFETY: a queued git task is live and idle until its runner hands it on.
         let (tag, name) = unsafe {
             let t = task.as_ref();
@@ -1638,6 +1638,6 @@ bun_io::impl_buffered_reader_parent! {
     on_reader_done  = |this| GitSubprocess::on_reader_done(ThisPtr::new(this));
     // SAFETY: `this` is the live runner registered via `set_parent`.
     on_reader_error = |this, err| GitSubprocess::on_reader_error(ThisPtr::new(this), err);
-    loop_           = |this| (*this).event_loop.native_loop();
+    loop_           = |this| (*this).event_loop.native_loop().as_ptr();
     event_loop      = |this| (*this).event_loop.as_event_loop_ctx();
 }

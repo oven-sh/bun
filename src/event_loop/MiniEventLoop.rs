@@ -18,11 +18,11 @@
 //! - Shell command execution with proper I/O handling
 //! - Any Bun subsystem that needs event-driven architecture without JS overhead
 
-use core::cell::Cell;
+use core::cell::{Cell, OnceCell, UnsafeCell};
 use core::ffi::c_void;
 use core::ptr::NonNull;
 
-use bun_collections::linear_fifo::{DynamicBuffer, LinearFifo};
+use bun_collections::FifoCell;
 use bun_dotenv::{self as dotenv, Loader as DotEnvLoader};
 use bun_io::file_poll::Store as FilePollStore;
 use bun_sys::{self as sys, Fd, Mode};
@@ -31,7 +31,7 @@ use bun_uws::Loop as UwsLoop;
 
 use crate::AnyTaskWithExtraContext::{AnyTaskWithExtraContext, New};
 // MOVE-IN: EventLoopHandle relocated from bun_jsc — see AnyEventLoop.rs.
-use crate::EventLoopHandle;
+use crate::{EventLoopHandle, LoopWaker};
 
 // ─── Upward link-time externs (LAYERING) ────────────────────────────────────
 // The bodies live in `bun_runtime` (which owns `webcore::Blob`) as
@@ -60,303 +60,36 @@ unsafe impl bun_threading::Linked for AnyTaskWithExtraContext {
 }
 
 /// FIFO of raw task pointers (tasks are intrusive nodes; the queue does not own them).
-type Queue = LinearFifo<*mut AnyTaskWithExtraContext, DynamicBuffer<*mut AnyTaskWithExtraContext>>;
+type Queue = FifoCell<*mut AnyTaskWithExtraContext>;
 
-pub struct MiniEventLoop {
-    pub(crate) tasks: Queue,
-    pub(crate) concurrent_tasks: ConcurrentTaskQueue,
-    // Raw pointer because the loop is C-owned
-    // (created by `uws_get_loop`/`us_create_loop`) and outlives this struct.
-    pub loop_: *mut UwsLoop,
-    pub file_polls: Option<Box<FilePollStore>>,
-    /// Mutable; callers (shell spawn,
-    /// `createNullDelimitedEnvMap`) write through it. Stored as `NonNull`
-    /// (BACKREF) so [`EventLoopHandle::env`] can hand out a `*mut` with
-    /// mutable provenance.
-    pub env: Option<NonNull<DotEnvLoader>>,
-    // Never freed in `deinit`. Use Box<[u8]> and dupe on assign.
-    pub top_level_dir: Box<[u8]>,
-    // Opaque ctx assigned externally; only read/cleared here.
-    pub(crate) after_event_loop_callback_ctx: Option<NonNull<c_void>>,
-    pub(crate) after_event_loop_callback: Option<unsafe extern "C" fn(*mut c_void)>,
-    pub pipe_read_scratch: Box<bun_io::PipeReadScratch>,
+/// The part of a [`MiniEventLoop`] that other threads reach. They borrow this and never the
+/// `MiniEventLoop`, whose other fields belong to its thread.
+pub struct Shared {
+    concurrent_tasks: ConcurrentTaskQueue,
+    waker: LoopWaker,
 }
 
-thread_local! {
-    pub static GLOBAL_INITIALIZED: Cell<bool> = const { Cell::new(false) };
-    // Raw pointer because the global is heap-allocated once (heap::alloc) and lives
-    // for the thread's lifetime (a true thread-lifetime singleton; never freed).
-    pub static GLOBAL: Cell<*mut MiniEventLoop> = const { Cell::new(core::ptr::null_mut()) };
-}
+const _: () = {
+    const fn assert_sync<T: Sync>() {}
+    assert_sync::<Shared>();
+};
 
-/// Returns the thread-local `*mut MiniEventLoop`.
-///
-/// Returning `&'static mut`
-/// here would let two calls (or `init_global` + any reader of `GLOBAL`) hold
-/// overlapping `&mut` to the same allocation — UB. Return the raw pointer;
-/// callers reborrow `&mut` for the scope they need.
-pub fn init_global(
-    env: Option<&'static mut DotEnvLoader>,
-    cwd: Option<&[u8]>,
-) -> *mut MiniEventLoop {
-    if GLOBAL_INITIALIZED.with(|g| g.get()) {
-        // Already initialized: hand back the stored raw pointer. No `&mut` is
-        // materialized here (see fn doc — avoids aliased `&'static mut` UB).
-        return GLOBAL.with(|g| g.get());
-    }
-    let loop_ = MiniEventLoop::init();
-    // §Forbidden bans `Box::leak` for `&'static`; this is a
-    // thread-lifetime singleton, so use `heap::alloc` (intrusive ownership)
-    // and store the raw pointer in the thread-local.
-    let global_ptr: *mut MiniEventLoop = bun_core::heap::into_raw(Box::new(loop_));
-    // SAFETY: `global_ptr` was just allocated via `heap::alloc`; this thread
-    // holds the only reference for the duration of first-init. The `GLOBAL`
-    // thread-local is NOT yet published (set below, after this `&mut` is dropped),
-    // so no reader of `GLOBAL` nor a re-entrant `init_global()` can observe
-    // the pointer while this exclusive borrow is live. The `&mut` is scoped to
-    // this function body — NOT `'static` — and ends before we publish/return the
-    // raw ptr.
-    let global = unsafe { &mut *global_ptr };
-
-    // sys-level API is `set_parent_raw(tag, ptr)`. Tag 1 = JS,
-    // tag 2 = mini (`EventLoopHandle` discriminant + 1).
-    {
-        let (tag, ptr) = EventLoopHandle::init_mini(global_ptr).into_tag_ptr();
-        // SAFETY: see `loop_ptr()` invariant.
-        unsafe {
-            (*global.loop_ptr())
-                .internal_loop_data
-                .set_parent_raw(tag, ptr)
-        };
-    }
-
-    // The process-global loader is stored as `AtomicPtr<Loader>`.
-    global.env = env
-        .map(NonNull::from)
-        .or_else(|| NonNull::new(dotenv::INSTANCE.load(core::sync::atomic::Ordering::Acquire)));
-    if global.env.is_none() {
-        // Thread-lifetime singleton.
-        global.env = Some(bun_core::heap::into_raw_nn(Box::new(DotEnvLoader::init())));
-    }
-
-    // Set top_level_dir from provided cwd or get current working directory
-    if let Some(dir) = cwd {
-        // Dupe to keep Box<[u8]> ownership uniform.
-        global.top_level_dir = Box::<[u8]>::from(dir);
-    } else if global.top_level_dir.is_empty() {
-        let mut buf = bun_paths::path_buffer_pool::get();
-        match sys::getcwd(&mut buf[..]) {
-            Ok(len) => {
-                global.top_level_dir = Box::<[u8]>::from(&buf[..len]);
-            }
-            Err(_) => {
-                global.top_level_dir = Box::default();
-            }
-        }
-    }
-
-    // Publish the thread-local pointer only AFTER the scoped `&mut *global_ptr`
-    // above is no longer used — publishing earlier would let a callee that reads
-    // `GLOBAL` re-derive a `&mut` aliasing `global` (UB). Nothing between the
-    // `&mut` borrow and here reads `GLOBAL` (`EventLoopHandle::init_mini` /
-    // `into_tag_ptr` only copy the pointer value).
-    GLOBAL.with(|g| g.set(global_ptr));
-    GLOBAL_INITIALIZED.with(|g| g.set(true));
-    global_ptr
-}
-
-impl MiniEventLoop {
-    /// Raw `*mut uws::Loop`.
+impl Shared {
+    /// Any thread.
     ///
-    /// This is the sole accessor for the `loop_` field. A `&mut UwsLoop`-
-    /// returning accessor is intentionally **not** provided: `UwsLoop::tick()`
-    /// fires FilePoll callbacks which re-enter this struct via the
-    /// `EventLoopCtx` vtable (`platform_event_loop`) and via
-    /// `EventLoopHandle::Mini` (e.g. `enqueue_task_concurrent` → `wakeup()`),
-    /// so a held `&mut UwsLoop` across `.tick()` would alias. The loop is also
-    /// a C-owned handle whose internals are mutated by uSockets itself. All
-    /// access goes through the raw pointer instead.
-    ///
-    /// SAFETY (invariant): `self.loop_` is the live C-owned uws loop set in
-    /// [`init`](Self::init) via `UwsLoop::get()`; never null, outlives `self`.
-    #[inline]
-    pub fn loop_ptr(&self) -> *mut UwsLoop {
-        self.loop_
-    }
-
-    /// Raw pointer to the `DotEnv::Loader` backref.
-    ///
-    /// Returns `None` until [`init_global`] populates it. Neither a `&`- nor
-    /// a `&mut`-returning accessor is provided: the loader may be shared via
-    /// the process-global `dotenv::INSTANCE` (and `Transpiler::env`), and
-    /// other safe paths (`EventLoopHandle::create_null_delimited_env_map`,
-    /// `interpreter.rs`) materialize `&mut DotEnvLoader` from the same
-    /// allocation via raw deref.
-    /// Handing out a long-lived `&DotEnvLoader` here would let safe code hold
-    /// it across one of those `&mut` paths → aliased `&`/`&mut` UB. Callers
-    /// deref the returned `NonNull` for a tightly-scoped borrow under their
-    /// own SAFETY contract instead (mirrors [`loop_ptr`](Self::loop_ptr)).
-    ///
-    /// SAFETY (invariant): when `Some`, points to a thread-/process-lifetime
-    /// loader set in `init_global` that outlives `self` (never freed).
-    #[inline]
-    pub(crate) fn env_ptr(&self) -> Option<NonNull<DotEnvLoader>> {
-        self.env
-    }
-
-    pub fn on_after_event_loop(&mut self) {
-        if let Some(cb) = self.after_event_loop_callback {
-            let ctx = self.after_event_loop_callback_ctx;
-            self.after_event_loop_callback = None;
-            self.after_event_loop_callback_ctx = None;
-            // SAFETY: `cb` is a C-ABI callback registered by the owner of `ctx`; the owner
-            // guarantees `ctx` is valid until the callback fires.
-            unsafe { cb(ctx.map_or(core::ptr::null_mut(), |p| p.as_ptr())) };
-        }
-    }
-
-    /// Raw-pointer `FilePollStore` accessor for re-entrant callers.
-    ///
-    /// The `mini_ctx` vtable shim (`file_polls`) is reached
-    /// via `EventLoopCtx` from inside FilePoll callbacks fired by
-    /// `UwsLoop::tick()`, which is itself invoked from
-    /// `tick`/`tick_once`/`tick_without_idle` while those methods hold
-    /// `&mut self`. Re-deriving a second `&mut MiniEventLoop` from the stored
-    /// `owner` raw ptr there is aliased-`&mut` UB under Stacked Borrows. This
-    /// accessor lazy-inits the store via `addr_of_mut!` on the field only,
-    /// never materializing a `&mut Self`.
-    ///
-    /// # Safety
-    /// `this` must point to a live `MiniEventLoop`. Caller must not hold a
-    /// live `&mut` to `file_polls` itself across this call. (Not eligible for
-    /// `unsafe-fn-narrow`: every unsafe op below derefs the caller-supplied
-    /// `this`; the body cannot discharge that precondition.)
-    pub(crate) unsafe fn file_polls_raw(this: *mut Self) -> *mut FilePollStore {
-        // SAFETY: caller guarantees `this` points to a live `MiniEventLoop` (see fn `# Safety`);
-        // `addr_of_mut!` projects to `file_polls` without forming `&mut Self`.
-        unsafe {
-            let slot = core::ptr::addr_of_mut!((*this).file_polls);
-            if (*slot).is_none() {
-                slot.write(Some(Box::new(FilePollStore::init())));
-            }
-            // SAFETY: ensured `Some` just above; `Box` deref yields a stable
-            // heap address independent of `*this`.
-            match &mut *slot {
-                Some(b) => &raw mut **b,
-                None => core::hint::unreachable_unchecked(),
-            }
-        }
-    }
-
-    pub(crate) fn init() -> MiniEventLoop {
-        MiniEventLoop {
-            tasks: Queue::init(),
-            concurrent_tasks: ConcurrentTaskQueue::default(),
-            loop_: UwsLoop::get(),
-            file_polls: None,
-            env: None,
-            top_level_dir: Box::default(),
-            after_event_loop_callback_ctx: None,
-            after_event_loop_callback: None,
-            pipe_read_scratch: Box::new(bun_io::PipeReadScratch::new()),
-        }
-    }
-
-    pub(crate) fn tick_concurrent_with_count(&mut self) -> usize {
-        let concurrent = self.concurrent_tasks.pop_batch();
-        let count = concurrent.count;
-        if count == 0 {
-            return 0;
-        }
-
-        let mut iter = concurrent.iterator();
-        let start_count = self.tasks.readable_length();
-        // `ensure_unused_capacity` early-returns without realigning when
-        // capacity is already sufficient, and `writable_slice(0)` only yields
-        // the first contiguous segment `buf[head+count..]` — so an empty fifo
-        // with `head > 0` would yield a short slice and the loop would `break`
-        // early, silently dropping tasks already popped from `concurrent`. Use
-        // `writable_with_size`, which realigns when the contiguous slice is
-        // too short, so the returned slice is always `>= count` long.
-        //
-        // Fill the writable slice first, track items written in a local, then
-        // commit via `update()` after the borrow ends.
-        let mut written: usize = 0;
-        {
-            let mut writable = self.tasks.writable_with_size(count).expect("unreachable");
-            loop {
-                let task = iter.next();
-                if task.is_null() {
-                    break;
-                }
-                writable[0] = task;
-                writable = &mut writable[1..];
-                written += 1;
-                if writable.is_empty() {
-                    break;
-                }
-            }
-        }
-        self.tasks.update(written);
-
-        self.tasks.readable_length() - start_count
-    }
-
-    #[inline]
-    pub fn tick_once(&mut self, context: *mut c_void) {
-        if self.tick_concurrent_with_count() == 0 && self.tasks.readable_length() == 0 {
-            // SAFETY: see `loop_ptr()` invariant.
-            unsafe {
-                (*self.loop_ptr()).inc();
-                (*self.loop_ptr()).tick();
-                (*self.loop_ptr()).dec();
-            }
-            self.on_after_event_loop();
-        }
-
-        while let Some(task) = self.tasks.read_item() {
-            // SAFETY: tasks are pushed by enqueue_task* and remain valid until run() consumes them.
-            unsafe { (*task).run(context) };
-        }
-    }
-
-    pub(crate) fn tick_without_idle(&mut self, context: *mut c_void) {
-        loop {
-            let _ = self.tick_concurrent_with_count();
-            while let Some(task) = self.tasks.read_item() {
-                // SAFETY: see tick_once.
-                unsafe { (*task).run(context) };
-            }
-
-            // SAFETY: see `loop_ptr()` invariant.
-            unsafe { (*self.loop_ptr()).tick_without_idle() };
-
-            if self.tasks.readable_length() == 0 && self.tick_concurrent_with_count() == 0 {
-                break;
-            }
-        }
-        self.on_after_event_loop();
-    }
-
-    pub fn tick<F>(&mut self, context: *mut c_void, is_done: F)
-    where
-        F: Fn(*mut c_void) -> bool,
-    {
-        // Generic `F` monomorphizes per callsite. `tick_once` is `#[inline]` so codegen is
-        // identical to the previously hand-inlined body.
-        while !is_done(context) {
-            self.tick_once(context);
-        }
-    }
-
     /// `task` must outlive the queued work item; ownership of the intrusive
     /// node stays with the caller until the callback runs.
-    pub fn enqueue_task_concurrent(&mut self, task: NonNull<AnyTaskWithExtraContext>) {
+    pub fn enqueue_task_concurrent(&self, task: NonNull<AnyTaskWithExtraContext>) {
+        // The loop's thread can run the task as soon as it is in the queue. A loop that an
+        // `AnyEventLoop` owns (one per `Bun.build`, posted to through a raw pointer) may have been
+        // waiting only for that and be dropped next: `self` is not read after the push.
+        let waker = self.waker.clone();
         self.concurrent_tasks.push(task);
-        // SAFETY: see `loop_ptr()` invariant.
-        unsafe { (*self.loop_ptr()).wakeup() };
+        waker.wake();
     }
 
+    /// Any thread.
+    ///
     /// The caller supplies `field_offset = core::mem::offset_of!(C, <field>)` of the
     /// embedded `AnyTaskWithExtraContext`.
     ///
@@ -365,7 +98,7 @@ impl MiniEventLoop {
     /// and `ctx` is non-null and outlives the queued task (intrusive node; ownership stays
     /// with caller).
     pub unsafe fn enqueue_task_concurrent_with_extra_ctx<C, P>(
-        &mut self,
+        &self,
         ctx: *mut C,
         callback: fn(*mut C, *mut P),
         field_offset: usize,
@@ -376,11 +109,167 @@ impl MiniEventLoop {
         unsafe { task.write(New::<C, P>::init(ctx, callback)) };
 
         // SAFETY: `task` was just initialized above and is non-null (derived from `ctx`).
-        self.concurrent_tasks
-            .push(unsafe { NonNull::new_unchecked(task) });
+        self.enqueue_task_concurrent(unsafe { NonNull::new_unchecked(task) });
+    }
+}
 
-        // SAFETY: see `loop_ptr()` invariant.
-        unsafe { (*self.loop_ptr()).wakeup() };
+/// Every method takes `&self`: a task or a poll callback this loop runs reaches the same loop again
+/// through an [`EventLoopHandle`] or a `bun_io::EventLoopCtx`.
+pub struct MiniEventLoop {
+    tasks: Queue,
+    pub shared: Shared,
+    /// The loop of the thread that made this.
+    pub loop_: &'static UwsLoop,
+    file_polls: OnceCell<Box<UnsafeCell<FilePollStore>>>,
+    /// Callers (shell spawn, `createNullDelimitedEnvMap`) write through it. Only
+    /// [`init_global`] sets it, to a loader that is never freed.
+    pub(crate) env: Option<NonNull<DotEnvLoader>>,
+    /// Only [`init_global`] sets it.
+    pub(crate) top_level_dir: Box<[u8]>,
+    // Opaque ctx assigned externally; only read/cleared here.
+    after_event_loop_callback_ctx: Cell<Option<NonNull<c_void>>>,
+    after_event_loop_callback: Cell<Option<unsafe extern "C" fn(*mut c_void)>>,
+    pipe_read_scratch: Box<bun_io::PipeReadScratch>,
+}
+
+thread_local! {
+    static GLOBAL_INITIALIZED: Cell<bool> = const { Cell::new(false) };
+    /// The loop `bun_io::get_vm_ctx(AllocatorType::Mini)` resolves to on this thread.
+    pub static GLOBAL: Cell<Option<&'static MiniEventLoop>> = const { Cell::new(None) };
+}
+
+/// This thread's `MiniEventLoop`, made on the first call (which is the only one whose arguments
+/// are used) and never freed.
+pub fn init_global(
+    env: Option<&'static mut DotEnvLoader>,
+    cwd: Option<&[u8]>,
+) -> &'static MiniEventLoop {
+    if GLOBAL_INITIALIZED.get() {
+        return GLOBAL.get().expect("set together with GLOBAL_INITIALIZED");
+    }
+    let mut loop_ = MiniEventLoop::init();
+
+    // The process-global loader is stored as `AtomicPtr<Loader>`.
+    loop_.env = env
+        .map(NonNull::from)
+        .or_else(|| NonNull::new(dotenv::INSTANCE.load(core::sync::atomic::Ordering::Acquire)));
+    if loop_.env.is_none() {
+        // Thread-lifetime singleton.
+        loop_.env = Some(bun_core::heap::into_raw_nn(Box::new(DotEnvLoader::init())));
+    }
+
+    // Set top_level_dir from provided cwd or get current working directory
+    if let Some(dir) = cwd {
+        loop_.top_level_dir = Box::<[u8]>::from(dir);
+    } else {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        if let Ok(len) = sys::getcwd(&mut buf[..]) {
+            loop_.top_level_dir = Box::<[u8]>::from(&buf[..len]);
+        }
+    }
+
+    let global: &'static MiniEventLoop = Box::leak(Box::new(loop_));
+    EventLoopHandle::init_mini(global).set_as_parent_of(global.loop_);
+    GLOBAL.set(Some(global));
+    GLOBAL_INITIALIZED.set(true);
+    global
+}
+
+impl MiniEventLoop {
+    pub fn on_after_event_loop(&self) {
+        if let Some(cb) = self.after_event_loop_callback.take() {
+            let ctx = self.after_event_loop_callback_ctx.take();
+            // SAFETY: `cb` is a C-ABI callback registered by the owner of `ctx`; the owner
+            // guarantees `ctx` is valid until the callback fires.
+            unsafe { cb(ctx.map_or(core::ptr::null_mut(), |p| p.as_ptr())) };
+        }
+    }
+
+    /// `bun_io` changes the store through this pointer.
+    fn file_polls(&self) -> *mut FilePollStore {
+        self.file_polls
+            .get_or_init(|| Box::new(UnsafeCell::new(FilePollStore::init())))
+            .get()
+    }
+
+    pub(crate) fn init() -> MiniEventLoop {
+        let loop_ = UwsLoop::get();
+        MiniEventLoop {
+            tasks: Queue::new(),
+            shared: Shared {
+                concurrent_tasks: ConcurrentTaskQueue::default(),
+                waker: LoopWaker::new(loop_),
+            },
+            loop_,
+            file_polls: OnceCell::new(),
+            env: None,
+            top_level_dir: Box::default(),
+            after_event_loop_callback_ctx: Cell::new(None),
+            after_event_loop_callback: Cell::new(None),
+            pipe_read_scratch: Box::new(bun_io::PipeReadScratch::new()),
+        }
+    }
+
+    fn tick_concurrent_with_count(&self) -> usize {
+        let concurrent = self.shared.concurrent_tasks.pop_batch();
+        let count = concurrent.count;
+        if count == 0 {
+            return 0;
+        }
+
+        let mut iter = concurrent.iterator();
+        let start_count = self.tasks.readable_length();
+        bun_core::handle_oom(self.tasks.ensure_unused_capacity(count));
+        loop {
+            let task = iter.next();
+            if task.is_null() {
+                break;
+            }
+            bun_core::handle_oom(self.tasks.write_item(task));
+        }
+
+        self.tasks.readable_length() - start_count
+    }
+
+    #[inline]
+    pub fn tick_once(&self, context: *mut c_void) {
+        if self.tick_concurrent_with_count() == 0 && self.tasks.readable_length() == 0 {
+            self.loop_.inc();
+            self.loop_.tick();
+            self.loop_.dec();
+            self.on_after_event_loop();
+        }
+
+        while let Some(task) = self.tasks.read_item() {
+            // SAFETY: tasks are pushed by enqueue_task* and remain valid until run() consumes them.
+            unsafe { (*task).run(context) };
+        }
+    }
+
+    pub(crate) fn tick_without_idle(&self, context: *mut c_void) {
+        loop {
+            let _ = self.tick_concurrent_with_count();
+            while let Some(task) = self.tasks.read_item() {
+                // SAFETY: see tick_once.
+                unsafe { (*task).run(context) };
+            }
+
+            self.loop_.tick_without_idle();
+
+            if self.tasks.readable_length() == 0 && self.tick_concurrent_with_count() == 0 {
+                break;
+            }
+        }
+        self.on_after_event_loop();
+    }
+
+    pub fn tick<F>(&self, context: *mut c_void, is_done: F)
+    where
+        F: Fn(*mut c_void) -> bool,
+    {
+        while !is_done(context) {
+            self.tick_once(context);
+        }
     }
 }
 
@@ -392,36 +281,34 @@ impl MiniEventLoop {
 
 bun_io::link_impl_EventLoopCtx! {
     Mini for MiniEventLoop => |this| {
-        platform_event_loop_ptr() => (*this).loop_ptr(),
-        // `file_polls_raw` to avoid aliased `&mut MiniEventLoop` while `tick*`
-        // holds `&mut self` across the re-entrant `UwsLoop::tick()` that
-        // reaches this body.
-        file_polls_ptr()  => MiniEventLoop::file_polls_raw(this),
+        platform_event_loop_ptr() => (*this).loop_.as_ptr(),
+        file_polls_ptr()  => (*this).file_polls(),
         // Mini has no pending_unref_counter; the upstream deliberately panics.
         increment_pending_unref_counter() => panic!("FIXME TODO"),
-        after_event_loop_callback() => (*this).after_event_loop_callback,
+        after_event_loop_callback() => (*this).after_event_loop_callback.get(),
         set_after_event_loop_callback(cb, ctx) => {
-            (*this).after_event_loop_callback = cb;
-            (*this).after_event_loop_callback_ctx = ctx;
+            (*this).after_event_loop_callback.set(cb);
+            (*this).after_event_loop_callback_ctx.set(ctx);
         },
         pipe_read_scratch() => &raw const *(*this).pipe_read_scratch,
     }
 }
 
 impl MiniEventLoop {
-    /// `this` is the per-thread `MiniEventLoop` singleton; the returned ctx
-    /// must not outlive it.
     #[inline]
-    pub fn as_event_loop_ctx(this: &mut MiniEventLoop) -> bun_io::EventLoopCtx {
-        // SAFETY: `this` is a live `&mut`, so the pointer handed to `new` is
-        // non-null and exclusively borrowed for the call's duration.
-        unsafe { bun_io::EventLoopCtx::new(bun_io::EventLoopCtxKind::Mini, this) }
+    pub fn as_event_loop_ctx(&'static self) -> bun_io::EventLoopCtx {
+        // SAFETY: `'static` outlives every dispatch.
+        unsafe {
+            bun_io::EventLoopCtx::new(
+                bun_io::EventLoopCtxKind::Mini,
+                core::ptr::from_ref(self).cast_mut(),
+            )
+        }
     }
 }
 
 impl Drop for MiniEventLoop {
     fn drop(&mut self) {
-        // `tasks.deinit()` is implicit via Queue's Drop.
-        debug_assert!(self.concurrent_tasks.is_empty());
+        debug_assert!(self.shared.concurrent_tasks.is_empty());
     }
 }

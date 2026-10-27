@@ -228,22 +228,14 @@ impl PackageManager {
     pub fn sleep(&mut self) {
         self.report_slow_lifecycle_scripts();
         Output::flush();
-        // see `tick_lifecycle_scripts` — `is_done` callback reborrows
-        // `self` (the struct that owns `event_loop`), so use the raw-pointer
-        // `tick_raw` variant which only holds `&mut event_loop` between
-        // `is_done` calls.
+        let event_loop = self.event_loop;
         let ctx = std::ptr::from_mut::<PackageManager>(self).cast::<core::ffi::c_void>();
-        let event_loop = core::ptr::addr_of_mut!(self.event_loop);
-        // SAFETY: `event_loop` is valid for the duration; `is_done` reborrows
-        // `*ctx` only while no `&mut event_loop` is live (per `tick_raw` contract).
-        unsafe {
-            bun_event_loop::AnyEventLoop::tick_raw(event_loop, ctx, |ctx| {
-                // SAFETY: `ctx` is the `*mut PackageManager` erased above; live
-                // for the duration of `sleep`.
-                let this = bun_ptr::callback_ctx::<PackageManager>(ctx);
-                this.has_no_more_pending_lifecycle_scripts()
-            });
-        }
+        event_loop.tick(ctx, |ctx| {
+            // SAFETY: `ctx` is the `*mut PackageManager` erased above; live
+            // for the duration of `sleep`.
+            let this = unsafe { bun_ptr::callback_ctx::<PackageManager>(ctx) };
+            this.has_no_more_pending_lifecycle_scripts()
+        });
     }
 
     pub(crate) fn report_slow_lifecycle_scripts(&mut self) {

@@ -11,6 +11,7 @@
 #![allow(incomplete_features)]
 #![warn(unused_must_use)]
 
+pub mod cell;
 pub mod hive_array;
 pub mod index_sort;
 pub mod multi_array_list;
@@ -31,6 +32,7 @@ pub mod static_hash_map;
 pub use static_hash_map::StaticHashMap;
 
 pub use bounded_array::BoundedArray;
+pub use cell::{ArrayHashMapCell, FifoCell, IdentityHashMapCell, VecCell};
 pub use hive_array::{
     Fallback as HiveArrayFallback, HiveArray, HiveBox, HiveRef, HiveRefHandle, HiveSlot,
 };

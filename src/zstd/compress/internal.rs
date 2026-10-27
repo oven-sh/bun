@@ -2,6 +2,7 @@
 
 use super::fse::{FseCTable, FseRepeat};
 use super::huf::{HufCTable, HufRepeat};
+use super::sequences::SeqCodes;
 use crate::common::{
     BlockType, MINMATCH, REP_START_VALUE, SymbolEncodingType, WILDCOPY_OVERLENGTH,
     ZSTD_BLOCKHEADERSIZE, ZSTD_REP_NUM,
@@ -241,9 +242,8 @@ pub(crate) struct SeqStore {
     pub(crate) lit_buffer: Vec<u8>,
     /// How much of `lit_buffer` is literals.
     pub(crate) lit_len: usize,
-    pub(crate) ll_code: Vec<u8>,
-    pub(crate) ml_code: Vec<u8>,
-    pub(crate) of_code: Vec<u8>,
+    /// Room for the codes of `max_nb_seq` sequences.
+    pub(crate) codes: Vec<SeqCodes>,
     pub(crate) max_nb_seq: usize,
     pub(crate) max_nb_lit: usize,
     pub(crate) long_length_type: LongLengthType,
@@ -319,9 +319,7 @@ impl SeqStore {
             sequences: Vec::new(),
             lit_buffer: Vec::new(),
             lit_len: 0,
-            ll_code: Vec::new(),
-            ml_code: Vec::new(),
-            of_code: Vec::new(),
+            codes: Vec::new(),
             max_nb_seq: 0,
             max_nb_lit: 0,
             long_length_type: LongLengthType::None,
@@ -340,9 +338,7 @@ impl SeqStore {
         }
         grow(&mut self.sequences, max_nb_seq)?;
         grow(&mut self.lit_buffer, max_nb_lit + WILDCOPY_OVERLENGTH)?;
-        grow(&mut self.ll_code, max_nb_seq)?;
-        grow(&mut self.ml_code, max_nb_seq)?;
-        grow(&mut self.of_code, max_nb_seq)?;
+        grow(&mut self.codes, max_nb_seq)?;
         self.max_nb_seq = max_nb_seq;
         self.max_nb_lit = max_nb_lit;
         self.reset();

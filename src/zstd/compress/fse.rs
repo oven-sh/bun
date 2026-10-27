@@ -174,6 +174,13 @@ impl FseCTable {
             .put(usize::from(symbol_value), FseSymbolTransform::default())
     }
 
+    /// `FSE_initCState2`: the state that it costs the fewest bits to start from, given that the first symbol is `symbol`,
+    /// which the table has a code for.
+    #[inline]
+    pub(crate) fn first_state(&self, symbol: u8) -> u32 {
+        FseCState::new2(self, u32::from(symbol)).value as u32
+    }
+
     /// `FSE_getMaxNbBits`: the most bits it takes to encode `symbol_value`, rounded up. One more than the table log
     /// if the table has no code for it.
     #[inline(always)]

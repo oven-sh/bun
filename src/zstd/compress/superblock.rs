@@ -1,6 +1,6 @@
 //! `zstd_compress_superblock.c`: a block written as several smaller ones, of about the size asked for.
 
-use super::block_entropy::{build_block_entropy_stats, write_nb_seq};
+use super::block_entropy::{additional_bits_of, build_block_entropy_stats, write_nb_seq};
 use super::fse::FseCTable;
 use super::internal::{
     CompressedBlockState, EntropyCTables, EntropyCTablesMetadata, FseCTables, FseCTablesMetadata,
@@ -8,12 +8,15 @@ use super::internal::{
 };
 use super::literals::{compress_rle_literals_block, no_compress_literals};
 use super::params::CCtxParams;
-use super::sequences::{cross_entropy_cost, encode_sequences, fse_bit_cost};
+use super::sequences::{
+    CodeCounts, SeqCodes, SeqHistograms, cross_entropy_cost, encode_sequences, fse_bit_cost,
+    summarize,
+};
 use super::{hist, huf};
 use crate::common::{
     BlockType, DEFAULT_MAX_OFF, HUF_SYMBOLVALUE_MAX, LL_BITS, LL_DEFAULT_NORM, LL_DEFAULT_NORM_LOG,
-    MAX_LL, MAX_ML, MAX_OFF, MAX_SEQ, MINMATCH, ML_BITS, ML_DEFAULT_NORM, ML_DEFAULT_NORM_LOG,
-    OF_DEFAULT_NORM, OF_DEFAULT_NORM_LOG, SymbolEncodingType, ZSTD_BLOCKHEADERSIZE,
+    MAX_LL, MAX_ML, MINMATCH, ML_BITS, ML_DEFAULT_NORM, ML_DEFAULT_NORM_LOG, OF_DEFAULT_NORM,
+    OF_DEFAULT_NORM_LOG, SymbolEncodingType, ZSTD_BLOCKHEADERSIZE,
 };
 use crate::error::{ErrorCode, Result};
 use crate::util::{SliceExt, write_le24, write_le32};
@@ -116,21 +119,13 @@ fn seq_decompressed_size(
     Ok(match_length_sum + lit_size)
 }
 
-/// The codes of some sequences.
-#[derive(Clone, Copy)]
-struct Codes<'a> {
-    ll: &'a [u8],
-    ml: &'a [u8],
-    of: &'a [u8],
-}
-
 /// `ZSTD_compressSubBlock_sequences`: the sequences section of a sub-block. Returns its size, which is 0 if it could
 /// not be compressed, and whether it holds the descriptions of the tables.
 fn compress_sub_block_sequences(
     fse_tables: &FseCTables,
     fse_metadata: &FseCTablesMetadata,
     sequences: &[SeqDef],
-    codes: Codes<'_>,
+    codes: &[SeqCodes],
     dst: &mut [u8],
     write_entropy: bool,
 ) -> Result<(usize, bool)> {
@@ -166,16 +161,7 @@ fn compress_sub_block_sequences(
         )?;
     }
 
-    let bitstream_size = encode_sequences(
-        dst.sub_mut(op..)?,
-        &fse_tables.matchlength_c_table,
-        codes.ml,
-        &fse_tables.offcode_c_table,
-        codes.of,
-        &fse_tables.litlength_c_table,
-        codes.ll,
-        sequences,
-    )?;
+    let bitstream_size = encode_sequences(dst.sub_mut(op..)?, fse_tables, codes, sequences)?;
     op += bitstream_size;
     // Decoders up to 1.3.4 fail on a table header with fewer than 4 bytes after it,
     if write_entropy
@@ -205,7 +191,7 @@ fn compress_sub_block(
     entropy_metadata: &EntropyCTablesMetadata,
     sequences: &[SeqDef],
     literals: &[u8],
-    codes: Codes<'_>,
+    codes: &[SeqCodes],
     dst: &mut [u8],
     write_lit_entropy: bool,
     write_seq_entropy: bool,
@@ -281,87 +267,80 @@ fn estimate_sub_block_size_literal(
     }
 }
 
-/// `ZSTD_estimateSubBlockSize_symbolType`
+/// `ZSTD_estimateSubBlockSize_symbolType`: `count` is the distribution of `nb_seq` codes.
 fn estimate_sub_block_size_symbol_type(
     ty: SymbolEncodingType,
-    code_table: &[u8],
-    max_code: u32,
+    count: &CodeCounts,
+    nb_seq: usize,
     fse_c_table: &FseCTable,
     additional_bits: Option<&[u8]>,
     default_norm: &[i16],
     default_norm_log: u32,
     default_max: u32,
-) -> Result<usize> {
-    let mut count = [0u32; MAX_SEQ as usize + 1];
-    let mut max = max_code;
-    hist::count_fast_wksp(&mut count, &mut max, code_table)?;
+) -> usize {
+    let max = summarize(count).max_symbol_value;
     let estimate_in_bits = match ty {
         SymbolEncodingType::Basic if max <= default_max => {
-            cross_entropy_cost(default_norm, default_norm_log, &count, max)
+            cross_entropy_cost(default_norm, default_norm_log, count, max)
         }
         SymbolEncodingType::Basic => Err(ErrorCode::Generic),
         SymbolEncodingType::Rle => Ok(0),
         SymbolEncodingType::Compressed | SymbolEncodingType::Repeat => {
-            fse_bit_cost(fse_c_table, &count, max)
+            fse_bit_cost(fse_c_table, count, max)
         }
     };
-    let Ok(mut estimate_in_bits) = estimate_in_bits else {
-        return Ok(code_table.len() * 10);
+    let Ok(estimate_in_bits) = estimate_in_bits else {
+        return nb_seq * 10;
     };
-    for &code in code_table {
-        estimate_in_bits += usize::from(match additional_bits {
-            Some(bits) => bits.at(usize::from(code))?,
-            None => code,
-        });
-    }
-    Ok(estimate_in_bits / 8)
+    (estimate_in_bits + additional_bits_of(count, additional_bits)) / 8
 }
 
 /// `ZSTD_estimateSubBlockSize_sequences`
 fn estimate_sub_block_size_sequences(
-    codes: Codes<'_>,
+    histograms: &SeqHistograms,
+    nb_seq: usize,
     fse_tables: &FseCTables,
     fse_metadata: &FseCTablesMetadata,
     write_entropy: bool,
-) -> Result<usize> {
+) -> usize {
     const SEQUENCES_SECTION_HEADER_SIZE: usize = 3;
-    if codes.of.is_empty() {
-        return Ok(SEQUENCES_SECTION_HEADER_SIZE);
+    if nb_seq == 0 {
+        return SEQUENCES_SECTION_HEADER_SIZE;
     }
     let mut c_seq_size_estimate = estimate_sub_block_size_symbol_type(
         fse_metadata.of_type,
-        codes.of,
-        MAX_OFF,
+        &histograms.of,
+        nb_seq,
         &fse_tables.offcode_c_table,
         None,
         &OF_DEFAULT_NORM,
         OF_DEFAULT_NORM_LOG,
         DEFAULT_MAX_OFF,
-    )?;
+    );
     c_seq_size_estimate += estimate_sub_block_size_symbol_type(
         fse_metadata.ll_type,
-        codes.ll,
-        MAX_LL,
+        &histograms.ll,
+        nb_seq,
         &fse_tables.litlength_c_table,
         Some(&LL_BITS),
         &LL_DEFAULT_NORM,
         LL_DEFAULT_NORM_LOG,
         MAX_LL,
-    )?;
+    );
     c_seq_size_estimate += estimate_sub_block_size_symbol_type(
         fse_metadata.ml_type,
-        codes.ml,
-        MAX_ML,
+        &histograms.ml,
+        nb_seq,
         &fse_tables.matchlength_c_table,
         Some(&ML_BITS),
         &ML_DEFAULT_NORM,
         ML_DEFAULT_NORM_LOG,
         MAX_ML,
-    )?;
+    );
     if write_entropy {
         c_seq_size_estimate += fse_metadata.fse_tables_size;
     }
-    Ok(c_seq_size_estimate + SEQUENCES_SECTION_HEADER_SIZE)
+    c_seq_size_estimate + SEQUENCES_SECTION_HEADER_SIZE
 }
 
 /// `ZSTD_needSequenceEntropyTables`
@@ -421,6 +400,7 @@ fn size_block_sequences(
 /// `ZSTD_compressSubBlock_multi`
 fn compress_sub_block_multi(
     seq_store: &SeqStore,
+    histograms: &SeqHistograms,
     prev_c_block: &CompressedBlockState,
     next_c_block: &mut CompressedBlockState,
     entropy_metadata: &EntropyCTablesMetadata,
@@ -441,13 +421,7 @@ fn compress_sub_block_multi(
     let mut write_lit_entropy =
         entropy_metadata.huf_metadata.h_type == SymbolEncodingType::Compressed;
     let mut write_seq_entropy = true;
-    let codes = |from: usize, count: usize| -> Result<Codes<'_>> {
-        Ok(Codes {
-            ll: seq_store.ll_code.span(from, count)?,
-            ml: seq_store.ml_code.span(from, count)?,
-            of: seq_store.of_code.span(from, count)?,
-        })
-    };
+    let codes = |from: usize, count: usize| seq_store.codes.span(from, count);
 
     if nb_seqs > 0 {
         let est_lit_size = estimate_sub_block_size_literal(
@@ -457,11 +431,12 @@ fn compress_sub_block_multi(
             write_lit_entropy,
         );
         let est_block_size = estimate_sub_block_size_sequences(
-            codes(0, nb_seqs)?,
+            histograms,
+            nb_seqs,
             &next_c_block.entropy.fse,
             &entropy_metadata.fse_metadata,
             write_seq_entropy,
-        )? + est_lit_size
+        ) + est_lit_size
             + ZSTD_BLOCKHEADERSIZE;
         let avg_lit_cost = (est_lit_size * BYTESCALE)
             .checked_div(nb_literals)
@@ -583,7 +558,7 @@ pub(crate) fn compress_super_block(
 ) -> Result<usize> {
     let mut entropy_metadata = EntropyCTablesMetadata::new();
     let whole = seq_store.whole();
-    build_block_entropy_stats(
+    let histograms = build_block_entropy_stats(
         seq_store,
         &whole,
         &prev_c_block.entropy,
@@ -593,6 +568,7 @@ pub(crate) fn compress_super_block(
     )?;
     compress_sub_block_multi(
         seq_store,
+        &histograms,
         prev_c_block,
         next_c_block,
         &entropy_metadata,

@@ -235,8 +235,8 @@ struct Scratch {
 }
 
 thread_local! {
-    /// That of the last decoder that was dropped, without its literals, for the next one. Nothing depends on what is
-    /// in the tables, and it takes longer to clear new ones than to decode a small frame.
+    /// That of the last decoder that was dropped, without its literals and output, for the next one. Nothing depends on
+    /// what is in the tables, and it takes longer to clear new ones than to decode a small frame.
     static SPARE_SCRATCH: cell::Cell<Option<Box<Scratch>>> = const { cell::Cell::new(None) };
 }
 
@@ -263,6 +263,7 @@ impl Drop for BlockDecoder {
     fn drop(&mut self) {
         if let Some(mut scratch) = self.scratch.take() {
             scratch.lit_buffer.clear();
+            scratch.small_output.fill(0);
             if scratch.lit_buffer.capacity() > Scratch::MAX_SPARE_LIT_BUFFER {
                 scratch.lit_buffer = Vec::new();
             }

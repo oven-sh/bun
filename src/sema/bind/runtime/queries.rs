@@ -20,6 +20,9 @@ pub(super) fn find_entry<K: Ord + Copy, V>(list: &[(K, V)], key: K) -> Option<&V
     Some(&list[index].1)
 }
 
+/// `RuntimeReferencesIn::ident_binding_runs`
+pub(super) const IDENTS_IN_RUN: usize = 16;
+
 #[inline]
 pub(super) fn find_symbol<K: Ord + Copy>(list: &[(K, SymbolId)], key: K) -> Option<SymbolId> {
     find_entry(list, key).copied()
@@ -276,8 +279,14 @@ impl Bound<'_> {
     }
 
     pub fn binding(&self, ident: ExprId) -> Binding {
-        match find_entry(&self.runtime.references.ident_bindings, ident) {
-            Some(&binding) => self.binding_under_goal(binding),
+        let references = &self.runtime.references;
+        let run = ident.idx() / IDENTS_IN_RUN;
+        let entries = match references.ident_binding_runs.get(run..run + 2) {
+            Some(&[start, end]) => &references.ident_bindings[start as usize..end as usize],
+            _ => &[],
+        };
+        match entries.iter().find(|entry| entry.0 == ident) {
+            Some(&(_, binding)) => self.binding_under_goal(binding),
             None => self.default_binding(ident),
         }
     }

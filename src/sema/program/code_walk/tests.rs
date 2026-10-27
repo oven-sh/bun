@@ -288,6 +288,36 @@ fn path_of_embedded_file_is_not_resolved_by_the_build() {
 }
 
 #[test]
+fn host_looks_once_at_a_file_that_is_folded_again() {
+    const FILES: &[(&str, &str)] = &[
+        (
+            "/main.ts",
+            "import given from \"./name.txt\" with { type: \"given\" }\nimport \"./alone\"\nimport(given)",
+        ),
+        ("/name.txt", "./named"),
+        ("/alone.ts", ""),
+        ("/named.ts", ""),
+        ("/implied.ts", ""),
+    ];
+    let host = StatementsHost {
+        loaders: &[("/name.txt", Some("given"), TEXT_LOADER)],
+        implied: vec![(
+            "/main.ts",
+            vec![HostResolution::Path(b"/implied.ts".into())],
+        )],
+        ..host_of(FILES)
+    };
+    let walked = walk(&host, &["/main.ts"]);
+    assert!(walked.paths().contains(&"/named.ts"));
+    assert!(walked.paths().contains(&"/implied.ts"));
+    let events = host.events();
+    for (path, _) in FILES {
+        let finished = HostEvent::FinishedFile((*path).into());
+        assert_eq!(count(&events, &finished), 1, "{path}");
+    }
+}
+
+#[test]
 fn import_in_folded_code_is_not_loaded() {
     let host = host_of(&[
         (

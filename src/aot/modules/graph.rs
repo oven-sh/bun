@@ -206,7 +206,18 @@ impl ModuleGraph {
     }
 
     pub fn import_binding(&self, file: FileId, symbol: SymbolId) -> ImportBinding {
-        find(&self.row(file).imports, symbol).unwrap_or(ImportBinding::Local)
+        let imports = &self.row(file).imports;
+        // Most names that are asked about are declared behind the imports of their file, which mostly stand one behind the other.
+        let (Some(first), Some(last)) = (imports.first(), imports.last()) else {
+            return ImportBinding::Local;
+        };
+        if symbol < first.0 || symbol > last.0 {
+            return ImportBinding::Local;
+        }
+        match imports.get((symbol.0 - first.0.0) as usize) {
+            Some(&(import, binding)) if import == symbol => binding,
+            Some(_) | None => find(imports, symbol).unwrap_or(ImportBinding::Local),
+        }
     }
 
     pub fn member_binding(&self, file: FileId, member: ExprId) -> Option<ImportBinding> {

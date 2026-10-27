@@ -21,11 +21,11 @@
 // CHECK: [[isObject]] = TypeTest [[called]] testedType=object @
 // CHECK-NEXT: Branch [[isObject]] -> taken [[convert]](| 0), notTaken [[keep]](| 0)
 // CHECK: [[convert]]([[objectKey]]):
-// CHECK: RequireObjectCoercible [[updateBase]]
+// CHECK: RequireObjectCoercible [[updateBase]] nullishAccess=Update
 // CHECK: [[converted]] = ToPropertyKey [[objectKey]]
 // CHECK: Jump -> next [[join]]([[converted]])
 // CHECK: [[join]]([[key]]):
-// CHECK: [[before]] = SuperGet [[updateBase]], [[updateThis]], [[key]] @
+// CHECK: [[before]] = SuperGet [[updateBase]], [[updateThis]], [[key]] @{{*}} callers
 // CHECK: [[after]] = Increment [[before]]
 // CHECK: SuperSet [[updateBase]], [[updateThis]], [[after]], [[key]] @
 

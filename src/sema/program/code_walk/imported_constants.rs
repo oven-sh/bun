@@ -8,6 +8,7 @@ use crate::hir::ExprFlags;
 use crate::module_format::ModuleFormat;
 use crate::resolve::{CodeResolution, SiteResolution};
 use std::cell::RefCell;
+use std::rc::Rc;
 
 #[derive(Copy, Clone, PartialEq, Debug)]
 enum Export {
@@ -55,10 +56,27 @@ pub(super) struct NamesLookedUp {
     file_count_of_replacements: usize,
 }
 
+/// The `export *` statements of a file that pass names on, and behind which of them a name can be found.
+#[derive(Default)]
+struct Stars {
+    /// In their order, each with whether the build fails to see every name behind it.
+    statements: Vec<(StmtId, bool)>,
+    /// For a name that a file behind a statement exports, twice the index of the first such statement, and one more where a later one may have it too.
+    first_with_name: FxHashMap<Atom, u32>,
+}
+
+impl Stars {
+    fn sees_every_name(&self) -> bool {
+        self.statements.iter().all(|statement| !statement.1)
+    }
+}
+
 struct Exports<'w, 's, 'r> {
     files: &'w [WalkedFile<'s, 'r>],
     replacements: &'w FxHashMap<u32, u32>,
     resolved: FxHashMap<(u32, Atom), Option<Export>>,
+    /// By file. `Some(None)`: they are being looked at.
+    stars: Vec<Option<Option<Rc<Stars>>>>,
     first_targets_of_sites: RefCell<FxHashMap<u32, Vec<u32>>>,
     /// The files whose variables the names of the file in hand lead to.
     files_read: Vec<u32>,
@@ -189,13 +207,37 @@ impl<'s> Exports<'_, 's, '_> {
         }
     }
 
-    fn resolve_through_stars(&mut self, file: u32, name: Atom) -> Export {
+    /// The names for which `resolve` finds something other than `Missing` in the file. `None`: any name may be one.
+    fn names_found_in(&mut self, file: u32) -> Option<Vec<Atom>> {
+        let files = self.files;
+        let parsed = files[file as usize].parsed.as_ref()?;
+        let (hir, bound) = (&parsed.parse.hir, &parsed.parse.bound);
+        let is_module = parsed.code.analyzed.analysis.module_format == ModuleFormat::Esm;
+        if !is_module || hir.has_errors {
+            return None;
+        }
+        // In a circle of `export *` a name that nobody exports is unknown.
+        let stars = self.stars_of(file)?;
+        if !stars.sees_every_name() {
+            return None;
+        }
+        let own = bound.table(bound.symbol(bound.file_symbol).exports);
+        let own = own.iter().map(|entry| entry.0);
+        Some(own.chain(stars.first_with_name.keys().copied()).collect())
+    }
+
+    /// `None`: the statements of the file are being looked at.
+    fn stars_of(&mut self, file: u32) -> Option<Rc<Stars>> {
+        if let Some(known) = &self.stars[file as usize] {
+            return known.clone();
+        }
         let files = self.files;
         let Some(parsed) = &files[file as usize].parsed else {
-            return Export::Unknown;
+            return Some(Rc::default());
         };
+        self.stars[file as usize] = Some(None);
         let hir = &parsed.parse.hir;
-        let mut found = Export::Missing;
+        let mut stars = Stars::default();
         for statement in hir.ids(hir.body) {
             let StmtKind::ExportStar {
                 alias,
@@ -206,6 +248,38 @@ impl<'s> Exports<'_, 's, '_> {
                 continue;
             };
             if alias.is_some() {
+                continue;
+            }
+            let index = stars.statements.len() as u32;
+            let target = self.target_of_site(file, ImportSiteKind::ExportStar(statement));
+            let names = target.ok().and_then(|target| self.names_found_in(target));
+            stars.statements.push((statement, names.is_none()));
+            for name in names.unwrap_or_default() {
+                let first = stars.first_with_name.entry(name).or_insert(index * 2);
+                if *first / 2 != index {
+                    *first |= 1;
+                }
+            }
+        }
+        let stars = Rc::new(stars);
+        self.stars[file as usize] = Some(Some(Rc::clone(&stars)));
+        Some(stars)
+    }
+
+    fn resolve_through_stars(&mut self, file: u32, name: Atom) -> Export {
+        if self.files[file as usize].parsed.is_none() {
+            return Export::Unknown;
+        }
+        // Behind every other statement the name is missing.
+        let Some(stars) = self.stars_of(file) else {
+            return Export::Unknown;
+        };
+        let first_with_name = stars.first_with_name.get(&name).copied();
+        let mut found = Export::Missing;
+        for (index, &(statement, has_any_name)) in (0..).zip(&stars.statements) {
+            let has_name = first_with_name
+                .is_some_and(|first| index == first / 2 || first % 2 == 1 && index > first / 2);
+            if !has_any_name && !has_name {
                 continue;
             }
             let site = ImportSiteKind::ExportStar(statement);
@@ -357,6 +431,7 @@ pub(super) fn fold_files_that_import_constants_again<'r>(
         files: &state.files,
         replacements: &looked_up.replacements,
         resolved: FxHashMap::default(),
+        stars: vec![None; state.files.len()],
         first_targets_of_sites: RefCell::default(),
         files_read: Vec::new(),
     };

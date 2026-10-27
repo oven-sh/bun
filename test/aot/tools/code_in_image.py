@@ -150,6 +150,8 @@ class Image:
         if n: _, at = self.varint(at)
         if fl & 4: _, at = self.varint(at); _, at = self.varint(at)
         if fl & 2: n, at = self.varint(at); at += n
+        if fl & 64: n, at = self.varint(at); at += n
+        if fl & 128: n, at = self.varint(at); at += n
         head, at = self.varint(at); count = head >> 3
         if head & 4:
             k, at = self.varint(at)

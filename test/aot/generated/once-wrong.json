@@ -98,6 +98,18 @@
     "seed 37.",
     "seed 39."
   ],
+  "native code calls a built-in with an operand that it rejects": [
+    "Atomics 1, a symbol, promises",
+    "Buffer 1, a symbol, promises",
+    "Date 1, a symbol, promises",
+    "Error 1, a symbol, promises",
+    "Math 1, a bigint, promises",
+    "Math 1, a symbol, promises",
+    "Math 1, an object whose conversion throws a number, promises",
+    "Math 1, an object whose conversion throws an error, promises",
+    "Symbol 1, a bigint, promises",
+    "Symbol 1, null, promises"
+  ],
   "odd callables at every way to call or construct them": ["construct extends"],
   "text parsed as a type gives what plain JSON.parse gives": [
     "seed 117.",

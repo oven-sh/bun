@@ -567,11 +567,11 @@ class Sizes {
       const at = this.place(size);
       this.imports.push(
         this.pick([
-          `import { v${at}, f${at} } from "./barrel-${n}";`,
-          `import * as all${n} from "./barrel-${n}";\nconst { v${at}, f${at} } = all${n};`,
+          `import { v${at} as v${n}, f${at} as f${n} } from "./barrel-${n}";`,
+          `import * as all${n} from "./barrel-${n}";\nconst { v${at}: v${n}, f${at}: f${n} } = all${n};`,
         ]),
       );
-      this.emit(`printValue("barrel ${n}", v${at}, f${at}());`);
+      this.emit(`printValue("barrel ${n}", v${n}, f${n}());`);
     } else if (kind === "json") {
       const value = this.pick([
         () =>

@@ -107,9 +107,12 @@ impl Resolver<'_, '_> {
     pub(super) fn classify_mentions(&mut self) {
         for expr in self.evaluated_exprs() {
             // What `createRequire` has made stands for nothing. What is done with it is done with a `require`.
-            let state = match (self.state(expr), self.find_made_require(expr)) {
-                (ExprState::Unresolved, Some(made)) => ExprState::Held(made),
-                (state, _) => state,
+            let state = match self.state(expr) {
+                ExprState::Unresolved => match self.find_made_require(expr) {
+                    Some(made) => ExprState::Held(made),
+                    None => continue,
+                },
+                state => state,
             };
             if let ExprState::DynamicGlobal(path) = state {
                 self.output.mentioned.push(path.id);

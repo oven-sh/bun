@@ -306,6 +306,22 @@ pub fn apply_binary(
     }
 }
 
+/// The text of a template whose substitutions are constants. `None`: the build leaves it to the run time.
+pub fn apply_template(
+    atoms: &Interner<'_>,
+    texts: &[Atom],
+    substitutions: &[Constant],
+    max_string_bytes: usize,
+) -> Option<Constant> {
+    let over_limit_count = Cell::new(0);
+    let evaluator = Evaluator::new(atoms, max_string_bytes, &over_limit_count);
+    let substitutions: Vec<Value> = substitutions.iter().copied().map(Value::from).collect();
+    match evaluator.concatenate(texts, &substitutions) {
+        Value::Known(result) => Some(evaluator.to_constant(result)),
+        Value::Unknown => None,
+    }
+}
+
 pub(crate) fn slice_in<'s, T: Copy>(list: &[T], arena: &'s Arena) -> &'s [T] {
     if list.is_empty() {
         return &[];

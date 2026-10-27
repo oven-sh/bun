@@ -805,7 +805,6 @@ typed-objects/plain-clone-takes-stores-behind-it	// CALLS+ both CloneObjectAndEx
 typed-objects/plain-clone-takes-stores-behind-it	// CALLS+ named CloneObjectAndExtend
 typed-objects/plain-clone-takes-stores-behind-it	// CALLS+ wide CloneObjectAndExtendWithNumber
 typed-objects/plain-clone-takes-stores-behind-it	// CALLS- both PutBy
-typed-objects/proxyless-generic-class-stays-closed	// IR- ^layout (L\d+) .*name="State" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
 typed-objects/proxyless-generic-function-stays-closed	// IR- ^layout (L\d+) .*name="State" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
 typed-objects/proxyless-generic-passed-to-map-stays-closed	// IR- ^layout (L\d+) .*name="State" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
 typed-objects/reads-after-cast-share-structure-check	// IRT= 1 maybe TypeTest v[0-9]+ testedType=L[0-9]+!

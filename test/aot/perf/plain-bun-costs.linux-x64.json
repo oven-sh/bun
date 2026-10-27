@@ -93,7 +93,7 @@
     "peakKilobytes": 33420
   },
   "jit events-and-streams.js": {
-    "thousandInstructions": 1134050,
+    "thousandInstructions": 1072575,
     "pageFaults": 7067,
     "peakKilobytes": 58184
   },

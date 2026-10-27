@@ -1750,6 +1750,194 @@ class Scenes {
     this.emit(1, `printValue("callees ${number}", out);`);
     this.lines.push("}");
   }
+
+  /** One place that reads a member, calls a method or constructs, reached by receivers or classes of several kinds that all have the name. */
+  sceneOfOnePlaceForSeveralKinds() {
+    const number = ++this.count;
+    const any = this.typed("any");
+    const asAny = this.isTypeScript ? " as any" : "";
+    this.lines.push("{");
+    this.emit(
+      1,
+      `let out = "";`,
+      `function show(value${any})${this.typed("string")} { return typeof value === "function" ? "function " + value.name : Array.isArray(value) ? "[" + value.map(show).join() + "]" : typeof value === "object" && value !== null ? Object.prototype.toString.call(value) : Object.is(value, -0) ? "number -0" : typeof value + " " + String(value); }`,
+      `function note(value${any})${this.typed("void")} { out += show(value) + ";"; }`,
+    );
+    const [list, floats, text, bytes, doubles] = [
+      "[1, 2, 3]",
+      "[1.5, 2.5]",
+      `"abc"`,
+      "new Uint8Array([1, 2, 3])",
+      "new Float64Array([1.5, 2.5])",
+    ];
+    const [map, set, buffer] = ["new Map([[1, 2]])", "new Set([1, 2])", "new ArrayBuffer(4)"];
+    // What is done with `o`, and who has that name.
+    const places: [use: string, receivers: string[]][] = [
+      [
+        "o.length",
+        [list, floats, "[]", text, bytes, doubles, "function (a, b) {}", "{ length: 7 }", `["a"]`, "new Array(5)"],
+      ],
+      ["o.size", [map, set, "{ size: 7 }", "new Map()"]],
+      ["o.byteLength", [buffer, bytes, doubles, "new DataView(new ArrayBuffer(8), 2)", "{ byteLength: 7 }"]],
+      [
+        "o.name",
+        [`new Error("m")`, "function named() {}", "class Named {}", `{ name: "own" }`, "Math.max", "new RangeError()"],
+      ],
+      ["o[0]", [list, floats, text, bytes, doubles, `{ 0: "own" }`, "[]", "[[1]]", "[, 1]"]],
+      ["o[1]", [list, floats, text, bytes, doubles, "[1]", "[, 1]"]],
+      ["o.slice(1)", [list, floats, text, bytes, buffer, "{ slice(from) { return from; } }"]],
+      [`o.at(${this.pick(["0", "-1", "5"])})`, [list, floats, text, bytes, doubles, "[]"]],
+      [
+        `o.${this.pick(["indexOf", "includes", "lastIndexOf"])}(${this.pick(["2", "2.5", `"b"`, "NaN"])})`,
+        [list, floats, text, bytes, doubles, "[NaN]"],
+      ],
+      [`o.concat(${this.pick(["[4]", `"d"`, "4"])})`, [list, floats, text, "[]"]],
+      [`o.${this.pick(["keys", "values", "entries"])}().next().value`, [list, floats, bytes, map, set, "[]"]],
+      ["[...o]", [list, floats, text, bytes, map, set, "[1, 2].values()", "(function* () { yield 1; })()"]],
+      ["o.has(1)", [map, set, "new WeakSet()", "new WeakMap()", "{ has(key) { return key; } }"]],
+      ["o.get(1)", [map, "new WeakMap()", "new Map()", "{ get(key) { return key; } }"]],
+      ["o.forEach((each, key) => note(key))", [list, floats, bytes, map, set]],
+      [
+        "o.toString()",
+        [list, floats, text, "12", "1.5", "true", `Symbol("s")`, `new Error("m")`, "/a/g", "{}", bytes, "10n"],
+      ],
+      ["o.valueOf()", [list, text, "12", "true", `Symbol("s")`, "{}", "10n", "new Number(3)", `new String("s")`, map]],
+      ["o.join()", [list, floats, bytes, doubles, "[[1], [2]]", "[null, undefined]"]],
+      ["o.fill(0)", [list, floats, bytes, doubles, "new Array(2)"]],
+      [
+        `o.${this.pick(["reverse", "sort", "toSorted", "toReversed"])}()`,
+        [list, floats, bytes, doubles, `["b", "a"]`, "[3, 10, 2]"],
+      ],
+      ["o.with(0, 9)", [list, floats, bytes, doubles]],
+      [`o.${this.pick(["map", "filter"])}(each => each > 1)`, [list, floats, bytes, doubles, "[1, 2].values()"]],
+      [
+        `o.${this.pick(["find", "some", "every"])}(each => each > 1)`,
+        [list, floats, bytes, doubles, "[1, 2].values()", "[]"],
+      ],
+      ["o.reduce((sum, each) => sum + each, 0)", [list, floats, bytes, doubles, "[1, 2].values()", `["a"]`]],
+      ["o.add(3).size", [set, "new Set()", "{ add() { return { size: 7 }; } }"]],
+      ["o.set(3, 4)", [map, bytes, "new WeakMap()", "{ set() { return 7; } }"]],
+      ["o.delete(1)", [map, set, "new WeakSet()", "new WeakMap()"]],
+      [
+        "o.next().value",
+        [
+          "[1].values()",
+          "(function* () { yield 1; })()",
+          "{ next() { return { value: 7 }; } }",
+          `"a"[Symbol.iterator]()`,
+          "new Map([[1, 2]]).keys()",
+        ],
+      ],
+      [`o.test("a")`, ["/a/", "/b/g", "{ test(given) { return given; } }"]],
+      [
+        "o.constructor.name",
+        [list, text, bytes, map, set, "{}", "12", `new Error("m")`, "/a/", "() => 1", "class Named {}"],
+      ],
+      [
+        "new o(2)",
+        [
+          "Array",
+          "Uint8Array",
+          "Float64Array",
+          "String",
+          "Number",
+          "Object",
+          "ArrayBuffer",
+          "Error",
+          "Boolean",
+          "class Own { length = 7; }",
+        ],
+      ],
+      [
+        "new o(2).length",
+        [
+          "Array",
+          "Uint8Array",
+          "Float64Array",
+          "String",
+          "Object",
+          "Error",
+          "class Own { length = 7; }",
+          "function Old() { this.length = 7; }",
+        ],
+      ],
+      ["new o([[1, 2]]).size", ["Map", "Set", "class Own { size = 7; }"]],
+      ["o(2)", ["Array", "String", "Number", "Object", "Boolean", "BigInt", "Symbol", "Error", "RegExp"]],
+      ["o.of(1, 2)", ["Array", "Uint8Array", "Float64Array", "{ of() { return 7; } }"]],
+      ["o.from([1, 2])", ["Array", "Uint8Array", "Float64Array", "Iterator", "{ from() { return 7; } }"]],
+    ];
+    for (let index = this.pick([2, 3, 4, 6]); index > 0; index--) {
+      const id = `${number}_${index}`;
+      const [use, candidates] = this.pick(places);
+      const receivers = this.several(2, 4, () => this.pick(candidates)).map(each => `(${each})`);
+      const at = (receiver: string) => use.replace(/\bo\b/g, receiver);
+      const used = (result: string) =>
+        this.pick([
+          result,
+          result,
+          result,
+          `[${result}]`,
+          `typeof ${result}`,
+          `(${result}${asAny})?.length`,
+          `(${result}${asAny}) + 1`,
+          `Array.isArray(${result})`,
+          `(${result}${asAny})?.[0]`,
+          `{ held: ${result} }.held`,
+          `(${result}${asAny}) instanceof Object`,
+          `(${result}) ? "yes" : "no"`,
+          `String(${result})`,
+        ]);
+      const guarded = (statement: string) =>
+        `try { ${statement} } catch (error) { note("threw " + (error${asAny})?.constructor?.name); }`;
+      const all = receivers.join(", ");
+      const inParentheses = (written: string) => written.replace(/^\{.*$/, "($&)");
+      this.emit(
+        1,
+        ...this.pick<() => string[]>([
+          () => [
+            `function g${id}(o${any})${any} { return ${used(at("o"))}; }`,
+            ...receivers.map(each => guarded(`note(g${id}(${each}));`)),
+          ],
+          () => [
+            `function g${id}(o${any})${any} { return ${used(at("o"))}; }`,
+            ...receivers.map(each => guarded(`note(g${id}(${each}));`)),
+          ],
+          () => [
+            `function g${id}(o${any})${any} { return ${used(at("o"))}; }`,
+            `for (let turn = 0; turn < 3; turn++) { ${receivers.map(each => guarded(`note(g${id}(${each}));`)).join(" ")} }`,
+          ],
+          () => [
+            `const g${id} = (o${any})${any} => ${inParentheses(used(at("o")))};`,
+            guarded(`note([${all}].map(g${id}));`),
+          ],
+          () => [`for (const o of [${all}]${asAny}) { ${guarded(`note(${used(at("o"))});`)} }`],
+          () => [
+            `for (let turn = 0; turn < 4; turn++) { const o${any} = turn % 2 ? ${receivers[0]} : ${receivers[1]}; ${guarded(`note(${used(at("o"))});`)} }`,
+          ],
+          () => [
+            `const table${id}${any} = [${all}];`,
+            `for (const at of [0, 1, 0, 1]) { ${guarded(`note(${used(at(`table${id}[at]`))});`)} }`,
+          ],
+          () => [
+            `const holder${id}${any} = { o: ${receivers[0]} };`,
+            `function run${id}()${any} { return ${used(at(`holder${id}.o`))}; }`,
+            guarded(`note(run${id}());`),
+            `holder${id}.o = ${receivers[1]};`,
+            guarded(`note(run${id}());`),
+          ],
+          () => [
+            `let o${id}${any} = ${receivers[0]};`,
+            `const run${id} = ()${any} => ${inParentheses(used(at(`o${id}`)))};`,
+            guarded(`note(run${id}());`),
+            `o${id} = ${receivers[1]};`,
+            guarded(`note(run${id}());`),
+          ],
+        ])(),
+      );
+    }
+    this.emit(1, `printValue("kinds ${number}", out);`);
+    this.lines.push("}");
+  }
 }
 
 /**
@@ -1769,6 +1957,9 @@ export function writeOrdinaryScenes(text: string, isTypeScript: boolean) {
       () => scenes.sceneOfWalks(),
       () => scenes.sceneOfWalks(),
       () => scenes.sceneOfIdioms(),
+      () => scenes.sceneOfOnePlaceForSeveralKinds(),
+      () => scenes.sceneOfOnePlaceForSeveralKinds(),
+      () => scenes.sceneOfOnePlaceForSeveralKinds(),
       () => scenes.sceneOfBuiltInCallees(),
       () => scenes.sceneOfBuiltInCallees(),
       () => scenes.sceneOfBuiltInCallees(),

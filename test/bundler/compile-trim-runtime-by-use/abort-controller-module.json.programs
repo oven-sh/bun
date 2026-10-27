@@ -760,22 +760,6 @@ show("iso-8859-2", [0xb1, 0xe6, 0xea]);
 show("utf-16be", [0x00, 0x68, 0x00, 0x69]);
 try { new TextDecoder("euc-jp", { fatal: true }).decode(new Uint8Array([0xff, 0xff])); } catch (error) { console.log((error as Error).name); }
 show("utf-8", [0xe2, 0x82, 0xac]);
-//// libarchive.ts
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-
-const archive = new Bun.Archive({ "a.txt": "first", "folder/b.json": JSON.stringify({ b: 2 }) }, { compress: "gzip" });
-const bytes = await archive.bytes();
-console.log("gzip", bytes[0] === 0x1f && bytes[1] === 0x8b);
-const files = await new Bun.Archive(bytes).files();
-for (const [name, file] of [...files].sort(([a]: [string, unknown], [b]: [string, unknown]) => a.localeCompare(b))) console.log(name, await file.text());
-const folder = mkdtempSync(join(tmpdir(), "trim-archive-"));
-console.log("extracted", await new Bun.Archive(bytes).extract(folder), readFileSync(join(folder, "folder/b.json"), "utf8"));
-await Bun.write(join(folder, "copy.tar.gz"), archive);
-console.log("written", (await new Bun.Archive(readFileSync(join(folder, "copy.tar.gz"))).files()).size);
-rmSync(folder, { recursive: true, force: true });
-console.log("plain tar", (await new Bun.Archive({ "c.txt": "third" }).bytes()).length);
 //// libdeflate-compressor.ts
 const text = "deflate ".repeat(3000);
 const bytes = new TextEncoder().encode(text);

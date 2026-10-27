@@ -78,9 +78,9 @@ function typeScriptOf(
   receiverType: string | undefined,
   parameters: readonly DumpedParameter[],
 ): string | undefined {
-  if (type.hasAnyFunction || type.hasPlainData) return undefined;
+  if (type.hasAnyFunction) return undefined;
   const names = new Set<string | undefined>(type.primitives.map(primitive => typeScriptNames[primitive]));
-  if (type.hasAnyObject) names.add("object");
+  if (type.hasAnyObject || type.hasPlainData) names.add("object");
   if (type.integers !== null) names.add(typeScriptNames.Number);
   for (const literal of type.stringLiterals) names.add(JSON.stringify(literal));
   for (const part of type.parts) names.add(typeScriptOfPart(part, receiverType, parameters));
@@ -118,7 +118,12 @@ test("a result type that is proven by construction agrees with bun-types", async
   expect(described.filter(o => o.holderType === undefined && !o.path.includes("%")).map(o => o.path)).toEqual([]);
   expect(named.filter(o => o.resultType === undefined).map(o => o.path)).toEqual([]);
   expect(overloads.length).toBeGreaterThan(20);
-  for (const path of ["Request.prototype.url", "Buffer.prototype.readInt8", "Bun.CryptoHasher.algorithms"])
+  for (const path of [
+    "Request.prototype.url",
+    "Buffer.prototype.readInt8",
+    "Bun.CryptoHasher.algorithms",
+    "Bun.Transpiler.prototype.scan",
+  ])
     expect(overloads.map(o => o.path)).toContain(path);
   expect((await errorsOf(lines)).map(line => overloads[line - 2].path)).toEqual([]);
 });

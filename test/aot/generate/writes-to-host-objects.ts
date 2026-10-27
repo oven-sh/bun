@@ -111,4 +111,69 @@ for (const [holder, members] of Object.entries(MEMBERS)) {
   }
 }
 
+// KEYS UNDER WHICH THE HOST KEEPS AN ACCESSOR OF ITS OWN UNTIL SOMEBODY STORES THERE x every way to store, define or delete by key. ONE KEY AND ONE WAY A PROGRAM.
+// The program reads the key, its descriptor and the keys of the holder on both sides, and then asks what hangs on the key.
+const LOOK = `function look(when) {
+  const descriptor = Object.getOwnPropertyDescriptor(@O, @K);
+  let held;
+  try {
+    held = @O.@M;
+  } catch (error) {
+    held = "threw " + told(error);
+  }
+  const shown = typeof held === "object" || typeof held === "function" || (@H && held !== given) ? typeof held : String(held);
+  console.log(when, descriptor ? Object.keys(descriptor).join() : "absent", descriptor?.enumerable, descriptor?.writable, shown, held === given);
+  console.log(when, Object.hasOwn(@O, @K), @K in @O, Object.keys(@O).includes(@K), typeof descriptor?.get, typeof descriptor?.value);
+}
+`;
+const HOURS = 'attempt("the hour", () => new Date(0).getHours());\n';
+type Replaced = { head?: string; holder: string; given: string; keys: string[]; use?: string; differsFromRunToRun?: boolean; env?: Record<string, string> };
+const REPLACED: Record<string, Replaced> = {
+  "the-environment": { holder: "process.env", given: '"UTC"', keys: ["TZ"], use: HOURS + 'attempt("Bun.env", () => Bun.env.TZ);\n', env: { TZ: "Asia/Tokyo" } },
+  "the-environment-with-an-empty-variable": { holder: "process.env", given: '"Asia/Tokyo"', keys: ["TZ"], use: HOURS, env: { TZ: "" } },
+  "the-environment-of-a-program": { holder: "process.env", given: '"1"', keys: ["NODE_TLS_REJECT_UNAUTHORIZED", "BUN_CONFIG_VERBOSE_FETCH", "NO_PROXY", "NOBODY_SET_THIS"] },
+  "the-process": { holder: "process", given: "5", keys: ["ppid"], differsFromRunToRun: true, use: through("node:process", "ppid") },
+  "the-prototype-of-stats": { head: 'import fs from "node:fs";\n', holder: "fs.Stats.prototype", given: "5", keys: ["atime", "mtime", "ctime", "birthtime"], use: 'attempt("a new object", () => typeof fs.statSync(".").@M);\n' },
+  "the-prototype-of-stats-in-big-integers": { head: 'import fs from "node:fs";\nconst above = Object.getPrototypeOf(fs.statSync(".", { bigint: true }));\n', holder: "above", given: "5", keys: ["atime", "birthtime"], use: 'attempt("a new object", () => typeof fs.statSync(".", { bigint: true }).@M);\n' },
+  "a-stats-object": { head: 'import fs from "node:fs";\nconst stats = fs.statSync(".");\n', holder: "stats", given: "5", keys: ["mtime"], use: 'attempt("another object", () => typeof fs.statSync(".").@M);\n' },
+  "an-heir-of-a-stats-object": { head: 'import fs from "node:fs";\nconst heir = Object.create(fs.statSync("."));\n', holder: "heir", given: "5", keys: ["ctime"] },
+  "the-prototype-of-module": { head: 'import Module from "node:module";\nfunction replaced(name) {\n  return "replaced " + name;\n}\n', holder: "Module.prototype", given: "replaced", keys: ["require"], use: 'attempt("a call", () => Module.prototype.require("node:path") === "replaced node:path");\n' },
+  "an-object-that-was-given-a-stack": { head: "const holder = { a: 1 };\nError.captureStackTrace(holder);\n", holder: "holder", given: '"text"', keys: ["stack"], differsFromRunToRun: true },
+  "an-error": { head: 'const error = new Error("told");\n', holder: "error", given: '"text"', keys: ["stack"], differsFromRunToRun: true },
+  "an-error-that-was-given-a-stack": { head: 'const error = new Error("told");\nError.captureStackTrace(error);\n', holder: "error", given: '"text"', keys: ["stack"], differsFromRunToRun: true },
+};
+const STORES: Record<string, [string, string]> = {
+  "a-store": ["is stored to", 'attempt("the store", () => (@O.@M = given) === given);\n'],
+  "a-store-under-a-computed-key": ["is stored to under a key that is put together at run time", 'attempt("the store", () => (@O[key] = given) === given);\n'],
+  "object-assign": ["is stored to by Object.assign", 'attempt("the store", () => Object.assign(@O, { @M: given }) === @O);\n'],
+  "object-assign-under-a-computed-key": ["is stored to by Object.assign of an object with a key that is put together at run time", 'attempt("the store", () => Object.assign(@O, { [key]: given }) === @O);\n'],
+  "object-assign-of-a-spread-of-the-holder": ["is stored to by Object.assign of what a spread took out of the holder", 'let saved;\nattempt("the spread", () => typeof (saved = { ...@O }));\nattempt("the store", () => Object.assign(@O, saved) === @O);\n'],
+  "reflect-set": ["is stored to by Reflect.set", 'attempt("the store", () => Reflect.set(@O, @K, given));\n'],
+  "reflect-set-under-a-computed-key": ["is stored to by Reflect.set under a key that is put together at run time", 'attempt("the store", () => Reflect.set(@O, key, given));\n'],
+  "reflect-set-with-the-holder-as-the-receiver": ["is stored to by Reflect.set of another object, with the holder as the receiver", 'attempt("the store", () => Reflect.set({}, @K, given, @O));\n'],
+  "reflect-set-with-the-holder-twice": ["is stored to by Reflect.set with the holder as the target and as the receiver", 'attempt("the store", () => Reflect.set(@O, @K, given, @O));\n'],
+  "reflect-set-in-the-trap-of-a-proxy": ["is stored to by Reflect.set in the trap of a proxy of the holder", 'const proxy = new Proxy(@O, { set: (target, name, value) => Reflect.set(target, name, value, target) });\nattempt("the store", () => (proxy.@M = given) === given);\n'],
+  "a-definition": ["is defined anew", 'attempt("the definition", () => Object.defineProperty(@O, @K, { value: given, writable: true, enumerable: true, configurable: true }) === @O);\n'],
+  "reflect-delete-property": ["is deleted by Reflect.deleteProperty and stored to by Object.assign", 'attempt("the deletion", () => Reflect.deleteProperty(@O, @K));\nlook("between");\nattempt("the store", () => Object.assign(@O, { @M: given }) === @O);\n'],
+};
+for (const [name, { head = "", holder, given, keys, use = "", differsFromRunToRun = false, env }] of Object.entries(REPLACED)) {
+  for (const member of keys) {
+    for (const [way, [says, code]] of Object.entries(STORES)) {
+      let text = "// " + holder + "." + member + " " + says + ", and is read, described and listed on both sides.\n" + head + HEAD + (use.includes("attemptLater") ? asyncAttempt : "") + "const given = " + given + ";\n";
+      if (code.replaceAll("@K", "").includes("key")) {
+        const half = Math.floor(member.length / 2);
+        text += 'const key = ["' + member.slice(0, half) + '", "' + member.slice(half) + '"].join("");\n';
+      }
+      text += LOOK + 'look("before");\n' + code + 'look("behind");\n' + use;
+      const file = name + "-" + member.toLowerCase().replaceAll("_", "-") + "-" + way;
+      filesWritten[file + ".js"] = text.replaceAll("@O", holder).replaceAll("@M", member).replaceAll("@K", '"' + member + '"').replaceAll("@H", String(differsFromRunToRun));
+      if (env) filesWritten[file + ".json"] = JSON.stringify({ env }) + "\n";
+    }
+  }
+}
+/** Without the extension. */
+export const programsOfKeysThatTheHostReplaces = Object.keys(filesWritten)
+  .filter(file => file.endsWith(".js") && Object.keys(REPLACED).some(name => file.startsWith(name + "-")))
+  .map(file => file.slice(0, -".js".length));
+
 export const programs = (): WrittenProgram[] => programsOf(filesWritten);

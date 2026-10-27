@@ -1,0 +1,116 @@
+//// a-default-is-put-on-node-module-with-a-create-require/main.cjs
+const M = require("node:module"); M.default = { createRequire: () => name => console.log("mine", name) }; M.default.createRequire(__filename)("./next.cjs");
+//// a-default-is-put-on-node-module-with-a-create-require/next.cjs
+console.log("the next file");
+//// a-default-is-put-on-the-default-of-the-namespace-of-node-module/main.mjs
+import * as ns from "node:module"; ns.default.default = { createRequire: () => name => console.log("mine", name) }; ns.default.default.createRequire(import.meta.url)("./next.mjs");
+//// a-default-is-put-on-the-default-of-the-namespace-of-node-module/next.mjs
+console.log("the next file");
+//// create-require-is-assigned-on-node-module-and-its-answer-is-held-in-a-variable/main.cjs
+const M = require("node:module"); try { M.createRequire = () => name => console.log("mine", name); } catch (error) { console.log(String(error)); } const load = M.createRequire(__filename); load("./next.cjs");
+//// create-require-is-assigned-on-node-module-and-its-answer-is-held-in-a-variable/next.cjs
+console.log("the next file");
+//// create-require-is-assigned-on-node-module/main.cjs
+const M = require("node:module"); try { M.createRequire = () => name => console.log("mine", name); } catch (error) { console.log(String(error)); } M.createRequire(__filename)("./next.cjs");
+//// create-require-is-assigned-on-node-module/next.cjs
+console.log("the next file");
+//// create-require-is-assigned-on-one-require-of-node-module-and-called-on-the-next/main.cjs
+try { require("node:module").createRequire = () => name => console.log("mine", name); } catch (error) { console.log(String(error)); } require("node:module").createRequire(__filename)("./next.cjs");
+//// create-require-is-assigned-on-one-require-of-node-module-and-called-on-the-next/next.cjs
+console.log("the next file");
+//// create-require-is-assigned-on-the-default-import-of-node-module/main.mjs
+import M from "node:module"; M.createRequire = () => name => console.log("mine", name); M.createRequire(import.meta.url)("./next.mjs");
+//// create-require-is-assigned-on-the-default-import-of-node-module/next.mjs
+console.log("the next file");
+//// create-require-is-assigned-on-the-default-of-the-namespace-of-node-module/main.mjs
+import * as ns from "node:module"; ns.default.createRequire = () => name => console.log("mine", name); ns.createRequire(import.meta.url)("./next.mjs");
+//// create-require-is-assigned-on-the-default-of-the-namespace-of-node-module/next.mjs
+console.log("the next file");
+//// create-require-is-assigned-on-what-get-builtin-module-answers/main.mjs
+process.getBuiltinModule("node:module").createRequire = () => name => console.log("mine", name); process.getBuiltinModule("node:module").createRequire(import.meta.url)("./next.mjs");
+//// create-require-is-assigned-on-what-get-builtin-module-answers/next.mjs
+console.log("the next file");
+//// create-require-is-assigned-under-a-key-put-together-at-run-time/main.cjs
+const key = ["create", "Require"].join(""); try { require("node:module")[key] = () => name => console.log("mine", name); } catch (error) { console.log(String(error)); } require("node:module").createRequire(__filename)("./next.cjs");
+//// create-require-is-assigned-under-a-key-put-together-at-run-time/next.cjs
+console.log("the next file");
+//// create-require-is-defined-on-node-module/main.cjs
+Object.defineProperty(require("node:module"), "createRequire", { value: () => name => console.log("mine", name) }); require("node:module").createRequire(__filename)("./next.cjs");
+//// create-require-is-defined-on-node-module/next.cjs
+console.log("the next file");
+//// get-builtin-module-is-assigned-and-asked-for-node-module/main.mjs
+process.getBuiltinModule = () => ({ createRequire: () => name => console.log("mine", name) }); process.getBuiltinModule("node:module").createRequire(import.meta.url)("./next.mjs");
+//// get-builtin-module-is-assigned-and-asked-for-node-module/next.mjs
+console.log("the next file");
+//// get-builtin-module-is-assigned-and-what-its-answer-makes-is-held-in-a-variable/main.mjs
+process.getBuiltinModule = () => ({ createRequire: () => name => console.log("mine", name) }); const load = process.getBuiltinModule("node:module").createRequire(import.meta.url); load("./next.mjs");
+//// get-builtin-module-is-assigned-and-what-its-answer-makes-is-held-in-a-variable/next.mjs
+console.log("the next file");
+//// global-is-assigned-an-object-whose-process-answers-for-node-module/main.cjs
+global = { process: { getBuiltinModule: () => ({ createRequire: () => name => console.log("mine", name) }) } }; global.process.getBuiltinModule("node:module").createRequire(__filename)("./next.cjs");
+//// global-is-assigned-an-object-whose-process-answers-for-node-module/next.cjs
+console.log("the next file");
+//// import-meta-is-handed-to-a-function-that-only-looks-and-its-require-loads/main.mjs
+function look(m) { return typeof m.require; } console.log(look(import.meta)); import.meta.require("./next.mjs"); const load = import.meta.require; load("./next.mjs"); console.log(typeof import.meta.require("node:path").sep);
+//// import-meta-is-handed-to-a-function-that-only-looks-and-its-require-loads/next.mjs
+console.log("the next file");
+//// import-meta-require-is-assigned-a-function-that-answers-for-node-module/main.mjs
+import.meta.require = name => ({ createRequire: () => name => console.log("mine", name) }); import.meta.require("node:module").createRequire(import.meta.url)("./next.mjs");
+//// import-meta-require-is-assigned-a-function-that-answers-for-node-module/next.mjs
+console.log("the next file");
+//// import-meta-require-is-assigned-and-called/main.mjs
+import.meta.require = name => console.log("mine", name); import.meta.require("./next.mjs");
+//// import-meta-require-is-assigned-and-called/next.mjs
+console.log("the next file");
+//// import-meta-require-is-assigned-and-held-in-a-variable/main.mjs
+import.meta.require = name => console.log("mine", name); const load = import.meta.require; load("./next.mjs");
+//// import-meta-require-is-assigned-and-held-in-a-variable/next.mjs
+console.log("the next file");
+//// import-meta-require-is-assigned-by-a-function-that-is-handed-import-meta/main.mjs
+function change(m) { m.require = name => console.log("mine", name); } change(import.meta); import.meta.require("./next.mjs");
+//// import-meta-require-is-assigned-by-a-function-that-is-handed-import-meta/next.mjs
+console.log("the next file");
+//// import-meta-require-is-assigned-through-a-variable-that-holds-import-meta/main.mjs
+const meta = import.meta; meta.require = name => console.log("mine", name); import.meta.require("./next.mjs");
+//// import-meta-require-is-assigned-through-a-variable-that-holds-import-meta/next.mjs
+console.log("the next file");
+//// import-meta-require-is-defined-and-called/main.mjs
+Object.defineProperty(import.meta, "require", { value: name => console.log("mine", name) }); import.meta.require("./next.mjs");
+//// import-meta-require-is-defined-and-called/next.mjs
+console.log("the next file");
+//// module-of-node-module-is-assigned-an-object-with-a-create-require/main.cjs
+const M = require("node:module"); try { M.Module = { createRequire: () => name => console.log("mine", name) }; } catch (error) { console.log(String(error)); } M.Module.createRequire(__filename)("./next.cjs");
+//// module-of-node-module-is-assigned-an-object-with-a-create-require/next.cjs
+console.log("the next file");
+//// require-is-assigned-a-function-that-answers-for-node-module-and-what-it-makes-is-held-in-a-variable/main.cjs
+require = () => ({ createRequire: () => name => console.log("mine", name) }); const load = require("node:module").createRequire(__filename); load("./next.cjs");
+//// require-is-assigned-a-function-that-answers-for-node-module-and-what-it-makes-is-held-in-a-variable/next.cjs
+console.log("the next file");
+//// require-is-assigned-a-function-that-answers-for-node-module/main.cjs
+require = () => ({ createRequire: () => name => console.log("mine", name) }); require("node:module").createRequire(__filename)("./next.cjs");
+//// require-is-assigned-a-function-that-answers-for-node-module/next.cjs
+console.log("the next file");
+//// require-is-given-a-call-of-its-own-that-answers-for-node-module/main.cjs
+require.call = () => ({ createRequire: () => name => console.log("mine", name) }); require.call(null, "node:module").createRequire(__filename)("./next.cjs");
+//// require-is-given-a-call-of-its-own-that-answers-for-node-module/next.cjs
+console.log("the next file");
+//// require-is-handed-to-a-function-that-only-looks-and-its-resolve-answers/main.cjs
+function look(load) { return typeof load.resolve; } console.log(look(require)); function ask(name) { return name.endsWith("next.cjs"); } console.log(ask(require.resolve("./next.cjs")), require.resolve("node:path")); (() => console.log(ask(require.resolve("./next.cjs"))))();
+//// require-is-handed-to-a-function-that-only-looks-and-its-resolve-answers/next.cjs
+console.log("the next file");
+//// require-resolve-is-assigned-and-called/main.cjs
+require.resolve = name => "mine " + name; console.log(require.resolve("./next.cjs"), require.resolve("node:path"), require.resolve(["./next", "cjs"].join(".")));
+//// require-resolve-is-assigned-and-called/next.cjs
+console.log("the next file");
+//// require-resolve-is-assigned-by-a-function-that-is-handed-require/main.cjs
+function change(load) { load.resolve = name => "mine " + name; } change(require); function ask() { return require.resolve("./next.cjs"); } console.log(ask());
+//// require-resolve-is-assigned-by-a-function-that-is-handed-require/next.cjs
+console.log("the next file");
+//// require-resolve-is-assigned-through-a-variable-that-holds-require/main.cjs
+const load = require; load.resolve = name => "mine " + name; console.log(load.resolve("./next.cjs"), require.resolve("./next.cjs"));
+//// require-resolve-is-assigned-through-a-variable-that-holds-require/next.cjs
+console.log("the next file");
+//// require-resolve-is-defined-and-called/main.cjs
+Object.defineProperty(require, "resolve", { value: name => "mine " + name }); console.log(require.resolve("./next.cjs"));
+//// require-resolve-is-defined-and-called/next.cjs
+console.log("the next file");

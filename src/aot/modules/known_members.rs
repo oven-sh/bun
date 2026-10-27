@@ -4,7 +4,7 @@ use std::rc::Rc;
 use bun_core::strings;
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, BindingInitializer, Bound, Decl, Parent, SymbolId};
-use bun_sema::check::aot::is_member_visited_before;
+use bun_sema::check::aot::{find_link_followed_by_transpiler, is_member_visited_before};
 use bun_sema::fold::{self, Constant, Decision, FoldedValue};
 use bun_sema::hir::{
     self, BinOp, Chain, EnumId, EnumMemberId, ExprId, ExprKind, Flags, MemberKey, StmtKind, UnOp,
@@ -42,15 +42,23 @@ struct MemberValue {
     is_known_to_build_alone: bool,
 }
 
-type MemberValues = Rc<[Option<MemberValue>]>;
+struct DeclarationValues {
+    members: Box<[Option<MemberValue>]>,
+    // The enums of other files whose members the initializers read. The values hold as long as nothing can store to the objects of those.
+    relies_on: Box<[Sym]>,
+}
+
+type MemberValues = Rc<DeclarationValues>;
 
 // Which members an initializer may name for its value to be known.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 enum Named {
-    // Those of its own declaration, and those of another declaration whose initializers name none but their own.
-    OwnAndOneStepAway,
+    // Those of its own declaration, and those of the declarations that have run before it.
+    OwnAndEarlier,
     Own,
 }
+
+type DeclarationKey = (FileId, EnumId, Named);
 
 // The initializers of a declaration, while they are evaluated in their order.
 #[derive(Copy, Clone)]
@@ -61,11 +69,14 @@ struct Initializers<'a> {
     named: Named,
     // Whether the initializer that is evaluated rests on a value that the build alone knows.
     is_known_to_build_alone: &'a Cell<bool>,
+    relies_on: &'a RefCell<Vec<Sym>>,
+    // A declaration whose values an initializer asks for, and that nobody has evaluated yet.
+    asked_for: &'a Cell<Option<DeclarationKey>>,
 }
 
 #[derive(Default)]
 pub(crate) struct KnownMemberValues {
-    by_declaration: RefCell<FxHashMap<(FileId, EnumId, Named), MemberValues>>,
+    by_declaration: RefCell<FxHashMap<DeclarationKey, MemberValues>>,
 }
 
 /// The objects that the build knows whole because nothing but their declaration fills them: the enums at the top of the files of a program, and the
@@ -216,12 +227,10 @@ impl<'a, 's> KnownObjects<'a, 's> {
         if !hir.has_typescript_semantics() || !is_link_of_no_chain(hir, access) {
             return None;
         }
-        let Some((object, MemberKey::Name(name))) = hir.member_key(access) else {
-            return None;
-        };
-        if !hir.is_name_resolved_by_transpiler(access, self.files.atoms.bytes(name))
-            || !is_plain_read(hir, bound, access)
-        {
+        let atoms = &self.files.atoms;
+        let link = find_link_followed_by_transpiler(hir, access, |name| atoms.bytes(name));
+        let (object, name) = link?;
+        if !is_plain_read(hir, bound, access) {
             return None;
         }
         let enumeration = self.find_enum(file, object)?;
@@ -230,19 +239,38 @@ impl<'a, 's> KnownObjects<'a, 's> {
     }
 
     pub(crate) fn find_read(&self, file: FileId, access: ExprId) -> Option<MemberRead> {
-        self.find_read_naming(file, access, Named::OwnAndOneStepAway)
+        let named = self.find_named_member(file, access)?;
+        let values = self.values_of((named.0.file, named.1, Named::OwnAndEarlier));
+        self.read_member(file, access, named, &values)
     }
 
-    fn find_read_naming(&self, file: FileId, access: ExprId, named: Named) -> Option<MemberRead> {
-        let (enumeration, declaration, member) = self.find_named_member(file, access)?;
+    /// The enums of other files that the values of the members of an enum rest on.
+    pub(crate) fn enums_relied_on(&self, enumeration: Sym) -> SmallVec<[Sym; 2]> {
+        let mut relied_on = SmallVec::new();
+        let bound = self.files.bound(enumeration.file);
+        for &declaration in bound.symbol(enumeration.id).decls {
+            if let Decl::Enum(declaration) = declaration {
+                let values = self.values_of((enumeration.file, declaration, Named::OwnAndEarlier));
+                relied_on.extend_from_slice(&values.relies_on);
+            }
+        }
+        relied_on
+    }
+
+    fn read_member(
+        &self,
+        file: FileId,
+        access: ExprId,
+        (enumeration, declaration, member): (Sym, EnumId, EnumMemberId),
+        values: &DeclarationValues,
+    ) -> Option<MemberRead> {
         let hir = self.files.hir(file);
         let declared_in = self.files.hir(enumeration.file);
-        let values = self.values_of(enumeration.file, declaration, named);
         let index = (member.0 - declared_in[declaration].members.start) as usize;
         let MemberValue {
             value,
             is_known_to_build_alone,
-        } = values[index]?;
+        } = values.members[index]?;
         let is_in_place_of_reads = !is_known_to_build_alone;
         let validity = if enumeration.file == file {
             if !is_in_place_of_reads || !is_member_visited_before(hir, member, access) {
@@ -442,34 +470,61 @@ impl<'a, 's> KnownObjects<'a, 's> {
 
     /// To run such a declaration is to make the object and nothing else.
     pub(crate) fn knows_every_member(&self, file: FileId, declaration: EnumId) -> bool {
-        let values = self.values_of(file, declaration, Named::OwnAndOneStepAway);
-        values.iter().all(Option::is_some)
+        let values = self.values_of((file, declaration, Named::OwnAndEarlier));
+        values.members.iter().all(Option::is_some)
+    }
+
+    fn find_evaluated(&self, declaration: DeclarationKey) -> Option<MemberValues> {
+        let by_declaration = self.known.by_declaration.borrow();
+        by_declaration.get(&declaration).map(Rc::clone)
     }
 
     // What is known of a declaration hangs on the declaration alone, never on who asks first: a build asks in more than one order.
-    fn values_of(&self, file: FileId, declaration: EnumId, named: Named) -> MemberValues {
-        let key = (file, declaration, named);
-        if let Some(values) = self.known.by_declaration.borrow().get(&key) {
-            return Rc::clone(values);
+    // An enum may be made of an enum that is made of an enum, however often: what a declaration asks for is evaluated ahead of it.
+    fn values_of(&self, declaration: DeclarationKey) -> MemberValues {
+        let mut waiting: SmallVec<[DeclarationKey; 4]> = SmallVec::new();
+        waiting.push(declaration);
+        while let Some(&next) = waiting.last() {
+            if self.find_evaluated(next).is_some() {
+                waiting.pop();
+                continue;
+            }
+            let evaluated = match self.compute_values(next) {
+                Err(asked_for) if !waiting.contains(&asked_for) => {
+                    waiting.push(asked_for);
+                    continue;
+                }
+                // An initializer asks only for what has run before it, so no declaration comes to ask for itself.
+                Err(_) => {
+                    debug_assert!(false, "enums are made of each other");
+                    DeclarationValues {
+                        members: vec![None; self.files.hir(next.0)[next.1].members.len()].into(),
+                        relies_on: Box::default(),
+                    }
+                }
+                Ok(values) => values,
+            };
+            let mut by_declaration = self.known.by_declaration.borrow_mut();
+            by_declaration.insert(next, Rc::new(evaluated));
         }
-        let values: MemberValues = self.compute_values(file, declaration, named).into();
-        let mut by_declaration = self.known.by_declaration.borrow_mut();
-        by_declaration.insert(key, Rc::clone(&values));
-        values
+        match self.find_evaluated(declaration) {
+            Some(values) => values,
+            None => unreachable!("the loop ends when the declaration is evaluated"),
+        }
     }
 
     fn compute_values(
         &self,
-        file: FileId,
-        declaration: EnumId,
-        named: Named,
-    ) -> Vec<Option<MemberValue>> {
+        (file, declaration, named): DeclarationKey,
+    ) -> Result<DeclarationValues, DeclarationKey> {
         let hir = self.files.hir(file);
         let members = hir[declaration].members;
         let mut values: Vec<Option<MemberValue>> = Vec::with_capacity(members.len());
         // A member without an initializer is one more than the member before it, if that is a number.
         let mut counted = Some(0.0);
         let is_known_to_build_alone = Cell::new(false);
+        let relies_on = RefCell::new(Vec::new());
+        let asked_for = Cell::new(None);
         for member in members.iter() {
             let node = &hir[member];
             let value = if node.computed_name.is_some() {
@@ -482,8 +537,14 @@ impl<'a, 's> KnownObjects<'a, 's> {
                     earlier: &values,
                     named,
                     is_known_to_build_alone: &is_known_to_build_alone,
+                    relies_on: &relies_on,
+                    asked_for: &asked_for,
                 };
-                self.evaluate(initializers, initializer)
+                let value = self.evaluate(initializers, initializer);
+                if let Some(asked_for) = asked_for.take() {
+                    return Err(asked_for);
+                }
+                value
             } else {
                 counted.map(Constant::Number)
             };
@@ -496,7 +557,15 @@ impl<'a, 's> KnownObjects<'a, 's> {
                 is_known_to_build_alone: is_known_to_build_alone.get(),
             }));
         }
-        values
+        Ok(DeclarationValues {
+            members: values.into(),
+            relies_on: relies_on.into_inner().into(),
+        })
+    }
+
+    fn max_string_bytes(&self) -> usize {
+        let max_string_bytes = self.limits.get(LimitId::MaxFoldedStringBytes);
+        usize::try_from(max_string_bytes).unwrap_or(usize::MAX)
     }
 
     // The number or the string that an initializer evaluates to whenever it runs.
@@ -521,8 +590,7 @@ impl<'a, 's> KnownObjects<'a, 's> {
                 }
             }
         };
-        let max_string_bytes = self.limits.get(LimitId::MaxFoldedStringBytes);
-        let max_string_bytes = usize::try_from(max_string_bytes).unwrap_or(usize::MAX);
+        let max_string_bytes = self.max_string_bytes();
         while let Some((op, right)) = right_operands.pop() {
             if !is_member_value(&value) {
                 return None;
@@ -544,6 +612,8 @@ impl<'a, 's> KnownObjects<'a, 's> {
             earlier,
             named,
             is_known_to_build_alone,
+            relies_on,
+            asked_for,
         } = initializers;
         let (hir, bound) = (self.files.hir(file), self.files.bound(file));
         let find_earlier = |member: EnumMemberId| {
@@ -560,6 +630,15 @@ impl<'a, 's> KnownObjects<'a, 's> {
             {
                 let operand = self.evaluate(initializers, operand)?;
                 fold::apply_unary(&self.files.atoms, op, operand)
+            }
+            ExprKind::Template { exprs } => {
+                let mut substitutions: SmallVec<[Constant; 4]> = SmallVec::new();
+                for substitution in hir.ids(exprs) {
+                    substitutions.push(self.evaluate(initializers, substitution)?);
+                }
+                let texts: SmallVec<[Atom; 4]> = hir.ids(hir.template_texts(exprs)).collect();
+                let max_string_bytes = self.max_string_bytes();
+                fold::apply_template(&self.files.atoms, &texts, &substitutions, max_string_bytes)
             }
             ExprKind::Ident(_) => {
                 let Binding::Symbol(symbol) = bound.binding(expression) else {
@@ -583,21 +662,40 @@ impl<'a, 's> KnownObjects<'a, 's> {
                 Some(Constant::Number(f64::from(length)))
             }
             ExprKind::Dot { .. } | ExprKind::Index { .. } => {
-                match self.find_named_member(file, expression)? {
-                    (enumeration, owner, member)
-                        if enumeration.file == file && owner == declaration =>
-                    {
-                        find_earlier(member)
-                    }
-                    _ if named == Named::Own => None,
-                    _ => {
-                        let read = self.find_read_naming(file, expression, Named::Own)?;
-                        match read.validity {
-                            Validity::Always => Some(read.value),
-                            Validity::WhileObjectIsNotHandedOn => None,
+                let found = self.find_named_member(file, expression)?;
+                let (enumeration, owner, member) = found;
+                if enumeration.file == file && owner == declaration {
+                    return find_earlier(member);
+                }
+                if named == Named::Own {
+                    return None;
+                }
+                // The other declaration stands further up in the file, or in a file that has run. A file on a cycle reads a `const enum` of
+                // another file all the same: of that one the members count that name none but their own.
+                let has_run_before = match enumeration.file == file {
+                    true => is_member_visited_before(hir, member, expression),
+                    false => !self.graph.half(ModuleRef::File(file)),
+                };
+                let other = match has_run_before {
+                    true => (enumeration.file, owner, Named::OwnAndEarlier),
+                    false if enumeration.file == file => return None,
+                    false => (enumeration.file, owner, Named::Own),
+                };
+                let Some(values) = self.find_evaluated(other) else {
+                    asked_for.set(Some(other));
+                    return None;
+                };
+                let read = self.read_member(file, expression, found, &values)?;
+                if read.validity == Validity::WhileObjectIsNotHandedOn {
+                    is_known_to_build_alone.set(true);
+                    let mut relies_on = relies_on.borrow_mut();
+                    for &relied_on in [enumeration].iter().chain(values.relies_on.iter()) {
+                        if !relies_on.contains(&relied_on) {
+                            relies_on.push(relied_on);
                         }
                     }
                 }
+                Some(read.value)
             }
             _ => None,
         }

@@ -138,3 +138,26 @@ const p = new Proxy({ inner: new F() }, {});
 const q = p.inner.m;
 const made = new q();
 console.log(typeof made, made instanceof q, q.bind({ x: "bound" })(), new F().m());
+//// under-an-index/main.mjs
+class C {}
+C.prototype[0] = function () {
+  return 1;
+};
+function g(x) {
+  return x === undefined ? "none" : x + 1;
+}
+const q = new Proxy(new C(), {})[0];
+q.k = 5;
+console.log(g(new C()[0].k));
+//// under-an-index-nobody-knows/main.mjs
+class C {}
+C.prototype[1] = function () {
+  return 1;
+};
+function g(x) {
+  return x === undefined ? "none" : x + 1;
+}
+const at = process.argv.length > 99 ? 7 : 1;
+const q = new Proxy(new C(), {})[at];
+q.k = 5;
+console.log(g(new C()[1].k));

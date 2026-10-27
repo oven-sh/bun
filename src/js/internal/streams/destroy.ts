@@ -122,7 +122,7 @@ const destroy = function destroy(this: $Node.StreamWithState, err?: Error | null
   return this;
 };
 
-streamState.internals.destroyMethods = { destroy };
+streamState.internals.destroyMethods = { destroy, closeAfterThrow };
 
 function _destroy(self: $Node.StreamWithState, err: Error | null | undefined, cb: $Node.ErrorCallback | undefined) {
   let called = false;
@@ -165,6 +165,13 @@ function _destroy(self: $Node.StreamWithState, err: Error | null | undefined, cb
   } catch (err) {
     onDestroy(err as Error);
   }
+}
+
+function closeAfterThrow(self: $Node.StreamWithState, r: ReadableState, err: unknown) {
+  checkError(err as Error, undefined, r);
+  r[kState] |= Flag.Closed;
+  if (err) ProcessNextTick(emitErrorCloseNT, self, err);
+  else ProcessNextTick(emitCloseNT, self);
 }
 
 function emitErrorCloseNT(self: $Node.StreamWithState, err: Error) {

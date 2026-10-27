@@ -28,6 +28,7 @@ pub(super) enum HostEvent {
     ParsedCode(Vec<u8>),
     RanMacros { pending_calls: usize },
     TransformedTree(Vec<u8>),
+    FinishedFile(Vec<u8>),
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -465,6 +466,7 @@ impl CodeHost for StatementsHost {
         request: &FinishedFile<'_, '_>,
         _payload: &mut Option<HostPayload>,
     ) -> Vec<HostResolution> {
+        self.record(HostEvent::FinishedFile(request.path.to_vec()));
         let implied = self.find_by_path(&self.implied, request.path);
         implied.cloned().unwrap_or_default()
     }

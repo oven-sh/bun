@@ -244,3 +244,10 @@ show(function s26() { const a = "5"; const b = a ?? null; const c = b ? false : 
 show(function s27() { let a = "x"; let b = a >>> true; let c = NaN + b; let d = -c; let e = d ?? ""; e(); });
 show(function s28() { const a = void 0; const b = a + 1; const c = b ?? "é"; return 1 in c; });
 show(function s29() { { const a = false; const b = a + void 0; const c = b != null; const d = c ?? `t`; const e = typeof d; return (1, e)(); } });
+show(function s30() { const a = 2.5; const b = a ** 1; const c = b > -3; return (c ? null : undefined).p; });
+show(function s31() { const a = 0; const b = a ** 2.5; const c = b ? "é" : 1; const d = `${c}y`; return `${d}`(); });
+show(function s32() { const a = -3; const b = a ** Infinity; const c = b && -3; const d = void c; return d.p.q; });
+show(function s33() { const a = ""; const b = a == 0; b(); });
+show(function s34() { const a = ""; const b = -a; const c = (1, b); const d = "" != c; return (typeof d)(); });
+show(function s35() { const a = "1"; const b = a == 1; return b(); });
+show(function s36() { const a = "2"; const b = a == 2; return b(); });

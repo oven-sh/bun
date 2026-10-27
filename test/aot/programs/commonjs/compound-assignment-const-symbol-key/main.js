@@ -8,7 +8,7 @@
 // IR= 0 addAssign ElemSet
 // IR= 0 increment ElemGet
 // IR= 0 increment ElemSet
-// IR= 1 underOneOfTwo ElemGet
+// IRT= 1 underOneOfTwo ElemGet
 // IR= 1 underWhatIsGiven ElemGet
 // IR= 1 underWhatALoopCarries ElemGet
 "use strict";

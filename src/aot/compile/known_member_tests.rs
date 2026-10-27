@@ -7,10 +7,13 @@ use super::testing::{default_settings, with_loaded_build};
 use crate::load::ProjectId;
 use crate::lower::LeftOutDeclarations;
 
-fn find_file(files: &Files<'_>, path: &str) -> FileId {
+fn find_file_if_loaded(files: &Files<'_>, path: &str) -> Option<FileId> {
     let mut compiled = files.compiled_files().iter().copied();
-    let found = compiled.find(|&file| files.module(file).file_name().as_bstr() == path);
-    found.unwrap_or_else(|| panic!("{path} is no file of the program"))
+    compiled.find(|&file| files.module(file).file_name().as_bstr() == path)
+}
+
+fn find_file(files: &Files<'_>, path: &str) -> FileId {
+    find_file_if_loaded(files, path).unwrap_or_else(|| panic!("{path} is no file of the program"))
 }
 
 fn with_left_out_declarations<R>(
@@ -278,11 +281,12 @@ fn function_of_the_file_of_an_enum_that_nobody_calls_hands_nothing_on() {
     assert!(!hands_on_enum(&files));
 }
 
-// Whether the executable makes the object of the first enum of a file.
+// Whether the executable makes the object of the first enum of a file. A file that nothing imports is no file of the program.
 fn makes_object_of_enum(files: &[(&str, &str)], path: &str) -> bool {
     with_left_out_declarations(files, |files, left_out| {
-        let file = find_file(files, path);
-        !left_out.is_statement_left_out(file, files.hir(file)[EnumId(0)].stmt)
+        find_file_if_loaded(files, path).is_some_and(|file| {
+            !left_out.is_statement_left_out(file, files.hir(file)[EnumId(0)].stmt)
+        })
     })
 }
 
@@ -329,4 +333,127 @@ fn enum_with_a_member_that_the_build_cannot_work_out_is_made() {
             "{members}"
         );
     }
+}
+
+const ENUMS_MADE_OF_ENUMS: [(&str, &str); 3] = [
+    ("base.ts", "export enum Base { One = 1, Two }"),
+    (
+        "made.ts",
+        "import { Base } from './base'; export enum Made { Three = Base.One + Base.Two, Four = Three + 1 }",
+    ),
+    (
+        "third.ts",
+        "import { Made } from './made'; export enum Third { Eight = Made.Four * 2 }",
+    ),
+];
+
+// Which of the three objects the executable makes: that of `Base`, of `Made`, of `Third`.
+fn makes_objects_of_enums_made_of_enums(main: &str) -> [bool; 3] {
+    let mut files = vec![("main.ts", main)];
+    files.extend(ENUMS_MADE_OF_ENUMS);
+    ["/project/base.ts", "/project/made.ts", "/project/third.ts"]
+        .map(|path| makes_object_of_enum(&files, path))
+}
+
+#[test]
+fn enum_made_of_enums_of_other_files_is_known_over_any_number_of_steps() {
+    for main in [
+        "import { Made } from './made'; console.log(Made.Three, Made.Four);",
+        "import { Third } from './third'; console.log(Third.Eight);",
+        "import { Base } from './base'; import { Third } from './third'; console.log(Base.Two, Third.Eight);",
+    ] {
+        assert_eq!(
+            makes_objects_of_enums_made_of_enums(main),
+            [false; 3],
+            "{main}"
+        );
+    }
+}
+
+#[test]
+fn whoever_gets_hold_of_an_enum_spoils_the_enums_that_are_made_of_it() {
+    for (main, expected) in [
+        (
+            "import { Base } from './base'; import { Third } from './third'; console.log(Base); console.log(Third.Eight);",
+            [true; 3],
+        ),
+        (
+            "import { Base } from './base'; import { Third } from './third'; console.log(Third.Eight); console.log(Base);",
+            [true; 3],
+        ),
+        (
+            "import { Made } from './made'; import { Third } from './third'; console.log(Third.Eight, Made);",
+            [false, true, true],
+        ),
+        (
+            "import { Made } from './made'; import { Third } from './third'; console.log(Made.Four, Third);",
+            [false, false, true],
+        ),
+        (
+            "import { Base } from './base'; import { Made } from './made'; (Base as any).One = 9; console.log(Made.Three);",
+            [true, true, false],
+        ),
+    ] {
+        assert_eq!(
+            makes_objects_of_enums_made_of_enums(main),
+            expected,
+            "{main}"
+        );
+    }
+}
+
+// A transpiler knows nothing of another file, so the file of such an enum reads the object.
+#[test]
+fn member_made_of_an_enum_of_another_file_is_read_from_the_object_in_its_own_file() {
+    let main = "import { Base } from './base'; enum Made { Three = Base.One + Base.Two } console.log(Made.Three);";
+    let files = [("main.ts", main), ENUMS_MADE_OF_ENUMS[0]];
+    assert!(makes_object_of_enum(&files, "/project/main.ts"));
+    assert!(!makes_object_of_enum(&files, "/project/base.ts"));
+}
+
+#[test]
+fn enums_that_name_each_other_are_known_as_far_as_each_has_run() {
+    let main = "enum First { A = 1, B = (Second as any).C } enum Second { C = First.A + 1, D = First.B } console.log(Second.C);";
+    assert!(makes_object_of_enum(
+        &[("main.ts", main)],
+        "/project/main.ts"
+    ));
+    let files = [
+        (
+            "main.ts",
+            "import { Left } from './left'; console.log(Left.A);",
+        ),
+        (
+            "left.ts",
+            "import { Right } from './right'; export const enum Left { A = Right.B + 1, C = 1 }",
+        ),
+        (
+            "right.ts",
+            "import { Left } from './left'; export const enum Right { B = Left.C + 1 }",
+        ),
+    ];
+    with_left_out_declarations(&files, |_, _| {});
+}
+
+#[test]
+fn enum_whose_members_are_templates_over_its_members_is_known() {
+    let texts = "export enum Text { A = 1, B = 'b', C = `a${A}b${B}c`, D = `${Text.C}!`, E = `plain`, F = `n${1 + 2}` }";
+    let files = [
+        (
+            "main.ts",
+            "import { Text } from './text'; console.log(Text.C, Text.D, Text.E, Text.F);",
+        ),
+        ("text.ts", texts),
+    ];
+    assert!(!makes_object_of_enum(&files, "/project/text.ts"));
+    // A transpiler works these out too, so that the values stand in the place of the reads in the file of the enum as well.
+    let main = format!(
+        "{} console.log(Text.C, Text.D, Text.E, Text.F);",
+        texts.trim_start_matches("export ")
+    );
+    let files = [("main.ts", main.as_str())];
+    assert!(!makes_object_of_enum(&files, "/project/main.ts"));
+    let unknown = "export enum Text { A = `a${process.argv.length}` }";
+    let files = [("main.ts", "import './text';"), ("text.ts", unknown)];
+    assert!(makes_object_of_enum(&files, "/project/text.ts"));
 }

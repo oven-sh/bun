@@ -458,25 +458,21 @@ function addChunk(stream: $Node.Readable, state: ReadableState, chunk, length: n
     state[kState] |= Flag.DataEmitted;
     stream.emit("data", chunk);
   } else {
-    bufferChunk(stream, state, chunk, length, addToFront);
+    // Update the buffer info.
+    state.length += length;
+    if (addToFront) {
+      if (state.bufferIndex > 0) {
+        state.buffer[--state.bufferIndex] = chunk;
+      } else {
+        state.buffer.unshift(chunk); // Slow path
+      }
+    } else {
+      state.buffer.push(chunk);
+    }
+
+    if ((state[kState] & Flag.NeedReadable) !== 0) emitReadable(stream);
   }
   maybeReadMore(stream, state);
-}
-
-function bufferChunk(stream: $Node.Readable, state: ReadableState, chunk, length: number, addToFront: boolean): void {
-  // Update the buffer info.
-  state.length += length;
-  if (addToFront) {
-    if (state.bufferIndex > 0) {
-      state.buffer[--state.bufferIndex] = chunk;
-    } else {
-      state.buffer.unshift(chunk); // Slow path
-    }
-  } else {
-    state.buffer.push(chunk);
-  }
-
-  if ((state[kState] & Flag.NeedReadable) !== 0) emitReadable(stream);
 }
 
 Readable.prototype.isPaused = function (this: $Node.Readable) {

@@ -7,7 +7,7 @@ use crate::file_analysis::{FileAnalysis, FileInputs, analyze_file, fold_file_aga
 use crate::fold::FoldInputs;
 use crate::hir_from_data::HostValue;
 use crate::import_sites::{AutomaticJsx, JsxMode, find_exported_requires};
-use crate::module_format::DeclaredModuleType;
+use crate::module_format::{DeclaredModuleType, ModuleFormat};
 use crate::resolve::{
     CodeImportForm, CodeImportKind, CodeParseRequest, CodeRequest, CodeResolution, HostPayload,
     HostResolution, JsxRuntime, JsxSettings, MacroRequest, ParsedCode, TransformRequest,
@@ -125,7 +125,9 @@ fn resolve_analyzed_file<'s, 'r>(
 ) -> ParsedCodeFile<'s, 'r> {
     let (hir, bound) = (&parse.hir, &parse.bound);
     let mut code = resolve_code_imports(context, key, hir, analyzed);
-    code.add_implied(context, key, hir, bound, &mut payload);
+    if !is_finished_later(&code.analyzed.analysis) {
+        code.add_implied(context, key, hir, bound, &mut payload);
+    }
     code.requests = summarize_requests(context, key, hir, bound, &code);
     let decisions = &code.analyzed.analysis.decisions;
     code.exported_requires = find_exported_requires(hir, bound, decisions);
@@ -135,6 +137,24 @@ fn resolve_analyzed_file<'s, 'r>(
         code: Box::new(code),
         payload,
     }
+}
+
+/// What the names hold that a file reads of other files may fold it once more. The host looks at such a file when they have been looked up.
+pub(super) fn is_finished_later(analysis: &FileAnalysis<'_>) -> bool {
+    analysis.module_format == ModuleFormat::Esm && !analysis.imported_names.is_empty()
+}
+
+pub(super) fn finish_code_file<'s, 'r>(
+    context: &CodeLoadContext<'_, 's, 'r>,
+    target: CodeTarget<'r>,
+    mut loaded: ParsedCodeFile<'s, 'r>,
+) -> ParsedCodeFile<'s, 'r> {
+    let key = target.key;
+    let (hir, bound) = (&loaded.parse.hir, &loaded.parse.bound);
+    let code = &mut loaded.code;
+    code.add_implied(context, key, hir, bound, &mut loaded.payload);
+    code.requests = summarize_requests(context, key, hir, bound, code);
+    loaded
 }
 
 /// The tree and its bindings stay. `None`: the file is to be loaded anew.

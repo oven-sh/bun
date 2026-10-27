@@ -352,8 +352,18 @@ impl Resolver<'_, '_> {
         if self.input.dialect != SourceDialect::Program {
             return;
         }
+        let hir = self.input.hir;
         let mut mentions = Vec::new();
         for expr in self.evaluated_exprs() {
+            // Each of the three begins at an expression that stands for a built-in: this one, the one below its casts, or the object that it reads by a key.
+            let stands_for_builtin =
+                matches!(self.state(expr), ExprState::Builtin(_) | ExprState::Held(_));
+            if !stands_for_builtin
+                && !matches!(hir[expr].kind, ExprKind::Index { .. })
+                && hir.type_assertion_operand(expr).is_none()
+            {
+                continue;
+            }
             let found = self.find_module_object_mention(expr).into_iter();
             let found = found.chain(self.find_way_that_computed_key_reads(expr));
             for (owner, object_use) in found.chain(self.find_ways_that_pattern_reads(expr)) {

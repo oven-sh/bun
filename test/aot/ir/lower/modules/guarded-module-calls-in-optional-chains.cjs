@@ -8,7 +8,7 @@
 // CALL: [[matched]]():
 // CALL-NEXT: = RequireModule module=m
 // CALL: [[other]]([[function]]):
-// CALL-NEXT: = Call [[function]], {{*}}calleeName="process.getBuiltinModule"
+// CALL-NEXT: = Call [[function]], {{*}}calleeName="global.process.getBuiltinModule"
 // CALL: Return
 
 // RUN(OBJECT): lower
@@ -25,11 +25,11 @@
 // The usual test for the feature in a library. Each link of the chain leaves for `undefined` as in an ordinary call, and behind it
 // the module is loaded by its number where the callee is the built-in.
 function optionalCall() {
-  return process.getBuiltinModule?.("node:buffer");
+  return global.process.getBuiltinModule?.("node:buffer");
 }
 
 function optionalObject() {
-  return process?.getBuiltinModule("node:buffer");
+  return global.process?.getBuiltinModule("node:buffer");
 }
 
 module.exports = { optionalCall, optionalObject };

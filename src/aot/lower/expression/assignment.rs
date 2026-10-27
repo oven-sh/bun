@@ -242,8 +242,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                     self.set_position(self.file.member_position(object));
                     return;
                 }
-                // The test of `o` is reported there. A getter or a trap that the read calls has its caller at `o`.
-                Some((object, MemberKey::Computed(key))) if !self.file.is_literal_operand(key) => {
+                // JSC tests `o` by an operation of its own, which the read stands for. The test is reported there. A getter or a trap that the read calls has its caller at `o`.
+                Some((object, MemberKey::Computed(key)))
+                    if !self.file.is_printed_as_number_or_text(key) =>
+                {
                     self.set_position_to_last_recorded();
                     let position = self.file.member_position(object);
                     self.builder.set_position_for_callers(position);

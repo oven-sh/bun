@@ -177,6 +177,8 @@ define_tables! {
             implicit_references: S::Few<ImplicitReference> = implicit_reference_order,
         }
         lists {
+            // For each run of `IDENTS_IN_RUN` expression ids, how many entries of `ident_bindings` lie in front of it. One more at the end.
+            ident_binding_runs: S::List<u32>,
             evaluated_idents: S::List<u64>,
             eval_visible_symbols: S::List<u64>,
             idents_behind_eval_variables: S::List<u64>,

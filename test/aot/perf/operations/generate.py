@@ -168,6 +168,12 @@ row('concat2', 's = s + t (ours: a rope; Go and C++ copy)', group='strings', les
 row('template3', 's = `${s}-${t}`', group='strings', less='ts:direct_call_string',
     ts=('(s: string, t: string): string', '', 's = gi(`${s}-${t}`);', 's'), go=('(s string, t string) string', '', 's = s + "-" + t', 's'), cc=('std::string %s(std::string s, const std::string& t)', '', 's = s + "-" + t;', 's'),
     call={'ts': 'x ^= F(W0, W1).length', 'go': 'x ^= int64(len(F(W0, W1)))', 'cc': 'x ^= F(W0, W1).size()'})
+row('concat2_read', 's = s + t, and a character of the last text is read behind the sites: ours has to lay the rope out flat, so both sides copy', group='strings', less='ts:direct_call_string',
+    ts=('(s: string, t: string): string', '', 's = gi(s + t);', 's'), go=('(s string, t string) string', '', 's = s + t', 's'), cc=('std::string %s(std::string s, const std::string& t)', '', 's = s + t;', 's'),
+    call={'ts': 'x = (x + F(W0, W1).charCodeAt(1)) & 65535', 'go': 'x = (x + int64(F(W0, W1)[1])) & 65535', 'cc': 'x = (x + F(W0, W1)[1]) & 65535'})
+row('template3_read', 's = `${s}-${t}`, and a character of the last text is read behind the sites', group='strings', less='ts:direct_call_string',
+    ts=('(s: string, t: string): string', '', 's = gi(`${s}-${t}`);', 's'), go=('(s string, t string) string', '', 's = s + "-" + t', 's'), cc=('std::string %s(std::string s, const std::string& t)', '', 's = s + "-" + t;', 's'),
+    call={'ts': 'x = (x + F(W0, W1).charCodeAt(1)) & 65535', 'go': 'x = (x + int64(F(W0, W1)[1])) & 65535', 'cc': 'x = (x + F(W0, W1)[1]) & 65535'})
 row('template_number', 's = `${t}${v}`: a number made text and joined (v below 1000)', group='strings', less='ts:direct_call_string',
     ts=('(t: string, v: number): string', 'let s = t;', 's = gi(`${t}${v + s.length}`);', 's'), go=('(t string, v int64) string', 's := t', 's = t + strconv.FormatInt(v + int64(len(s)), 10)', 's'),
     cc=('std::string %s(const std::string& t, long v)', 'std::string s = t;', 's = t + std::to_string(v + (long)s.size());', 's'),

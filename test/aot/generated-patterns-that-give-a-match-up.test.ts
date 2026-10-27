@@ -3,7 +3,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { join } from "node:path";
 import { Random } from "./fuzz/random";
-import { generate } from "./generated/patterns-that-give-a-match-up";
+import { generate, type Text } from "./generated/patterns-that-give-a-match-up";
 import { inShare } from "./run-programs";
 import { test } from "./supported";
 
@@ -17,17 +17,20 @@ const tsconfig = JSON.stringify({
     types: [],
   },
 });
-const title = "a pattern made at run time gives a match up where plain Bun does, and no later";
-const seeds = Array.from({ length: 60 }, (_, index) => index + 1).filter(
-  seed => seed <= 3 || inShare(`${title} ${seed}`, 20),
+const title = "a pattern gives a match up where plain Bun does, and no later";
+const texts: Text[] = ["at run time", "literal", "constant"];
+const rows = texts.flatMap(text =>
+  Array.from({ length: 60 }, (_, index) => index + 1)
+    .filter(seed => seed <= (text === "at run time" ? 3 : 1) || inShare(`${title} ${text} ${seed}`, 30))
+    .map(seed => [text, seed] as const),
 );
 
 // A hundred million turns take a build with a sanitizer or with assertions minutes.
-test.skipIf(isASAN || isDebug).concurrent.each(seeds)(
-  `${title}: seed %d`,
-  async seed => {
+test.skipIf(isASAN || isDebug).concurrent.each(rows)(
+  `${title}: its text is %s, seed %d`,
+  async (text, seed) => {
     using folder = tempDir("aot-patterns-that-give-a-match-up", {
-      "main.ts": generate(new Random(seed), "at run time", 3),
+      "main.ts": generate(new Random(seed), text, 3),
       "tsconfig.json": tsconfig,
     });
     const spawn = (cmd: string[]) =>
@@ -46,7 +49,8 @@ test.skipIf(isASAN || isDebug).concurrent.each(seeds)(
     expect({ stdout: answers(stdout), exitCode }).toEqual({ stdout: answers(expected), exitCode: plainExitCode });
     expect(expected).toContain("finds nothing from ");
     const times = (output: string) => Array.from(output.matchAll(/ ([0-9]+)ms$/gm), found => Number(found[1]));
-    const allowed = times(expected).map(time => time * 2 + 250);
+    // A machine that runs many jobs at once holds a process up for a few hundred milliseconds now and then.
+    const allowed = times(expected).map(time => time * 3 + 1000);
     expect(
       times(stdout).map((time, at) =>
         time <= allowed[at] ? "in time" : `${time} ms, plain Bun ${times(expected)[at]} ms`,

@@ -108,6 +108,7 @@ interface Internals {
           error?: Error | null,
           callback?: $Node.ErrorCallback,
         ) => $Node.StreamWithState;
+        closeAfterThrow: (stream: $Node.StreamWithState, state: ReadableState, error: unknown) => void;
       }
     | undefined;
   onwrite: ((stream: $Node.Writable, er?: Error | null) => void) | undefined;

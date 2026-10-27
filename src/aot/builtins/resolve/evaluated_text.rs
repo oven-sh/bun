@@ -70,9 +70,9 @@ impl Resolver<'_, '_> {
     }
 
     pub(super) fn collect_evaluated_texts(&mut self) {
-        let exprs = self.evaluated_exprs();
-        self.output.evaluated_texts = exprs
-            .filter_map(|expr| self.find_evaluated_text(expr))
+        let calls = self.evaluated_calls().iter();
+        self.output.evaluated_texts = calls
+            .filter_map(|&call| self.find_evaluated_text(call))
             .collect();
     }
 }

@@ -913,7 +913,8 @@ pub struct Run<'u> {
     /// Only declaration files are shared. Every other file is parsed for each program and freed with it.
     only_declaration_files: bool,
     parses: AtomicUsize,
-    bytes: AtomicUsize,
+    /// `None`: nobody asks for them. Each look at the size of an arena walks the pages of every arena of the process.
+    bytes: Option<AtomicUsize>,
     /// The first `Host::origin` number that isn't taken.
     origins: AtomicUsize,
 }
@@ -927,7 +928,7 @@ impl<'u> Run<'u> {
             provided,
             only_declaration_files: false,
             parses: AtomicUsize::new(0),
-            bytes: AtomicUsize::new(0),
+            bytes: Some(AtomicUsize::new(0)),
             origins: AtomicUsize::new(1),
         }
     }
@@ -941,7 +942,7 @@ impl<'u> Run<'u> {
             provided: FxHashSet::default(),
             only_declaration_files: true,
             parses: AtomicUsize::new(0),
-            bytes: AtomicUsize::new(0),
+            bytes: None,
             origins: AtomicUsize::new(1),
         }
     }
@@ -961,7 +962,8 @@ impl<'u> Run<'u> {
 
     /// Bytes allocated for the parsed files.
     pub fn bytes(&self) -> usize {
-        self.bytes.load(Ordering::Relaxed)
+        let bytes = self.bytes.as_ref();
+        bytes.map_or(0, |bytes| bytes.load(Ordering::Relaxed))
     }
 
     /// How many files have been parsed.
@@ -1009,7 +1011,8 @@ impl<'u> Run<'u> {
         self.parses.fetch_add(1, Ordering::Relaxed);
         let arena = self.session.arena();
         // Only this thread allocates in it.
-        let before = arena.allocated_bytes();
+        let bytes = self.bytes.as_ref();
+        let bytes = bytes.map(|bytes| (bytes, arena.allocated_bytes()));
         let text = text.unwrap_or_else(|| host.read_source(path));
         let is_unreadable = text.is_empty() && host.read(path).is_none();
         let (mut hir, bound) = Files::parse_and_bind(
@@ -1035,8 +1038,10 @@ impl<'u> Run<'u> {
             is_shared: true,
         });
         path_parses.push((key, parse, is_unreadable));
-        let more = arena.allocated_bytes().saturating_sub(before);
-        self.bytes.fetch_add(more, Ordering::Relaxed);
+        if let Some((bytes, before)) = bytes {
+            let more = arena.allocated_bytes().saturating_sub(before);
+            bytes.fetch_add(more, Ordering::Relaxed);
+        }
         parse
     }
 }

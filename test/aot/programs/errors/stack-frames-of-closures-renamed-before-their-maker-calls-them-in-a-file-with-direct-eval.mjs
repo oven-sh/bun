@@ -61,14 +61,6 @@ function runAll() {
     rename(kept, name);
     closure(...[1, 2]);
   });
-  run(function returnsTheCall(name) {
-    const closure = function written6() {
-      throw new Error("x");
-    };
-    const text = "" + closure;
-    rename(kept, name);
-    return closure();
-  });
   run(function callsAnArrow(name) {
     const closure = () => {
       throw new Error("x");

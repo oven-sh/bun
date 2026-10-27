@@ -49,6 +49,13 @@ group("built-ins that a program names", () => {
     ["the constructor of its prototype object", "Cookie", `const Class = Bun.CookieMap.prototype.constructor; console.log(new Class("a=1").size);`],
     ["the same through Reflect", "Cookie", `const Class = Reflect.get(Bun.CookieMap, "prototype").constructor; console.log(Reflect.construct(Class, ["a=1"]));`],
     ["the same under a computed key", "Cookie", `const Class = Bun.CookieMap[process.argv[2]].constructor; console.log(new Class("a=1").size);`],
+    ["the same through Reflect under a computed key", "Cookie", `const Class = Reflect.get(Bun.CookieMap, process.argv[2]).constructor; console.log(new Class("a=1").size);`],
+    ["the same out of a descriptor under a computed key", "Cookie", `const Class = Object.getOwnPropertyDescriptor(Bun.CookieMap, process.argv[2])!.value.constructor; console.log(new Class("a=1").size);`],
+    ["the same out of all its descriptors", "Cookie", `const Class = (Object.getOwnPropertyDescriptors(Bun.CookieMap) as any).prototype.value.constructor; console.log(new Class("a=1").size);`],
+    ["the same by a pattern with a computed key", "Cookie", `const { [process.argv[2]]: held } = Bun.CookieMap; console.log(new held.constructor("a=1").size);`],
+    ["the same under each of its own names", "Cookie", `for (const name of Object.getOwnPropertyNames(Bun.CookieMap)) { const Class = Bun.CookieMap[name]?.constructor; if (name === process.argv[2]) console.log(new Class("a=1").size); }`],
+    ["the same under a computed key of an heir", "Cookie", `const Class = Object.create(Bun.CookieMap)[process.argv[2]].constructor; console.log(new Class("a=1").size);`],
+    ["the same of a global under a computed key of an heir", "UrlPattern", `declare const URLPattern: any; const Class = Object.create(URLPattern)[process.argv[2]].constructor; console.log(new Class("http://a/b").pathname);`],
     ["the same of a global", "UrlPattern", `declare const URLPattern: any; const Class = URLPattern.prototype.constructor; console.log(new Class("http://a/b").pathname);`],
   ])("a class of the host is made as %s", async (_, feature, text) => {
     expect(retainsFeature((await of(text)).lines, feature)).toBe(true);
@@ -580,9 +587,13 @@ group("parts of Bun that run code the compiler does not see", () => {
   test.each([
     ["transformSync", `console.log(new Bun.Transpiler().transformSync(process.argv[2]));`],
     ["scan", `console.log(new Bun.Transpiler().scan(process.argv[2]));`],
-  ])("Bun.Transpiler makes text of text, and an executable that runs only its own code refuses the macros in it: it is listed and the report stays closed: %s", async (_, text) => {
+    ["transformSync of a transpiler with options, and a method of the text", `console.log(new Bun.Transpiler({ loader: "tsx" }).transformSync(process.argv[2]).trim());`],
+    ["scanImports, and the length of the list", `console.log(new Bun.Transpiler({ loader: "tsx" }).scanImports(process.argv[2]).length);`],
+    ["scan, and a member of a member", `console.log(new Bun.Transpiler().scan(process.argv[2]).exports.length);`],
+    ["transform, and the length of the text", `console.log((await new Bun.Transpiler().transform(process.argv[2])).length);\nexport {};`],
+  ])("Bun.Transpiler makes text of text, and an executable that runs only its own code refuses the macros in it: it is listed, the report stays closed and lists no member that the program doesn't name: %s", async (_, text) => {
     const use = await of(text);
-    expect({ ...completeness(use), listed: use.lines.includes("Bun Transpiler") }).toEqual({ ...closed, listed: true });
+    expect({ ...completeness(use), listed: use.lines.includes("Bun Transpiler"), usesEveryMember: use.lines.includes("property toTemporalInstant") }).toEqual({ ...closed, listed: true, usesEveryMember: false });
   });
 
   test.each([

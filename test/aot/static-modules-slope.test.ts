@@ -374,6 +374,60 @@ describe.concurrent("what a module costs at start", () => {
   }
 });
 
+describe.concurrent("files that the entry point does not bring along", () => {
+  // Each file has variables that do not start as zero: an enum, a static field, a number that a function reads early. They get their first words when the file is loaded.
+  const fileBelowARoot = (name: string, next?: string) =>
+    (next ? `import { use${next} } from "./${next}";\n` : "") +
+    `export enum E${name} { First = 1, Second }\nexport class S${name} { static count = 2; }\nexport var v${name} = process.argv.length;\n` +
+    `export function use${name}(): number { return E${name}.Second + S${name}.count + v${name}${next ? ` + use${next}()` : ""}; }\n`;
+  const roots = 4;
+  const filesOfRoots = (filesBelowARoot: number) => {
+    const files: Record<string, string> = {};
+    for (let root = 0; root < roots; root++)
+      for (let i = 0; i < filesBelowARoot; i++)
+        files[`r${root}m${i}.ts`] = fileBelowARoot(
+          `r${root}m${i}`,
+          i + 1 < filesBelowARoot ? `r${root}m${i + 1}` : undefined,
+        );
+    files["main.ts"] =
+      `switch (process.argv[2]) {\n` +
+      Array.from(
+        { length: roots },
+        (_, root) =>
+          `  case "${root}":\n    import("./r${root}m0").then(all => console.log(all.user${root}m0()));\n    break;\n`,
+      ).join("") +
+      `}\n`;
+    return files;
+  };
+
+  test("what fills their variables goes by the files that are loaded by name, not by the files below those", async () => {
+    const counted: Statistics[] = [];
+    for (const filesBelowARoot of [10, 100]) {
+      await slot(async () => {
+        using directory = tempDir("aot-static-modules-filled", filesOfRoots(filesBelowARoot));
+        const { executable, statistics } = await build(String(directory), "main.ts");
+        const ran = await run([executable, "1"], String(directory), bunEnv);
+        expect({ stdout: ran.stdout, exitCode: ran.exitCode }).toEqual({
+          stdout: `${filesBelowARoot * 7}\n`,
+          exitCode: 0,
+        });
+        counted.push(statistics);
+      });
+    }
+    const [few, many] = counted;
+    expect({
+      groups: many.GroupsOfFilesFilledWhenEntered,
+      functionsThatFill: many.FunctionsThatFillVariablesOfFiles,
+      bytesOfTables: many.ProgramTableBytesStatics,
+    }).toEqual({
+      groups: roots,
+      functionsThatFill: few.FunctionsThatFillVariablesOfFiles,
+      bytesOfTables: few.ProgramTableBytesStatics,
+    });
+    expect(few.FunctionsThatFillVariablesOfFiles).toBeLessThanOrEqual(roots);
+  }, 600_000);
+});
+
 describe.concurrent("modules that do not run", () => {
   // A file that only a dead function requires has no site that names it and no record.
   test("a chain that only a dead function requires is not in the executable", async () => {

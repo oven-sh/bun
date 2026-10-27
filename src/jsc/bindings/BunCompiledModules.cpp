@@ -25,6 +25,7 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/RegExp.h>
 #include <JavaScriptCore/ScriptFetchParameters.h>
+#include <JavaScriptCore/SourceCode.h>
 #include <JavaScriptCore/Symbol.h>
 #include <wtf/SetForScope.h>
 
@@ -334,6 +335,17 @@ static bool isRequireFunctionOf(Zig::GlobalObject* globalObject, JSCommonJSModul
     return boundModuleOf(function) == module && uncheckedDowncast<JSBoundFunction>(function)->targetFunction() == globalObject->requireFunctionUnbound();
 }
 
+static JSCell* resolveFunctionOf(JSGlobalObject* realm, JSObject* requirer, JSCell* heldOrNull)
+{
+    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(realm);
+    auto& vm = getVM(globalObject);
+    JSObject* unbound = globalObject->requireResolveFunctionUnbound();
+    auto* held = heldOrNull ? dynamicDowncast<JSBoundFunction>(heldOrNull) : nullptr;
+    if (held && held->targetFunction() == unbound && held->boundThis() == JSValue(requirer) && !held->boundArgsLength())
+        return held;
+    return JSBoundFunction::create(vm, globalObject, unbound, requirer, ArgList(), 1, Bun::commonStrings(vm).resolveString(), makeSource("resolve"_s, SourceOrigin(), SourceTaintedOrigin::Untainted));
+}
+
 // As without compiled modules, evaluating a module replaces whatever the program stored in `module.require`.
 static JSObject* attachRequireFunction(VM& vm, Zig::GlobalObject* globalObject, JSCommonJSModule* module, JSString* path)
 {
@@ -592,6 +604,7 @@ const AOT::ModuleHost compiledModuleHost = {
     &createLoadError,
     &showChildren,
     &findModuleWithAttributes,
+    &resolveFunctionOf,
 };
 
 JSValue createNotInExecutableError(JSGlobalObject* globalObject, ErrorCode code, const String& path, NotInExecutable what)

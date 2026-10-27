@@ -9,7 +9,7 @@ use bun_sema::hir::{
 use bun_sema::import_sites::{
     ImportSite, ImportSiteKind, ImportSpecifier, OwnRequire, RequireCallForm, find_own_require,
     find_require_call, holds_import_meta_require, is_made_require, is_require_made_for_own_file,
-    may_still_be_undefined,
+    may_require_get_members, may_still_be_undefined,
 };
 use bun_sema::program::FileId;
 use smallvec::smallvec;
@@ -110,8 +110,22 @@ impl FileLowering<'_, '_, '_, '_> {
         let Some(Resolved::Builtin(root_path)) = self.builtins.of_expr(root) else {
             return CalleeKnowledge::Unresolved;
         };
+        let may_member_be_replaced = match self.hir[root].kind {
+            ExprKind::ImportMeta => self.bound.import_meta_may_be_modified(),
+            _ => {
+                root != callee
+                    && root_path.id == BuiltinId::ModuleRequire
+                    && may_require_get_members(self.hir, self.bound)
+            }
+        };
         match table::entry(root_path.id).scope {
-            Scope::Realm => CalleeKnowledge::Expected(callee_path.id),
+            Scope::Realm => match callee_path.mutability {
+                Mutability::AlwaysLocked => CalleeKnowledge::Bound,
+                Mutability::ConstantUnlessWritten | Mutability::ChangesOnItsOwn => {
+                    CalleeKnowledge::Expected(callee_path.id)
+                }
+            },
+            Scope::Module if may_member_be_replaced => CalleeKnowledge::Expected(callee_path.id),
             Scope::Module => match self.inputs.modules.kind(self.file) {
                 ModuleKind::CommonJs => match root_path.mutability {
                     Mutability::AlwaysLocked => CalleeKnowledge::Bound,
@@ -344,7 +358,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 require: find_own_require(hir, bound, decisions, found.require)?,
             }
         } else if holds_import_meta_require(hir, bound, callee) {
-            CalleeTest::IsFilled
+            match bound.import_meta_may_be_modified() {
+                true => CalleeTest::Expected(BuiltinId::ModuleRequire),
+                false => CalleeTest::IsFilled,
+            }
         } else {
             match self.file.classify_callee(callee) {
                 CalleeKnowledge::Unresolved if is_require_made_for_own_file(hir, bound, callee) => {

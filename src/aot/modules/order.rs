@@ -513,7 +513,9 @@ impl<'a, 's> FileText<'a, 's> {
         }
         let callee = hir.skip_type_assertions(hir[id].callee);
         match site {
-            ImportSiteKind::ImportMetaRequire(_) => kind == ModuleKind::SourceText,
+            ImportSiteKind::ImportMetaRequire(_) => {
+                kind == ModuleKind::SourceText && !bound.import_meta_may_be_modified()
+            }
             ImportSiteKind::Require(_) if self.is_free(callee, CommonJsVariable::Require) => {
                 !self.may_replace(CommonJsVariable::Require)
             }

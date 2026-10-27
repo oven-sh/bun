@@ -2,6 +2,7 @@
 // the type of a value, that a place is never reached, what a built-in function may change of what it is handed. It stops at the first proof that the run shows false, and the build stops where
 // the program that goes to the back end is not valid. A false proof need not show in what this program prints: it shows in the next one.
 // The folders of these programs are run whole in an ordinary build only, so each program that ever stopped is listed here and is built once more with the checks on.
+import { programsOfKeysThatTheHostReplaces } from "./generate/writes-to-host-objects";
 import { buildFlags } from "./harness/flags";
 import { programsBuiltWith } from "./run-programs";
 
@@ -247,7 +248,15 @@ const stopped: Record<string, string[]> = {
     "structured-clone-uncloneable-marker",
   ],
   "writes-to-host-objects": [
+    "object-assign-stores-the-time-zone-in-the-environment",
     "process-send-reflect-define-property",
+    "reflect-set-with-a-built-in-object-as-the-receiver",
+    "the-environment-is-emptied-and-restored-by-object-assign",
+    "the-environment-is-saved-by-a-spread-and-restored-by-object-assign",
+    "the-halves-of-an-accessor-of-process-are-called-on-another-object",
+    "the-halves-of-the-accessors-of-stats-are-called-on-other-objects",
+    "the-time-zone-is-stored-by-built-ins-inside-the-loop-that-reads-it",
+    ...programsOfKeysThatTheHostReplaces,
   ],
 };
 

@@ -3,6 +3,7 @@ use super::declaration_kinds::{DeclarationKind, declaration_kind, for_each_name}
 use super::direct_evals::{DirectEval, DynamicScopes, compute_dynamic_scopes, find_direct_evals};
 use super::lookup::{COMMONJS_VARIABLES, Lookup};
 use super::namespace_exports::ExportedBlockBindings;
+use super::queries::IDENTS_IN_RUN;
 use super::storage::RuntimeReferencesIn;
 use super::type_only_code::TypeOnlyCode;
 use super::{Binding, CodeUnit, FunctionFlags, RuntimeBindOptions, RuntimeInput, RuntimeScopes};
@@ -313,10 +314,26 @@ impl ReferencePass<'_, '_> {
 
     fn finish_results(&mut self) {
         self.references.sort();
+        self.references.ident_binding_runs =
+            count_entries_in_front_of_runs(&self.references.ident_bindings);
         self.references
             .initialized_bindings
             .dedup_by_key(|entry| entry.0);
     }
+}
+
+fn count_entries_in_front_of_runs(ident_bindings: &[(ExprId, Binding)]) -> Vec<u32> {
+    let Some(last) = ident_bindings.last() else {
+        return Vec::new();
+    };
+    let mut runs = Vec::with_capacity(last.0.idx() / IDENTS_IN_RUN + 2);
+    for (index, entry) in (0..).zip(ident_bindings) {
+        while runs.len() <= entry.0.idx() / IDENTS_IN_RUN {
+            runs.push(index);
+        }
+    }
+    runs.push(ident_bindings.len() as u32);
+    runs
 }
 
 pub(super) fn is_loop_head(hir: &File<'_>, parent: Parent, stmt: StmtId) -> bool {

@@ -623,6 +623,26 @@
     "typed": 1477.8,
     "untyped": 774.3
   },
+  "everyday-data-and-control/json-parse-by-a-type-that-lists-fewer-members-and-list-the-keys": {
+    "typed": 765.6,
+    "untyped": 1442
+  },
+  "everyday-data-and-control/json-parse-by-a-type-that-lists-one-of-eleven-members": {
+    "typed": 1666.6,
+    "untyped": 2542.2
+  },
+  "everyday-data-and-control/json-parse-by-a-type-that-lists-one-of-three-members": {
+    "typed": 718.9,
+    "untyped": 1382.2
+  },
+  "everyday-data-and-control/json-parse-by-a-type-that-lists-three-of-nine-members": {
+    "typed": 2434.8,
+    "untyped": 2259
+  },
+  "everyday-data-and-control/json-parse-with-a-member-that-the-type-does-not-declare": {
+    "typed": 964.3,
+    "untyped": 937.6
+  },
   "everyday-data-and-control/logical-operators": {
     "typed": 25.2,
     "untyped": 23

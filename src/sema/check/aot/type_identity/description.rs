@@ -192,7 +192,11 @@ pub(super) fn member_name_key<'p>(queries: &Queries<'_, 'p, '_>, name: MemberNam
 pub(super) fn describe_untyped_members<'a>(
     members: impl Iterator<Item = (&'a [u8], ObjectMemberKind)>,
 ) -> [u64; 2] {
-    let mut sorted: Vec<(&'a [u8], ObjectMemberKind)> = members.collect();
+    describe_listed_untyped_members(members.collect())
+}
+
+// It stands once, whatever lists the members.
+fn describe_listed_untyped_members(mut sorted: Vec<(&[u8], ObjectMemberKind)>) -> [u64; 2] {
     sorted.sort_by(|left, right| left.0.cmp(right.0));
     sorted.dedup_by(|later, earlier| {
         let is_same_name = later.0 == earlier.0;

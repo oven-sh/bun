@@ -1,0 +1,126 @@
+{
+  "everyday-data-and-control/uint8-array-sum": {
+    "typed": 228,
+    "untyped": 223
+  },
+  "everyday-loops-over-lists-and-typed-arrays/uint8-array-copied-by-index": {
+    "typed": 1467,
+    "untyped": 1458
+  },
+  "everyday-loops-over-lists-and-typed-arrays/list-of-objects-one-field-summed": {
+    "typed": 4632,
+    "untyped": 4630
+  },
+  "everyday-loops-over-lists-and-typed-arrays/float64-array-mean-of-three-neighbors": {
+    "typed": 4686.9,
+    "untyped": 4550
+  },
+  "everyday-loops-over-lists-and-typed-arrays/float64-dot-product-of-a-thousand": {
+    "typed": 4931.9,
+    "untyped": 4799.9
+  },
+  "everyday-loops-over-lists-and-typed-arrays/data-view-sum-of-floats": {
+    "typed": 1328,
+    "untyped": 1329
+  },
+  "everyday-loops-over-lists-and-typed-arrays/list-of-fractions-sum-of-a-thousand": {
+    "typed": 2656,
+    "untyped": 2654
+  },
+  "everyday-benchmarks/matrix-multiply-flat": {
+    "typed": 6496.9,
+    "untyped": 6501
+  },
+  "everyday-loops-over-lists-and-typed-arrays/float64-matrix-transposed-flat": {
+    "typed": 3168,
+    "untyped": 3051
+  },
+  "everyday-loops-over-lists-and-typed-arrays/uint8-array-counted-into-bins": {
+    "typed": 5155,
+    "untyped": 5151.1
+  },
+  "everyday-loops-over-lists-and-typed-arrays/float32-array-scaled-in-place": {
+    "typed": 1909.5,
+    "untyped": 1835.5
+  },
+  "everyday-loops-over-lists-and-typed-arrays/rows-of-float64-arrays": {
+    "typed": 3019.1,
+    "untyped": 3142
+  },
+  "everyday-loops-over-lists-and-typed-arrays/list-of-integers-in-a-parameter": {
+    "typed": 2525,
+    "untyped": 2651.1
+  },
+  "everyday-loops-over-lists-and-typed-arrays/float64-array-running-sums": {
+    "typed": 2297,
+    "untyped": 2299
+  },
+  "everyday-loops-over-lists-and-typed-arrays/buffer-entries-summed": {
+    "typed": 9974.1,
+    "untyped": 9969.4
+  },
+  "everyday-small-programs/matrix-four-by-four-in-float32": {
+    "typed": 745,
+    "untyped": 748
+  },
+  "everyday-loops-over-lists-and-typed-arrays/list-of-integers-stored-to-in-place": {
+    "typed": 6310,
+    "untyped": 6817.8
+  },
+  "everyday-loops-over-lists-and-typed-arrays/uint8-clamped-array-brightened": {
+    "typed": 4653.5,
+    "untyped": 4643.5
+  },
+  "everyday-loops-over-lists-and-typed-arrays/int32-array-reversed-in-place": {
+    "typed": 2092,
+    "untyped": 2087
+  },
+  "everyday-loops-over-lists-and-typed-arrays/text-sum-of-char-codes": {
+    "typed": 2152,
+    "untyped": 2153.9
+  },
+  "everyday-loops-over-lists-and-typed-arrays/buffer-sum-of-a-thousand": {
+    "typed": 2917,
+    "untyped": 2914
+  },
+  "everyday-benchmarks/typed-array-sum-of-a-thousand": {
+    "typed": 2540,
+    "untyped": 2658
+  },
+  "everyday-loops-over-lists-and-typed-arrays/float64-array-that-a-closure-captured": {
+    "typed": 2658,
+    "untyped": 2655
+  },
+  "everyday-loops-over-lists-and-typed-arrays/float64-array-in-a-field": {
+    "typed": 2533,
+    "untyped": 2655
+  },
+  "everyday-loops-over-lists-and-typed-arrays/uint16-array-greatest-of-a-thousand": {
+    "typed": 3529.1,
+    "untyped": 3525
+  },
+  "everyday-loops-over-lists-and-typed-arrays/int32-array-sum-of-a-thousand": {
+    "typed": 3044,
+    "untyped": 3039
+  },
+  "everyday-loops-over-lists-and-typed-arrays/float64-array-walked-downward": {
+    "typed": 2670,
+    "untyped": 2665
+  },
+  "everyday-loops-over-lists-and-typed-arrays/float64-array-in-a-parameter": {
+    "typed": 2533,
+    "untyped": 2658
+  },
+  "everyday-loops-over-lists-and-typed-arrays/list-of-integers-sum-of-a-thousand": {
+    "typed": 2659.1,
+    "untyped": 2654
+  },
+  "everyday-benchmarks/generator-sum-of-a-thousand": {
+    "typed": 3412,
+    "untyped": 3414.1
+  },
+  "everyday-loops-over-lists-and-typed-arrays/buffer-values-summed": {
+    "typed": 2925.9,
+    "untyped": 2927.9
+  }
+}

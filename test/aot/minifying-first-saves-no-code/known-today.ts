@@ -537,8 +537,6 @@ export const knownToday: Record<string, string> = {
   "files are linked: a namespace read by constant names [ts]": "bundled: operations 8 -> 5",
   "files are linked: a namespace read for a name that is not there [js]":
     "bundled: operations 7 -> 5, run-time operations 239 -> 238",
-  "files are linked: an enum whose members name an enum of another file [ts]":
-    "each file: run-time operations 243 -> 242; bundled: operations 14 -> 9, run-time operations 243 -> 240",
   "names in brackets, keys and shorthand: a computed key that is a text [ts]":
     "each file: code bytes 215 -> 142, operations 9 -> 7, run-time operations 241 -> 240; bundled: code bytes 215 -> 142, operations 9 -> 7, run-time operations 241 -> 240",
   "names in brackets, keys and shorthand: a quoted key [ts]":

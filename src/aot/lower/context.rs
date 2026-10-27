@@ -146,12 +146,25 @@ pub(crate) struct FileLowering<'a, 'c, 'p, 's> {
     atom_keys: FxHashMap<Atom, PropertyKeyId>,
     shown_names: ShownNames,
     has_bundled_positions: bool,
+    runs_as_written: bool,
     pub(in crate::lower) printed_operators: PrintedOperators,
     pub(in crate::lower) statements_around: StatementsAround,
     pub(in crate::lower) constants_named_by_value: ConstantsNamedByValue,
     counters: Counters,
     scratch: BuilderScratch,
     pub(crate) has_chain_past_nesting_limit: bool,
+}
+
+fn runs_file_as_written(kind: load::SourceKind, hir: &hir::File<'_>) -> bool {
+    match kind {
+        load::SourceKind::EvaluatedText => true,
+        // The helpers of the bundler.
+        load::SourceKind::RuntimeModule(module) => table::is_es_module(module),
+        load::SourceKind::Program
+        | load::SourceKind::Data
+        | load::SourceKind::TypesOnly
+        | load::SourceKind::RuntimeFunctions => hir::find_transpiled_mark(&hir.text).is_some(),
+    }
 }
 
 impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
@@ -219,6 +232,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
                 inputs.sources.bundled_names(file),
             ),
             has_bundled_positions: inputs.sources.bundled_positions(file).is_some(),
+            runs_as_written: runs_file_as_written(inputs.sources.kind(file), hir),
             printed_operators: PrintedOperators::default(),
             statements_around: StatementsAround::default(),
             constants_named_by_value: ConstantsNamedByValue::default(),
@@ -295,19 +309,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
 
     // `bun run` hands the text to the engine as it is written, without its transpiler.
     pub(crate) fn runs_as_written(&self) -> bool {
-        self.runs_file_as_written(self.file, self.hir)
-    }
-
-    fn runs_file_as_written(&self, file: FileId, hir: &hir::File<'_>) -> bool {
-        match self.inputs.sources.kind(file) {
-            load::SourceKind::EvaluatedText => true,
-            // The helpers of the bundler.
-            load::SourceKind::RuntimeModule(module) => table::is_es_module(module),
-            load::SourceKind::Program
-            | load::SourceKind::Data
-            | load::SourceKind::TypesOnly
-            | load::SourceKind::RuntimeFunctions => hir::find_transpiled_mark(&hir.text).is_some(),
-        }
+        self.runs_as_written
     }
 
     // A stack trace shows the positions that the engine records in the text it runs: no source map takes them back to a token.

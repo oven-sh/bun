@@ -390,6 +390,131 @@ const MADE_REQUIRES: &[(&str, &str, &[&str])] = &[
         r#"const a = b.createRequire; const b = a("node:module"); a(__filename)("a");"#,
         &[],
     ),
+    (
+        "a.cjs",
+        r#"require("node:module").default.createRequire(__filename)("a");"#,
+        &["node:module"],
+    ),
+    (
+        "a.mjs",
+        r#"import m from "node:module"; m.default.createRequire(import.meta.url)("a");"#,
+        &[],
+    ),
+    (
+        "a.mjs",
+        r#"import * as m from "node:module"; m.default.default.createRequire(import.meta.url)("a");"#,
+        &[],
+    ),
+    (
+        "a.mjs",
+        r#"import * as m from "node:module"; m.Module.default.createRequire(import.meta.url)("a");"#,
+        &[],
+    ),
+    (
+        "a.mjs",
+        r#"import * as m from "node:module"; m.default.Module.createRequire(import.meta.url)("a");"#,
+        &["a"],
+    ),
+    (
+        "a.mjs",
+        r#"import { default as m } from "node:module"; m.createRequire(import.meta.url)("a");"#,
+        &["a"],
+    ),
+    (
+        "a.mjs",
+        r#"import { default as m } from "node:module"; m.default.createRequire(import.meta.url)("a");"#,
+        &[],
+    ),
+    (
+        "a.mjs",
+        r#"process.getBuiltinModule("node:module").default.createRequire(import.meta.url)("a");"#,
+        &[],
+    ),
+    (
+        "a.cjs",
+        r#"global.process.getBuiltinModule("node:module").createRequire(__filename)("a");"#,
+        &[],
+    ),
+    (
+        "a.cjs",
+        r#"const host = global; host.process.getBuiltinModule("node:module").createRequire(__filename)("a");"#,
+        &[],
+    ),
+    (
+        "a.cjs",
+        r#"require = other; require("node:module").createRequire(__filename)("a");"#,
+        &["node:module"],
+    ),
+    (
+        "a.cjs",
+        r#"const load = require; require = other; load("node:module").createRequire(__filename)("a");"#,
+        &["node:module"],
+    ),
+    (
+        "a.cjs",
+        r#"require = other; module.require("node:module").createRequire(__filename)("a");"#,
+        &["node:module"],
+    ),
+    (
+        "a.cjs",
+        r#"require.call = other; require.call(null, "node:module").createRequire(__filename)("a");"#,
+        &["node:module"],
+    ),
+    (
+        "a.cjs",
+        r#"change(require); require.call(null, "node:module").createRequire(__filename)("a");"#,
+        &["node:module"],
+    ),
+    (
+        "a.cjs",
+        r#"const load = require; load("b"); require.apply(null, ["node:module"]).createRequire(__filename)("a");"#,
+        &["b", "node:module", "a"],
+    ),
+    (
+        "a.cjs",
+        r#"const load = require; load.apply = other; require.apply(null, ["node:module"]).createRequire(__filename)("a");"#,
+        &["node:module"],
+    ),
+    (
+        "a.cjs",
+        r#"const load = require, same = load; change(same); require.apply(null, ["node:module"]).createRequire(__filename)("a");"#,
+        &["node:module"],
+    ),
+    (
+        "a.cjs",
+        r#"let load = require; load = other; require.apply(null, ["node:module"]).createRequire(__filename)("a");"#,
+        &["node:module"],
+    ),
+    (
+        "a.mjs",
+        r#"export const load = require; require.call(null, "node:module").createRequire(import.meta.url)("a");"#,
+        &["node:module"],
+    ),
+    (
+        "a.mjs",
+        r#"const load = require; export { load }; require.call(null, "node:module").createRequire(import.meta.url)("a");"#,
+        &["node:module"],
+    ),
+    (
+        "a.cjs",
+        r#"delete require.call; require.call(null, "node:module").createRequire(__filename)("a");"#,
+        &["node:module"],
+    ),
+    (
+        "a.cjs",
+        r#"typeof require; require.resolve("b"); require("c"); require.call(null, "node:module").createRequire(__filename)("a");"#,
+        &["c", "node:module", "a"],
+    ),
+    (
+        "a.mjs",
+        r#"import.meta.require = other; import.meta.require("node:module").createRequire(import.meta.url)("a");"#,
+        &[],
+    ),
+    (
+        "a.mjs",
+        r#"change(import.meta); import.meta.require("node:module").createRequire(import.meta.url)("a");"#,
+        &[],
+    ),
 ];
 
 const REQUIRES_AS_VALUES: &[(&str, &str, &[&str])] = &[

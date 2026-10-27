@@ -7,12 +7,13 @@ use bun_sema::hir::{
 };
 use bun_sema::import_sites::{
     ImportSite, ImportSiteKind, JsxCallee, JsxImport, RequireCallForm, find_require_call,
-    jsx_callee,
+    jsx_callee, may_require_get_members,
 };
 use smallvec::SmallVec;
 
 use super::walker::bindings_of;
 use super::{ArgumentRead, Context, PatternRole, Task, Walker};
+use crate::builtins::id::BuiltinId;
 use crate::builtins::table::{self, Scope};
 use crate::builtins::{Intrinsic, Mutability, Resolved};
 use crate::ir::ClassSlot;
@@ -336,6 +337,9 @@ impl Walker<'_, '_> {
             && bound.dynamic_lookup_scope(NodeData::Expr(root)).is_none()
             && table::entry(root_path.id).scope == Scope::Module
             && root_path.mutability == Mutability::AlwaysLocked
+            && !(root != callee
+                && root_path.id == BuiltinId::ModuleRequire
+                && may_require_get_members(hir, bound))
     }
 
     fn record_argument_read(&mut self, call: &Call, context: Context) {

@@ -1584,6 +1584,8 @@ struct Walk<'a, 's> {
     objects_handed_on: FxHashSet<Sym>,
     // By an enum that is not handed on: the files that read members of it whose values the build knows.
     files_reading_members: FxHashMap<Sym, SmallVec<[FileId; 2]>>,
+    // By an enum, the enums whose members are made of its members.
+    enums_relying_on: FxHashMap<Sym, SmallVec<[Sym; 2]>>,
 }
 
 impl<'a, 's> Walk<'a, 's> {
@@ -1697,6 +1699,7 @@ impl<'a, 's> Walk<'a, 's> {
             reaches_load_by_unknown_name: false,
             objects_handed_on: FxHashSet::default(),
             files_reading_members: FxHashMap::default(),
+            enums_relying_on: FxHashMap::default(),
         }
     }
 
@@ -1903,6 +1906,28 @@ impl<'a, 's> Walk<'a, 's> {
         let readers = self.files_reading_members.remove(&enumeration);
         for reader in readers.unwrap_or_default() {
             self.follow(reader, Interest::Binding(enumeration));
+        }
+        let relying = self.enums_relying_on.remove(&enumeration);
+        for relying in relying.unwrap_or_default() {
+            self.hand_on_object(relying);
+        }
+    }
+
+    // What the build knows of the members of an enum holds as long as what it knows of the enums that they are made of.
+    fn note_enums_relied_on(&mut self, enumeration: Sym) {
+        if !is_enum(self.input.files.bound(enumeration.file), enumeration.id) {
+            return;
+        }
+        let known = KnownMemberValues::default();
+        let relied_on = (self.input.known_objects(&known)).enums_relied_on(enumeration);
+        let is_handed_on = |other: &Sym| self.objects_handed_on.contains(other);
+        if relied_on.iter().any(is_handed_on) {
+            self.hand_on_object(enumeration);
+            return;
+        }
+        for other in relied_on {
+            let relying = self.enums_relying_on.entry(other).or_default();
+            relying.push(enumeration);
         }
     }
 
@@ -2318,6 +2343,11 @@ impl<'a, 's> Walk<'a, 's> {
                 }
             }
             Interest::KnownMember(enumeration) => {
+                let is_met_before = self.objects_handed_on.contains(&enumeration)
+                    || self.files_reading_members.contains_key(&enumeration);
+                if !is_met_before {
+                    self.note_enums_relied_on(enumeration);
+                }
                 if self.objects_handed_on.contains(&enumeration) {
                     self.follow(file, Interest::Binding(enumeration));
                 } else {

@@ -61,6 +61,23 @@ fn is_declared_around(hir: &hir::File<'_>, declarations: &[Decl], name: ExprId) 
     false
 }
 
+/// The object and the name of one link of a path that Bun's transpiler follows: `["name"]` is
+/// `.name` where the name is ASCII, and a link of an optional chain ends the path.
+pub fn find_link_followed_by_transpiler<'a>(
+    hir: &hir::File<'_>,
+    link: ExprId,
+    bytes_of: impl FnOnce(Atom) -> &'a [u8],
+) -> Option<(ExprId, Atom)> {
+    let (object, MemberKey::Name(name)) = hir.member_key(link)? else {
+        return None;
+    };
+    let is_optional = hir
+        .expr_flags(link)
+        .contains(ExprFlags::OPTIONAL_CHAIN_LINK);
+    let is_followed = !is_optional && hir.is_name_resolved_by_transpiler(link, bytes_of(name));
+    is_followed.then_some((object, name))
+}
+
 /// Bun's transpiler visits the enums of a list of statements ahead of the list's other statements,
 /// and knows a member's value from that visit on.
 pub fn is_member_visited_before(hir: &hir::File<'_>, member: EnumMemberId, access: ExprId) -> bool {
@@ -225,16 +242,10 @@ impl Checker<'_, '_> {
         let (hir, bound, files) = (self.hir(file), self.bound(file), self.files());
         let mut names: SmallVec<[Atom; 4]> = SmallVec::new();
         let mut first = path;
-        while let Some((object, key)) = hir.member_key(first) {
-            let MemberKey::Name(name) = key else {
-                return None;
-            };
-            let is_optional = hir
-                .expr_flags(first)
-                .contains(ExprFlags::OPTIONAL_CHAIN_LINK);
-            if is_optional || !hir.is_name_resolved_by_transpiler(first, self.atoms().bytes(name)) {
-                return None;
-            }
+        while hir.member_key(first).is_some() {
+            let atoms = self.atoms();
+            let link = find_link_followed_by_transpiler(hir, first, |name| atoms.bytes(name));
+            let (object, name) = link?;
             names.push(name);
             first = hir.skip_type_assertions(object);
         }

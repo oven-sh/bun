@@ -392,10 +392,10 @@ import process from "node:process";
 import { getBuiltinModule } from "node:process";
 const original = process.getBuiltinModule;
 console.log("the import is the function of the object:", getBuiltinModule === original);
-process.getBuiltinModule = () => "replaced";
-console.log("the property behind the store:", process.getBuiltinModule("node:path"));
+try { process.getBuiltinModule = () => "replaced"; } catch (error) { console.log("the store:", error.name); }
+console.log("the property behind the store:", typeof process.getBuiltinModule("node:path"));
 console.log("the import behind the store:", typeof getBuiltinModule(["node:", "path"].join("")).basename, getBuiltinModule === original);
-process.getBuiltinModule = original;
+try { process.getBuiltinModule = original; } catch (error) { console.log("the store:", error.name); }
 //// an-object-of-the-program-is-only-looked-at-by-the-type-tests-of-node.ts
 import { types } from "node:util";
 import { isUtf8 } from "node:buffer";

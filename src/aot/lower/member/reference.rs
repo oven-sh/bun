@@ -154,7 +154,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let position = self.position();
         self.set_position_to_last_recorded();
         self.builder
-            .require_object_coercible(object, NullishAccess::Read, None);
+            .require_object_coercible(object, NullishAccess::Update, None);
         self.set_position(position);
         let converted = self.builder.to_property_key(split.taken_value);
         self.builder.write_variable(result, converted);

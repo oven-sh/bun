@@ -2,7 +2,7 @@ mod imported_constants;
 
 use self::imported_constants::{NamesLookedUp, fold_files_that_import_constants_again};
 use super::code_barrels::{BarrelRequests, NOT_LOADED, erase_waiting_sites};
-use super::code_file::{fold_code_file_again, load_code_file};
+use super::code_file::{finish_code_file, fold_code_file_again, is_finished_later, load_code_file};
 use super::code_imports::files_of;
 use super::code_load::{CodeEntry, CodeTarget, LoadKey, ParsedCodeFile};
 use super::code_types::predicted_type_files;
@@ -28,6 +28,8 @@ struct WalkedFile<'s, 'r> {
     parsed: Option<Box<ParsedCodeFile<'s, 'r>>>,
     /// What is to be folded once more.
     folded_before: Option<Box<ParsedCodeFile<'s, 'r>>>,
+    /// It stays as it is folded, and the host looks at it.
+    is_only_finished: bool,
     targets: Vec<u32>,
     is_called_before_it_runs: bool,
     imported_requires: Vec<ImportedRequire>,
@@ -64,6 +66,8 @@ struct WalkState<'s, 'r> {
     barrels: BarrelRequests,
     has_exported_requires: bool,
     names_looked_up: NamesLookedUp,
+    /// The files that the host has yet to look at: `is_finished_later`.
+    unfinished: Vec<u32>,
 }
 
 impl WalkState<'_, '_> {
@@ -216,6 +220,7 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
             target,
             parsed: None,
             folded_before: None,
+            is_only_finished: false,
             targets: Vec::new(),
             is_called_before_it_runs: false,
             imported_requires: Vec::new(),
@@ -235,10 +240,16 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
         state: &mut WalkState<'s, 'r>,
         index: u32,
         mut parsed: Box<ParsedCodeFile<'s, 'r>>,
+        is_only_finished: bool,
     ) {
         let requests = std::mem::take(&mut parsed.code.requests);
         state.has_exported_requires |= !parsed.code.exported_requires.is_empty();
-        state.names_looked_up.parsed_since.push(index);
+        if !is_only_finished {
+            state.names_looked_up.parsed_since.push(index);
+            if is_finished_later(&parsed.code.analyzed.analysis) {
+                state.unfinished.push(index);
+            }
+        }
         let file = &mut state.files[index as usize];
         file.targets = vec![NOT_LOADED; parsed.code.targets.len()];
         file.parsed = Some(parsed);
@@ -456,11 +467,15 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                 let file = &mut state.files[index as usize];
                 let (target, is_called_early) = (file.target, file.is_called_before_it_runs);
                 let folded_before = file.folded_before.take();
+                let is_only_finished = std::mem::take(&mut file.is_only_finished);
                 let requires = file.imported_requires.clone();
                 let constants = file.imported_constants.clone();
                 drop(state);
                 let arena = *arena.get_or_insert_with(|| context.session.arena());
                 let parsed = match folded_before {
+                    Some(loaded) if is_only_finished => {
+                        Some(finish_code_file(context, target, *loaded))
+                    }
                     Some(loaded) => fold_code_file_again(
                         context,
                         arena,
@@ -481,7 +496,8 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                 };
                 match parsed {
                     Some(parsed) => {
-                        self.add_parsed_file(&mut self.state.lock(), index, Box::new(parsed));
+                        let mut state = self.state.lock();
+                        self.add_parsed_file(&mut state, index, Box::new(parsed), is_only_finished);
                     }
                     None => self.state.lock().found.push(index),
                 }
@@ -514,7 +530,8 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                 if state.deferred.is_empty()
                     && (fold_files_that_import_constants_again(context, &mut state)
                         || forget_files_called_before_they_run(&mut state)
-                        || forget_files_that_import_requires(&context.atoms, &mut state))
+                        || forget_files_that_import_requires(&context.atoms, &mut state)
+                        || finish_files(&mut state))
                 {
                     state.in_progress += 1;
                     drop(state);
@@ -679,6 +696,18 @@ fn fold_parsed_file_again(state: &mut WalkState<'_, '_>, index: u32) {
     state.barrels.forget_folded_file(index);
     state.ready.push((index, Cow::Borrowed(&[])));
     state.in_progress += 1;
+}
+
+// Nothing is left that folds or parses one of them again.
+fn finish_files(state: &mut WalkState<'_, '_>) -> bool {
+    let mut unfinished = std::mem::take(&mut state.unfinished);
+    unfinished.shared_sort_unstable();
+    unfinished.dedup();
+    for &index in &unfinished {
+        fold_parsed_file_again(state, index);
+        state.files[index as usize].is_only_finished = true;
+    }
+    !unfinished.is_empty()
 }
 
 fn names_export(hir: &hir::File<'_>, site: ImportSiteKind, export: Atom) -> bool {

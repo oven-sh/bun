@@ -1,0 +1,314 @@
+{
+  "buffer-entries-summed": {
+    "function": "turn",
+    "step": 1,
+    "x64": {
+      "instructions": 10,
+      "patchpoints": 2
+    },
+    "arm64": {
+      "instructions": 8,
+      "patchpoints": 2
+    }
+  },
+  "buffer-sum-of-a-thousand": {
+    "function": "turn",
+    "step": 8,
+    "x64": {
+      "instructions": 21,
+      "patchpoints": 8
+    },
+    "arm64": {
+      "instructions": 27,
+      "patchpoints": 8
+    }
+  },
+  "buffer-values-summed": {
+    "function": "bench",
+    "step": 8,
+    "x64": {
+      "instructions": 21,
+      "patchpoints": 8
+    },
+    "arm64": {
+      "instructions": 27,
+      "patchpoints": 8
+    }
+  },
+  "data-view-sum-of-floats": {
+    "function": "turn",
+    "step": 64,
+    "x64": {
+      "instructions": 10,
+      "patchpoints": 8
+    },
+    "arm64": {
+      "instructions": 25,
+      "patchpoints": 8
+    }
+  },
+  "float32-array-scaled-in-place": {
+    "function": "bench",
+    "step": 8,
+    "x64": {
+      "instructions": 18,
+      "patchpoints": 16
+    },
+    "arm64": {
+      "instructions": 33,
+      "patchpoints": 16
+    }
+  },
+  "float64-array-in-a-field": {
+    "function": "bench",
+    "step": 8,
+    "x64": {
+      "instructions": 10,
+      "patchpoints": 8
+    },
+    "arm64": {
+      "instructions": 25,
+      "patchpoints": 8
+    }
+  },
+  "float64-array-in-a-parameter": {
+    "function": "bench",
+    "step": 8,
+    "x64": {
+      "instructions": 10,
+      "patchpoints": 8
+    },
+    "arm64": {
+      "instructions": 25,
+      "patchpoints": 8
+    }
+  },
+  "float64-array-mean-of-three-neighbors": {
+    "function": "bench",
+    "step": 4,
+    "x64": {
+      "instructions": 23,
+      "patchpoints": 16
+    },
+    "arm64": {
+      "instructions": 47,
+      "patchpoints": 16
+    }
+  },
+  "float64-array-running-sums": {
+    "function": "bench",
+    "step": 4,
+    "x64": {
+      "instructions": 15,
+      "patchpoints": 12
+    },
+    "arm64": {
+      "instructions": 32,
+      "patchpoints": 12
+    }
+  },
+  "float64-array-that-a-closure-captured": {
+    "function": "bench",
+    "step": 8,
+    "x64": {
+      "instructions": 10,
+      "patchpoints": 8
+    },
+    "arm64": {
+      "instructions": 25,
+      "patchpoints": 8
+    }
+  },
+  "float64-array-walked-downward": {
+    "function": "bench",
+    "step": -8,
+    "x64": {
+      "instructions": 10,
+      "patchpoints": 8
+    },
+    "arm64": {
+      "instructions": 25,
+      "patchpoints": 8
+    }
+  },
+  "float64-dot-product-of-a-thousand": {
+    "function": "turn",
+    "step": 8,
+    "x64": {
+      "instructions": 27,
+      "patchpoints": 16
+    },
+    "arm64": {
+      "instructions": 56,
+      "patchpoints": 16
+    }
+  },
+  "float64-matrix-transposed-flat": {
+    "function": "bench",
+    "step": 4,
+    "x64": {
+      "instructions": 40,
+      "patchpoints": 9
+    },
+    "arm64": {
+      "instructions": 32,
+      "patchpoints": 9
+    }
+  },
+  "int32-array-reversed-in-place": {
+    "function": "bench",
+    "step": null,
+    "x64": {
+      "instructions": 7,
+      "patchpoints": 4
+    },
+    "arm64": {
+      "instructions": 7,
+      "patchpoints": 4
+    }
+  },
+  "int32-array-sum-of-a-thousand": {
+    "function": "bench",
+    "step": 8,
+    "x64": {
+      "instructions": 22,
+      "patchpoints": 8
+    },
+    "arm64": {
+      "instructions": 27,
+      "patchpoints": 8
+    }
+  },
+  "list-of-fractions-sum-of-a-thousand": {
+    "function": "turn",
+    "step": 8,
+    "x64": {
+      "instructions": 10,
+      "patchpoints": 0
+    },
+    "arm64": {
+      "instructions": 25,
+      "patchpoints": 0
+    }
+  },
+  "list-of-integers-in-a-parameter": {
+    "function": "turn",
+    "step": 8,
+    "x64": {
+      "instructions": 10,
+      "patchpoints": 0
+    },
+    "arm64": {
+      "instructions": 25,
+      "patchpoints": 0
+    }
+  },
+  "list-of-integers-stored-to-in-place": {
+    "function": "bench",
+    "step": 4,
+    "x64": {
+      "instructions": 26,
+      "patchpoints": 4
+    },
+    "arm64": {
+      "instructions": 36,
+      "patchpoints": 4
+    }
+  },
+  "list-of-integers-sum-of-a-thousand": {
+    "function": "turn",
+    "step": 8,
+    "x64": {
+      "instructions": 10,
+      "patchpoints": 0
+    },
+    "arm64": {
+      "instructions": 25,
+      "patchpoints": 0
+    }
+  },
+  "list-of-objects-one-field-summed": {
+    "function": "turn",
+    "step": 1,
+    "x64": {
+      "instructions": 5,
+      "patchpoints": 1
+    },
+    "arm64": {
+      "instructions": 7,
+      "patchpoints": 1
+    }
+  },
+  "rows-of-float64-arrays": {
+    "function": "bench",
+    "step": 8,
+    "x64": {
+      "instructions": 10,
+      "patchpoints": 8
+    },
+    "arm64": {
+      "instructions": 25,
+      "patchpoints": 8
+    }
+  },
+  "text-sum-of-char-codes": {
+    "function": "turn",
+    "step": 8,
+    "x64": {
+      "instructions": 28,
+      "patchpoints": 9
+    },
+    "arm64": {
+      "instructions": 27,
+      "patchpoints": 9
+    }
+  },
+  "uint16-array-greatest-of-a-thousand": {
+    "function": "bench",
+    "step": 8,
+    "x64": {
+      "instructions": 18,
+      "patchpoints": 8
+    },
+    "arm64": {
+      "instructions": 25,
+      "patchpoints": 8
+    }
+  },
+  "uint8-array-copied-by-index": {
+    "function": "bench",
+    "step": 8,
+    "x64": {
+      "instructions": 19,
+      "patchpoints": 16
+    },
+    "arm64": {
+      "instructions": 33,
+      "patchpoints": 16
+    }
+  },
+  "uint8-array-counted-into-bins": {
+    "function": "turn",
+    "step": 1,
+    "x64": {
+      "instructions": 9,
+      "patchpoints": 3
+    },
+    "arm64": {
+      "instructions": 8,
+      "patchpoints": 3
+    }
+  },
+  "uint8-clamped-array-brightened": {
+    "function": "bench",
+    "step": 4,
+    "x64": {
+      "instructions": 26,
+      "patchpoints": 8
+    },
+    "arm64": {
+      "instructions": 29,
+      "patchpoints": 8
+    }
+  }
+}

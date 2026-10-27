@@ -1,6 +1,7 @@
 // bun list-builtins.ts <build>/codegen/aot_builtin_table.json <output.json>
 // Writes what BunCompilerProfile.swift needs to know about Bun's and Node's APIs: names, parameters, option bags, handlers and results.
 import { readFileSync, writeFileSync } from "node:fs";
+import { excluded } from "./excluded-builtins";
 
 type Type = {
   isAnything: boolean;
@@ -34,10 +35,6 @@ type Class = { token: string; origin: string; constructor: string | null; protot
 
 const [tablePath, outputPath] = process.argv.slice(2);
 const table: { entries: Entry[]; classes: Class[] } = JSON.parse(readFileSync(tablePath, "utf8"));
-
-// They start processes, end this one by a signal, load native code, wait for a person, or answer differently each time.
-const excluded =
-  /^(bun:(ffi|jsc|test|bake|wrap|internal-for-testing)|node:(child_process|cluster|repl|inspector|v8|vm|wasi|test|trace_events|module|constants|quic|domain|_\w+|dns)\b)|^Bun\.(spawn|spawnSync|\$|openInEditor|gc|generateHeapSnapshot|shrink|nanoseconds|sleepSync|build|plugin|FFI|jest|unsafe|mmap|which|resolve|resolveSync|main|argv|env|stdin|cron|Terminal|WebView|dns)\b|^process\.(kill|abort|reallyExit|_\w+|binding|dlopen|chdir|exit|hrtime|uptime|cpuUsage|memoryUsage|resourceUsage|pid|ppid|argv|argv0|execPath|execArgv|env|title|stdin|umask|set\w+|initgroups|report|availableMemory|constrainedMemory|debugPort|mainModule|threadCpuUsage)\b|^(alert|confirm|prompt|fetch|WebSocket|reportError|performance|navigator|crypto\.(randomUUID|getRandomValues)|Bun\.random\w*|node:crypto\.random\w*|node:os\.|node:fs\.(watch|watchFile|rm|rmSync|rmdir|rmdirSync|unlink|unlinkSync|chmod|chown)\w*)/;
 
 const classOfPrototype = new Map(table.classes.filter(c => c.prototype).map(c => [c.prototype!, c.token]));
 const hostClasses = new Set(table.classes.filter(c => c.origin === "Host").map(c => c.token));

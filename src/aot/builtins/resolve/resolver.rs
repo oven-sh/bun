@@ -196,7 +196,27 @@ pub(super) struct Resolver<'a, 's> {
     named_outside: OnceCell<FxHashSet<SymbolId>>,
     // The ids of the expressions that count as evaluated lie in this range, which is short for a part of a file.
     evaluated: Range<u32>,
+    // The evaluated expressions whose state `resolve` computes, and the evaluated calls with and without `new`. Both in order.
+    computed: Vec<ExprId>,
+    calls: Vec<ExprId>,
     work_stack: Vec<ExprId>,
+}
+
+// `compute_state` answers `Unresolved` for every other kind, which waits for nothing.
+fn can_stand_for_builtin(kind: ExprKind) -> bool {
+    matches!(
+        kind,
+        ExprKind::Ident(_)
+            | ExprKind::Dot { .. }
+            | ExprKind::Index { .. }
+            | ExprKind::Call(_)
+            | ExprKind::ImportMeta
+            | ExprKind::Binary {
+                op: BinOp::Comma,
+                ..
+            }
+            | ExprKind::Assign { .. }
+    )
 }
 
 fn sorted_unique<T: Ord>(mut list: Vec<T>) -> Box<[T]> {
@@ -269,6 +289,8 @@ impl<'a, 's> Resolver<'a, 's> {
                 .iter()
                 .any(|it| it.1 == RuntimeModule::NodeModule),
             output: ResolverOutput::default(),
+            computed: Vec::new(),
+            calls: Vec::new(),
             work_stack: Vec::new(),
         }
     }
@@ -398,11 +420,19 @@ impl<'a, 's> Resolver<'a, 's> {
                 evaluated.start = expr.0;
             }
             evaluated.end = expr.0 + 1;
+            let kind = input.hir[expr].kind;
+            if matches!(kind, ExprKind::Call(_) | ExprKind::New(_)) {
+                self.calls.push(expr);
+            }
             let state = match input.decisions.decision(expr) {
-                Decision::Unknown => ExprState::Unvisited,
-                Decision::Constant(_) | Decision::Data(_) | Decision::DeferredData => {
-                    ExprState::Unresolved
+                Decision::Unknown if can_stand_for_builtin(kind) => {
+                    self.computed.push(expr);
+                    ExprState::Unvisited
                 }
+                Decision::Unknown
+                | Decision::Constant(_)
+                | Decision::Data(_)
+                | Decision::DeferredData => ExprState::Unresolved,
                 Decision::GlobalPath(path) => self.resolve_global_path(path),
             };
             self.set_state(expr, state);
@@ -410,19 +440,20 @@ impl<'a, 's> Resolver<'a, 's> {
         self.evaluated = evaluated;
     }
 
+    pub(super) fn evaluated_calls(&self) -> &[ExprId] {
+        &self.calls
+    }
+
     // What a binding holds changes what `resolve` computes. Which expressions count as evaluated, and what the folder has decided, stays.
     fn forget_computed_states(&mut self) {
-        for expr in self.evaluated_exprs() {
-            let is_computed = !matches!(self.state(expr), ExprState::NotEvaluated)
-                && matches!(self.input.decisions.decision(expr), Decision::Unknown);
-            if is_computed {
-                self.set_state(expr, ExprState::Unvisited);
-            }
+        for index in 0..self.computed.len() {
+            self.set_state(self.computed[index], ExprState::Unvisited);
         }
     }
 
     fn resolve_exprs(&mut self) {
-        for expr in self.evaluated_exprs() {
+        for index in 0..self.computed.len() {
+            let expr = self.computed[index];
             if self.is_unvisited(expr) {
                 self.resolve(expr);
             }
@@ -430,6 +461,12 @@ impl<'a, 's> Resolver<'a, 's> {
     }
 
     fn resolve(&mut self, start: ExprId) {
+        // What an expression waits for is written in front of it, but for a name that is read above its declaration.
+        if self.find_unvisited_dependency(start).is_none() {
+            let state = self.compute_state(start);
+            self.set_state(start, state);
+            return;
+        }
         self.work_stack.push(start);
         while let Some(&expr) = self.work_stack.last() {
             if let Some(dependency) = self.find_unvisited_dependency(expr) {

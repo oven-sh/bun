@@ -1461,15 +1461,37 @@ impl FileLowering<'_, '_, '_, '_> {
                 let (left, right) = self.printed_operands(op, left, right);
                 let right_kind = self.find_literal_kind(right)?;
                 let left_kind = self.find_literal_kind(left)?;
-                let is_number_comparison = left_kind == LiteralKind::Number
-                    && matches!(op, BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge);
-                match !is_number_comparison || self.is_comparison_folded(left, right) {
-                    true => find_folded_kind(op, left_kind, right_kind),
-                    false => None,
+                let is_relation = matches!(op, BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge);
+                match (left_kind, right_kind) {
+                    (LiteralKind::Number, LiteralKind::Number)
+                        if is_relation && !self.is_comparison_folded(left, right) =>
+                    {
+                        None
+                    }
+                    (LiteralKind::String(_), LiteralKind::Number)
+                        if matches!(op, BinOp::EqEq | BinOp::NotEq) =>
+                    {
+                        self.is_string_known_to_equal_number(left, right)
+                            .then_some(LiteralKind::Boolean)
+                    }
+                    _ => find_folded_kind(op, left_kind, right_kind),
                 }
             }
             _ => None,
         }
+    }
+
+    // `"" == 0`, `"0" == 0` and `"1" == 1`: the only strings that Bun's transpiler compares with a number.
+    fn is_string_known_to_equal_number(&self, string: ExprId, number: ExprId) -> bool {
+        let values = (
+            self.find_literal_value(string),
+            self.find_literal_value(number),
+        );
+        let (Some(Constant::String(text)), Some(Constant::Number(number))) = values else {
+            return false;
+        };
+        let text = self.queries.atom_bytes(text);
+        (number == 0.0 && (text.is_empty() || text == b"0")) || (number == 1.0 && text == b"1")
     }
 
     // Bun's transpiler folds `<` over two numbers unless one is NaN, or both are finite and one is beyond the safe integers.
@@ -1495,6 +1517,18 @@ impl FileLowering<'_, '_, '_, '_> {
             self.find_literal_kind(expression),
             Some(LiteralKind::String(_))
         )
+    }
+
+    // JSC's parser finds a number or a string where Bun's transpiler has printed the expression. `NaN` is printed as the name.
+    pub(in crate::lower) fn is_printed_as_number_or_text(&self, expression: ExprId) -> bool {
+        match self.find_literal_kind(expression) {
+            Some(LiteralKind::String(_)) => true,
+            Some(LiteralKind::Number) => !matches!(
+                self.find_literal_value(expression),
+                Some(Constant::Number(value)) if value.is_nan()
+            ),
+            _ => false,
+        }
     }
 
     fn is_rope(&self, expression: ExprId) -> bool {
@@ -1604,7 +1638,13 @@ impl FileLowering<'_, '_, '_, '_> {
                     self.find_literal_value(left)?,
                     self.find_literal_value(right)?,
                 ];
-                fold::apply_binary(atoms, op, operands, usize::MAX)
+                // The build leaves a power that may be inexact to the run time.
+                fold::apply_binary(atoms, op, operands, usize::MAX).or(match (op, operands) {
+                    (BinOp::Pow, [Constant::Number(base), Constant::Number(exponent)]) => {
+                        Some(Constant::Number(base.powf(exponent)))
+                    }
+                    _ => None,
+                })
             }
             _ => None,
         }

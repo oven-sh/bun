@@ -457,8 +457,9 @@ impl FunctionBuilder {
     }
 
     // Until the next position: where what is emitted is reported while something that it calls runs. The position is where its own errors are reported.
+    // That there is such a place says what is emitted, so it is written where the two are one place too.
     pub fn set_position_for_callers(&mut self, position: u32) {
-        self.set_written_position(position);
+        self.written_position = self.position.map(|_| position);
         self.is_written_position_for_callers = true;
     }
 

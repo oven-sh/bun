@@ -2,7 +2,8 @@
 // in one match, and then answers that there is no match. Whoever asks cannot tell that from a subject that does not match, so programs ask again with an alternative beside the pattern that always
 // matches, and count on both giving up together. An executable gives a match up at the same length of the subject as plain Bun, and takes no longer to get there.
 //
-//   bodies    repetitions in repetitions, alternatives that overlap, greedy and lazy, with and without a greatest number of turns, capturing or not, in a lookahead: the turns double with each character;
+//   bodies    repetitions in repetitions, alternatives that overlap, greedy and lazy, with and without a greatest number of turns, capturing or not, referred back to, in a lookahead: the turns double
+//             with each character;
 //             names between slashes, words between blanks: the turns grow with the second, third or fourth power of the length
 //   around    every subject has a match: the body fails, or matches late, and an alternative beside it matches at once: the end of the subject, nothing, a text behind the subject.
 //             The body begins with ^ or not, alone or with a neighbor that does, inside a group or not: alternatives that begin with ^ are tried at the first place alone
@@ -35,6 +36,11 @@ const doubling: Body[] = [
   "(?=(x+)+y)x",
   "(?<n>x+)+y",
   "(?:x|[xw])*y",
+  "(x+)+\\1y",
+  "(?<n>x+)+\\k<n>y",
+  "(x|xx)+\\1y",
+  "((x+)+)\\2y",
+  "(x)(?:x|xx)+\\1y",
 ].map(pattern => ({ pattern, head: "", unit: "x", tail: "c", most: 80 }));
 const powers: Body[] = [
   { pattern: "(?:x|w|xw)*y", head: "", unit: "xw", tail: "c", most: 64 },
@@ -106,6 +112,8 @@ export function generate(random: Random, text: Text, count: number): string {
   };
   while (cases.length < count) {
     const body = random.chance(0.5) ? random.pick(doubling) : random.pick(powers);
+    // The build makes one class of alternatives that are single characters: nothing is left to go back over, and the match is found.
+    if (text !== "at run time" && /\(\?:x\|(x|\[xw\])\)\*/.test(body.pattern)) continue;
     const flags = random.pick(["", "", "", "i", "m", "s", "u", "v", "g", "y", "d"]);
     let [form, behind, isTriedOnce] = random.pick(around);
     // The flag y allows no place but the first, and under the flag m a ^ holds at more places than that.

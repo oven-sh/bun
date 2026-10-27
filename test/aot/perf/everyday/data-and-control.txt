@@ -65,6 +65,30 @@ function turn(i: number): number {
   const row = JSON.parse(text) as { id: number; name: string };
   return row.id + row.name.length + (i & 1);
 }
+//// json-parse-by-a-type-that-lists-one-of-three-members
+const text = '{"id":7,"name":"row","ok":true}';
+function turn(i: number): number {
+  const row = JSON.parse(text) as { name: string };
+  return row.name.length + (i & 1);
+}
+//// json-parse-by-a-type-that-lists-one-of-eleven-members
+const text = '{"k0":0,"k1":"v1","k2":true,"k3":3.5,"k4":28,"name":"row","k5":"v5","k6":true,"k7":7.5,"k8":56,"k9":"v9"}';
+function turn(i: number): number {
+  const row = JSON.parse(text) as { name: string };
+  return row.name.length + (i & 1);
+}
+//// json-parse-by-a-type-that-lists-three-of-nine-members
+const text = '{"id":7,"created":"2026-01-02","name":"row","tags":["a","b"],"owner":{"id":1},"ok":true,"score":1.5,"note":null,"rank":3}';
+function turn(i: number): number {
+  const row = JSON.parse(text) as { id: number; name: string; ok: boolean };
+  return row.id + row.name.length + (i & 1);
+}
+//// json-parse-by-a-type-that-lists-fewer-members-and-list-the-keys
+const text = '{"id":7,"name":"row","ok":true}';
+function turn(i: number): number {
+  const row = JSON.parse(text) as { name: string };
+  return Object.keys(row).length + row.name.length + (i & 1);
+}
 //// json-parse-nested
 const text = '{"user":{"id":7,"roles":["admin","dev"],"address":{"city":"Oslo"}},"total":3}';
 function turn(i: number): number {

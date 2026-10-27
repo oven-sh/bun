@@ -28,6 +28,14 @@ if (what === "limit") {
   console.log("made and collected", head!.id, cells);
 } else if (what === "awaited collections") {
   for (let round = 0; round < 4; round++) Bun.gc(true);
+} else if (what === "awaited collections of many objects") {
+  let head: Cell | null = null;
+  for (let i = 0; i < 4_000_000; i++) head = { id: i, next: head };
+  for (let round = 0; round < 4; round++) Bun.gc(true);
+  await Bun.sleep(20);
+  let cells = 0;
+  for (let cell = head; cell; cell = cell.next) cells++;
+  console.log("kept", cells);
 } else if (what === "worker") {
   try {
     new Worker(new URL(import.meta.url));
@@ -89,15 +97,20 @@ describe.skipIf(!isLinux || isASAN)("a compiled program that can start no thread
     });
   }, 120_000);
 
-  // A collection that takes longer than its slice of time goes on beside the program. A program that waits for it hands it to the collector's own thread.
-  test.todo(
-    "waits for the collections that it asks for, on a busy machine too",
-    async () => {
-      if (!isBound) return;
-      expect(await ask("awaited collections")).toEqual({ stdout: "the end\n", exitCode: 0, lines: [] });
-    },
-    120_000,
-  );
+  // A collection that takes longer than its slice of time goes on beside the program. A program that waits for it hands it to the collector's own thread, or finishes it by itself.
+  test("waits for the collections that it asks for, on a busy machine too", async () => {
+    if (!isBound) return;
+    expect(await ask("awaited collections")).toEqual({ stdout: "the end\n", exitCode: 0, lines: [] });
+  }, 120_000);
+
+  test("waits for the collections of millions of objects that it asks for", async () => {
+    if (!isBound) return;
+    expect(await ask("awaited collections of many objects")).toEqual({
+      stdout: "kept 4000000\nthe end\n",
+      exitCode: 0,
+      lines: [],
+    });
+  }, 120_000);
 
   test("new Worker() throws", async () => {
     if (!isBound) return;

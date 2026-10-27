@@ -152,6 +152,9 @@ impl Resolver<'_, '_> {
     pub(super) fn compute_symbol_state(&mut self, expr: ExprId, symbol: SymbolId) -> ExprState {
         let value = self.resolve_alias(symbol);
         let held = self.held.get(&symbol).copied().flatten();
+        if value.is_none() && held.is_none() {
+            return ExprState::Unresolved;
+        }
         let bound = self.input.bound;
         if bound.dynamic_lookup_scope(NodeData::Expr(expr)).is_some() {
             if let Some(value) = value.or(held) {

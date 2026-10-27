@@ -1,6 +1,7 @@
 use super::made_requires::{
     OwnRequire, StepsLeft, Text, find_imported_export, find_own_require, follow_settled_bindings,
-    follow_to_own_require, holds_import_meta_require, settled_symbol,
+    follow_to_own_require, holds_import_meta_require, may_be_modified, may_require_get_members,
+    settled_symbol,
 };
 use super::{ImportSite, ImportSiteKind, ImportSpecifier, ScanInputs};
 use crate::atom::{Atom, Interner, known};
@@ -36,11 +37,45 @@ pub(super) fn find_request_of_exports(
 ) -> Option<ExprId> {
     let form = find_call_form(text.hir, call)?;
     let site = find_call_site(text, call, form, left)?;
-    match site.kind {
-        ImportSiteKind::Require(_)
-        | ImportSiteKind::ImportMetaRequire(_)
-        | ImportSiteKind::GetBuiltinModule(_) => text.hir.ids(site.args).next(),
-        _ => None,
+    let CallForm::Call { callee, .. } = form else {
+        return None;
+    };
+    match has_fixed_callee(text, callee, site.kind, left) {
+        true => text.hir.ids(site.args).next(),
+        false => None,
+    }
+}
+
+fn has_fixed_callee(
+    text: Text<'_, '_, '_, '_>,
+    callee: ExprId,
+    kind: ImportSiteKind,
+    left: StepsLeft,
+) -> bool {
+    let Text { hir, bound, .. } = text;
+    let callee = hir.skip_type_assertions(callee);
+    let holds_require = || !may_be_modified(hir, bound, CommonJsVariable::Require);
+    match kind {
+        ImportSiteKind::Require(_) => match follow_to_own_require(text, callee, left) {
+            Some(OwnRequire::OfFile) => holds_require(),
+            Some(OwnRequire::Made | OwnRequire::OfOtherFile(_)) => true,
+            None => match hir.member_key(callee) {
+                Some((_, MemberKey::Name(name))) if name == known::require => holds_require(),
+                Some((object, _)) => {
+                    let object = hir.skip_type_assertions(object);
+                    is_free_common_js(hir, bound, object, CommonJsVariable::Require)
+                        && holds_require()
+                        && !may_require_get_members(hir, bound)
+                }
+                None => false,
+            },
+        },
+        ImportSiteKind::ImportMetaRequire(_) => !bound.import_meta_may_be_modified(),
+        ImportSiteKind::GetBuiltinModule(_) => {
+            matches!(hir.member_key(callee), Some((object, _))
+                if is_process(hir, bound, hir.skip_type_assertions(object), &[known::globalThis]))
+        }
+        _ => false,
     }
 }
 
@@ -204,8 +239,8 @@ fn find_call_site(
         return is_require.then(|| create_site(ImportSiteKind::RequireResolve(call), args));
     }
     if name == known::getBuiltinModule {
-        let is_process = is_global_process(hir, bound, object);
-        return is_process.then(|| create_site(ImportSiteKind::GetBuiltinModule(call), args));
+        let on_process = is_process(hir, bound, object, &[known::globalThis, known::global]);
+        return on_process.then(|| create_site(ImportSiteKind::GetBuiltinModule(call), args));
     }
     None
 }
@@ -216,7 +251,7 @@ fn is_free_name(hir: &File<'_>, bound: &Bound<'_>, e: ExprId, names: &[Atom]) ->
         && bound.dynamic_lookup_scope(NodeData::Expr(e)).is_none()
 }
 
-fn is_global_process(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {
+fn is_process(hir: &File<'_>, bound: &Bound<'_>, e: ExprId, global_objects: &[Atom]) -> bool {
     let e = follow_settled_bindings(hir, bound, e);
     if is_free_name(hir, bound, e, &[known::process]) {
         return true;
@@ -228,7 +263,7 @@ fn is_global_process(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {
     }
     matches!(hir.member_key(e), Some((object, MemberKey::Name(name)))
         if name == known::process
-            && is_free_name(hir, bound, follow_settled_bindings(hir, bound, object), &[known::globalThis, known::global]))
+            && is_free_name(hir, bound, follow_settled_bindings(hir, bound, object), global_objects))
 }
 
 pub(crate) fn is_in_with_scope(bound: &Bound<'_>, ident: ExprId) -> bool {

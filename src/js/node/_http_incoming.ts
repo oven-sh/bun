@@ -62,7 +62,7 @@ const readMoreOnNextTick = internals.readMoreOnNextTick!;
 const emitReadableNow = internals.emitReadableNow!;
 const finishEnd = internals.finishEnd!;
 const { read, push, resume, removeAllListeners } = internals.readableMethods!;
-const { destroy } = internals.destroyMethods!;
+const { destroy, closeAfterThrow } = internals.destroyMethods!;
 const {
   emit,
   storeEmitWithRejectionCapture,
@@ -937,50 +937,85 @@ function isUnheard(req: $Node.IncomingMessage, name: string) {
 }
 
 function endsUnwatched(req: $Node.IncomingMessage) {
-  if (!req[noBodySymbol] || req.resume !== resume) {
+  let state: $Node.ReadableState;
+  try {
+    if (!req[noBodySymbol] || req.resume !== resume) {
+      return false;
+    }
+    state = req._readableState;
+    if (!advanceFlags(state, kFlagsUntouched, kFlagsResumed)) return false;
+  } catch {
     return false;
   }
-  const state = req._readableState;
-  if (!advanceFlags(state, kFlagsUntouched, kFlagsResumed)) return false;
   queueTick2(resumeUnwatched, req, state);
   return true;
 }
 
+function resumesUnwatched(req: $Node.IncomingMessage, state: $Node.ReadableState): boolean {
+  try {
+    return (
+      !!req[kHandle] &&
+      !req._consuming &&
+      !req[eofInProgress] &&
+      req.read === read &&
+      req._read === incomingMessageRead &&
+      req._readableState === state &&
+      isUnheard(req, "resume") &&
+      advanceFlags(state, kFlagsResumed, kFlagsReading)
+    );
+  } catch {
+    return false;
+  }
+}
+
 function resumeUnwatched(req: $Node.IncomingMessage, state: $Node.ReadableState) {
-  if (
-    !req[kHandle] ||
-    req._consuming ||
-    req[eofInProgress] ||
-    req.read !== read ||
-    req._read !== incomingMessageRead ||
-    req._readableState !== state ||
-    !isUnheard(req, "resume") ||
-    !advanceFlags(state, kFlagsResumed, kFlagsReading)
-  ) {
+  if (!resumesUnwatched(req, state)) {
     ("unlikely");
     return resumeOnNextTick(req, state);
   }
-  req._consuming = true;
-  resumeConnection(req);
-  req[eofInProgress] = true;
+  try {
+    req._consuming = true;
+    resumeConnection(req);
+    req[eofInProgress] = true;
+  } catch (err) {
+    state[kState] |= kSync | kResumeScheduled;
+    const stream: $Node.Readable = req;
+    errorOrDestroy(stream, err as Error);
+    finishReadOfNothing(state);
+    return finishResume(req, state);
+  }
   if (ring.read === ring.write && ticksAreUnhooked()) endUnwatched(req);
   else queueTick1(endUnwatched, req);
 }
 
+function endsItsBodyUnwatched(req: $Node.IncomingMessage): boolean {
+  try {
+    return (
+      req.push === push &&
+      req.read === read &&
+      isUnheard(req, "readable") &&
+      advanceFlags(req._readableState, kFlagsReading, kFlagsEnded)
+    );
+  } catch {
+    return false;
+  }
+}
+
 function endUnwatched(req: $Node.IncomingMessage) {
-  const state = req._readableState;
-  if (
-    req.push !== push ||
-    req.read !== read ||
-    !isUnheard(req, "readable") ||
-    !advanceFlags(state, kFlagsReading, kFlagsEnded)
-  ) {
+  if (!endsItsBodyUnwatched(req)) {
     ("unlikely");
     return emitEOFIncomingMessageOuter(req);
   }
+  const state = req._readableState;
   req.complete = true;
-  const parser = req.socket?.parser;
-  const held = parser != null && parser.incoming === req ? parser : undefined;
+  let held: $Node.HTTPParser | $Node.HttpServerParserShim | undefined;
+  try {
+    const parser = req.socket?.parser;
+    held = parser != null && parser.incoming === req ? parser : undefined;
+  } catch (error) {
+    queueTick3(destroyUnwatched, req, state, undefined);
+    throw error;
+  }
   if (ring.read === ring.write && ticksAreUnhooked()) destroyUnwatched(req, state, held);
   else queueTick3(destroyUnwatched, req, state, held);
 }
@@ -997,40 +1032,60 @@ function destroyUnwatched(
   }
 }
 
+function handleToDestroyUnwatched(req: $Node.IncomingMessage, state: $Node.ReadableState) {
+  try {
+    const handle = req[kHandle];
+    if (
+      !handle ||
+      !req.complete ||
+      req.writable ||
+      req._writableState ||
+      req.destroy !== destroy ||
+      req._destroy !== incomingMessageDestroy ||
+      req._readableState !== state ||
+      !readsItsSocketUnseen(req) ||
+      !isUnheard(req, "end") ||
+      !readsReadableEndedThroughAccessor(req) ||
+      !advanceFlags(state, kFlagsEnded, kFlagsDestroyed)
+    ) {
+      return undefined;
+    }
+    return handle;
+  } catch {
+    return undefined;
+  }
+}
+
 function destroyOnNextTick(req: $Node.IncomingMessage, state: $Node.ReadableState) {
-  const handle = req[kHandle];
-  if (
-    !handle ||
-    !req.complete ||
-    req.writable ||
-    req._writableState ||
-    req.destroy !== destroy ||
-    req._destroy !== incomingMessageDestroy ||
-    req._readableState !== state ||
-    !readsItsSocketUnseen(req) ||
-    !isUnheard(req, "end") ||
-    !readsReadableEndedThroughAccessor(req) ||
-    !advanceFlags(state, kFlagsEnded, kFlagsDestroyed)
-  ) {
+  const handle = handleToDestroyUnwatched(req, state);
+  if (handle === undefined) {
     ("unlikely");
     return endOnNextTick(state, req);
   }
   req[kAutoDestroyed] = true;
-  req[kHandle] = undefined;
-  handle.onabort = undefined;
+  try {
+    req[kHandle] = undefined;
+    handle.onabort = undefined;
+  } catch (err) {
+    return closeAfterThrow(req, state, err);
+  }
   queueTick1(closeUnwatched, req);
 }
 
 function mayDumpInPlace(req: $Node.IncomingMessage): boolean {
-  return (
-    req._readableState[kState] === kFlagsUntouched &&
-    req[noBodySymbol] &&
-    !req._dumped &&
-    req._dump === dump &&
-    req.resume === resume &&
-    req.removeAllListeners === removeAllListeners &&
-    readsReadableEndedThroughAccessor(req)
-  );
+  try {
+    return (
+      req._readableState[kState] === kFlagsUntouched &&
+      req[noBodySymbol] &&
+      !req._dumped &&
+      req._dump === dump &&
+      req.resume === resume &&
+      req.removeAllListeners === removeAllListeners &&
+      readsReadableEndedThroughAccessor(req)
+    );
+  } catch {
+    return false;
+  }
 }
 
 function beginDump(req: $Node.IncomingMessage): void {
@@ -1039,17 +1094,17 @@ function beginDump(req: $Node.IncomingMessage): void {
   req._readableState[kState] = kFlagsResumed | 0;
 }
 
-function closeUnwatched(req: $Node.IncomingMessage) {
-  if (req.listenerCount !== listenerCount) {
+function closeUnwatched(self: $Node.IncomingMessage) {
+  if (self.listenerCount !== listenerCount) {
     ("unlikely");
-    req.listenerCount("error");
+    self.listenerCount("error");
   }
-  req._readableState[kState] |= kClosed;
-  if (ring.read === ring.write && ticksAreUnseen()) emitCloseUnwatched(req);
-  else if (ProcessNextTick === originalNextTick) enqueueTick1(emitCloseUnwatched, req);
+  self._readableState[kState] |= kClosed;
+  if (ring.read === ring.write && ticksAreUnseen()) emitCloseUnwatched(self);
+  else if (ProcessNextTick === originalNextTick) enqueueTick1(emitCloseUnwatched, self);
   else {
     ("unlikely");
-    ProcessNextTick(emitCloseUnwatched, req);
+    ProcessNextTick(emitCloseUnwatched, self);
   }
 }
 
@@ -1085,24 +1140,29 @@ internals.takeRequestCloseTick = takeCloseTick;
 function resumeRequestBody(stream: $Node.Readable, state: $Node.ReadableState): boolean {
   const flags = state[kState];
   const req: $Node.IncomingMessage = stream as any;
-  if ((flags & ~kDecoding) !== kBodyResumed || state.length !== 0 || req._read !== incomingMessageRead) return false;
-  const handle = req[kHandle];
-  if (
-    !handle ||
-    req._consuming ||
-    req[eofInProgress] ||
-    req[noBodySymbol] ||
-    req.read !== read ||
-    req._readableState !== state ||
-    !isUnheard(req, "resume")
-  ) {
-    ("unlikely");
+  let handle: $Node.IncomingMessage[typeof kHandle];
+  try {
+    if ((flags & ~kDecoding) !== kBodyResumed || state.length !== 0 || req._read !== incomingMessageRead) return false;
+    handle = req[kHandle];
+    if (
+      !handle ||
+      req._consuming ||
+      req[eofInProgress] ||
+      req[noBodySymbol] ||
+      req.read !== read ||
+      req._readableState !== state ||
+      !isUnheard(req, "resume")
+    ) {
+      ("unlikely");
+      return false;
+    }
+  } catch {
     return false;
   }
   const asked = (flags & kDecoding) | kBodyAsked;
   state[kState] = asked;
-  req._consuming = true;
   try {
+    req._consuming = true;
     resumeConnection(req);
     const bodyReadState = handle.hasBody;
     if ((bodyReadState & NodeHTTPBodyReadState.done) !== 0 || bodyReadState === NodeHTTPBodyReadState.none) {
@@ -1134,73 +1194,83 @@ function onBodyData(this: $Node.IncomingMessage, chunk: Buffer | undefined, isLa
 
 internals.onRequestBodyData = onBodyData;
 
-function takeBodyData(req: $Node.IncomingMessage, chunk: Buffer | undefined, isLast: boolean, aborted: number) {
-  const state = req._readableState;
+// `stream` and `chunk` as in addChunk(): a TypeError about a replaced emit() quotes the call.
+function takeBodyData(stream: $Node.IncomingMessage, bytes: Buffer | undefined, isLast: boolean, aborted: number) {
+  const state = stream._readableState;
   const flags = state[kState];
   const word = flags & ~kDecoding;
   if (
     aborted !== NodeHTTPResponseAbortEvent.none ||
     !isLast ||
-    chunk === undefined ||
-    (word !== kBodyReading && (word !== kBodyAwaited || chunk.length >= state.highWaterMark)) ||
+    bytes === undefined ||
+    (word !== kBodyReading && (word !== kBodyAwaited || bytes.length >= state.highWaterMark)) ||
     state.length !== 0 ||
-    req._dumped ||
-    req.upgrade ||
-    req[eofInProgress] ||
-    req.push !== push ||
-    req.read !== read ||
-    req._read !== incomingMessageRead ||
+    stream._dumped ||
+    stream.upgrade ||
+    stream[eofInProgress] ||
+    stream.push !== push ||
+    stream.read !== read ||
+    stream._read !== incomingMessageRead ||
     !ticksAreUnseen()
   ) {
     ("unlikely");
-    return onDataIncomingMessage.$call(req, chunk, isLast, aborted);
+    return onDataIncomingMessage.$call(stream, bytes, isLast, aborted);
   }
 
   // Only the native server hands over a body this way.
-  const socket: $Node.HttpServerSocket | null | undefined = req.socket as any;
+  const socket: $Node.HttpServerSocket | null | undefined = stream.socket as any;
   socket?._unrefTimer?.();
 
   state[kState] = flags & ~kReading;
-  const data = (flags & kDecoder) !== 0 ? state[kDecoderValue]!.write(chunk) : chunk;
+  const chunk = (flags & kDecoder) !== 0 ? state[kDecoderValue]!.write(bytes) : bytes;
   const given = (flags & kDecoding) | kBodyGiven;
-  const length = data.length as number;
+  const length = chunk.length as number;
   if (length !== 0 && word === kBodyReading) {
     state.awaitDrainWriters = null;
     state[kState] = given;
-    req.emit("data", data);
+    stream.emit("data", chunk);
   }
   if (length !== 0 && word === kBodyAwaited) {
     state.length = length;
-    state.buffer.push(data);
+    state.buffer.push(chunk);
     state[kState] = (flags & kDecoding) | kBodyBuffered;
-    queueTick1(emitReadableNow, req);
-    req[eofInProgress] = true;
-    queueTick2(finishBufferedBody, req, state);
+    queueTick1(emitReadableNow, stream);
+    markEndInProgress(stream, state);
+    queueTick2(finishBufferedBody, stream, state);
   } else if (state[kState] === given && state.length === 0) {
     state[kState] = given | kReadingMore;
-    req[eofInProgress] = true;
-    queueTick2(finishBody, req, state);
+    markEndInProgress(stream, state);
+    queueTick2(finishBody, stream, state);
   } else {
     ("unlikely");
-    readMoreLater(req, state);
+    readMoreLater(stream, state);
     if ((state[kState] & kEnded) !== 0 || (state.length >= state.highWaterMark && state.length !== 0)) {
       const finSent = socket?.[kHandle]?.finSent === true;
       // Nothing reads this body and a pause would hide the peer's FIN: uWS drops the later reads, so that FIN closes the connection.
-      if (finSent && !req._consuming) socket![kHandle]!.stopParsing();
+      if (finSent && !stream._consuming) socket![kHandle]!.stopParsing();
       else if (socket && (finSent || !socket.writableEnded)) {
         socket.pause();
-        req[kHandle]?.pause();
+        stream[kHandle]?.pause();
       }
     }
-    emitEOFIncomingMessage(req);
+    emitEOFIncomingMessage(stream);
   }
-  if (!req.upgrade && socket && !socket._paused && socket.readable) {
+  if (!stream.upgrade && socket && !socket._paused && socket.readable) {
     const resumeUnlessFlowing = socket.$resumeUnlessFlowing;
     if (resumeUnlessFlowing !== undefined) resumeUnlessFlowing.$call(socket, false);
     else {
       ("unlikely");
       socket.resume();
     }
+  }
+}
+
+function markEndInProgress(req: $Node.IncomingMessage, state: $Node.ReadableState) {
+  try {
+    req[eofInProgress] = true;
+  } catch (error) {
+    queueTick2(readMoreOnNextTick, req, state);
+    throw error;
   }
 }
 
@@ -1320,7 +1390,12 @@ function endBody(req: $Node.IncomingMessage, state: $Node.ReadableState) {
   }
   state[kState] = (flags & kDecoding) | kBodyEnded;
   if (ring.read === ring.write && ticksAreUnseen()) {
-    releaseParserOnNextTick(req);
+    try {
+      releaseParserOnNextTick(req);
+    } catch (error) {
+      queueTick2(endOnNextTick, state, req);
+      throw error;
+    }
     emitBodyEnd(req, state);
   } else {
     queueTick2(endOnNextTick, state, req);
@@ -1336,31 +1411,37 @@ function emitBodyEnd(req: $Node.IncomingMessage, state: $Node.ReadableState) {
 
 function destroyEndedRequest(state: $Node.ReadableState, stream: $Node.Readable): boolean {
   const req: $Node.IncomingMessage = stream as any;
-  if ((state[kState] & kDestroysItselfMask) !== kDestroysItself || req._destroy !== incomingMessageDestroy)
-    return false;
-  const handle = req[kHandle];
-  if (
-    !handle ||
-    !req.complete ||
-    req.writable ||
-    req._writableState ||
-    req.destroy !== destroy ||
-    req._readableState !== state ||
-    !readsReadableEndedThroughAccessor(req) ||
-    !readsItsSocketUnseen(req) ||
-    !ticksAreUnseen()
-  ) {
-    ("unlikely");
-    return false;
-  }
+  let handle: $Node.IncomingMessage[typeof kHandle];
   try {
+    if ((state[kState] & kDestroysItselfMask) !== kDestroysItself || req._destroy !== incomingMessageDestroy)
+      return false;
+    handle = req[kHandle];
+    if (
+      !handle ||
+      !req.complete ||
+      req.writable ||
+      req._writableState ||
+      req.destroy !== destroy ||
+      req._readableState !== state ||
+      !readsReadableEndedThroughAccessor(req) ||
+      !readsItsSocketUnseen(req) ||
+      !ticksAreUnseen()
+    ) {
+      ("unlikely");
+      return false;
+    }
     req[kAutoDestroyed] = true;
   } catch {
     return false;
   }
   state[kState] |= kDestroyed;
-  req[kHandle] = undefined;
-  handle.onabort = handle.ondata = undefined;
+  try {
+    req[kHandle] = undefined;
+    handle.onabort = handle.ondata = undefined;
+  } catch (err) {
+    closeAfterThrow(req, state, err);
+    return true;
+  }
   const tick = ring.read!;
   if (
     tick !== ring.write &&
@@ -1393,17 +1474,21 @@ function beginUnseenDump(req: $Node.IncomingMessage): void {
 }
 
 function staysUnseen(req: $Node.IncomingMessage): boolean {
-  const state = req._readableState;
-  return (
-    state[kState] === kFlagsResumed &&
-    state.length === 0 &&
-    req[noBodySymbol] &&
-    req._dumped &&
-    !req._consuming &&
-    !req[eofInProgress] &&
-    readsItsSocketUnseen(req) &&
-    keepsItsMethods(req)
-  );
+  try {
+    const state = req._readableState;
+    return (
+      state[kState] === kFlagsResumed &&
+      state.length === 0 &&
+      req[noBodySymbol] &&
+      req._dumped &&
+      !req._consuming &&
+      !req[eofInProgress] &&
+      readsItsSocketUnseen(req) &&
+      keepsItsMethods(req)
+    );
+  } catch {
+    return false;
+  }
 }
 
 function continueDump(req: $Node.IncomingMessage, state: $Node.ReadableState): void {
@@ -1415,16 +1500,20 @@ function queueDump(req: $Node.IncomingMessage, state: $Node.ReadableState): void
 }
 
 function endsUnseen(req: $Node.IncomingMessage): boolean {
-  const state = req._readableState;
-  return (
-    state[kState] === kFlagsUntouched &&
-    state.length === 0 &&
-    req[noBodySymbol] &&
-    !req._dumped &&
-    !req._consuming &&
-    !req[eofInProgress] &&
-    keepsItsMethods(req)
-  );
+  try {
+    const state = req._readableState;
+    return (
+      state[kState] === kFlagsUntouched &&
+      state.length === 0 &&
+      req[noBodySymbol] &&
+      !req._dumped &&
+      !req._consuming &&
+      !req[eofInProgress] &&
+      keepsItsMethods(req)
+    );
+  } catch {
+    return false;
+  }
 }
 
 function keepsItsMethods(req: $Node.IncomingMessage): boolean {

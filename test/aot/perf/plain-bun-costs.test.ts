@@ -22,10 +22,12 @@
 //
 // The numbers are those of the release build with LTO for Linux x64, which is what CI builds and ships. Other builds print the table
 // and are not judged: PLAIN_BUN_COSTS=hold judges them anyway.
+//
+// What the top tier compiles a second time, it compiled for nothing the first time. That needs no counter, so it is judged wherever the programs run.
 import { expect, test } from "bun:test";
 import { existsSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "fs";
 import { bunExe, isASAN, isCI, isDebug, isGlibc, runCommandMaxRSS, tempDir } from "harness";
-import { join } from "path";
+import { basename, join } from "path";
 import { measureUntilWithinBounds } from "../harness/measure-again";
 import { measureStart, startEnvironment, type Until } from "./start/measure-start";
 
@@ -207,4 +209,42 @@ test.skipIf(!measurable)(
     if (judged) expect(failures).toEqual([]);
   },
   600_000,
+);
+
+const compiledTwiceByTheTopTier: Record<string, string[]> = {
+  "arrays.js": ["", "flatIntoArray"],
+  "classes-and-closures.js": ["next", "performProxyObjectGet"],
+  "collector.js": ["", "count", "tree"],
+  "crypto.js": ["digest", "update"],
+  "emit-to-one-listener.js": ["", "emit"],
+  "emit-to-two-listeners.js": ["", "emit"],
+  "language.js": ["language.js"],
+  "streams-made.js": ["Duplex", "Readable", "_addListener", "get", "getHighWaterMark"],
+  "waiting-ticks.js": ["read"],
+};
+
+test.skipIf(!measurable)(
+  "the top tier compiles no function twice that it compiled once",
+  () => {
+    const more: Record<string, string[]> = {};
+    for (const file of readdirSync(programs).sort()) {
+      if (!file.endsWith(".js")) continue;
+      const { stderr, exitCode } = Bun.spawnSync({
+        cmd: [bunExe(), join(programs, file)],
+        cwd: "/",
+        env: { ...startEnvironment, BUN_JSC_useConcurrentJIT: "0", BUN_JSC_reportCompileTimes: "1" },
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      expect({ file, exitCode }).toEqual({ file, exitCode: 0 });
+      const times = new Map<string, number>();
+      for (const [, which] of stderr.toString().matchAll(/^Optimized (.*#\w+):\[.*\] using FTL with FTL /gm))
+        times.set(which, (times.get(which) ?? 0) + 1);
+      const twice = [...times].filter(([, count]) => count > 1).map(([which]) => basename(which).replace(/#\w+$/, ""));
+      const unexpected = twice.filter(name => !compiledTwiceByTheTopTier[file]?.includes(name));
+      if (unexpected.length) more[file] = unexpected;
+    }
+    expect(more).toEqual({});
+  },
+  300_000,
 );

@@ -5938,6 +5938,36 @@ node:tty.ReadStream.prototype setRawMode("a", 1)
 "
 `;
 
+exports[`members of the prototype objects of node:tty: on Windows 1`] = `
+"node:tty.ReadStream.prototype ref()
+  the receiver <- every object, a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:tty.ReadStream.prototype ref("a", 1)
+  the receiver <- every object, a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:tty.ReadStream.prototype unref()
+  the receiver <- every object, a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:tty.ReadStream.prototype unref("a", 1)
+  the receiver <- every object, a number, a string
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:tty.ReadStream.prototype setRawMode()
+  throws TypeError: what is called is not a function <- {}, an object without a prototype, an instance of another class, a proxy of {}, a number, a string
+  throws Error: setRawMode failed because it was called on something that is not a TTY <- an heir of the prototype object, a proxy of such an heir, the prototype object
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+node:tty.ReadStream.prototype setRawMode("a", 1)
+  throws TypeError: what is called is not a function <- {}, an object without a prototype, an instance of another class, a proxy of {}, a number, a string
+  throws Error: setRawMode failed because it was called on something that is not a TTY <- an heir of the prototype object, a proxy of such an heir, the prototype object
+  throws TypeError: undefined is not an object <- undefined
+  throws TypeError: null is not an object <- null
+"
+`;
+
 exports[`members of the prototype objects of node:url 1`] = `
 "node:url.Url.prototype parse()
   throws TypeError ERR_INVALID_ARG_TYPE: The "url" argument must be of type string. Received undefined <- every receiver

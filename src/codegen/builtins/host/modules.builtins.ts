@@ -146,6 +146,7 @@ export default b.declarations(
     throws: true,
     uses: { id: [b.loadedAsModule] },
     implementation: b.hostCall,
+    mutability: "AlwaysLocked",
   }),
   b.static("process.mainModule", b.property(b.union(moduleObject, b.undefined))),
   b.class("node:module", {
@@ -167,6 +168,7 @@ export default b.declarations(
     },
   }),
   b.same("node:module.Module", "node:module"),
+  b.extend("node:module.Module", { mutability: "AlwaysLocked" }),
   b.static("node:module._cache", b.property(moduleCache)),
   b.static("node:module._extensions", b.property(moduleExtensions)),
   // It returns undefined and converts nothing.
@@ -193,6 +195,7 @@ export default b.declarations(
     capability: "js",
     throws: true,
     implementation: b.generic,
+    mutability: "AlwaysLocked",
   }),
   b.namespace("node:module.prototype", {
     require: {

@@ -215,8 +215,8 @@ pub fn get_frame_content_size(src: &[u8]) -> u64 {
     }
 }
 
-/// `readSkippableFrameSize`
-fn read_skippable_frame_size(src: &[u8]) -> Result<usize> {
+/// The size of the skippable frame whose header is at the start of `src`.
+fn skippable_frame_size(src: &[u8]) -> Result<usize> {
     if src.len() < ZSTD_SKIPPABLEHEADERSIZE {
         return Err(ErrorCode::SrcSizeWrong);
     }
@@ -227,7 +227,12 @@ fn read_skippable_frame_size(src: &[u8]) -> Result<usize> {
     {
         return Err(ErrorCode::FrameParameterUnsupported);
     }
-    let skippable_size = ZSTD_SKIPPABLEHEADERSIZE + size_u32 as usize;
+    Ok(ZSTD_SKIPPABLEHEADERSIZE + size_u32 as usize)
+}
+
+/// `readSkippableFrameSize`
+fn read_skippable_frame_size(src: &[u8]) -> Result<usize> {
+    let skippable_size = skippable_frame_size(src)?;
     if skippable_size > src.len() {
         return Err(ErrorCode::SrcSizeWrong);
     }
@@ -245,7 +250,12 @@ pub enum FrameExtent {
 /// How far the frame at the start of `src` goes, for when where it ends is not known in advance.
 pub fn frame_extent(src: &[u8]) -> Result<FrameExtent> {
     if src.len() >= ZSTD_SKIPPABLEHEADERSIZE && is_skippable_magic(read_le32(src, 0)?) {
-        return read_skippable_frame_size(src).map(FrameExtent::Whole);
+        let size = skippable_frame_size(src)?;
+        return Ok(if size <= src.len() {
+            FrameExtent::Whole(size)
+        } else {
+            FrameExtent::AtLeast(size)
+        });
     }
     let header = match get_frame_header(src)? {
         HeaderStatus::Complete(header) => header,

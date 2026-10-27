@@ -2062,6 +2062,27 @@ pub fn resolve_posix_t<'a, T: PathCharCwd>(
     buf: &'a mut [T],
     buf2: &mut [T],
 ) -> MaybeSlice<'a, T> {
+    resolve_posix_with_cwd::<T, _, _, false>(
+        paths,
+        buf,
+        buf2,
+        MAX_PATH_SIZE_UPPER,
+        posix_cwd_t::<T>,
+    )
+}
+
+// Keep dynamic cwd allocation out of the native resolver instantiation.
+pub fn resolve_posix_with_cwd<'a, T: PathCharCwd, E, F, const ALLOW_LONG_CWD: bool>(
+    paths: &[&[T]],
+    buf: &'a mut [T],
+    buf2: &mut [T],
+    cwd_buffer_capacity: usize,
+    mut get_cwd: F,
+) -> Result<&'a [T], E>
+where
+    E: From<bun_sys::Error>,
+    F: for<'b> FnMut(&'b mut [T]) -> Result<&'b mut [T], E>,
+{
     // Backed by expandable buf2 because resolvedPath may be long.
     // We use buf2 here because resolvePosixT is called by other methods and using
     // buf2 here avoids stepping on others' toes.
@@ -2080,12 +2101,15 @@ pub fn resolve_posix_t<'a, T: PathCharCwd>(
         // in this scope; copy into buf2 before reusing.
         // Sized to the larger of the two T variants.
         let mut tmp_buf: [T; MAX_PATH_SIZE_UPPER];
+        let mut tmp_spill: Vec<T>;
         let path: &[T] = if i_i64 >= 0 {
             paths[usize::try_from(i_i64).expect("int cast")]
+        } else if ALLOW_LONG_CWD && cwd_buffer_capacity > MAX_PATH_SIZE_UPPER {
+            tmp_spill = vec![T::default(); cwd_buffer_capacity];
+            &*get_cwd(&mut tmp_spill)?
         } else {
-            // cwd is limited to MAX_PATH_BYTES.
             tmp_buf = [T::default(); MAX_PATH_SIZE_UPPER];
-            &*posix_cwd_t(&mut tmp_buf)?
+            &*get_cwd(&mut tmp_buf)?
         };
         // validateString of `path` is performed in pub fn resolve.
         let len = path.len();
@@ -2163,9 +2187,36 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
     buf: &'a mut [T],
     buf2: &mut [T],
 ) -> MaybeSlice<'a, T> {
+    resolve_windows_with_cwd::<T, _, _, false>(
+        paths,
+        buf,
+        buf2,
+        MAX_PATH_SIZE_UPPER,
+        get_cwd_t::<T>,
+    )
+}
+
+pub fn resolve_windows_with_cwd<'a, T: PathCharCwd, E, F, const ALLOW_LONG_CWD: bool>(
+    paths: &[&[T]],
+    buf: &'a mut [T],
+    buf2: &mut [T],
+    cwd_buffer_capacity: usize,
+    mut get_cwd: F,
+) -> Result<&'a [T], E>
+where
+    E: From<bun_sys::Error>,
+    F: for<'b> FnMut(&'b mut [T]) -> Result<&'b mut [T], E>,
+{
     let is_sep_t = is_sep_windows_t::<T>;
     // Sized to the larger of the two T variants.
-    let mut tmp_buf = [T::default(); MAX_PATH_SIZE_UPPER + 1];
+    let mut tmp_stack = [T::default(); MAX_PATH_SIZE_UPPER + 3];
+    let mut tmp_spill;
+    let tmp_buf: &mut [T] = if ALLOW_LONG_CWD && cwd_buffer_capacity > MAX_PATH_SIZE_UPPER {
+        tmp_spill = vec![T::default(); cwd_buffer_capacity + 3];
+        &mut tmp_spill
+    } else {
+        &mut tmp_stack
+    };
 
     // Backed by tmpBuf.
     // Borrowck: track resolved_device length into tmp_buf.
@@ -2215,7 +2266,7 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
             path_len = p.len();
         } else if resolved_device_len == 0 {
             // cwd is limited to MAX_PATH_BYTES.
-            cwd_len = get_cwd_t(&mut tmp_buf[..])?.len();
+            cwd_len = get_cwd(&mut tmp_buf[..])?.len();
             path_ptr = tmp_buf.as_ptr();
             path_len = cwd_len;
         } else {
@@ -2303,7 +2354,7 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
             } else {
                 // cwd is limited to MAX_PATH_BYTES. Store it AFTER the device:
                 // tmp_buf[0..resolved_device_len] backs resolvedDevice.
-                cwd_len = get_cwd_t(&mut tmp_buf[resolved_device_len..])?.len();
+                cwd_len = get_cwd(&mut tmp_buf[resolved_device_len..])?.len();
                 path_ptr = tmp_buf[resolved_device_len..].as_ptr();
                 path_len = cwd_len;
                 // We must set envPath here so that it doesn't hit the null check just below.
@@ -2409,7 +2460,8 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
                                 return Err(bun_sys::Error::from_code(
                                     bun_sys::E::ENAMETOOLONG,
                                     bun_sys::Tag::TODO,
-                                ));
+                                )
+                                .into());
                             }
                             // SAFETY: src/dst within live buffers; ptr::copy handles overlap.
                             unsafe {
@@ -2429,7 +2481,8 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
                                 return Err(bun_sys::Error::from_code(
                                     bun_sys::E::ENAMETOOLONG,
                                     bun_sys::Tag::TODO,
-                                ));
+                                )
+                                .into());
                             }
                             // SAFETY: src/dst within live buffers; ptr::copy handles overlap.
                             unsafe {

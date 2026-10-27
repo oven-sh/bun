@@ -60,6 +60,7 @@ using namespace JSC;
     macro(createInternalModuleById) \
     macro(createUninitializedArrayBuffer) \
     macro(ctimeMs) \
+    macro(cwd) \
     macro(data) \
     macro(decode) \
     macro(dest) \

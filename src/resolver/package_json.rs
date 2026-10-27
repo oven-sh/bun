@@ -856,10 +856,11 @@ impl PackageJSON {
                 // If a name is in several groups, the last group wins, as it does in `bun install`.
                 let dependency_groups: &[DependencyGroup] =
                     if INCLUDE_DEPENDENCIES == IncludeDependencies::Main {
+                        // `bun run --filter` orders scripts by these, so a name that `dependencies` lists is one of those.
                         &[
-                            DependencyGroup::DEPENDENCIES,
-                            DependencyGroup::DEV,
                             DependencyGroup::OPTIONAL,
+                            DependencyGroup::DEV,
+                            DependencyGroup::DEPENDENCIES,
                         ]
                     } else if !strings::contains(package_json_path, NODE_MODULES_PATH.as_bytes()) {
                         // One of the project's own package.json files. A package.json in the cache

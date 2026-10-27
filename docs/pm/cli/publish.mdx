@@ -52,7 +52,7 @@ bun publish ./package.tgz
 
 ### `--recursive` and `--filter`
 
-In a monorepo, `--recursive` (`-r`) publishes the root package and every workspace package, dependencies before their dependents. `--filter` (`-F`) does the same for the matching workspace packages only.
+In a monorepo, `--recursive` (`-r`) publishes the root package and every workspace package, dependencies before their dependents. `--filter` (`-F`) does the same for the matching workspace packages only. Packages that depend on each other in a cycle come after everything else they depend on, and the order inside a cycle is not specified.
 
 ```sh terminal icon="terminal"
 bun publish --recursive

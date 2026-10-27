@@ -14,7 +14,9 @@ use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
 use bun_event_loop::EventLoopHandle;
 use bun_event_loop::MiniEventLoop::{self as MiniEventLoopMod, MiniEventLoop};
+use bun_install::dependency::Behavior;
 use bun_install::lifecycle_script_runner::ScriptArgv;
+use bun_install::package_manager::workspace_selection::{GivesWay, cycle_groups};
 use bun_io::{BufferedReader, ReadState};
 use bun_sys as sys;
 
@@ -28,7 +30,7 @@ struct ScriptConfig {
     combined: &'static ZStr, // interned via `cli_dupe` into the process-lifetime CLI arena
     // Owned dep names; `DependencyMap.source_buf` would dangle once the
     // parsed `PackageJSON` (which owns the file bytes) drops.
-    deps: Vec<Box<[u8]>>,
+    deps: Vec<(Box<[u8]>, Behavior)>,
 
     // $PATH must be set per script because it contains
     // node_modules/.bin
@@ -916,13 +918,13 @@ pub(crate) fn run_scripts_with_filter(
             let combined = ZStr::from_buf(interned, combined_len);
 
             let dep_source_buf: &[u8] = &package.json.dependencies.source_buf;
-            let deps: Vec<Box<[u8]>> = package
+            let deps: Vec<(Box<[u8]>, Behavior)> = package
                 .json
                 .dependencies
                 .map
-                .keys()
+                .values()
                 .iter()
-                .map(|k| Box::<[u8]>::from(k.slice(dep_source_buf)))
+                .map(|dep| (dep.name.slice(dep_source_buf).into(), dep.behavior))
                 .collect();
 
             scripts.push(ScriptConfig {
@@ -1072,7 +1074,7 @@ pub(crate) fn run_scripts_with_filter(
     // compute dependencies (TODO: maybe we should do this only in a workspace?)
     for handle in state.handles.iter_mut() {
         let config = handle.config;
-        for name in &config.deps {
+        for (name, _) in &config.deps {
             // is it a workspace dependency?
             if let Some(pkgs) = map.get(&**name) {
                 for &dep in pkgs {
@@ -1092,18 +1094,14 @@ pub(crate) fn run_scripts_with_filter(
             break;
         }
     }
-    // if there is, we ignore dependency order completely
     if has_cycle_flag {
-        for handle in state.handles.iter_mut() {
-            handle.dependents.clear();
-            handle.remaining_dependencies = 0;
-        }
+        wait_around_cycles(&mut state.handles);
     }
 
     // set up dependencies between pre/post scripts
     // this is done after the cycle check because we don't want these to be removed if there is a cycle
     for i in 0..state.handles.len() - 1 {
-        if state.handles[i].config.package_name == state.handles[i + 1].config.package_name {
+        if is_chained(state.handles[i].config, state.handles[i + 1].config) {
             let next_ptr: *mut ProcessHandle = &raw mut state.handles[i + 1];
             state.handles[i].dependents.push(next_ptr);
             state.handles[i + 1].remaining_dependencies += 1;
@@ -1169,4 +1167,67 @@ fn has_cycle(current: &mut ProcessHandle) -> bool {
     }
     current.visit_state = VisitState::Visited;
     false
+}
+
+/// Whether `next` waits for `previous`: the scripts of one package run one after the other, and a package is its name (#10386).
+fn is_chained(previous: &ScriptConfig, next: &ScriptConfig) -> bool {
+    previous.package_name == next.package_name
+}
+
+/// Replaces the waits of a run whose packages depend on each other in a cycle, so that only a cycle stops waiting.
+#[inline(never)]
+fn wait_around_cycles(handles: &mut [ProcessHandle]) {
+    let first = handles.as_ptr();
+    let mut waits_for: Vec<Vec<(u32, GivesWay)>> = vec![Vec::new(); handles.len()];
+    for (dependency, handle) in handles.iter().enumerate() {
+        let name = &handle.config.package_name;
+        for &dependent in &handle.dependents {
+            // SAFETY: `dependents` only holds pointers to elements of `handles`.
+            let dependent = unsafe { dependent.cast_const().offset_from_unsigned(first) };
+            let listed = &handles[dependent].config.deps;
+            let listed = listed.iter().find(|(listed, _)| listed == name);
+            let gives_way = listed.map_or(GivesWay::Never, |&(_, behavior)| GivesWay::of(behavior));
+            waits_for[dependent].push((dependency as u32, gives_way));
+        }
+    }
+    // A cycle can go through the link to the previous script of a chain, because two packages can have one name.
+    let to_previous = |i: usize| i > 0 && is_chained(handles[i - 1].config, handles[i].config);
+    let chained: Vec<bool> = (0..handles.len()).map(to_previous).collect();
+    for (i, waits_for) in waits_for.iter_mut().enumerate() {
+        if chained[i] {
+            waits_for.push((i as u32 - 1, GivesWay::Never));
+        }
+    }
+    let (group_of, groups) = cycle_groups(&mut waits_for);
+
+    for handle in handles.iter_mut() {
+        handle.dependents.clear();
+        handle.remaining_dependencies = 0;
+    }
+    // For each group, the last group that was made to wait for it, so that no script waits for another one twice.
+    let mut last_waiting = vec![usize::MAX; groups.len()];
+    for (waiting, members) in groups.iter().enumerate() {
+        for &member in members {
+            // The caller adds the link to the previous script of the chain, which is the last entry here.
+            let dependencies = waits_for[member].len() - usize::from(chained[member]);
+            for &(dependency, _) in &waits_for[member][..dependencies] {
+                let awaited = group_of[dependency as usize] as usize;
+                if awaited == waiting
+                    || std::mem::replace(&mut last_waiting[awaited], waiting) == waiting
+                {
+                    continue;
+                }
+                for &dependent in members {
+                    let dependent_ptr: *mut ProcessHandle = &raw mut handles[dependent];
+                    for &dependency in &groups[awaited] {
+                        if chained[dependent] && dependency + 1 == dependent {
+                            continue;
+                        }
+                        handles[dependency].dependents.push(dependent_ptr);
+                        handles[dependent].remaining_dependencies += 1;
+                    }
+                }
+            }
+        }
+    }
 }

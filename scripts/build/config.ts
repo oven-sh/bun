@@ -305,7 +305,7 @@ export interface Config {
   rc: string | undefined;
   /** Windows: llvm-mt for nested cmake (CMAKE_MT). May be absent in some LLVM distros. */
   mt: string | undefined;
-  /** x64: nasm for BoringSSL's win-x64 assembly and libjpeg-turbo's x86_64 SIMD. */
+  /** x64: nasm for BoringSSL's win-x64 assembly. */
   nasm: string | undefined;
 
   // ─── macOS SDK (darwin only, undefined elsewhere) ───
@@ -513,7 +513,7 @@ export interface Toolchain extends JsToolchain {
    * source.ts) sidesteps the need.
    */
   mt: string | undefined;
-  /** x64 targets: nasm for BoringSSL's win-x64 assembly and libjpeg-turbo's x86_64 SIMD. */
+  /** x64 targets: nasm for BoringSSL's win-x64 assembly. */
   nasm: string | undefined;
 }
 

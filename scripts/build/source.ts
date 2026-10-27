@@ -448,7 +448,6 @@ export type DepName =
   | "cares"
   | "highway"
   | "libdeflate"
-  | "libjpeg-turbo"
   | "libspng"
   | "libuv"
   | "libwebp"

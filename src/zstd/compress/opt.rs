@@ -569,7 +569,7 @@ impl<'a> Trees<'a> {
         bt_look_ahead::<4, 2>(self.hash_table, self.bt, &self.input, self.hasher, ip);
 
         let descent = Descent::new(self.bt, curr);
-        bt_walk(
+        bt_walk::<false>(
             self.bt,
             &self.input,
             ip,

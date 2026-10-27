@@ -202,7 +202,7 @@ impl<'a> Dubt<'a> {
         let mut search_dict = true;
         match_index = table_get(self.hash_table, h);
         table_put(self.hash_table, h, curr);
-        let nb_compares = bt_walk(
+        let nb_compares = bt_walk::<true>(
             self.bt,
             &self.input,
             ip,
@@ -390,7 +390,7 @@ fn sort_dubt1(
 ) -> Result<()> {
     // The next sorted candidate is in the first slot. The other one has the previous unsorted candidate.
     let [next_sorted, _] = bt_children(bt, curr);
-    bt_walk(
+    bt_walk::<true>(
         bt,
         input,
         curr.wrapping_sub(input.dict_limit),

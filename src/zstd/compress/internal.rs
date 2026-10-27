@@ -904,6 +904,24 @@ impl<'a> Near<'a> {
         Err(len)
     }
 
+    /// [`Self::compare`] of a position that starts with `head`, if these bytes are enough to tell. What it reads does not
+    /// depend on `from`, so it does not wait for the comparison that `from` comes from.
+    #[inline(always)]
+    pub(crate) fn compare_head(self, head: &[u8; 16], match_pos: u32, from: u32) -> Option<Common> {
+        let match_bytes = self.chunk16(match_pos)?;
+        let mut differ = 0u32;
+        for (n, (byte, match_byte)) in head.iter().zip(match_bytes).enumerate() {
+            differ |= u32::from(byte != match_byte) << n;
+        }
+        let first = differ.trailing_zeros();
+        if first >= 16 || first < from {
+            return None;
+        }
+        let byte = head.get(first as usize & 15).copied().unwrap_or(0);
+        let match_byte = match_bytes.get(first as usize & 15).copied().unwrap_or(0);
+        Some(Common::followed_by(first, match_byte, byte))
+    }
+
     /// A hint that `pos`, which may be anything, is about to be read.
     #[inline(always)]
     pub(crate) fn prefetch(self, pos: u32) {
@@ -1286,9 +1304,9 @@ pub(crate) fn bt_look_ahead<const ROOT: u32, const BELOW: u32>(
 /// Goes down the tree whose root is `root` for the position `ip` of `input.near`, which `descent` is for and which
 /// becomes the root. `visit` is called with each position that is met on the way, which are all at least `low` and at
 /// most `nb_compares`, and what it has in common with `ip`, and returns whether to go on. Returns how many more positions
-/// could have been compared.
+/// could have been compared. `BY_HEAD` is whether to try [`Near::compare_head`], which is for ways down that are short.
 #[inline(always)]
-pub(crate) fn bt_walk(
+pub(crate) fn bt_walk<const BY_HEAD: bool>(
     bt: &mut Nodes,
     input: &TreeInput<'_>,
     ip: u32,
@@ -1303,6 +1321,7 @@ pub(crate) fn bt_walk(
     }
     let near = input.near;
     let dict_limit = input.dict_limit;
+    let head = near.chunk16(ip).filter(|_| BY_HEAD);
     let mut match_index = root;
     while nb_compares != 0 && match_index >= low {
         let children = bt_children(bt, match_index);
@@ -1314,9 +1333,13 @@ pub(crate) fn bt_walk(
                 near.prefetch(child.wrapping_sub(dict_limit).wrapping_add(from));
             }
         }
-        let common = match near.compare_chunks(ip, match_index.wrapping_sub(dict_limit), from) {
-            Ok(common) => common,
-            Err(from) => input.compare_rest(ip, match_index, from)?,
+        let match_pos = match_index.wrapping_sub(dict_limit);
+        let common = match head.and_then(|head| near.compare_head(head, match_pos, from)) {
+            Some(common) => common,
+            None => match near.compare_chunks(ip, match_pos, from) {
+                Ok(common) => common,
+                Err(from) => input.compare_rest(ip, match_index, from)?,
+            },
         };
         if !visit(match_index, common)? {
             break;

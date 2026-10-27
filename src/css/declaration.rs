@@ -275,6 +275,39 @@ pub(crate) fn parse_declaration<'bump>(
     )
 }
 
+/// The class a `composes` declaration composes into. Warns and returns `None` where it is not allowed.
+fn composing_class_or_warn(
+    state: css::ComposesState,
+    source_location: css::SourceLocation,
+    options: &css::ParserOptions,
+) -> Option<bun_ast::Ref> {
+    match state {
+        css::ComposesState::Allow { class, .. } => return Some(class),
+        css::ComposesState::DisallowEntirely => options.warn_fmt(
+            format_args!("\"composes\" is not valid here"),
+            source_location.line,
+            source_location.column,
+        ),
+        css::ComposesState::DisallowNested(info) => options.warn_fmt(
+            format_args!("\"composes\" is not allowed inside nested selectors"),
+            info.line,
+            info.column,
+        ),
+        css::ComposesState::DisallowNotSingleClass(info) => options.warn_fmt_with_notes(
+            format_args!("\"composes\" only works inside single class selectors"),
+            source_location.line,
+            source_location.column,
+            Box::new([bun_ast::Data {
+                text: b"The parent selector is not a single class selector because of the syntax here:"
+                    .as_slice()
+                    .into(),
+                location: Some(info.to_logger_location(options.filename)),
+            }]),
+        ),
+    }
+    None
+}
+
 pub(crate) fn parse_declaration_impl<'bump, C>(
     name: &[u8],
     input: &mut css::Parser,
@@ -297,31 +330,11 @@ where
     }
     let mut composing_class = None;
     if input.flags.css_modules() && matches!(property_id, css::PropertyId::Composes) {
-        let source_location = input.current_source_location();
-        match composes_ctx.composes_state() {
-            css::ComposesState::Allow { class, .. } => composing_class = Some(class),
-            css::ComposesState::DisallowEntirely => options.warn_fmt(
-                format_args!("\"composes\" is not valid here"),
-                source_location.line,
-                source_location.column,
-            ),
-            css::ComposesState::DisallowNested(info) => options.warn_fmt(
-                format_args!("\"composes\" is not allowed inside nested selectors"),
-                info.line,
-                info.column,
-            ),
-            css::ComposesState::DisallowNotSingleClass(info) => options.warn_fmt_with_notes(
-                format_args!("\"composes\" only works inside single class selectors"),
-                source_location.line,
-                source_location.column,
-                Box::new([bun_ast::Data {
-                    text: b"The parent selector is not a single class selector because of the syntax here:"
-                        .as_slice()
-                        .into(),
-                    location: Some(info.to_logger_location(options.filename)),
-                }]),
-            ),
-        }
+        composing_class = composing_class_or_warn(
+            composes_ctx.composes_state(),
+            input.current_source_location(),
+            options,
+        );
         if composing_class.is_none() {
             // Dropped unread: its `from "<file>"` must not import the file.
             while input.next().is_ok() {}

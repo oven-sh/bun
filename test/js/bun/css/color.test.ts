@@ -877,16 +877,16 @@ describe("color channels written as a number or a percentage", () => {
 });
 
 describe("relative colors and sRGB", () => {
-  // A browser keeps these unclamped, which rgb(), hsl() and hwb() cannot hold.
+  // A browser keeps these unclamped, which rgb(), hsl() and hwb() cannot hold. A style sheet keeps them as written.
   test.each([
-    "rgb(from lab(100% 104.3 -50.9) r g b)",
-    "hsl(from color(display-p3 0 1 0) h s l)",
-    "hwb(from oklch(1 0.399 336.3) h w b)",
-    "rgb(from light-dark(red, color(display-p3 0 1 0)) r g b)",
-    "rgb(from #336699 300 g b)",
-    "color-mix(in hwb, oklch(100% 0.399 336.3), blue)",
-  ])("%s is not resolved", input => {
-    expect(color(input, "css")).toBeNull();
+    ["rgb(from lab(100% 104.3 -50.9) r g b)", "#ff96ff"],
+    ["hsl(from color(display-p3 0 1 0) h s l)", "#0f0"],
+    ["hwb(from oklch(1 0.399 336.3) h w b)", "#ff5bff"],
+    ["rgb(from light-dark(red, color(display-p3 0 1 0)) r g b)", "light-dark(red, #0f0)"],
+    ["rgb(from #336699 300 g b)", "#f69"],
+    ["color-mix(in hwb, oklch(100% 0.399 336.3), blue)", "#962eff"],
+  ])("%s is clipped to %s", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
   });
 
   test.each([
@@ -977,5 +977,17 @@ describe("named colors in any letter case", () => {
 describe("greys in the lab format", () => {
   test.each(["#000000", "#808080", "#ffffff"])("%s has a = b = 0", input => {
     expect(color(input, "lab")).toMatch(/^lab\(\d+(\.\d+)?% 0 0\)$/);
+  });
+});
+
+describe("a relative color or color-mix() outside sRGB is clipped, not gamut mapped", () => {
+  test.each([
+    ["rgb(from #336699 300 g b)", "#ff6699"],
+    ["rgb(from color(display-p3 0 1 0) r g b)", "#00ff00"],
+    ["hsl(from oklch(100% .399 336.3) h s l)", "#ff5bff"],
+    ["hwb(from color(display-p3 0 1 0) h w b)", "#00ff00"],
+    ["color-mix(in hsl, color(display-p3 0 1 0), red)", "#ffff00"],
+  ])("%s is %s", (input, expected) => {
+    expect(color(input, "hex")).toBe(expected);
   });
 });

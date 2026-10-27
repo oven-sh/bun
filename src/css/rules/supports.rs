@@ -102,7 +102,7 @@ impl SupportsCondition {
 }
 
 impl SupportsCondition {
-    /// The color features of every browser in which the condition holds: its block needs no fallbacks for them.
+    /// The color features that every browser in which the condition holds has.
     fn tested_color_features(&self, arena: &bun_alloc::Arena) -> css::Features {
         use css::css_values::color::{CssColor, LABColor, PredefinedColor};
         let color = match self {

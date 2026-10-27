@@ -40,7 +40,7 @@ impl<R> NestingRule<R> {
     }
 }
 
-/// A [nested declarations rule](https://drafts.csswg.org/css-nesting-1/#nested-declarations-rule), which has no selector.
+/// A [nested declarations rule](https://drafts.csswg.org/css-nesting-1/#nested-declarations-rule).
 pub struct NestedDeclarationsRule {
     pub(crate) declarations: DeclarationBlock<'static>,
     pub(crate) loc: Location,
@@ -50,7 +50,7 @@ impl NestedDeclarationsRule {
     pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         // Read the `Copy` field directly: `Printer::context()` ties the borrow to `dest`.
         if let Some(ctx) = dest.ctx {
-            // Nesting is compiled away: a block under the enclosing selectors, in that rule's prefix pass.
+            // Nesting is compiled away: a block under the enclosing selectors and their prefix.
             let vendor_prefix = core::mem::replace(&mut dest.vendor_prefix, ctx.vendor_prefix);
             dest.ctx = ctx.parent;
             dest.nesting_expansions = 0;
@@ -86,7 +86,7 @@ impl NestedDeclarationsRule {
         Ok(())
     }
 
-    /// Minifies the declarations. Returns the `:dir()` rules they stage in a nested group rule, then their other fallback rules.
+    /// Returns the `:dir()` rules of the declarations, then their other fallback rules.
     pub(crate) fn minify<R>(
         &mut self,
         context: &mut MinifyContext<'_, '_>,
@@ -131,7 +131,7 @@ impl NestedDeclarationsRule {
         fallbacks.extend(context.handler_context.get_supports_rules(None, self.loc));
         context.handler_context.reset();
 
-        // Lowers `:dir()` for the targets, after the reset: minifying a style rule drains the context.
+        // Lowers `:dir()` for the targets. After the reset: this drains the context.
         dir_rules.minify(context, false)?;
         Ok((dir_rules.v, fallbacks))
     }

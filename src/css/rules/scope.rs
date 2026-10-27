@@ -40,6 +40,7 @@ impl<R> ScopeRule<R> {
             dest.write_char(b')')?;
             dest.whitespace()?;
         }
+        let was_in_scope_rule = core::mem::replace(&mut dest.in_scope_rule, true);
         if let Some(scope_end) = &self.scope_end {
             if dest.minify {
                 dest.write_char(b' ')?;
@@ -57,6 +58,7 @@ impl<R> ScopeRule<R> {
         // so clear our style context while printing them to avoid replacing & ourselves.
         // https://drafts.csswg.org/css-cascade-6/#scoped-rules
         dest.with_cleared_context(&self.rules, |rules, d: &mut Printer| rules.to_css(d))?;
+        dest.in_scope_rule = was_in_scope_rule;
         dest.pending_semicolon = false;
         dest.dedent();
         dest.newline()?;

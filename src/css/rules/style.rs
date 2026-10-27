@@ -412,7 +412,7 @@ impl<R> StyleRule<R> {
     {
         use css::context::{DeclarationContext, PropertyHandlerContext};
 
-        // Compiled nesting repeats every nested rule for each selector of this rule. Native nesting repeats it for each rule that the selector list is split into.
+        // Native nesting repeats the nested rules only once per rule this list is split into.
         let saved_expansion_multiplier = context.selector_expansion_multiplier;
         let copies = if context.targets.should_compile_same(css::Feature::Nesting) {
             self.selectors.v.len().max(1)
@@ -427,7 +427,7 @@ impl<R> StyleRule<R> {
             &mut context.handler_context,
             &mut handler_context,
         );
-        // After the swap `handler_context` is this rule's own: `NestedDeclarationsRule::minify` stages in it.
+        // After the swap `handler_context` is this rule's own.
         let result =
             self.rules
                 .minify_nested(context, parent_is_unused, Some(&mut handler_context));

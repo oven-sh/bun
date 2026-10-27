@@ -730,7 +730,7 @@ describe("css modules", () => {
     });
     const out = join(String(dir), "out");
     const result = await Bun.build({ entrypoints: [join(String(dir), "entry.js")], outdir: out, throw: false });
-    const logs = result.logs.map(log => log.message);
+    const logs = result.logs.map(log => Bun.stripANSI(log.message));
     if (!result.success) return { logs };
     const unhash = (text: string) => text.replace(/_[\w-]{6}(?![\w-])/g, "_H");
     const css = await Bun.file(join(out, "entry.css")).text();

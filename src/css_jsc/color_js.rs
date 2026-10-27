@@ -233,7 +233,7 @@ pub(crate) fn color<'a>(
             let mut parser = css::Parser::new(
                 &mut parser_input,
                 None,
-                css::css_parser::ParserOpts::default(),
+                css::css_parser::ParserOpts::CLIP_COLORS,
                 None,
             );
             CssColor::parse(&mut parser)

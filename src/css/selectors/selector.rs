@@ -1484,8 +1484,12 @@ pub(crate) mod serialize {
                 dest.write_char(b')')?;
             }
         } else if dest.targets.should_compile_same(Feature::Nesting) {
-            // At the root and directly in `@scope`, `&` is `:scope` with no specificity.
-            dest.write_str(b":where(:scope)")?;
+            // `&` has no specificity, but only a browser with `@scope` is sure to have `:where()`.
+            dest.write_str(if dest.in_scope_rule {
+                &b":where(:scope)"[..]
+            } else {
+                b":scope"
+            })?;
         } else {
             dest.write_char(b'&')?;
         }

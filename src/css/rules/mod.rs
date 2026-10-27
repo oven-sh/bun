@@ -485,7 +485,7 @@ impl<R> CssRuleList<R> {
         self.minify_nested(context, parent_is_unused, None)
     }
 
-    /// `enclosing`: the handler context of the style rule that owns this list (`NestedDeclarationsRule::minify`).
+    /// `enclosing`: the handler context of the style rule that owns this list.
     pub(crate) fn minify_nested(
         &mut self,
         context: &mut MinifyContext<'_, '_>,
@@ -497,7 +497,7 @@ impl<R> CssRuleList<R> {
     {
         let mut style_rules = StyleRuleKeyMap::default();
         let mut merge_state = StyleRuleMergeState::default();
-        // The `:dir()` rules of nested declarations that are not first in the list print at `dir_slot`, before the nested rules.
+        // The `:dir()` rules of later nested declarations go before the nested rules.
         let mut dir_rules: Vec<CssRule<R>> = Vec::new();
         let mut dir_slot = 0;
         let mut rules: Vec<CssRule<R>> = Vec::new();
@@ -583,7 +583,7 @@ impl<R> CssRuleList<R> {
                         if parent_is_unused {
                             break 'arm;
                         }
-                        // A flush expects the handler context drained, and the declarations stage rules in it.
+                        // A later flush would find the rules staged below.
                         flush_pending_style_merge(
                             &mut rules,
                             &mut style_rules,
@@ -593,7 +593,6 @@ impl<R> CssRuleList<R> {
                         let is_first = rules.is_empty();
                         let (dir, fallbacks) =
                             nested.minify::<R>(context, enclosing.as_deref_mut())?;
-                        // Like the other non-style rules, it ends the style rule merge and the duplicate check.
                         merge_state.last_compat = None;
                         style_rules.clear();
                         if !nested.declarations.is_empty() {
@@ -631,13 +630,9 @@ impl<R> CssRuleList<R> {
                         // untouched preserves them verbatim, matching the
                         // pre-port behavior.
                         nst.style.charge_selector_expansion(context)?;
-                        // The wrapped rule prints its selector list as written, so only compiled nesting multiplies it.
-                        let split_rule_count = 1;
-                        nst.style.minify_nested_rules(
-                            context,
-                            parent_is_unused,
-                            split_rule_count,
-                        )?;
+                        // 1: its selector list is never split.
+                        nst.style
+                            .minify_nested_rules(context, parent_is_unused, 1)?;
                     }
                     CssRule::StartingStyle(rl) => {
                         // See `Container` above: recurse so nested style rules
@@ -719,7 +714,6 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
     // we need to split them into multiple rules.
     let mut incompatible = SmallList::<Selector, 1>::default();
     if split_rule_count > 1 {
-        // The compatible selectors stay in this rule. The rules for the incompatible ones are generated later.
         for sel in core::mem::take(&mut sty.selectors.v) {
             if selector::is_compatible(core::slice::from_ref(&sel), context.targets) {
                 sty.selectors.v.append(sel);

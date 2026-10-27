@@ -1912,8 +1912,20 @@ mod rule_parsers {
                     Ok(())
                 }
                 AtRulePrelude::Nest(selectors) => {
-                    let (declarations, rules) =
+                    let (mut declarations, mut rules) =
                         this.parse_nested(input, true, this.composes_state.nested())?;
+                    // The minifier leaves an `@nest` body as written, so it stays one block.
+                    rules.v.retain_mut(|rule| {
+                        let CssRule::NestedDeclarations(run) = rule else {
+                            return true;
+                        };
+                        let run = &mut run.declarations;
+                        declarations.declarations.append(&mut run.declarations);
+                        declarations
+                            .important_declarations
+                            .append(&mut run.important_declarations);
+                        false
+                    });
                     this.rules
                         .v
                         .push(CssRule::Nesting(css_rules::nesting::NestingRule {
@@ -3072,6 +3084,8 @@ bitflags::bitflags! {
         const RAW_URL_TOKENS = 0b10;
         /// Inside `:global(...)` of a CSS module.
         const GLOBAL_SCOPE = 0b100;
+        /// For `Bun.color`: clips a relative color or `color-mix()` that a style sheet keeps as written.
+        const CLIP_COLORS = 0b1000;
     }
 }
 impl ParserOpts {
@@ -3089,6 +3103,11 @@ impl ParserOpts {
     #[inline]
     pub(crate) fn raw_url_tokens(self) -> bool {
         self.contains(Self::RAW_URL_TOKENS)
+    }
+
+    #[inline]
+    pub(crate) fn clip_colors(self) -> bool {
+        self.contains(Self::CLIP_COLORS)
     }
 }
 
@@ -3690,6 +3709,7 @@ impl<'a> Parser<'a> {
         let text = self.slice_from_cloned(cached.start_position);
         let before = &self.input.tokenizer.src[..cached.start_position];
         let touches_a_number = self.next_byte() == Some(b'.')
+            || text.starts_with(b"+")
             || (text.starts_with(b".") && before.last().is_some_and(u8::is_ascii_digit));
         let is_long = int_value.is_some_and(|int| int.unsigned_abs() >= 10u32.pow(f32::DIGITS));
         (is_long || touches_a_number).then_some(text)

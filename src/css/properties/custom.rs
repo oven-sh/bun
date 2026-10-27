@@ -219,7 +219,7 @@ impl TokenList {
         }
 
         // A blank can mean something (`.a .b`, `type(<number>)`): only the stored ones print.
-        for token_or_value in self.v.iter() {
+        for (i, token_or_value) in self.v.iter().enumerate() {
             match token_or_value {
                 TokenOrValue::Color(color) => color.to_css(dest)?,
                 TokenOrValue::UnresolvedColor(color) => color.to_css(dest, is_custom_property)?,
@@ -255,6 +255,7 @@ impl TokenList {
                 TokenOrValue::AnimationName(v) => v.to_css(dest)?,
                 TokenOrValue::RawNumber(number) => number.to_css(dest)?,
                 TokenOrValue::Token(token) => match token {
+                    Token::Whitespace(_) if dest.minify && self.can_omit_whitespace(i) => {}
                     Token::Comma => dest.delim(b',', false)?,
                     Token::Dimension(dim) => {
                         css_parser::serializer::serialize_dimension(dim.num.value, dim.unit, dest)?;
@@ -265,6 +266,46 @@ impl TokenList {
             }
         }
         Ok(())
+    }
+
+    /// Whether the items around the blank at `i` read the same without it.
+    fn can_omit_whitespace(&self, i: usize) -> bool {
+        let (Some(prev), Some(next)) = (self.v[..i].last(), self.v.get(i + 1)) else {
+            return false;
+        };
+        let delim = |item: &TokenOrValue| match item {
+            TokenOrValue::Token(Token::Delim(d)) => char::from_u32(*d),
+            _ => None,
+        };
+        match (delim(prev), delim(next)) {
+            // calc() needs the blanks around `+` and `-`.
+            (Some('+' | '-'), _) | (_, Some('+' | '-')) => false,
+            // `/*` and `*/` delimit a comment, `*=` is one token.
+            (Some('/'), Some('*')) | (Some('*'), Some('/' | '=')) => false,
+            (Some('/'), _) if matches!(next, TokenOrValue::Token(Token::SubstringMatch)) => false,
+            (Some('*' | '/'), _) | (_, Some('*' | '/')) => true,
+            _ => {
+                let closes = |item: &TokenOrValue| {
+                    matches!(
+                        item,
+                        TokenOrValue::Token(
+                            Token::CloseParen | Token::CloseSquare | Token::CloseCurly
+                        )
+                    )
+                };
+                closes(prev)
+                    || closes(next)
+                    || matches!(
+                        prev,
+                        TokenOrValue::Var(_)
+                            | TokenOrValue::Env(_)
+                            | TokenOrValue::Function(_)
+                            | TokenOrValue::Token(
+                                Token::OpenParen | Token::OpenSquare | Token::OpenCurly
+                            )
+                    )
+            }
+        }
     }
 
     pub(crate) fn to_css_raw(&self, dest: &mut Printer) -> PrintResult<()> {
@@ -792,7 +833,7 @@ impl UnresolvedColor {
             }),
             b"hsl" => return input.parse_nested_block(|input2| {
                 parser.parse_relative::<HSL, UnresolvedColor, _>(input2, |i, p| {
-                    let (h, s, l, is_legacy) = parse_hsl_hwb_components::<HSL>(i, p, false)?;
+                    let (h, s, l, is_legacy) = parse_hsl_hwb_components(i, p, false)?;
                     if is_legacy {
                         return Err(i.new_custom_error(ParserError::invalid_value));
                     }

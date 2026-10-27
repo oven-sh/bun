@@ -919,7 +919,7 @@ impl FontHandler {
                 // `font` resets `font-kerning` and the like, so they stay behind a buffered `font`.
                 if self.has_shorthand
                     && bun_core::strings::starts_with_case_insensitive_ascii(
-                        val.name.as_str(),
+                        crate::VendorPrefix::strip_from(val.name.as_str()).1,
                         b"font-",
                     )
                 {

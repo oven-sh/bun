@@ -320,9 +320,8 @@ impl LinearGradient {
 
     fn get_prefixed(&self, bump: &Arena, prefix: VendorPrefix) -> LinearGradient {
         let mut x = self.deep_clone(bump);
-        let was_prefixed = self.vendor_prefix != VendorPrefix::NONE;
-        if self.direction.is_default(was_prefixed) {
-            x.direction = LineDirection::default(prefix != VendorPrefix::NONE);
+        if self.vendor_prefix == VendorPrefix::NONE {
+            x.direction = self.direction.to_prefixed();
         }
         x.vendor_prefix = prefix;
         x
@@ -894,6 +893,31 @@ impl LineDirection {
         match self {
             LineDirection::Angle(angle) => !is_prefixed && angle.to_degrees() == 180.0,
             _ => *self == Self::default(is_prefixed),
+        }
+    }
+
+    /// A standard direction in the prefixed syntax: the opposite side, or the angle measured
+    /// counterclockwise from `to right`.
+    fn to_prefixed(&self) -> LineDirection {
+        let flip_x = |x: HorizontalPositionKeyword| match x {
+            HorizontalPositionKeyword::Left => HorizontalPositionKeyword::Right,
+            HorizontalPositionKeyword::Right => HorizontalPositionKeyword::Left,
+        };
+        let flip_y = |y: VerticalPositionKeyword| match y {
+            VerticalPositionKeyword::Top => VerticalPositionKeyword::Bottom,
+            VerticalPositionKeyword::Bottom => VerticalPositionKeyword::Top,
+        };
+        match self {
+            _ if self.is_default(false) => Self::default(true),
+            LineDirection::Angle(angle) => {
+                LineDirection::Angle(Angle::Deg((90.0 - angle.to_degrees()).rem_euclid(360.0)))
+            }
+            LineDirection::Horizontal(x) => LineDirection::Horizontal(flip_x(*x)),
+            LineDirection::Vertical(y) => LineDirection::Vertical(flip_y(*y)),
+            LineDirection::Corner(corner) => LineDirection::Corner(LineDirectionCorner {
+                horizontal: flip_x(corner.horizontal),
+                vertical: flip_y(corner.vertical),
+            }),
         }
     }
 

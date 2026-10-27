@@ -354,9 +354,9 @@ impl<'a> PropertyHandlerContext<'a> {
         }
     }
 
-    /// Drops the `@supports` copies of a property: printed after the rule, they would beat a later declaration of it.
+    /// The `@supports` copies print after the rule, so they would beat a later declaration.
     pub(crate) fn remove_conditional_property(&mut self, property_id: css::PropertyId) {
-        // A merged rule is minified again, with no context, while the copies of the next rule are staged.
+        // No context: a merged rule, minified again while the next rule's copies are staged.
         if self.context != DeclarationContext::StyleRule {
             return;
         }

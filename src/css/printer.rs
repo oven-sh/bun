@@ -129,7 +129,7 @@ pub struct Printer<'a> {
     /// they are skipped while this is set and emitted once in the final pass,
     /// keeping the output linear in nesting depth instead of exponential.
     pub(crate) skip_prefixed_nested_rules: bool,
-    /// The block ends in a declaration with no `;` yet. Printer state: a minified `@media all` prints no block.
+    /// The last thing printed is a nested declaration with no `;` yet.
     pub(crate) pending_semicolon: bool,
     pub(crate) in_calc: bool,
     pub(crate) css_module: Option<css::CssModule<'a>>,
@@ -149,6 +149,8 @@ pub struct Printer<'a> {
     /// `serialize::serialize_nesting` so deeply nested rules with multiple
     /// `&` references per level cannot expand exponentially.
     pub(crate) nesting_expansions: u32,
+    /// In the `<scope-end>` or the block of an `@scope` rule.
+    pub(crate) in_scope_rule: bool,
     /// Running total of bytes emitted by duplicate vendor-prefix passes. A rule
     /// whose selector list carries more than one vendor prefix (e.g. a list
     /// mixing `:-webkit-autofill` with an unprefixed pseudo-class, or a single
@@ -300,6 +302,7 @@ impl<'a> Printer<'a> {
             css_module: None,
             ctx: None,
             nesting_expansions: 0,
+            in_scope_rule: false,
             prefix_expansion_bytes: 0,
             error_kind: None,
         }

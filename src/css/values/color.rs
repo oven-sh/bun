@@ -734,10 +734,14 @@ impl CssColor {
         }
     }
 
-    /// Converts to `T`. `None` for a color outside sRGB that `T` cannot hold: no browser maps it.
-    fn to_space<T: Colorspace + ColorGamut>(&self) -> Option<T> {
-        if T::SRGB_ONLY && !SRGB::try_from_css_color(self)?.is_nearly_in_gamut() {
-            return None;
+    /// Converts to `T`. A color outside sRGB that `T` cannot hold is clipped, or `None`: no browser
+    /// maps it.
+    fn to_space<T: Colorspace + ColorGamut>(&self, clip: bool) -> Option<T> {
+        if T::SRGB_ONLY {
+            let srgb = SRGB::try_from_css_color(self)?;
+            if !srgb.is_nearly_in_gamut() {
+                return clip.then(|| srgb.clip().into());
+            }
         }
         T::try_from_css_color(self)
     }
@@ -751,6 +755,7 @@ impl CssColor {
         other: &CssColor,
         mut p2: f32,
         method: HueInterpolationMethod,
+        clip: bool,
     ) -> Option<CssColor>
     where
         T: Interpolate + ColorGamut,
@@ -783,15 +788,15 @@ impl CssColor {
             };
 
             return Some(CssColor::LightDark {
-                light: Box::new(al.interpolate::<T>(p1, &bl, p2, method)?),
-                dark: Box::new(ad.interpolate::<T>(p1, &bd, p2, method)?),
+                light: Box::new(al.interpolate::<T>(p1, &bl, p2, method, clip)?),
+                dark: Box::new(ad.interpolate::<T>(p1, &bd, p2, method, clip)?),
             });
         }
 
         // https://drafts.csswg.org/css-color-5/#color-mix-result
         // An operand stored as `T` is not converted (`From<T> for T`), so it is mixed as written.
-        let mut first_color = self.to_space::<T>()?;
-        let mut second_color = other.to_space::<T>()?;
+        let mut first_color = self.to_space::<T>(clip)?;
+        let mut second_color = other.to_space::<T>(clip)?;
 
         // https://drafts.csswg.org/css-color-4/#interpolation-missing
         first_color.fill_missing_components(&second_color);
@@ -1361,7 +1366,7 @@ pub(crate) fn parse_hsl_hwb<T: Colorspace + ColorGamut>(
 ) -> CssResult<CssColor> {
     input.parse_nested_block(|i| {
         parser.parse_relative::<T, CssColor, _>(i, |i, p| {
-            let (h, a, b, is_legacy) = parse_hsl_hwb_components::<T>(i, p, allows_legacy)?;
+            let (h, a, b, is_legacy) = parse_hsl_hwb_components(i, p, allows_legacy)?;
             let alpha = if is_legacy {
                 parse_legacy_alpha(i, p)?
             } else {
@@ -1373,12 +1378,11 @@ pub(crate) fn parse_hsl_hwb<T: Colorspace + ColorGamut>(
     })
 }
 
-pub(crate) fn parse_hsl_hwb_components<T>(
+pub(crate) fn parse_hsl_hwb_components(
     input: &mut css::Parser,
     parser: &mut ComponentParser,
     allows_legacy: bool,
 ) -> CssResult<(f32, f32, f32, bool)> {
-    let _ = core::marker::PhantomData::<T>; // autofix
     if let Some(from) = &mut parser.from {
         from.scale = (1.0, 100.0, 100.0);
     }
@@ -1847,7 +1851,7 @@ impl ComponentParser {
             return Ok(C::light_dark_owned(light, dark));
         }
 
-        let Some(new_from) = from.to_space::<T>() else {
+        let Some(new_from) = from.to_space::<T>(input.flags.clip_colors()) else {
             return Err(input.new_custom_error(css::ParserError::invalid_value));
         };
 
@@ -1859,7 +1863,7 @@ impl ComponentParser {
     /// Clamps a channel of `rgb()`, `hsl()` or `hwb()`. A relative color out of range does not
     /// parse: no browser clamps it.
     fn clamp_unit(&self, input: &css::Parser, value: f32) -> CssResult<f32> {
-        if self.from.is_some() && !is_nearly_unit(value) {
+        if self.from.is_some() && !input.flags.clip_colors() && !is_nearly_unit(value) {
             return Err(input.new_custom_error(css::ParserError::invalid_value));
         }
         Ok(value.clamp(0.0, 1.0))
@@ -2322,27 +2326,23 @@ pub(crate) fn parse_color_mix(input: &mut css::Parser) -> CssResult<CssColor> {
         return Err(input.new_custom_error(css::ParserError::invalid_value));
     }
 
+    let clip = input.flags.clip_colors();
+    macro_rules! mix {
+        ($T:ty) => {
+            first_color.interpolate::<$T>(p1, &second_color, p2, hue_method, clip)
+        };
+    }
     let result = match method {
-        ColorSpaceName::Srgb => first_color.interpolate::<SRGB>(p1, &second_color, p2, hue_method),
-        ColorSpaceName::SrgbLinear => {
-            first_color.interpolate::<SRGBLinear>(p1, &second_color, p2, hue_method)
-        }
-        ColorSpaceName::Hsl => first_color.interpolate::<HSL>(p1, &second_color, p2, hue_method),
-        ColorSpaceName::Hwb => first_color.interpolate::<HWB>(p1, &second_color, p2, hue_method),
-        ColorSpaceName::Lab => first_color.interpolate::<LAB>(p1, &second_color, p2, hue_method),
-        ColorSpaceName::Lch => first_color.interpolate::<LCH>(p1, &second_color, p2, hue_method),
-        ColorSpaceName::Oklab => {
-            first_color.interpolate::<OKLAB>(p1, &second_color, p2, hue_method)
-        }
-        ColorSpaceName::Oklch => {
-            first_color.interpolate::<OKLCH>(p1, &second_color, p2, hue_method)
-        }
-        ColorSpaceName::Xyz | ColorSpaceName::XyzD65 => {
-            first_color.interpolate::<XYZd65>(p1, &second_color, p2, hue_method)
-        }
-        ColorSpaceName::XyzD50 => {
-            first_color.interpolate::<XYZd50>(p1, &second_color, p2, hue_method)
-        }
+        ColorSpaceName::Srgb => mix!(SRGB),
+        ColorSpaceName::SrgbLinear => mix!(SRGBLinear),
+        ColorSpaceName::Hsl => mix!(HSL),
+        ColorSpaceName::Hwb => mix!(HWB),
+        ColorSpaceName::Lab => mix!(LAB),
+        ColorSpaceName::Lch => mix!(LCH),
+        ColorSpaceName::Oklab => mix!(OKLAB),
+        ColorSpaceName::Oklch => mix!(OKLCH),
+        ColorSpaceName::Xyz | ColorSpaceName::XyzD65 => mix!(XYZd65),
+        ColorSpaceName::XyzD50 => mix!(XYZd50),
     };
 
     let result = match result {

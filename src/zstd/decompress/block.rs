@@ -634,7 +634,8 @@ impl BlockDecoder {
         };
         let is_small = start == prefix_start
             && capacity <= Scratch::MAX_SMALL_OUTPUT
-            && literals.location == LitLocation::NotInDst;
+            && literals.location == LitLocation::NotInDst
+            && matches!(ext_dict, ExtDict::Dict(_));
         let (out, copy_to) = match buf {
             OutputBuffer::Whole(bytes) if is_small => (
                 OutputBuffer::Whole(small_output.sub_mut(..capacity + WILDCOPY_OVERLENGTH)?),

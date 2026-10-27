@@ -30,13 +30,18 @@ _file_arguments() {
     # bun test picks test files by their lowercased name, so the filter ignores case too.
     # the options and the cd are in the subshell only, so an interrupted listing leaks nothing.
     # the callers add flags and script names to the list, so readline must not treat it as
-    # file names: a name with a space is escaped here instead. the typed part stays as it is,
-    # so that a leading ~ still expands
-    local rest;
+    # file names: a name with a space is escaped here instead, unless the user opened a quote.
+    # a leading ~ stays as it is, so that it still expands
+    local tilde;
     COMPREPLY=();
     while IFS= read -r file; do
-        printf -v rest '%q' "${file:${#cur_word}}";
-        COMPREPLY+=( "${cur_word}${rest}" );
+        if [[ "${cur_word}" != [\"\']* ]]; then
+            tilde="";
+            [[ "${file}" == "~"* ]] && { tilde="~"; file="${file#\~}"; };
+            printf -v file '%q' "${file}";
+            file="${tilde}${file}";
+        fi
+        COMPREPLY+=( "${file}" );
     done < <(CDPATH= builtin cd -- "${working_dir}" >/dev/null 2>&1 && shopt -s extglob nocasematch && compgen -f -X "${extensions}" -- "${cur_word}");
 }
 

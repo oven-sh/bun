@@ -19,6 +19,7 @@ pub mod io;
 mod lookup;
 pub mod record;
 pub mod reply;
+pub mod simulation;
 mod sysconfig;
 mod text;
 

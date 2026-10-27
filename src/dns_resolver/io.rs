@@ -57,6 +57,52 @@ pub enum FileError {
     Other,
 }
 
+/// What the system says of its resolver, as the system says it.
+#[derive(Debug)]
+pub enum Settings {
+    /// Read resolv.conf(5) and nsswitch.conf(5).
+    Files,
+    Windows(WindowsSettings),
+    /// `dns_configuration_copy()`'s `resolver` list. `None`: it gave nothing.
+    Mac(Option<Vec<MacResolver>>),
+    /// The properties `net.dns1` to `net.dns8`, up to the first that is not set.
+    Android(Vec<Vec<u8>>),
+}
+
+#[derive(Debug, Default)]
+pub struct WindowsSettings {
+    /// `FirstDnsServerAddress` of each adapter that is up, as `GetAdaptersAddresses` orders them.
+    pub servers: Vec<WindowsServer>,
+    /// From the registry, in this order, those that are set:
+    /// `SearchList` and `Domain` of `Tcpip\Parameters`, `SearchList` of `Windows NT\DNSClient`, `PrimaryDNSSuffix` of
+    /// `System\DNSClient`, then `SearchList`, `Domain` and `DhcpDomain` of each key in `Tcpip\Parameters\Interfaces`.
+    pub suffixes: Vec<Vec<u8>>,
+}
+
+#[derive(Debug)]
+pub struct WindowsServer {
+    pub address: SocketAddr,
+    /// `Ipv4Metric` or `Ipv6Metric` of the adapter, by the family of the address.
+    pub interface_metric: u32,
+    /// `GetBestRoute2`'s metric for the address through the adapter.
+    pub route_metric: Option<u32>,
+    /// `Ipv6IfIndex` of the adapter.
+    pub ipv6_interface: u32,
+}
+
+/// A `dns_resolver_t`.
+#[derive(Debug, Default)]
+pub struct MacResolver {
+    /// It has a `domain`: it answers for that domain only.
+    pub for_one_domain: bool,
+    pub reach_flags: u32,
+    pub port: u16,
+    pub search: Vec<Vec<u8>>,
+    pub options: Option<Vec<u8>>,
+    pub nameservers: Vec<SocketAddr>,
+    pub interface: u32,
+}
+
 /// An environment variable.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Variable {
@@ -101,6 +147,7 @@ pub trait Io {
     fn modified_time(&mut self, path: &[u8]) -> Option<i64>;
     fn env(&mut self, variable: Variable) -> Option<Vec<u8>>;
     fn hostname(&mut self) -> Option<Vec<u8>>;
+    fn settings(&mut self) -> Settings;
     /// Where the system keeps `hosts`, `services` and the like: `/etc/{name}`, except on Windows.
     fn etc_path(&mut self, name: &str) -> Option<Vec<u8>>;
 

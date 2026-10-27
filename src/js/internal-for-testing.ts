@@ -890,6 +890,9 @@ export const dnsGetaddrinfoError = $bindgen("dns_internals.bind.ts", "getaddrinf
   hostname: string,
 ) => Error & { code: string; errno: number; syscall: string; hostname: string };
 
+/** Runs the resolver behind `node:dns` in the world that `script` describes and returns the log of all it did there. The language of both is in `src/dns_resolver/simulation.rs`. */
+export const dnsSimulate = $bindgen("dns_internals.bind.ts", "simulateForTesting");
+
 export const fetchH2Internals = {
   liveCounts: $bindgen("headers_jsc.bind.ts", "h2LiveCounts"),
 };

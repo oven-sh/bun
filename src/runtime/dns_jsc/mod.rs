@@ -19,6 +19,7 @@ pub(crate) use dns_body::netc;
 pub(crate) mod dns_resolver_jsc; // answers and errors → JSValue
 
 mod system_io;
+mod system_settings;
 
 #[path = "options_jsc.rs"]
 pub(crate) mod options_jsc; // GetAddrInfo.Options ↔ JSValue

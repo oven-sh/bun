@@ -1,13 +1,13 @@
-//! The system's resolver configuration: resolv.conf(5), nsswitch.conf(5) and the environment.
+//! The system's resolver configuration: resolv.conf(5) and nsswitch.conf(5) or what the system has instead, then the environment.
 
-use core::net::IpAddr;
+use core::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
 use bun_core::ip_address::parse_ares;
 use bun_core::strings;
 
 use crate::buf::all_print;
 use crate::channel::ServerConfig;
-use crate::io::{FileError, Io, Variable};
+use crate::io::{FileError, Io, MacResolver, Settings, Variable, WindowsSettings};
 use crate::text::{fits, parse_uint, split, take_while, trim, trim_start, word};
 use crate::{Error, Result};
 
@@ -44,26 +44,26 @@ pub(crate) fn load_etc_file<I: Io>(io: &mut I, name: &str) -> Result<Vec<u8>> {
     load_file(io, &path)
 }
 
-/// A file that is there and cannot be read is an error. One that is not there says nothing.
 pub(crate) fn read<I: Io>(io: &mut I) -> Result<SysConfig> {
     let mut config = SysConfig {
         ndots: 1,
         ..SysConfig::default()
     };
-    type ParseLine<I> = fn(&mut SysConfig, &mut I, &[u8]);
-    let files: [(&str, ParseLine<I>); 2] = [
-        ("resolv.conf", SysConfig::parse_resolv_conf_line),
-        ("nsswitch.conf", SysConfig::parse_nsswitch_line),
-    ];
-    for (name, parse_line) in files {
-        match load_etc_file(io, name) {
-            Ok(text) => {
-                for line in split(&text, b"\n", true, None) {
-                    parse_line(&mut config, io, line);
-                }
+    match io.settings() {
+        Settings::Files => config.read_files(io)?,
+        Settings::Windows(settings) => config.read_windows(io, settings),
+        Settings::Mac(resolvers) => {
+            for resolver in resolvers.ok_or(Error::ESERVFAIL)? {
+                config.read_mac_resolver(io, &resolver);
             }
-            Err(Error::ENOTFOUND) => {}
-            Err(error) => return Err(error),
+        }
+        Settings::Android(properties) => {
+            if properties.is_empty() {
+                return Err(Error::EFILE);
+            }
+            for servers in properties {
+                config.add_servers(io, &servers);
+            }
         }
     }
     if let Some(domain) = io.env(Variable::LocalDomain) {
@@ -83,6 +83,95 @@ pub(crate) fn domain_of_hostname<I: Io>(io: &mut I) -> Option<Vec<u8>> {
 }
 
 impl SysConfig {
+    /// A file that is there and cannot be read is an error. One that is not there says nothing.
+    fn read_files<I: Io>(&mut self, io: &mut I) -> Result<()> {
+        type ParseLine<I> = fn(&mut SysConfig, &mut I, &[u8]);
+        let files: [(&str, ParseLine<I>); 2] = [
+            ("resolv.conf", SysConfig::parse_resolv_conf_line),
+            ("nsswitch.conf", SysConfig::parse_nsswitch_line),
+        ];
+        for (name, parse_line) in files {
+            match load_etc_file(io, name) {
+                Ok(text) => {
+                    for line in split(&text, b"\n", true, None) {
+                        parse_line(self, io, line);
+                    }
+                }
+                Err(Error::ENOTFOUND) => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(())
+    }
+
+    fn read_windows<I: Io>(&mut self, io: &mut I, settings: WindowsSettings) {
+        // Windows routes packets by these metrics and does not order the servers by them.
+        let mut servers: Vec<(u32, SocketAddr, u32)> = Vec::new();
+        for server in settings.servers {
+            let scope = match server.address.ip() {
+                IpAddr::V4(Ipv4Addr::UNSPECIFIED | Ipv4Addr::BROADCAST) => continue,
+                IpAddr::V6(Ipv6Addr::UNSPECIFIED) => continue,
+                IpAddr::V6(v6) if v6.is_unicast_link_local() => server.ipv6_interface,
+                _ => 0,
+            };
+            let metric = server
+                .route_metric
+                .filter(|&metric| metric != u32::MAX)
+                .and_then(|metric| metric.checked_add(server.interface_metric))
+                .unwrap_or(u32::MAX);
+            servers.push((metric, server.address, scope));
+        }
+        servers.sort_by_key(|(metric, ..)| *metric);
+        let mut seen: Vec<(IpAddr, u16, u32)> = Vec::new();
+        for (_, address, scope) in servers {
+            let server = (address.ip(), address.port(), scope);
+            if !seen.contains(&server) {
+                seen.push(server);
+                self.add_server(io, address.ip(), address.port(), Some(scope));
+            }
+        }
+
+        let suffixes: Vec<&[u8]> = settings
+            .suffixes
+            .iter()
+            .map(Vec::as_slice)
+            .filter(|suffix| !suffix.is_empty() && all_print(suffix))
+            .collect();
+        if !suffixes.is_empty() {
+            self.set_search(&suffixes.join(&b','), None);
+        }
+    }
+
+    fn read_mac_resolver<I: Io>(&mut self, io: &mut I, resolver: &MacResolver) {
+        /// `kSCNetworkFlagsReachable | kSCNetworkReachabilityFlagsConnectionOnTraffic`
+        const CAN_BE_REACHED: u32 = 1 << 1 | 1 << 3;
+        if resolver.for_one_domain
+            || resolver.reach_flags & CAN_BE_REACHED == 0
+            || resolver.nameservers.is_empty()
+        {
+            return;
+        }
+        for domain in &resolver.search {
+            if !self
+                .domains
+                .iter()
+                .any(|it| it.eq_ignore_ascii_case(domain))
+            {
+                self.domains.push(domain.clone());
+            }
+        }
+        if let Some(options) = &resolver.options {
+            self.set_options(options);
+        }
+        for address in &resolver.nameservers {
+            let port = match address.port() {
+                0 => resolver.port,
+                port => port,
+            };
+            self.add_server(io, address.ip(), port, Some(resolver.interface));
+        }
+    }
+
     fn set_search(&mut self, list: &[u8], max: Option<usize>) {
         self.domains.clear();
         for domain in split(list, b", ", false, None) {
@@ -149,28 +238,39 @@ impl SysConfig {
 
     fn add_servers<I: Io>(&mut self, io: &mut I, list: &[u8]) {
         for text in split(list, b" ,", false, None) {
-            let Some((address, port, interface)) = parse_server(text) else {
-                continue;
-            };
-            let mut scope_id = 0;
-            if let IpAddr::V6(v6) = address {
-                match v6.segments() {
-                    // Site-local, deprecated by RFC 3879. Windows and Android are known to list such servers; none exists.
-                    [0xfec0..=0xfeff, ..] => continue,
-                    [0xfe80..=0xfebf, ..] => match interface_index(io, interface) {
-                        Some(index) => scope_id = index,
-                        None => continue,
-                    },
-                    _ => {}
-                }
+            if let Some((address, port, interface)) = parse_server(text) {
+                let interface = interface_index(io, interface);
+                self.add_server(io, address, port, interface);
             }
-            self.servers.push(ServerConfig {
-                address,
-                udp_port: port,
-                tcp_port: port,
-                scope_id,
-            });
         }
+    }
+
+    /// `interface` matters to a link-local address only, which is of no use without one.
+    fn add_server<I: Io>(
+        &mut self,
+        io: &mut I,
+        address: IpAddr,
+        port: u16,
+        interface: Option<u32>,
+    ) {
+        let mut scope_id = 0;
+        if let IpAddr::V6(v6) = address {
+            match v6.segments() {
+                // Site-local, deprecated by RFC 3879. Windows and Android are known to list such servers; none exists.
+                [0xfec0..=0xfeff, ..] => return,
+                [0xfe80..=0xfebf, ..] => match interface.filter(|&index| io.has_interface(index)) {
+                    Some(index) => scope_id = index,
+                    None => return,
+                },
+                _ => {}
+            }
+        }
+        self.servers.push(ServerConfig {
+            address,
+            udp_port: port,
+            tcp_port: port,
+            scope_id,
+        });
     }
 
     fn parse_resolv_conf_line<I: Io>(&mut self, io: &mut I, line: &[u8]) {
@@ -213,7 +313,7 @@ fn interface_index<I: Io>(io: &mut I, interface: &[u8]) -> Option<u32> {
         return None;
     }
     if interface.iter().all(u8::is_ascii_digit) {
-        return parse_uint(interface, u32::MAX).filter(|&index| io.has_interface(index));
+        return parse_uint(interface, u32::MAX);
     }
     io.interface_index(interface)
 }

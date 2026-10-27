@@ -99,3 +99,9 @@ export const getaddrinfoErrorForTesting = b.fn({
   returns: b.any,
   rustPath: "crate::dns_jsc::internal::getaddrinfo_error_for_testing",
 });
+/** Runs the resolver in the world that `script` describes and returns the log: see `src/dns_resolver/simulation.rs`. */
+export const simulateForTesting = b.fn({
+  args: { script: b.string.utf8 },
+  returns: b.string.utf8,
+  rustPath: "bun_dns_resolver::simulation::run",
+});

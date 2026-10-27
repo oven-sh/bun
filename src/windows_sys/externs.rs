@@ -797,8 +797,206 @@ pub use ntdll::NtClose;
 
 /// `user32` namespace (subset placeholder; fill in as needed).
 pub mod user32 {}
-/// `advapi32` namespace (subset placeholder; fill in as needed).
-pub mod advapi32 {}
+/// `advapi32` namespace (subset).
+pub mod advapi32 {
+    use super::*;
+
+    pub type HKEY = *mut c_void;
+    /// `(HKEY)(ULONG_PTR)((LONG)0x80000002)`: the sign is extended.
+    pub const HKEY_LOCAL_MACHINE: HKEY = 0x8000_0002_u32 as i32 as isize as HKEY;
+    pub const KEY_QUERY_VALUE: DWORD = 0x0001;
+    pub const KEY_READ: DWORD = 0x0002_0019;
+    pub const ERROR_SUCCESS: LONG = 0;
+    pub const ERROR_MORE_DATA: LONG = 234;
+
+    #[cfg_attr(windows, link(name = "advapi32"))]
+    unsafe extern "system" {
+        pub fn RegOpenKeyExW(
+            hKey: HKEY,
+            lpSubKey: LPCWSTR,
+            ulOptions: DWORD,
+            samDesired: DWORD,
+            phkResult: *mut HKEY,
+        ) -> LONG;
+        pub fn RegQueryValueExW(
+            hKey: HKEY,
+            lpValueName: LPCWSTR,
+            lpReserved: *mut DWORD,
+            lpType: *mut DWORD,
+            lpData: *mut u8,
+            lpcbData: *mut DWORD,
+        ) -> LONG;
+        pub fn RegEnumKeyExW(
+            hKey: HKEY,
+            dwIndex: DWORD,
+            lpName: LPWSTR,
+            lpcchName: *mut DWORD,
+            lpReserved: *mut DWORD,
+            lpClass: LPWSTR,
+            lpcchClass: *mut DWORD,
+            lpftLastWriteTime: *mut FILETIME,
+        ) -> LONG;
+        pub fn RegCloseKey(hKey: HKEY) -> LONG;
+    }
+}
+
+/// `iphlpapi` namespace (subset). Integers are spelled by width, so that the layouts can be asserted on any host.
+pub mod iphlpapi {
+    use super::*;
+
+    pub const NO_ERROR: u32 = 0;
+    pub const ERROR_BUFFER_OVERFLOW: u32 = 111;
+    /// `IfOperStatusUp`
+    pub const IF_OPER_STATUS_UP: i32 = 1;
+    pub const IF_TYPE_SOFTWARE_LOOPBACK: u16 = 24;
+    /// `IF_MAX_STRING_SIZE + 1`, what `if_indextoname` may write.
+    pub const IF_NAMESIZE: usize = 257;
+
+    /// `NET_LUID`: 24 reserved bits, 24 of index, then `IfType` in the top 16.
+    pub type NET_LUID = u64;
+
+    /// `SOCKADDR_INET`: a union of `sockaddr_in` and `sockaddr_in6`.
+    #[repr(C)]
+    #[derive(Copy, Clone)]
+    pub struct SOCKADDR_INET(pub [u32; 7]);
+
+    #[repr(C)]
+    pub struct SOCKET_ADDRESS {
+        pub lpSockaddr: *mut ws2_32::sockaddr,
+        pub iSockaddrLength: i32,
+    }
+
+    /// `IP_ADAPTER_DNS_SERVER_ADDRESS_XP`
+    #[repr(C)]
+    pub struct IP_ADAPTER_DNS_SERVER_ADDRESS {
+        pub Alignment: u64,
+        pub Next: *mut IP_ADAPTER_DNS_SERVER_ADDRESS,
+        pub Address: SOCKET_ADDRESS,
+    }
+
+    /// The head of `IP_ADAPTER_ADDRESSES_LH`. Only the system makes one.
+    #[repr(C)]
+    pub struct IP_ADAPTER_ADDRESSES {
+        pub Alignment: u64,
+        pub Next: *mut IP_ADAPTER_ADDRESSES,
+        pub AdapterName: *mut c_char,
+        pub FirstUnicastAddress: *mut c_void,
+        pub FirstAnycastAddress: *mut c_void,
+        pub FirstMulticastAddress: *mut c_void,
+        pub FirstDnsServerAddress: *mut IP_ADAPTER_DNS_SERVER_ADDRESS,
+        pub DnsSuffix: *mut WCHAR,
+        pub Description: *mut WCHAR,
+        pub FriendlyName: *mut WCHAR,
+        pub PhysicalAddress: [u8; 8],
+        pub PhysicalAddressLength: u32,
+        pub Flags: u32,
+        pub Mtu: u32,
+        pub IfType: u32,
+        pub OperStatus: i32,
+        pub Ipv6IfIndex: u32,
+        pub ZoneIndices: [u32; 16],
+        pub FirstPrefix: *mut c_void,
+        pub TransmitLinkSpeed: u64,
+        pub ReceiveLinkSpeed: u64,
+        pub FirstWinsServerAddress: *mut c_void,
+        pub FirstGatewayAddress: *mut c_void,
+        pub Ipv4Metric: u32,
+        pub Ipv6Metric: u32,
+        pub Luid: NET_LUID,
+    }
+
+    #[repr(C)]
+    pub struct IP_ADDRESS_PREFIX {
+        pub Prefix: SOCKADDR_INET,
+        pub PrefixLength: u8,
+    }
+
+    #[repr(C)]
+    pub struct MIB_IPFORWARD_ROW2 {
+        pub InterfaceLuid: NET_LUID,
+        pub InterfaceIndex: u32,
+        pub DestinationPrefix: IP_ADDRESS_PREFIX,
+        pub NextHop: SOCKADDR_INET,
+        pub SitePrefixLength: u8,
+        pub ValidLifetime: u32,
+        pub PreferredLifetime: u32,
+        pub Metric: u32,
+        pub Protocol: i32,
+        pub Loopback: BOOLEAN,
+        pub AutoconfigureAddress: BOOLEAN,
+        pub Publish: BOOLEAN,
+        pub Immortal: BOOLEAN,
+        pub Age: u32,
+        pub Origin: i32,
+    }
+
+    #[repr(C)]
+    pub struct MIB_UNICASTIPADDRESS_ROW {
+        pub Address: SOCKADDR_INET,
+        pub InterfaceLuid: NET_LUID,
+        pub InterfaceIndex: u32,
+        pub PrefixOrigin: i32,
+        pub SuffixOrigin: i32,
+        pub ValidLifetime: u32,
+        pub PreferredLifetime: u32,
+        pub OnLinkPrefixLength: u8,
+        pub SkipAsSource: BOOLEAN,
+        pub DadState: i32,
+        pub ScopeId: u32,
+        pub CreationTimeStamp: i64,
+    }
+
+    #[repr(C)]
+    pub struct MIB_UNICASTIPADDRESS_TABLE {
+        pub NumEntries: u32,
+        /// `NumEntries` of them.
+        pub Table: [MIB_UNICASTIPADDRESS_ROW; 1],
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    const _: () = {
+        use core::mem::{offset_of, size_of};
+        assert!(size_of::<SOCKADDR_INET>() == 28);
+        assert!(size_of::<IP_ADAPTER_DNS_SERVER_ADDRESS>() == 32);
+        assert!(offset_of!(IP_ADAPTER_ADDRESSES, FirstDnsServerAddress) == 48);
+        assert!(offset_of!(IP_ADAPTER_ADDRESSES, OperStatus) == 104);
+        assert!(offset_of!(IP_ADAPTER_ADDRESSES, Ipv6IfIndex) == 108);
+        assert!(offset_of!(IP_ADAPTER_ADDRESSES, Ipv4Metric) == 216);
+        assert!(offset_of!(IP_ADAPTER_ADDRESSES, Luid) == 224);
+        assert!(offset_of!(MIB_IPFORWARD_ROW2, Metric) == 84);
+        assert!(size_of::<MIB_IPFORWARD_ROW2>() == 104);
+        assert!(offset_of!(MIB_UNICASTIPADDRESS_ROW, InterfaceLuid) == 32);
+        assert!(size_of::<MIB_UNICASTIPADDRESS_ROW>() == 80);
+        assert!(offset_of!(MIB_UNICASTIPADDRESS_TABLE, Table) == 8);
+    };
+
+    #[cfg_attr(windows, link(name = "iphlpapi"))]
+    unsafe extern "system" {
+        pub fn GetAdaptersAddresses(
+            Family: u32,
+            Flags: u32,
+            Reserved: *mut c_void,
+            AdapterAddresses: *mut IP_ADAPTER_ADDRESSES,
+            SizePointer: *mut u32,
+        ) -> u32;
+        pub fn GetBestRoute2(
+            InterfaceLuid: *mut NET_LUID,
+            InterfaceIndex: u32,
+            SourceAddress: *const SOCKADDR_INET,
+            DestinationAddress: *const SOCKADDR_INET,
+            AddressSortOptions: u32,
+            BestRoute: *mut MIB_IPFORWARD_ROW2,
+            BestSourceAddress: *mut SOCKADDR_INET,
+        ) -> u32;
+        pub fn GetUnicastIpAddressTable(
+            Family: u16,
+            Table: *mut *mut MIB_UNICASTIPADDRESS_TABLE,
+        ) -> u32;
+        pub fn FreeMibTable(Memory: *mut c_void);
+        pub fn if_nametoindex(InterfaceName: *const c_char) -> u32;
+        pub fn if_indextoname(InterfaceIndex: u32, InterfaceName: *mut c_char) -> *mut c_char;
+    }
+}
 
 // `bun.windows.libuv` is exposed from the higher-tier `bun_sys::windows`
 // module, NOT here — `bun_windows_sys` is the leaf Win32 externs crate and
@@ -1386,6 +1584,8 @@ unsafe extern "system" {
     pub fn GetCurrentDirectoryW(nBufferLength: DWORD, lpBuffer: LPWSTR) -> DWORD;
 
     pub fn GetSystemDirectoryW(lpBuffer: LPWSTR, uSize: DWORD) -> DWORD;
+
+    pub fn ExpandEnvironmentStringsW(lpSrc: LPCWSTR, lpDst: LPWSTR, nSize: DWORD) -> DWORD;
 
     pub fn GetFileAttributesW(lpFileName: LPCWSTR) -> DWORD;
 

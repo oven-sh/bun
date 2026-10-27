@@ -4,7 +4,8 @@ use core::net::{IpAddr, SocketAddr};
 
 use bun_collections::ArrayHashMap;
 use bun_core::env_var;
-use bun_dns_resolver::io::{FileError, Io, IoError, Opened, Transport, Variable};
+use bun_dns_resolver::io::{FileError, Io, IoError, Opened, Settings, Transport, Variable};
+#[cfg(not(windows))]
 use bun_io as Async;
 #[cfg(not(windows))]
 use bun_io::FilePoll;
@@ -55,7 +56,6 @@ impl SystemIo {
         server: &Address,
         local: Option<IpAddr>,
     ) -> sys::Maybe<bool> {
-        let mut fast_open = false;
         if transport == Transport::Tcp {
             // One query, then a wait for its answer: nothing to batch.
             socket::set_option(fd, socket::IPPROTO_TCP, socket::TCP_NODELAY, 1)?;
@@ -75,10 +75,10 @@ impl SystemIo {
             socket::bind(fd, &Address::from_ip(local, 0))?;
         }
         #[cfg(any(target_os = "linux", target_os = "android"))]
-        if transport == Transport::Tcp {
-            fast_open =
-                socket::set_option(fd, libc::IPPROTO_TCP, libc::TCP_FASTOPEN_CONNECT, 1).is_ok();
-        }
+        let fast_open = transport == Transport::Tcp
+            && socket::set_option(fd, libc::IPPROTO_TCP, libc::TCP_FASTOPEN_CONNECT, 1).is_ok();
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        let fast_open = false;
         match socket::connect(fd, server).map_err(io_error) {
             Ok(()) | Err(IoError::WouldBlock) => Ok(fast_open),
             Err(IoError::Failed) => Err(sys::Error::from_code(
@@ -184,7 +184,7 @@ impl Io for SystemIo {
                 // SAFETY: the live loop of this thread, and a fresh allocation with a zeroed `uv_poll_t`.
                 if unsafe {
                     uv::uv_poll_init_socket(
-                        (*bun_uws::Loop::get()).uv_loop,
+                        self.vm.uv_loop(),
                         &mut (*poll).poll,
                         socket.native() as _,
                     )
@@ -266,6 +266,10 @@ impl Io for SystemIo {
         .map(<[u8]>::to_vec)
     }
 
+    fn settings(&mut self) -> Settings {
+        super::system_settings::read()
+    }
+
     #[cfg(not(windows))]
     fn hostname(&mut self) -> Option<Vec<u8>> {
         let mut buffer = [0u8; 256];
@@ -274,9 +278,42 @@ impl Io for SystemIo {
         Some(buffer[..len].to_vec())
     }
 
+    #[cfg(windows)]
+    fn hostname(&mut self) -> Option<Vec<u8>> {
+        let mut buffer = [0u16; 256];
+        // SAFETY: the buffer has the units the function may write, and Winsock was started in `new`.
+        let status =
+            unsafe { sys::windows::GetHostNameW(buffer.as_mut_ptr(), buffer.len() as i32) };
+        let len = buffer.iter().position(|&unit| unit == 0)?;
+        (status == 0).then(|| bun_core::strings::to_utf8_alloc(&buffer[..len]))
+    }
+
     #[cfg(not(windows))]
     fn etc_path(&mut self, name: &str) -> Option<Vec<u8>> {
         Some(format!("/etc/{name}").into_bytes())
+    }
+
+    #[cfg(windows)]
+    fn etc_path(&mut self, name: &str) -> Option<Vec<u8>> {
+        let mut path = super::system_settings::etc_directory()?;
+        path.push(b'\\');
+        path.extend_from_slice(name.as_bytes());
+        Some(path)
+    }
+
+    #[cfg(windows)]
+    fn interface_index(&mut self, name: &[u8]) -> Option<u32> {
+        super::system_settings::interface_index(name)
+    }
+
+    #[cfg(windows)]
+    fn has_interface(&mut self, index: u32) -> bool {
+        super::system_settings::has_interface(index)
+    }
+
+    #[cfg(windows)]
+    fn loopback_addresses(&mut self) -> Option<Vec<IpAddr>> {
+        super::system_settings::loopback_addresses()
     }
 
     #[cfg(not(windows))]

@@ -550,6 +550,7 @@ pub(crate) mod get_addr_info_request {
     }
     pub(crate) enum Backend {
         /// Not filled in yet, or taken.
+        #[cfg(not(windows))]
         Unset,
         #[cfg(target_os = "macos")]
         DnsSd(BackendDnsSd),
@@ -566,10 +567,8 @@ pub(crate) mod get_addr_info_request {
         }
         #[cfg(windows)]
         pub(crate) fn as_libc_uv_mut(&mut self) -> &mut libuv::uv_getaddrinfo_t {
-            match self {
-                Backend::Libc(l) => &mut l.uv,
-                _ => unreachable!(),
-            }
+            let Backend::Libc(libc) = self;
+            &mut libc.uv
         }
     }
 }
@@ -1005,9 +1004,8 @@ impl Resolver {
             // SAFETY: `lookup` is the live boxed request until its completion
             // callback removes it from the cache.
             unsafe {
-                if let get_addr_info_request::Backend::Libc(l) = &mut (*lookup).backend {
-                    let _ = libuv::uv_cancel(core::ptr::from_mut(&mut l.uv).cast());
-                }
+                let request = (*lookup).backend.as_libc_uv_mut();
+                let _ = libuv::uv_cancel(core::ptr::from_mut(request).cast());
             }
         }
     }
@@ -2412,7 +2410,7 @@ pub(crate) struct UvDnsPoll {
     // BACKREF — stored mut because the poll callback hands it to
     // `Resolver::deref`, which may write/free `*this`.
     pub parent: *mut Resolver,
-    pub socket: sys::Fd,
+    pub socket: bun_sys::Fd,
     /// Number of `on_dns_poll_uv` calls for this handle on the stack. libuv
     /// reads `poll` again after each one returns.
     poll_cb_depth: u32,
@@ -2424,7 +2422,7 @@ pub(crate) struct UvDnsPoll {
 
 #[cfg(windows)]
 impl UvDnsPoll {
-    pub(crate) fn new(parent: *mut Resolver, socket: sys::Fd) -> *mut Self {
+    pub(crate) fn new(parent: *mut Resolver, socket: bun_sys::Fd) -> *mut Self {
         bun_core::heap::into_raw(Box::new(Self {
             parent,
             socket,

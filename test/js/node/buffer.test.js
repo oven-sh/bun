@@ -5367,12 +5367,16 @@ describe("Buffer.prototype.toJSON", () => {
     });
   });
 
-  it("copies every byte of a 70,000-byte Buffer", () => {
-    const buf = Buffer.alloc(70_000);
-    for (let i = 0; i < buf.length; i++) buf[i] = i % 251;
-    const { data } = buf.toJSON();
-    expect(data.length).toBe(70_000);
-    expect(Buffer.from(data).equals(buf)).toBe(true);
+  // The compiler unrolls and vectorizes the copy loop, so the lengths sit on both sides of those widths.
+  it("copies every byte at every length", () => {
+    const source = Buffer.alloc(70_003);
+    for (let i = 0; i < source.length; i++) source[i] = (i * 7) % 256;
+    for (const length of [1, 2, 3, 4, 5, 7, 8, 9, 15, 16, 17, 31, 32, 33, 63, 64, 65, 1000, 70_000]) {
+      const buf = source.subarray(3, 3 + length);
+      const { data } = buf.toJSON();
+      expect(data.length).toBe(length);
+      expect(data.findIndex((byte, i) => byte !== buf[i])).toBe(-1);
+    }
   });
 
   it("serializes the elements of a TypedArray receiver of any kind", () => {

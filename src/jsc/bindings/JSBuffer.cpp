@@ -2884,8 +2884,10 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_toJSON, (JSGlobalObject * lex
             ObjectInitializationScope initializationScope(vm);
             if ((data = JSArray::tryCreateUninitializedRestricted(initializationScope, lexicalGlobalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithInt32), arrayLength))) [[likely]] {
                 const uint8_t* vector = bytes->typedVector();
+                // The overload that takes the indexing type is inlined. The one that reads it is a call for each byte.
+                const IndexingType indexingType = data->indexingType();
                 for (unsigned i = 0; i < arrayLength; ++i)
-                    data->initializeIndex(initializationScope, i, jsNumber(vector[i]));
+                    data->initializeIndex(initializationScope, i, jsNumber(vector[i]), indexingType);
             }
         } else if ((data = JSArray::tryCreate(vm, lexicalGlobalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithUndecided), arrayLength))) [[likely]] {
             // A BigInt64Array element allocates, so this array cannot start uninitialized.

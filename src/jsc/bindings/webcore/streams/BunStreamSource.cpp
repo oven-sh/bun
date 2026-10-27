@@ -30,8 +30,6 @@
 #include <JavaScriptCore/JSInternalFieldObjectImplInlines.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/JSTypedArrays.h>
-#include <JavaScriptCore/Microtask.h>
-#include <JavaScriptCore/MicrotaskQueue.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SourceCode.h>
@@ -300,7 +298,7 @@ static void nativeSourceCallClose(JSC::VM& vm, JSGlobalObject* globalObject, JSN
 
 static void scheduleNativeSourceCallClose(JSGlobalObject* globalObject, JSNativeStreamSourceAdapter* adapter)
 {
-    queueStreamsMicrotask(globalObject, WebCore::JSStreamsRuntime::from(globalObject)->onNativeSourceCallCloseMicrotask(), jsUndefined(), adapter);
+    queueStreamsMicrotask(getVM(globalObject), globalObject, WebCore::JSStreamsRuntime::from(globalObject)->onNativeSourceCallCloseMicrotask(), jsUndefined(), adapter);
 }
 
 // Sizes the next slab to what the source actually delivers: one doubling when a pull fills the slab (files),
@@ -1381,7 +1379,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWebStreamsHandler_onNativeSourceHandleClosedMicrotask
 extern "C" void Bun__NativeStreamSourceAdapter__onClose(JSGlobalObject* globalObject, JSC::EncodedJSValue adapter)
 {
     // Deferred: the native side may report close from inside a pull() or off any JS frame.
-    Bun::WebStreams::queueStreamsMicrotask(globalObject, WebCore::JSStreamsRuntime::from(globalObject)->onNativeSourceHandleClosedMicrotask(), jsUndefined(), JSValue::decode(adapter));
+    Bun::WebStreams::queueStreamsMicrotask(getVM(globalObject), globalObject, WebCore::JSStreamsRuntime::from(globalObject)->onNativeSourceHandleClosedMicrotask(), jsUndefined(), JSValue::decode(adapter));
 }
 
 // A pull() reaction that closes the controller settles the owner's promise in place of that close: with what end() throws, or pull()'s own reason. Null: it closed earlier.

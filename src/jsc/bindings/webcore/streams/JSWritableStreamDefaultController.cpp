@@ -577,7 +577,7 @@ void writableStreamDefaultControllerProcessClose(JSGlobalObject* globalObject, J
     auto* runtime = JSStreamsRuntime::from(globalObject);
     // See readableStreamDefaultControllerCallPullIfNeeded.
     if (!sinkClosePromise || sinkClosePromise->status() == JSPromise::Status::Fulfilled)
-        return queueStreamsMicrotask(globalObject, runtime->onWSSinkCloseFulfilled(), jsUndefined(), controller);
+        return queueStreamsMicrotask(vm, globalObject, runtime->onWSSinkCloseFulfilled(), jsUndefined(), controller);
     sinkClosePromise->performPromiseThenWithContext(vm, globalObject, runtime->onWSSinkCloseFulfilled(), runtime->onWSSinkCloseRejected(), jsUndefined(), controller);
 }
 
@@ -591,7 +591,7 @@ void writableStreamDefaultControllerProcessWrite(JSGlobalObject* globalObject, J
     auto* runtime = JSStreamsRuntime::from(globalObject);
     // See readableStreamDefaultControllerCallPullIfNeeded.
     if (!sinkWritePromise || sinkWritePromise->status() == JSPromise::Status::Fulfilled)
-        return queueStreamsMicrotask(globalObject, runtime->onWSSinkWriteFulfilled(), jsUndefined(), controller);
+        return queueStreamsMicrotask(vm, globalObject, runtime->onWSSinkWriteFulfilled(), jsUndefined(), controller);
     sinkWritePromise->performPromiseThenWithContext(vm, globalObject, runtime->onWSSinkWriteFulfilled(), runtime->onWSSinkWriteRejected(), jsUndefined(), controller);
 }
 

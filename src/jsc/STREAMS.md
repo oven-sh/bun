@@ -74,6 +74,10 @@ Blob,JSON,Array,ArrayBuffer,FormData}` and the `Request`/`Response` body consume
 - Each TU compiles standalone (see `noUnifyDirs` in `scripts/build/unified.ts`): file-local
   `static` helpers are written assuming TU isolation, so don't move them into headers
   without renaming.
+- Deferred jobs: `queueStreamsMicrotask` (`WebStreamsInternals.h`) is the only place that builds a
+  `QueuedTask`. The job runs in the async context of the code that queued it, as a promise
+  reaction does, so `AsyncLocalStorage` and `Bun.ModuleGraph` follow it.
+  `test/internal/source-lints/streams-single-deferral.test.ts` enforces this.
 - Exception discipline: any call that can enter user JS needs `RETURN_IF_EXCEPTION` under a
   `ThrowScope` before its result is used. The `// userJS:` annotations in
   `WebStreamsInternals.h` are the source of truth for which operations can.

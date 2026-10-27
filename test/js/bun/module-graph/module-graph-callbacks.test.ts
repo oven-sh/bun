@@ -283,12 +283,18 @@ const dir = String(
           await Bun.dns.lookup("localhost"); seen("after Bun.dns.lookup");
         },
 
-        webStreams: async seen => {
+        webStreams: async (seen, env) => {
           let pulled = 0;
           const readable = new ReadableStream({ pull(controller) { seen("pull"); if (++pulled === 2) controller.close(); else controller.enqueue(new Uint8Array(200000)); } });
           const transformed = readable.pipeThrough(new TransformStream({ transform(chunk, controller) { seen("transform"); controller.enqueue(chunk); }, flush() { seen("flush"); } })).pipeThrough(new CompressionStream("gzip"));
           await new Response(transformed).arrayBuffer(); seen("after arrayBuffer()");
           await new Promise(resolve => new ReadableStream({ start(controller) { controller.enqueue("x"); controller.close(); } }).pipeTo(new WritableStream({ write() { seen("sink write"); }, close() { seen("sink close"); resolve(); } })));
+          // Writes and a close() that wait behind a sink write() that returns no promise.
+          const writer = new WritableStream({ write() { seen("queued sink write"); }, close() { seen("queued sink close"); } }, { highWaterMark: 4 }).getWriter();
+          await writer.write(0); writer.write(1); writer.write(2); await writer.close();
+          // A fetched body whose end arrives after its last chunk.
+          const streamed = await fetch("http://127.0.0.1:" + env.httpPort + "/stream");
+          await streamed.body.pipeThrough(new TransformStream({ flush() { seen("flush of a fetched body"); } })).pipeTo(new WritableStream({ close() { seen("sink close behind a fetched body"); } }));
         },
       };
     `,

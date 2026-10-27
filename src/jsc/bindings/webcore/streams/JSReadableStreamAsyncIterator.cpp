@@ -181,7 +181,7 @@ static JSPromise* runAsyncIteratorNextSteps(JSC::VM& vm, JSGlobalObject* globalO
         auto* resultObject = createIteratorResultObject(globalObject, chunk, false);
         if (scope.exception()) [[unlikely]]
             return clearOngoingIfOurs();
-        queueStreamsMicrotask(globalObject, JSStreamsRuntime::from(globalObject)->onAsyncIteratorResolveMicrotask(), resultObject, result);
+        queueStreamsMicrotask(vm, globalObject, JSStreamsRuntime::from(globalObject)->onAsyncIteratorResolveMicrotask(), resultObject, result);
         return result;
     }
     auto* domGlobalObject = defaultGlobalObject(globalObject);

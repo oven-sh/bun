@@ -489,7 +489,7 @@ void readableStreamDefaultControllerCallPullIfNeeded(JSGlobalObject* globalObjec
     // The fulfillment handler sees m_pullAgain and runs this pull from its microtask (see streamLinkMustDefer).
     if (mayDefer == MayDefer::Yes && controller->m_algorithms.linksAnotherStream() && streamLinkMustDefer(vm)) [[unlikely]] {
         controller->m_pullAgain = true;
-        return queueStreamsMicrotask(globalObject, runtime->onRSDefaultControllerPullFulfilled(), jsUndefined(), controller);
+        return queueStreamsMicrotask(vm, globalObject, runtime->onRSDefaultControllerPullFulfilled(), jsUndefined(), controller);
     }
     JSPromise* pullPromise = performDefaultControllerPullAlgorithm(vm, globalObject, controller);
     RETURN_IF_EXCEPTION(scope, void());
@@ -498,7 +498,7 @@ void readableStreamDefaultControllerCallPullIfNeeded(JSGlobalObject* globalObjec
     // wrapper promise and performPromiseThen reactions while keeping the spec's microtask
     // boundary (m_pulling stays set until then, so pull-call count is unchanged).
     if (!pullPromise || pullPromise->status() == JSPromise::Status::Fulfilled)
-        return queueStreamsMicrotask(globalObject, runtime->onRSDefaultControllerPullFulfilled(), jsUndefined(), controller);
+        return queueStreamsMicrotask(vm, globalObject, runtime->onRSDefaultControllerPullFulfilled(), jsUndefined(), controller);
     pullPromise->performPromiseThenWithContext(vm, globalObject, runtime->onRSDefaultControllerPullFulfilled(), runtime->onRSDefaultControllerPullRejected(), jsUndefined(), controller);
 }
 

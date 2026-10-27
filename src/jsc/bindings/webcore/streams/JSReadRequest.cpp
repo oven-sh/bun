@@ -20,7 +20,6 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSCast.h>
 #include <JavaScriptCore/JSPromise.h>
-#include <JavaScriptCore/MicrotaskQueue.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 
@@ -28,17 +27,6 @@ namespace WebCore {
 
 using namespace JSC;
 using namespace Bun::WebStreams;
-
-// [reaction-convention] deferral: runs handler(value, context) as its own microtask,
-// carrying the current async context, without allocating a promise.
-static void queueReactionJob(JSC::VM& vm, JSGlobalObject* globalObject, JSFunction* handler, JSValue value, JSValue context)
-{
-    JSValue asyncContext = globalObject->m_asyncContextData.get()->getInternalField(0);
-    if (asyncContext.isEmpty())
-        asyncContext = jsUndefined();
-    QueuedTask task { nullptr, InternalMicrotask::BunPerformMicrotaskJob, 0, globalObject, handler, asyncContext, value, context };
-    vm.queueMicrotask(WTF::move(task));
-}
 
 const ClassInfo JSReadRequest::s_info = { "ReadRequest"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadRequest) };
 
@@ -120,18 +108,18 @@ void JSReadRequest::chunkSteps(JSGlobalObject* globalObject, JSValue chunk)
     case ReadRequestKind::PipeTo:
         RELEASE_AND_RETURN(scope, pipeToReadRequestChunkSteps(globalObject, uncheckedDowncast<JSStreamPipeToOperation>(context()), chunk));
     case ReadRequestKind::DefaultTee:
-        return queueReactionJob(vm, globalObject, JSStreamsRuntime::from(globalObject)->onDefaultTeeReadChunkMicrotask(), chunk, context());
+        return queueStreamsMicrotask(vm, globalObject, JSStreamsRuntime::from(globalObject)->onDefaultTeeReadChunkMicrotask(), chunk, context());
     case ReadRequestKind::ByteTee:
-        return queueReactionJob(vm, globalObject, JSStreamsRuntime::from(globalObject)->onByteTeeReadChunkMicrotask(), chunk, context());
+        return queueStreamsMicrotask(vm, globalObject, JSStreamsRuntime::from(globalObject)->onByteTeeReadChunkMicrotask(), chunk, context());
     case ReadRequestKind::ReadStreamIntoSink:
-        return queueReactionJob(vm, globalObject, JSStreamsRuntime::from(globalObject)->onReadStreamIntoSinkChunk(), chunk, context());
+        return queueStreamsMicrotask(vm, globalObject, JSStreamsRuntime::from(globalObject)->onReadStreamIntoSinkChunk(), chunk, context());
     case ReadRequestKind::AsyncIterator: {
         auto* context = uncheckedDowncast<InternalFieldTuple>(this->context());
         auto* promise = uncheckedDowncast<JSPromise>(context->getInternalField(1));
         auto* result = createIteratorResultObject(globalObject, chunk, false);
         RETURN_IF_EXCEPTION(scope, void());
         // Per spec, next()'s promise resolves from a queued microtask.
-        queueStreamsMicrotask(globalObject, JSStreamsRuntime::from(globalObject)->onAsyncIteratorResolveMicrotask(), result, promise);
+        queueStreamsMicrotask(vm, globalObject, JSStreamsRuntime::from(globalObject)->onAsyncIteratorResolveMicrotask(), result, promise);
         return;
     }
     case ReadRequestKind::TextDecode:
@@ -145,7 +133,7 @@ void JSReadRequest::closeSteps(JSGlobalObject* globalObject, MayDefer mayDefer)
     auto& vm = getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     if (mayDefer == MayDefer::Yes && closeStepsCloseAnotherStream(m_kind) && streamLinkMustDefer(vm)) [[unlikely]]
-        return queueReactionJob(vm, globalObject, JSStreamsRuntime::from(globalObject)->onReadRequestCloseStepsDeferred(), jsUndefined(), this);
+        return queueStreamsMicrotask(vm, globalObject, JSStreamsRuntime::from(globalObject)->onReadRequestCloseStepsDeferred(), jsUndefined(), this);
     switch (m_kind) {
     case ReadRequestKind::Promise: {
         auto* promise = uncheckedDowncast<JSPromise>(context());
@@ -198,7 +186,7 @@ void JSReadRequest::closeSteps(JSGlobalObject* globalObject, MayDefer mayDefer)
         return;
     }
     case ReadRequestKind::ReadStreamIntoSink:
-        return queueReactionJob(vm, globalObject, JSStreamsRuntime::from(globalObject)->onReadStreamIntoSinkClose(), jsUndefined(), context());
+        return queueStreamsMicrotask(vm, globalObject, JSStreamsRuntime::from(globalObject)->onReadStreamIntoSinkClose(), jsUndefined(), context());
     case ReadRequestKind::AsyncIterator: {
         auto* context = uncheckedDowncast<InternalFieldTuple>(this->context());
         auto* iterator = uncheckedDowncast<JSReadableStreamAsyncIterator>(context->getInternalField(0));
@@ -208,7 +196,7 @@ void JSReadRequest::closeSteps(JSGlobalObject* globalObject, MayDefer mayDefer)
         RETURN_IF_EXCEPTION(scope, void());
         auto* result = createIteratorResultObject(globalObject, jsUndefined(), true);
         RETURN_IF_EXCEPTION(scope, void());
-        queueStreamsMicrotask(globalObject, JSStreamsRuntime::from(globalObject)->onAsyncIteratorResolveMicrotask(), result, promise);
+        queueStreamsMicrotask(vm, globalObject, JSStreamsRuntime::from(globalObject)->onAsyncIteratorResolveMicrotask(), result, promise);
         return;
     }
     case ReadRequestKind::TextDecode:
@@ -231,7 +219,7 @@ void JSReadRequest::errorSteps(JSGlobalObject* globalObject, JSValue error, MayD
         uncheckedDowncast<JSStreamTeeState>(context())->m_reading = false;
         return;
     case ReadRequestKind::ReadStreamIntoSink:
-        return queueReactionJob(vm, globalObject, JSStreamsRuntime::from(globalObject)->onReadStreamIntoSinkRejected(), error, context());
+        return queueStreamsMicrotask(vm, globalObject, JSStreamsRuntime::from(globalObject)->onReadStreamIntoSinkRejected(), error, context());
     case ReadRequestKind::AsyncIterator: {
         auto* context = uncheckedDowncast<InternalFieldTuple>(this->context());
         auto* iterator = uncheckedDowncast<JSReadableStreamAsyncIterator>(context->getInternalField(0));
@@ -239,12 +227,12 @@ void JSReadRequest::errorSteps(JSGlobalObject* globalObject, JSValue error, MayD
         iterator->m_isFinished = true;
         readableStreamDefaultReaderRelease(globalObject, iterator->m_reader.get());
         RETURN_IF_EXCEPTION(scope, void());
-        queueStreamsMicrotask(globalObject, JSStreamsRuntime::from(globalObject)->onAsyncIteratorRejectMicrotask(), error, promise);
+        queueStreamsMicrotask(vm, globalObject, JSStreamsRuntime::from(globalObject)->onAsyncIteratorRejectMicrotask(), error, promise);
         return;
     }
     case ReadRequestKind::TextDecode: {
         if (mayDefer == MayDefer::Yes && streamLinkMustDefer(vm)) [[unlikely]]
-            return queueReactionJob(vm, globalObject, JSStreamsRuntime::from(globalObject)->onReadRequestErrorStepsDeferred(), error, this);
+            return queueStreamsMicrotask(vm, globalObject, JSStreamsRuntime::from(globalObject)->onReadRequestErrorStepsDeferred(), error, this);
         auto* controller = uncheckedDowncast<JSReadableStreamDefaultController>(context());
         auto* reader = dynamicDowncast<JSReadableStreamDefaultReader>(controller->m_algorithms.algorithmContext.get());
         readableStreamDefaultControllerError(globalObject, controller, error);
@@ -321,7 +309,7 @@ void JSReadIntoRequest::chunkSteps(JSGlobalObject* globalObject, JSArrayBufferVi
         RELEASE_AND_RETURN(scope, resolvePromise(globalObject, promise, result));
     }
     case ReadIntoRequestKind::ByteTee:
-        return queueReactionJob(vm, globalObject, JSStreamsRuntime::from(globalObject)->onByteTeeReadIntoChunkMicrotask(), chunk, context());
+        return queueStreamsMicrotask(vm, globalObject, JSStreamsRuntime::from(globalObject)->onByteTeeReadIntoChunkMicrotask(), chunk, context());
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -339,7 +327,7 @@ void JSReadIntoRequest::closeSteps(JSGlobalObject* globalObject, JSArrayBufferVi
     }
     case ReadIntoRequestKind::ByteTee: {
         if (mayDefer == MayDefer::Yes && streamLinkMustDefer(vm)) [[unlikely]]
-            return queueReactionJob(vm, globalObject, JSStreamsRuntime::from(globalObject)->onReadIntoRequestCloseStepsDeferred(), chunkOrNull ? JSValue(chunkOrNull) : jsUndefined(), this);
+            return queueStreamsMicrotask(vm, globalObject, JSStreamsRuntime::from(globalObject)->onReadIntoRequestCloseStepsDeferred(), chunkOrNull ? JSValue(chunkOrNull) : jsUndefined(), this);
         auto* context = uncheckedDowncast<InternalFieldTuple>(this->context());
         auto* teeState = uncheckedDowncast<JSStreamTeeState>(context->getInternalField(0));
         bool forBranch2 = context->getInternalField(1).asBoolean();

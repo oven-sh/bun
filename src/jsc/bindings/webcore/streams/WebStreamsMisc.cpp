@@ -1,6 +1,4 @@
 #include "config.h"
-#include <JavaScriptCore/Microtask.h>
-#include <JavaScriptCore/MicrotaskQueue.h>
 #include "WebStreamsInternals.h"
 
 #include "JSReadableStream.h"
@@ -164,13 +162,6 @@ bool isNonNegativeNumber(JSValue value)
     if (std::isnan(number))
         return false;
     return number >= 0;
-}
-
-// Queues handler(value, contextCell) — the reaction-convention argument order.
-void queueStreamsMicrotask(JSGlobalObject* globalObject, JSFunction* handler, JSValue value, JSValue context)
-{
-    QueuedTask task { nullptr, InternalMicrotask::BunInvokeJobWithArguments, 0, globalObject, handler, value, context };
-    globalObject->vm().queueMicrotask(WTF::move(task));
 }
 
 bool streamLinkMustDefer(JSC::VM& vm)

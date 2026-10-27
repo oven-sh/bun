@@ -23,7 +23,6 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSCast.h>
 #include <JavaScriptCore/JSPromise.h>
-#include <JavaScriptCore/MicrotaskQueue.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SourceCode.h>
 #include <JavaScriptCore/SubspaceInlines.h>
@@ -108,17 +107,6 @@ static void registerPipeReaction(JSGlobalObject* globalObject, JSPromise* promis
     // unconditional [[Get]] on the (here undefined) capability. Substitute the shared no-op.
     auto* runtime = JSStreamsRuntime::from(globalObject);
     promise->performPromiseThenWithContext(vm, globalObject, onFulfilled ? onFulfilled : runtime->onReturnUndefined(), onRejected ? onRejected : runtime->onReturnUndefined(), jsUndefined(), context);
-}
-
-// [reaction-convention] deferral: runs handler(value, context) as its own microtask,
-// carrying the current async context, without allocating a promise.
-static void queuePipeReactionJob(JSC::VM& vm, JSGlobalObject* globalObject, JSFunction* handler, JSValue value, JSValue context)
-{
-    JSValue asyncContext = globalObject->m_asyncContextData.get()->getInternalField(0);
-    if (asyncContext.isEmpty())
-        asyncContext = jsUndefined();
-    QueuedTask task { nullptr, InternalMicrotask::BunPerformMicrotaskJob, 0, globalObject, handler, asyncContext, value, context };
-    vm.queueMicrotask(WTF::move(task));
 }
 
 // Publish a write for the shutdown paths: currentWrite is the newest write, and every
@@ -290,7 +278,7 @@ void JSStreamPipeToOperation::shutdownWithAction(JSGlobalObject* globalObject, S
         }
         // Step 3.2's write-drain wait is ALWAYS a reaction ("In parallel"): with no pending
         // write, defer so no shutdown effect is observable inside the pipeTo() call.
-        queuePipeReactionJob(vm, globalObject, JSStreamsRuntime::from(globalObject)->onPipeWritesFinishedForShutdown(), jsUndefined(), this);
+        queueStreamsMicrotask(vm, globalObject, JSStreamsRuntime::from(globalObject)->onPipeWritesFinishedForShutdown(), jsUndefined(), this);
         return;
     }
     performPipeShutdownAction(globalObject, this);
@@ -614,7 +602,7 @@ void pipeToReadRequestChunkSteps(JSGlobalObject* globalObject, JSStreamPipeToOpe
     // write's promise, so a shutdown that must drain the pending writes still waits for it.
     auto* writePromise = JSPromise::create(vm, globalObject->promiseStructure());
     auto* context = InternalFieldTuple::create(vm, globalObject->internalFieldTupleStructure(), op, writePromise);
-    queuePipeReactionJob(vm, globalObject, runtime->onPipeChunkDeferredWrite(), chunk, context);
+    queueStreamsMicrotask(vm, globalObject, runtime->onPipeChunkDeferredWrite(), chunk, context);
     publishPipeWrite(globalObject, op, writePromise);
     RETURN_IF_EXCEPTION(scope, );
     // A shutdown that is waiting on currentWrite re-checks it when its reaction fires.

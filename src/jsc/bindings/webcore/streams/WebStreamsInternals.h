@@ -1,6 +1,7 @@
 // WebStreamsInternals.h — THE FROZEN ABI of the Web Streams C++ implementation.
 // Every cross-file free function of the subsystem is declared here, EXACTLY ONCE, grouped
-// by the .cpp that OWNS its body. NO definitions live here.
+// by the .cpp that OWNS its body. The only definitions here are the inline ones every .cpp
+// shares: the exception boundaries and queueStreamsMicrotask.
 //
 // Every declaration carries:   // userJS: yes|no — <owner .cpp>
 //   "userJS: yes" = the op can synchronously run arbitrary user JS (directly, through a
@@ -24,9 +25,11 @@
 // forward-declared; `const JSC::Identifier&`; `WTF::String`) — do not rely on transitive
 // includes from root.h for them. MarkedVector.h supplies JSC::MarkedArgumentBuffer.
 #include <JavaScriptCore/Identifier.h>
+#include <JavaScriptCore/InternalFieldTuple.h>
 #include <JavaScriptCore/JSCJSValue.h>
 #include <JavaScriptCore/JSTypedArrays.h>
 #include <JavaScriptCore/MarkedVector.h>
+#include <JavaScriptCore/MicrotaskQueue.h>
 #include <JavaScriptCore/ThrowScope.h>
 #include <optional>
 #include <utility>
@@ -224,6 +227,18 @@ ALWAYS_INLINE JSC::JSPromise* promiseFromSteps(JSC::JSGlobalObject* globalObject
     }
     return result;
 }
+
+// The one deferral under streams/ (streams-single-deferral.test.ts). handler(value, contextCell) runs as its
+// own microtask in the async context that is current here, as the promise reaction it stands in for would.
+ALWAYS_INLINE void queueStreamsMicrotask(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSFunction* handler, JSC::JSValue value, JSC::JSValue context)
+{
+    JSC::JSValue asyncContext = globalObject->m_asyncContextData.get()->getInternalField(0);
+    if (asyncContext.isEmpty())
+        asyncContext = JSC::jsUndefined();
+    JSC::QueuedTask task { nullptr, JSC::InternalMicrotask::BunPerformMicrotaskJob, 0, globalObject, handler, asyncContext, value, context };
+    vm.queueMicrotask(WTF::move(task));
+}
+
 // "resolve promise with v" — SAME `Object.prototype.then` hazard as promiseResolvedWith:
 // resolving with ANY object (user-controlled or our own) runs user JS.
 void resolvePromise(JSC::JSGlobalObject*, JSC::JSPromise*, JSC::JSValue); // userJS: yes — WebStreamsMisc.cpp
@@ -362,7 +377,6 @@ void readableStreamDefaultReaderRead(JSC::JSGlobalObject*, JSReadableStreamDefau
 // against unset branch slots). Callers skip a terminal branch.
 JSReadableStreamDefaultController* teeBranchDefaultController(JSReadableStream* branch); // userJS: no — ReadableStreamOperations.cpp
 JSReadableByteStreamController* teeBranchByteController(JSReadableStream* branch); // userJS: no — ReadableStreamOperations.cpp
-void queueStreamsMicrotask(JSC::JSGlobalObject*, JSC::JSFunction* handler, JSC::JSValue value, JSC::JSValue context); // userJS: no — WebStreamsMisc.cpp
 // True if a chain of tees or text streams has used too much stack for the next link. The link then continues from a microtask.
 bool streamLinkMustDefer(JSC::VM&); // userJS: no (pure) — WebStreamsMisc.cpp
 JSC::JSValue readableStreamDefaultReaderTryReadFromQueue(JSC::JSGlobalObject*, JSReadableStreamDefaultReader*); // userJS: yes (a drained queue can pull) — JSReadableStreamDefaultReader.cpp

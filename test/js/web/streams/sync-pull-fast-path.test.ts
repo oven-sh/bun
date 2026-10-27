@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import { AsyncLocalStorage } from "node:async_hooks";
 
 // A JS pull() that returns undefined used to go through promiseResolvedWith + performPromiseThen,
 // allocating a wrapper JSPromise per chunk. callPullIfNeeded now queues the fulfilled handler
@@ -75,6 +76,27 @@ describe.each(["default", "bytes"] as const)("pull() sync fast path (%s controll
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "ok", stderr: "", exitCode: 0 });
   });
+
+  // The queued handler stands in for a promise reaction, which runs in the async context it was
+  // registered in. So the pull() it makes for a read that waits reads the store of the reader.
+  test("the next pull() runs in the AsyncLocalStorage store of the read that waits for it", async () => {
+    const storage = new AsyncLocalStorage<string>();
+    const pulls: (string | undefined)[] = [];
+    const pull = (controller: ReadableStreamDefaultController<Uint8Array> | ReadableByteStreamController) => {
+      pulls.push(storage.getStore());
+      controller.enqueue(new Uint8Array(1));
+    };
+    const stream =
+      kind === "bytes"
+        ? new ReadableStream({ type: "bytes", pull }, { highWaterMark: 0 })
+        : new ReadableStream<Uint8Array>({ pull }, { highWaterMark: 0 });
+    const reader = stream.getReader();
+    // The stream has started after one turn of the event loop.
+    await new Promise<void>(resolve => setImmediate(resolve));
+
+    await storage.run("reader", () => Promise.all([reader.read(), reader.read(), reader.read()]));
+    expect(pulls).toEqual(["reader", "reader", "reader"]);
+  });
 });
 
 // writableStreamDefaultControllerProcessWrite wrapped each sink write() return in a new
@@ -107,4 +129,38 @@ test("writer.write() with a sync sink does not allocate a wrapper promise per ch
     stderr: "",
     exitCode: 0,
   });
+});
+
+// As for pull(): the writes and the close() that wait behind a sink write() with no promise run
+// from the queued handler, in the store a promise reaction would have.
+test("writes queued behind a sync sink write() run in the AsyncLocalStorage store of the writer", async () => {
+  const storage = new AsyncLocalStorage<string>();
+  const seen: string[] = [];
+  const writer = new WritableStream<string>(
+    {
+      write(chunk) {
+        seen.push(`write ${chunk}: ${storage.getStore()}`);
+      },
+      close() {
+        seen.push(`close: ${storage.getStore()}`);
+      },
+    },
+    { highWaterMark: 4 },
+  ).getWriter();
+  // The stream has started once a write completes.
+  await writer.write("first");
+
+  await storage.run("writer", () => {
+    writer.write("a");
+    writer.write("b");
+    writer.write("c");
+    return writer.close();
+  });
+  expect(seen).toEqual([
+    "write first: undefined",
+    "write a: writer",
+    "write b: writer",
+    "write c: writer",
+    "close: writer",
+  ]);
 });

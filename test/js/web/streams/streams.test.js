@@ -20,6 +20,7 @@ import {
   tmpdirSync,
 } from "harness";
 import { mkfifo } from "mkfifo";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { closeSync, createReadStream, openSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Duplex, PassThrough, Readable, Writable, finished, pipeline } from "node:stream";
@@ -3985,6 +3986,112 @@ it("pipeTo writes an already-dequeued chunk when the signal aborts mid-drain", a
   );
   // Node 26 agrees byte-for-byte: every dequeued chunk is written before the abort finishes.
   expect({ outcome, written }).toEqual({ outcome: "rejected:stop", written: ["a", "b", "c"] });
+});
+
+// A native source ends in a job that the stream queued. The job runs in the async context of what
+// queued it, so the close() or flush() that it reaches reads the store that write() and transform() read.
+describe("AsyncLocalStorage under a pipe from a native source", () => {
+  const storage = new AsyncLocalStorage();
+  const store = () => storage.getStore() ?? "no store";
+
+  // The server sends the next piece, and then the end of the body, only after the client has
+  // seen the piece before it. So the end of the body arrives in an event of its own.
+  async function fetchInPieces(pieces) {
+    let seenByClient = Promise.withResolvers();
+    const server = Bun.serve({
+      port: 0,
+      fetch: () =>
+        new Response(
+          (async function* () {
+            for (let piece = 0; piece < pieces; piece++) {
+              yield "piece";
+              await seenByClient.promise;
+              seenByClient = Promise.withResolvers();
+            }
+          })(),
+        ),
+    });
+    const response = await fetch(server.url);
+    return { server, body: response.body, pieceSeen: () => seenByClient.resolve() };
+  }
+
+  test("flush() and close() read the store of the pipe over a fetch() body that ends in an event of its own", async () => {
+    const seen = { pipeThrough: [], pipeTo: [] };
+    {
+      const { server, body, pieceSeen } = await fetchInPieces(3);
+      await using _ = server;
+      const output = storage.run("pipeThrough", () =>
+        body.pipeThrough(
+          new TransformStream({
+            transform(chunk, controller) {
+              seen.pipeThrough.push("transform: " + store());
+              controller.enqueue(chunk);
+              pieceSeen();
+            },
+            flush: () => void seen.pipeThrough.push("flush: " + store()),
+          }),
+        ),
+      );
+      for await (const _ of output);
+    }
+    {
+      const { server, body, pieceSeen } = await fetchInPieces(3);
+      await using _ = server;
+      await storage.run("pipeTo", () =>
+        body.pipeTo(
+          new WritableStream({
+            write() {
+              seen.pipeTo.push("write: " + store());
+              pieceSeen();
+            },
+            close: () => void seen.pipeTo.push("close: " + store()),
+          }),
+        ),
+      );
+    }
+    expect(seen).toEqual({
+      pipeThrough: ["transform: pipeThrough", "transform: pipeThrough", "transform: pipeThrough", "flush: pipeThrough"],
+      pipeTo: ["write: pipeTo", "write: pipeTo", "write: pipeTo", "close: pipeTo"],
+    });
+  });
+
+  test("flush() reads the store of the pipe over the stdout of a subprocess", async () => {
+    const seen = [];
+    // The child prints a piece for each line of its stdin and exits at "end".
+    await using child = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.stdout.write("piece"); for await (const line of console) { if (line === "end") break; process.stdout.write("piece"); }`,
+      ],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    let pieces = 0;
+    const output = storage.run("pipeThrough", () =>
+      child.stdout.pipeThrough(
+        new TransformStream({
+          transform(chunk, controller) {
+            seen.push("transform: " + store());
+            controller.enqueue(chunk);
+            child.stdin.write(++pieces < 3 ? "more\n" : "end\n");
+            child.stdin.flush();
+          },
+          flush: () => void seen.push("flush: " + store()),
+        }),
+      ),
+    );
+    for await (const _ of output);
+    expect(seen).toEqual([
+      "transform: pipeThrough",
+      "transform: pipeThrough",
+      "transform: pipeThrough",
+      "flush: pipeThrough",
+    ]);
+    expect(await child.exited).toBe(0);
+  });
 });
 
 // When a Bun native sink (spawn stdin, Bun.serve response body) consumes a TransformStream's

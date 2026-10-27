@@ -12,6 +12,8 @@ pub(super) struct Rows<'a> {
     pub(super) v: &'a [u8],
     pub(super) y_stride: usize,
     pub(super) uv_stride: usize,
+    /// The alpha rows, if the image has any, without padding. They start one row higher, which is undefined at the top.
+    pub(super) alpha: Option<&'a [u8]>,
     /// The position of the first row in the image, which is even.
     pub(super) first_row: usize,
     pub(super) num_rows: usize,
@@ -25,9 +27,8 @@ pub(super) struct Emitter {
     tmp_u: Vec<u8>,
     tmp_v: Vec<u8>,
     upsampler: Upsampler,
-    /// The alpha plane, or one opaque row for all.
-    alpha: Vec<u8>,
-    alpha_stride: usize,
+    /// The alpha row of an image without alpha.
+    opaque: Vec<u8>,
 }
 
 impl Emitter {
@@ -41,15 +42,8 @@ impl Emitter {
             tmp_u: try_vec(0, uv_width)?,
             tmp_v: try_vec(0, uv_width)?,
             upsampler: Upsampler::new(width)?,
-            alpha: try_vec(0xff, width)?,
-            alpha_stride: 0,
+            opaque: try_vec(0xff, width)?,
         })
-    }
-
-    /// `plane` has `width * height` samples.
-    pub(super) fn set_alpha(&mut self, plane: Vec<u8>) {
-        self.alpha = plane;
-        self.alpha_stride = self.width;
     }
 
     /// `CustomPut`, that is `EmitFancyRGB` and `EmitAlphaRGB`.
@@ -61,11 +55,15 @@ impl Emitter {
             tmp_u,
             tmp_v,
             upsampler,
-            alpha,
-            alpha_stride,
+            opaque,
         } = self;
         let (width, height) = (*width, *height);
         let uv_width = width.div_ceil(2);
+        let (first_row, num_rows) = (rows.first_row, rows.num_rows);
+        let (alpha, alpha_stride) = match rows.alpha {
+            Some(alpha) => (alpha, width),
+            None => (opaque.as_slice(), 0),
+        };
         let y_row = |j: usize| rows.y.sub(j * rows.y_stride..)?.sub(..width);
         let uv_row = |j: usize| -> Checked<[&[u8]; 2]> {
             let start = j * rows.uv_stride;
@@ -86,13 +84,13 @@ impl Emitter {
             for (lower, luma) in [(false, Some(top_y)), (true, bottom_y)] {
                 let Some(luma) = luma else { continue };
                 let y = y + usize::from(lower);
-                let alpha = alpha.sub(y * *alpha_stride..)?.sub(..width)?;
+                let alpha_start = (y + 1 - first_row) * alpha_stride;
+                let alpha = alpha.sub(alpha_start..)?.sub(..width)?;
                 upsampler.convert(lower, luma, alpha, output.row_mut(y, width)?)?;
             }
             Ok(())
         };
 
-        let (first_row, num_rows) = (rows.first_row, rows.num_rows);
         let y_end = first_row + num_rows;
         let cur_uv = uv_row(0)?;
         if first_row == 0 {

@@ -123,20 +123,25 @@ fn gradient_unfilter(prev: &[u8], row: &mut [u8]) {
     }
 }
 
-/// `WebPUnfilters[filter]` on each row of `plane`, from the top down.
-pub(super) fn unfilter(filter: Filter, plane: &mut [u8], width: usize) -> Checked {
+/// `WebPUnfilters[filter]` on each of `rows`, from the top down. `above` is the row above them, if they are not the first.
+pub(super) fn unfilter(
+    filter: Filter,
+    above: Option<&[u8]>,
+    rows: &mut [u8],
+    width: usize,
+) -> Checked {
     if filter == Filter::None {
         return Ok(());
     }
-    let (mut prev, below) = plane.split_at_mid(width)?;
-    horizontal_unfilter(0, prev);
-    for row in below.chunks_exact_mut(width) {
-        match filter {
-            Filter::Vertical => vertical_unfilter(prev, row),
-            Filter::Gradient => gradient_unfilter(prev, row),
-            _ => horizontal_unfilter(prev.at(0)?, row),
+    let mut prev = above;
+    for row in rows.chunks_exact_mut(width) {
+        match (filter, prev) {
+            (_, None) => horizontal_unfilter(0, row),
+            (Filter::Vertical, Some(prev)) => vertical_unfilter(prev, row),
+            (Filter::Gradient, Some(prev)) => gradient_unfilter(prev, row),
+            (_, Some(prev)) => horizontal_unfilter(prev.at(0)?, row),
         }
-        prev = row;
+        prev = Some(row);
     }
     Ok(())
 }

@@ -232,32 +232,56 @@ impl Transform {
         Ok(())
     }
 
-    /// Sets `dst` to the colors, converted. Each of `indices` packs `1 << bits` indices, the first in the lowest bits.
+    /// `color_index_inverse` with `N`, more than one, for `1 << bits`.
     #[inline(always)]
-    fn color_index_inverse<T>(
+    fn map_bundled<const N: usize, T>(
         &self,
         mut indices: impl Iterator<Item = u8>,
         dst: &[Cell<T>],
         convert: impl Fn(u32) -> T,
     ) -> Checked {
         let color_map = self.data.array_at::<COLOR_MAP_SIZE>(0)?;
-        if self.bits == 0 {
-            for (dst, index) in dst.iter().zip(indices) {
-                dst.set(convert(color_map.at(index.into())?));
+        let bits_per_pixel = const { u8::BITS / N as u32 };
+        let unpack = |mut packed_pixels: u32, pixels: &[Cell<T>]| -> Checked {
+            for dst in pixels {
+                let index = packed_pixels & ((1 << bits_per_pixel) - 1);
+                dst.set(convert(color_map.at(index as usize)?));
+                packed_pixels >>= bits_per_pixel;
             }
-            return Ok(());
-        }
-        let bits_per_pixel = 8 >> self.bits;
-        let bit_mask = (1 << bits_per_pixel) - 1;
+            Ok(())
+        };
         for row in dst.chunks_exact(self.xsize) {
-            for (pixels, mut packed_pixels) in row.chunks(1 << self.bits).zip(&mut indices) {
-                for dst in pixels {
-                    dst.set(convert(color_map.at((packed_pixels & bit_mask).into())?));
-                    packed_pixels >>= bits_per_pixel;
-                }
+            let (whole, rest) = row.as_chunks::<N>();
+            for (pixels, packed_pixels) in whole.iter().zip(&mut indices) {
+                unpack(packed_pixels.into(), pixels)?;
+            }
+            if !rest.is_empty() {
+                unpack(indices.next().ok_or(Bug)?.into(), rest)?;
             }
         }
         Ok(())
+    }
+
+    /// Sets `dst`, whole rows, to the colors, converted. Each of `indices` packs `1 << bits` indices, the first in the lowest bits.
+    #[inline(always)]
+    fn color_index_inverse<T>(
+        &self,
+        indices: impl Iterator<Item = u8>,
+        dst: &[Cell<T>],
+        convert: impl Fn(u32) -> T,
+    ) -> Checked {
+        match self.bits {
+            0 => {
+                let color_map = self.data.array_at::<COLOR_MAP_SIZE>(0)?;
+                for (dst, index) in dst.iter().zip(indices) {
+                    dst.set(convert(color_map.at(index.into())?));
+                }
+                Ok(())
+            }
+            1 => self.map_bundled::<2, T>(indices, dst, convert),
+            2 => self.map_bundled::<4, T>(indices, dst, convert),
+            _ => self.map_bundled::<8, T>(indices, dst, convert),
+        }
     }
 
     /// `VP8LColorIndexInverseTransformAlpha`: whole rows, of which only the green channel is stored.
@@ -311,9 +335,16 @@ impl Transform {
 }
 
 #[inline(always)]
-pub(super) fn green_of(pixel: Pixel) -> u8 {
+fn green_of(pixel: Pixel) -> u8 {
     let [_, green, _, _] = pixel;
     green
+}
+
+/// `WebPExtractGreen`. Shifting whole pixels, unlike reading one byte of each, compiles to a byte shuffle.
+pub(super) fn extract_green(src: &[Pixel], dst: &mut [u8]) {
+    for (dst, &pixel) in dst.iter_mut().zip(src) {
+        *dst = (u32::from_le_bytes(pixel) >> 8) as u8;
+    }
 }
 
 /// `src` holds pixels as 0xAARRGGBB.
@@ -323,9 +354,11 @@ pub(super) fn copy_pixels(src: &[u32], dst: &mut [Pixel]) {
     }
 }
 
-/// `VP8LConvertBGRAToRGBA`
+/// `VP8LConvertBGRAToRGBA`. Arithmetic on whole pixels, unlike moving their bytes, compiles to a shuffle of four pixels.
 pub(super) fn convert_bgra_to_rgba(src: &[Pixel], dst: &mut [u8]) {
-    for (dst, &[blue, green, red, alpha]) in dst.as_chunks_mut().0.iter_mut().zip(src) {
-        *dst = [red, green, blue, alpha];
+    for (dst, &pixel) in dst.as_chunks_mut().0.iter_mut().zip(src) {
+        let argb = u32::from_le_bytes(pixel);
+        let abgr = (argb & 0xff00_ff00) | (argb & 0x00ff_00ff).rotate_left(16);
+        *dst = abgr.to_le_bytes();
     }
 }

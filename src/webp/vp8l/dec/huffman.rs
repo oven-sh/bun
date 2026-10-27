@@ -50,8 +50,11 @@ pub(super) struct HuffmanCode32 {
     pub(super) value: u32,
 }
 
+/// From the next `HUFFMAN_PACKED_BITS` bits to a whole pixel.
+pub(super) type PackedTable = [HuffmanCode32; HUFFMAN_PACKED_TABLE_SIZE];
+
 /// The five codes of a meta code.
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub(super) struct HTreeGroup {
     /// Where the table of each code starts in `Metadata::huffman_tables`.
     pub(super) htrees: [usize; HUFFMAN_CODES_PER_META_CODE],
@@ -61,22 +64,8 @@ pub(super) struct HTreeGroup {
     pub(super) literal_arb: u32,
     /// Whether no bit is read: green and distance have a single symbol too, and `literal_arb` includes green's, a literal.
     pub(super) is_trivial_code: bool,
-    pub(super) use_packed_table: bool,
-    /// From the next bits to a whole pixel, if it is short.
-    pub(super) packed_table: [HuffmanCode32; HUFFMAN_PACKED_TABLE_SIZE],
-}
-
-impl Default for HTreeGroup {
-    fn default() -> Self {
-        Self {
-            htrees: [0; HUFFMAN_CODES_PER_META_CODE],
-            is_trivial_literal: false,
-            literal_arb: 0,
-            is_trivial_code: false,
-            use_packed_table: false,
-            packed_table: [HuffmanCode32::default(); HUFFMAN_PACKED_TABLE_SIZE],
-        }
-    }
+    /// Only if pixels are short enough for it.
+    pub(super) packed_table: Option<Box<PackedTable>>,
 }
 
 /// The bit-reversed increment of `key`, which has `len` bits.

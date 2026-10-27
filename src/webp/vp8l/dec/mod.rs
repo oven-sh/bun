@@ -5,13 +5,15 @@ mod huffman;
 mod lossless;
 mod predictors;
 
+use core::mem::{replace, take};
+
 use bit_reader::BitReader;
 use huffman::{
     HTreeGroup, HUFFMAN_PACKED_BITS, HUFFMAN_PACKED_TABLE_SIZE, HUFFMAN_TABLE_BITS,
     HUFFMAN_TABLE_MASK, HuffmanCode, HuffmanCode32, LENGTHS_TABLE_MASK, MAX_CODE_LENGTHS_SIZE,
-    append_huffman_table, build_lengths_table, is_valid_huffman_code,
+    PackedTable, append_huffman_table, build_lengths_table, is_valid_huffman_code,
 };
-use lossless::{COLOR_MAP_SIZE, Transform, convert_bgra_to_rgba, copy_pixels, green_of};
+use lossless::{COLOR_MAP_SIZE, Transform, convert_bgra_to_rgba, copy_pixels, extract_green};
 use predictors::{Pixel, add_pixel};
 
 use crate::util::{Bug, Checked, SliceExt, try_vec, try_with_capacity};
@@ -29,6 +31,11 @@ use crate::{Error, Info, Output, Result};
 pub(crate) use crate::vp8l::common::FRAME_HEADER_SIZE;
 
 const NUM_ARGB_CACHE_ROWS: usize = 16;
+
+/// The longest distance of a backward reference, but for the `CODE_TO_PLANE_CODES` in a wide image.
+const MAX_COPY_DISTANCE: usize = (1 << 20) - CODE_TO_PLANE_CODES;
+/// The longest backward reference.
+const MAX_COPY_LENGTH: usize = 1 << 12;
 
 // The five codes of a meta code. Green also codes the length prefixes and the color cache indices.
 const GREEN: usize = 0;
@@ -117,16 +124,17 @@ fn read_symbol(
     Ok(code.value() as usize)
 }
 
-fn build_packed_table(group: &mut HTreeGroup, tables: &[HuffmanCode]) -> Checked {
+fn build_packed_table(group: &HTreeGroup, tables: &[HuffmanCode]) -> Result<Box<PackedTable>> {
+    let table = try_vec(HuffmanCode32::default(), HUFFMAN_PACKED_TABLE_SIZE)?;
+    let mut table: Box<PackedTable> = table.into_boxed_slice().try_into().map_err(|_| Bug)?;
     let [green, red, blue, alpha, _] = group.htrees;
-    for (next_bits, huff) in group.packed_table.iter_mut().enumerate() {
+    for (next_bits, huff) in table.iter_mut().enumerate() {
         let hcode = tables.at(green + next_bits)?;
         if hcode.value() as usize >= NUM_LITERAL_CODES {
             huff.bits = hcode.bits() + BITS_SPECIAL_MARKER;
             huff.value = hcode.value();
             continue;
         }
-        *huff = HuffmanCode32::default();
         let mut bits = next_bits;
         for (table_start, shift) in [(green, 8), (red, 16), (blue, 0), (alpha, 24)] {
             let hcode = tables.at(table_start + bits)?;
@@ -135,7 +143,7 @@ fn build_packed_table(group: &mut HTreeGroup, tables: &[HuffmanCode]) -> Checked
             bits >>= hcode.bits();
         }
     }
-    Ok(())
+    Ok(table)
 }
 
 fn read_huffman_code_lengths(
@@ -318,9 +326,8 @@ fn read_htree_groups(
                 group.literal_arb |= green.value() << 8;
             }
         }
-        group.use_packed_table = !group.is_trivial_code && max_bits < HUFFMAN_PACKED_BITS;
-        if group.use_packed_table {
-            build_packed_table(group, &tables)?;
+        if !group.is_trivial_code && max_bits < HUFFMAN_PACKED_BITS {
+            group.packed_table = Some(build_packed_table(group, &tables)?);
         }
     }
     Ok((htree_groups, tables))
@@ -425,27 +432,126 @@ fn cache_pixels(color_cache: &mut ColorCache, data: &[u32], last_cached: &mut us
     Ok(())
 }
 
-/// Calls `process_rows` with the pixels so far and how many rows are complete, every `NUM_ARGB_CACHE_ROWS` rows and at the end.
+/// Consecutive whole rows of entropy-coded pixels.
+struct Rows<'a, T> {
+    y_start: usize,
+    y_end: usize,
+    pixels: &'a [T],
+}
+
+/// The entropy-coded pixels of an image, which come from the top down: all of them, or the last rows.
+struct Window<T> {
+    width: usize,
+    height: usize,
+    /// The pixels so far, from row `first_row` on.
+    pixels: Vec<T>,
+    first_row: usize,
+    /// How many rows `take_rows` has returned.
+    rows_done: usize,
+    /// How many rows above `rows_done` a backward reference can reach.
+    max_distance_rows: usize,
+    /// With more rows than this above `rows_done`, there may not be room for the next rows.
+    max_rows_above: usize,
+}
+
+impl<T: Copy> Window<T> {
+    /// A window that keeps the whole image, with room for a backward reference that goes past its end.
+    fn whole(width: usize, height: usize) -> Result<Self> {
+        Ok(Self {
+            width,
+            height,
+            pixels: try_with_capacity(width * height + MAX_COPY_LENGTH)?,
+            first_row: 0,
+            rows_done: 0,
+            max_distance_rows: height,
+            max_rows_above: height,
+        })
+    }
+
+    /// `GetWindowRows`: a window that drops the rows that were taken and are out of reach.
+    fn sliding(width: usize, height: usize) -> Result<Self> {
+        if width == 0 {
+            return Err(Error::Bug);
+        }
+        let max_distance_rows = MAX_COPY_DISTANCE.max(7 * width + 8).div_ceil(width);
+        // A copy that starts in the middle of a row ends one row further down.
+        let max_length_rows = MAX_COPY_LENGTH.div_ceil(width) + 1;
+        let new_rows = NUM_ARGB_CACHE_ROWS + max_length_rows;
+        // Twice what it takes, so that half of the window is decoded between two moves of the other half.
+        let num_rows = 2 * (max_distance_rows + new_rows);
+        if num_rows >= height {
+            return Self::whole(width, height);
+        }
+        Ok(Self {
+            width,
+            height,
+            pixels: try_with_capacity(width * num_rows)?,
+            first_row: 0,
+            rows_done: 0,
+            max_distance_rows,
+            max_rows_above: num_rows - new_rows,
+        })
+    }
+
+    /// Where row `y`, which is not above the window, starts in `pixels`.
+    fn index_of_row(&self, y: usize) -> usize {
+        (y - self.first_row) * self.width
+    }
+
+    /// `ShiftWindow`, then the row to decode up to: at most `last_row`, and `NUM_ARGB_CACHE_ROWS` rows to take.
+    fn next_stop(&mut self, last_row: usize) -> Checked<Option<usize>> {
+        if self.rows_done >= last_row {
+            return Ok(None);
+        }
+        if self.rows_done - self.first_row > self.max_rows_above {
+            let first_row = self.rows_done - self.max_distance_rows;
+            let dropped = self.index_of_row(first_row);
+            let kept = self.pixels.len().checked_sub(dropped).ok_or(Bug)?;
+            self.pixels.move_within(dropped, 0, kept)?;
+            self.pixels.truncate(kept);
+            self.first_row = first_row;
+        }
+        let next_multiple = (self.rows_done / NUM_ARGB_CACHE_ROWS + 1) * NUM_ARGB_CACHE_ROWS;
+        Ok(Some(next_multiple.min(last_row)))
+    }
+
+    /// The rows from `rows_done` to `y_end`, which are complete.
+    fn take_rows(&mut self, y_end: usize) -> Checked<Rows<'_, T>> {
+        let y_start = replace(&mut self.rows_done, y_end);
+        let range = self.index_of_row(y_start)..self.index_of_row(y_end);
+        Ok(Rows {
+            y_start,
+            y_end,
+            pixels: self.pixels.sub(range)?,
+        })
+    }
+}
+
+/// `DecodeImageData`: decodes up to row `y_end`, or further if a backward reference goes further.
 fn decode_image_data(
     br: &mut BitReader<'_>,
     metadata: &Metadata,
-    width: usize,
-    height: usize,
-    process_rows: &mut dyn FnMut(&[u32], usize) -> Checked,
-) -> Result<Vec<u32>> {
-    let num_pixels = width * height;
-    let mut data = try_with_capacity(num_pixels)?;
-    let mut color_cache = match metadata.color_cache_bits {
-        0 => None,
-        bits => Some(ColorCache::new(bits)?),
-    };
+    color_cache: &mut Option<ColorCache>,
+    window: &mut Window<u32>,
+    y_end: usize,
+) -> Result<()> {
+    let end = window.index_of_row(y_end);
+    if window.pixels.len() >= end {
+        return Ok(());
+    }
+    let width = window.width;
+    let image_end = window.index_of_row(window.height);
+    let mut data = take(&mut window.pixels);
+    let mut cache = color_cache.take();
     let tables = metadata.huffman_tables.as_slice();
     let mask = metadata.huffman_mask;
-    let (mut row, mut col) = (0, 0);
-    let mut last_cached = 0;
+    let mut row = window.first_row + data.len().checked_div(width).ok_or(Bug)?;
+    let mut col = data.len().checked_rem(width).ok_or(Bug)?;
+    // Each call leaves all the pixels in the color cache.
+    let mut last_cached = data.len();
     let mut htree_group = metadata.get_htree_group_for_pos(col, row)?;
 
-    'decode: while data.len() < num_pixels {
+    'decode: while data.len() < end {
         if col & mask == 0 {
             htree_group = metadata.get_htree_group_for_pos(col, row)?;
         }
@@ -454,9 +560,9 @@ fn decode_image_data(
                 break 'literal htree_group.literal_arb;
             }
             br.fill_bit_window();
-            let symbol = if htree_group.use_packed_table {
+            let symbol = if let Some(packed_table) = &htree_group.packed_table {
                 let index = br.prefetch_bits() as usize & (HUFFMAN_PACKED_TABLE_SIZE - 1);
-                let packed = htree_group.packed_table.at(index)?;
+                let packed = packed_table.at(index)?;
                 if packed.bits < BITS_SPECIAL_MARKER {
                     br.skip_bits(packed.bits);
                     if br.is_end_of_stream() {
@@ -487,9 +593,9 @@ fn decode_image_data(
                 break 'literal (alpha << 24) | (red << 16) | green | blue;
             }
             if symbol >= FIRST_CACHE_CODE {
-                let color_cache = color_cache.as_mut().ok_or(Bug)?;
-                cache_pixels(color_cache, &data, &mut last_cached)?;
-                break 'literal color_cache.lookup((symbol - FIRST_CACHE_CODE) as u32)?;
+                let cache = cache.as_mut().ok_or(Bug)?;
+                cache_pixels(cache, &data, &mut last_cached)?;
+                break 'literal cache.lookup((symbol - FIRST_CACHE_CODE) as u32)?;
             }
 
             let length = prefix_decode(symbol - NUM_LITERAL_CODES, br);
@@ -500,23 +606,23 @@ fn decode_image_data(
             if br.is_end_of_stream() {
                 break 'decode;
             }
-            if data.len() < dist || num_pixels - data.len() < length {
+            if data.len() < dist {
                 return Err(Error::BitstreamError);
             }
             copy_block(&mut data, dist, length)?;
+            if let Some(cache) = &mut cache {
+                cache_pixels(cache, &data, &mut last_cached)?;
+            }
+            if data.len() >= end {
+                break 'decode;
+            }
             col += length;
             while col >= width {
                 col -= width;
                 row += 1;
-                if row % NUM_ARGB_CACHE_ROWS == 0 {
-                    process_rows(&data, row)?;
-                }
             }
             if col & mask != 0 {
                 htree_group = metadata.get_htree_group_for_pos(col, row)?;
-            }
-            if let Some(color_cache) = &mut color_cache {
-                cache_pixels(color_cache, &data, &mut last_cached)?;
             }
             continue 'decode;
         };
@@ -526,26 +632,35 @@ fn decode_image_data(
         if col >= width {
             col = 0;
             row += 1;
-            if row % NUM_ARGB_CACHE_ROWS == 0 {
-                process_rows(&data, row)?;
-            }
-            if let Some(color_cache) = &mut color_cache {
-                cache_pixels(color_cache, &data, &mut last_cached)?;
+            if let Some(cache) = &mut cache {
+                cache_pixels(cache, &data, &mut last_cached)?;
             }
         }
     }
 
-    if br.is_end_of_stream() {
+    // The loop lets a backward reference go past the end of the image, which the window has room for.
+    if br.is_end_of_stream() || data.len() > image_end {
         return Err(Error::BitstreamError);
     }
-    process_rows(&data, row)?;
-    Ok(data)
+    window.pixels = data;
+    *color_cache = cache;
+    Ok(())
+}
+
+fn new_color_cache(metadata: &Metadata) -> Result<Option<ColorCache>> {
+    Ok(match metadata.color_cache_bits {
+        0 => None,
+        bits => Some(ColorCache::new(bits)?),
+    })
 }
 
 /// `DecodeImageStream` of an image that is part of a header: it has no transforms and a single meta code.
 fn decode_image_stream(br: &mut BitReader<'_>, xsize: usize, ysize: usize) -> Result<Vec<u32>> {
     let metadata = read_metadata(br, xsize, ysize, false)?;
-    decode_image_data(br, &metadata, xsize, ysize, &mut |_, _| Ok(()))
+    let mut window = Window::whole(xsize, ysize)?;
+    let mut color_cache = new_color_cache(&metadata)?;
+    decode_image_data(br, &metadata, &mut color_cache, &mut window, ysize)?;
+    Ok(window.pixels)
 }
 
 /// The colors are stored as differences.
@@ -598,74 +713,110 @@ fn read_transform(
 }
 
 /// Undoes the transforms, a few rows at a time.
-struct ArgbCache<'a> {
-    transforms: &'a [Transform],
-    /// The width of the rows that come in.
-    in_width: usize,
+struct ArgbCache {
     /// The width of the rows that go out.
-    out_width: usize,
+    width: usize,
     /// `NUM_ARGB_CACHE_ROWS` rows, after one row for the predictor transform to keep the row above them in.
     pixels: Vec<Pixel>,
-    rows_done: usize,
 }
 
-impl<'a> ArgbCache<'a> {
-    fn new(transforms: &'a [Transform], in_width: usize, out_width: usize) -> Result<Self> {
+impl ArgbCache {
+    fn new(width: usize) -> Result<Self> {
         Ok(Self {
-            transforms,
-            in_width,
-            out_width,
-            pixels: try_vec([0; 4], out_width * (NUM_ARGB_CACHE_ROWS + 1))?,
-            rows_done: 0,
+            width,
+            pixels: try_vec([0; 4], width * (NUM_ARGB_CACHE_ROWS + 1))?,
         })
     }
 
-    /// Transforms rows `rows_done..y_end` of `data`. Returns the number of the first one and their pixels.
+    /// Returns the pixels of `rows`, which follow the rows of the last call and are not more than the cache holds.
     fn apply_inverse_transforms(
         &mut self,
-        data: &[u32],
-        y_end: usize,
-    ) -> Checked<(usize, &[Pixel])> {
-        let y_start = self.rows_done;
-        self.rows_done = y_end;
-        let top = self.out_width;
-        let mut rows_in = Some(data.sub(self.in_width * y_start..self.in_width * y_end)?);
-        if y_start < y_end {
-            for transform in self.transforms.iter().rev() {
-                transform.inverse(y_start, y_end, rows_in.take(), &mut self.pixels, top)?;
-            }
+        transforms: &[Transform],
+        rows: &Rows<'_, u32>,
+    ) -> Checked<&[Pixel]> {
+        let top = self.width;
+        let mut rows_in = Some(rows.pixels);
+        for transform in transforms.iter().rev() {
+            let rows_in = rows_in.take();
+            transform.inverse(rows.y_start, rows.y_end, rows_in, &mut self.pixels, top)?;
         }
         if let Some(rows_in) = rows_in {
             copy_pixels(rows_in, self.pixels.sub_mut(top..)?);
         }
-        let rows_out = self
-            .pixels
-            .sub(top..top + self.out_width * (y_end - y_start))?;
-        Ok((y_start, rows_out))
+        self.pixels
+            .sub(top..top + self.width * (rows.y_end - rows.y_start))
+    }
+}
+
+/// Reads the entropy-coded pixels of the main image, a few rows at a time.
+struct PixelReader<'a, T> {
+    br: BitReader<'a>,
+    metadata: Metadata,
+    color_cache: Option<ColorCache>,
+    window: Window<T>,
+}
+
+impl<'a, T: Copy> PixelReader<'a, T> {
+    /// `AllocateInternalBuffers32b`, `AllocateInternalBuffers8b`, without the cache for the transforms.
+    fn new(br: BitReader<'a>, metadata: Metadata, width: usize, height: usize) -> Result<Self> {
+        Ok(Self {
+            window: Window::sliding(width, height)?,
+            color_cache: new_color_cache(&metadata)?,
+            br,
+            metadata,
+        })
+    }
+}
+
+impl PixelReader<'_, u32> {
+    /// The next rows, above `last_row`. Nothing below that row is read, but for the end of a backward reference.
+    fn next_rows(&mut self, last_row: usize) -> Result<Option<Rows<'_, u32>>> {
+        let Some(y_end) = self.window.next_stop(last_row)? else {
+            return Ok(None);
+        };
+        decode_image_data(
+            &mut self.br,
+            &self.metadata,
+            &mut self.color_cache,
+            &mut self.window,
+            y_end,
+        )?;
+        Ok(Some(self.window.take_rows(y_end)?))
+    }
+}
+
+impl PixelReader<'_, u8> {
+    /// The same for an image whose green channel alone is entropy-coded.
+    fn next_rows(&mut self, last_row: usize) -> Result<Option<Rows<'_, u8>>> {
+        let Some(y_end) = self.window.next_stop(last_row)? else {
+            return Ok(None);
+        };
+        decode_alpha_data(&mut self.br, &self.metadata, &mut self.window, y_end)?;
+        Ok(Some(self.window.take_rows(y_end)?))
     }
 }
 
 /// The main image, read up to its pixels.
-struct Decoder<'a> {
+struct Header<'a> {
     br: BitReader<'a>,
     /// The width of the entropy-coded image, which is less than that of the image if pixels are bundled.
-    width: usize,
+    coded_width: usize,
     metadata: Metadata,
     transforms: Vec<Transform>,
 }
 
-impl<'a> Decoder<'a> {
+impl<'a> Header<'a> {
     /// `DecodeImageStream` of the main image, up to the pixels.
-    fn new(mut br: BitReader<'a>, xsize: usize, ysize: usize) -> Result<Self> {
-        let mut width = xsize;
+    fn read(mut br: BitReader<'a>, xsize: usize, ysize: usize) -> Result<Self> {
+        let mut coded_width = xsize;
         let mut transforms = try_with_capacity(NUM_TRANSFORMS)?;
         while br.read_bits(1) != 0 {
-            read_transform(&mut br, &mut width, ysize, &mut transforms)?;
+            read_transform(&mut br, &mut coded_width, ysize, &mut transforms)?;
         }
-        let metadata = read_metadata(&mut br, width, ysize, true)?;
+        let metadata = read_metadata(&mut br, coded_width, ysize, true)?;
         Ok(Self {
             br,
-            width,
+            coded_width,
             metadata,
             transforms,
         })
@@ -677,41 +828,45 @@ pub(crate) fn decode(data: &[u8], output: &mut Output<'_>) -> Result<()> {
     let mut br = BitReader::new(data);
     let info = read_image_info(&mut br).ok_or(Error::BitstreamError)?;
     let (width, height) = (info.width as usize, info.height as usize);
-    let mut dec = Decoder::new(br, width, height)?;
+    let Header {
+        br,
+        coded_width,
+        metadata,
+        transforms,
+    } = Header::read(br, width, height)?;
     output.check(width, height)?;
-    let mut argb_cache = ArgbCache::new(&dec.transforms, dec.width, width)?;
-    let mut emit_rows = |data: &[u32], y_end| {
-        let (y_start, rows) = argb_cache.apply_inverse_transforms(data, y_end)?;
-        for (y, argb) in (y_start..).zip(rows.chunks_exact(width)) {
+    let mut argb_cache = ArgbCache::new(width)?;
+    let mut reader = PixelReader::<u32>::new(br, metadata, coded_width, height)?;
+    while let Some(rows) = reader.next_rows(height)? {
+        let argb = argb_cache.apply_inverse_transforms(&transforms, &rows)?;
+        for (y, argb) in (rows.y_start..).zip(argb.chunks_exact(width)) {
             convert_bgra_to_rgba(argb, output.row_mut(y, width)?);
         }
-        Ok(())
-    };
-    decode_image_data(
-        &mut dec.br,
-        &dec.metadata,
-        dec.width,
-        height,
-        &mut emit_rows,
-    )?;
+    }
     Ok(())
 }
 
-/// `DecodeAlphaData`: `decode_image_data` for an image whose green channel alone is entropy-coded, and alone is returned.
+/// `DecodeAlphaData`: `decode_image_data` for an image whose green channel alone is entropy-coded, and alone is kept.
 fn decode_alpha_data(
     br: &mut BitReader<'_>,
     metadata: &Metadata,
-    width: usize,
-    height: usize,
-) -> Result<Vec<u8>> {
-    let num_pixels = width * height;
-    let mut data = try_with_capacity(num_pixels)?;
+    window: &mut Window<u8>,
+    y_end: usize,
+) -> Result<()> {
+    let end = window.index_of_row(y_end);
+    if window.pixels.len() >= end {
+        return Ok(());
+    }
+    let width = window.width;
+    let image_end = window.index_of_row(window.height);
+    let mut data = take(&mut window.pixels);
     let tables = metadata.huffman_tables.as_slice();
     let mask = metadata.huffman_mask;
-    let (mut row, mut col) = (0, 0);
+    let mut row = window.first_row + data.len().checked_div(width).ok_or(Bug)?;
+    let mut col = data.len().checked_rem(width).ok_or(Bug)?;
     let mut htree_group = metadata.get_htree_group_for_pos(col, row)?;
 
-    while !br.eos && data.len() < num_pixels {
+    while !br.eos && data.len() < end {
         if col & mask == 0 {
             htree_group = metadata.get_htree_group_for_pos(col, row)?;
         }
@@ -733,7 +888,7 @@ fn decode_alpha_data(
             br.fill_bit_window();
             let dist_code = prefix_decode(dist_symbol, br);
             let dist = plane_code_to_distance(width, dist_code)?;
-            if data.len() < dist || num_pixels - data.len() < length {
+            if data.len() < dist {
                 return Err(Error::BitstreamError);
             }
             copy_block(&mut data, dist, length)?;
@@ -742,51 +897,82 @@ fn decode_alpha_data(
                 col -= width;
                 row += 1;
             }
-            if data.len() < num_pixels && col & mask != 0 {
+            if data.len() < end && col & mask != 0 {
                 htree_group = metadata.get_htree_group_for_pos(col, row)?;
             }
         }
         br.eos = br.is_end_of_stream();
     }
-    // Unlike `decode_image_data`, this lets the last symbol go past the end of the data.
-    if data.len() < num_pixels {
+    // Unlike `decode_image_data`, this lets the last symbol of the image go past the end of the data.
+    if data.len() > image_end || (br.eos && data.len() < image_end) {
         return Err(Error::BitstreamError);
     }
-    Ok(data)
+    window.pixels = data;
+    Ok(())
 }
 
-/// `VP8LDecodeAlphaHeader`, `VP8LDecodeAlphaImageStream`: `output` becomes the green channel of a headerless image.
-pub(crate) fn decode_alpha(
-    data: &[u8],
-    width: usize,
-    height: usize,
-    output: &mut [u8],
-) -> Result<()> {
-    let mut dec = Decoder::new(BitReader::new(data), width, height)?;
+enum AlphaPixels<'a> {
+    /// The green channel alone is entropy-coded, and the only transform is a palette.
+    Green(PixelReader<'a, u8>),
+    Argb(PixelReader<'a, u32>, ArgbCache),
+}
 
-    if let [transform] = dec.transforms.as_slice()
-        && transform.kind == TransformType::ColorIndexing
-        && dec.metadata.is_8b_optimizable()?
-    {
-        let pixels = decode_alpha_data(&mut dec.br, &dec.metadata, dec.width, height)?;
-        transform.color_index_inverse_alpha(&pixels, output)?;
-        return Ok(());
+/// The green channel of a headerless image, from the top down.
+pub(crate) struct AlphaDecoder<'a> {
+    width: usize,
+    transforms: Vec<Transform>,
+    pixels: AlphaPixels<'a>,
+}
+
+impl<'a> AlphaDecoder<'a> {
+    /// `VP8LDecodeAlphaHeader`
+    pub(crate) fn new(data: &'a [u8], width: usize, height: usize) -> Result<Self> {
+        let Header {
+            br,
+            coded_width,
+            metadata,
+            transforms,
+        } = Header::read(BitReader::new(data), width, height)?;
+        let pixels = if let [transform] = transforms.as_slice()
+            && transform.kind == TransformType::ColorIndexing
+            && metadata.is_8b_optimizable()?
+        {
+            AlphaPixels::Green(PixelReader::new(br, metadata, coded_width, height)?)
+        } else {
+            let reader = PixelReader::new(br, metadata, coded_width, height)?;
+            AlphaPixels::Argb(reader, ArgbCache::new(width)?)
+        };
+        Ok(Self {
+            width,
+            transforms,
+            pixels,
+        })
     }
 
-    let mut argb_cache = ArgbCache::new(&dec.transforms, dec.width, width)?;
-    let mut extract_alpha_rows = |data: &[u32], y_end| {
-        let (y_start, rows) = argb_cache.apply_inverse_transforms(data, y_end)?;
-        for (alpha, &pixel) in output.sub_mut(y_start * width..)?.iter_mut().zip(rows) {
-            *alpha = green_of(pixel);
+    /// `VP8LDecodeAlphaImageStream`: `output` becomes the rows from where the last call stopped to `last_row`.
+    pub(crate) fn decode_rows(&mut self, last_row: usize, mut output: &mut [u8]) -> Result<()> {
+        let mut next_output = |rows: usize| -> Checked<&mut [u8]> {
+            let (next, rest) = take(&mut output).split_at_mid(rows * self.width)?;
+            output = rest;
+            Ok(next)
+        };
+        match &mut self.pixels {
+            // `ExtractPalettedAlphaRows`
+            AlphaPixels::Green(reader) => {
+                let transform = self.transforms.first().ok_or(Bug)?;
+                while let Some(rows) = reader.next_rows(last_row)? {
+                    let alpha = next_output(rows.y_end - rows.y_start)?;
+                    transform.color_index_inverse_alpha(rows.pixels, alpha)?;
+                }
+            }
+            // `ExtractAlphaRows`
+            AlphaPixels::Argb(reader, argb_cache) => {
+                while let Some(rows) = reader.next_rows(last_row)? {
+                    let argb = argb_cache.apply_inverse_transforms(&self.transforms, &rows)?;
+                    extract_green(argb, next_output(rows.y_end - rows.y_start)?);
+                }
+            }
         }
         Ok(())
-    };
-    decode_image_data(
-        &mut dec.br,
-        &dec.metadata,
-        dec.width,
-        height,
-        &mut extract_alpha_rows,
-    )?;
-    Ok(())
+    }
 }

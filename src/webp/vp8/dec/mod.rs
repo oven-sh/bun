@@ -10,7 +10,8 @@ mod upsampling;
 
 use crate::util::{Bug, Checked, SliceExt, try_vec};
 use crate::vp8::common::{
-    IntraMode, MB_FEATURE_TREE_PROBS, NUM_MB_SEGMENTS, NUM_PROBAS, SIGNATURE, inverse_wht,
+    FRAME_HEADER_SIZE, IntraMode, MB_FEATURE_TREE_PROBS, NUM_MB_SEGMENTS, NUM_PROBAS, SIGNATURE,
+    inverse_wht,
 };
 use crate::vp8::tables::{CAT3, CAT4, CAT5, CAT6};
 use crate::{Error, Info, Output, Result, alpha};
@@ -19,8 +20,6 @@ use core::array;
 use frame::Frame;
 use quant::{Quant, QuantMatrix};
 use tree::{Proba, TypeProbas};
-
-pub(crate) use crate::vp8::common::FRAME_HEADER_SIZE;
 
 const NUM_REF_LF_DELTAS: usize = 4;
 const NUM_MODE_LF_DELTAS: usize = 4;
@@ -493,6 +492,7 @@ impl<'a> Decoder<'a> {
         // The modes of the 4x4 blocks, and the coefficients, along the lower edge of the row of macroblocks above.
         let mut intra_t = try_vec([IntraMode::Dc; 4], self.mb_w)?;
         let mut top_ctx = try_vec(MbContext::default(), self.mb_w)?;
+        let mut alpha_dec = None;
         for mb_y in 0..self.mb_h {
             let mut intra_l = [IntraMode::Dc; 4];
             for (top, mb) in intra_t.iter_mut().zip(&mut frame.mb_data) {
@@ -509,15 +509,20 @@ impl<'a> Decoder<'a> {
                     return Err(Error::NotEnoughData);
                 }
             }
-            // libwebp decodes alpha a few rows at a time unless the levels are pre-processed, and fails the same images.
+            // Of a bad alpha header and a first row of macroblocks that is cut short, the latter is reported.
             if mb_y == 0
                 && let Some(alpha) = alpha
             {
-                let plane = alpha::dec::decode(alpha, self.width, self.height)?;
-                frame.emitter.set_alpha(plane);
+                let max_rows = 16 + frame.filter_type.extra_rows();
+                alpha_dec = Some(alpha::dec::Decoder::new(
+                    alpha,
+                    self.width,
+                    self.height,
+                    max_rows,
+                )?);
             }
             frame.reconstruct_row(mb_y)?;
-            frame.finish_row(mb_y, output)?;
+            frame.finish_row(mb_y, alpha_dec.as_mut(), output)?;
         }
         Ok(())
     }

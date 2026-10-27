@@ -5,7 +5,7 @@ use super::io::{Emitter, Rows};
 use super::{Decoder, FilterType, MbData};
 use crate::util::{Checked, SliceExt, try_vec};
 use crate::vp8::common::NUM_MB_SEGMENTS;
-use crate::{Output, Result};
+use crate::{Output, Result, alpha};
 
 /// `VP8FInfo`: how a macroblock is filtered.
 #[derive(Clone, Copy, Default)]
@@ -282,8 +282,13 @@ impl Frame {
         Ok(())
     }
 
-    /// Filters the row and writes what no later filtering changes.
-    pub(super) fn finish_row(&mut self, mb_y: usize, output: &mut Output<'_>) -> Result<()> {
+    /// Filters the row and writes what no later filtering changes, with as many rows of `alpha`.
+    pub(super) fn finish_row(
+        &mut self,
+        mb_y: usize,
+        alpha: Option<&mut alpha::dec::Decoder<'_>>,
+        output: &mut Output<'_>,
+    ) -> Result<()> {
         let mb_w = self.mb_w;
         let (y_stride, uv_stride) = (16 * mb_w, 8 * mb_w);
         let extra_rows = self.filter_type.extra_rows();
@@ -311,6 +316,10 @@ impl Frame {
             v: self.cache_v.as_flattened().sub(uv_offset..)?,
             y_stride,
             uv_stride,
+            alpha: match alpha {
+                Some(alpha) => Some(alpha.next_rows(y_end - y_start)?),
+                None => None,
+            },
             first_row: y_start,
             num_rows: y_end - y_start,
         };

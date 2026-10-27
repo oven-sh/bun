@@ -561,9 +561,8 @@ describe("Bun.Image", () => {
     // Walk a WebP RIFF container and return the ICCP chunk payload.
     // Layout: "RIFF" · u32le(riff_size) · "WEBP" · { fourcc(4) ·
     // u32le(chunk_size) · payload · pad-to-even }…  A non-VP8X WebP
-    // (plain `WebPEncodeRGBA` output) only has a single VP8/VP8L chunk
-    // and returns null here. libwebpmux wraps the bitstream in VP8X +
-    // ICCP when a profile is attached.
+    // only has a single VP8/VP8L chunk and returns null here. The
+    // bitstream is wrapped in VP8X + ICCP when a profile is attached.
     function extractWebpIccp(webp: Uint8Array): Uint8Array | null {
       if (webp.length < 12) return null;
       const dv = new DataView(webp.buffer, webp.byteOffset, webp.byteLength);
@@ -718,9 +717,8 @@ describe("Bun.Image", () => {
       expect(Array.from(got!)).toEqual(Array.from(fakeProfile));
     });
 
-    // ── WebP ICCP carry-through — libwebpmux/libwebpdemux wrap the raw
-    // VP8/VP8L bitstream in a VP8X container so the ICCP chunk can travel
-    // alongside. Covers decode-side (WebP→PNG), encode-side (PNG→WebP,
+    // ── WebP ICCP carry-through — the raw VP8/VP8L bitstream is wrapped
+    // in a VP8X container so the ICCP chunk can travel alongside. Covers decode-side (WebP→PNG), encode-side (PNG→WebP,
     // both lossy and lossless), WebP→WebP round-trip, geometry ops
     // preserving the profile through a WebP encode, and the no-profile
     // fast path staying a bare VP8/VP8L RIFF.
@@ -728,7 +726,7 @@ describe("Bun.Image", () => {
     test("PNG iCCP transfers to WebP encode — ICCP chunk in output", async () => {
       const src = pngWithIccp(cornersPng, fakeProfile);
       const webp = await new Bun.Image(src).webp({ quality: 90 }).bytes();
-      // libwebpmux wraps the bitstream in VP8X when any extended chunk is
+      // The bitstream is wrapped in VP8X when any extended chunk is
       // attached. First chunk after the RIFF header must be VP8X with the
       // ICCP flag (bit 5 of byte 0 of the VP8X body) set.
       expect(String.fromCharCode(...webp.subarray(12, 16))).toBe("VP8X");
@@ -1729,7 +1727,7 @@ describe("Bun.Image.backend", () => {
 
   // Same input → both backends → both must round-trip pixels exactly. The
   // system path goes through ImageIO/WIC + vImage; the bun path is
-  // spng/libwebp + Highway. Reflect/rotate are pure permutations so byte
+  // spng/bun_webp + Highway. Reflect/rotate are pure permutations so byte
   // equality holds; resize uses lanczos3 (the only filter the system path
   // accepts) so we just check dimensions and that it's not all-black.
   test.each(["bun", "system"] as const)("backend=%s pipeline parity", async backend => {

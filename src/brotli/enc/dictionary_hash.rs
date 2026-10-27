@@ -127,6 +127,7 @@ mod tests {
 
     /// The checksums are those of the tables that the reference encoder embeds.
     #[test]
+    #[cfg_attr(miri, ignore = "too slow for Miri")]
     fn same_as_reference_tables() -> Fallible {
         let hash = dictionary_hash()?;
         assert_eq!(hash.words.len(), 32768);

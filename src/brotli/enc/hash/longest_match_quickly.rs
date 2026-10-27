@@ -222,8 +222,9 @@ impl<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::enc::dictionary_hash::dictionary_hash;
+    use crate::enc::dictionary_hash::DictionaryHash;
     use crate::enc::hash::{DictionaryStats, SCORE_BASE};
+    use std::sync::OnceLock;
 
     #[test]
     fn the_last_distance_is_not_taken_beyond_the_window() -> Fallible {
@@ -234,6 +235,12 @@ mod tests {
         }
         let mut distance_cache = [0; 16];
         distance_cache[0] = 100;
+        // Without `USE_DICTIONARY` it is not looked at, and the real one takes Miri minutes to make.
+        static NO_WORDS: OnceLock<DictionaryHash> = OnceLock::new();
+        let no_words = NO_WORDS.get_or_init(|| DictionaryHash {
+            words: Box::default(),
+            lengths: Box::default(),
+        });
         for (max_backward, found) in [(100, 32), (99, 0)] {
             let mut hasher = HashLongestMatchQuickly::<{ 1 << 20 }, 4, 7, false>::new()?;
             let mut stats = DictionaryStats::default();
@@ -244,7 +251,7 @@ mod tests {
                 len_code_delta: 0,
             };
             hasher.find_longest_match(
-                &mut StaticDictionarySearch::new(&mut stats, dictionary_hash()?),
+                &mut StaticDictionarySearch::new(&mut stats, no_words),
                 &data,
                 255,
                 &distance_cache,

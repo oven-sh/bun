@@ -28,17 +28,35 @@ use crate::ZStr;
 // window; writes are rare and serial.
 static TOP_LEVEL_DIR: crate::RwLock<&'static [u8]> = crate::RwLock::new(b".");
 
+/// The recorded directory no longer names the process cwd; see [`mark_top_level_dir_stale`].
+static TOP_LEVEL_DIR_STALE: AtomicBool = AtomicBool::new(false);
+
 /// Record the top-level directory (interned `'static` slice). Idempotent;
 /// later calls overwrite. Called from `FileSystem::init` / `set_top_level_dir`.
+/// A recorded directory is trusted, so this also clears the stale mark.
 #[inline]
 pub fn set_top_level_dir(dir: &'static [u8]) {
-    *TOP_LEVEL_DIR.write() = dir;
+    let mut guard = TOP_LEVEL_DIR.write();
+    *guard = dir;
+    TOP_LEVEL_DIR_STALE.store(false, Ordering::Release);
 }
 
 /// Top-level directory recorded at startup (defaults to `"."`).
 #[inline]
 pub fn top_level_dir() -> &'static [u8] {
     *TOP_LEVEL_DIR.read()
+}
+
+/// The recorded directory must not be used as a base until a trusted one is recorded.
+#[inline]
+pub fn mark_top_level_dir_stale() {
+    let _guard = TOP_LEVEL_DIR.write();
+    TOP_LEVEL_DIR_STALE.store(true, Ordering::Release);
+}
+
+#[inline]
+pub fn top_level_dir_is_stale() -> bool {
+    TOP_LEVEL_DIR_STALE.load(Ordering::Acquire)
 }
 
 /// Set by `bun_crash_handler::init()` once it has installed its segfault

@@ -1,5 +1,5 @@
-// `Bun.Image` reads and writes WebP exactly as it did with libwebp 1.6.0: the same pixels, the same errors, the same
-// bytes. record.ts says where the expected results come from.
+// For these files and images, `Bun.Image` reads and writes WebP exactly as it did with libwebp 1.6.0: the same pixels,
+// the same errors, the same bytes. record.ts says where the expected results come from.
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import { load, observeDecode, observeEncode, observeMetadata, type DecodeCase, type EncodeCase } from "./observe";

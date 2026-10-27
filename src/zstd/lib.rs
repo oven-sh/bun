@@ -20,10 +20,12 @@ mod util;
 
 pub use common::ZSTD_CONTENTSIZE_ERROR;
 use common::ZSTD_CONTENTSIZE_UNKNOWN;
-pub use compress::params::c_param::COMPRESSION_LEVEL as ZSTD_C_COMPRESSION_LEVEL;
-pub use compress::params::{ZSTD_CLEVEL_DEFAULT, compress_bound};
+pub use compress::internal::Strategy;
+pub use compress::params::{ZSTD_CLEVEL_DEFAULT, c_param, compress_bound};
 pub use compress::stream::{CCtx, EndDirective, compress};
-pub use decompress::{DCtx, DDict, FrameExtent, frame_extent, get_frame_content_size};
+pub use decompress::{
+    DCtx, DDict, FrameExtent, ZSTD_D_WINDOW_LOG_MAX, frame_extent, get_frame_content_size,
+};
 use decompress::{decompress, find_decompressed_size};
 pub use error::ErrorCode;
 

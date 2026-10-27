@@ -23,7 +23,7 @@ pub(crate) const ZSTD_MAX_FSE_HEADERS_SIZE: usize = (53usize * 9 + 36 * 9 + 32 *
 /// `ZSTD_strategy`
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
-pub(crate) enum Strategy {
+pub enum Strategy {
     Fast = 1,
     DFast = 2,
     Greedy = 3,

@@ -248,7 +248,7 @@ impl CompressionStreamCoder {
             (Format::Zstd, false) => {
                 let mut cctx = Box::new(zstd::CCtx::new());
                 if let Some(lvl) = level
-                    && (cctx.set_parameter(zstd::ZSTD_C_COMPRESSION_LEVEL, lvl)).is_err()
+                    && (cctx.set_parameter(zstd::c_param::COMPRESSION_LEVEL, lvl)).is_err()
                 {
                     return Err(CodecError::Message("failed to set zstd level"));
                 }

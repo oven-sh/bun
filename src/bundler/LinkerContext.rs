@@ -92,8 +92,6 @@ pub struct LinkerContext<'a> {
     /// We may need to refer to the "__esm" and/or "__commonJS" runtime symbols
     pub(crate) cjs_runtime_ref: Ref,
     pub(crate) esm_runtime_ref: Ref,
-    /// `__esmAsync`: the `__esm` of a wrapper that is an async function.
-    pub(crate) esm_async_runtime_ref: Ref,
 
     /// We may need to refer to the CommonJS "module" symbol for exports
     pub(crate) unbound_module_ref: Ref,
@@ -165,7 +163,6 @@ impl<'a> Default for LinkerContext<'a> {
             cycle_detector: Vec::new(),
             cjs_runtime_ref: Ref::NONE,
             esm_runtime_ref: Ref::NONE,
-            esm_async_runtime_ref: Ref::NONE,
             unbound_module_ref: Ref::NONE,
             promise_ref: Ref::NONE,
             preload_runtime_ref: Ref::NONE,
@@ -594,10 +591,6 @@ impl<'a> LinkerContext<'a> {
 
         self.esm_runtime_ref = runtime_named_exports
             .get(b"__esm")
-            .expect("infallible: runtime export")
-            .ref_;
-        self.esm_async_runtime_ref = runtime_named_exports
-            .get(b"__esmAsync")
             .expect("infallible: runtime export")
             .ref_;
         self.cjs_runtime_ref = runtime_named_exports
@@ -3418,15 +3411,6 @@ impl<'a> LinkerContext<'a> {
 
     /// Creates the synthetic wrapper part (CommonJS or ESM) for a wrapped
     /// file and records its part index in `wrapper_part_index`.
-    /// `__esmAsync` for a file whose wrapper is an async function, else `__esm`.
-    pub(crate) fn esm_runtime_ref_for(&self, source_index: crate::IndexInt) -> Ref {
-        if self.graph.meta.items_flags()[source_index as usize].is_async_or_has_async_dependency {
-            self.esm_async_runtime_ref
-        } else {
-            self.esm_runtime_ref
-        }
-    }
-
     pub(crate) fn create_wrapper_for_file(
         &mut self,
         wrap: WrapKind,
@@ -3546,11 +3530,10 @@ impl<'a> LinkerContext<'a> {
                 // This depends on the "__esm" symbol and declares the "init_foo" symbol
                 // for similar reasons to the CommonJS closure above.
 
-                let esm_runtime_ref = self.esm_runtime_ref_for(source_index);
                 let esm_parts: &[u32] = if wrapper_ref.is_valid()
                     && self.options.output_format != Format::InternalBakeDev
                 {
-                    self.top_level_symbols_to_parts_for_runtime(esm_runtime_ref)
+                    self.top_level_symbols_to_parts_for_runtime(self.esm_runtime_ref)
                 } else {
                     &[]
                 };
@@ -3591,7 +3574,7 @@ impl<'a> LinkerContext<'a> {
                         .generate_symbol_import_and_use(
                             source_index,
                             part_index,
-                            esm_runtime_ref,
+                            self.esm_runtime_ref,
                             1,
                             crate::Index::RUNTIME,
                         )
@@ -5182,46 +5165,6 @@ impl InsideWrapperPrefix {
             return Ok(());
         }
 
-        if let bun_ast::StmtData::SLocal(local) = stmt.data {
-            let binds_identifiers = local
-                .decls
-                .iter()
-                .all(|decl| matches!(decl.binding.data, bun_ast::binding::Data::BIdentifier(_)));
-            debug_assert!(binds_identifiers);
-            if binds_identifiers {
-                // `var ns = value;` becomes `var ns;` above and `ns = value;` in order.
-                let mut hoisted = G::DeclList::init_capacity(local.decls.len());
-                for decl in local.decls.iter() {
-                    hoisted.push(G::Decl {
-                        binding: decl.binding,
-                        value: None,
-                    });
-                    if let (Some(value), bun_ast::binding::Data::BIdentifier(id)) =
-                        (decl.value, decl.binding.data)
-                    {
-                        self.joined.push(Joined::Sync(Stmt::alloc(
-                            S::SExpr {
-                                value: Expr::assign(
-                                    Expr::init_identifier(id.get().r#ref, decl.binding.loc),
-                                    value,
-                                ),
-                                ..Default::default()
-                            },
-                            stmt.loc,
-                        )));
-                    }
-                }
-                self.stmts.push(Stmt::alloc(
-                    S::Local {
-                        decls: hoisted,
-                        ..Default::default()
-                    },
-                    stmt.loc,
-                ));
-                return Ok(());
-            }
-        }
-
         self.joined.push(Joined::Sync(stmt));
         Ok(())
     }
@@ -5332,41 +5275,24 @@ impl InsideWrapperPrefix {
             }
         }
 
-        let value = match (awaited.len(), &self.joined[0]) {
-            // `init_a() && await init_a()`: `undefined` is a call back into an import cycle.
-            (1, &Joined::Async(wrapper_ref, loc)) => Expr::init(
-                E::Binary {
-                    op: bun_ast::OpCode::BinLogicalAnd,
-                    left: init_call(wrapper_ref, loc),
-                    right: Expr::init(
-                        E::Await {
-                            value: init_call(wrapper_ref, loc),
-                        },
-                        Loc::EMPTY,
-                    ),
-                },
-                Loc::EMPTY,
-            ),
-            // `await Promise.all([init_a(), init_d()])`
-            _ => Expr::init(
-                E::Await {
-                    value: promise_method(
-                        b"all",
-                        Expr::init(
-                            E::Array {
-                                items: awaited,
-                                ..Default::default()
-                            },
-                            Loc::EMPTY,
-                        ),
-                    ),
-                },
-                Loc::EMPTY,
-            ),
+        // `await init_a()`, or `await Promise.all([init_a(), init_d()])`
+        let value = if awaited.len() == 1 {
+            awaited.slice()[0]
+        } else {
+            promise_method(
+                b"all",
+                Expr::init(
+                    E::Array {
+                        items: awaited,
+                        ..Default::default()
+                    },
+                    Loc::EMPTY,
+                ),
+            )
         };
         out.push(Stmt::alloc(
             S::SExpr {
-                value,
+                value: Expr::init(E::Await { value }, Loc::EMPTY),
                 ..Default::default()
             },
             Loc::EMPTY,

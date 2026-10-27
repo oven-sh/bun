@@ -330,7 +330,8 @@ pub(crate) fn post_process_js_chunk(
             if wraps[idx].wrap != crate::WrapKind::None {
                 continue;
             }
-            if !tla_keywords[idx].is_empty() {
+            // An unwrapped file that imports an async wrapped module prints `await init_x()`.
+            if !tla_keywords[idx].is_empty() || wraps[idx].is_async_or_has_async_dependency {
                 mi.flags.has_tla = true;
                 break;
             }

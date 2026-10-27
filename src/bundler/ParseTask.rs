@@ -563,45 +563,6 @@ export var __callDispose = (stack, error, hasError) => {
 }
 ";
 
-// Must stay last: the chunk hash reads runtime part indices, so nothing before it can move.
-const RUNTIME_ESM_ASYNC: &str = "\
-// `__esm` for a wrapper that is an async function. `init(1)` is an `import()` of its module.
-var __esmClock = 0; // orders wrapper starts, wrapper ends and `import()` calls
-var __esmImport; // the `import()` call that started the wrappers now in their first part
-var __esmQueue; // `import()` calls made while the innermost such wrapper runs its first part
-export var __esmAsync = (fn, res, start, end, init) =>
-  (init = (from, call, outer, queue, own) => {
-    if (end) {
-      // A module does not wait for the wrapper whose first part called its `import()`.
-      if (!from) for (call = __esmImport; call; call = call.outer) if (start < call.at && call.at < end) return;
-      return res;
-    }
-    if (start) {
-      if (from) return Promise.resolve().then(() => res);
-      // An import cycle member runs on. A wrapper that ran before the `import()` call costs one job.
-      return __esmImport && start < __esmImport.at ? Promise.resolve() : void 0;
-    }
-    if (from === 1) {
-      call = { at: ++__esmClock, outer: __esmImport };
-      // The module starts when the running code is done, not inside the `import()` call.
-      return (queue = __esmQueue)
-        ? new Promise(resolve => queue.push(() => resolve(init(call))))
-        : Promise.resolve(call).then(init);
-    }
-    outer = __esmImport;
-    queue = __esmQueue;
-    if (from) __esmImport = from;
-    start = ++__esmClock;
-    __esmQueue = own = [];
-    res = fn((fn = 0));
-    end = ++__esmClock;
-    __esmImport = outer;
-    __esmQueue = queue;
-    for (call of own) call();
-    return res;
-  });
-";
-
 // ══════════════════════════════════════════════════════════════════════════
 // Per-file parse worker — `getAST`/`getCodeForParseTask`/`runFromThreadPool`.
 // ══════════════════════════════════════════════════════════════════════════
@@ -643,16 +604,10 @@ pub mod parse_worker {
                     RUNTIME_PRELOAD_BROWSER,
                 ),
             };
-            [
-                include_str!("../runtime.js"),
-                require,
-                using,
-                preload,
-                RUNTIME_ESM_ASYNC,
-            ]
-            .concat()
-            .into_bytes()
-            .into_boxed_slice()
+            [include_str!("../runtime.js"), require, using, preload]
+                .concat()
+                .into_bytes()
+                .into_boxed_slice()
         });
 
         let parse_task = ParseTask {

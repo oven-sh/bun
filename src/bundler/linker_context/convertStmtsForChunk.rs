@@ -277,10 +277,11 @@ pub(crate) fn convert_stmts_for_chunk(
                                 && wrapper_ref.is_valid()
                                 && c.graph.files_live.is_set(other_source_index)
                             {
+                                // A `__commonJS` wrapper is not an async function: it cannot await.
                                 stmts.inside_wrapper_prefix.append_dependency(
                                     wrapper_ref,
                                     stmt.loc,
-                                    flag.is_async_or_has_async_dependency,
+                                    flag.is_async_or_has_async_dependency && wrap != WrapKind::Cjs,
                                 )?;
                             }
                         }

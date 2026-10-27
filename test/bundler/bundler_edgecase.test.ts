@@ -2593,7 +2593,7 @@ describe("bundler", () => {
     },
     onAfterBundle(api) {
       const out = api.readFile("/out.js");
-      expect(out).toContain("await init_async(1)");
+      expect(out).toContain("await (init_async() || Promise.resolve().then(() => init_async()))");
       expect(out).toContain("init_sync()");
     },
   });
@@ -4444,7 +4444,7 @@ describe("bundler", () => {
       // a starts, then b, then the wrapper waits for a. The `.catch` gives
       // a's promise a handler for when b throws.
       expect(api.readFile("/out.js").replace(/\s+/g, " ")).toContain(
-        "Promise.resolve(init_a()).catch(() => {}); init_b(); init_a() && await init_a();",
+        "Promise.resolve(init_a()).catch(() => {}); init_b(); await init_a();",
       );
     },
   });
@@ -4671,45 +4671,6 @@ describe("bundler", () => {
       stdout: `plugins: ["plugin:p1"]`,
     },
   });
-  // b is async only because it imports a, and a is still in its first
-  // synchronous segment when b runs. An import cycle does not wait for that:
-  // b runs at once, before the later dependencies of a.
-  itBundled("edgecase/ImportCycleMemberRunsBeforeLaterDependency", {
-    files: {
-      "/entry.js": /* js */ `import "./a.js"; console.log("entry");`,
-      "/a.js": /* js */ `
-        import "./b.js";
-        import "./t.js";
-        import "./s.js";
-        console.log("a body");
-      `,
-      "/b.js": /* js */ `
-        import "./a.js";
-        globalThis.bReady = true;
-        console.log("b body");
-      `,
-      "/t.js": /* js */ `
-        console.log("t start");
-        await 0;
-        console.log("t end");
-      `,
-      "/s.js": /* js */ `
-        console.log("s sees b:", globalThis.bReady);
-        setTimeout(() => import("./a.js"));
-      `,
-    },
-    format: "esm",
-    run: {
-      stdout: `
-        b body
-        t start
-        s sees b: true
-        t end
-        a body
-        entry
-      `,
-    },
-  });
   // b throws after a started. The import fails with b's error, d does not
   // start, and the later rejection of a has a handler: no unhandled rejection.
   itBundled("edgecase/SyncDependencyThrowsAfterAsyncDependencyStarted", {
@@ -4777,9 +4738,9 @@ describe("bundler", () => {
       `,
     },
   });
-  // The next cases: a module that `import()` loads never runs inside the
-  // `import()` call. It starts after the synchronous code that called it.
-  // x imports the caller back and reads what the caller set after the call.
+  // The next cases: a module that `import()` loads and that imports its caller
+  // back does not run in the middle of the caller's synchronous code.
+  // x reads what the caller set after the call.
   itBundled("edgecase/ImportCallTargetRunsAfterCallerCode", {
     files: {
       "/entry.js": /* js */ `import "./a.js";`,
@@ -4885,129 +4846,6 @@ describe("bundler", () => {
     },
     format: "esm",
     run: { stdout: "page sees store: ready" },
-  });
-  // x and y import each other inside a graph that `import()` loads: y still
-  // runs at once, before t and s, and after the code that made the call.
-  itBundled("edgecase/ImportCycleInsideImportCallRunsAfterCallerCode", {
-    files: {
-      "/entry.js": /* js */ `
-        globalThis.after = false;
-        const p = import("./x.js");
-        globalThis.after = true;
-        await p;
-        console.log("entry end");
-      `,
-      "/x.js": /* js */ `
-        import "./y.js";
-        import "./t.js";
-        import "./s.js";
-        console.log("x body");
-      `,
-      "/y.js": /* js */ `
-        import "./x.js";
-        globalThis.yReady = true;
-        console.log("y body sees after:", globalThis.after);
-      `,
-      "/t.js": /* js */ `
-        console.log("t start");
-        await 0;
-        console.log("t end");
-      `,
-      "/s.js": /* js */ `console.log("s sees y:", globalThis.yReady);`,
-    },
-    format: "esm",
-    run: {
-      stdout: `
-        y body sees after: true
-        t start
-        s sees y: true
-        t end
-        x body
-        entry end
-      `,
-    },
-  });
-  // The same cycle, and the call is in a module that has no top-level await.
-  itBundled("edgecase/ImportCycleInsideImportCallFromSyncModule", {
-    files: {
-      "/entry.js": /* js */ `
-        import "./a.js";
-        console.log("entry end");
-      `,
-      "/a.js": /* js */ `
-        export let ready = false;
-        import("./x.js");
-        ready = true;
-        console.log("a end");
-      `,
-      "/x.js": /* js */ `
-        import "./y.js";
-        import "./t.js";
-        console.log("x body");
-      `,
-      "/y.js": /* js */ `
-        import "./x.js";
-        import { ready } from "./a.js";
-        console.log("y sees ready:", ready);
-      `,
-      "/t.js": /* js */ `
-        console.log("t start");
-        await 0;
-        console.log("t end");
-      `,
-    },
-    format: "esm",
-    run: {
-      stdout: `
-        a end
-        entry end
-        y sees ready: true
-        t start
-        t end
-        x body
-      `,
-    },
-  });
-  // h calls `import()` on w, and a imports w right after h. w runs at its
-  // place among the imports of a, and the `import()` settles with it.
-  itBundled("edgecase/ImportCallOfALaterStaticDependency", {
-    files: {
-      "/entry.js": /* js */ `import "./a.js"; console.log("entry");`,
-      "/a.js": /* js */ `
-        import "./h.js";
-        import "./w.js";
-        import "./t.js";
-        import "./s.js";
-        console.log("a body");
-      `,
-      "/h.js": /* js */ `
-        import("./w.js").then(() => console.log("dyn w resolved"));
-        globalThis.hDone = true;
-      `,
-      "/w.js": /* js */ `
-        import "./a.js";
-        globalThis.wReady = true;
-        console.log("w body, hDone:", globalThis.hDone);
-      `,
-      "/t.js": /* js */ `
-        console.log("t start");
-        await 0;
-        console.log("t end");
-      `,
-      "/s.js": /* js */ `console.log("s sees w:", globalThis.wReady);`,
-    },
-    format: "esm",
-    run: {
-      stdout: `
-        w body, hDone: true
-        t start
-        s sees w: true
-        t end
-        a body
-        entry
-        dyn w resolved
-      `,
-    },
   });
   // router awaits the `import()` of home, home imports store, and app imports
   // store after router. store does not wait for router, so nothing hangs.
@@ -5118,66 +4956,148 @@ describe("bundler", () => {
       `,
     },
   });
-  // Each `import()` has its own promise: two of three have no handler here.
-  itBundled("edgecase/EachImportCallOfAFailingModuleRejects", {
+  // A lazy route. app has a top-level await, router imports app back and
+  // calls `import()` on page, and page reads an export that app sets in its body.
+  itBundled("edgecase/ImportCallInImportCycleMemberReadsExportOfCycleRoot", {
     files: {
       "/entry.js": /* js */ `
-        let unhandled = 0;
-        process.on("unhandledRejection", () => unhandled++);
-        process.on("exit", () => console.log("unhandled:", unhandled));
-        import("./x.js");
-        import("./x.js").catch(e => console.log("caught:", e.message));
-        import("./x.js");
+        import "./app.js";
+        console.log("entry end");
+      `,
+      "/app.js": /* js */ `
+        import "./router.js";
+        export const store = { routes: [] };
         await 0;
+        console.log("app ready");
       `,
-      "/x.js": /* js */ `
-        await 0;
-        throw new Error("x failed");
+      "/router.js": /* js */ `
+        import { store } from "./app.js";
+        export const routeCount = () => store.routes.length;
+        import("./page.js");
       `,
-    },
-    format: "esm",
-    target: "bun",
-    run: { stdout: "caught: x failed\nunhandled: 2" },
-  });
-  // b imports a with two statements. It still gets the one `init_a() &&` form
-  // and runs at once, before t and s.
-  itBundled("edgecase/ImportCycleMemberWithTwoImportsOfOneModule", {
-    files: {
-      "/entry.js": /* js */ `import "./a.js"; console.log("entry");`,
-      "/a.js": /* js */ `
-        import "./b.js";
-        import "./t.js";
-        import "./s.js";
-        export const av = 1;
-        console.log("a body");
-      `,
-      "/b.js": /* js */ `
-        import "./a.js";
-        import * as A from "./a.js";
-        globalThis.bReady = true;
-        console.log("b body", typeof A);
-      `,
-      "/t.js": /* js */ `
-        console.log("t start");
-        await 0;
-        console.log("t end");
-      `,
-      "/s.js": /* js */ `
-        console.log("s sees b:", globalThis.bReady);
-        import("./a.js");
+      "/page.js": /* js */ `
+        import { store } from "./app.js";
+        store.routes.push("page");
+        console.log("page registered:", store.routes.join(","));
       `,
     },
     format: "esm",
     run: {
       stdout: `
-        b body object
-        t start
-        s sees b: true
-        t end
-        a body
-        entry
+        app ready
+        entry end
+        page registered: page
       `,
     },
+  });
+  // The same, and the target reads a binding that the cycle root assigns
+  // after its imports.
+  itBundled("edgecase/ImportCallInImportCycleMemberRunsAfterCycleRootCode", {
+    files: {
+      "/entry.js": /* js */ `import "./a.js";`,
+      "/a.js": /* js */ `
+        import "./h.js";
+        export let ready = false;
+        ready = true;
+        await 0;
+      `,
+      "/h.js": /* js */ `
+        import "./a.js";
+        import("./x.js");
+        globalThis.hDone = true;
+      `,
+      "/x.js": /* js */ `
+        import { ready } from "./a.js";
+        console.log("x sees hDone:", globalThis.hDone, "ready:", ready);
+      `,
+    },
+    format: "esm",
+    run: { stdout: "x sees hDone: true ready: true" },
+  });
+  // c.js has `export *` and `exports`, so its wrapper is `__commonJS`, a plain
+  // function. The `init_tla()` of its `export *` has no `await` there.
+  itBundled("edgecase/ExportStarOfAsyncModuleInCommonJSWrapper", {
+    files: {
+      "/entry.js": /* js */ `
+        import c from "./c.js";
+        console.log(c.a);
+      `,
+      "/c.js": /* js */ `
+        export * from "./tla.js";
+        exports.a = 1;
+        Object.keys(exports);
+      `,
+      "/tla.js": /* js */ `
+        await 0;
+        export const t = 1;
+      `,
+    },
+    format: "esm",
+    run: { stdout: "1" },
+  });
+  // p imports a with two statements and q with one. Both wait for a in the
+  // same way, so p still continues before q.
+  itBundled("edgecase/TwoImportsOfOneAsyncModuleKeepImporterOrder", {
+    files: {
+      "/entry.js": /* js */ `
+        await import("./root.js");
+        console.log("entry end");
+      `,
+      "/root.js": /* js */ `
+        import "./p.js";
+        import "./q.js";
+        console.log("root body");
+      `,
+      "/p.js": /* js */ `
+        import "./a.js";
+        import * as A from "./a.js";
+        console.log("p body", typeof A);
+      `,
+      "/q.js": /* js */ `
+        import "./a.js";
+        console.log("q body");
+      `,
+      "/a.js": /* js */ `
+        console.log("a start");
+        await 0;
+        console.log("a end");
+      `,
+    },
+    format: "esm",
+    run: {
+      stdout: `
+        a start
+        a end
+        p body object
+        q body
+        root body
+        entry end
+      `,
+    },
+  });
+  itBundled("edgecase/ImportCallTargetRunsAfterLaterImportsOfImporter", {
+    todo: true, // page starts inside the `import()` call, before store. node starts it after app has ended
+    files: {
+      "/entry.js": /* js */ `
+        import "./app.js";
+        import("./app.js");
+      `,
+      "/app.js": /* js */ `
+        import "./router.js";
+        import "./store.js";
+      `,
+      "/router.js": /* js */ `
+        import("./page.js");
+        await 0;
+      `,
+      "/store.js": /* js */ `globalThis.store = "ready";`,
+      "/page.js": /* js */ `
+        console.log("page sees store:", globalThis.store);
+        await 0;
+      `,
+    },
+    format: "esm",
+    run: { stdout: "page sees store: ready" },
   });
   // m7 imports m10, which is async through the cycle m10 -> m12 -> m5 -> m10
   // and m5's re-export of m13. A depth-first walk reaches m7 while m10 is

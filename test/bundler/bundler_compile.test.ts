@@ -320,6 +320,43 @@ describe("bundler", () => {
       },
       stdout: "function",
     },
+    {
+      // a.ts is wrapped (`import()` reaches it) and has a top-level await, so
+      // the entry prints `await init_a()`. No file that the chunk holds unwrapped
+      // has an `await` of its own, and the module record still needs the flag.
+      name: "ImportOfAsyncWrappedModule",
+      files: {
+        "/entry.ts": `
+          import "./a.ts";
+          console.log("after");
+          import("./a.ts");
+        `,
+        "/a.ts": `
+          console.log("a start");
+          await 0;
+          console.log("a end");
+          export const a = 1;
+        `,
+      },
+      stdout: "a start\na end\nafter",
+    },
+    {
+      name: "ExportStarOfAsyncWrappedModule",
+      files: {
+        "/entry.ts": `
+          export * from "./a.ts";
+          console.log("after");
+          import("./a.ts");
+        `,
+        "/a.ts": `
+          console.log("a start");
+          await 0;
+          console.log("a end");
+          export const a = 1;
+        `,
+      },
+      stdout: "a start\na end\nafter",
+    },
   ];
 
   for (const scenario of esmBytecodeScenarios) {

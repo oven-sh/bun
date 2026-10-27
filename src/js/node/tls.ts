@@ -17,6 +17,7 @@ const {
   stripTls13CipherNames,
   validateSecureContextOptions,
   SSL_OP_CIPHER_SERVER_PREFERENCE,
+  hasStreamMethods,
 } = require("internal/tls");
 const {
   validateString,
@@ -29,6 +30,7 @@ const {
 
 const { Server: NetServer, Socket: NetSocket } = net;
 const {
+  kAcceptedTLS,
   kArmHandshakeTimeout,
   kPreHandshakeWrite,
   kSecureConnectDone,
@@ -611,6 +613,7 @@ const buntls = Symbol.for("::buntls::");
 const kNativeSecureContextCtor = Symbol.for("::buntlsnativesecurecontextctor::");
 
 function TLSSocket(socket?, options?) {
+  this[kAcceptedTLS] = null;
   this[ksecureContext] = undefined;
   this.ALPNProtocols = undefined;
   this[kcheckServerIdentity] = undefined;
@@ -633,15 +636,14 @@ function TLSSocket(socket?, options?) {
   this[krenegotiationDisabled] = undefined;
   this.encrypted = true;
 
-  const isNetSocketOrDuplex = socket instanceof Duplex;
-
-  // A provided underlying socket must be a Duplex/net.Socket. An event emitter
-  // that isn't a stream (e.g. a bare EventEmitter) is not a valid socket — Node
-  // throws when wrapping it. Distinguished from a TLS options object, which is
-  // not an EventEmitter.
-  if (socket != null && !isNetSocketOrDuplex && socket instanceof EventEmitter) {
+  const isDuplex = socket instanceof Duplex;
+  // The first argument can also be the options. It is a stream when it has the methods of one.
+  const isOtherStream = !isDuplex && !!socket && hasStreamMethods(socket);
+  // Node throws when it wraps what is no stream.
+  if (!isDuplex && !isOtherStream && socket && (options !== undefined || socket instanceof EventEmitter)) {
     throw $ERR_INVALID_ARG_TYPE("socket", "Duplex", socket);
   }
+  const isNetSocketOrDuplex = isDuplex || isOtherStream;
 
   // A wrapped socket keeps its allowHalfOpen and drops onread: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L592-L596
   if (isNetSocketOrDuplex) {
@@ -649,7 +651,7 @@ function TLSSocket(socket?, options?) {
   } else {
     options = options || socket || {};
     const wrapped = options.socket;
-    if (wrapped instanceof Duplex) {
+    if (wrapped instanceof Duplex || (wrapped && hasStreamMethods(wrapped))) {
       options = { ...options, allowHalfOpen: wrapped.allowHalfOpen, onread: null };
     }
   }
@@ -1367,12 +1369,12 @@ function Server(options, secureConnectionListener): void {
   this._handshakeTimeout = handshakeTimeout;
 
   this.on("connection", socket => {
-    // Skip only sockets this server's own native accept path already wrapped
-    // (those arrive as an encrypted TLSSocket with .server preassigned).
-    // Anything else - plain or TLS from another server - gets a server-side
-    // TLS layer, like Node's tls.Server wraps any injected duplex
-    // (node v26.3.0 lib/_tls_wrap.js, Server's connection listener).
-    if (!socket || (socket.encrypted && socket.server === this)) return;
+    if (!socket) return;
+    // Only the accept path's own event is skipped: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1259-L1286
+    if (socket[kAcceptedTLS] === this) {
+      socket[kAcceptedTLS] = null;
+      return;
+    }
     const wrapped = new TLSSocket(socket, {
       secureContext: this._sharedCreds,
       isServer: true,

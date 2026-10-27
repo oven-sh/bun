@@ -1656,10 +1656,11 @@ class ChildProcess extends EventEmitter {
   }
 
   unref() {
-    // Node's unref() releases only the process: an open stdout or stderr pipe
-    // still holds the loop. read(0) starts the read that gives a pipe that hold.
-    this.#stdout?.read?.(0);
-    this.#stderr?.read?.(0);
+    // As in Node, an open stdout or stderr pipe holds the loop after unref(): start its read.
+    const stdout = this.#stdout,
+      stderr = this.#stderr;
+    if (stdout) process.nextTick(startReading, stdout);
+    if (stderr) process.nextTick(startReading, stderr);
     if (this.#handle) this.#handle.unref();
   }
 
@@ -1743,6 +1744,10 @@ const nodeToBunLookup = {
 };
 
 const INTERNAL_IPC_PREFIX = "NODE_";
+
+function startReading(stream) {
+  if (!stream.destroyed) stream.read(0);
+}
 
 function isInternalIpcMessage(message) {
   if (message === null || typeof message !== "object") return false;

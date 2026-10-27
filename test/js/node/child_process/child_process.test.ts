@@ -2050,3 +2050,36 @@ it.skipIf(!isPosix)("a launcher's output comes before 'exit' while a grandchild 
   await once(c, "close");
   expect(events).toEqual(["data", "exit"]);
 });
+
+// unref() must not read the pipe on the spot: a read there hands JS what the
+// child wrote so far, and the rest arrives as a second 'data' event. Node
+// reads from the event loop, so both writes arrive as one chunk.
+it.skipIf(!isPosix)("unref() leaves a child's earlier write in the pipe until the event loop runs", async () => {
+  using dir = tempDir("unref-two-writes", {});
+  const file = (name: string) => path.join(String(dir), name);
+  const waitFor = (name: string) => {
+    const deadline = Date.now() + 10_000;
+    while (!fs.existsSync(file(name))) {
+      if (Date.now() > deadline) throw new Error(`the child never created ${name}`);
+      Bun.sleepSync(1);
+    }
+  };
+  const c = spawn(
+    "sh",
+    [
+      "-c",
+      `echo one; : > "$1/wrote-one"; until [ -e "$1/go" ]; do sleep 0.01; done; echo two; : > "$1/wrote-two"`,
+      "sh",
+      String(dir),
+    ],
+    { stdio: ["ignore", "pipe", "ignore"] },
+  );
+  waitFor("wrote-one");
+  c.unref();
+  const chunks: string[] = [];
+  c.stdout!.setEncoding("utf8").on("data", chunk => chunks.push(chunk));
+  fs.writeFileSync(file("go"), "");
+  waitFor("wrote-two");
+  await once(c, "close");
+  expect(chunks).toEqual(["one\ntwo\n"]);
+});

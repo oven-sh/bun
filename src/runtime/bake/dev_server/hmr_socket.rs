@@ -358,17 +358,17 @@ impl HmrSocket {
     }
 }
 
-/// `WebSocketBehavior.Wrap(DevServer, HmrSocket, ssl).apply(.{})`.
+/// `H1Wrap::<DevServer, HmrSocket, SSL>::apply(Default::default())`.
 pub(super) fn hmr_socket_behavior<const SSL: bool>() -> bun_uws_sys::WebSocketBehavior {
-    bun_uws_sys::web_socket::Wrap::<DevServer, HmrSocket, SSL>::apply(&Default::default())
+    bun_uws_sys::web_socket::H1Wrap::<DevServer, HmrSocket, SSL>::apply(&Default::default())
 }
 
-// `WebSocketBehavior.Wrap(ServerType, Type, ssl)` requires `Type` (= `HmrSocket`)
+// `H1Wrap<ServerType, Type, SSL>` requires `Type` (= `HmrSocket`)
 // to be a `WebSocketHandler` and `ServerType` (= `DevServer`) to be a
-// `WebSocketUpgradeServer<SSL>`. The trait is wired explicitly and forward to the inherent method bodies in
+// `H1WebSocketUpgradeServer<SSL>`. The trait is wired explicitly and forwards to the inherent method bodies in
 // `dev_server::hmr_socket`.
 impl bun_uws_sys::web_socket::WebSocketHandler for HmrSocket {
-    // `Wrap.apply` leaves the drain/ping/pong C callbacks `null` when
+    // `H1Wrap::apply` leaves the drain/ping/pong C callbacks `null` when
     // `HAS_ON_* == false`.
     const HAS_ON_DRAIN: bool = false;
     const HAS_ON_PING: bool = false;
@@ -404,8 +404,8 @@ impl bun_uws_sys::web_socket::WebSocketHandler for HmrSocket {
     unsafe fn on_pong(_this: *mut Self, _ws: bun_uws_sys::AnyWebSocket, _message: &[u8]) {}
 }
 
-impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for DevServer {
-    unsafe fn on_websocket_upgrade(
+impl<const SSL: bool> bun_uws_sys::web_socket::H1WebSocketUpgradeServer<SSL> for DevServer {
+    unsafe fn on_h1_websocket_upgrade(
         this: *mut Self,
         res: *mut bun_uws_sys::NewAppResponse<SSL>,
         req: &mut Request,

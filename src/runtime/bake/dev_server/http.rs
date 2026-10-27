@@ -227,7 +227,7 @@ fn on_unref_source_map_request(dev: &mut DevServer, req: &mut Request, resp: Any
     }
 }
 
-// `ResponseLike` for the concrete `Response<SSL>` (used by `on_websocket_upgrade`).
+// `ResponseLike` for the concrete `Response<SSL>` (used by `on_h1_websocket_upgrade`).
 impl<const SSL: bool> ResponseLike for bun_uws_sys::response::Response<SSL> {
     fn write_status(&mut self, status: &[u8]) {
         bun_uws_sys::response::Response::<SSL>::write_status(self, status)

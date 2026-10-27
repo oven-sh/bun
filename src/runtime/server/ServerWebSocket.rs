@@ -6,16 +6,18 @@ use bun_jsc::JsCell;
 use bun_jsc::bindgen::{self, Callable, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::bun_string_jsc;
 use bun_uws::{self as uws, AnyWebSocket, WebSocketBehavior};
-use bun_uws_sys::web_socket::{WebSocketHandler, WebSocketUpgradeServer, Wrap};
+use bun_uws_sys::web_socket::{
+    H1WebSocketUpgradeServer, H1Wrap, StreamWebSocketTransport, StreamWrap, WebSocketHandler,
+};
 use bun_uws_sys::{Opcode, SendStatus};
 
 use crate::generated_bindgen::server::js_ServerWebSocket as js;
-use crate::server::WebSocketServerHandler;
 use crate::server::jsc::{
     self, AbortSignal, ArrayBuffer, CommonAbortReason, JSGlobalObject, JSType, JSValue, JsError,
     JsRef, JsResult,
 };
 use crate::server::web_socket_server_context::HandlerFlags;
+use crate::server::{WebSocketServerHandler, WebSocketTree};
 use crate::webcore::{Blob, BlobExt};
 
 bun_output::declare_scope!(WebSocketServer, visible);
@@ -43,31 +45,52 @@ pub(crate) struct ServerWebSocket {
 }
 
 // We pack the per-socket data into this struct below:
-// ssl:1, closed:1, ws_package:1, binary_type:4, packed_websocket_ptr:57
+// tls:1, closed:1, ws_package:1, binary_type:2, h2:1, <unused>:1, packed_websocket_ptr:57
+// `tls` and `h2` together encode the `TransportKind`.
 #[repr(transparent)]
 #[derive(Copy, Clone, Default)]
 pub(crate) struct Flags(u64);
 
+#[repr(u8)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+enum TransportKind {
+    H1Plain = 0,
+    H1Tls = 1,
+    H2 = 2,
+    // Reserved for the future HTTP/3 WebSocket adapter.
+    H3 = 3,
+}
+
 impl Flags {
-    const SSL_BIT: u64 = 1 << 0;
+    const TLS_BIT: u64 = 1 << 0;
+    const H2_BIT: u64 = 1 << 5;
+    const TRANSPORT_MASK: u64 = Self::TLS_BIT | Self::H2_BIT;
     const CLOSED_BIT: u64 = 1 << 1;
     const WS_PACKAGE_BIT: u64 = 1 << 2;
     const BINARY_TYPE_SHIFT: u32 = 3;
-    const BINARY_TYPE_MASK: u64 = 0b1111 << Self::BINARY_TYPE_SHIFT;
+    const BINARY_TYPE_MASK: u64 = 0b11 << Self::BINARY_TYPE_SHIFT;
     const PTR_SHIFT: u32 = 7;
     const PTR_MASK: u64 = (1u64 << 57) - 1;
 
     #[inline]
-    pub(crate) fn ssl(self) -> bool {
-        self.0 & Self::SSL_BIT != 0
+    fn transport(self) -> TransportKind {
+        match self.0 & Self::TRANSPORT_MASK {
+            0 => TransportKind::H1Plain,
+            Self::TLS_BIT => TransportKind::H1Tls,
+            Self::H2_BIT => TransportKind::H2,
+            Self::TRANSPORT_MASK => TransportKind::H3,
+            _ => unreachable!("invalid WebSocket transport kind"),
+        }
     }
     #[inline]
-    pub(crate) fn set_ssl(&mut self, v: bool) {
-        if v {
-            self.0 |= Self::SSL_BIT;
-        } else {
-            self.0 &= !Self::SSL_BIT;
-        }
+    fn set_transport(&mut self, transport: TransportKind) {
+        let encoded = match transport {
+            TransportKind::H1Plain => 0,
+            TransportKind::H1Tls => Self::TLS_BIT,
+            TransportKind::H2 => Self::H2_BIT,
+            TransportKind::H3 => Self::TRANSPORT_MASK,
+        };
+        self.0 = (self.0 & !Self::TRANSPORT_MASK) | encoded;
     }
     #[inline]
     pub(crate) fn closed(self) -> bool {
@@ -119,13 +142,18 @@ impl Flags {
     #[inline]
     fn websocket(self) -> AnyWebSocket {
         // Ensure those other bits are zeroed out
-        let ptr = self.packed_websocket_ptr() as usize as *mut uws::RawWebSocket;
-        if self.ssl() {
-            // SAFETY: packed_websocket_ptr was set from ws.raw() in on_open; non-null while !closed
-            AnyWebSocket::Ssl(ptr)
-        } else {
-            // SAFETY: same as above
-            AnyWebSocket::Tcp(ptr)
+        let ptr = self.packed_websocket_ptr() as usize as *mut core::ffi::c_void;
+        match self.transport() {
+            TransportKind::H2 => AnyWebSocket::H2(ptr.cast::<bun_uws_sys::h2::WebSocket>()),
+            TransportKind::H1Tls => {
+                // SAFETY: packed_websocket_ptr was set from ws.raw() in on_open; non-null while !closed
+                AnyWebSocket::Ssl(ptr.cast::<uws::RawWebSocket>())
+            }
+            TransportKind::H1Plain => {
+                // SAFETY: same as above
+                AnyWebSocket::Tcp(ptr.cast::<uws::RawWebSocket>())
+            }
+            TransportKind::H3 => unreachable!("HTTP/3 WebSockets are not wired yet"),
         }
     }
 }
@@ -336,7 +364,9 @@ impl ServerWebSocket {
 
     /// `None` once closed.
     pub(crate) fn us_socket(&self) -> Option<*mut bun_uws::us_socket_t> {
-        (!self.is_closed()).then(|| self.websocket().us_socket())
+        (!self.is_closed())
+            .then(|| self.websocket().us_socket())
+            .flatten()
     }
 
     /// R-2 helper: read-modify-write the packed `Cell<Flags>` through `&self`.
@@ -478,19 +508,46 @@ impl ServerWebSocket {
             bun_output::scoped_log!(WebSocketServer, "{}() closed", fn_name);
             return Ok(JSValue::js_number(0.0));
         };
-        let status = if !handler.flags.contains(HandlerFlags::PUBLISH_TO_SELF) && !self.is_closed()
-        {
-            self.websocket()
-                .publish(topic.slice(), bytes.slice(), payload.opcode(), compress)
+        let publish_to_self = handler.flags.contains(HandlerFlags::PUBLISH_TO_SELF);
+        let (topic, message, opcode) = (topic.slice(), bytes.slice(), payload.opcode());
+        let ws = self.websocket();
+        let server = match handler.server {
+            Some(server) if ws.is_stream() || server.has_stream_websocket_trees() => server,
+            // Without a stream transport every subscriber is in the one uWS topic tree.
+            _ => {
+                let status = if !publish_to_self && !self.is_closed() {
+                    ws.publish(topic, message, opcode, compress)
+                } else {
+                    AnyWebSocket::publish_h1_with_options(
+                        handler.flags.contains(HandlerFlags::SSL),
+                        app,
+                        topic,
+                        message,
+                        opcode,
+                        compress,
+                    )
+                };
+                return Ok(send_status_to_js(status, bytes.len(), fn_name));
+            }
+        };
+        let status = if publish_to_self || self.is_closed() {
+            server.publish(topic, message, opcode, compress)
         } else {
-            AnyWebSocket::publish_with_options(
-                handler.flags.contains(HandlerFlags::SSL),
-                app,
-                topic.slice(),
-                bytes.slice(),
-                payload.opcode(),
-                compress,
-            )
+            // The socket publishes into its own tree so uWS skips it as the sender. Every other
+            // tree receives the message as a server-wide publication.
+            let own_tree = WebSocketTree::of(ws);
+            let self_subscribed = u32::from(ws.is_subscribed(topic));
+            let own = (server
+                .num_subscribers_in(own_tree, topic)
+                .saturating_sub(self_subscribed)
+                != 0)
+                .then(|| ws.publish(topic, message, opcode, compress));
+            let others = WebSocketTree::ALL
+                .into_iter()
+                .filter(|tree| *tree != own_tree)
+                .filter(|tree| server.num_subscribers_in(*tree, topic) != 0)
+                .map(|tree| server.publish_in(tree, topic, message, opcode, compress));
+            SendStatus::worst(own.into_iter().chain(others))
         };
         Ok(send_status_to_js(status, bytes.len(), fn_name))
     }
@@ -587,7 +644,11 @@ impl ServerWebSocket {
         self.update_flags(|f| {
             f.set_packed_websocket_ptr(ws.raw() as usize as u64);
             f.set_closed(false);
-            f.set_ssl(matches!(ws, AnyWebSocket::Ssl(_)));
+            f.set_transport(match ws {
+                AnyWebSocket::Tcp(_) => TransportKind::H1Plain,
+                AnyWebSocket::Ssl(_) => TransportKind::H1Tls,
+                AnyWebSocket::H2(_) => TransportKind::H2,
+            });
         });
         // Live-socket accounting lives on the server (`Cell`), reached
         // through the type-erased backref so the shared `&Handler` suffices.
@@ -935,13 +996,19 @@ impl ServerWebSocket {
         Ok(())
     }
 
-    pub(crate) fn behavior<ServerType, const SSL: bool>(
+    pub(crate) fn behavior_h1<ServerType, const SSL: bool>(
         opts: &WebSocketBehavior,
     ) -> WebSocketBehavior
     where
-        ServerType: WebSocketUpgradeServer<SSL>,
+        ServerType: H1WebSocketUpgradeServer<SSL>,
     {
-        Wrap::<ServerType, Self, SSL>::apply(opts)
+        H1Wrap::<ServerType, Self, SSL>::apply(opts)
+    }
+
+    pub(crate) fn behavior_stream<X: StreamWebSocketTransport>(
+        opts: &WebSocketBehavior,
+    ) -> bun_uws_sys::stream_websocket::WebSocketBehavior<X> {
+        StreamWrap::<Self, X>::apply(opts)
     }
 
     pub(crate) fn constructor<'a>(heap: &JsHeap<'a>) -> bindgen::Result<'a, Self> {
@@ -1343,7 +1410,7 @@ impl WsPackageSocket {
         skip_utf8_validation: bool,
         compression: bool,
     ) -> WebSocketBehavior {
-        Wrap::<(), Self, SSL>::ws_package(
+        H1Wrap::<(), Self, SSL>::ws_package(
             max_payload_length,
             auto_pong,
             skip_utf8_validation,
@@ -1524,4 +1591,32 @@ fn call_corked(
     let mut call = || result = callback.call(global_object, this_value, args);
     ws.cork(&mut call, |call| call());
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{BinaryType, Flags, TransportKind};
+
+    #[test]
+    fn flags_pack_transport_without_overlapping_other_fields() {
+        for transport in [
+            TransportKind::H1Plain,
+            TransportKind::H1Tls,
+            TransportKind::H2,
+            TransportKind::H3,
+        ] {
+            let mut flags = Flags::default();
+            flags.set_transport(transport);
+            flags.set_closed(true);
+            flags.set_ws_package();
+            flags.set_binary_type(BinaryType::Blob);
+            flags.set_packed_websocket_ptr((1u64 << 56) | 0x1234);
+
+            assert_eq!(flags.transport(), transport);
+            assert!(flags.closed());
+            assert!(flags.ws_package());
+            assert_eq!(flags.binary_type() as u8, BinaryType::Blob as u8);
+            assert_eq!(flags.packed_websocket_ptr(), (1u64 << 56) | 0x1234);
+        }
+    }
 }

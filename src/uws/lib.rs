@@ -43,7 +43,7 @@ pub type SslCtx = bun_boringssl::c::SSL_CTX;
 /// uWS C++ `WebSocketContext<SSL,true,UserData>*`. Only ever produced by the
 /// upgrade-handler thunk and round-tripped to `uws_res_upgrade`; Rust never
 /// dereferences it. Re-exported from `bun_uws_sys` so the trait
-/// `bun_uws_sys::web_socket::WebSocketUpgradeServer` and higher-tier callers
+/// `bun_uws_sys::web_socket::H1WebSocketUpgradeServer` and higher-tier callers
 /// (`bun_runtime::server`, `bake::dev_server`) all name the *same* opaque.
 pub use bun_uws_sys::WebSocketUpgradeContext;
 

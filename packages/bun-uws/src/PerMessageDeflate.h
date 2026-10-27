@@ -23,6 +23,9 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstring>
+#include <limits>
+#include <memory>
+#include <optional>
 
 namespace uWS {
     /* Compressor mode is 8 lowest bits where HIGH4(windowBits), LOW4(memLevel).
@@ -141,6 +144,28 @@ struct DeflationStream {
         deflateInit2(&deflationStream, Z_DEFAULT_COMPRESSION, Z_DEFLATED, windowBits, memLevel, Z_DEFAULT_STRATEGY);
     }
 
+    /* Conservative bound for the one Z_SYNC_FLUSH performed by deflate().
+     * deflateBound() only guarantees Z_FINISH/Z_NO_FLUSH. Z_SYNC_FLUSH appends one empty stored block of
+     * at most six bytes, and the returned view later drops its four-byte tail. */
+    std::optional<size_t> maxSizeForSyncFlush(size_t length) {
+        if (length > std::numeric_limits<uLong>::max()) return std::nullopt;
+        uLong bound = ::deflateBound(&deflationStream, (uLong) length);
+        if ((uint64_t) bound > (uint64_t) std::numeric_limits<size_t>::max() - 6) return std::nullopt;
+        return (size_t) bound + 6;
+    }
+
+    /* deflateCopy() stores a backpointer to the destination z_stream, so the clone is allocated at its final
+     * address and must never be moved. zlib-ng copies source pointers into the destination before allocating;
+     * clear a failed copy so its destructor cannot release the source state. */
+    std::unique_ptr<DeflationStream> clone() {
+        auto copy = std::unique_ptr<DeflationStream>(new DeflationStream(NoInit {}, noContextTakeover));
+        if (::deflateCopy(&copy->deflationStream, &deflationStream) != Z_OK) {
+            copy->deflationStream = {};
+            return nullptr;
+        }
+        return copy;
+    }
+
     /* You must not deflate an empty string. */
     std::string_view deflate(ZlibContext *zlibContext, std::string_view raw) {
         /* Odd place to clear this one, fix */
@@ -188,6 +213,11 @@ struct DeflationStream {
     ~DeflationStream() {
         deflateEnd(&deflationStream);
     }
+
+private:
+    struct NoInit { };
+
+    DeflationStream(NoInit, bool noContextTakeover) : noContextTakeover(noContextTakeover) { }
 };
 
 struct InflateResult {

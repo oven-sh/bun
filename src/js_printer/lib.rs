@@ -6556,8 +6556,7 @@ pub(crate) mod __gated_printer {
             self.print(quote);
         }
 
-        /// Targets other than Bun drop the `type` of an import that stays in the output,
-        /// except `css`: a browser runs that import as a CSS module script.
+        /// Only Bun targets print `type`, except for `css`: a browser runs an import that stays in the output as a CSS module script.
         fn print_css_type_attribute(&mut self, import_record: &ImportRecord) {
             if matches!(
                 import_record.loader,

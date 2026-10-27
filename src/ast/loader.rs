@@ -51,8 +51,7 @@ pub enum Loader {
     Json5 = 19,
     Md = 20,
     Xml = 21,
-    /// Internal: a stylesheet that browser code imports `with { type: "css" }`. It loads as a
-    /// JavaScript module that exports a constructed `CSSStyleSheet`. No name parses to it.
+    /// Internal: a stylesheet that browser code imports `with { type: "css" }`, loaded as a JavaScript module (see `css_module_script`). No name parses to it.
     #[strum(serialize = "css")]
     CssModuleScript = 22,
 }

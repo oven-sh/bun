@@ -1,9 +1,4 @@
-//! CSS module scripts: `import sheet from "./a.css" with { type: "css" }` in a browser bundle.
-//!
-//! `BundleV2::typed_css_import_loader` gives the file `Loader::CssModuleScript`. `parse` then
-//! loads it as a JavaScript module that exports a constructed `CSSStyleSheet`, so the linker
-//! needs no knowledge of it. `check_imports` runs after the scan: one path is one module, so it
-//! reports a file that another import uses as a stylesheet.
+//! CSS module scripts: in a browser bundle, `import sheet from "./a.css" with { type: "css" }` loads the file as a JavaScript module that exports a constructed `CSSStyleSheet`.
 
 use core::fmt::Write as _;
 use std::borrow::Cow;
@@ -50,10 +45,7 @@ fn write_template_chars(js: &mut Vec<u8>, text: &[u8]) {
     }
 }
 
-/// Parses a stylesheet and returns the module `export default <CSSStyleSheet of the text>`.
-///
-/// The text is final here, before the bundler resolves anything. So a `url()` to a file is a
-/// `${...}` of an asset import in the module, and an `@import` is dropped, as browsers do.
+/// Returns the module `export default <CSSStyleSheet of the text>`. The text is final before the bundler resolves anything: a `url()` to a file is an asset import, and `@import` is dropped.
 pub(crate) fn parse(
     log: &mut Log,
     topts: &options::BundleOptions<'_>,
@@ -183,8 +175,7 @@ pub(crate) fn parse(
         let _ = write!(&mut js, "import asset{asset} from \"{asset}\";\n");
     }
     if !assets.is_empty() {
-        // The URL of an asset is relative to the chunk. A stylesheet resolves a relative URL
-        // against the document, so make it absolute. The result is safe in a quoted `url()`.
+        // A constructed stylesheet resolves a relative URL against the document: `url` makes the chunk-relative path of an asset absolute, and safe in a quoted `url()`.
         js.extend_from_slice(if topts.output_format == options::Format::Esm {
             b"var url = (path) => {\n  try {\n    path = new URL(path, import.meta.url).href;\n  } catch {}\n  return path.replace(/[\"\\\\]/g, \"\\\\$&\");\n};\n"
         } else {
@@ -244,9 +235,7 @@ pub(crate) fn parse(
     };
     let mut ast = JSAst::init(*ast);
 
-    // The imports are in the order of `assets`. Resolve each one as its `url()`: the scan
-    // then finds the same file as for a page stylesheet, and `check_imports` makes the record a
-    // statement import for the linker.
+    // The imports are in the order of `assets`. Kind `Url` makes the scan resolve each one like its `url()`; `check_imports` then makes it a statement import.
     let mut asset_imports = ast
         .import_records
         .iter_mut()
@@ -263,11 +252,7 @@ pub(crate) fn parse(
     Ok(ast)
 }
 
-/// Runs after the scan when the build has a CSS module script.
-///
-/// - Reports a file that is a CSS module script for one import and a stylesheet for another.
-/// - Warns about an import that binds nothing: no code can adopt its sheet.
-/// - Makes the asset imports of each CSS module script statement imports (see `parse`).
+/// After the scan: reports a file used both with and without `type: "css"` (one path is one module), warns about an import that binds nothing, and makes the asset imports of `parse` statement imports.
 pub(crate) fn check_imports(this: &mut BundleV2<'_>) -> Result<(), AnyError> {
     if this.graph.css_module_script_imports.is_empty() {
         return Ok(());
@@ -336,8 +321,7 @@ pub(crate) fn check_imports(this: &mut BundleV2<'_>) -> Result<(), AnyError> {
         }
     }
 
-    // One error for each file, at its first typed import, with a note at each use without the
-    // attribute. The order does not depend on which import the scan resolved first.
+    // One error for each file at its first typed import, in an order that does not depend on which import the scan resolved first.
     conflicts.sort_unstable();
     conflicts.dedup();
     conflicts.sort_unstable_by_key(|file| sources[*file as usize].path.text);

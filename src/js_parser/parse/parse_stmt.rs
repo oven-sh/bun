@@ -1331,10 +1331,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     let import_record_index =
                         p.add_import_record(ImportKind::Stmt, parsed_path.loc, parsed_path.text);
-                    if !parsed_path.is_macro
-                        && parsed_path.import_tag == ImportRecordTag::None
-                        && parsed_path.loader == Some(bun_ast::Loader::Css)
-                    {
+                    if parsed_path.loader == Some(bun_ast::Loader::Css) {
                         p.import_records.items_mut()[import_record_index as usize].loader =
                             parsed_path.loader;
                     }

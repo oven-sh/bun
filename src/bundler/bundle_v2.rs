@@ -3126,8 +3126,7 @@ pub mod bv2_impl {
             })
         }
 
-        /// The loader for `import ... with { type: "css" }` of a file that loads as a stylesheet.
-        /// In a browser graph the file is a CSS module script: see `css_module_script`.
+        /// The loader for `import ... with { type: "css" }`: in a browser graph the file is a CSS module script (see `css_module_script`).
         #[cold]
         fn typed_css_import_loader(
             &mut self,
@@ -3160,8 +3159,7 @@ pub mod bv2_impl {
             Ok(Loader::CssModuleScript)
         }
 
-        /// `typed_css_import_loader` for an import that went to `onResolve` plugins.
-        /// `Ok(None)`: the import has no `type: "css"`. `Err`: the error is in the log.
+        /// `typed_css_import_loader` after `onResolve` plugins. `Ok(None)`: no `type: "css"`. `Err`: the error is in the log.
         fn typed_css_import_loader_after_plugins(
             &mut self,
             import_record: &jsc_api::JSBundler::MiniImportRecord,
@@ -5116,8 +5114,7 @@ pub mod bv2_impl {
                 }
                 jsc_api::JSBundler::LoadValue::Success(code) => {
                     // `code`: LoadSuccess { source_code, loader }
-                    // A stylesheet that the plugin loads for an import with `type: "css"` stays
-                    // a CSS module script: the plugin only knows the loader as "css".
+                    // A plugin sees the loader as "css": the stylesheet it returns for an import with `type: "css"` stays a CSS module script.
                     let loader = if code.loader == Loader::Css
                         && load.parse_task().loader == Some(Loader::CssModuleScript)
                     {
@@ -7317,8 +7314,7 @@ pub mod bv2_impl {
                             continue 'outer;
                         }
 
-                        // Do not use cached files for CSS. A browser import with `type: "css"`
-                        // goes to the loader decision below, which reports it.
+                        // Do not use cached files for CSS, or for a browser import with `type: "css"`: the loader decision below reports it.
                         if loader == Loader::Css
                             || (import_record.loader == Some(Loader::Css)
                                 && target == Target::Browser)

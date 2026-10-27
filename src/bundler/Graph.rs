@@ -92,8 +92,7 @@ pub struct Graph<'a> {
     /// Helps skip a loop.
     pub(crate) has_any_secondary_paths: bool,
 
-    /// The imports that made a file a CSS module script, as (importer source index,
-    /// import record index). See `css_module_script`.
+    /// (importer source index, import record index) of each import that made a file a CSS module script.
     pub(crate) css_module_script_imports: Vec<(IndexInt, u32)>,
 }
 

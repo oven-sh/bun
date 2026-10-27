@@ -319,6 +319,40 @@ describe.concurrent(`bun lint: the React Compiler rules match oxlint ${expected.
     slow,
   );
 
+  // Matches oxlint 1.87.0. To its compiler a nested function whose ref types don't converge is one that reads a ref,
+  // and the validation goes on: a function after it clears what says that they didn't, and a ref that's read after
+  // it is still reported. `bun build` ends the validation there, as the TypeScript original does.
+  test("a nested function whose ref types don't converge doesn't end the validation", async () => {
+    const returnsItself = "const outer = () => { const f = () => f; return f; };";
+    const { diagnostics, exit } = await report({
+      ".oxlintrc.json": rc(),
+      "alone.jsx": `export default function A(p) {
+  ${returnsItself}
+  return <div onClick={outer}>{p.a}</div>;
+}
+`,
+      "sibling.jsx": `export default function A(p) {
+  ${returnsItself}
+  const other = () => 1;
+  return <div onClick={outer} onFocus={other}>{p.a}</div>;
+}
+`,
+      "read.jsx": `import { useRef } from "react";
+export default function A(p) {
+  const ref = useRef(null);
+  ${returnsItself}
+  const v = ref.current;
+  return <div onClick={outer}>{v}</div>;
+}
+`,
+    });
+    expect(Object.fromEntries(Object.entries(diagnostics).map(([path, found]) => [path, locationsOf(found)]))).toEqual({
+      "alone.jsx": [["react(invariant)", 1, 25]],
+      "read.jsx": [["react(refs)", 5, 13]],
+    });
+    expect(exit).toBe(1);
+  });
+
   // oxlint 1.87.0 also reports nothing with up to 1,000 of them, in 16 s, and doesn't finish within a minute at 3,000.
   test(
     "a chain of objects that each contain the previous one, starting from a ref, takes linear memory",

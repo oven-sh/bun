@@ -85,6 +85,10 @@ pub struct EnvironmentConfig {
     /// For `validate_ref_access_during_render`: a function expression knows which of the variables
     /// that it captures are refs and values of refs. Upstream does not look at them.
     pub captured_refs_are_known_in_functions: bool,
+    /// For `validate_ref_access_during_render`: types in a nested function that do not converge end the validation,
+    /// with that as its one error. The TypeScript original throws there. Upstream's Rust crate takes the function for
+    /// one that reads a ref and goes on, and each function around it then runs all of its rounds again.
+    pub unconverged_ref_types_end_the_validation: bool,
     /// An effect on a variable is reported where it is. Upstream puts the first effect of a kind on a variable for
     /// all the later ones, so that each write to a captured variable is reported at the first.
     pub effects_keep_their_place: bool,
@@ -160,6 +164,7 @@ impl Default for EnvironmentConfig {
             validate_ref_access_during_render: true,
             joined_ref_values_keep_their_place: false,
             captured_refs_are_known_in_functions: true,
+            unconverged_ref_types_end_the_validation: true,
             effects_keep_their_place: false,
             jsx_can_be_reordered: true,
             arguments_of_no_alias_methods_escape: true,

@@ -2089,6 +2089,86 @@ describe("bundler", () => {
     },
   });
 
+  // ValidateNoRefAccessInRender runs a fixpoint for each function. The type it gives a function holds the type of
+  // what the function returns, so the type of a function that returns itself contains itself, and the fixpoint of
+  // `outer` does not converge. babel-plugin-react-compiler 1.0.0 throws there and leaves the component as written,
+  // and so does the bundler. Upstream's Rust crate takes `outer` for a function that reads a ref and goes on: the
+  // fixpoint of `other` then clears the `changed` flag that all of them share, and the component is compiled on a
+  // validation that did not end.
+  //
+  // The fake `c` records the size of every memo cache, so the second element of each pair is the `_c(n)` of that
+  // component. A component that the compiler skips has `[]` there.
+  itBundled("react-compiler/NestedFunctionThatDoesNotConverge", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        import { useRef } from "react";
+        import { sizes } from "react/compiler-runtime";
+
+        function NestedReturnsItself(p) {
+          const outer = () => {
+            const f = () => f;
+            return f;
+          };
+          const other = () => 1;
+          return <div onClick={outer} onFocus={other}>{p.a}</div>;
+        }
+        function NestedReturnsItselfOrRefReader(p) {
+          const ref = useRef(null);
+          const outer = () => {
+            const read = () => ref.current;
+            const f = () => (p.a ? f : read);
+            return f;
+          };
+          const other = () => 1;
+          return <div onClick={outer} onFocus={other}>{p.a}</div>;
+        }
+        // The same component without the function that returns itself.
+        function NestedReturnsOne(p) {
+          const outer = () => {
+            const f = () => 1;
+            return f;
+          };
+          const other = () => 1;
+          return <div onClick={outer} onFocus={other}>{p.a}</div>;
+        }
+
+        function render(fn) {
+          const before = sizes().length;
+          const { props } = fn({ a: "a" });
+          const f = props.onClick();
+          return [f() === f || f(), sizes().slice(before)];
+        }
+        console.log(JSON.stringify({
+          NestedReturnsItself: render(NestedReturnsItself),
+          NestedReturnsItselfOrRefReader: render(NestedReturnsItselfOrRefReader),
+          NestedReturnsOne: render(NestedReturnsOne),
+        }));
+      `,
+      "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+      "/node_modules/react/index.js": `exports.useRef = current => ({ current });`,
+      "/node_modules/react/jsx-runtime.js": `exports.jsx = exports.jsxs = (type, props) => ({ type, props });`,
+      "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (type, props) => ({ type, props });`,
+      "/node_modules/react/compiler-runtime.js": `
+        const sizes = [];
+        exports.c = size => {
+          sizes.push(size);
+          return new Array(size).fill(Symbol.for("react.memo_cache_sentinel"));
+        };
+        exports.sizes = () => sizes;
+      `,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: {
+      stdout: JSON.stringify({
+        NestedReturnsItself: [true, []],
+        NestedReturnsItselfOrRefReader: [true, []],
+        NestedReturnsOne: [1, [2]],
+      }),
+    },
+  });
+
   // A temporary that has to survive as a variable is "promoted": the compiler
   // names it `#t<n>` (or `#T<n>` for a JSX tag, which has to be capitalised to
   // read as a component) after its declaration id, and the printer drops the
@@ -4513,6 +4593,94 @@ test("react-compiler compile time is not exponential in the function nesting dep
   expect(stdout).toContain("p.a + s");
   expect(stdout).toMatch(/\b_c\(\d+\)/);
   expect(exitCode).toBe(0);
+});
+
+// ValidateNoRefAccessInRender runs a fixpoint of at most 10 rounds for each function, and that of a function that
+// holds `const f = () => f` does not converge. babel-plugin-react-compiler 1.0.0 throws there and leaves the component
+// as written. Where the validation goes on instead, each function around that one runs all of its rounds again: three
+// arrows take a minute, and twenty do not end.
+const functionsThatReturnThemselves = {
+  "and does nothing else": `const f = () => f;`,
+  "in one of two shapes": `const f = () => (p.a ? [f] : f);`,
+};
+
+// Not concurrent: when a test times out, `bun test` kills the process that the test spawned only if the tests run one
+// at a time.
+test.each(Object.entries(functionsThatReturnThemselves))(
+  "react-compiler compile time is not exponential in the arrows around a function that returns itself %s",
+  async (_name, declaration) => {
+    using dir = tempDir("react-compiler-returns-itself", {
+      "entry.jsx": `
+        import { useRef } from "react";
+        export default function App(p) {
+          const ref = useRef(null);
+          const outer = row => ${Buffer.alloc("() => ".length * 19, "() => ")}{
+            ${declaration}
+            return f;
+          };
+          return <div onClick={outer}>{p.a}</div>;
+        }
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", "entry.jsx"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      // Kill switch: a child that does not end is killed, so that the assertions below fail and no process is left.
+      timeout: 20_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(proc.signalCode).toBeNull();
+    // The component is left as written, as babel-plugin-react-compiler leaves it.
+    expect(stdout).toContain("const f = () =>");
+    expect(stdout).not.toContain("react/compiler-runtime");
+    expect(exitCode).toBe(0);
+  },
+);
+
+// When the types in a nested function do not converge, nothing that the functions around it have found by then is
+// reported: the TypeScript original throws. `onClick` has found its write to the ref, which is no error of the
+// component, because render does not call `onClick`. With the pragmas of the fixtures every error fails the build,
+// but for an invariant and a todo.
+test.skipIf(!isDebug && !isASAN)("react-compiler reports nothing but that the ref types did not converge", async () => {
+  using dir = tempDir("react-compiler-unconverged", {
+    "entry.jsx": `
+      import { useRef } from "react";
+      export function Comp(p) {
+        const ref = useRef(null);
+        const onClick = () => {
+          ref.current = p.a;
+          return () => {
+            const f = () => f;
+            return f;
+          };
+        };
+        return <div onClick={onClick}>{p.a}</div>;
+      }
+    `,
+  });
+
+  const result = await Bun.build({
+    entrypoints: [join(String(dir), "entry.jsx")],
+    target: "browser",
+    external: ["*"],
+    reactCompiler: true,
+    // @ts-expect-error test-only option, not in bun-types
+    reactCompilerParseTestPragmas: true,
+    throw: false,
+  });
+
+  expect({
+    errors: result.logs.filter(log => log.level === "error").map(log => String(log.message).split(".")[0]),
+    memoized: result.success && /\b_c\(\d+\)/.test(await result.outputs[0].text()),
+    success: result.success,
+  }).toEqual({ errors: [], memoized: false, success: true });
 });
 
 // Upstream sorts them with `<` of JavaScript, by UTF-16 code units: U+20000 begins with 0xD840, which is

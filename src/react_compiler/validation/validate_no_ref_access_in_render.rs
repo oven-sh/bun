@@ -513,6 +513,8 @@ struct Env {
     joins: Joins,
     /// `EnvironmentConfig::captured_refs_are_known_in_functions`
     looks_into_functions: bool,
+    /// `EnvironmentConfig::unconverged_ref_types_end_the_validation`
+    ends_when_unconverged: bool,
     /// Whether the type of any identifier is that of a ref or of the value of one.
     has_ref_types: bool,
     /// By identifier. Empty if none is a ref's or a ref value's.
@@ -550,6 +552,7 @@ impl Env {
                 returned: Joined::default(),
             },
             looks_into_functions: env.config.captured_refs_are_known_in_functions,
+            ends_when_unconverged: env.config.unconverged_ref_types_end_the_validation,
             has_ref_types,
             type_kinds: match has_ref_types {
                 true => env.identifiers.iter().map(type_kind_of).collect(),
@@ -1087,6 +1090,13 @@ fn validate_no_ref_access_in_render_impl(
                             ref_env,
                             &mut inner_errors,
                         );
+                        let is_invariant =
+                            |it: &CompilerDiagnostic| it.category == ErrorCategory::Invariant;
+                        if ref_env.ends_when_unconverged && inner_errors.iter().any(is_invariant) {
+                            // Nothing that was found before it stays: the TypeScript original throws.
+                            *errors = inner_errors;
+                            return RefAccessType::None;
+                        }
                         let mut details = inner_errors.iter().flat_map(|it| &it.details);
                         let access = details.find_map(|it| match it {
                             CompilerDiagnosticDetail::Error {

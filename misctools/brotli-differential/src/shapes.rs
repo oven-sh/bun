@@ -240,3 +240,32 @@ pub fn run_select(seed: u64, len: usize, corpus: &r#gen::Corpus) {
     }
     println!("ok: {cases} cases, {} -> {}", totals.0, totals.1);
 }
+
+/// A copy from a dictionary when the window is full, so that its distance is larger than the window but not larger than
+/// the position. Then the bytes that are that far back in the input, which the ring buffer still has.
+pub fn run_far_dict(seed: u64, qualities: u64) {
+    const LGWIN: u32 = 25;
+    let limit = (1usize << LGWIN) - 16;
+    let mut rng = Rng(seed);
+    // It compresses, and has no matches to speak of.
+    let mut text = |n: usize| -> Vec<u8> { (0..n).map(|_| b'0' + (rng.next() & 63) as u8).collect() };
+    let dictionary = text(4096);
+    let mut data = text(36 << 20);
+    let (address, length) = (1000, 1000);
+    let distance = limit + dictionary.len() - address;
+    for k in 0..4 {
+        let at = limit + (1 << 20) + k * 100_003;
+        data[at..at + length].copy_from_slice(&dictionary[address..address + length]);
+        // After so many literals the encoder does not look for a match at every position, and the later it finds the copy,
+        // the shorter is the distance into the dictionary. With a run, that does not matter.
+        data[at + length - distance..][..128].fill(b'A' + k as u8);
+        data[at + length..][..64].fill(b'A' + k as u8);
+    }
+    let dicts = vec![dictionary];
+    for q in crate::args::qualities(qualities, 2..12) {
+        let params = vec![(6, 1), (1, q), (2, LGWIN), (5, data.len() as u32)];
+        let case = EncCase { data: data.clone(), params, dicts: dicts.clone(), schedule: 0, misuse: false };
+        let out = enc::compare(&case).and_then(|out| enc::round_trip(&out, &data, &dicts, true, 0).map(|()| out)).unwrap_or_else(|e| panic!("seed {seed} quality {q}: {e}"));
+        println!("quality {q}: {} -> {}", data.len(), out.len());
+    }
+}

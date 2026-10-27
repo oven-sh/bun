@@ -12,3 +12,17 @@
          SetTotalOut(s, total_out);
        } else {
          size_t out_bytes = storage_ix >> 3;
+--- a/c/enc/hash_longest_match_quickly_inc.h
++++ b/c/enc/hash_longest_match_quickly_inc.h
+@@ -168,7 +168,10 @@
+   BROTLI_DCHECK(cur_ix_masked + max_length <= ring_buffer_mask);
+ 
+   out->len_code_delta = 0;
+-  if (prev_ix < cur_ix) {
++  /* From upstream commit 54f74c7. The last distance can be one into a compound
++     dictionary (H55), beyond the window: what is that far back in the ring
++     buffer is not what the decoder copies. */
++  if (prev_ix < cur_ix && cached_backward <= max_backward) {
+     prev_ix &= (uint32_t)ring_buffer_mask;
+     if (compare_char == data[prev_ix + best_len]) {
+       const size_t len = FindMatchLengthWithLimit(

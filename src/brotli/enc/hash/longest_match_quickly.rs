@@ -126,7 +126,8 @@ impl<
         let mut prev_ix = cur_ix.wrapping_sub(cached_backward);
 
         out.len_code_delta = 0;
-        if prev_ix < cur_ix {
+        // The last distance can be one into an attached dictionary, which is further back than the window.
+        if prev_ix < cur_ix && cached_backward <= max_backward {
             prev_ix &= mask as u32 as usize;
             if compare_char == data.at(prev_ix + best_len)? {
                 let len = find_match_length_with_limit(data.sub(prev_ix..)?, current, max_length);
@@ -213,6 +214,48 @@ impl<
         if BUCKET_SWEEP != 1 {
             let key_out = (key + (cur_ix & Self::BUCKET_SWEEP_MASK)) & Self::BUCKET_MASK;
             buckets.put(key_out, cur_ix as u32)?;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::enc::dictionary_hash::dictionary_hash;
+    use crate::enc::hash::{DictionaryStats, SCORE_BASE};
+
+    #[test]
+    fn the_last_distance_is_not_taken_beyond_the_window() -> Fallible {
+        // The same 32 bytes at 0 and at 100.
+        let mut data = [0u8; 256];
+        for (i, byte) in data.iter_mut().enumerate() {
+            *byte = (i % 100) as u8 ^ if i < 132 { 0 } else { 0x80 };
+        }
+        let mut distance_cache = [0; 16];
+        distance_cache[0] = 100;
+        for (max_backward, found) in [(100, 32), (99, 0)] {
+            let mut hasher = HashLongestMatchQuickly::<{ 1 << 20 }, 4, 7, false>::new()?;
+            let mut stats = DictionaryStats::default();
+            let mut out = HasherSearchResult {
+                len: 0,
+                distance: 0,
+                score: SCORE_BASE + 100,
+                len_code_delta: 0,
+            };
+            hasher.find_longest_match(
+                &mut StaticDictionarySearch::new(&mut stats, dictionary_hash()?),
+                &data,
+                255,
+                &distance_cache,
+                100,
+                100,
+                max_backward,
+                max_backward,
+                1 << 20,
+                &mut out,
+            )?;
+            assert_eq!(out.len, found, "max_backward {max_backward}");
         }
         Ok(())
     }

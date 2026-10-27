@@ -243,6 +243,7 @@ pub fn run(args: &[String]) -> bool {
         Some("enc-words") => ring::run_words(num(2, 1), num(3, 1000), num(4, 1 << 16) as usize, num(5, 0xFFF)),
         Some("enc-lengths") => ring::run_lengths(num(2, 1), num(3, 1000), num(4, 1 << 19) as usize, num(5, 0xFFF)),
         Some("enc-dict") => shapes::run_dict(num(2, 1), num(3, 1000), num(4, 1 << 20) as usize, num(5, 0xFFC), &corpus()),
+        Some("enc-far-dict") => shapes::run_far_dict(num(2, 1), num(3, 0x3FC)),
         Some("enc-blocks") => shapes::run_blocks(num(2, 1), num(3, 100), num(4, 1 << 20) as usize, num(5, 0xFF0)),
         Some("enc-select") => shapes::run_select(num(2, 1), num(3, 200_000) as usize, &corpus()),
         Some("enc-big") => big::run(num(2, 1), num(3, 6 << 30), args::params(args::rest(args, 4)), &corpus()),

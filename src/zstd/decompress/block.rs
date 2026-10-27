@@ -213,6 +213,8 @@ struct Scratch {
     entropy: EntropyDTables,
     /// Grows to the literals of the largest block so far, and `WILDCOPY_OVERLENGTH`.
     lit_buffer: Vec<u8>,
+    /// Sequences are decoded that many at a time, after 3 that only stand for the last offsets.
+    batch: [RawSequence; 3 + 128],
 }
 
 thread_local! {
@@ -269,6 +271,7 @@ impl BlockDecoder {
                 Box::new(Scratch {
                     entropy: EntropyDTables::new(),
                     lit_buffer: Vec::new(),
+                    batch: [RawSequence::EMPTY; _],
                 })
             })
         })
@@ -331,6 +334,7 @@ impl BlockDecoder {
                 let Scratch {
                     entropy,
                     lit_buffer,
+                    ..
                 } = scratch;
                 let dst = lit_buffer.sub_mut(..lit_size)?;
                 let huf_result = if lit_enc_type == SymbolEncodingType::Repeat {
@@ -581,6 +585,7 @@ impl BlockDecoder {
         let Scratch {
             entropy,
             lit_buffer,
+            batch,
         } = &mut **scratch;
         let dict_tables = dict_entropy.map(|dict| &dict.seq);
         let tables = entropy.seq.gather(&mut self.seq_sources, dict_tables);
@@ -632,9 +637,9 @@ impl BlockDecoder {
         if nb_seq > 0 {
             let seq_state = SeqState::new(sequences, tables, rep)?;
             let prev_offset = if use_prefetch_decoder {
-                exec.run::<true>(&seq_state, nb_seq)?
+                exec.run::<true>(&seq_state, nb_seq, batch)?
             } else {
-                exec.run::<false>(&seq_state, nb_seq)?
+                exec.run::<false>(&seq_state, nb_seq, batch)?
             };
             *rep = prev_offset.map(|offset| offset as u32);
         }
@@ -714,12 +719,20 @@ struct Sequence {
 }
 
 /// A sequence whose offset is as it is coded: 1 to 3 for one of the last offsets, or 3 more than the offset.
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Copy)]
 struct RawSequence {
     offset_value: u32,
     lit_length: u32,
     /// Above `MINMATCH`.
     match_length: u32,
+}
+
+impl RawSequence {
+    const EMPTY: Self = Self {
+        offset_value: 0,
+        lit_length: 0,
+        match_length: 0,
+    };
 }
 
 /// Where matches are, for `ZSTD_prefetchMatch`.
@@ -1464,19 +1477,6 @@ impl<'a> Executor<'_, 'a> {
     /// `ZSTD_decompressSequences_body`, `ZSTD_decompressSequences_bodySplitLitBuffer` and, with `LONG`,
     /// `ZSTD_decompressSequencesLong_body`. Returns the last offsets.
     fn run<const LONG: bool>(
-        &mut self,
-        seq_state: &SeqState<'_>,
-        nb_seq: usize,
-    ) -> Result<[usize; ZSTD_REP_NUM]> {
-        // Sequences are decoded that many at a time, after 3 that only stand for the last offsets.
-        if nb_seq < 32 {
-            self.run_by_batch::<LONG>(seq_state, nb_seq, &mut [RawSequence::default(); 3 + 32])
-        } else {
-            self.run_by_batch::<LONG>(seq_state, nb_seq, &mut [RawSequence::default(); 3 + 128])
-        }
-    }
-
-    fn run_by_batch<const LONG: bool>(
         &mut self,
         seq_state: &SeqState<'_>,
         nb_seq: usize,

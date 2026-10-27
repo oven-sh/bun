@@ -71,7 +71,7 @@ impl FrameHeader {
 }
 
 enum HeaderStatus {
-    Complete(FrameHeader),
+    Complete,
     /// The header cannot be read from fewer bytes than this.
     Needs(usize),
 }
@@ -97,8 +97,8 @@ fn frame_header_size(src: &[u8]) -> Result<usize> {
         + usize::from(single_segment && fcs_id == 0))
 }
 
-/// `ZSTD_getFrameHeader`
-fn get_frame_header(src: &[u8]) -> Result<HeaderStatus> {
+/// `ZSTD_getFrameHeader`: sets `header` if the one at the start of `src` is complete.
+fn get_frame_header(header: &mut FrameHeader, src: &[u8]) -> Result<HeaderStatus> {
     const MIN_INPUT_SIZE: usize = FRAMEHEADERSIZE_PREFIX;
 
     if src.len() < MIN_INPUT_SIZE {
@@ -124,13 +124,14 @@ fn get_frame_header(src: &[u8]) -> Result<HeaderStatus> {
             if src.len() < ZSTD_SKIPPABLEHEADERSIZE {
                 return Ok(HeaderStatus::Needs(ZSTD_SKIPPABLEHEADERSIZE));
             }
-            return Ok(HeaderStatus::Complete(FrameHeader {
+            *header = FrameHeader {
                 frame_type: FrameType::Skippable,
                 dict_id: magic - ZSTD_MAGIC_SKIPPABLE_START,
                 header_size: ZSTD_SKIPPABLEHEADERSIZE,
                 frame_content_size: u64::from(read_le32(src, ZSTD_FRAMEIDSIZE)?),
                 ..FrameHeader::EMPTY
-            }));
+            };
+            return Ok(HeaderStatus::Complete);
         }
         return Err(ErrorCode::PrefixUnknown);
     }
@@ -192,7 +193,7 @@ fn get_frame_header(src: &[u8]) -> Result<HeaderStatus> {
         window_size = frame_content_size;
     }
 
-    Ok(HeaderStatus::Complete(FrameHeader {
+    *header = FrameHeader {
         frame_type: FrameType::Frame,
         frame_content_size,
         window_size,
@@ -200,14 +201,16 @@ fn get_frame_header(src: &[u8]) -> Result<HeaderStatus> {
         header_size: fhsize,
         dict_id,
         checksum_flag,
-    }))
+    };
+    Ok(HeaderStatus::Complete)
 }
 
 /// `ZSTD_getFrameContentSize`: [`ZSTD_CONTENTSIZE_UNKNOWN`] if the frame at the start of `src` does not say, and
 /// [`ZSTD_CONTENTSIZE_ERROR`] if there is no whole frame header.
 pub fn get_frame_content_size(src: &[u8]) -> u64 {
-    match get_frame_header(src) {
-        Ok(HeaderStatus::Complete(header)) => match header.frame_type {
+    let mut header = FrameHeader::EMPTY;
+    match get_frame_header(&mut header, src) {
+        Ok(HeaderStatus::Complete) => match header.frame_type {
             FrameType::Skippable => 0,
             FrameType::Frame => header.frame_content_size,
         },
@@ -257,10 +260,10 @@ pub fn frame_extent(src: &[u8]) -> Result<FrameExtent> {
             FrameExtent::AtLeast(size)
         });
     }
-    let header = match get_frame_header(src)? {
-        HeaderStatus::Complete(header) => header,
-        HeaderStatus::Needs(size) => return Ok(FrameExtent::AtLeast(size)),
-    };
+    let mut header = FrameHeader::EMPTY;
+    if let HeaderStatus::Needs(size) = get_frame_header(&mut header, src)? {
+        return Ok(FrameExtent::AtLeast(size));
+    }
     let mut ip = header.header_size;
     loop {
         let Some(remaining) = src
@@ -770,9 +773,8 @@ impl DState {
 
     /// `ZSTD_decodeFrameHeader`: `src` is all of a frame header.
     fn decode_frame_header(&mut self, src: &[u8]) -> Result<()> {
-        match get_frame_header(src)? {
-            HeaderStatus::Complete(header) => self.f_params = header,
-            HeaderStatus::Needs(_) => return Err(ErrorCode::SrcSizeWrong),
+        if let HeaderStatus::Needs(_) = get_frame_header(&mut self.f_params, src)? {
+            return Err(ErrorCode::SrcSizeWrong);
         }
         if self.f_params.dict_id != 0 && self.dict_id != self.f_params.dict_id {
             return Err(ErrorCode::DictionaryWrong);
@@ -1155,8 +1157,8 @@ impl DState {
             }
 
             if let DStreamStage::LoadHeader { lh_size } = self.stream_stage {
-                match get_frame_header(self.header_buffer.sub(..lh_size)?)? {
-                    HeaderStatus::Complete(header) => self.f_params = header,
+                match get_frame_header(&mut self.f_params, self.header_buffer.sub(..lh_size)?)? {
+                    HeaderStatus::Complete => {}
                     HeaderStatus::Needs(h_size) => {
                         let to_load = h_size - lh_size;
                         let remaining_input = iend - ip;
@@ -1166,7 +1168,10 @@ impl DState {
                             self.stream_stage = DStreamStage::LoadHeader { lh_size };
                             input.pos = iend;
                             // Refuse what cannot become a frame header.
-                            get_frame_header(self.header_buffer.sub(..lh_size)?)?;
+                            get_frame_header(
+                                &mut self.f_params,
+                                self.header_buffer.sub(..lh_size)?,
+                            )?;
                             return Ok(
                                 FRAMEHEADERSIZE_MIN.max(h_size) - lh_size + ZSTD_BLOCKHEADERSIZE
                             );

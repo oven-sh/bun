@@ -41,6 +41,9 @@ use bun_resolver::{self as _resolver, Resolver};
 
 declare_scope!(ParseTask, hidden);
 
+/// The parser returned `Result::MacroDeferred`: the task runs again, on the macro pool.
+const MACRO_DEFERRED: AnyError = AnyError::JsParser(js_parser::Error::MacroDeferred);
+
 #[allow(non_snake_case)]
 mod EventLoop {
     pub(super) type Task = bun_event_loop::ConcurrentTask::ConcurrentTask;
@@ -89,6 +92,10 @@ pub struct ParseTask<'a> {
     pub(crate) contents_or_fd: ContentsOrFd<'a>,
     /// True if this task opened `contents_or_fd`'s file. False if the resolver's entry cache owns it.
     pub(crate) opened_own_fd: bool,
+    /// The parser returned `MACRO_DEFERRED` for this task: its next parse runs the macros.
+    pub(crate) macro_deferred: bool,
+    /// What a native plugin logged before `MACRO_DEFERRED`: the next run does not call the plugin.
+    pub(crate) pending_log: Option<Box<Log>>,
     pub(crate) external_free_function: ExternalFreeFunction,
     pub(crate) side_effects: bun_ast::SideEffects,
     pub(crate) loader: Option<Loader>,
@@ -298,6 +305,8 @@ impl<'a> ParseTask<'a> {
             // defaults:
             secondary_path_for_commonjs_interop: None,
             opened_own_fd: false,
+            macro_deferred: false,
+            pending_log: None,
             external_free_function: ExternalFreeFunction::NONE,
             loader: None,
             task: ThreadPoolLib::Task {
@@ -329,6 +338,8 @@ impl Default for ParseTask<'_> {
             secondary_path_for_commonjs_interop: None,
             contents_or_fd: ContentsOrFd::Contents(b""),
             opened_own_fd: false,
+            macro_deferred: false,
+            pending_log: None,
             external_free_function: ExternalFreeFunction::NONE,
             side_effects: bun_ast::SideEffects::HasSideEffects,
             loader: None,
@@ -625,6 +636,8 @@ pub mod parse_worker {
             // defaults:
             secondary_path_for_commonjs_interop: None,
             opened_own_fd: false,
+            macro_deferred: false,
+            pending_log: None,
             external_free_function: ExternalFreeFunction::NONE,
             task: ThreadPoolLib::Task {
                 node: ThreadPoolLib::Node::default(),
@@ -860,6 +873,7 @@ pub mod parse_worker {
                     // states that never reach the bundler's `getAST`, so unwrap.
                     match res {
                         bun_js_parser::Result::Ast(ast) => Ok(JSAst::init(*ast)),
+                        bun_js_parser::Result::MacroDeferred => Err(MACRO_DEFERRED),
                         bun_js_parser::Result::Cached
                         | bun_js_parser::Result::AlreadyBundled(_) => {
                             unreachable!("bundler parse never yields Cached/AlreadyBundled")
@@ -2527,6 +2541,9 @@ pub mod parse_worker {
             || !(task.experimental_decorators || task.emit_decorator_metadata);
         opts.features.unwrap_commonjs_packages = topts.unwrap_commonjs_packages;
         opts.features.no_macros = topts.no_macros;
+        // A macro on the bundler's own pool holds no thread of the work pool.
+        opts.features.defer_macro_imports =
+            !task.macro_deferred && !worker_ctx.graph.pool().worker_pool_is_owned;
         // Modeled as
         // `Option<Box<StringSet>>` on both sides, so we deep-clone (small —
         // CLI-supplied flag set). PERF: retype
@@ -2736,7 +2753,15 @@ pub mod parse_worker {
                 }
                 // SAFETY: `transpiler` is live; no other borrow of it is held here.
                 unsafe { (*transpiler).reset_store() };
-                if matches!(task.contents_or_fd, ContentsOrFd::Fd { .. }) {
+                if e == MACRO_DEFERRED {
+                    // The next run keeps `entry` and decides again who owns the descriptor.
+                    if task.opened_own_fd {
+                        task.contents_or_fd = ContentsOrFd::Fd {
+                            file: Fd::INVALID,
+                            dir: Fd::INVALID,
+                        };
+                    }
+                } else if matches!(task.contents_or_fd, ContentsOrFd::Fd { .. }) {
                     entry.deinit();
                 }
                 return Err(e);
@@ -2800,7 +2825,7 @@ pub mod parse_worker {
         );
 
         let mut step: Step = Step::Pending;
-        let mut log = Log::init();
+        let mut log = this.pending_log.take().map_or_else(Log::init, |log| *log);
         debug_assert!(this.source_index.is_valid()); // forgot to set source_index
 
         let value: ResultValue = 'value: {
@@ -2873,6 +2898,18 @@ pub mod parse_worker {
                         break 'value ResultValue::Empty {
                             source_index: this.source_index,
                         };
+                    }
+
+                    if e == MACRO_DEFERRED {
+                        this.macro_deferred = true;
+                        if !log.msgs.is_empty() {
+                            this.pending_log = Some(Box::new(log));
+                        }
+                        worker.unget();
+                        if bun_threading::MacroPool::ensure_worker() {
+                            return bun_threading::MacroPool::schedule(&raw mut this.task);
+                        }
+                        return run_from_thread_pool_impl(this);
                     }
 
                     break 'value ResultValue::Err(ResultError {

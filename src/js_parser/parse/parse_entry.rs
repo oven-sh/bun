@@ -278,6 +278,7 @@ impl<'a> Options<'a> {
                 inlining: f.inlining,
                 inject_jest_globals: f.inject_jest_globals,
                 no_macros: f.no_macros,
+                defer_macro_imports: false,
                 commonjs_named_exports: f.commonjs_named_exports,
                 minify_syntax: f.minify_syntax,
                 minify_identifiers: f.minify_identifiers,
@@ -977,6 +978,9 @@ impl<'a> Parser<'a> {
             Ok(s) => s.into_bump_slice_mut(),
             Err(e) => {
                 parse_tracer.end();
+                if e == crate::Error::MacroDeferred {
+                    return Ok(crate::Result::MacroDeferred);
+                }
                 if e == crate::Error::StackOverflow {
                     // The lexer location won't be totally accurate, but it's kind of helpful.
                     p.log().add_error(

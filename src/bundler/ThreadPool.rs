@@ -189,14 +189,6 @@ impl ThreadPool {
         self.io_pool.as_deref()
     }
 
-    /// Sends every thread that may hold a [`Worker`] through its idle queue.
-    pub(crate) fn wake_for_idle_events(&self) {
-        self.worker_pool().wake_for_idle_events();
-        if let Some(io) = self.io_pool_ref() {
-            io.wake_for_idle_events();
-        }
-    }
-
     pub(crate) fn start(&self) {
         self.worker_pool().warm(8);
         if let Some(io) = self.io_pool_ref() {
@@ -514,9 +506,11 @@ impl Worker {
         unsafe { Self::deinit(this) };
     }
 
-    pub(crate) fn deinit_soon(&mut self) {
+    /// Returns the pool to wake: the worker's thread tears it down when it is next idle.
+    pub(crate) fn deinit_soon(&mut self) -> Option<bun_ptr::BackRef<ThreadPoolLib::ThreadPool>> {
         if let Some(thread) = self.thread {
             thread.push_idle_task(&raw mut self.deinit_task);
+            Some(thread.pool())
         } else {
             // `thread` is `ThreadPoolLib::Thread::current()` captured at
             // creation. When null, the Worker was created on a non-pool thread
@@ -532,6 +526,7 @@ impl Worker {
             // the caller is about to `clear_retaining_capacity()` the
             // `workers_assignments` map.
             unsafe { Self::deinit(std::ptr::from_mut::<Self>(self)) };
+            None
         }
     }
 

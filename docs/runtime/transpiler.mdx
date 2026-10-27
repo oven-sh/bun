@@ -78,9 +78,9 @@ await transpiler.transform("<div>hi!</div>", "tsx");
 
 <Accordion title="Nitty gritty">
 
-The `.transform()` method runs the transpiler in Bun's worker threadpool, so running it 100 times spreads the work across `Math.floor($cpu_count * 0.8)` threads without blocking the main JavaScript thread.
+The `.transform()` method runs the transpiler in Bun's worker threadpool, so running it 100 times spreads the work across the threads of that pool without blocking the main JavaScript thread.
 
-If your code uses a macro, the transpiler may spawn a new copy of Bun's JavaScript runtime environment in that new thread.
+If your code imports a macro, it is transpiled on a thread of a separate pool, where the transpiler may spawn a new copy of Bun's JavaScript runtime environment to run the macro.
 
 </Accordion>
 

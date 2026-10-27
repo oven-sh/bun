@@ -15,7 +15,7 @@ use bun_ast::Expr;
 use bun_ast::Loader;
 use bun_ast::{ImportRecord, ImportRecordFlags};
 use bun_bundler::options::{self, PackagesOption, SourceMapOption};
-use bun_bundler::transpiler::{MacroJSCtx, ParseOptions, ParseResult};
+use bun_bundler::transpiler::{MacroJSCtx, ParseOptions, ParseResult, ParseStop};
 use bun_bundler::{self as Transpiler};
 use bun_js_parser::lexer as JSLexer;
 use bun_js_parser::parser::Runtime;
@@ -607,6 +607,10 @@ pub(crate) struct TransformTask {
     pub tsconfig: Option<jsc::JsPtr<TSConfigJSON>>,
     pub loader: Loader,
     pub replace_exports: bun_ast::runtime::ReplaceableExportMap,
+    /// Runs the task again on the macro pool, after [`ParseStop::MacroDeferred`].
+    macro_pool_task: jsc::WorkPoolTask,
+    /// The job's completion, while `macro_pool_task` is scheduled.
+    done: Option<bun_jsc::Completion<Self>>,
 }
 // SAFETY: see the type doc — VM-owned config is read only under the pool
 // borrow; everything else is owned.
@@ -623,7 +627,15 @@ impl jsc::JobContext for TransformTask {
     type OffThread = Self;
     type Js = TransformJs;
     fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
-        TransformTask::run(this, done.ticket());
+        if TransformTask::run(this, done.ticket(), true) {
+            if jsc::MacroPool::ensure_worker() {
+                this.done = Some(done);
+                // The macro pool may run the task before this returns.
+                jsc::MacroPool::schedule(&raw mut this.macro_pool_task);
+                return None;
+            }
+            TransformTask::run(this, done.ticket(), false);
+        }
         Some(done)
     }
     fn then(mut this: Self, mut js: TransformJs, cx: &jsc::JsThread<'_>) -> JsResult<()> {
@@ -668,6 +680,11 @@ impl TransformTask {
             replace_exports: bun_ast::runtime::ReplaceableExportMap {
                 entries: config.runtime.replace_exports.entries.clone().expect("OOM"),
             },
+            macro_pool_task: jsc::WorkPoolTask {
+                node: Default::default(),
+                callback: Self::run_on_macro_pool,
+            },
+            done: None,
         };
         let promise = jsc::JSPromiseStrong::init(cx.global());
         let value = promise.value();
@@ -682,7 +699,18 @@ impl TransformTask {
         value
     }
 
-    fn run(&mut self, vm: &jsc::Ticket) {
+    fn run_on_macro_pool(task: *mut jsc::WorkPoolTask) {
+        // SAFETY: `JobContext::run` handed this field of a live `TransformTask` to this thread.
+        let this = unsafe { &mut *bun_core::from_field_ptr!(Self, macro_pool_task, task) };
+        let done = this.done.take().expect("scheduled with its completion");
+        if !done.ticket().cancelled() {
+            this.run(done.ticket(), false);
+        }
+        done.finish();
+    }
+
+    /// `true`: the parse returned [`ParseStop::MacroDeferred`], and the task is as it was.
+    fn run(&mut self, vm: &jsc::Ticket, defer_macro_imports: bool) -> bool {
         let name = self.loader.stdin_name();
         // SAFETY: the wrapper's config, alive under the job's ticket (see `schedule`).
         let tsconfig: Option<&TSConfigJSON> =
@@ -757,14 +785,24 @@ impl TransformTask {
             allow_bytecode_cache: false,
         };
 
-        let Some(parse_result) = self.transpiler.parse(parse_options, None) else {
-            self.err = Some(crate::Error::ParseError);
-            return;
+        let parse_result = match self
+            .transpiler
+            .parse_maybe_return_file_only_allow_shared_buffer::<false, false>(
+                parse_options,
+                None,
+                defer_macro_imports,
+            ) {
+            Ok(parse_result) => parse_result,
+            Err(ParseStop::MacroDeferred) => return true,
+            Err(ParseStop::Failed) => {
+                self.err = Some(crate::Error::ParseError);
+                return false;
+            }
         };
 
         if parse_result.empty {
             self.output_code = BunString::EMPTY;
-            return;
+            return false;
         }
 
         let mut buffer_writer = JSPrinter::BufferWriter::init();
@@ -785,7 +823,7 @@ impl TransformTask {
             Ok(n) => n,
             Err(err) => {
                 self.err = Some(err.into());
-                return;
+                return false;
             }
         };
 
@@ -797,6 +835,7 @@ impl TransformTask {
         } else {
             self.output_code = BunString::EMPTY;
         }
+        false
     }
 
     fn then(&mut self, promise: &mut JSPromise, global: &JSGlobalObject) -> JsResult<()> {
@@ -1154,7 +1193,7 @@ impl JSTranspiler {
         code: &'p [u8],
         loader: Option<Loader>,
         macro_js_ctx: MacroJSCtx,
-    ) -> Option<ParseResult<'p>> {
+    ) -> Result<ParseResult<'p>, ParseStop> {
         let config = self.config.get();
         let name = config.default_loader.stdin_name();
 
@@ -1262,7 +1301,7 @@ impl JSTranspiler {
 
         let parse_result = self.get_parse_result(arena_ref, code, loader, MacroJSCtx::ZERO);
         let log_ref = self.transpiler.get().log_mut();
-        let Some(mut parse_result) = parse_result else {
+        let Ok(mut parse_result) = parse_result else {
             if (log_ref.warnings + log_ref.errors) > 0 {
                 return Err(global.throw_value(log_ref.to_js(global, format_args!("Parse error"))?));
             }
@@ -1407,7 +1446,7 @@ impl JSTranspiler {
         let macro_js_ctx: MacroJSCtx = MacroJSCtx(js_ctx_value.0 as i64);
         let parse_result = self.get_parse_result(arena_ref, code, loader, macro_js_ctx);
         let log_ref = self.transpiler.get().log_mut();
-        let Some(parse_result) = parse_result else {
+        let Ok(parse_result) = parse_result else {
             if (log_ref.warnings + log_ref.errors) > 0 {
                 return Err(global.throw_value(log_ref.to_js(global, format_args!("Parse error"))?));
             }

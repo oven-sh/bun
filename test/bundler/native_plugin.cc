@@ -181,6 +181,14 @@ plugin_impl_baz(const OnBeforeParseArguments *args,
   plugin_impl_with_needle(args, result, "baz");
 }
 
+// Logs a warning for the file and leaves its source as it is.
+extern "C" BUN_PLUGIN_EXPORT void
+plugin_impl_warns(const OnBeforeParseArguments *args,
+                  OnBeforeParseResult *result) {
+  const char *msg = "a warning from the plugin";
+  log_error(args, result, BUN_LOG_LEVEL_WARN, msg, strlen(msg));
+}
+
 extern "C" void finalizer(napi_env env, void *data, void *hint) {
   External *external = (External *)data;
   if (external != nullptr) {

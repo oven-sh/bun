@@ -195,6 +195,9 @@ pub mod Runtime {
 
         pub no_macros: bool,
 
+        /// Stop at an import that binds a macro (`Result::MacroDeferred`): the host parses again.
+        pub defer_macro_imports: bool,
+
         pub commonjs_named_exports: bool,
 
         pub minify_syntax: bool,
@@ -289,6 +292,7 @@ pub mod Runtime {
                 inlining: false,
                 inject_jest_globals: false,
                 no_macros: false,
+                defer_macro_imports: false,
                 commonjs_named_exports: true,
                 minify_syntax: false,
                 minify_identifiers: false,
@@ -670,6 +674,22 @@ pub struct MacroRefData<'a> {
 }
 
 type MacroRefs<'a> = ArrayHashMap<Ref, MacroRefData<'a>>;
+
+/// Why a call of a macro is an error in the file that has it.
+#[derive(Clone, Copy)]
+pub(crate) enum MacroRefusal {
+    Disabled,
+    NodeModule,
+}
+
+impl MacroRefusal {
+    pub(crate) fn message(self) -> &'static [u8] {
+        match self {
+            Self::Disabled => b"Macros are disabled",
+            Self::NodeModule => b"For security reasons, macros cannot be run from node_modules.",
+        }
+    }
+}
 
 pub(crate) enum Substitution {
     Success(Expr),

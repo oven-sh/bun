@@ -713,7 +713,7 @@ impl ThreadPool {
         self.sync.load(Ordering::Relaxed).spawned() > 0
     }
 
-    fn force_spawn(&self) {
+    pub(crate) fn force_spawn(&self) {
         // Try to notify a thread
         let is_waking = false;
         self.notify(is_waking);
@@ -1184,6 +1184,11 @@ impl Thread {
     #[inline]
     pub fn current() -> *mut Thread {
         CURRENT.with(|c| c.get())
+    }
+
+    /// The pool this thread works for.
+    pub fn pool(&self) -> bun_ptr::BackRef<ThreadPool> {
+        self.thread_pool
     }
 
     pub fn push_idle_task(&self, task: *mut Task) {

@@ -229,6 +229,8 @@ pub enum Result<'a> {
     AlreadyBundled(AlreadyBundled),
     Cached,
     Ast(Box<Ast<'a>>),
+    /// An import binds a macro and the host set `features.defer_macro_imports`. Nothing is logged.
+    MacroDeferred,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

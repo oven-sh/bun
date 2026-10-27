@@ -2609,7 +2609,7 @@ fn transpile_source_code_of_any_provenance(
                 // `parse_maybe_return_file_only_allow_shared_buffer` body, so
                 // dispatch at runtime via the const-generic bool.
                 let return_file_only = disable_transpilying || loader == L::Json;
-                let parse_result: Option<ParseResult> = if return_file_only {
+                let parse_result = if return_file_only {
                     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
                     unsafe {
                         (*jsc_vm)
@@ -2625,7 +2625,7 @@ fn transpile_source_code_of_any_provenance(
                     }
                 };
 
-                let Some(mut parse_result) = parse_result else {
+                let Ok(mut parse_result) = parse_result else {
                     // Register with watcher even on parse failure.
                     if !disable_transpilying {
                         // SAFETY: see Note on `_fd_guard` — reborrow via

@@ -87,6 +87,10 @@ impl JavaScript {
         };
 
         let result = match parser.parse() {
+            // The parse runs again on another thread, and logs there.
+            Ok(js_parser::Result::MacroDeferred) => {
+                return Ok(Some(js_parser::Result::MacroDeferred));
+            }
             Ok(r) => {
                 // The parser halts on every logged error.
                 debug_assert_eq!(temp_log.errors, 0);

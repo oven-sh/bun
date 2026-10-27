@@ -419,8 +419,7 @@ describe("bundler", () => {
       stdout: `{}`,
     },
   });
-  // That keeps this layout building: bun-plugin-svelte strips the types of a `.svelte.ts` file and returns it as
-  // JavaScript, and the re-export of the interface is still there.
+  // The reason: bun-plugin-svelte strips the types of a `.svelte.ts` file and returns it with a JavaScript loader.
   itBundled("ts/ExportMissingES6PluginLoaderJS", {
     files: {
       "/entry.js": /* js */ `
@@ -458,8 +457,7 @@ describe("bundler", () => {
       "/barrel.ts": [`Browser polyfill for module "node:net" doesn't have a matching export named "createServer"`],
     },
   });
-  // The namespace does not have the dropped name, so a read of it is `undefined`. esbuild 0.25.1 prints a read of
-  // `foo_exports.nope` here and never declares `foo_exports`.
+  // A namespace read of a dropped name is `undefined`. esbuild 0.25.1 reads an undeclared `foo_exports` here.
   itBundled("ts/ExportMissingES6NamespaceRead", {
     files: {
       "/entry.js": /* js */ `

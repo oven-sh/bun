@@ -18,6 +18,7 @@ use crate::tables::HuffSpec;
 use input::Input;
 pub use input::Warning;
 use marker::Reached;
+use std::borrow::Cow;
 
 pub(crate) const NUM_QUANT_TBLS: usize = 4;
 pub(crate) const NUM_HUFF_TBLS: usize = 4;
@@ -105,8 +106,9 @@ pub struct Decoder<'a> {
     saw_adobe: bool,
     adobe_transform: u8,
     color_space: Option<ColorSpace>,
-    app2: Vec<Vec<u8>>,
-    icc_profile: Option<Vec<u8>>,
+    /// The APP2 segments before the first scan.
+    app2: Vec<Cow<'a, [u8]>>,
+    in_header: bool,
 
     pub(crate) comps_in_scan: usize,
     /// Indexes into `comps`.
@@ -168,7 +170,7 @@ impl<'a> Decoder<'a> {
             adobe_transform: 0,
             color_space: None,
             app2: Vec::new(),
-            icc_profile: None,
+            in_header: true,
             comps_in_scan: 0,
             cur_comp: [None; MAX_COMPS_IN_SCAN],
             ss: 0,
@@ -192,9 +194,8 @@ impl<'a> Decoder<'a> {
             // Only tables.
             Reached::Eoi => return Err(Error::NoImage),
         }
+        this.in_header = false;
         this.guess_color_space();
-        this.icc_profile = this.read_icc_profile()?;
-        this.app2 = Vec::new();
         if this.color_space.is_none() {
             return Err(Error::UnknownColorSpace);
         }
@@ -215,8 +216,8 @@ impl<'a> Decoder<'a> {
     }
 
     /// The profile from the APP2 segments before the first scan.
-    pub fn take_icc_profile(&mut self) -> Option<Vec<u8>> {
-        self.icc_profile.take()
+    pub fn icc_profile(&mut self) -> Result<Option<Vec<u8>>> {
+        self.read_icc_profile()
     }
 
     /// The `Warning`s so far, or-ed together.
@@ -227,7 +228,7 @@ impl<'a> Decoder<'a> {
     /// Whether `decode` takes a `scale` other than 8. TurboJPEG allowed a cropping region, which Bun relied on when it
     /// scaled, for exactly these streams.
     pub fn scalable(&self) -> bool {
-        !self.lossless && (self.precision == 8 || self.precision == 12) && self.subsampling_known()
+        !self.lossless && self.precision == 8 && self.subsampling_known()
     }
 
     /// Whether the sampling factors are one of 4:4:4, 4:2:2, 4:2:0, 4:4:0, 4:1:1 and 4:4:1, or the image is gray.

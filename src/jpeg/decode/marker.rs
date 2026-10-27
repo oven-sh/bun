@@ -4,6 +4,7 @@ use super::input::{M_EOI, Warning};
 use super::{Component, Decoder, MAX_COMPS_IN_SCAN, NUM_ARITH_TBLS, NUM_HUFF_TBLS, NUM_QUANT_TBLS};
 use crate::error::{Error, Result};
 use crate::tables::{HuffSpec, NATURAL_ORDER};
+use std::borrow::Cow;
 
 const M_SOF0: u8 = 0xc0;
 const M_SOF1: u8 = 0xc1;
@@ -90,7 +91,7 @@ impl Decoder<'_> {
                 M_DQT => self.get_dqt()?,
                 M_DRI => self.get_dri()?,
                 M_APP0 | M_APP14 => self.get_interesting_appn(marker),
-                M_APP2 => self.save_app2()?,
+                M_APP2 if self.in_header => self.save_app2()?,
                 M_APP0..=M_APP15 | M_COM | M_DNL => self.skip_variable(),
                 M_RST0..=M_RST7 | M_TEM => {}
                 _ => return Err(Error::UnknownMarker(marker)),
@@ -343,19 +344,16 @@ impl Decoder<'_> {
         let Some(length) = usize::from(self.inp.u16()).checked_sub(2) else {
             return Ok(());
         };
-        let mut data = Vec::new();
-        data.try_reserve_exact(length)
-            .map_err(|_| Error::OutOfMemory)?;
-        let real = self.inp.remaining();
-        if let Some(real) = real.get(..length) {
-            data.extend_from_slice(real);
+        if let Some(data) = self.inp.remaining().get(..length) {
+            self.app2.push(Cow::Borrowed(data));
             self.inp.advance(length);
         } else {
-            for _ in 0..length {
-                data.push(self.inp.byte());
-            }
+            let mut data = Vec::new();
+            data.try_reserve_exact(length)
+                .map_err(|_| Error::OutOfMemory)?;
+            data.extend((0..length).map(|_| self.inp.byte()));
+            self.app2.push(Cow::Owned(data));
         }
-        self.app2.push(data);
         Ok(())
     }
 

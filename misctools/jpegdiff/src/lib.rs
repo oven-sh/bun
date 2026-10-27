@@ -20,11 +20,11 @@ pub fn ours(bytes: &[u8], eighths: u32, max_pixels: u64) -> Result<Ours, OurFail
     if d.width() as u64 * d.height() as u64 > max_pixels {
         return Err(OurFailure::Header(bun_jpeg::Error::InvalidArgument));
     }
+    let icc = d.icc_profile().map_err(OurFailure::Header)?;
     let header_warnings = d.warnings();
     let cmyk = matches!(d.color_space(), ColorSpace::Cmyk | ColorSpace::Ycck);
     let scale = if d.scalable() { eighths } else { 8 };
     let (width, height) = d.scaled_size(scale);
-    let icc = d.take_icc_profile();
     let pixels = d.decode(scale, if cmyk { PixelFormat::Cmyk } else { PixelFormat::Rgba }).map_err(OurFailure::Decode)?;
     Ok(Ours { pixels, width, height, cmyk, icc, header_warnings, warnings: d.warnings() })
 }

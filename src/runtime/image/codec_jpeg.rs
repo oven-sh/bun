@@ -68,7 +68,7 @@ pub(crate) fn decode(
     let icc_profile = if cmyk {
         None
     } else {
-        decoder.take_icc_profile()
+        decoder.icc_profile().map_err(decode_error)?
     };
 
     let format = if cmyk {

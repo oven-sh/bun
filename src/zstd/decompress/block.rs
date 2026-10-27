@@ -5,7 +5,7 @@ use super::seq_table::{
     Cell, Codes, LL_CODES, ML_CODES, OF_CODES, OffsetTable, SeqTable, SeqTableRefs,
     SeqTableSources, SeqTables, TableSource,
 };
-use core::cell::{self, OnceCell};
+use core::cell;
 use core::hint::{Locality, prefetch_read};
 use core::ops::Range;
 
@@ -266,7 +266,9 @@ impl Drop for BlockDecoder {
         if let Some(mut scratch) = self.scratch.take() {
             scratch.lit_buffer.clear();
             let used = core::mem::take(&mut scratch.small_output_used);
-            if let Some(used) = scratch.small_output.get_mut(..used) {
+            if used != 0
+                && let Some(used) = scratch.small_output.get_mut(..used)
+            {
                 used.fill(0);
             }
             if scratch.lit_buffer.capacity() > Scratch::MAX_SPARE_LIT_BUFFER {
@@ -828,33 +830,31 @@ impl History {
 
 /// A copy of the start of a stream after zeroes, where it can be read as if its start were far. That it was not shows
 /// afterwards.
-struct PaddedStart(OnceCell<[u8; Self::PADDING + Self::MAX_SIZE]>);
+struct PaddedStart([u8; Self::PADDING + Self::MAX_SIZE]);
 
 impl PaddedStart {
     const PADDING: usize = 32;
     const MAX_SIZE: usize = 224;
 
     const fn new() -> Self {
-        Self(OnceCell::new())
+        Self([0; _])
     }
 
-    /// `bit_d` on the copy, if little enough is left of it.
-    fn set(&self, bit_d: &BitDStream<'_>) -> Option<BitDStream<'_>> {
+    /// Whether little enough is left of `bit_d`.
+    fn fits(bit_d: &BitDStream<'_>) -> bool {
+        bit_d.bytes().len() <= Self::MAX_SIZE && bit_d.bits_consumed <= 64
+    }
+
+    /// `bit_d` on the copy, which is new. It fits.
+    fn set(&mut self, bit_d: &BitDStream<'_>) -> Option<BitDStream<'_>> {
         let src = bit_d.bytes();
-        if src.len() > Self::MAX_SIZE || bit_d.bits_consumed > 64 {
-            return None;
-        }
-        let copy = self.0.get_or_init(|| {
-            let mut copy = [0; _];
-            if let Some(start) = copy.get_mut(Self::PADDING..Self::PADDING + src.len()) {
-                start.copy_from_slice(src);
-            }
-            copy
-        });
+        self.0
+            .get_mut(Self::PADDING..Self::PADDING + src.len())?
+            .copy_from_slice(src);
         // A stream of less than 8 bytes counts what it lacks as consumed.
         let lacking = 8usize.saturating_sub(src.len()) as u32 * 8;
         let pos = Self::PADDING + src.len() - 8;
-        BitDStream::resume(copy, pos, bit_d.bits_consumed.checked_sub(lacking)?).ok()
+        BitDStream::resume(&self.0, pos, bit_d.bits_consumed.checked_sub(lacking)?).ok()
     }
 
     /// How many bits are left to read of the copy and of the zeroes.
@@ -1630,7 +1630,9 @@ impl<'a> Executor<'_, 'a> {
         // executes the last ones.
         let mut ahead = [Sequence::default(); 8];
         let ahead = ahead.sub_mut(..if LONG { nb_seq.min(8) } else { 0 })?;
-        let start = PaddedStart::new();
+        let mut start = None;
+        // There until decoding goes on from it.
+        let mut start = (!LONG).then_some(&mut start);
         let mut seq_state: SeqState<'_> = *seq_state;
 
         let more_bits = seq_state.tables.lengths_often_have_more_bits();
@@ -1651,12 +1653,13 @@ impl<'a> Executor<'_, 'a> {
         }
         // Where decoding went on from a copy of the start of the stream, if it did.
         let mut left_at = None;
-        let mut can_leave = !LONG;
         while remaining > ahead.len() {
             let mut count = 0;
             if !self.split {
-                if can_leave && let Some(bit_d) = start.set(&seq_state.bit_d) {
-                    can_leave = false;
+                if PaddedStart::fits(&seq_state.bit_d)
+                    && let Some(start) = start.take()
+                    && let Some(bit_d) = start.insert(PaddedStart::new()).set(&seq_state.bit_d)
+                {
                     left_at = Some((seq_state, remaining));
                     seq_state.bit_d = bit_d;
                 }

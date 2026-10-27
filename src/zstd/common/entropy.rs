@@ -3,7 +3,7 @@
 use super::fse_decompress::{Spread, fse_decompress_weights};
 use super::{FSE_MIN_TABLELOG, FSE_TABLELOG_ABSOLUTE_MAX, HUF_TABLELOG_MAX};
 use crate::error::{ErrorCode, Result};
-use crate::util::{SliceExt, highbit32, read_le32};
+use crate::util::{BUG, SliceExt, highbit32, read_le32};
 
 /// What [`read_ncount`] found besides the counts.
 pub(crate) struct NCount {
@@ -331,11 +331,13 @@ pub(crate) fn huf_read_stats_wksp(
         *rank =
             counts0.at(weight)? + counts1.at(weight)? + counts2.at(weight)? + counts3.at(weight)?;
     }
-    let (valid, too_large) = ranks.split_at(rank_stats.len());
+    let Some((valid, too_large)) = ranks.split_first_chunk() else {
+        return Err(BUG);
+    };
     if all_bits & 0xF0F0_F0F0 != 0 || too_large.iter().any(|&rank| rank != 0) {
         return Err(ErrorCode::CorruptionDetected);
     }
-    rank_stats.copy_from_slice(valid);
+    *rank_stats = *valid;
     // Those that complete the last four.
     if let Some(rank) = rank_stats.first_mut() {
         *rank -= (4 - others.len()) as u32;

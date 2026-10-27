@@ -1690,6 +1690,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.lexer_backtracker_bool(Self::skip_type_script_type_arguments_with_backtracking)
     }
 
+    // Not inlined: the lexer snapshot would be in the frame of every `parse_paren_expr`, one for each nested "(".
+    #[inline(never)]
     pub(crate) fn try_skip_type_script_arrow_return_type_with_backtracking(
         &mut self,
     ) -> Result<bool, Error> {

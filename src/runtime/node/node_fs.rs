@@ -7711,19 +7711,33 @@ impl NodeFS {
             };
 
             #[cfg(any(target_os = "linux", target_os = "android"))]
-            let flags = sys::O::PATH; // O_PATH is faster
+            let flags = sys::O::PATH;
             #[cfg(not(any(target_os = "linux", target_os = "android")))]
             let flags = sys::O::RDONLY | sys::O::NONBLOCK | sys::O::NOCTTY;
 
-            let fd = match sys::open(path, flags, 0) {
-                Err(err) => return Err(err.with_path(path)),
-                Ok(fd_) => fd_,
-            };
-            let _close = scopeguard::guard(fd, |fd| fd.close());
-
-            let buf = match Syscall::get_fd_path(fd, &mut outbuf) {
-                Err(err) => return Err(err.with_path(path)),
-                Ok(buf_) => buf_,
+            // open(2) can refuse an inode that still has a path: only a failed lookup is final.
+            let buf: &[u8] = 'fast: {
+                match sys::open(path, flags, 0) {
+                    Ok(fd) => {
+                        let _close = scopeguard::guard(fd, |fd| fd.close());
+                        if let Ok(buf_) = Syscall::get_fd_path(fd, &mut outbuf) {
+                            break 'fast buf_;
+                        }
+                    }
+                    Err(err)
+                        if matches!(
+                            err.get_errno(),
+                            E::ENOENT | E::ENOTDIR | E::ELOOP | E::ENAMETOOLONG
+                        ) =>
+                    {
+                        return Err(err.with_path(path));
+                    }
+                    Err(_) => {}
+                }
+                match sys::realpath(path, &mut outbuf) {
+                    Err(err) => return Err(err.with_path(path)),
+                    Ok(buf_) => buf_,
+                }
             };
 
             // Linux appends " (deleted)" to the path of a file that has been unlinked. A name can

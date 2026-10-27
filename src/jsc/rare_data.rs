@@ -254,8 +254,8 @@ pub struct RareData {
     compression_scratch: Cell<Option<Vec<u8>>>,
     /// Inflated payload of one `new WebSocket()` client message; see [`Self::take_websocket_inflate_scratch`].
     websocket_inflate_scratch: Cell<Option<Vec<u8>>>,
-    /// One libdeflate handle for every JS-thread one-shot inflate; see [`Self::take_libdeflate_decompressor`].
-    libdeflate_decompressor: Cell<Option<libdeflate::OwnedDecompressor>>,
+    /// One libdeflate handle for every JS-thread one-shot inflate; see [`Self::libdeflate_decompressor`].
+    libdeflate_decompressor: OnceCell<libdeflate::OwnedDecompressor>,
 
     // There is intentionally no `aws_signature_cache` field — storage lives in
     // `bun_s3_signing::credentials::AWS_SIGNATURE_CACHE` (process static; it
@@ -304,7 +304,7 @@ impl Default for RareData {
             h2_padded_frame_buffer: Cell::new(None),
             compression_scratch: Cell::new(None),
             websocket_inflate_scratch: Cell::new(None),
-            libdeflate_decompressor: Cell::new(None),
+            libdeflate_decompressor: OnceCell::new(),
             s3_default_client: Strong::empty(),
             node_quic_callbacks: Strong::empty(),
             default_csrf_secret: OnceCell::new(),
@@ -817,17 +817,14 @@ impl RareData {
     }
 
     /// libdeflate keeps no state between calls, so one handle serves every one-shot inflate on
-    /// this thread. Taken out of its slot; hand it back with
-    /// [`Self::put_back_libdeflate_decompressor`]. `None` when libdeflate cannot allocate it;
-    /// callers fall back to zlib.
-    pub fn take_libdeflate_decompressor(&self) -> Option<libdeflate::OwnedDecompressor> {
-        self.libdeflate_decompressor
-            .take()
-            .or_else(libdeflate::OwnedDecompressor::new)
-    }
-
-    pub fn put_back_libdeflate_decompressor(&self, decompressor: libdeflate::OwnedDecompressor) {
-        self.libdeflate_decompressor.set(Some(decompressor));
+    /// this thread. `None` when libdeflate cannot allocate it; callers fall back to zlib.
+    pub fn libdeflate_decompressor(&self) -> Option<&libdeflate::Decompressor> {
+        if self.libdeflate_decompressor.get().is_none() {
+            let _ = self
+                .libdeflate_decompressor
+                .set(libdeflate::OwnedDecompressor::new()?);
+        }
+        self.libdeflate_decompressor.get().map(|d| &**d)
     }
 
     pub fn boring_engine(&self) -> *mut boring::ENGINE {

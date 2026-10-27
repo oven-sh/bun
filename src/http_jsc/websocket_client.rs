@@ -482,23 +482,18 @@ impl<const SSL: bool> WebSocket<SSL> {
         let mut decompressed = rare.take_websocket_inflate_scratch();
         let result = match self.deflate.borrow_mut().as_mut() {
             None => Err(ErrorCode::UnexpectedRsv1),
-            Some(deflate) => {
-                let mut decompressor = rare.take_libdeflate_decompressor();
-                let inflated = deflate.decompress(
-                    decompressor.as_deref_mut(),
+            Some(deflate) => deflate
+                .decompress(
+                    rare.libdeflate_decompressor(),
                     data,
                     &mut decompressed,
                     self.max_payload_length(),
-                );
-                if let Some(decompressor) = decompressor {
-                    rare.put_back_libdeflate_decompressor(decompressor);
-                }
-                inflated.map_err(|err| match err {
+                )
+                .map_err(|err| match err {
                     websocket_deflate::Error::InflateFailed => ErrorCode::InvalidCompressedData,
                     websocket_deflate::Error::TooLarge => ErrorCode::MessageTooBig,
                     websocket_deflate::Error::OutOfMemory => ErrorCode::FailedToAllocateMemory,
-                })
-            }
+                }),
         };
 
         // The deflate borrow is released: both arms can re-enter `clear_data`.

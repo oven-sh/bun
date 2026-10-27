@@ -1763,7 +1763,7 @@ pub(crate) mod JSZlib {
                 heap.create_uint8_array_from_box(list.into_boxed_slice())
             }
             Library::Libdeflate => {
-                let Some(mut decompressor) = bun_libdeflate::OwnedDecompressor::new() else {
+                let Some(decompressor) = bun_libdeflate::OwnedDecompressor::new() else {
                     return Err(bun_alloc::AllocError.into());
                 };
                 let encoding = if is_gzip {

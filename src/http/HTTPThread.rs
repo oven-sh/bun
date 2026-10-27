@@ -235,14 +235,14 @@ pub struct LibdeflateState {
 unsafe impl bun_core::Zeroable for LibdeflateState {}
 
 impl LibdeflateState {
-    /// Mutable access to the libdeflate decompressor handle.
+    /// The libdeflate decompressor handle.
     ///
     /// `decompressor` is set once in [`HttpThread::deflater`] (panics on OOM)
     /// and is never `None` after that, so the unwrap is infallible.
     #[inline]
-    pub(crate) fn decompressor_mut(&mut self) -> &mut bun_libdeflate_sys::libdeflate::Decompressor {
+    pub(crate) fn decompressor(&self) -> &bun_libdeflate_sys::libdeflate::Decompressor {
         self.decompressor
-            .as_deref_mut()
+            .as_deref()
             .expect("set in HttpThread::deflater()")
     }
 }

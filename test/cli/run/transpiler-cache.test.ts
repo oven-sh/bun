@@ -431,6 +431,24 @@ describe("transpiler cache", () => {
       expect(newCacheCount()).toBe(0);
     });
 
+    // `sh` passes bytes, and process.argv reads each part that is not UTF-8 as one U+FFFD. The key is built from
+    // the text of a value, so these bytes and their text name one entry.
+    test.skipIf(isWindows)("--define with bytes that are not UTF-8 has the entry of their text", () => {
+      writeFileSync(join(temp_dir, "a.js"), code + "\n//" + filler);
+
+      // BVAL:"caf\xE9"
+      const script = `exec "$0" --define "$(printf 'BVAL:"caf\\351"')" a.js`;
+      const bytes = Bun.spawnSync({ cmd: ["sh", "-c", script, bunExe()], cwd: temp_dir, env });
+      expect(bytes.stdout.toString().trim()).toBe("caf\uFFFD");
+      expect(newCacheCount()).toBe(1);
+      const entry = join(cache_dir, readdirSync(cache_dir)[0]);
+      const written = readFileSync(entry);
+
+      expect(run(temp_dir, ["--define", 'BVAL:"caf\uFFFD"', "a.js"])).toBe("caf\uFFFD");
+      expect(newCacheCount()).toBe(0);
+      expect(readFileSync(entry).equals(written)).toBeTrue();
+    });
+
     test("--define passed to bun test invalidates cache", () => {
       // `bun test` builds its define table on its own boot path. The test file
       // is below the minimum cache size; the module it imports is not, and

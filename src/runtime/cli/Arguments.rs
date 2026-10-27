@@ -977,10 +977,12 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 .iter()
                 .map(|s| Box::<[u8]>::from(*s))
                 .collect(),
+            // The text of a value is what `process.argv` decodes from these bytes.
             values: defines_tuple
                 .values
                 .iter()
-                .map(|s| Box::<[u8]>::from(*s))
+                .map(|s| strings::to_well_formed_utf8_in(s, cli::cli_arena()).unwrap_or(*s))
+                .map(Box::<[u8]>::from)
                 .collect(),
         });
     }

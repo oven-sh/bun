@@ -5,7 +5,7 @@ use core::cmp::Ordering;
 
 use crate::BoundedArray;
 use crate::CrateError as Error;
-use bun_alloc::AllocError;
+use bun_alloc::{AllocError, Arena};
 use bun_highway as highway;
 use bun_simdutf_sys::simdutf;
 
@@ -1402,6 +1402,36 @@ pub fn str_utf8(bytes: &[u8]) -> Option<&str> {
     } else {
         None
     }
+}
+
+/// `None` if `bytes` is valid UTF-8. Else a copy in `arena` with one U+FFFD for each ill-formed
+/// sequence, as `TextDecoder` and `process.env` decode it.
+pub fn to_well_formed_utf8_in<'a>(bytes: &[u8], arena: &'a Arena) -> Option<&'a [u8]> {
+    if is_valid_utf8(bytes) {
+        return None;
+    }
+    const REPLACEMENT: &[u8] = "\u{FFFD}".as_bytes();
+    // A chunk is valid text and the ill-formed sequence after it, which only the last chunk can lack.
+    let replacement = |chunk: &core::str::Utf8Chunk<'_>| -> &'static [u8] {
+        if chunk.invalid().is_empty() {
+            &[]
+        } else {
+            REPLACEMENT
+        }
+    };
+    let len: usize = bytes
+        .utf8_chunks()
+        .map(|chunk| chunk.valid().len() + replacement(&chunk).len())
+        .sum();
+    let out = arena.alloc_slice_fill_copy(len, 0u8);
+    let mut at = 0;
+    for chunk in bytes.utf8_chunks() {
+        for part in [chunk.valid().as_bytes(), replacement(&chunk)] {
+            out[at..at + part.len()].copy_from_slice(part);
+            at += part.len();
+        }
+    }
+    Some(out)
 }
 
 pub use index_of_newline_or_non_ascii as index_of_newline_or_non_ascii_or_ansi;
@@ -2941,6 +2971,51 @@ mod tests {
             assert_eq!(
                 (r.code_point, r.len, r.fail),
                 (code_point, len, fail),
+                "input {:x?}",
+                input
+            );
+        }
+    }
+
+    #[test]
+    fn to_well_formed_utf8_in_decodes_as_text_decoder() {
+        let arena = bun_alloc::Arena::new();
+        for valid in ["", "plain\r\n\0", "é€😀\u{FFFD}"] {
+            assert_eq!(
+                super::to_well_formed_utf8_in(valid.as_bytes(), &arena),
+                None
+            );
+        }
+        // What `new TextDecoder().decode(input)` is in Node.js.
+        let cases: &[(&[u8], &str)] = &[
+            (b"a\xA9b", "a\u{FFFD}b"),
+            (b"caf\xFC", "caf\u{FFFD}"),
+            (b"caf\xE9", "caf\u{FFFD}"),
+            (b"x\xE2\x82y", "x\u{FFFD}y"),
+            (b"s\xED\xA0\x80t", "s\u{FFFD}\u{FFFD}\u{FFFD}t"),
+            (b"o\xC0\xAFv", "o\u{FFFD}\u{FFFD}v"),
+            (b"\xF0\x9F\x98", "\u{FFFD}"),
+            (b"a\xF0\x9F\x98b", "a\u{FFFD}b"),
+            (b"\xF4\x90\x80\x80", "\u{FFFD}\u{FFFD}\u{FFFD}\u{FFFD}"),
+            (b"\xE0\x80\x80", "\u{FFFD}\u{FFFD}\u{FFFD}"),
+            (b"\xF0\x80\x80\x80", "\u{FFFD}\u{FFFD}\u{FFFD}\u{FFFD}"),
+            (b"\xC1\xBF", "\u{FFFD}\u{FFFD}"),
+            (b"\xF5\x80", "\u{FFFD}\u{FFFD}"),
+            (b"\xFF\xFE", "\u{FFFD}\u{FFFD}"),
+            (b"\xE2\x82\xE2\x82\xAC", "\u{FFFD}€"),
+            (
+                b"\xED\xA0\xBD\xED\xB8\x80",
+                "\u{FFFD}\u{FFFD}\u{FFFD}\u{FFFD}\u{FFFD}\u{FFFD}",
+            ),
+            (b"\xC3\xA9\x80\xF0\x9F\x98\x80", "é\u{FFFD}😀"),
+            (b"\xC3", "\u{FFFD}"),
+            (b"\xEF\xBF\xBD\xFF", "\u{FFFD}\u{FFFD}"),
+            (b"\xE2\x82\xAC\xE2\x82", "€\u{FFFD}"),
+        ];
+        for &(input, text) in cases {
+            assert_eq!(
+                super::to_well_formed_utf8_in(input, &arena),
+                Some(text.as_bytes()),
                 "input {:x?}",
                 input
             );

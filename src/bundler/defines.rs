@@ -57,7 +57,11 @@ fn env_string_store_put(
     // transpiler arena) so the slab is bulk-freed with the `Define` table
     // instead of leaking a `Box` per env var. Copy the value because
     // `Bun__setEnvValue` frees the env-map entry it points into.
-    let value: &[u8] = bump.alloc_slice_copy(value);
+    // `process.env` decodes these bytes at run time, so inline that text.
+    let value: &[u8] = match strings::to_well_formed_utf8_in(value, bump) {
+        Some(decoded) => decoded,
+        None => bump.alloc_slice_copy(value),
+    };
     let value: ExprData = ExprData::EString(bun_ast::StoreRef::from_bump(
         bump.alloc(bun_ast::E::EString::init(value)),
     ));

@@ -3513,8 +3513,9 @@ it.if(isPosix)("realpath reads its path the way Node does", async () => {
     ["w\\d/z", "/w\\d/z", "/w\\d/z"],
     ["w\\d/../file", "/file", "/file"],
     ["a\\..\\file", "ENOENT lstat", "ENOENT realpath"],
-    ["file/", "/file", "ENOTDIR realpath"],
-    ["file/..", "", "ENOTDIR realpath"],
+    // Darwin's libc realpath accepts a trailing slash on a file, as does Node.
+    ["file/", "/file", process.platform === "darwin" ? "/file" : "ENOTDIR realpath"],
+    ["file/..", "", process.platform === "darwin" ? "" : "ENOTDIR realpath"],
     ["nope/../file", "/file", "ENOENT realpath"],
     ["link/../y", "/y", "/dir/y"],
   ];

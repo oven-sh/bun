@@ -123,23 +123,21 @@ impl<'a, const N: usize> Loads<'a, N> {
         Ok(Self { data, last })
     }
 
+    /// The `N` bytes from `pos` on, if they are all inside.
     #[inline(always)]
-    pub(crate) fn at(&self, pos: usize) -> Checked<&'a [u8; N]> {
+    pub(crate) fn at(&self, pos: usize) -> Option<&'a [u8; N]> {
         if pos > self.last {
-            return Err(Bug);
+            return None;
         }
         // The compiler sees that this cannot fail.
-        self.data
-            .get(pos..)
-            .and_then(<[u8]>::first_chunk)
-            .ok_or(Bug)
+        self.data.get(pos..).and_then(<[u8]>::first_chunk)
     }
 }
 
 impl Loads<'_, 4> {
     #[inline(always)]
-    pub(crate) fn u32_le(&self, pos: usize) -> Checked<u32> {
-        Ok(u32::from_le_bytes(*self.at(pos)?))
+    pub(crate) fn u32_le(&self, pos: usize) -> Option<u32> {
+        self.at(pos).copied().map(u32::from_le_bytes)
     }
 }
 

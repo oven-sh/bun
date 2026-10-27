@@ -108,11 +108,7 @@ fn build() -> Fallible<DictionaryHash> {
 /// Built on first use.
 pub(crate) fn dictionary_hash() -> Fallible<&'static DictionaryHash> {
     static HASH: OnceLock<DictionaryHash> = OnceLock::new();
-    if let Some(hash) = HASH.get() {
-        return Ok(hash);
-    }
-    let hash = build()?;
-    Ok(HASH.get_or_init(|| hash))
+    HASH.get_or_try_init(build)
 }
 
 #[cfg(test)]

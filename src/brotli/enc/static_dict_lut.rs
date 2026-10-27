@@ -194,11 +194,7 @@ fn build() -> Fallible<StaticDictionaryLut> {
 /// Built on first use.
 pub(crate) fn static_dictionary_lut() -> Fallible<&'static StaticDictionaryLut> {
     static LUT: OnceLock<StaticDictionaryLut> = OnceLock::new();
-    if let Some(lut) = LUT.get() {
-        return Ok(lut);
-    }
-    let lut = build()?;
-    Ok(LUT.get_or_init(|| lut))
+    LUT.get_or_try_init(build)
 }
 
 #[cfg(test)]

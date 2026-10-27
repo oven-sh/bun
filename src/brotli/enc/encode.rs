@@ -761,7 +761,7 @@ impl Encoder {
     /// `BrotliEncoderSetParameter`. `false` if the value is not valid, or after the first [`Self::compress_stream`].
     /// Most values are not checked here but brought into range later.
     pub fn set_parameter(&mut self, parameter: EncoderParameter, value: u32) -> bool {
-        if self.is_initialized {
+        if self.is_initialized || self.is_broken {
             return false;
         }
         let params = &mut self.params;
@@ -798,9 +798,9 @@ impl Encoder {
     }
 
     /// `BrotliEncoderAttachPreparedDictionary`. The decoder has to be given the same bytes. `false` if there are 15
-    /// dictionaries already.
+    /// dictionaries already, or no memory.
     pub fn attach_prepared_dictionary(&mut self, dictionary: PreparedDictionary) -> bool {
-        self.params.dictionary.attach(dictionary)
+        !self.is_broken && self.params.dictionary.attach(dictionary)
     }
 
     /// `BrotliEncoderIsFinished`.

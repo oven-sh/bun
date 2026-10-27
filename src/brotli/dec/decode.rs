@@ -154,6 +154,41 @@ struct CompoundDictionary {
     block_map: [u8; 256],
 }
 
+impl CompoundDictionary {
+    /// Goes on with the copy in progress, to `pos` and up to the end of the ring buffer. Returns how much was copied.
+    fn copy_to(
+        &mut self,
+        ringbuffer: &mut [u8],
+        ringbuffer_size: i32,
+        mut pos: i32,
+    ) -> Checked<i32> {
+        let orig_pos = pos;
+        while self.br_length != self.br_copied {
+            let space = ringbuffer_size - pos;
+            let chunk_length =
+                self.chunk_offsets.at(self.br_index + 1)? - self.chunk_offsets.at(self.br_index)?;
+            let rem_chunk_length = chunk_length - self.br_offset;
+            let length = (self.br_length - self.br_copied)
+                .min(rem_chunk_length)
+                .min(space);
+            let chunk = self.chunks.get(self.br_index).ok_or(Bug)?;
+            let source = chunk.sub(self.br_offset as usize..(self.br_offset + length) as usize)?;
+            ringbuffer.write_at(pos as usize, source)?;
+            pos += length;
+            self.br_offset += length;
+            self.br_copied += length;
+            if length == rem_chunk_length {
+                self.br_index += 1;
+                self.br_offset = 0;
+            }
+            if pos == ringbuffer_size {
+                break;
+            }
+        }
+        Ok(pos - orig_pos)
+    }
+}
+
 /// What reading the prefix codes and context maps of a meta-block header needs.
 struct HeaderArena {
     substate_tree_group: TreeGroupState,
@@ -1674,41 +1709,6 @@ impl Decoder {
             .map_or(0, |addon| addon.total_size)
     }
 
-    /// Goes on with the copy from the compound dictionary, up to the end of the ring buffer. Returns how much was
-    /// copied.
-    fn copy_from_compound_dictionary(
-        &mut self,
-        ringbuffer: &mut [u8],
-        mut pos: i32,
-    ) -> Checked<i32> {
-        let addon = self.compound_dictionary.as_deref_mut().ok_or(Bug)?;
-        let orig_pos = pos;
-        while addon.br_length != addon.br_copied {
-            let space = self.ringbuffer_size - pos;
-            let chunk_length = addon.chunk_offsets.at(addon.br_index + 1)?
-                - addon.chunk_offsets.at(addon.br_index)?;
-            let rem_chunk_length = chunk_length - addon.br_offset;
-            let length = (addon.br_length - addon.br_copied)
-                .min(rem_chunk_length)
-                .min(space);
-            let chunk = addon.chunks.get(addon.br_index).ok_or(Bug)?;
-            let source =
-                chunk.sub(addon.br_offset as usize..(addon.br_offset + length) as usize)?;
-            ringbuffer.write_at(pos as usize, source)?;
-            pos += length;
-            addon.br_offset += length;
-            addon.br_copied += length;
-            if length == rem_chunk_length {
-                addon.br_index += 1;
-                addon.br_offset = 0;
-            }
-            if pos == self.ringbuffer_size {
-                break;
-            }
-        }
-        Ok(pos - orig_pos)
-    }
-
     /// Finds the smallest ring buffer that will do, now that the length and the flags of the meta-block are known: a
     /// stream that announces a large window need not have that much data.
     #[inline(never)]
@@ -1912,7 +1912,8 @@ impl Decoder {
             if !s.initialize_compound_dictionary_copy(address, length)? {
                 return Err(E::CompoundDictionary);
             }
-            return Ok(pos + s.copy_from_compound_dictionary(ringbuffer, pos)?);
+            let addon = s.compound_dictionary.as_deref_mut().ok_or(Bug)?;
+            return Ok(pos + addon.copy_to(ringbuffer, s.ringbuffer_size, pos)?);
         }
         if length < MIN_DICTIONARY_WORD_LENGTH as i32 || length > MAX_DICTIONARY_WORD_LENGTH as i32
         {
@@ -1958,11 +1959,11 @@ impl Decoder {
         i: &mut i32,
     ) -> Step {
         let s = self;
-        // For the functions that are not inlined.
-        macro_rules! with_bit_reader_in_place {
-            ($call:expr) => {{
+        // The functions that are not inlined use `s.br`, so that `br` can stay in registers.
+        macro_rules! block_switch {
+            ($function:ident) => {{
                 s.br = *br;
-                let result = $call;
+                let result = s.$function::<SAFE>(input);
                 *br = s.br;
                 result
             }};
@@ -1994,7 +1995,7 @@ impl Decoder {
                         return Err(E::NeedsMoreInput);
                     }
                     if s.block_length[1] == 0 {
-                        with_bit_reader_in_place!(s.decode_command_block_switch::<SAFE>(input))?;
+                        block_switch!(decode_command_block_switch)?;
                         continue;
                     }
                     *i = s.read_command::<SAFE>(br, input)?;
@@ -2144,9 +2145,7 @@ impl Decoder {
                         s.distance_code = s.dist_rb.at((s.dist_rb_idx & 3) as usize)?;
                     } else {
                         if s.block_length[2] == 0 {
-                            with_bit_reader_in_place!(
-                                s.decode_distance_block_switch::<SAFE>(input)
-                            )?;
+                            block_switch!(decode_distance_block_switch)?;
                         }
                         s.read_distance::<SAFE>(br, input)?;
                     }
@@ -2223,7 +2222,7 @@ impl Decoder {
                 }
 
                 Label::NextLiteralBlock => {
-                    with_bit_reader_in_place!(s.decode_literal_block_switch::<SAFE>(input))?;
+                    block_switch!(decode_literal_block_switch)?;
                     label = Label::CommandInner;
                 }
             }
@@ -2628,14 +2627,10 @@ impl Decoder {
                 }
                 match s.state {
                     State::CommandPostWrite1 => {
-                        if s.compound_dictionary
-                            .as_ref()
-                            .is_some_and(|addon| addon.br_length != addon.br_copied)
+                        if let Some(addon) = &mut s.compound_dictionary
+                            && addon.br_length != addon.br_copied
                         {
-                            let mut ringbuffer = core::mem::take(&mut s.ringbuffer);
-                            let copied = s.copy_from_compound_dictionary(&mut ringbuffer, s.pos);
-                            s.ringbuffer = ringbuffer;
-                            s.pos += copied?;
+                            s.pos += addon.copy_to(&mut s.ringbuffer, s.ringbuffer_size, s.pos)?;
                             if s.pos >= s.ringbuffer_size {
                                 return Ok(Flow::Continue);
                             }

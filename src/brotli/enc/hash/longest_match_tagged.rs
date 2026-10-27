@@ -4,12 +4,14 @@
 use super::{
     HASH_MUL_32, HASH_MUL_64, HasherImpl, HasherSearchResult, StaticDictionarySearch,
     backward_reference_score, find_longest_match_at_last_distances, for_each_position,
-    prepare_distance_cache, search_in_static_dictionary,
+    search_in_static_dictionary, window,
 };
+use crate::enc::Fallible;
 use crate::enc::find_match_length::find_match_length_with_limit;
+use crate::enc::params::EncoderParams;
 use crate::util::{
-    Checked, Loads, OutOfMemory, SliceExt, load_u32_le, load_u64_le, try_vec, try_with_capacity,
-    try_zeroed,
+    Bug, Checked, Loads, OutOfMemory, SliceExt, load_u32_le, load_u64_le, try_vec,
+    try_with_capacity, try_zeroed,
 };
 
 const TAG_HASH_BITS: u32 = 8;
@@ -48,26 +50,23 @@ impl<const N: usize> Block<N> {
     }
 }
 
-/// `x`, of which the low `N` bits are used, rotated right by `n` bits.
+/// `x`, of which the low `N` bits are used, rotated right by `n` bits. `N` is 16 or 32.
 #[inline(always)]
 fn rotate_right<const N: usize>(x: u64, n: usize) -> u64 {
-    match N {
-        16 => u64::from((x as u16).rotate_right(n as u32)),
-        32 => u64::from((x as u32).rotate_right(n as u32)),
-        _ => x.rotate_right(n as u32),
+    if N == 16 {
+        u64::from((x as u16).rotate_right(n as u32))
+    } else {
+        u64::from((x as u32).rotate_right(n as u32))
     }
 }
 
 /// The buckets of a table.
-pub(crate) trait Buckets<const N: usize>: Sized {
+pub(crate) trait TaggedBuckets<const N: usize>: Sized {
     /// `1 << bucket_bits` empty buckets.
     fn new(bucket_bits: u32) -> Result<Self, OutOfMemory>;
 
     /// How many positions were added to bucket `key`, modulo 65536, and the last of them.
     fn bucket_mut(&mut self, key: usize) -> Checked<(&mut u16, &mut Block<N>)>;
-
-    /// Empties bucket `key`.
-    fn clear_bucket(&mut self, key: usize) -> Checked;
 
     /// Empties all buckets.
     fn clear(&mut self);
@@ -79,7 +78,7 @@ pub(crate) struct DenseBuckets<const N: usize> {
     blocks: Vec<Block<N>>,
 }
 
-impl<const N: usize> Buckets<N> for DenseBuckets<N> {
+impl<const N: usize> TaggedBuckets<N> for DenseBuckets<N> {
     fn new(bucket_bits: u32) -> Result<Self, OutOfMemory> {
         Ok(Self {
             added: try_zeroed(1 << bucket_bits)?,
@@ -90,10 +89,6 @@ impl<const N: usize> Buckets<N> for DenseBuckets<N> {
     #[inline(always)]
     fn bucket_mut(&mut self, key: usize) -> Checked<(&mut u16, &mut Block<N>)> {
         Ok((self.added.at_mut(key)?, self.blocks.at_mut(key)?))
-    }
-
-    fn clear_bucket(&mut self, key: usize) -> Checked {
-        self.added.put(key, 0)
     }
 
     fn clear(&mut self) {
@@ -121,10 +116,7 @@ impl<const N: usize> SparseBuckets<N> {
     }
 
     fn to_dense(&self) -> Result<DenseBuckets<N>, OutOfMemory> {
-        let mut dense = DenseBuckets {
-            added: try_zeroed(self.heads.len())?,
-            blocks: try_vec(Block::EMPTY, self.heads.len())?,
-        };
+        let mut dense = DenseBuckets::new(self.heads.len().trailing_zeros())?;
         let buckets = dense.added.iter_mut().zip(&mut dense.blocks);
         for (&[block, added], (dense_added, dense_block)) in self.heads.iter().zip(buckets) {
             if let Some(block) = self.blocks.get(usize::from(block).wrapping_sub(1)) {
@@ -136,7 +128,7 @@ impl<const N: usize> SparseBuckets<N> {
     }
 }
 
-impl<const N: usize> Buckets<N> for SparseBuckets<N> {
+impl<const N: usize> TaggedBuckets<N> for SparseBuckets<N> {
     fn new(bucket_bits: u32) -> Result<Self, OutOfMemory> {
         Ok(Self {
             heads: try_zeroed(1 << bucket_bits)?,
@@ -153,29 +145,30 @@ impl<const N: usize> Buckets<N> for SparseBuckets<N> {
         Ok((added, self.blocks.at_mut(usize::from(*block) - 1)?))
     }
 
-    fn clear_bucket(&mut self, key: usize) -> Checked {
-        let [_, added] = self.heads.at_mut(key)?;
-        *added = 0;
-        Ok(())
-    }
-
     fn clear(&mut self) {
         self.heads.fill([0; 2]);
         self.blocks.clear();
     }
 }
 
-/// Hashes 5 bytes if `LONG`, which is for large inputs, else 4. A bucket holds `N` positions: 16, 32 or 64.
+/// Hashes 5 bytes if `LONG`, which is for large inputs, else 4. A bucket holds `N` positions: 16 or 32.
 pub(crate) struct HashLongestMatchTagged<const LONG: bool, const N: usize, B> {
     buckets: B,
     /// Nothing was added to `buckets` since they were made.
     is_clear: bool,
 }
 
-impl<const LONG: bool, const N: usize, B: Buckets<N>> HashLongestMatchTagged<LONG, N, B> {
+impl<const LONG: bool, const N: usize, B: TaggedBuckets<N>> HashLongestMatchTagged<LONG, N, B> {
     const BUCKET_BITS: u32 = if LONG { 15 } else { 14 };
 
-    pub(crate) fn new() -> Result<Self, OutOfMemory> {
+    pub(crate) fn new(params: &EncoderParams) -> Fallible<Self> {
+        let hasher = &params.hasher;
+        if hasher.bucket_bits as u32 != Self::BUCKET_BITS
+            || 1 << hasher.block_bits != N
+            || hasher.num_last_distances_to_check as usize != NUM_LAST_DISTANCES_TO_CHECK
+        {
+            return Err(Bug.into());
+        }
         Ok(Self {
             buckets: B::new(Self::BUCKET_BITS)?,
             is_clear: true,
@@ -229,24 +222,14 @@ impl<const LONG: bool, const N: usize> HashLongestMatchTagged<LONG, N, SparseBuc
     }
 }
 
-impl<const LONG: bool, const N: usize, B: Buckets<N>> HasherImpl
+impl<const LONG: bool, const N: usize, B: TaggedBuckets<N>> HasherImpl
     for HashLongestMatchTagged<LONG, N, B>
 {
     const HASH_TYPE_LENGTH: usize = if LONG { 8 } else { 4 };
     const STORE_LOOKAHEAD: usize = if LONG { 8 } else { 4 };
 
-    fn prepare(&mut self, one_shot: bool, input_size: usize, data: &[u8]) -> Checked {
-        // Clearing an entry at a time is 100 times slower for each of them.
-        let partial_prepare_threshold = (1usize << Self::BUCKET_BITS) >> 6;
-        if core::mem::take(&mut self.is_clear) {
-            return Ok(());
-        }
-        if one_shot && input_size <= partial_prepare_threshold {
-            for i in 0..input_size {
-                let (key, _) = Self::hash_bytes(data, i)?;
-                self.buckets.clear_bucket(key)?;
-            }
-        } else {
+    fn prepare(&mut self, _one_shot: bool, _input_size: usize, _data: &[u8]) -> Checked {
+        if !core::mem::take(&mut self.is_clear) {
             self.buckets.clear();
         }
         Ok(())
@@ -273,10 +256,9 @@ impl<const LONG: bool, const N: usize, B: Buckets<N>> HasherImpl
         }
     }
 
+    /// Only the 4 distances that are always there are used.
     #[inline(always)]
-    fn prepare_distance_cache(&self, distance_cache: &mut [i32; 16]) {
-        prepare_distance_cache(distance_cache, NUM_LAST_DISTANCES_TO_CHECK);
-    }
+    fn prepare_distance_cache(&self, _distance_cache: &mut [i32; 16]) {}
 
     #[inline(always)]
     fn find_longest_match(
@@ -294,7 +276,7 @@ impl<const LONG: bool, const N: usize, B: Buckets<N>> HasherImpl
     ) -> Checked {
         let cur_ix_masked = cur_ix & ring_buffer_mask;
         let current = data.sub(cur_ix_masked..)?;
-        let window = Loads::<4>::new(data.get(..=ring_buffer_mask).unwrap_or(data))?;
+        let window = Loads::<4>::new(window(data, ring_buffer_mask))?;
         // A short copy from far away is not accepted.
         let min_score = out.score;
         let mut best_len = out.len;
@@ -332,7 +314,7 @@ impl<const LONG: bool, const N: usize, B: Buckets<N>> HasherImpl
         }
         'search: {
             // The 4 bytes up to the one that a longer match has to include. They have to be inside the window.
-            let Ok(mut wanted) = window.u32_le(cur_ix_masked + best_len - 3) else {
+            let Some(mut wanted) = window.u32_le(cur_ix_masked + best_len - 3) else {
                 break 'search;
             };
             while matches > 0 {
@@ -344,7 +326,7 @@ impl<const LONG: bool, const N: usize, B: Buckets<N>> HasherImpl
                     break;
                 }
                 prev_ix &= ring_buffer_mask;
-                if window.u32_le(prev_ix + best_len - 3) != Ok(wanted) {
+                if window.u32_le(prev_ix + best_len - 3) != Some(wanted) {
                     continue;
                 }
                 let len = if LONG {
@@ -367,7 +349,7 @@ impl<const LONG: bool, const N: usize, B: Buckets<N>> HasherImpl
                         out.len = best_len;
                         out.distance = backward;
                         out.score = best_score;
-                        let Ok(next) = window.u32_le(cur_ix_masked + best_len - 3) else {
+                        let Some(next) = window.u32_le(cur_ix_masked + best_len - 3) else {
                             break 'search;
                         };
                         wanted = next;

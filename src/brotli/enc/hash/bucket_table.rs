@@ -1,4 +1,4 @@
-//! The storage of the hashers that keep the last few positions of each hash.
+//! The storage of the hasher that keeps the last few positions of each hash.
 
 use crate::enc::params::HasherParams;
 use crate::util::{Bug, Checked, OutOfMemory, SliceExt, try_with_capacity, try_zeroed};
@@ -8,12 +8,10 @@ use crate::util::{Bug, Checked, OutOfMemory, SliceExt, try_with_capacity, try_ze
 type Head = [u16; 2];
 
 pub(crate) struct BucketTable {
-    /// The number of buckets.
-    pub(crate) bucket_size: usize,
     /// How many positions a bucket holds. Older ones are forgotten.
     pub(crate) block_size: usize,
     block_bits: u32,
-    /// What is left of a 32-bit hash after this shift is the bucket, and under it `extra_hash_bits` more bits.
+    /// What is left of a 32-bit hash after this shift is the bucket.
     pub(crate) hash_shift: u32,
     pub(crate) num_last_distances_to_check: usize,
     heads: Vec<Head>,
@@ -33,14 +31,13 @@ pub(crate) struct Buckets<'a> {
 }
 
 impl BucketTable {
-    pub(crate) fn new(hasher: &HasherParams, extra_hash_bits: u32) -> Result<Self, OutOfMemory> {
+    pub(crate) fn new(hasher: &HasherParams) -> Result<Self, OutOfMemory> {
         let bucket_size = 1usize << hasher.bucket_bits;
         let block_size = 1usize << hasher.block_bits;
         Ok(Self {
-            bucket_size,
             block_size,
             block_bits: hasher.block_bits as u32,
-            hash_shift: (32 - hasher.bucket_bits) as u32 - extra_hash_bits,
+            hash_shift: (32 - hasher.bucket_bits) as u32,
             num_last_distances_to_check: hasher.num_last_distances_to_check as usize,
             heads: try_zeroed(bucket_size)?,
             blocks: try_with_capacity(bucket_size * block_size)?,
@@ -51,13 +48,6 @@ impl BucketTable {
     /// Whether the table was not used since it was made, and so has nothing to forget. It counts as used from now on.
     pub(crate) fn take_is_clear(&mut self) -> bool {
         core::mem::take(&mut self.is_clear)
-    }
-
-    /// Forgets the positions of bucket `key`.
-    pub(crate) fn clear_bucket(&mut self, key: usize) -> Checked {
-        let [_, added] = self.heads.at_mut(key)?;
-        *added = 0;
-        Ok(())
     }
 
     /// Forgets all positions.

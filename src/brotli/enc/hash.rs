@@ -220,6 +220,13 @@ fn look_up_in_static_dictionary(
     Ok(())
 }
 
+/// The part of the ring buffer that a match has to end in to be looked at, as in the reference encoder: the positions up
+/// to `ring_buffer_mask`. All of `data` while the ring buffer is shorter than that.
+#[inline(always)]
+fn window(data: &[u8], ring_buffer_mask: usize) -> &[u8] {
+    data.get(..=ring_buffer_mask).unwrap_or(data)
+}
+
 /// Tries the first `num_last_distances_to_check` distances of the cache. `best_len` is the length to beat.
 #[inline(always)]
 fn find_longest_match_at_last_distances(
@@ -234,7 +241,7 @@ fn find_longest_match_at_last_distances(
     out: &mut HasherSearchResult,
 ) -> Checked {
     let cur_ix_masked = cur_ix & ring_buffer_mask;
-    let window = data.get(..=ring_buffer_mask).unwrap_or(data);
+    let window = window(data, ring_buffer_mask);
     let mut best_score = out.score;
     for (i, &distance) in distance_cache
         .iter()
@@ -420,7 +427,7 @@ pub(crate) type H35 = HashComposite<H3, HashRolling<4>>;
 pub(crate) type H55 = HashComposite<H54, HashRolling<4>>;
 pub(crate) type H65 = HashComposite<H6, HashRolling<1>>;
 
-/// The hasher that [`EncoderParams::choose_hasher`] chose.
+/// The hasher that [`EncoderParams::choose_hasher`] chose. Some come in two forms that find the same matches.
 pub(crate) enum HasherKind {
     /// Nothing was allocated yet.
     NotSetUp,
@@ -495,7 +502,7 @@ impl Hasher {
         self.common.is_prepared = false;
     }
 
-    /// On first use, chooses a hasher and allocates it.
+    /// On first use, chooses a hasher and allocates it. Later, replaces one that is made for less input than there is now.
     fn setup(
         &mut self,
         params: &mut EncoderParams,
@@ -505,6 +512,7 @@ impl Hasher {
         is_last: bool,
     ) -> Fallible {
         let one_shot = position == 0 && is_last;
+        let input_end = position + input_size;
         if matches!(self.kind, HasherKind::NotSetUp) {
             params.hasher = params.choose_hasher();
             self.common.dict_num_lookups = 0;
@@ -523,31 +531,31 @@ impl Hasher {
                 54 => HasherKind::H54(H54::new()?),
                 55 => HasherKind::H55(H55::new(H54::new()?, HashRolling::new()?)),
                 58 if params.hasher.block_bits == 4 => {
-                    if input_size > H58Sparse::<16>::MAX_INPUT {
-                        HasherKind::H58x16(H58::new()?)
+                    if input_end > H58Sparse::<16>::MAX_INPUT {
+                        HasherKind::H58x16(H58::new(params)?)
                     } else {
-                        HasherKind::H58x16Sparse(H58Sparse::new()?)
+                        HasherKind::H58x16Sparse(H58Sparse::new(params)?)
                     }
                 }
                 58 if params.hasher.block_bits == 5 => {
-                    if input_size > H58Sparse::<32>::MAX_INPUT {
-                        HasherKind::H58x32(H58::new()?)
+                    if input_end > H58Sparse::<32>::MAX_INPUT {
+                        HasherKind::H58x32(H58::new(params)?)
                     } else {
-                        HasherKind::H58x32Sparse(H58Sparse::new()?)
+                        HasherKind::H58x32Sparse(H58Sparse::new(params)?)
                     }
                 }
                 65 => HasherKind::H65(H65::new(H6::new(params)?, HashRolling::new()?)),
-                68 if params.hasher.block_bits == 4 => HasherKind::H68x16(H68::new()?),
-                68 if params.hasher.block_bits == 5 => HasherKind::H68x32(H68::new()?),
+                68 if params.hasher.block_bits == 4 => HasherKind::H68x16(H68::new(params)?),
+                68 if params.hasher.block_bits == 5 => HasherKind::H68x32(H68::new(params)?),
                 _ => return Err(Bug.into()),
             };
             self.reset();
         }
         match &self.kind {
-            HasherKind::H58x16Sparse(h) if position + input_size > H58Sparse::<16>::MAX_INPUT => {
+            HasherKind::H58x16Sparse(h) if input_end > H58Sparse::<16>::MAX_INPUT => {
                 self.kind = HasherKind::H58x16(h.to_dense()?);
             }
-            HasherKind::H58x32Sparse(h) if position + input_size > H58Sparse::<32>::MAX_INPUT => {
+            HasherKind::H58x32Sparse(h) if input_end > H58Sparse::<32>::MAX_INPUT => {
                 self.kind = HasherKind::H58x32(h.to_dense()?);
             }
             _ => {}

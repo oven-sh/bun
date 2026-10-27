@@ -4,7 +4,7 @@ use super::bucket_table::BucketTable;
 use super::{
     HASH_MUL_32, HASH_MUL_64, HasherImpl, HasherSearchResult, StaticDictionarySearch,
     backward_reference_score, find_longest_match_at_last_distances, prepare_distance_cache,
-    search_in_static_dictionary,
+    search_in_static_dictionary, window,
 };
 use crate::enc::Fallible;
 use crate::enc::find_match_length::find_match_length_with_limit;
@@ -21,7 +21,7 @@ impl<const LONG: bool> HashLongestMatch<LONG> {
     pub(crate) fn new(params: &EncoderParams) -> Fallible<Self> {
         debug_assert!(!LONG || params.hasher.bucket_bits == 15);
         Ok(Self {
-            table: BucketTable::new(&params.hasher, 0)?,
+            table: BucketTable::new(&params.hasher)?,
         })
     }
 
@@ -46,18 +46,8 @@ impl<const LONG: bool> HasherImpl for HashLongestMatch<LONG> {
     const HASH_TYPE_LENGTH: usize = if LONG { 8 } else { 4 };
     const STORE_LOOKAHEAD: usize = if LONG { 8 } else { 4 };
 
-    fn prepare(&mut self, one_shot: bool, input_size: usize, data: &[u8]) -> Checked {
-        // Clearing an entry at a time is 100 times slower for each of them.
-        let partial_prepare_threshold = self.table.bucket_size >> 6;
-        if self.table.take_is_clear() {
-            return Ok(());
-        }
-        if one_shot && input_size <= partial_prepare_threshold {
-            for i in 0..input_size {
-                let key = self.hash_bytes(data, i)?;
-                self.table.clear_bucket(key)?;
-            }
-        } else {
+    fn prepare(&mut self, _one_shot: bool, _input_size: usize, _data: &[u8]) -> Checked {
+        if !self.table.take_is_clear() {
             self.table.clear();
         }
         Ok(())
@@ -127,7 +117,7 @@ impl<const LONG: bool> HasherImpl for HashLongestMatch<LONG> {
         if block_size > 16 {
             prefetch_read(bucket.as_ptr().wrapping_add(16), Locality::L1);
         }
-        let window = Loads::<4>::new(data.get(..=ring_buffer_mask).unwrap_or(data))?;
+        let window = Loads::<4>::new(window(data, ring_buffer_mask))?;
         out.len = 0;
         out.len_code_delta = 0;
 
@@ -150,7 +140,7 @@ impl<const LONG: bool> HasherImpl for HashLongestMatch<LONG> {
         let down = newest.saturating_sub(block_size);
         'search: {
             // The 4 bytes up to the one that a longer match has to include. They have to be inside the window.
-            let Ok(mut wanted) = window.u32_le(cur_ix_masked + best_len - 3) else {
+            let Some(mut wanted) = window.u32_le(cur_ix_masked + best_len - 3) else {
                 break 'search;
             };
             for i in (down..newest).rev() {
@@ -160,7 +150,7 @@ impl<const LONG: bool> HasherImpl for HashLongestMatch<LONG> {
                     break;
                 }
                 prev_ix &= ring_buffer_mask;
-                if window.u32_le(prev_ix + best_len - 3) != Ok(wanted) {
+                if window.u32_le(prev_ix + best_len - 3) != Some(wanted) {
                     continue;
                 }
                 let len = if LONG {
@@ -183,7 +173,7 @@ impl<const LONG: bool> HasherImpl for HashLongestMatch<LONG> {
                         out.len = best_len;
                         out.distance = backward;
                         out.score = best_score;
-                        let Ok(next) = window.u32_le(cur_ix_masked + best_len - 3) else {
+                        let Some(next) = window.u32_le(cur_ix_masked + best_len - 3) else {
                             break 'search;
                         };
                         wanted = next;

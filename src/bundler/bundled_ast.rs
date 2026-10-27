@@ -394,3 +394,15 @@ impl<'arena> BundledAst<'arena> {
         }
     }
 }
+
+// Two flags on one bit would each read as the other. The panic message is the second flag's name.
+const _: () = {
+    let flags = <Flags as bitflags::Flags>::FLAGS;
+    let (mut taken, mut i) = (0, 0);
+    while i < flags.len() {
+        let bits = flags[i].value().bits();
+        assert!(taken & bits == 0, "{}", flags[i].name());
+        taken |= bits;
+        i += 1;
+    }
+};

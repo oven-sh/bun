@@ -110,6 +110,8 @@ using namespace JSC;
     macro(json) \
     macro(kResistStopPropagation) \
     macro(lazy) \
+    macro(lazyPropertyLoaders) \
+    macro(lazyPropertyValues) \
     macro(lineText) \
     macro(loadEsmIntoCjs) \
     macro(main) \

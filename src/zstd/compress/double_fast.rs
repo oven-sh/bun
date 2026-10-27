@@ -252,13 +252,10 @@ impl Finder {
             ip = end;
 
             // `ip` is not past the last position that can be looked at.
-            let Some(bytes) = near.read64(ip) else {
+            let Some(around) = near.window::<{ 2 + HASH_READ_SIZE }>(ip - 2) else {
                 break 'block;
             };
-            bytes0 = bytes;
-            let Some(around) = near.window::<{ 1 + HASH_READ_SIZE }>(ip - 2) else {
-                break 'block;
-            };
+            bytes0 = le64_at::<2, _>(around);
             let index_to_insert = curr + 2;
             if let Some(to_insert) = near.read64(index_to_insert.wrapping_sub(base_index)) {
                 hashed_put(hash_long, long.hash(to_insert), index_to_insert);

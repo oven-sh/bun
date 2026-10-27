@@ -204,6 +204,13 @@ describe("zlib", () => {
       inputs.shortMatches = fourBytesEach(260_000, () => dictionary[next() % 2000]);
       // So many matches at each position that blocks end because levels 10 to 12 can hold no more of them.
       inputs.coins = fourBytesEach(200_000, () => 0x41414141 + (next() & 0x01010101));
+      // Matches are of no use here, so levels 10 to 12 write literals only. In libdeflate 1.16 that could exceed the bound.
+      inputs.skewed = fourBytesEach(20_000, () => next() & next());
+      // No match for more than 65535 bytes, which libdeflate 0.6 could not count. From its test_litrunlen_overflow.c.
+      inputs.noMatches = Buffer.alloc(2 * 250 * 251);
+      for (let half = 0, i = 0; half < 2; half++)
+        for (let stride = 1; stride < 251; stride++)
+          for (let multiple = 0; multiple < 251; multiple++) inputs.noMatches[i++] = (stride * multiple) % 251;
     });
 
     // What the C library wrote for each input at levels 0 to 12: the length and the start of the SHA-1.
@@ -314,6 +321,14 @@ describe("zlib", () => {
         "28591 fa53b93c06cf5b85",
         "28484 ee4045a8538f6798",
       ],
+      skewed: [
+        "20005 5e2aaec58f604b59",
+        "16469 fb9bf5e044313fad",
+        ...Array(3).fill("16706 3657cac564bd198c"),
+        ...Array(5).fill("16808 06e8a1ba27ee603f"),
+        ...Array(3).fill("16428 81e235ce25568523"),
+      ],
+      noMatches: ["125510 fe85f174af38f0d4", "125309 dedf5d158bed37db", ...Array(11).fill("125279 85be301be4068581")],
     };
     const writtenByCFor0To79Bytes = [
       "3560 c856dc0aca751fee",
@@ -344,6 +359,64 @@ describe("zlib", () => {
         Array.from({ length: 80 }, (_, length) => deflateSync(inputs.words.subarray(0, length), { library, level })),
       );
       expect(outputs.map(output => digest(Buffer.concat(output)))).toEqual(writtenByCFor0To79Bytes);
+    });
+
+    // Windows Explorer and old zlibs refuse a code with unused code space, which libdeflate wrote until 1.18.
+    it("writes complete Huffman codes, whatever a block uses", () => {
+      // How much of its code space each code of the first block uses, out of 1.
+      const codeSpaceUsed = stream => {
+        let position = 0;
+        const bits = count => {
+          let value = 0;
+          for (let i = 0; i < count; i++, position++) value |= ((stream[position >> 3] >> (position & 7)) & 1) << i;
+          return value;
+        };
+        const blockType = bits(3) >> 1;
+        if (blockType !== 2) return { blockType };
+        const literalCount = 257 + bits(5);
+        const distanceCount = 1 + bits(5);
+        const precodeLengths = new Array(19).fill(0);
+        for (const symbol of [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15].slice(0, 4 + bits(4)))
+          precodeLengths[symbol] = bits(3);
+        // Canonical codewords go by length, then by symbol.
+        const symbolOf = new Map();
+        for (let length = 1, code = 0; length <= 7; length++, code <<= 1)
+          precodeLengths.forEach((other, symbol) => other === length && symbolOf.set(`${length} ${code++}`, symbol));
+        const lengths = [];
+        while (lengths.length < literalCount + distanceCount) {
+          let length = 0;
+          let code = 0;
+          do code = (code << 1) | bits(1);
+          while (!symbolOf.has(`${++length} ${code}`));
+          const symbol = symbolOf.get(`${length} ${code}`);
+          if (symbol < 16) lengths.push(symbol);
+          else if (symbol === 16) lengths.push(...new Array(3 + bits(2)).fill(lengths.at(-1)));
+          else lengths.push(...new Array(symbol === 17 ? 3 + bits(3) : 11 + bits(7)).fill(0));
+        }
+        const used = lengths => lengths.reduce((sum, length) => sum + (length && 2 ** -length), 0);
+        return {
+          precode: used(precodeLengths),
+          literals: used(lengths.slice(0, literalCount)),
+          distances: used(lengths.slice(literalCount)),
+        };
+      };
+      // Each run of three of its eight symbols comes once, so there is nothing to match.
+      const noDistance = [0, 0, 0];
+      for (const seen = new Set(["0 0 0"]); ;) {
+        const next = [7, 6, 5, 4, 3, 2, 1, 0].find(symbol => !seen.has([...noDistance.slice(-2), symbol].join(" ")));
+        if (next === undefined) break;
+        seen.add([...noDistance.slice(-2), next].join(" "));
+        noDistance.push(next);
+      }
+      for (const input of [Buffer.from(noDistance), Buffer.alloc(3000, "abcdefg"), Buffer.alloc(3000, "a")]) {
+        for (let level = 1; level <= 12; level++) {
+          expect(codeSpaceUsed(deflateSync(input, { library, level }))).toEqual({
+            precode: 1,
+            literals: 1,
+            distances: 1,
+          });
+        }
+      }
     });
 
     it("gzip is a header that tells the level, what deflate writes, the CRC-32 and the length", () => {
@@ -485,6 +558,17 @@ describe("zlib", () => {
             "05e0014812000000005455555555555555555555555555555555555555555555555501",
             null,
           ],
+          ["libdeflate's test of no distance code", "05c0810c0000008030b627cbd9c4", "ABAA"],
+          ["libdeflate's test of a literal code of one symbol", "05c08108000000002075f503", ""],
+          ["libdeflate's test of a distance code of one symbol", "0dc08100000000802075f43e0b", "\xff\xff\xff\xff"],
+          [
+            "libdeflate's test of a distance code of one symbol that is not the first",
+            "0dc1010900000080a0ebcfab1017",
+            "\xfe\xff\xfe\xff\xfe",
+          ],
+          ["libdeflate's test of too many code lengths, accepted until 1.15", "05c081000000000090f574d603", null],
+          // Until 1.9 the zeros that stand in for missing input went on decoding to literals until the output was full.
+          ["libdeflate's test of a stream cut off where zeros are literals", "04c081000000000010ebe900", null],
           [
             "codes of 1 to 15 bits",
             "05e081b46ddbb66ddbb2c6944b6d7dccb5cf7ddf3f841042f841bbf7fdfefefdf7bffffb7fffdfffeffff7fffdbffffbdf7ffffe7edfbbe5ff0f",
@@ -499,6 +583,7 @@ describe("zlib", () => {
           ["no input", "", null],
           ["a plain member", "1f8b08000000000000ffcbc80400ac2a93d802000000", "hi"],
           ["every optional field", "1f8b081f0000000000ff03000102036e616d65006300deadcbc80400ac2a93d802000000", "hi"],
+          ["FTEXT, a time, every XFL bit and another OS", "1f8b0801efbeaddeff03cbc80400ac2a93d802000000", "hi"],
           ["an empty extra field, name and comment", "1f8b081c0000000000ff00000000cbc80400ac2a93d802000000", "hi"],
           ["reserved flag 0x20", "1f8b08200000000000ffcbc80400ac2a93d802000000", null],
           ["reserved flag 0x80", "1f8b08800000000000ffcbc80400ac2a93d802000000", null],

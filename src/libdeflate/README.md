@@ -52,8 +52,8 @@ So a `Vec` is lengthened as the result grows (`Output`):
   messages, and costs a few more steps on the way to 4 KiB.
 - It asks early where that takes no reallocation, so that the fast loop always has room. Where it would take one, the
   output is first used to its last byte: a `Vec` reserved at exactly the right size never moves.
-- The sequence store, the match cache and the optimum nodes are `Vec`s with their full capacity reserved, which get as
-  long as the blocks so far needed. A compressor for level 12 reserves 9 MB and a small input touches little of it.
+- The sequence store, the match cache and the optimum nodes are `Vec`s with their full capacity reserved, filled by
+  `push` or sized to the block. A compressor for level 12 reserves 9 MB and a small input touches little of it.
 
 ## The bit buffer of the decompressor
 

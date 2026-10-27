@@ -436,18 +436,16 @@ impl NearOptimal {
         choose_all_literals(common, block)?;
         let only_lits_cost = common.compute_true_cost()?;
 
-        // Make any match that reaches past the end of the block too expensive to use.
+        // A match that reaches past the end of the block finds a node there that is too expensive to use.
         let past_end = (block_length + DEFLATE_MAX_MATCH_LEN as usize).min(MAX_BLOCK_LENGTH + 1);
-        let too_expensive = OptimumNode {
-            cost_to_end: 0x8000_0000,
-            item: 0,
-        };
-        if self.optimum_nodes.len() < past_end {
-            self.optimum_nodes.resize(past_end, too_expensive);
-        }
-        self.optimum_nodes
-            .get_mut(block_length..past_end)?
-            .fill(too_expensive);
+        self.optimum_nodes.clear();
+        self.optimum_nodes.resize(
+            past_end,
+            OptimumNode {
+                cost_to_end: 0x8000_0000,
+                item: 0,
+            },
+        );
 
         if block_length <= self.max_len_to_optimize_static_block as usize {
             self.costs_saved.clone_from(&self.costs);

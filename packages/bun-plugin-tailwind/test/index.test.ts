@@ -297,6 +297,7 @@ describe("dev server", () => {
         }
       })();
     }
+    void server.exited.then(code => listening.reject(new Error(`the server exited with code ${code}\n${log}`)));
     const url = await listening.promise;
 
     async function page() {

@@ -106,5 +106,5 @@ A new Tailwind release reaches users without a release of this package: `@tailwi
 
 ## License
 
-MIT. `src/index.ts` follows [`@tailwindcss/vite`](https://github.com/tailwindlabs/tailwindcss/tree/main/packages/%40tailwindcss-vite),
+MIT. `src/root.ts` follows [`@tailwindcss/vite`](https://github.com/tailwindlabs/tailwindcss/tree/main/packages/%40tailwindcss-vite),
 which is MIT licensed, Copyright (c) Tailwind Labs, Inc.

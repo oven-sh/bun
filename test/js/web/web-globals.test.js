@@ -628,6 +628,7 @@ describe("QuotaExceededError", () => {
         expect.objectContaining({
           name: "TypeError",
           code: "ERR_INVALID_THIS",
+          // Node's text for the getters of DOMException and of this class. It has no "type" before the name.
           message: 'Value of "this" must be of QuotaExceededError',
         }),
       );

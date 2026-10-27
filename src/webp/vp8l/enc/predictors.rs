@@ -5,7 +5,7 @@ use crate::vp8l::format_constants::ARGB_BLACK;
 
 /// `VP8LSubPixels`: the difference of each component, modulo 256.
 #[inline]
-pub(crate) const fn sub_pixels(a: u32, b: u32) -> u32 {
+pub(super) const fn sub_pixels(a: u32, b: u32) -> u32 {
     let alpha_and_green = 0x00ff_00ffu32
         .wrapping_add(a & 0xff00_ff00)
         .wrapping_sub(b & 0xff00_ff00);
@@ -69,71 +69,71 @@ fn select(a: u32, b: u32, c: u32) -> u32 {
 }
 
 #[inline]
-pub(crate) fn predictor0(_left: u32, _top_left: u32, _top: u32, _top_right: u32) -> u32 {
+pub(super) fn predictor0(_left: u32, _top_left: u32, _top: u32, _top_right: u32) -> u32 {
     ARGB_BLACK
 }
 
 #[inline]
-pub(crate) fn predictor1(left: u32, _top_left: u32, _top: u32, _top_right: u32) -> u32 {
+pub(super) fn predictor1(left: u32, _top_left: u32, _top: u32, _top_right: u32) -> u32 {
     left
 }
 
 #[inline]
-pub(crate) fn predictor2(_left: u32, _top_left: u32, top: u32, _top_right: u32) -> u32 {
+pub(super) fn predictor2(_left: u32, _top_left: u32, top: u32, _top_right: u32) -> u32 {
     top
 }
 
 #[inline]
-pub(crate) fn predictor3(_left: u32, _top_left: u32, _top: u32, top_right: u32) -> u32 {
+pub(super) fn predictor3(_left: u32, _top_left: u32, _top: u32, top_right: u32) -> u32 {
     top_right
 }
 
 #[inline]
-pub(crate) fn predictor4(_left: u32, top_left: u32, _top: u32, _top_right: u32) -> u32 {
+pub(super) fn predictor4(_left: u32, top_left: u32, _top: u32, _top_right: u32) -> u32 {
     top_left
 }
 
 #[inline]
-pub(crate) fn predictor5(left: u32, _top_left: u32, top: u32, top_right: u32) -> u32 {
+pub(super) fn predictor5(left: u32, _top_left: u32, top: u32, top_right: u32) -> u32 {
     average3(left, top, top_right)
 }
 
 #[inline]
-pub(crate) fn predictor6(left: u32, top_left: u32, _top: u32, _top_right: u32) -> u32 {
+pub(super) fn predictor6(left: u32, top_left: u32, _top: u32, _top_right: u32) -> u32 {
     average2(left, top_left)
 }
 
 #[inline]
-pub(crate) fn predictor7(left: u32, _top_left: u32, top: u32, _top_right: u32) -> u32 {
+pub(super) fn predictor7(left: u32, _top_left: u32, top: u32, _top_right: u32) -> u32 {
     average2(left, top)
 }
 
 #[inline]
-pub(crate) fn predictor8(_left: u32, top_left: u32, top: u32, _top_right: u32) -> u32 {
+pub(super) fn predictor8(_left: u32, top_left: u32, top: u32, _top_right: u32) -> u32 {
     average2(top_left, top)
 }
 
 #[inline]
-pub(crate) fn predictor9(_left: u32, _top_left: u32, top: u32, top_right: u32) -> u32 {
+pub(super) fn predictor9(_left: u32, _top_left: u32, top: u32, top_right: u32) -> u32 {
     average2(top, top_right)
 }
 
 #[inline]
-pub(crate) fn predictor10(left: u32, top_left: u32, top: u32, top_right: u32) -> u32 {
+pub(super) fn predictor10(left: u32, top_left: u32, top: u32, top_right: u32) -> u32 {
     average4(left, top_left, top, top_right)
 }
 
 #[inline]
-pub(crate) fn predictor11(left: u32, top_left: u32, top: u32, _top_right: u32) -> u32 {
+pub(super) fn predictor11(left: u32, top_left: u32, top: u32, _top_right: u32) -> u32 {
     select(top, left, top_left)
 }
 
 #[inline]
-pub(crate) fn predictor12(left: u32, top_left: u32, top: u32, _top_right: u32) -> u32 {
+pub(super) fn predictor12(left: u32, top_left: u32, top: u32, _top_right: u32) -> u32 {
     clamped_add_subtract_full(left, top, top_left)
 }
 
 #[inline]
-pub(crate) fn predictor13(left: u32, top_left: u32, top: u32, _top_right: u32) -> u32 {
+pub(super) fn predictor13(left: u32, top_left: u32, top: u32, _top_right: u32) -> u32 {
     clamped_add_subtract_half(left, top, top_left)
 }

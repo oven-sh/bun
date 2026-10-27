@@ -4,22 +4,22 @@
 //! turns into vector instructions.
 
 /// The blue, green, red and alpha of a pixel.
-pub(crate) type Pixel = [u8; 4];
+pub(super) type Pixel = [u8; 4];
 
 /// Four pixels.
-pub(crate) type Block = [u8; 16];
+pub(super) type Block = [u8; 16];
 
-pub(crate) const BLACK: Pixel = [0, 0, 0, 0xff];
+pub(super) const BLACK: Pixel = [0, 0, 0, 0xff];
 
 /// `pixel`, followed by three pixels of no interest.
 #[inline(always)]
-pub(crate) fn block_of(pixel: Pixel) -> Block {
+pub(super) fn block_of(pixel: Pixel) -> Block {
     let [b, g, r, a] = pixel;
     [b, g, r, a, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 }
 
 #[inline(always)]
-pub(crate) fn first_pixel(block: Block) -> Pixel {
+pub(super) fn first_pixel(block: Block) -> Pixel {
     let [b, g, r, a, ..] = block;
     [b, g, r, a]
 }
@@ -35,7 +35,7 @@ fn zip_with(a: Block, b: Block, f: impl Fn(u8, u8) -> u8) -> Block {
 
 /// `VP8LAddPixels`
 #[inline(always)]
-pub(crate) fn add_pixels(a: Block, b: Block) -> Block {
+pub(super) fn add_pixels(a: Block, b: Block) -> Block {
     zip_with(a, b, u8::wrapping_add)
 }
 
@@ -99,14 +99,14 @@ fn select(a: Block, b: Block, c: Block) -> Block {
 }
 
 /// Whether `predict` looks at `left`.
-pub(crate) const fn uses_left(mode: u32) -> bool {
+pub(super) const fn uses_left(mode: u32) -> bool {
     matches!(mode, 1 | 5 | 6 | 7 | 10..=13)
 }
 
 /// `VP8LPredictors[mode]`, from the pixels to the left, top left, top and top right, for each of the four pixels. The
 /// exception is mode 11, which is right for the first pixel only.
 #[inline(always)]
-pub(crate) fn predict(
+pub(super) fn predict(
     mode: u32,
     left: Block,
     top_left: Block,

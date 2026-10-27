@@ -3,11 +3,11 @@
 use core::cell::Cell;
 use core::mem::take;
 
-use crate::util::{Bug, Checked, SliceExt};
-use crate::vp8l::format_constants::{TransformType, sub_sample_size};
-use crate::vp8l::predictors::{
+use super::predictors::{
     BLACK, Block, Pixel, add_pixels, block_of, first_pixel, predict, uses_left,
 };
+use crate::util::{Bug, Checked, SliceExt};
+use crate::vp8l::format_constants::{TransformType, sub_sample_size};
 
 /// The size of `Transform::data` for `ColorIndexing`, whatever the number of colours, so that any index is valid.
 pub(super) const COLOR_MAP_SIZE: usize = 256;

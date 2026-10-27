@@ -3,6 +3,7 @@
 mod bit_reader;
 mod huffman;
 mod lossless;
+mod predictors;
 
 use bit_reader::BitReader;
 use huffman::{
@@ -19,9 +20,9 @@ use super::format_constants::{
     NUM_DISTANCE_CODES, NUM_HUFFMAN_BITS, NUM_LENGTH_CODES, NUM_LITERAL_CODES, NUM_TRANSFORM_BITS,
     NUM_TRANSFORMS, TransformType, VERSION_BITS, sub_sample_size,
 };
-use super::predictors::{Pixel, add_pixels, block_of, first_pixel};
 use crate::util::{Bug, Checked, OutOfMemory, SliceExt, try_vec};
 use crate::{DecodeError, Output};
+use predictors::{Pixel, add_pixels, block_of, first_pixel};
 
 pub(crate) use super::format_constants::FRAME_HEADER_SIZE;
 

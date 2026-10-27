@@ -1509,13 +1509,17 @@ describe("bugs that zstd has had", () => {
     }
     return bytes;
   }
-  function through(stream: zlib.ZstdCompress | zlib.ZstdDecompress, chunks: Iterable<Buffer>) {
+  function through(stream: zlib.ZstdCompress | zlib.ZstdDecompress, chunks: Iterable<Buffer>, flush = false) {
     const { promise, resolve } = Promise.withResolvers<Buffer | string>();
     const output: Buffer[] = [];
     stream.on("data", chunk => output.push(chunk));
     stream.on("error", (error: any) => resolve(error.code));
     stream.on("end", () => resolve(Buffer.concat(output)));
-    for (const chunk of chunks) stream.write(chunk);
+    stream.on("close", () => resolve("closed"));
+    for (const chunk of chunks) {
+      stream.write(chunk);
+      if (flush) stream.flush();
+    }
     stream.end();
     return promise;
   }
@@ -1717,8 +1721,8 @@ describe("bugs that zstd has had", () => {
     const content = noise(100_000, 2);
     const frame = zlib.zstdCompressSync(content);
     const stream = zlib.createZstdDecompress();
-    const { promise, resolve } = Promise.withResolvers<number>();
-    stream.once("data", chunk => resolve(chunk.length));
+    const { promise, resolve, reject } = Promise.withResolvers<number>();
+    stream.once("data", chunk => resolve(chunk.length)).on("error", reject);
     stream.write(frame.subarray(0, 5000), () => stream.flush());
     expect(await promise).toBeWithin(4000, 5000);
     stream.destroy();
@@ -1878,19 +1882,9 @@ describe("bugs that zstd has had", () => {
       pledgedSrcSize: input.length,
       params: { [c.ZSTD_c_compressionLevel]: 22 },
     });
-    const { promise, resolve } = Promise.withResolvers<Buffer>();
-    const output: Buffer[] = [];
-    stream.on("data", chunk => output.push(chunk)).on("end", () => resolve(Buffer.concat(output)));
-    for (const [from, to] of [
-      [0, 4],
-      [4, 9],
-      [9, 20],
-    ]) {
-      stream.write(input.subarray(from, to));
-      stream.flush();
-    }
-    stream.end(input.subarray(20));
-    expect(zlib.zstdDecompressSync(await promise)).toEqual(input);
+    const cuts = [0, 4, 9, 20, input.length];
+    const chunks = cuts.slice(1).map((to, i) => input.subarray(cuts[i], to));
+    expect(zlib.zstdDecompressSync((await through(stream, chunks, true)) as Buffer)).toEqual(input);
   });
 
   it("raw blocks between compressed ones", () => {
@@ -1913,16 +1907,7 @@ describe("bugs that zstd has had", () => {
     expect(Bun.MD5.hash(Buffer.concat(frames), "hex")).toStartWith("033266ef");
 
     const input = noise(300, 22, 3);
-    const stream = zlib.createZstdCompress({ params });
-    const { promise, resolve } = Promise.withResolvers<Buffer>();
-    const output: Buffer[] = [];
-    stream.on("data", chunk => output.push(chunk)).on("end", () => resolve(Buffer.concat(output)));
-    for (const piece of pieces(input, 5)) {
-      stream.write(piece);
-      stream.flush();
-    }
-    stream.end();
-    const frame = await promise;
+    const frame = (await through(zlib.createZstdCompress({ params }), pieces(input, 5), true)) as Buffer;
     expect(`${frame.length} ${Bun.MD5.hash(frame, "hex").slice(0, 8)}`).toBe("504 1f230d95");
     expect(zlib.zstdDecompressSync(frame)).toEqual(input);
   });

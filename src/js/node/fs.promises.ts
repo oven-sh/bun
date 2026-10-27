@@ -346,7 +346,7 @@ const exports = {
       let stats;
       try {
         stats = await fs.lstat(path);
-      } catch (err) {
+      } catch (err: any) {
         if (err?.code !== "ENOENT") throw err;
       }
       if (stats?.isDirectory() && !options?.recursive) {

@@ -3752,6 +3752,7 @@ describe("rm", () => {
     for (const options of [undefined, { force: true }, { recursive: true }]) {
       expect(() => rmSync(path, options)).toThrow(expect.objectContaining(expected));
       expect(await fs.promises.rm(path, options).then(() => null, pick)).toEqual(expected);
+      // @ts-expect-error @types/node requires options before a callback
       const cbErr = await new Promise(resolve => fs.rm(path, options, resolve));
       expect(pick(cbErr)).toEqual(expected);
     }
@@ -3972,7 +3973,7 @@ describe("createReadStream", () => {
     const openResult = (stream: fs.ReadStream) =>
       new Promise<any>(resolve => {
         stream.on("open", () => resolve("open"));
-        stream.on("error", e => resolve({ code: e.code, syscall: e.syscall, path: e.path }));
+        stream.on("error", (e: any) => resolve({ code: e.code, syscall: e.syscall, path: e.path }));
       }).finally(() => stream.destroy());
 
     const bufferStream = createReadStream(Buffer.from(file));
@@ -4543,7 +4544,7 @@ describe("createWriteStream", () => {
     const openResult = (stream: fs.WriteStream) =>
       new Promise<any>(resolve => {
         stream.on("open", () => resolve("open"));
-        stream.on("error", e => resolve({ code: e.code, syscall: e.syscall, path: e.path }));
+        stream.on("error", (e: any) => resolve({ code: e.code, syscall: e.syscall, path: e.path }));
       }).finally(() => stream.destroy());
 
     const bufferStream = createWriteStream(Buffer.from(file), { flags: "a" });

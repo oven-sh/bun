@@ -560,7 +560,7 @@ var access = function access(path, mode, callback?) {
       let stats;
       try {
         stats = fs.lstatSync(path);
-      } catch (err) {
+      } catch (err: any) {
         if (err?.code !== "ENOENT") throw err;
       }
       if (stats?.isDirectory() && !options?.recursive) {

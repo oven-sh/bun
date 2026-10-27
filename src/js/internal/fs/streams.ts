@@ -15,7 +15,7 @@ type FileHandle = import("node:fs/promises").FileHandle & {
 type FSStream = Omit<import("node:fs").ReadStream & import("node:fs").WriteStream, "path" | "_write" | "_writev"> & {
   fd: number | null;
   // null / undefined only for the internal fast-path WriteStream, which is given a FileSink and no path.
-  path: string | null | undefined;
+  path: string | Uint8Array | null | undefined;
   _write: import("node:fs").WriteStream["_write"] | null;
   _writev: import("node:fs").WriteStream["_writev"] | null;
   _writableState?: { ending: boolean; destroyed: boolean };
@@ -602,7 +602,7 @@ function underscoreWriteFast(this: FSStream, data: any, encoding: any, cb: any) 
   }
   try {
     if (fileSink === true) {
-      fileSink = this[kWriteStreamFastPath] = Bun.file(this.path!).writer();
+      fileSink = this[kWriteStreamFastPath] = Bun.file(this.path as string).writer();
       // @ts-expect-error
       this.fd = fileSink._getFd();
     }

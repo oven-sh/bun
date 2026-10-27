@@ -193,7 +193,7 @@ fn sub(bytes: &[u8], offset: usize, len: usize) -> Result<&[u8], BuiltinsError> 
         .ok_or(BuiltinsError::Invalid)
 }
 
-fn struct_at<T: Copy>(bytes: &[u8], offset: usize) -> Result<T, BuiltinsError> {
+fn struct_at<T: bun_core::AnyBitPattern>(bytes: &[u8], offset: usize) -> Result<T, BuiltinsError> {
     Ok(read_struct(sub(bytes, offset, size_of::<T>())?))
 }
 

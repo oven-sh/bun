@@ -1,5 +1,5 @@
 pub mod reference;
-use bun_jpeg::{ColorSpace, Decoder, PixelFormat, Warning};
+use bun_jpeg::{ColorSpace, Decoder, PixelFormat};
 
 pub struct Ours {
     pub pixels: Vec<u8>,
@@ -7,8 +7,6 @@ pub struct Ours {
     pub height: u32,
     pub cmyk: bool,
     pub icc: Option<Vec<u8>>,
-    pub header_warnings: u32,
-    pub warnings: u32,
 }
 #[derive(Debug)]
 pub enum OurFailure {
@@ -21,12 +19,11 @@ pub fn ours(bytes: &[u8], eighths: u32, max_pixels: u64) -> Result<Ours, OurFail
         return Err(OurFailure::Header(bun_jpeg::Error::InvalidArgument));
     }
     let icc = d.icc_profile().map_err(OurFailure::Header)?;
-    let header_warnings = d.warnings();
     let cmyk = matches!(d.color_space(), ColorSpace::Cmyk | ColorSpace::Ycck);
     let scale = if d.scalable() { eighths } else { 8 };
     let (width, height) = d.scaled_size(scale);
     let pixels = d.decode(scale, if cmyk { PixelFormat::Cmyk } else { PixelFormat::Rgba }).map_err(OurFailure::Decode)?;
-    Ok(Ours { pixels, width, height, cmyk, icc, header_warnings, warnings: d.warnings() })
+    Ok(Ours { pixels, width, height, cmyk, icc })
 }
 
 /// Returns a description of the first difference.
@@ -54,17 +51,6 @@ pub fn compare(bytes: &[u8], eighths: u32, max_pixels: u64) -> Result<&'static s
                     "pixels: {n} bytes differ, first at x={} y={} c={}: ref {} ours {} ({}x{})",
                     px as u32 % r.width, px as u32 / r.width, i % 4, r.pixels[i], o.pixels[i], r.width, r.height
                 ));
-            }
-            // Whether these two are reported depends on how far ahead the bytes are read, and on which of its two paths
-            // the reference took. The ICC profile is only looked at by the reference's header call.
-            let unsure = Warning::BadHuffCode as u32 | Warning::ExtraneousData as u32;
-            let icc = Warning::BogusIcc as u32;
-            if r.header_warned != (o.header_warnings != 0) {
-                return Err(format!("header warning: ref {}, ours {:#x}", r.header_warned, o.header_warnings));
-            }
-            let excused = r.last_message.contains("extraneous bytes") || r.last_message.contains("bad Huffman code");
-            if (o.warnings & !unsure & !icc != 0 && !r.decode_warned) || (r.decode_warned && o.warnings & !icc == 0 && !excused) {
-                return Err(format!("warning: ref {} ({:?}), ours {:#x}", r.decode_warned, r.last_message, o.warnings));
             }
             Ok(if r.decode_warned { "ok-warned" } else { "ok" })
         }

@@ -1,6 +1,5 @@
 //! Marker segments (jdmarker.c) and the ICC profile they carry (jdicc.c).
 
-use super::input::Warning;
 use super::{Component, Decoder, MAX_COMPS_IN_SCAN, NUM_ARITH_TBLS, NUM_HUFF_TBLS, NUM_QUANT_TBLS};
 use crate::error::{Error, Result, try_vec_with_capacity};
 use crate::markers::*;
@@ -293,10 +292,6 @@ impl Decoder<'_> {
         if marker == M_APP0 {
             if numtoread >= 14 && b.starts_with(b"JFIF\0") {
                 self.saw_jfif = true;
-                let [.., major, _, _, _, _, _, _, _, _] = b;
-                if major != 1 {
-                    self.inp.warn(Warning::JfifMajor);
-                }
             }
         } else if numtoread >= 12 && b.starts_with(b"Adobe") {
             let [.., transform, _, _] = b;
@@ -314,7 +309,7 @@ impl Decoder<'_> {
         };
         if let Some(data) = self.inp.remaining().get(..length) {
             self.app2.push(Cow::Borrowed(data));
-            self.inp.advance(length);
+            self.inp.skip(length);
         } else {
             let mut data = try_vec_with_capacity(length)?;
             data.extend((0..length).map(|_| self.inp.byte()));
@@ -330,7 +325,7 @@ impl Decoder<'_> {
 
     /// Puts the ICC profile together from the APP2 segments read so far. A profile whose pieces do not add up is
     /// ignored.
-    pub(crate) fn read_icc_profile(&mut self) -> Result<Option<Vec<u8>>> {
+    pub(crate) fn read_icc_profile(&self) -> Result<Option<Vec<u8>>> {
         fn icc(marker: &[u8]) -> Option<(u8, u8, &[u8])> {
             let rest = marker.strip_prefix(b"ICC_PROFILE\0")?;
             let (&[seq_no, count], data) = rest.split_first_chunk::<2>()?;
@@ -343,19 +338,14 @@ impl Decoder<'_> {
         for (seq_no, count, data) in self.app2.iter().filter_map(|m| icc(m)) {
             if num_markers == 0 {
                 num_markers = count;
-            } else if num_markers != count {
-                self.inp.warn(Warning::BogusIcc);
-                return Ok(None);
             }
-            if seq_no == 0 || seq_no > num_markers {
-                self.inp.warn(Warning::BogusIcc);
+            if num_markers != count || seq_no == 0 || seq_no > num_markers {
                 return Ok(None);
             }
             let Some(piece) = pieces.get_mut(usize::from(seq_no)) else {
                 return Err(Error::Internal);
             };
             if piece.is_some() {
-                self.inp.warn(Warning::BogusIcc);
                 return Ok(None);
             }
             *piece = Some(data);
@@ -368,13 +358,11 @@ impl Decoder<'_> {
         let mut total_length = 0usize;
         for piece in pieces.clone() {
             let Some(piece) = piece else {
-                self.inp.warn(Warning::BogusIcc);
                 return Ok(None);
             };
             total_length += piece.len();
         }
         if total_length == 0 {
-            self.inp.warn(Warning::BogusIcc);
             return Ok(None);
         }
 

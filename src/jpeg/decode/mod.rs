@@ -16,7 +16,6 @@ mod upsample;
 use crate::error::{Error, Result};
 use crate::tables::HuffSpec;
 use input::Input;
-pub use input::Warning;
 use marker::Reached;
 use std::borrow::Cow;
 
@@ -215,13 +214,8 @@ impl<'a> Decoder<'a> {
     }
 
     /// The profile from the APP2 segments before the first scan.
-    pub fn icc_profile(&mut self) -> Result<Option<Vec<u8>>> {
+    pub fn icc_profile(&self) -> Result<Option<Vec<u8>>> {
         self.read_icc_profile()
-    }
-
-    /// The `Warning`s so far, or-ed together.
-    pub fn warnings(&self) -> u32 {
-        self.inp.warnings
     }
 
     /// Whether `decode` takes a `scale` other than 8. TurboJPEG allowed a cropping region, which Bun relied on when it
@@ -328,11 +322,7 @@ impl<'a> Decoder<'a> {
             } else if self.saw_adobe {
                 match self.adobe_transform {
                     0 => ColorSpace::Rgb,
-                    1 => ColorSpace::YCbCr,
-                    _ => {
-                        self.inp.warn(Warning::AdobeTransform);
-                        ColorSpace::YCbCr
-                    }
+                    _ => ColorSpace::YCbCr,
                 }
             } else if (c0.id, c1.id, c2.id) == (b'R', b'G', b'B') || self.lossless {
                 ColorSpace::Rgb
@@ -342,11 +332,7 @@ impl<'a> Decoder<'a> {
             [_, _, _, _] => Some(if self.saw_adobe {
                 match self.adobe_transform {
                     0 => ColorSpace::Cmyk,
-                    2 => ColorSpace::Ycck,
-                    _ => {
-                        self.inp.warn(Warning::AdobeTransform);
-                        ColorSpace::Ycck
-                    }
+                    _ => ColorSpace::Ycck,
                 }
             } else {
                 ColorSpace::Cmyk

@@ -1,7 +1,7 @@
 //! Arithmetic decoding of sequential and progressive scans (jdarith.c, jaricom.c).
 
 use super::coef::{CoefBits, McuBlocks};
-use super::input::{Input, Warning};
+use super::input::Input;
 use super::phuff::{update_progression, validate_progression};
 use super::{Block, Decoder, MAX_BLOCKS_IN_MCU, MAX_COMPS_IN_SCAN, NUM_ARITH_TBLS};
 use crate::error::{Error, Result};
@@ -148,8 +148,7 @@ impl Core {
     }
 
     /// Damaged data. Nothing more is decoded until the next restart or scan.
-    fn fail(&mut self, inp: &mut Input) {
-        inp.warn(Warning::BadArithCode);
+    fn fail(&mut self) {
         self.ct = -1;
     }
 }
@@ -252,9 +251,6 @@ impl ArithDecoder {
             self.se = usize::from(d.se);
             self.al = u32::from(d.al);
         } else {
-            if d.ss != 0 || d.se != 63 || d.ah != 0 || d.al != 0 {
-                d.inp.warn(Warning::NotSequential);
-            }
             self.pass = Pass::Sequential;
             self.ss = 1;
             self.se = 63;
@@ -391,7 +387,7 @@ impl ArithDecoder {
                 while core.decode_at(inp, stats, st)? {
                     m <<= 1;
                     if m == 0x8000 {
-                        core.fail(inp);
+                        core.fail();
                         return Ok(false);
                     }
                     st += 1;
@@ -432,7 +428,7 @@ impl ArithDecoder {
                 st += 3;
                 k += 1;
                 if k > self.se {
-                    core.fail(inp);
+                    core.fail();
                     return Ok(false);
                 }
             }
@@ -445,7 +441,7 @@ impl ArithDecoder {
                 while core.decode_at(inp, stats, st)? {
                     m <<= 1;
                     if m == 0x8000 {
-                        core.fail(inp);
+                        core.fail();
                         return Ok(false);
                     }
                     st += 1;
@@ -502,7 +498,7 @@ impl ArithDecoder {
                 st += 3;
                 k += 1;
                 if k > self.se {
-                    core.fail(inp);
+                    core.fail();
                     return Ok(());
                 }
             }

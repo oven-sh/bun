@@ -2,7 +2,7 @@
 
 use super::bits::{BitReader, DerivedTable, FastBitReader, TableKind, huff_extend};
 use super::coef::McuBlocks;
-use super::input::{Input, Warning};
+use super::input::Input;
 use super::{Block, Decoder, MAX_BLOCKS_IN_MCU, MAX_COMPS_IN_SCAN, NUM_HUFF_TBLS};
 use crate::error::{Error, Result};
 use crate::tables::{self, NATURAL_ORDER};
@@ -50,11 +50,6 @@ impl HuffDecoder {
     }
 
     pub(crate) fn start_pass(&mut self, d: &mut Decoder) -> Result<()> {
-        // Some baseline files have all zeros here.
-        if d.ss != 0 || d.se != 63 || d.ah != 0 || d.al != 0 {
-            d.inp.warn(Warning::NotSequential);
-        }
-
         for i in 0..d.comps_in_scan {
             let comp = d.scan_comp(i)?;
             let (dc, ac) = (comp.dc_tbl_no, comp.ac_tbl_no);
@@ -97,7 +92,7 @@ impl HuffDecoder {
     }
 
     fn process_restart(&mut self, inp: &mut Input) {
-        self.bits.discard(inp);
+        self.bits.reset();
         inp.read_restart_marker();
         self.last_dc_val = [0; MAX_COMPS_IN_SCAN];
         self.restarts_to_go = self.restart_interval;
@@ -229,7 +224,7 @@ impl HuffDecoder {
         let Some((bits, consumed)) = bits.finish() else {
             return Ok(false);
         };
-        inp.advance(consumed);
+        inp.skip(consumed);
         self.bits = bits;
         self.last_dc_val = last_dc_val;
         Ok(true)

@@ -2,34 +2,6 @@
 
 use crate::markers::{M_EOI, M_RST0, M_RST7, M_SOF0};
 
-/// A broken rule that libjpeg goes on from. TurboJPEG only remembered that there was one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u32)]
-pub enum Warning {
-    /// The data ends before the image does.
-    PrematureEof = 1 << 0,
-    /// Bytes that belong to nothing come before a marker.
-    ExtraneousData = 1 << 1,
-    /// A restart marker is not the expected one.
-    MustResync = 1 << 2,
-    /// A data segment ends before its last MCU does.
-    HitMarker = 1 << 3,
-    /// Bits that are no Huffman code. libjpeg-turbo's fast path did not report this one.
-    BadHuffCode = 1 << 4,
-    /// Scan parameters that a sequential scan cannot have.
-    NotSequential = 1 << 5,
-    /// A JFIF version other than 1.x.
-    JfifMajor = 1 << 6,
-    /// An Adobe transform code that means nothing.
-    AdobeTransform = 1 << 7,
-    /// The pieces of the ICC profile do not add up.
-    BogusIcc = 1 << 8,
-    /// A progressive scan that does not follow from the ones before it.
-    BogusProgression = 1 << 9,
-    /// Bits that the arithmetic decoder cannot make sense of.
-    BadArithCode = 1 << 10,
-}
-
 pub(crate) struct Input<'a> {
     data: &'a [u8],
     /// May be past the end of `data`: the stream goes on with EOI markers forever, so that a truncated file decodes as
@@ -38,12 +10,8 @@ pub(crate) struct Input<'a> {
     /// A marker code that has been read and not handled, or 0. No entropy decoder reads past it.
     pub(crate) unread_marker: u8,
     pub(crate) next_restart_num: u8,
-    /// Bytes passed over while looking for a marker. Only decides whether the next marker warns.
-    pub(crate) discarded_bytes: usize,
     /// The entropy decoder ran out of data in this segment and made up zeros.
     pub(crate) insufficient_data: bool,
-    /// `Warning`s or-ed together.
-    pub(crate) warnings: u32,
 }
 
 impl<'a> Input<'a> {
@@ -53,15 +21,8 @@ impl<'a> Input<'a> {
             pos: 0,
             unread_marker: 0,
             next_restart_num: 0,
-            discarded_bytes: 0,
             insufficient_data: false,
-            warnings: 0,
         }
-    }
-
-    #[inline]
-    pub(crate) fn warn(&mut self, warning: Warning) {
-        self.warnings |= warning as u32;
     }
 
     #[inline]
@@ -77,7 +38,6 @@ impl<'a> Input<'a> {
     #[cold]
     fn byte_past_end(&mut self) -> u8 {
         if (self.pos - self.data.len()) & 1 == 0 {
-            self.warn(Warning::PrematureEof);
             0xff
         } else {
             M_EOI
@@ -91,11 +51,9 @@ impl<'a> Input<'a> {
         u16::from_be_bytes([hi, lo])
     }
 
+    #[inline]
     pub(crate) fn skip(&mut self, n: usize) {
         self.pos += n;
-        if self.pos > self.data.len() {
-            self.warn(Warning::PrematureEof);
-        }
     }
 
     /// What is left of the real data.
@@ -104,34 +62,18 @@ impl<'a> Input<'a> {
         self.data.get(self.pos..).unwrap_or(&[])
     }
 
-    /// Only for bytes taken from `remaining()`.
-    #[inline]
-    pub(crate) fn advance(&mut self, n: usize) {
-        self.pos += n;
-    }
-
     /// Reads up to the next marker and leaves its code, which is never 0 or 0xFF, in `unread_marker`.
     pub(crate) fn next_marker(&mut self) {
-        let mut c;
-        loop {
-            c = self.byte();
+        let mut c = 0;
+        // An FF with a zero after it is data.
+        while c == 0 {
             while c != 0xff {
-                self.discarded_bytes += 1;
                 c = self.byte();
             }
             // Extra FFs are legal padding.
             while c == 0xff {
                 c = self.byte();
             }
-            if c != 0 {
-                break;
-            }
-            // A stuffed zero: this was data.
-            self.discarded_bytes += 2;
-        }
-        if self.discarded_bytes != 0 {
-            self.warn(Warning::ExtraneousData);
-            self.discarded_bytes = 0;
         }
         self.unread_marker = c;
     }
@@ -151,7 +93,6 @@ impl<'a> Input<'a> {
     }
 
     fn resync_to_restart(&mut self, desired: u8) {
-        self.warn(Warning::MustResync);
         loop {
             let marker = self.unread_marker;
             let rst = |n: u8| M_RST0 + (n & 7);

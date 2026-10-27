@@ -191,7 +191,7 @@ impl DiffController {
     ) -> Result<()> {
         for yoffset in 0..self.mcu_rows_per_imcu_row {
             if d.restart_interval != 0 && self.restart_rows_to_go == 0 {
-                self.bits.discard(&mut d.inp);
+                self.bits.reset();
                 d.inp.read_restart_marker();
                 if d.inp.unread_marker == 0 {
                     d.inp.insufficient_data = false;

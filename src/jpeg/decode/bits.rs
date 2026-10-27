@@ -5,7 +5,7 @@
 //! outside, because reading never goes past a marker and whatever is between the last used bit and the marker is
 //! dropped.
 
-use super::input::{Input, Warning};
+use super::input::Input;
 use crate::error::{Error, Result};
 use crate::tables::HuffSpec;
 
@@ -120,12 +120,6 @@ impl BitReader {
         self.bits_left = 0;
     }
 
-    /// Drops what is left, at a restart marker.
-    pub(crate) fn discard(&mut self, inp: &mut Input) {
-        inp.discarded_bytes += (self.bits_left / 8) as usize;
-        self.bits_left = 0;
-    }
-
     /// Reads bytes until the buffer is full or a marker comes. Afterwards there are at least `nbits` bits, made up if
     /// need be.
     #[inline(never)]
@@ -149,10 +143,7 @@ impl BitReader {
             }
         }
         if nbits > self.bits_left {
-            if !inp.insufficient_data {
-                inp.warn(Warning::HitMarker);
-                inp.insufficient_data = true;
-            }
+            inp.insufficient_data = true;
             self.buf <<= MIN_GET_BITS - self.bits_left;
             self.bits_left = MIN_GET_BITS;
         }
@@ -212,7 +203,6 @@ impl BitReader {
             l += 1;
         }
         if l > 16 {
-            inp.warn(Warning::BadHuffCode);
             return 0;
         }
         let offset = table.valoffset.get(l).copied().unwrap_or(0);

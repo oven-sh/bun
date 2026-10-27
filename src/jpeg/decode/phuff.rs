@@ -2,7 +2,7 @@
 
 use super::bits::{BitReader, DerivedTable, TableKind, huff_extend};
 use super::coef::{CoefBits, McuBlocks};
-use super::input::{Input, Warning};
+use super::input::Input;
 use super::{Block, Decoder, MAX_BLOCKS_IN_MCU, MAX_COMPS_IN_SCAN, NUM_HUFF_TBLS};
 use crate::error::{Error, Result};
 use crate::tables::NATURAL_ORDER;
@@ -45,19 +45,13 @@ fn coef_at(block: &mut Block, k: usize) -> Option<&mut i16> {
     block.get_mut(usize::from(pos))
 }
 
-/// Records the scan in `coef_bits` and complains if it does not follow from the scans before it. The arithmetic decoder
-/// does the same.
+/// Records the scan in `coef_bits`. The arithmetic decoder does the same.
 pub(crate) fn update_progression(d: &mut Decoder, coef_bits: &mut CoefBits) -> Result<()> {
     let (ss, se) = (usize::from(d.ss), usize::from(d.se));
     for i in 0..d.comps_in_scan {
         let ci = d.scan_comp_index(i)?;
         let current = coef_bits.current.get_mut(ci).ok_or(Error::Internal)?;
         let previous = coef_bits.previous.get_mut(ci).ok_or(Error::Internal)?;
-        let [dc, ..] = *current;
-        if ss != 0 && dc < 0 {
-            // AC without a DC scan before it.
-            d.inp.warn(Warning::BogusProgression);
-        }
         let saved = ss.min(1)..=se.max(9);
         for (previous, &current) in previous
             .iter_mut()
@@ -72,9 +66,6 @@ pub(crate) fn update_progression(d: &mut Decoder, coef_bits: &mut CoefBits) -> R
             .skip(ss)
             .take((se + 1).saturating_sub(ss))
         {
-            if i32::from(d.ah) != (*bits).max(0) {
-                d.inp.warn(Warning::BogusProgression);
-            }
             *bits = i32::from(d.al);
         }
     }
@@ -163,7 +154,7 @@ impl PHuffDecoder {
     }
 
     fn process_restart(&mut self, inp: &mut Input) {
-        self.bits.discard(inp);
+        self.bits.reset();
         inp.read_restart_marker();
         self.last_dc_val = [0; MAX_COMPS_IN_SCAN];
         self.eobrun = 0;
@@ -307,10 +298,7 @@ impl PHuffDecoder {
                 let s = symbol & 15;
                 let mut value = 0;
                 if s != 0 {
-                    // A coefficient that turns nonzero is 1 or -1.
-                    if s != 1 {
-                        inp.warn(Warning::BadHuffCode);
-                    }
+                    // A coefficient that turns nonzero is 1 or -1, whatever `s` says.
                     bits.check(inp, 1);
                     value = if bits.get(1) != 0 { p1 } else { m1 };
                 } else if r != 15 {

@@ -2088,7 +2088,6 @@ pub struct Source<'a> {
 
     /// `Owned` when the `Source` read the file itself ([`source_from_file`]).
     pub contents: Cow<'a, [u8]>,
-    pub contents_is_recycled: bool,
 
     /// Lazily-generated human-readable identifier name that is non-unique
     /// Avoid accessing this directly most of the  time
@@ -2103,7 +2102,6 @@ impl Default for Source<'_> {
         Source {
             path: bun_paths::fs::Path::default(),
             contents: Cow::Borrowed(b""),
-            contents_is_recycled: false,
             identifier_name: Cow::Borrowed(b""),
             index: Index::source(0),
         }
@@ -2383,7 +2381,6 @@ impl<'a> Source<'a> {
         let mut source = Source {
             path: file.path,
             contents: Cow::Borrowed(file.contents),
-            contents_is_recycled: true,
             ..Default::default()
         };
         source.path.namespace = b"file";

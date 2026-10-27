@@ -120,10 +120,6 @@ pub enum Error {
     ReadError,
     #[error("OpenError")]
     OpenError,
-    #[error("UnexpectedPendingResolution")]
-    UnexpectedPendingResolution,
-    #[error("AsyncModule")]
-    AsyncModule,
     #[error("BlobNotFound")]
     BlobNotFound,
     #[error("InvalidRoutePattern")]
@@ -398,8 +394,6 @@ impl Error {
             Self::FormatError => "FormatError",
             Self::ReadError => "ReadError",
             Self::OpenError => "OpenError",
-            Self::UnexpectedPendingResolution => "UnexpectedPendingResolution",
-            Self::AsyncModule => "AsyncModule",
             Self::BlobNotFound => "BlobNotFound",
             Self::InvalidRoutePattern => "InvalidRoutePattern",
             Self::InvalidRequest => "InvalidRequest",

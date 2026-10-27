@@ -4219,7 +4219,6 @@ pub mod bv2_impl {
             let task_source = bun_ast::Source {
                 path: new_source.path,
                 contents: new_source.contents.clone(),
-                contents_is_recycled: new_source.contents_is_recycled,
                 identifier_name: new_source.identifier_name.clone(),
                 index: new_source.index,
             };

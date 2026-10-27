@@ -1047,7 +1047,6 @@ impl PackageJSON {
         package_json.source = bun_ast::Source {
             path: json_source.path,
             contents: std::borrow::Cow::Borrowed(contents_static),
-            contents_is_recycled: json_source.contents_is_recycled,
             identifier_name: json_source.identifier_name.clone(),
             index: json_source.index,
         };

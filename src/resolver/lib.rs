@@ -2159,23 +2159,6 @@ pub mod cache {
             }
         }
 
-        /// When we need to suspend/resume something that has pointers into the shared buffer, we need to
-        /// switch out the shared buffer so that it is not in use.
-        ///
-        /// Ownership transfer: the suspended parse keeps pointers into the old buffer, so plain
-        /// field assignment would drop+free the old buffer → use-after-free on resume. So we return
-        /// the detached buffer; the caller MUST take ownership of it and keep it alive for as long as
-        /// `parse_result.source.contents` may be read.
-        pub fn reset_shared_buffer(&mut self, buffer: *const MutableString) -> MutableString {
-            if core::ptr::eq(buffer, &raw const self.shared_buffer) {
-                core::mem::replace(&mut self.shared_buffer, MutableString::init_empty())
-            } else if core::ptr::eq(buffer, &raw const self.macro_shared_buffer) {
-                core::mem::replace(&mut self.macro_shared_buffer, MutableString::init_empty())
-            } else {
-                unreachable!("resetSharedBuffer: invalid buffer");
-            }
-        }
-
         /// `use_shared_buffer` is taken at runtime — the live
         /// callers (`ParseTask::get_code_for_parse_task_without_plugins`,
         /// `Transpiler::parse`) pass a value computed from runtime state, and the

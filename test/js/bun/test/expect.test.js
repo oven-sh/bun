@@ -703,6 +703,8 @@ describe("expect()", () => {
     // expect.any(Array), toMatchObject, and toHaveProperty must check for an
     // exception right after it. A missing check aborts a debug build under
     // BUN_JSC_validateExceptionChecks=1 (a no-op on release builds).
+    // The same applies to each step of a toHaveProperty path: one that returns
+    // early on a null or undefined link, and one whose lookup throws.
     test("expect.any(Array)/toMatchObject/toHaveProperty check the isArray() exception for Proxy values", async () => {
       const { bunEnv, bunExe } = require("harness");
       const src = `
@@ -716,6 +718,17 @@ describe("expect()", () => {
         try { expect({ a: 1 }).toHaveProperty(new Proxy(new Set(["a"]), {})); } catch {}
         const rp = Proxy.revocable({}, {}); rp.revoke();
         try { expect(rp.proxy).toEqual(expect.any(Array)); } catch {}
+        for (const path of ["a.b", "a.", "a..b", ["a", "b"]]) {
+          try { expect({ a: null }).not.toHaveProperty(path); } catch {}
+          try { expect({ a: undefined }).toHaveProperty(path); } catch {}
+        }
+        const thrower = { get a() { throw new RangeError("a"); }, get ""() { throw new RangeError("empty"); } };
+        for (const path of ["", ".a", "a.b", ["a", "b"]]) {
+          try { expect(thrower).not.toHaveProperty(path); } catch {}
+        }
+        for (const path of ["a.", "a..b"]) {
+          try { expect({ a: thrower }).not.toHaveProperty(path); } catch {}
+        }
         console.log("ok");
       `;
       await using proc = Bun.spawn({
@@ -2287,6 +2300,64 @@ describe("expect()", () => {
     expect([1]).not.toHaveProperty("[0][0]", 1);
     expect({ a: [1] }).toHaveProperty("a[[[[[[[[[0]]]", 1);
     expect({ "[[[": 0 }).not.toHaveProperty("[[[", 0);
+  });
+
+  test("toHaveProperty() - null or undefined link in the path", () => {
+    // A path that continues past a null or undefined value is "not found". It does not throw.
+    expect({ a: null }).not.toHaveProperty("a.b");
+    expect({ a: undefined }).not.toHaveProperty("a.b");
+    expect({ a: null }).not.toHaveProperty(["a", "b"]);
+    expect({ a: undefined }).not.toHaveProperty(["a", "b"]);
+    expect({ a: { b: null } }).not.toHaveProperty("a.b.c");
+    expect({ a: { b: undefined } }).not.toHaveProperty(["a", "b", "c"]);
+    expect({ a: [null] }).not.toHaveProperty("a[0].b");
+    expect([undefined]).not.toHaveProperty([0, "b"]);
+    expect({ a: null }).not.toHaveProperty("a.b", 1);
+    expect({ a: null }).not.toHaveProperty("a.b", undefined);
+    expect({ a: null }).not.toHaveProperty(["a", "b"], 1);
+
+    // The empty-name steps of the string form: ".a", "a.", "a..b" and "..".
+    expect({ "": null }).not.toHaveProperty(".a");
+    expect({ a: null }).not.toHaveProperty("a.");
+    expect({ a: null }).not.toHaveProperty("a..b");
+    expect({ "": null }).not.toHaveProperty("..");
+
+    // The positive form fails with the matcher's own message.
+    const notFound = isBun ? "Unable to find property" : "Received path: []";
+    expect(() => expect({ a: null }).toHaveProperty("a.b")).toThrow(notFound);
+    expect(() => expect({ a: undefined }).toHaveProperty("a.b", 1)).toThrow(notFound);
+    expect(() => expect({ a: null }).toHaveProperty(["a", "b"])).toThrow(notFound);
+    expect(() => expect({ a: { b: null } }).toHaveProperty("a.b.c")).toThrow(isBun ? notFound : 'Received path: "a"');
+
+    // A null or undefined value at the last step is still found.
+    expect({ a: null }).toHaveProperty("a");
+    expect({ a: null }).toHaveProperty("a", null);
+    expect({ a: null }).toHaveProperty(["a"], null);
+    expect({ a: { b: undefined } }).toHaveProperty("a.b");
+    expect({ a: { b: undefined } }).toHaveProperty("a.b", undefined);
+    expect({ a: { b: undefined } }).toHaveProperty(["a", "b"], undefined);
+    expect({ a: null }).not.toHaveProperty("a", undefined);
+
+    // Only null and undefined stop the walk. Any other primitive link is still walked through.
+    expect({ a: 0 }).toHaveProperty("a.toFixed");
+    expect({ a: false }).toHaveProperty(["a", "valueOf"]);
+    expect({ a: "" }).toHaveProperty("a.length", 0);
+    expect({ a: 0 }).not.toHaveProperty("a.b");
+
+    // A link that throws is not "not found". The error of the link reaches the caller.
+    const throwing = () => ({
+      get a() {
+        throw new RangeError("from getter");
+      },
+    });
+    expect(() => expect(throwing()).not.toHaveProperty("a.b")).toThrow(RangeError);
+    expect(() => expect(throwing()).not.toHaveProperty(["a", "b"])).toThrow(RangeError);
+    expect(() => expect(throwing()).toHaveProperty("a.b")).toThrow(RangeError);
+    expect(() => expect(throwing()).toHaveProperty(["a", "b"])).toThrow(RangeError);
+    const { proxy, revoke } = Proxy.revocable({}, {});
+    revoke();
+    expect(() => expect({ a: proxy }).not.toHaveProperty("a.b")).toThrow(TypeError);
+    expect(() => expect({ a: proxy }).not.toHaveProperty(["a", "b"])).toThrow(TypeError);
   });
 
   test("toHaveProperty() - with string or array", () => {

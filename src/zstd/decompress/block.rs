@@ -253,6 +253,8 @@ impl Drop for BlockDecoder {
 }
 
 impl BlockDecoder {
+    pub(crate) const SCRATCH_SIZE: usize = size_of::<Scratch>();
+
     pub(crate) const fn new() -> Self {
         Self {
             scratch: None,

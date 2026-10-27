@@ -584,8 +584,8 @@ impl Default for DCtx {
 }
 
 impl DCtx {
-    /// How much memory a new one takes.
-    pub const SIZE: usize = size_of::<Self>() + size_of::<EntropyDTables>();
+    /// How much memory one takes, apart from buffers whose size depends on the frames.
+    pub const SIZE: usize = size_of::<Self>() + BlockDecoder::SCRATCH_SIZE;
 
     /// `ZSTD_createDCtx`
     pub fn new() -> Self {

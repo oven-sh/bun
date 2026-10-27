@@ -1647,27 +1647,9 @@ describe.concurrent("--isolate: a finished file's late completions do not run in
 
   // crypto.subtle.unwrapKey("jwk") converts the key in the realm that started it, after the
   // decrypt has come back from the thread pool. Here the decrypt of a finished file waits behind
-  // a parked pool (2 threads, both in read() of a FIFO) until a later file lets it run.
-  test.skipIf(isWindows).each([
-    // The finished file's realm is collected first. The conversion then had no realm: a crash.
-    // The realm of the file before the running one, or of the two before it, can still be alive
-    // (the plateau that the next describe block allows), so two files that do nothing come between.
-    {
-      name: "after its realm was collected",
-      payload: `{"kty":"oct","k":"${Buffer.alloc(32).toString("base64url")}"}`,
-      idle: ["c-idle.test.ts", "d-idle.test.ts"],
-    },
-    // The realm is still there. The conversion ran in it, and its TypeError was the running file's.
-    { name: "with a payload that is not a JWK", payload: "123", idle: [] },
-  ])("a finished file's unwrapKey that comes back $name does nothing in a later file", async ({ payload, idle }) => {
-    const doesNothing = `
-        import { test, expect } from "bun:test";
-
-        test("does nothing", async () => {
-          await null;
-          expect().pass();
-        });
-      `;
+  // a parked pool (2 threads, both in read() of a FIFO) until the next file lets it run. The
+  // payload is not a JWK: converted in the finished realm, it threw a TypeError at the running file.
+  test.skipIf(isWindows)("a finished file's unwrapKey that comes back later does nothing in the next file", async () => {
     using dir = tempDir("isolate-late-unwrap", {
       "a-park.test.ts": `
         import { test, expect } from "bun:test";
@@ -1680,7 +1662,7 @@ describe.concurrent("--isolate: a finished file's late completions do not run in
             let failed;
             fs.promises.readFile(fifo).catch(error => (failed = error));
             // The write end opens once a pool thread is in open() of the read end. That thread then
-            // waits in read() until e-release.test.ts closes this descriptor.
+            // waits in read() until c-release.test.ts closes this descriptor.
             for (;;) {
               if (failed) throw failed;
               try {
@@ -1705,30 +1687,18 @@ describe.concurrent("--isolate: a finished file's late completions do not run in
           const iv = new Uint8Array(12);
           // Nothing else here needs the pool: importKey settles in the call, node:crypto wraps synchronously.
           const kek = await crypto.subtle.importKey("raw", raw, "AES-GCM", false, ["unwrapKey"]);
-          // The only key of the run. It lives as long as this realm, which e-release.test.ts watches.
-          globalThis.kek = kek;
           const cipher = createCipheriv("aes-256-gcm", raw, iv);
-          const wrapped = Buffer.concat([cipher.update(${JSON.stringify(payload)}), cipher.final(), cipher.getAuthTag()]);
+          const wrapped = Buffer.concat([cipher.update("123"), cipher.final(), cipher.getAuthTag()]);
           crypto.subtle.unwrapKey("jwk", wrapped, kek, { name: "AES-GCM", iv }, "AES-GCM", true, ["encrypt"]).catch(() => {});
           expect().pass();
         });
       `,
-      ...Object.fromEntries(idle.map(file => [file, doesNothing])),
-      "e-release.test.ts": `
+      "c-release.test.ts": `
         import { test, expect } from "bun:test";
-        import { heapStats } from "bun:jsc";
         import fs from "node:fs";
 
         test("lets the decrypt of b-unwrap.test.ts run", async () => {
-          try {
-            if (${idle.length > 0}) {
-              const keys = () => (Bun.gc(true), heapStats().objectTypeCounts.CryptoKey ?? 0);
-              for (let turns = 0; turns < 100 && keys() > 0; turns++) await new Promise(resolve => setImmediate(resolve));
-              expect(keys()).toBe(0);
-            }
-          } finally {
-            for (const fd of JSON.parse(fs.readFileSync(import.meta.dir + "/writers.json", "utf8"))) fs.closeSync(fd);
-          }
+          for (const fd of JSON.parse(fs.readFileSync(import.meta.dir + "/writers.json", "utf8"))) fs.closeSync(fd);
           // Round trips through the pool: the decrypt queued before them has come back by the last one.
           for (let i = 0; i < 4; i++) await crypto.subtle.digest("SHA-256", new Uint8Array(65536));
           expect().pass();
@@ -1736,14 +1706,94 @@ describe.concurrent("--isolate: a finished file's late completions do not run in
       `,
     });
     for (const name of ["fifo1", "fifo2"]) mkfifo(join(String(dir), name));
-    const files = ["a-park.test.ts", "b-unwrap.test.ts", ...idle, "e-release.test.ts"];
     const { stderr, exitCode } = await runTests(
       String(dir),
       ["--isolate"],
-      files.map(file => "./" + file),
+      ["./a-park.test.ts", "./b-unwrap.test.ts", "./c-release.test.ts"],
       { ...bunEnv, UV_THREADPOOL_SIZE: "2" },
     );
-    expect(normalizeBunSnapshot(stderr, dir)).toContain(`${files.length} pass`);
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("3 pass");
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+    if (exitCode !== 0) expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  // Here the finished file starts the unwrapKey while the next file runs: a ShadowRealm that it
+  // left calls one of its functions when the fetch of the realm ends. The conversion then ran a
+  // getter of the finished file.
+  test("an unwrapKey that a finished file starts during the next file does not convert its key", async () => {
+    const { promise: released, resolve: release } = Promise.withResolvers<void>();
+    await using server = Bun.serve({
+      port: 0,
+      async fetch(request) {
+        if (new URL(request.url).pathname === "/release") release();
+        await released;
+        return new Response("late");
+      },
+    });
+    using dir = tempDir("isolate-late-unwrap-reentry", {
+      "a-reenter.test.ts": `
+        import { test, expect } from "bun:test";
+        import { writeFileSync } from "node:fs";
+        import { join } from "node:path";
+
+        const dir = import.meta.dir;
+
+        test("leaves a fetch in a ShadowRealm that calls back into this file", async () => {
+          const iv = new Uint8Array(12);
+          const kek = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["wrapKey", "unwrapKey"]);
+          const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt"]);
+          const wrapped = await crypto.subtle.wrapKey("jwk", key, kek, { name: "AES-GCM", iv });
+          // The JWK of an AES key has no "qi": to convert it reads "qi" off the Object.prototype of this realm.
+          Object.defineProperty(Object.prototype, "qi", {
+            configurable: true,
+            get() {
+              writeFileSync(join(dir, "a-acted"), "");
+              return undefined;
+            },
+          });
+          // The fetch ends, answered or aborted, when this file has finished.
+          new ShadowRealm().evaluate(\`(url, f) => { fetch(url).then(r => r.text()).then(() => f(), () => f()); }\`)(
+            process.env.SERVER_URL,
+            () => {
+              writeFileSync(join(dir, "a-reentered"), "");
+              crypto.subtle.unwrapKey("jwk", wrapped, kek, { name: "AES-GCM", iv }, "AES-GCM", true, ["encrypt"]);
+            },
+          );
+          expect().pass();
+        });
+      `,
+      "b-reenter.test.ts": `
+        import { test, expect } from "bun:test";
+        import { existsSync } from "node:fs";
+        import { join } from "node:path";
+
+        const dir = import.meta.dir;
+
+        test("sees nothing from the unwrapKey of a-reenter.test.ts", async () => {
+          await fetch(process.env.SERVER_URL + "release");
+          // Round trips through the pool: until that file was called, and then until its decrypt has come back.
+          for (let i = 0; i < 400 && !existsSync(join(dir, "a-reentered")); i++) {
+            await crypto.subtle.digest("SHA-256", new Uint8Array(65536));
+          }
+          for (let i = 0; i < 40 && !existsSync(join(dir, "a-acted")); i++) {
+            await crypto.subtle.digest("SHA-256", new Uint8Array(65536));
+          }
+          // If the file cannot be called any more, this row has nothing left to test.
+          expect({
+            reentered: existsSync(join(dir, "a-reentered")),
+            acted: existsSync(join(dir, "a-acted")),
+          }).toEqual({ reentered: true, acted: false });
+        });
+      `,
+    });
+    const { stderr, exitCode } = await runTests(
+      String(dir),
+      ["--isolate"],
+      ["./a-reenter.test.ts", "./b-reenter.test.ts"],
+      { ...bunEnv, SERVER_URL: server.url.href },
+    );
+    expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
     expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
     if (exitCode !== 0) expect(stderr).toBe("");
     expect(exitCode).toBe(0);

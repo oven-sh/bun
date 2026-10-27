@@ -13870,6 +13870,26 @@ describe.concurrent.skipIf(isWindows)("file: dependency whose package.json path 
     expect(err).toContain("error: ENAMETOOLONG");
     expect(exitCode).toBe(1);
   });
+
+  it("fails when the absolute path fits and the path relative to the project does not", async () => {
+    using dir = tempDir("file-dep-relative-path-overflow", {
+      "package.json": JSON.stringify({
+        name: "my-app",
+        dependencies: { dep: "file:/" + Buffer.alloc(PATH_BUFFER_BYTES - 2, "d").toString() },
+      }),
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(err).toContain('error: Dependency "dep" has an unsafe folder path');
+    expect(exitCode).toBe(1);
+  });
 });
 
 // The tarball form of the above. A `file:` tarball path is read relative to the

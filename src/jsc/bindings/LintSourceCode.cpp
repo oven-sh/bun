@@ -344,7 +344,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsLintSourceCodeVisitorKeys, (JSGlobalObject*, EncodedJ
     if (!globalObject) [[unlikely]]
         return JSValue::encode(jsUndefined());
     LintHost* host = LintHost::from(globalObject);
-    return JSValue::encode(host->nodes.visitorKeys(globalObject, host, host->nodes.kindFor(host->isEspree(), host->isOxlint(), host->shortensNodes())));
+    return JSValue::encode(host->nodes.visitorKeys(globalObject, host, host->nodes.kindFor(host)));
 }
 
 // What typescript-eslint's parser gives without type information. Rules take the maps for a sign of TypeScript. There are no

@@ -1281,6 +1281,17 @@ pub trait OnSourceMapChunk {
     ) -> crate::Result<()>;
 }
 
+impl OnSourceMapChunk for Option<SourceMap::Chunk> {
+    fn on_source_map_chunk(
+        &mut self,
+        chunk: SourceMap::Chunk,
+        _: &bun_ast::Source,
+    ) -> crate::Result<()> {
+        *self = Some(chunk);
+        Ok(())
+    }
+}
+
 impl<'a> SourceMapHandler<'a> {
     pub(crate) fn on_source_map_chunk(
         &self,
@@ -1332,7 +1343,7 @@ pub struct Options<'a> {
 
     pub runtime_transpiler_cache: Option<RuntimeTranspilerCacheRef>,
     pub module_info: Option<&'a mut analyze_transpiled_module::ModuleInfo>,
-    pub input_files_for_dev_server: Option<&'a [bun_ast::Source]>,
+    pub input_files_for_dev_server: Option<&'a [bun_ast::Source<'a>]>,
 
     /// Borrowed from `BundledAst.commonjs_named_exports`; the printer only
     /// reads from it.
@@ -1346,6 +1357,8 @@ pub struct Options<'a> {
     pub minify_identifiers: bool,
     pub minify_syntax: bool,
     pub print_dce_annotations: bool,
+    /// Marks the braces of object literals in the source map, see `mark_object_brace`.
+    pub code_coverage: bool,
 
     pub inline_require_and_import_errors: bool,
     /// A bundler renamer named every symbol. Those renamers reserve `NaN`,
@@ -1425,6 +1438,7 @@ impl<'a> Default for Options<'a> {
             minify_identifiers: false,
             minify_syntax: false,
             print_dce_annotations: true,
+            code_coverage: false,
             inline_require_and_import_errors: true,
             has_run_symbol_renamer: false,
             require_or_import_meta_for_source_callback: RequireOrImportMetaCallback::default(),
@@ -1651,7 +1665,7 @@ pub(crate) mod __gated_printer {
         const IS_JSON: bool,
         const GENERATE_SOURCE_MAP: bool,
     > {
-        pub(crate) import_records: &'a [ImportRecord],
+        pub(crate) import_records: &'a [ImportRecord<'a>],
 
         pub(crate) needs_semicolon: bool,
         pub(crate) stmt_start: i32,
@@ -2365,6 +2379,7 @@ pub(crate) mod __gated_printer {
                                     temp_bindings.as_mut_slice(),
                                 ),
                                 is_single_line: true,
+                                close_brace_loc: bun_ast::Loc::EMPTY,
                             };
                             // `from_bump` wraps a `&mut T` as a non-null arena ref; here the
                             // pointee is a stack local but `print_binding` only reads it and
@@ -2430,6 +2445,14 @@ pub(crate) mod __gated_printer {
             }
             self.source_map_builder
                 .add_source_mapping(location, self.writer.slice());
+        }
+
+        #[inline]
+        pub(crate) fn mark_object_brace(&mut self) {
+            if !GENERATE_SOURCE_MAP || !self.options.code_coverage {
+                return;
+            }
+            self.source_map_builder.mark_object_brace();
         }
 
         #[inline]
@@ -2678,7 +2701,7 @@ pub(crate) mod __gated_printer {
         }
 
         #[inline]
-        pub(crate) fn import_record(&self, import_record_index: usize) -> &'a ImportRecord {
+        pub(crate) fn import_record(&self, import_record_index: usize) -> &'a ImportRecord<'a> {
             // detached from `&self` so callers can interleave `&mut self` printing.
             &self.import_records[import_record_index]
         }
@@ -3941,6 +3964,7 @@ pub(crate) mod __gated_printer {
                         self.print(b"(");
                     }
                     self.add_source_mapping(expr.loc);
+                    self.mark_object_brace();
                     self.print(b"{");
                     let props = e.properties.slice();
                     if !props.is_empty() {
@@ -3979,6 +4003,7 @@ pub(crate) mod __gated_printer {
                     }
                     if e.close_brace_loc.start > expr.loc.start {
                         self.add_source_mapping(e.close_brace_loc);
+                        self.mark_object_brace();
                     }
                     self.print(b"}");
                     if wrap {
@@ -4997,9 +5022,9 @@ pub(crate) mod __gated_printer {
                 }
                 ExprData::EString(key_str) => {
                     let key_str = key_str.flattened(self.bump);
-                    self.add_source_mapping(key.loc);
                     if key_str.is_utf8() {
                         self.print_space_before_identifier();
+                        self.add_source_mapping(key.loc);
                         let mut allow_shorthand = true;
                         if !IS_JSON && lexer::is_identifier(key_str.slice8()) {
                             self.print_identifier(key_str.slice8());
@@ -5044,6 +5069,7 @@ pub(crate) mod __gated_printer {
                         }
                     } else if !IS_JSON && self.can_print_identifier_utf16(key_str.slice16()) {
                         self.print_space_before_identifier();
+                        self.add_source_mapping(key.loc);
                         self.print_identifier_utf16(key_str.slice16())
                             .expect("unreachable");
 
@@ -5083,6 +5109,7 @@ pub(crate) mod __gated_printer {
                             }
                         }
                     } else {
+                        self.add_source_mapping(key.loc);
                         let c = Self::best_quote_char_for_e_string(&key_str, false);
                         self.print(c);
                         self.print_string_characters_utf16(key_str.slice16(), c);
@@ -5978,9 +6005,10 @@ pub(crate) mod __gated_printer {
 
                     if let Some(finally) = &s.finally {
                         self.print_space();
+                        self.add_source_mapping(finally.loc);
                         self.print(b"finally");
                         self.print_space();
-                        self.print_block(finally.loc, slice_of(finally.stmts), None);
+                        self.print_block(finally.body_loc, slice_of(finally.stmts), None);
                     }
 
                     self.print_newline();
@@ -6030,6 +6058,7 @@ pub(crate) mod __gated_printer {
                     for c in slice_of(s.cases).iter() {
                         self.print_semicolon_if_needed();
                         self.print_indent();
+                        self.add_source_mapping(c.loc);
 
                         if let Some(val) = &c.value {
                             self.print(b"case");
@@ -6611,7 +6640,7 @@ pub(crate) mod __gated_printer {
             if let Some(no_block) = &s.no {
                 self.print_semicolon_if_needed();
                 self.print_space_before_identifier();
-                self.add_source_mapping(no_block.loc);
+                self.add_source_mapping(s.else_loc.to_nullable().unwrap_or(no_block.loc));
                 self.print(b"else");
 
                 match &no_block.data {
@@ -6995,7 +7024,7 @@ pub(crate) mod __gated_printer {
         pub(crate) fn init(
             writer: W,
             bump: &'a bun_alloc::Arena,
-            import_records: &'a [ImportRecord],
+            import_records: &'a [ImportRecord<'a>],
             opts: Options<'a>,
             renamer: rename::Renamer<'a, 'a>,
             source_map_builder: SourceMap::chunk::Builder<'a>,
@@ -7650,7 +7679,7 @@ use js_ast::Ast;
 pub(crate) fn get_source_map_builder<'a, const IS_BUN_PLATFORM: bool>(
     generate_source_map: GenerateSourceMap,
     opts: &mut Options<'a>,
-    source: &'a bun_ast::Source,
+    source: &'a bun_ast::Source<'a>,
     tree: &Ast,
 ) -> SourceMap::chunk::Builder<'a> {
     if generate_source_map == GenerateSourceMap::Disable {
@@ -7699,11 +7728,10 @@ pub fn print_ast<'a, W: WriterTrait, const ASCII_ONLY: bool, const GENERATE_SOUR
     bump: &'a bun_alloc::Arena,
     tree: &'a Ast,
     mut symbols: js_ast::symbol::Map,
-    source: &'a bun_ast::Source,
+    source: &'a bun_ast::Source<'a>,
     opts: Options<'a>,
 ) -> crate::Result<usize> {
-    let _restore =
-        bun_crash_handler::scoped_action(bun_crash_handler::Action::Print(source.path.text));
+    bun_crash_handler::scoped_action!(bun_crash_handler::Action::Print(source.path.text));
 
     // `Renamer<'r,'src>` is invariant in `'src` (it holds `&'r mut`
     // NoOpRenamer<'src>`), so the two arms must agree on `'src`; constructing the
@@ -7969,9 +7997,9 @@ pub fn print<'a, const GENERATE_SOURCE_MAPS: bool>(
     bump: &'a bun_alloc::Arena,
     target: bun_ast::Target,
     ast: &Ast,
-    source: &'a bun_ast::Source,
+    source: &'a bun_ast::Source<'a>,
     opts: Options<'a>,
-    import_records: &'a [ImportRecord],
+    import_records: &'a [ImportRecord<'a>],
     parts: &[js_ast::Part],
     renamer: rename::Renamer<'a, 'a>,
 ) -> PrintResult {
@@ -8000,9 +8028,9 @@ pub fn print_with_writer<'a, W: WriterTrait, const GENERATE_SOURCE_MAPS: bool>(
     bump: &'a bun_alloc::Arena,
     target: bun_ast::Target,
     ast: &Ast,
-    source: &'a bun_ast::Source,
+    source: &'a bun_ast::Source<'a>,
     opts: Options<'a>,
-    import_records: &'a [ImportRecord],
+    import_records: &'a [ImportRecord<'a>],
     parts: &[js_ast::Part],
     renamer: rename::Renamer<'a, 'a>,
 ) -> PrintResult {
@@ -8041,14 +8069,13 @@ pub(crate) fn print_with_writer_and_platform<
     mut writer: W,
     bump: &'a bun_alloc::Arena,
     ast: &Ast,
-    source: &'a bun_ast::Source,
+    source: &'a bun_ast::Source<'a>,
     opts: Options<'a>,
-    import_records: &'a [ImportRecord],
+    import_records: &'a [ImportRecord<'a>],
     parts: &[js_ast::Part],
     renamer: rename::Renamer<'a, 'a>,
 ) -> PrintResult {
-    let _restore =
-        bun_crash_handler::scoped_action(bun_crash_handler::Action::Print(source.path.text));
+    bun_crash_handler::scoped_action!(bun_crash_handler::Action::Print(source.path.text));
 
     // See `print_ast`: pre-size the output buffer to avoid grow+memmove churn.
     writer.reserve(source.contents().len() as u64);

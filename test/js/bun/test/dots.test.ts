@@ -139,7 +139,7 @@ test("a console group with no label does not break the line of dots", async () =
   });
 });
 
-test("a call in a test ends the line of dots and prints the file header only when it prints", async () => {
+test.concurrent("a call in a test ends the line of dots and prints the file header only when it prints", async () => {
   // Each file has three tests, so a dot is on the line when the second test makes its call.
   const files = lateHeaderFiles.map(({ file, prints }) => (prints ? `.\n\n${file}:\n${prints}..` : "..."));
   const tests = lateHeaderFiles.length * 3;
@@ -154,7 +154,7 @@ test("a call in a test ends the line of dots and prints the file header only whe
   });
 });
 
-test("--parallel prints no empty line above console output or above the error of a test", async () => {
+test.concurrent("--parallel prints no empty line above console output or above the error of a test", async () => {
   // A test passes first, so the worker has sent a dot when the second test prints.
   const fixture = (call: string) => `
     import { test } from "bun:test";

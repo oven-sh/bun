@@ -52,6 +52,10 @@ const calls = [
   { name: "time", call: `console.time("time-label")`, prints: "" },
   { name: "countReset", call: `console.countReset("count-label")`, prints: "" },
   { name: "assert-true", call: `console.assert(true)`, prints: "" },
+  // These print nothing when they have no arguments.
+  { name: "dir-no-arguments", call: `console.dir()`, prints: "" },
+  { name: "dirxml-no-arguments", call: `console.dirxml()`, prints: "" },
+  { name: "table-no-arguments", call: `console.table()`, prints: "" },
   // Colors are off in the test environment, so this writes no escape sequence.
   { name: "clear", call: `console.clear()`, prints: "" },
 ];

@@ -48,6 +48,32 @@ struct ProcessInfo {
     end_time: Option<Instant>,
 }
 
+#[derive(Clone, Copy)]
+enum Stream {
+    Stdout,
+    Stderr,
+}
+
+/// One output pipe of a script. It is its reader's parent, so a chunk is known to come from it.
+pub(crate) struct PipeReader<'a> {
+    reader: BufferedReader,
+    handle: *mut ProcessHandle<'a>, // set in ProcessHandle::start() before the reader starts
+    stream: Stream,
+    /// Line renderer: the unterminated last line read from this pipe.
+    line_buffer: Vec<u8>,
+}
+
+impl PipeReader<'_> {
+    fn new(stream: Stream) -> Self {
+        Self {
+            reader: BufferedReader::init::<Self>(),
+            handle: core::ptr::null_mut(),
+            stream,
+            line_buffer: Vec::new(),
+        }
+    }
+}
+
 // `state` is a backref into the owning `State` (which holds `handles: []ProcessHandle`),
 // and `dependents` holds raw pointers into that same `handles` slice. This is
 // self-referential; kept as raw pointers per LIFETIMES.tsv (BACKREF).
@@ -55,8 +81,8 @@ pub(crate) struct ProcessHandle<'a> {
     config: &'a ScriptConfig,
     state: bun_ptr::BackRef<State<'a>, bun_ptr::Mut>,
 
-    stdout: BufferedReader,
-    stderr: BufferedReader,
+    stdout: PipeReader<'a>,
+    stderr: PipeReader<'a>,
     /// Pipes started and not yet at EOF/error; a script is finished only when
     /// its process has exited and this is 0 (see `State::maybe_finish`).
     remaining_fds: i8,
@@ -64,6 +90,7 @@ pub(crate) struct ProcessHandle<'a> {
     /// `remaining_scripts`, so a later pipe/exit event or the abort sweep
     /// cannot finish it twice.
     finished: bool,
+    /// Redraw renderer: what both pipes wrote, in the order it was read.
     buffer: Vec<u8>,
 
     process: Option<ProcessInfo>,
@@ -151,17 +178,21 @@ impl<'a> ProcessHandle<'a> {
         let (stdout_pipe, stderr_pipe) = (spawned.stdout.take(), spawned.stderr.take());
         let process = spawned.to_process_handle(EventLoopHandle::init_mini(state.event_loop));
 
-        let handle_ptr = std::ptr::from_mut::<ProcessHandle<'a>>(handle).cast::<c_void>();
-        handle.stdout.set_parent(handle_ptr);
-        handle.stderr.set_parent(handle_ptr);
+        let handle_ptr = std::ptr::from_mut::<ProcessHandle<'a>>(handle);
+        handle.stdout.handle = handle_ptr;
+        handle.stderr.handle = handle_ptr;
+        let stdout_parent = (&raw mut handle.stdout).cast::<c_void>();
+        handle.stdout.reader.set_parent(stdout_parent);
+        let stderr_parent = (&raw mut handle.stderr).cast::<c_void>();
+        handle.stderr.reader.set_parent(stderr_parent);
 
         #[cfg(windows)]
         {
             if let spawn::WindowsStdioResult::Buffer(pipe) = stdout_pipe {
-                handle.stdout.set_source(bun_io::Source::Pipe(pipe));
+                handle.stdout.reader.set_source(bun_io::Source::Pipe(pipe));
             }
             if let spawn::WindowsStdioResult::Buffer(pipe) = stderr_pipe {
-                handle.stderr.set_source(bun_io::Source::Pipe(pipe));
+                handle.stderr.reader.set_source(bun_io::Source::Pipe(pipe));
             }
         }
 
@@ -170,20 +201,20 @@ impl<'a> ProcessHandle<'a> {
             if let Some(stdout) = stdout_fd {
                 let _ = sys::set_nonblocking(stdout);
                 handle.remaining_fds += 1;
-                handle.stdout.start(stdout, true)?;
+                handle.stdout.reader.start(stdout, true)?;
             }
             if let Some(stderr) = stderr_fd {
                 let _ = sys::set_nonblocking(stderr);
                 handle.remaining_fds += 1;
-                handle.stderr.start(stderr, true)?;
+                handle.stderr.reader.start(stderr, true)?;
             }
         }
         #[cfg(not(unix))]
         {
             handle.remaining_fds += 1;
-            handle.stdout.start_with_current_pipe()?;
+            handle.stdout.reader.start_with_current_pipe()?;
             handle.remaining_fds += 1;
-            handle.stderr.start_with_current_pipe()?;
+            handle.stderr.reader.start_with_current_pipe()?;
         }
 
         handle.process = Some(ProcessInfo {
@@ -228,7 +259,10 @@ impl<'a> ProcessHandle<'a> {
     unsafe fn drain_and_close_pipes(this: *mut Self) {
         // SAFETY: caller contract; raw-ptr reborrows end before each dispatch.
         unsafe {
-            for reader in [&raw mut (*this).stdout, &raw mut (*this).stderr] {
+            for reader in [
+                &raw mut (*this).stdout.reader,
+                &raw mut (*this).stderr.reader,
+            ] {
                 // `is_done()` = EOF already counted out of `remaining_fds`.
                 #[cfg(unix)]
                 if !(*reader).is_done() && (*reader).get_fd() != sys::Fd::INVALID {
@@ -243,12 +277,12 @@ impl<'a> ProcessHandle<'a> {
         }
     }
 
-    fn on_read_chunk(&mut self, chunk: &[u8], has_more: ReadState) -> bool {
+    fn on_read_chunk(&mut self, stream: Stream, chunk: &[u8], has_more: ReadState) -> bool {
         let _ = has_more;
         let mut state_ref = self.state;
         // SAFETY: state backref valid (see start()).
         let state = unsafe { state_ref.get_mut() };
-        let _ = state.read_chunk(self, chunk);
+        let _ = state.read_chunk(self, stream, chunk);
         true
     }
 
@@ -299,15 +333,19 @@ impl<'a> ProcessHandle<'a> {
 
 // The reader holds no `&mut ProcessHandle` across the callback (it only holds a
 // `&mut` to the embedded `BufferedReader` field, which is disjoint from the
-// fields touched here). `state` backref valid for the lifetime of the run loop.
+// fields touched here). `handle` and `state` backrefs valid for the run loop.
 bun_io::impl_buffered_reader_parent! {
-    FilterRunHandle for ProcessHandle<'a>;
+    FilterRunHandle for PipeReader<'a>;
     has_on_read_chunk = true;
-    on_read_chunk   = |this, chunk, has_more| (*this).on_read_chunk(&chunk, has_more);
-    on_reader_done  = |this| (*this).on_reader_done();
-    on_reader_error = |this, err| (*this).on_reader_error(&err);
-    loop_           = |this| (*this).loop_();
-    event_loop      = |this| (*(*this).state.as_ptr()).event_loop_handle.as_event_loop_ctx();
+    on_read_chunk   = |this, chunk, has_more| {
+        (*(*this).handle).on_read_chunk((*this).stream, &chunk, has_more)
+    };
+    on_reader_done  = |this| (*(*this).handle).on_reader_done();
+    on_reader_error = |this, err| (*(*this).handle).on_reader_error(&err);
+    loop_           = |this| (*(*this).handle).loop_();
+    event_loop      = |this| {
+        (*(*(*this).handle).state.as_ptr()).event_loop_handle.as_event_loop_ctx()
+    };
 }
 
 /// Compile-time ANSI-tag expansion.
@@ -350,28 +388,37 @@ impl<'a> State<'a> {
         self.remaining_scripts == 0
     }
 
-    fn read_chunk(&mut self, handle: &mut ProcessHandle<'a>, chunk: &[u8]) -> crate::Result<()> {
+    fn read_chunk(
+        &mut self,
+        handle: &mut ProcessHandle<'a>,
+        stream: Stream,
+        chunk: &[u8],
+    ) -> crate::Result<()> {
         if self.pretty_output {
             handle.buffer.extend_from_slice(chunk);
             let _ = self.redraw(false);
         } else {
+            let line_buffer = match stream {
+                Stream::Stdout => &mut handle.stdout.line_buffer,
+                Stream::Stderr => &mut handle.stderr.line_buffer,
+            };
             let mut content = chunk;
             self.draw_buf.clear();
-            if !handle.buffer.is_empty() {
+            if !line_buffer.is_empty() {
                 if let Some(i) = strings::index_of_char(content, b'\n') {
                     let i = i as usize;
-                    handle.buffer.extend_from_slice(&content[0..i + 1]);
+                    line_buffer.extend_from_slice(&content[0..i + 1]);
                     content = &content[i + 1..];
                     write!(
                         &mut self.draw_buf,
                         "{} {}: {}",
                         bun_core::fmt::escape_control_chars(&handle.config.package_name),
                         bun_core::fmt::escape_control_chars(&handle.config.script_name),
-                        bstr::BStr::new(&handle.buffer),
+                        bstr::BStr::new(line_buffer),
                     )?;
-                    handle.buffer.clear();
+                    line_buffer.clear();
                 } else {
-                    handle.buffer.extend_from_slice(content);
+                    line_buffer.extend_from_slice(content);
                     return Ok(());
                 }
             }
@@ -388,7 +435,7 @@ impl<'a> State<'a> {
                 content = &content[i + 1..];
             }
             if !content.is_empty() {
-                handle.buffer.extend_from_slice(content);
+                line_buffer.extend_from_slice(content);
             }
             self.flush_draw_buf();
         }
@@ -447,15 +494,21 @@ impl<'a> State<'a> {
         }
         if !self.pretty_output {
             self.draw_buf.clear();
-            // flush any remaining buffer
-            if !handle.buffer.is_empty() {
-                writeln!(
-                    &mut self.draw_buf,
-                    "{}: {}",
-                    bun_core::fmt::escape_control_chars(&handle.config.package_name),
-                    bstr::BStr::new(&handle.buffer),
-                )?;
-                handle.buffer.clear();
+            // flush each pipe's unterminated last line
+            for line_buffer in [
+                &mut handle.stdout.line_buffer,
+                &mut handle.stderr.line_buffer,
+            ] {
+                if !line_buffer.is_empty() {
+                    writeln!(
+                        &mut self.draw_buf,
+                        "{} {}: {}",
+                        bun_core::fmt::escape_control_chars(&handle.config.package_name),
+                        bun_core::fmt::escape_control_chars(&handle.config.script_name),
+                        bstr::BStr::new(line_buffer),
+                    )?;
+                    line_buffer.clear();
+                }
             }
             // print exit status
             match &handle.process.as_ref().unwrap().status {
@@ -1016,8 +1069,8 @@ pub(crate) fn run_scripts_with_filter(
         handles_vec.push(ProcessHandle {
             state: state_ptr,
             config: script,
-            stdout: BufferedReader::init::<ProcessHandle>(),
-            stderr: BufferedReader::init::<ProcessHandle>(),
+            stdout: PipeReader::new(Stream::Stdout),
+            stderr: PipeReader::new(Stream::Stderr),
             buffer: Vec::new(),
             remaining_fds: 0,
             finished: false,

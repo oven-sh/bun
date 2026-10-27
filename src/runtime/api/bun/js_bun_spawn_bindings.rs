@@ -387,6 +387,7 @@ fn spawn_maybe_sync(
         stdio[2] = Stdio::Pipe;
     }
     let mut lazy = false;
+    let mut cancel_stdin_write_on_exit = false;
     let mut on_exit_callback = JSValue::ZERO;
     let mut on_disconnect_callback = JSValue::ZERO;
     // `env_loader()` is the audited safe accessor for the per-VM DotEnv loader
@@ -677,6 +678,9 @@ fn spawn_maybe_sync(
                         lazy = lazy_val.to_boolean();
                     }
                 }
+                cancel_stdin_write_on_exit = args
+                    .fast_get(cx.global(), bun_jsc::BuiltinName::cancelStdinWriteOnExit)?
+                    .is_some_and(|v| v.to_boolean());
             }
 
             if let Some(detached_val) = args.get(cx.global(), "detached")? {
@@ -1480,7 +1484,11 @@ fn spawn_maybe_sync(
         f.set(
             Subprocess::Flags::IS_STDIN_A_READABLE_STREAM,
             promise_for_stream != JSValue::ZERO,
-        )
+        );
+        f.set(
+            Subprocess::Flags::CANCEL_STDIN_WRITE_ON_EXIT,
+            cancel_stdin_write_on_exit,
+        );
     });
 
     // Note: Option (rather than an uninitialized value) since `IPC::Socket`

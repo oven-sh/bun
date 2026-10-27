@@ -12,6 +12,7 @@ const { addAbortSignal } = require("internal/streams/add-abort-signal");
 const { getHighWaterMark, getDefaultHighWaterMark } = require("internal/streams/state");
 const {
   kOnConstructed,
+  kErrorBuffer,
   kState,
   kObjectMode,
   kErrorEmitted,
@@ -341,6 +342,11 @@ WritableState.prototype[kOnConstructed] = function onConstructed(stream) {
   if ((this[kState] & kEnding) !== 0) {
     finishMaybe(stream, this);
   }
+};
+
+// What onwrite() does after a write on a destroyed stream, for a write() that does not go through it (child.stdin).
+WritableState.prototype[kErrorBuffer] = function () {
+  errorBuffer(this);
 };
 
 function Writable(options): void {

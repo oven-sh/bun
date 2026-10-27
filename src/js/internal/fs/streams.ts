@@ -23,6 +23,7 @@ type FSStream = Omit<import("node:fs").ReadStream & import("node:fs").WriteStrea
     destroyed: boolean;
     finished: boolean;
     emitClose: boolean;
+    writing: boolean;
     errored: Error | null;
   };
   flags: string;
@@ -620,7 +621,7 @@ function newCanceledWriteError(): Error {
   return new ErrnoException(ecanceled, "write");
 }
 
-// As in node: the first write destroy() canceled gets `write ECANCELED`, those queued behind it the stream's error.
+// As in node: the first write that destroy() or the child's exit canceled gets `write ECANCELED`, the rest `errored`.
 function canceledWriteError(stream: FSStream, err: any) {
   const canceled = stream[kCanceledWrite];
   if (canceled === undefined || err?.code !== "ECANCELED") return err;
@@ -679,7 +680,12 @@ function finalFast(this: FSStream, cb: (err?: any) => void) {
   try {
     const maybePromise = fileSink.flush();
     if ($isPromise(maybePromise)) {
-      maybePromise.then(() => cb(null), cb);
+      // With bytes that write() acknowledged held back, the flush is what parks.
+      const stream = this;
+      maybePromise.then(
+        () => cb(null),
+        err => cb(canceledWriteError(stream, err)),
+      );
       return;
     }
   } catch (err) {
@@ -874,7 +880,9 @@ function destroySinkStream(this: FSStream, err: Error | null, cb: (err?: Error |
   state.emitClose = false;
   if ($isPromise(outcome)) {
     this[kCanceledWrite] = null;
-    const afterWrites = emitCloseNextTick.bind(undefined, this);
+    // As under node, a write is in flight until its callback has run: Writable holds the other callbacks until then.
+    state.writing = true;
+    const afterWrites = afterParkedWrites.bind(undefined, this);
     outcome.$then(afterWrites, afterWrites);
   } else {
     // write() acknowledged bytes the pipe did not take. No callback is left to tell: the stream keeps the error.
@@ -883,6 +891,15 @@ function destroySinkStream(this: FSStream, err: Error | null, cb: (err?: Error |
     process.nextTick(emitCloseNextTick, this);
   }
   cb(err);
+}
+
+// As node's onwriteError(): https://github.com/nodejs/node/blob/v26.3.0/lib/internal/streams/writable.js#L602-L613
+function afterParkedWrites(stream: FSStream) {
+  const state: any = stream._writableState;
+  state.writing = false;
+  // A callback that throws takes the uncaught path as under node, not that of a rejected promise.
+  require("internal/shared").guardCallback(() => state[require("internal/streams/utils").kErrorBuffer]())();
+  emitCloseNextTick(stream);
 }
 
 function emitCloseNextTick(stream: FSStream) {

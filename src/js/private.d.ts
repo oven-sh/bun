@@ -118,6 +118,8 @@ declare module "bun" {
       cmd: string[];
       stdio: NodeStdio;
       onDisconnect?(ok: boolean): void;
+      // Private: a write parked on stdin at the child's exit fails with ECANCELED after the exit, as under node.
+      $cancelStdinWriteOnExit?: true;
     }
     interface NodeSpawnSyncOptions extends Omit<
       Bun.Spawn.SpawnSyncOptions<Bun.SpawnOptions.Writable, Bun.SpawnOptions.Readable, Bun.SpawnOptions.Readable>,

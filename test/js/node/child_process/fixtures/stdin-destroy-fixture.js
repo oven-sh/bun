@@ -45,6 +45,16 @@ const cases = {
     stdin.write("y", err => say(`second ${name(err)}`));
     stdin.destroy(boom());
   },
+  "end(callback), then destroy()": (stdin, say) => {
+    park(stdin, say);
+    stdin.end(err => say(`end ${name(err)}`));
+    stdin.destroy();
+  },
+  "destroy(), then end(callback)": (stdin, say) => {
+    park(stdin, say);
+    stdin.destroy();
+    stdin.end(err => say(`end ${name(err)}`));
+  },
   "write after destroy()": (stdin, say) => {
     park(stdin, say);
     stdin.destroy();

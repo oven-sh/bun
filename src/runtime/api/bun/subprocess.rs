@@ -226,6 +226,8 @@ bitflags::bitflags! {
     #[derive(Clone, Copy, Default)]
     pub struct Flags: u8 {
         const IS_SYNC                      = 1 << 0;
+        /// Set by `node:child_process`: a write parked on stdin at the child's exit is canceled, as in node.
+        const CANCEL_STDIN_WRITE_ON_EXIT   = 1 << 1;
         const HAS_STDIN_DESTRUCTOR_CALLED  = 1 << 2;
         const FINALIZED                    = 1 << 3;
         const DEREF_ON_STDIN_DESTROYED     = 1 << 4;
@@ -1007,7 +1009,13 @@ impl Subprocess<'_> {
             // free `this`, so no `&mut FileSink` is materialized at the boundary.
             // SAFETY: `pipe_ptr` is the canonical heap pointer with write+dealloc
             // provenance, held live by the `Writable::Pipe`/cache +1.
-            unsafe { FileSink::on_attached_process_exit(pipe_ptr.as_ptr(), status) };
+            unsafe {
+                FileSink::on_attached_process_exit(
+                    pipe_ptr.as_ptr(),
+                    status,
+                    self.flags.get().contains(Flags::CANCEL_STDIN_WRITE_ON_EXIT),
+                )
+            };
 
             if must_deref {
                 self.deref();

@@ -811,6 +811,16 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         self.outgoing.size()
     }
 
+    /// What a send of no bytes fails with: `EPIPE` once no process holds the other end. `None` for a non-socket.
+    pub fn socket_write_error(&self) -> Option<sys::Error> {
+        if !matches!(self.get_file_type(), FileType::Socket) {
+            return None;
+        }
+        write_to_socket(self.get_fd(), &[])
+            .err()
+            .filter(|err| !err.is_retry())
+    }
+
     pub(crate) fn should_buffer(&self, addition: usize) -> bool {
         !self.force_sync && self.outgoing.size() + addition < Self::CHUNK_SIZE
     }

@@ -1607,6 +1607,13 @@ impl<'a> Parser<'a> {
                         {
                             // `module.constructor` and other uses of `module` need the wrapper.
                             p.deoptimize_commonjs_named_exports();
+                        } else if p.module_exports_rewrite_count > p.module_exports_lifted_count
+                            && p.symbols.as_slice()[p.module_ref.inner_index() as usize]
+                                .use_count_estimate
+                                > 0
+                        {
+                            // A `module.exports` value in a live statement needs the wrapper (#12518).
+                            p.deoptimize_commonjs_named_exports();
                         }
                     }
                 }

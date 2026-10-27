@@ -826,23 +826,23 @@ describe("bundler", () => {
     },
     run: { stdout: "true 1\n1" },
   });
-  // `module.exports` under cjs2esm rewrites to ESpecial::ModuleExports, which
-  // prints as the `exports_*` namespace symbol. Output-shape check only: a bare
-  // `module.exports` value-read under cjs2esm currently emits a reference that
-  // has no declaration (a separate pre-existing issue), so the bundle cannot be
-  // executed here.
+  // `delete (null ?? module.exports)` evaluates to a value, so the result is
+  // `true`. The file uses `module.exports` as a value, so it keeps its CommonJS
+  // wrapper, and the printer has to keep the operand a value: `(0, exports)`.
   itBundled("cjs2esm/DeleteFoldedModuleExportsRef", {
     files: {
       "/entry.js": /* js */ `
         exports.a = 1;
         globalThis.r = delete (null ?? module.exports);
+        console.log(globalThis.r, exports.a);
       `,
     },
     onAfterBundle: api => {
       const code = api.readFile("out.js");
-      expect(code).toMatch(/delete\s+\(0,\s*exports_\w+\)/);
-      expect(code).not.toMatch(/delete\s+exports_\w+\b/);
+      expect(code).toMatch(/delete\s+\(0,\s*exports\)/);
+      expect(code).not.toMatch(/delete\s+exports\b/);
     },
+    run: { stdout: "true 1" },
   });
   // https://github.com/oven-sh/bun/issues/4565
   // `exports.x = ...` as the unbraced body of if/while/do/else must not be
@@ -2619,5 +2619,465 @@ describe("bundler", () => {
     run: {
       stdout: "var\nmain",
     },
+  });
+  // A `module.exports` that is not the target of a property access is a value:
+  // the file's real exports object. Code can add, remove or freeze its keys at
+  // run time, so the file keeps its CommonJS wrapper.
+  // https://github.com/oven-sh/bun/issues/12518
+  itBundled("cjs2esm/ObjectAssignModuleExportsDeoptimizes", {
+    files: {
+      "/entry.js": /* js */ `
+        import { createContext, useState, known } from './lib.js';
+        console.log(JSON.stringify([createContext(), useState(), known]));
+      `,
+      "/lib.js": /* js */ `
+        module.exports.known = 1;
+        Object.assign(module.exports, require('./other.js'));
+      `,
+      "/other.js": /* js */ `
+        module.exports.createContext = function() { return 'context'; };
+        module.exports.useState = function() { return 'state'; };
+      `,
+    },
+    cjs2esm: { unhandled: ["/lib.js", "/other.js"] },
+    run: { stdout: '["context","state",1]' },
+  });
+  // https://github.com/oven-sh/bun/issues/12518: the shape of the `rehackt` file, over a relative require
+  itBundled("cjs2esm/ObjectAssignModuleExportsWithDeadHint", {
+    files: {
+      "/entry.js": /* js */ `
+        import { createContext, known } from './lib.js';
+        console.log(JSON.stringify([createContext(), known]));
+      `,
+      "/lib.js": /* js */ `
+        "use strict";
+        if (0) {
+          module.exports = require('./other.js');
+        }
+        module.exports.known = 1;
+        Object.assign(module.exports, require('./other.js'));
+      `,
+      "/other.js": /* js */ `
+        module.exports.createContext = function() { return 'context'; };
+      `,
+    },
+    cjs2esm: { unhandled: ["/lib.js", "/other.js"] },
+    run: { stdout: '["context",1]' },
+  });
+  // https://github.com/oven-sh/bun/issues/12518: `rehackt@0.1.0/index.js` as it is, imported the
+  // way `@apollo/client` imports it. `react` is on the unwrap list, so `require("react")` becomes
+  // an import: of a lifted file in the first case, of a wrapped one in the second.
+  {
+    const reactBody = liftedReact["/node_modules/react/index.js"];
+    const reacts = {
+      LiftedReact: liftedReact,
+      WrappedReact: {
+        "/node_modules/react/package.json": liftedReact["/node_modules/react/package.json"],
+        "/node_modules/react/index.js": /* js */ `
+          'use strict';
+          if (process.env.NODE_ENV === 'production') {
+            module.exports = require('./cjs/react.production.min.js');
+          } else {
+            module.exports = require('./cjs/react.development.js');
+          }
+        `,
+        "/node_modules/react/cjs/react.production.min.js": reactBody,
+        "/node_modules/react/cjs/react.development.js": reactBody,
+      },
+    };
+    for (const [name, react] of Object.entries(reacts)) {
+      itBundled(`cjs2esm/ModuleExportsValueRehacktOver${name}`, {
+        files: {
+          "/entry.js": /* js */ `
+            import * as React from "rehackt";
+            import { useState, useId } from "rehackt";
+            import * as RealReact from "react";
+            console.log(
+              "createElement" in React,
+              React.createElement("div").type,
+              useState(1)[0],
+              useId(),
+              React.version,
+              React.createElement === RealReact.createElement,
+            );
+          `,
+          "/node_modules/rehackt/package.json": /* json */ `
+            { "name": "rehackt", "version": "0.1.0", "main": "index.js" }
+          `,
+          "/node_modules/rehackt/index.js": /* js */ `
+            "use strict";
+            if (0) {
+              // Trick cjs-module-lexer into adding named exports for all React exports.
+              // (if imported with \`import()\`, they will appear in \`.default\` as well.)
+              // This way, cjs-module-lexer will let all of react's (named) exports through unchanged.
+              module.exports = require("react");
+            }
+            // We don't want bundlers to error when they encounter usage of any of these exports.
+            // It's up to the package author to ensure that if they access React internals,
+            // they do so in a safe way that won't break if React changes how they use these internals.
+            // (e.g. only access them in development, and only in an optional way that won't
+            // break if internals are not there or do not have the expected structure)
+            // @ts-ignore
+            module.exports.__SECRET_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED = undefined;
+            // @ts-ignore
+            module.exports.__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE = undefined;
+            // @ts-ignore
+            module.exports.__SERVER_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE = undefined;
+            // Here we actually pull in the React library and add everything
+            // it exports to our own \`module.exports\`.
+            // If React suddenly were to add one of the above "polyfilled" exports,
+            // the React version would overwrite our version, so this should be
+            // future-proof.
+            Object.assign(module.exports, require("react"));
+          `,
+          ...react,
+        },
+        run: { stdout: "true div 1 id 19.0.0 true" },
+      });
+    }
+  }
+  itBundled("cjs2esm/ObjectAssignModuleExportsNamespaceImport", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as lib from './lib.js';
+        console.log(JSON.stringify([lib.createContext(), lib.known]));
+      `,
+      "/lib.js": /* js */ `
+        module.exports.known = 1;
+        Object.assign(module.exports, require('./other.js'));
+      `,
+      "/other.js": /* js */ `
+        module.exports.createContext = function() { return 'context'; };
+      `,
+    },
+    cjs2esm: { unhandled: ["/lib.js", "/other.js"] },
+    run: { stdout: '["context",1]' },
+  });
+  itBundled("cjs2esm/ModuleExportsEscapesAsValue", {
+    files: {
+      "/entry.js": /* js */ `
+        import { added, known } from './lib.js';
+        console.log(JSON.stringify([added, known]));
+      `,
+      "/lib.js": /* js */ `
+        module.exports.known = 1;
+        (function(obj) { obj.added = 2; })(module.exports);
+      `,
+    },
+    cjs2esm: { unhandled: ["/lib.js"] },
+    run: { stdout: "[2,1]" },
+  });
+  // https://github.com/oven-sh/bun/issues/14939: the order of wasm-bindgen output
+  itBundled("cjs2esm/ModuleExportsStoredBeforeAssign", {
+    files: {
+      "/entry.js": /* js */ `
+        import { transform } from './wasm.js';
+        console.log(transform());
+      `,
+      "/wasm.js": /* js */ `
+        let imports = {};
+        imports['__wbindgen_placeholder__'] = module.exports;
+        module.exports.transform = function() {
+          return imports['__wbindgen_placeholder__'] === module.exports ? 'ok' : 'bad';
+        };
+      `,
+    },
+    cjs2esm: { unhandled: ["/wasm.js"] },
+    run: { stdout: "ok" },
+  });
+  itBundled("cjs2esm/ModuleExportsComputedIndexDeoptimizes", {
+    files: {
+      "/entry.js": /* js */ `
+        import { added, known } from './lib.js';
+        console.log(JSON.stringify([added, known]));
+      `,
+      "/lib.js": /* js */ `
+        module.exports.known = 1;
+        for (const k of ['added']) module.exports[k] = 2;
+      `,
+    },
+    cjs2esm: { unhandled: ["/lib.js"] },
+    run: { stdout: "[2,1]" },
+  });
+  itBundled("cjs2esm/ModuleExportsPropertyReadStillConverts", {
+    files: {
+      "/entry.js": /* js */ `
+        import { a, b } from './lib.js';
+        console.log(JSON.stringify([a, b]));
+      `,
+      "/lib.js": /* js */ `
+        module.exports.a = 1;
+        module.exports.b = module.exports.a + 1;
+      `,
+    },
+    cjs2esm: true,
+    run: { stdout: "[1,2]" },
+  });
+  // A default import put these files back into a wrapper until 1.4.1. The
+  // importer reads properties only, so the linker has no reason to wrap.
+  for (const [name, line] of Object.entries({
+    SelfAsDefault: "exports.default = module.exports;",
+    StoredInGlobal: "globalThis.myLib = module.exports;",
+    Frozen: "Object.freeze(module.exports);",
+  })) {
+    itBundled(`cjs2esm/ModuleExportsValueDefaultImport${name}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import lib from './lib.cjs';
+          console.log(lib.add(1, 2));
+        `,
+        "/lib.cjs": /* js */ `
+          exports.add = (a, b) => a + b;
+          ${line}
+        `,
+      },
+      cjs2esm: { unhandled: ["/lib.cjs"] },
+      run: { stdout: "3" },
+    });
+  }
+  for (const [name, options] of Object.entries({
+    TargetBun: { target: "bun" },
+    BuildAPIMinifyIdentifiers: { backend: "api", minifyIdentifiers: true },
+  } as const)) {
+    itBundled(`cjs2esm/ModuleExportsValue${name}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import lib, { createContext } from './lib.cjs';
+          console.log(lib.known, createContext(), lib.default.known);
+        `,
+        "/lib.cjs": /* js */ `
+          module.exports.known = 1;
+          Object.assign(module.exports, require('./other.cjs'));
+          exports.default = module.exports;
+        `,
+        "/other.cjs": /* js */ `
+          module.exports.createContext = function() { return 'context'; };
+        `,
+      },
+      ...options,
+      run: { stdout: "1 context 1" },
+    });
+  }
+  // The keys of `module.exports` are the ones the file has written so far.
+  itBundled("cjs2esm/ModuleExportsValueKeysBetweenWrites", {
+    files: {
+      "/entry.js": /* js */ `
+        import lib from './lib.cjs';
+        import { out } from './lib.cjs';
+        import * as star from './star.js';
+        console.log(JSON.stringify([lib.out ?? lib.missing(), out, star.out, lib.c]));
+      `,
+      "/star.js": /* js */ `
+        export * from './lib.cjs';
+      `,
+      "/lib.cjs": /* js */ `
+        exports.a = 1;
+        exports.b = 2;
+        exports.out = Object.keys(module.exports);
+        exports.c = 3;
+      `,
+    },
+    cjs2esm: { unhandled: ["/lib.cjs"] },
+    run: { stdout: '[["a","b"],["a","b"],["a","b"],3]' },
+  });
+  // One file per parent expression that leaves the `module.exports` a value.
+  {
+    const parents = {
+      typeof: `exports.out = typeof module.exports;`,
+      in: `exports.out = "add" in module.exports;`,
+      optional: `exports.out = module.exports?.add(1, 2);`,
+      spread: `exports.out = Object.keys({ ...module.exports }).join();`,
+      index: `exports.out = Object.keys(module["exports"]).join();`,
+      computed: `exports.out = module.exports[String("add")](1, 2);`,
+      nested: `
+        exports.self = function () { var exports = 1; return module.exports; };
+        exports.out = typeof exports.self().add;
+      `,
+      destructure: `
+        const { add } = module.exports;
+        exports.out = add(1, 2);
+      `,
+    };
+    const names = Object.keys(parents);
+    itBundled("cjs2esm/ModuleExportsValueParents", {
+      files: {
+        "/entry.js": /* js */ `
+          ${names.map(name => `import { out as ${name}_ } from './${name}.cjs';`).join("\n")}
+          console.log(${names.map(name => `${name}_`).join(", ")});
+        `,
+        ...Object.fromEntries(names.map(name => [`/${name}.cjs`, `exports.add = (a, b) => a + b;\n${parents[name]}`])),
+      },
+      cjs2esm: { unhandled: names.map(name => `/${name}.cjs`) },
+      run: { stdout: "object true 3 add add 3 function 3" },
+    });
+  }
+  itBundled("cjs2esm/ModuleExportsValueInEntryPoint", {
+    files: {
+      "/entry.js": /* js */ `
+        module.exports.answer = 42;
+        console.log(typeof module.exports, Object.keys(module.exports).join());
+      `,
+    },
+    run: { stdout: "object answer" },
+  });
+  // `dead.cjs` only reads `module.exports` in dead code, so it stays lifted.
+  itBundled("cjs2esm/ModuleExportsValueSideEffectImport", {
+    files: {
+      "/entry.js": /* js */ `
+        import './lib.cjs';
+        import { d } from './dead.cjs';
+        console.log(globalThis.myLib.add(1, 2), d, globalThis.dead);
+      `,
+      "/lib.cjs": /* js */ `
+        exports.add = (a, b) => a + b;
+        globalThis.myLib = module.exports;
+      `,
+      "/dead.cjs": /* js */ `
+        exports.d = 1;
+        if (0) { globalThis.dead = module.exports; }
+      `,
+    },
+    cjs2esm: { unhandled: ["/lib.cjs"] },
+    run: { stdout: "3 1 undefined" },
+  });
+  itBundled("cjs2esm/ModuleExportsValueSplitDynamicImport", {
+    files: {
+      "/entry.js": /* js */ `
+        const ns = await import('./lib.cjs');
+        console.log(ns.out, ns.default.out, Object.keys(ns.default).join());
+      `,
+      "/lib.cjs": /* js */ `
+        exports.a = 1;
+        exports.out = Object.keys(module.exports).join();
+        exports.b = 2;
+      `,
+    },
+    outdir: "/out",
+    splitting: true,
+    run: { file: "/out/entry.js", stdout: "a a a,out,b" },
+  });
+  // `require()` in a package of the React family reaches a lifted file as an import.
+  itBundled("cjs2esm/ModuleExportsValueReactFamilyRequire", {
+    files: {
+      "/entry.js": /* js */ `
+        import { now } from "react-dom";
+        console.log(now());
+      `,
+      "/node_modules/react-dom/package.json": /* json */ `
+        { "name": "react-dom", "version": "19.0.0", "main": "index.js" }
+      `,
+      "/node_modules/react-dom/index.js": /* js */ `
+        'use strict';
+        var Scheduler = require("scheduler");
+        exports.now = function () { return Scheduler.unstable_now() + globalThis.scheduler.unstable_now(); };
+      `,
+      "/node_modules/scheduler/package.json": /* json */ `
+        { "name": "scheduler", "version": "0.25.0", "main": "index.js" }
+      `,
+      "/node_modules/scheduler/index.js": /* js */ `
+        'use strict';
+        exports.unstable_now = function () { return 1; };
+        globalThis.scheduler = module.exports;
+      `,
+    },
+    cjs2esm: { unhandled: ["/node_modules/scheduler/index.js"] },
+    run: { stdout: "2" },
+  });
+  itBundled("cjs2esm/ModuleExportsValueTypeScriptImportType", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { out } from './lib';
+        console.log(JSON.stringify(out));
+      `,
+      "/lib.ts": /* ts */ `
+        import type { T } from './t';
+        exports.a = 1 satisfies T;
+        exports.b = 2;
+        exports.out = Object.keys(module.exports);
+      `,
+      "/t.ts": /* ts */ `
+        export type T = number;
+      `,
+    },
+    entryPoints: ["/entry.ts"],
+    cjs2esm: { unhandled: ["/lib.ts"] },
+    run: { stdout: '["a","b"]' },
+  });
+  itBundled("cjs2esm/ModuleExportsValueAfterDeadExportsAssign", {
+    files: {
+      "/entry.js": /* js */ `
+        import { b } from './lib.cjs';
+        console.log(b);
+      `,
+      "/lib.cjs": /* js */ `
+        if (false) { exports = {}; }
+        exports.b = typeof module.exports;
+      `,
+    },
+    run: { stdout: "object" },
+  });
+  // The parser removes the unused function statement. Its lifted read does
+  // not hide the value in the next statement.
+  itBundled("cjs2esm/ModuleExportsValueBesideRemovedStatement", {
+    files: {
+      "/entry.js": /* js */ `
+        import { y } from './lib.cjs';
+        console.log(y, globalThis.held.y);
+      `,
+      "/lib.cjs": /* js */ `
+        exports.y = 1;
+        (function unused() { return module.exports.y; });
+        globalThis.held = module.exports;
+      `,
+    },
+    cjs2esm: { unhandled: ["/lib.cjs"] },
+    run: { stdout: "1 1" },
+  });
+  // The parser removes the only statement that uses `module`, so no value is
+  // left and the file is still lifted.
+  itBundled("cjs2esm/ModuleExportsValueOnlyInRemovedStatementStillConverts", {
+    files: {
+      "/entry.js": /* js */ `
+        import { y } from './lib.cjs';
+        console.log(y);
+      `,
+      "/lib.cjs": /* js */ `
+        exports.y = 1;
+        (function unused() { return module.exports; });
+      `,
+    },
+    cjs2esm: true,
+    run: { stdout: "1" },
+  });
+  // --minify-syntax substitutes a single-use `const` and visits the result
+  // again. A `module.exports` made or consumed there is still a value.
+  itBundled("cjs2esm/ModuleExportsValueAliasMinifySyntax", {
+    files: {
+      "/entry.js": /* js */ `
+        import { get as a } from './alias-member.cjs';
+        import { get as b } from './alias-typeof.cjs';
+        import { get as c } from './module-alias-member.cjs';
+        import { get as d } from './module-alias-typeof.cjs';
+        console.log(a(), b(), c(), d());
+      `,
+      "/alias-member.cjs": /* js */ `
+        exports.a = 1;
+        exports.get = function () { const m = module.exports; return m.a + 1; };
+      `,
+      "/alias-typeof.cjs": /* js */ `
+        exports.a = 1;
+        exports.get = function () { const m = module.exports; return typeof m; };
+      `,
+      "/module-alias-member.cjs": /* js */ `
+        exports.a = 1;
+        exports.get = function () { const m = module; return m.exports.a + 1; };
+      `,
+      "/module-alias-typeof.cjs": /* js */ `
+        exports.a = 1;
+        exports.get = function () { const m = module; return typeof m.exports; };
+      `,
+    },
+    minifySyntax: true,
+    run: { stdout: "2 object 2 object" },
   });
 });

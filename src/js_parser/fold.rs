@@ -729,6 +729,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         new_ref
                                     };
                                     p.note_commonjs_export_use(name, ref_, identifier_opts);
+                                    // Not on a substitution revisit: it records no use of `$name`.
+                                    if !p.is_revisit_for_substitution {
+                                        p.module_exports_lifted_count += 1;
+                                    }
 
                                     p.record_usage(ref_);
 

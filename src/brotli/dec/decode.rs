@@ -292,14 +292,14 @@ impl Default for Decoder {
 fn decode_symbol(bits: u64, table: &[HuffmanCode], br: &mut BitReader) -> Checked<u32> {
     let index = (bits & HUFFMAN_TABLE_MASK) as usize;
     let mut entry = table.at(index)?;
-    if u32::from(entry.bits) > HUFFMAN_TABLE_BITS {
-        let nbits = u32::from(entry.bits) - HUFFMAN_TABLE_BITS;
+    if u32::from(entry.bits()) > HUFFMAN_TABLE_BITS {
+        let nbits = u32::from(entry.bits()) - HUFFMAN_TABLE_BITS;
         br.drop_bits(HUFFMAN_TABLE_BITS);
         let sub_index = ((bits >> HUFFMAN_TABLE_BITS) & bit_mask(nbits)) as usize;
-        entry = table.at(index + usize::from(entry.value) + sub_index)?;
+        entry = table.at(index + usize::from(entry.value()) + sub_index)?;
     }
-    br.drop_bits(u32::from(entry.bits));
-    Ok(u32::from(entry.value))
+    br.drop_bits(u32::from(entry.bits()));
+    Ok(u32::from(entry.value()))
 }
 
 /// Peeks 16 bits and drops 0 to 15 of them.
@@ -315,16 +315,16 @@ fn safe_decode_symbol(table: &[HuffmanCode], br: &mut BitReader) -> Checked<Opti
     let mut available_bits = br.available_bits();
     if available_bits == 0 {
         let entry = table.at(0)?;
-        return Ok((entry.bits == 0).then_some(u32::from(entry.value)));
+        return Ok((entry.bits() == 0).then_some(u32::from(entry.value())));
     }
     let val = br.bits_unmasked();
     let index = (val & HUFFMAN_TABLE_MASK) as usize;
     let entry = table.at(index)?;
-    let bits = u32::from(entry.bits);
+    let bits = u32::from(entry.bits());
     if bits <= HUFFMAN_TABLE_BITS {
         if bits <= available_bits {
             br.drop_bits(bits);
-            return Ok(Some(u32::from(entry.value)));
+            return Ok(Some(u32::from(entry.value())));
         }
         return Ok(None);
     }
@@ -334,13 +334,13 @@ fn safe_decode_symbol(table: &[HuffmanCode], br: &mut BitReader) -> Checked<Opti
 
     let sub_index = ((val & bit_mask(bits)) >> HUFFMAN_TABLE_BITS) as usize;
     available_bits -= HUFFMAN_TABLE_BITS;
-    let entry = table.at(index + usize::from(entry.value) + sub_index)?;
-    if available_bits < u32::from(entry.bits) {
+    let entry = table.at(index + usize::from(entry.value()) + sub_index)?;
+    if available_bits < u32::from(entry.bits()) {
         return Ok(None);
     }
 
-    br.drop_bits(HUFFMAN_TABLE_BITS + u32::from(entry.bits));
-    Ok(Some(u32::from(entry.value)))
+    br.drop_bits(HUFFMAN_TABLE_BITS + u32::from(entry.bits()));
+    Ok(Some(u32::from(entry.value())))
 }
 
 #[inline(always)]
@@ -384,18 +384,18 @@ fn read_preloaded_symbol(
     input: &[u8],
     preloaded: &mut HuffmanCode,
 ) -> Checked<u32> {
-    let bits = u32::from(preloaded.bits);
+    let bits = u32::from(preloaded.bits());
     let result = if bits > HUFFMAN_TABLE_BITS {
         let val = br.get_16_bits_unmasked(input)?;
-        let index = (val & HUFFMAN_TABLE_MASK) as usize + usize::from(preloaded.value);
+        let index = (val & HUFFMAN_TABLE_MASK) as usize + usize::from(preloaded.value());
         let mask = bit_mask(bits - HUFFMAN_TABLE_BITS);
         br.drop_bits(HUFFMAN_TABLE_BITS);
         let entry = table.at(index + ((val >> HUFFMAN_TABLE_BITS) & mask) as usize)?;
-        br.drop_bits(u32::from(entry.bits));
-        entry.value
+        br.drop_bits(u32::from(entry.bits()));
+        entry.value()
     } else {
         br.drop_bits(bits);
-        preloaded.value
+        preloaded.value()
     };
     *preloaded = preload_symbol(table, br, input)?;
     Ok(u32::from(result))
@@ -616,8 +616,8 @@ impl HeaderArena {
             br.fill_bit_window_32(input)?;
             let index = br.bits_unmasked() & bit_mask(HUFFMAN_MAX_CODE_LENGTH_CODE_LENGTH as u32);
             let entry = self.table.at(index as usize)?;
-            br.drop_bits(u32::from(entry.bits));
-            let code_len = u32::from(entry.value);
+            br.drop_bits(u32::from(entry.bits()));
+            let code_len = u32::from(entry.value());
             if (code_len as usize) < REPEAT_PREVIOUS_CODE_LENGTH {
                 self.process_single_code_length(code_len)?;
             } else {
@@ -654,12 +654,12 @@ impl HeaderArena {
             };
             let index = u64::from(bits) & bit_mask(HUFFMAN_MAX_CODE_LENGTH_CODE_LENGTH as u32);
             let entry = self.table.at(index as usize)?;
-            let entry_bits = u32::from(entry.bits);
+            let entry_bits = u32::from(entry.bits());
             if entry_bits > available_bits {
                 get_byte = true;
                 continue;
             }
-            let code_len = u32::from(entry.value);
+            let code_len = u32::from(entry.value());
             if (code_len as usize) < REPEAT_PREVIOUS_CODE_LENGTH {
                 br.drop_bits(entry_bits);
                 self.process_single_code_length(code_len)?;

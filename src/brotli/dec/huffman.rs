@@ -12,18 +12,26 @@ pub(crate) const HUFFMAN_MAX_SIZE_272: usize = 646;
 
 pub(crate) const HUFFMAN_MAX_CODE_LENGTH_CODE_LENGTH: usize = 5;
 
+/// An entry of a lookup table. One integer, so that a table of them is cleared at once.
 #[derive(Clone, Copy, Default)]
-pub(crate) struct HuffmanCode {
-    /// The symbol, or the offset of the second level table.
-    pub(crate) value: u16,
-    /// How many bits the symbol takes.
-    pub(crate) bits: u8,
-}
+pub(crate) struct HuffmanCode(u32);
 
 impl HuffmanCode {
     #[inline(always)]
     const fn new(bits: u8, value: u16) -> Self {
-        Self { value, bits }
+        Self((value as u32) << 16 | bits as u32)
+    }
+
+    /// How many bits the symbol takes.
+    #[inline(always)]
+    pub(crate) const fn bits(self) -> u8 {
+        self.0 as u8
+    }
+
+    /// The symbol, or the offset of the second level table.
+    #[inline(always)]
+    pub(crate) const fn value(self) -> u16 {
+        (self.0 >> 16) as u16
     }
 }
 

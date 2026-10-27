@@ -103,7 +103,7 @@ describe.concurrent.skipIf(!isLinux || !canSetStackLimit)("with 700 KB of enviro
     });
   const deepDefineError = {
     stdout: "",
-    // The column is the depth that the parser reached, which is not the same in every build.
+    // The column is where the check tripped, which is not the same in every build.
     stderr: expect.stringMatching(
       /^1 \| \[+\n +\^\nerror: JSON document is too deeply nested\n    at defines\.json:1:\d+\n$/,
     ),

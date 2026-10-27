@@ -1,4 +1,5 @@
-import { describe } from "bun:test";
+import { afterEach, beforeEach, describe } from "bun:test";
+import { isASAN, isDebug } from "harness";
 import { itBundled } from "./expectBundled";
 
 // Starts a Worker and gives its first message.
@@ -17,7 +18,22 @@ const startWorker = /* js */ `
 
 // These cases are not in bundler_compile.test.ts. That file takes about 230 s on Windows arm64,
 // and the test runner stops a bundler_compile file at 300 s.
-describe("bundler", () => {
+describe.concurrent("bundler", () => {
+  // Each case links an executable: `bun build --compile` copies the bun binary and writes it again.
+  // As in bundler_compile_prelinked.test.ts, a case takes a slot first, so that at most three links
+  // run at once. An ASAN or debug binary is about a gigabyte, so those run one at a time.
+  let freeSlots = isASAN || isDebug ? 1 : 3;
+  const waiting: (() => void)[] = [];
+  beforeEach(async () => {
+    if (freeSlots > 0) freeSlots--;
+    else await new Promise<void>(resolve => waiting.push(resolve));
+  }, Infinity);
+  afterEach(() => {
+    const next = waiting.shift();
+    if (next) next();
+    else freeSlots++;
+  });
+
   // Without code splitting, the output of an entry point holds a copy of each module that it
   // imports. A copy of another entry point is not the main module, as with `bun run app.ts`.
   itBundled("edgecase/ImportMetaMainInCopyOfEntryPoint", {

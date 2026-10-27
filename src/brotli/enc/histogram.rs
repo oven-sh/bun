@@ -31,7 +31,6 @@ impl<const N: usize> Histogram<N> {
         }
     }
 
-    #[inline(always)]
     pub(crate) fn clear(&mut self) {
         self.data.fill(0);
         self.total_count = 0;

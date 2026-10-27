@@ -36,7 +36,6 @@ const MAX_SIMPLE_DISTANCE_ALPHABET_SIZE: usize =
     distance_alphabet_size(0, 0, LARGE_MAX_DISTANCE_BITS) as usize;
 
 /// The symbol for a block count.
-#[inline(always)]
 fn block_length_symbol(len: u32) -> usize {
     let mut code = if len >= 177 {
         if len >= 753 { 20 } else { 14 }
@@ -68,7 +67,6 @@ impl BlockTypeCodeCalculator {
         }
     }
 
-    #[inline(always)]
     fn next_block_type_code(&mut self, block_type: u8) -> usize {
         let block_type = usize::from(block_type);
         let type_code = if block_type == self.last_type + 1 {
@@ -86,14 +84,14 @@ impl BlockTypeCodeCalculator {
 
 #[inline(always)]
 fn store_command_extra(cmd: &Command, bw: &mut BitWriter<'_>) -> Checked {
-    let copylen_code = cmd.copy_len_code();
-    let inscode = get_insert_length_code(cmd.insert_len as usize);
-    let copycode = get_copy_length_code(copylen_code as usize);
-    let insert = INSERT_LENGTH_PREFIX_CODE.at(usize::from(inscode))?;
-    let copy = COPY_LENGTH_PREFIX_CODE.at(usize::from(copycode))?;
-    let insextraval = u64::from(cmd.insert_len - u32::from(insert.offset));
-    let copyextraval = u64::from(copylen_code - u32::from(copy.offset));
-    let bits = (copyextraval << insert.nbits) | insextraval;
+    let copy_len_code = cmd.copy_len_code();
+    let insert_code = get_insert_length_code(cmd.insert_len as usize);
+    let copy_code = get_copy_length_code(copy_len_code as usize);
+    let insert = INSERT_LENGTH_PREFIX_CODE.at(usize::from(insert_code))?;
+    let copy = COPY_LENGTH_PREFIX_CODE.at(usize::from(copy_code))?;
+    let insert_extra = u64::from(cmd.insert_len - u32::from(insert.offset));
+    let copy_extra = u64::from(copy_len_code - u32::from(copy.offset));
+    let bits = (copy_extra << insert.nbits) | insert_extra;
     bw.write_bits(usize::from(insert.nbits + copy.nbits), bits)
 }
 
@@ -544,7 +542,6 @@ fn encode_context_map(
 
 impl BlockSplitCode {
     /// Writes a block switch command.
-    #[inline(always)]
     fn store_block_switch(
         &mut self,
         block_len: u32,
@@ -552,18 +549,18 @@ impl BlockSplitCode {
         is_first_block: bool,
         bw: &mut BitWriter<'_>,
     ) -> Checked {
-        let typecode = self.type_code_calculator.next_block_type_code(block_type);
+        let type_code = self.type_code_calculator.next_block_type_code(block_type);
         if !is_first_block {
             bw.write_bits(
-                usize::from(self.type_depths.at(typecode)?),
-                u64::from(self.type_bits.at(typecode)?),
+                usize::from(self.type_depths.at(type_code)?),
+                u64::from(self.type_bits.at(type_code)?),
             )?;
         }
-        let lencode = block_length_symbol(block_len);
-        let range = BLOCK_LENGTH_PREFIX_CODE.at(lencode)?;
+        let length_symbol = block_length_symbol(block_len);
+        let range = BLOCK_LENGTH_PREFIX_CODE.at(length_symbol)?;
         bw.write_bits(
-            usize::from(self.length_depths.at(lencode)?),
-            u64::from(self.length_bits.at(lencode)?),
+            usize::from(self.length_depths.at(length_symbol)?),
+            u64::from(self.length_bits.at(length_symbol)?),
         )?;
         bw.write_bits(
             usize::from(range.nbits),
@@ -584,20 +581,20 @@ impl BlockSplitCode {
             lengths,
         } = split;
         let num_types = *num_types;
-        let mut type_histo = [0u32; MAX_BLOCK_TYPE_SYMBOLS];
-        let mut length_histo = [0u32; NUM_BLOCK_LEN_SYMBOLS];
+        let mut type_histogram = [0u32; MAX_BLOCK_TYPE_SYMBOLS];
+        let mut length_histogram = [0u32; NUM_BLOCK_LEN_SYMBOLS];
         let mut type_code_calculator = BlockTypeCodeCalculator::new();
         for (i, (&block_type, &length)) in types.iter().zip(lengths).enumerate() {
             let type_code = type_code_calculator.next_block_type_code(block_type);
             if i != 0 {
-                *type_histo.at_mut(type_code)? += 1;
+                *type_histogram.at_mut(type_code)? += 1;
             }
-            *length_histo.at_mut(block_length_symbol(length))? += 1;
+            *length_histogram.at_mut(block_length_symbol(length))? += 1;
         }
         store_var_len_uint8(num_types - 1, bw)?;
         if num_types > 1 {
             build_and_store_huffman_tree(
-                type_histo.sub(..num_types + 2)?,
+                type_histogram.sub(..num_types + 2)?,
                 num_types + 2,
                 tree,
                 &mut self.type_depths,
@@ -605,7 +602,7 @@ impl BlockSplitCode {
                 bw,
             )?;
             build_and_store_huffman_tree(
-                &length_histo,
+                &length_histogram,
                 NUM_BLOCK_LEN_SYMBOLS,
                 tree,
                 &mut self.length_depths,
@@ -731,8 +728,8 @@ impl<'a> BlockEncoder<'a> {
             self.entropy_ix = self.next_block(bw)? << context_bits;
         }
         self.block_len -= 1;
-        let histo_ix = context_map.at(self.entropy_ix + context)? as usize;
-        let ix = histo_ix * self.histogram_length + symbol;
+        let histogram_ix = context_map.at(self.entropy_ix + context)? as usize;
+        let ix = histogram_ix * self.histogram_length + symbol;
         bw.write_bits(
             usize::from(self.depths.at(ix)?),
             u64::from(self.bits.at(ix)?),
@@ -889,20 +886,20 @@ pub(crate) fn store_meta_block(
             prev_byte2 = input.at(pos.wrapping_sub(2) & mask)?;
             prev_byte = input.at(pos.wrapping_sub(1) & mask)?;
             if cmd.has_distance_symbol() {
-                let dist_code = cmd.dist_prefix.symbol();
-                let distnumextra = cmd.dist_prefix.num_extra_bits() as usize;
+                let distance_symbol = cmd.dist_prefix.symbol();
+                let num_extra_bits = cmd.dist_prefix.num_extra_bits() as usize;
                 if mb.distance_context_map.is_empty() {
-                    distance_enc.store_symbol(dist_code, bw)?;
+                    distance_enc.store_symbol(distance_symbol, bw)?;
                 } else {
                     distance_enc.store_symbol_with_context(
-                        dist_code,
+                        distance_symbol,
                         cmd.distance_context() as usize,
                         &mb.distance_context_map,
                         bw,
                         DISTANCE_CONTEXT_BITS,
                     )?;
                 }
-                bw.write_bits(distnumextra, u64::from(cmd.dist_extra))?;
+                bw.write_bits(num_extra_bits, u64::from(cmd.dist_extra))?;
             }
         }
     }
@@ -917,20 +914,20 @@ fn build_histograms(
     start_pos: usize,
     mask: usize,
     commands: &[Command],
-    lit_histo: &mut HistogramLiteral,
-    cmd_histo: &mut HistogramCommand,
-    dist_histo: &mut HistogramDistance,
+    literal_histogram: &mut HistogramLiteral,
+    command_histogram: &mut HistogramCommand,
+    distance_histogram: &mut HistogramDistance,
 ) -> Checked {
     let mut pos = start_pos;
     for cmd in commands {
-        cmd_histo.add(usize::from(cmd.cmd_prefix))?;
+        command_histogram.add(usize::from(cmd.cmd_prefix))?;
         for _ in 0..cmd.insert_len {
-            lit_histo.add(usize::from(input.at(pos & mask)?))?;
+            literal_histogram.add(usize::from(input.at(pos & mask)?))?;
             pos += 1;
         }
         pos += cmd.copy_len() as usize;
         if cmd.has_distance_symbol() {
-            dist_histo.add(cmd.dist_prefix.symbol())?;
+            distance_histogram.add(cmd.dist_prefix.symbol())?;
         }
     }
     Ok(())
@@ -941,39 +938,39 @@ fn store_data_with_huffman_codes(
     start_pos: usize,
     mask: usize,
     commands: &[Command],
-    lit_depth: &[u8],
-    lit_bits: &[u16],
-    cmd_depth: &[u8],
-    cmd_bits: &[u16],
-    dist_depth: &[u8],
-    dist_bits: &[u16],
+    literal_depths: &[u8],
+    literal_bits: &[u16],
+    command_depths: &[u8],
+    command_bits: &[u16],
+    distance_depths: &[u8],
+    distance_bits: &[u16],
     bw: &mut BitWriter<'_>,
 ) -> Checked {
     let mut pos = start_pos;
     for cmd in commands {
-        let cmd_code = usize::from(cmd.cmd_prefix);
+        let command_symbol = usize::from(cmd.cmd_prefix);
         bw.write_bits(
-            usize::from(cmd_depth.at(cmd_code)?),
-            u64::from(cmd_bits.at(cmd_code)?),
+            usize::from(command_depths.at(command_symbol)?),
+            u64::from(command_bits.at(command_symbol)?),
         )?;
         store_command_extra(cmd, bw)?;
         for _ in 0..cmd.insert_len {
             let literal = usize::from(input.at(pos & mask)?);
             bw.write_bits(
-                usize::from(lit_depth.at(literal)?),
-                u64::from(lit_bits.at(literal)?),
+                usize::from(literal_depths.at(literal)?),
+                u64::from(literal_bits.at(literal)?),
             )?;
             pos += 1;
         }
         pos += cmd.copy_len() as usize;
         if cmd.has_distance_symbol() {
-            let dist_code = cmd.dist_prefix.symbol();
-            let distnumextra = cmd.dist_prefix.num_extra_bits() as usize;
+            let distance_symbol = cmd.dist_prefix.symbol();
+            let num_extra_bits = cmd.dist_prefix.num_extra_bits() as usize;
             bw.write_bits(
-                usize::from(dist_depth.at(dist_code)?),
-                u64::from(dist_bits.at(dist_code)?),
+                usize::from(distance_depths.at(distance_symbol)?),
+                u64::from(distance_bits.at(distance_symbol)?),
             )?;
-            bw.write_bits(distnumextra, u64::from(cmd.dist_extra))?;
+            bw.write_bits(num_extra_bits, u64::from(cmd.dist_extra))?;
         }
     }
     Ok(())
@@ -981,30 +978,30 @@ fn store_data_with_huffman_codes(
 
 /// What it takes to write a meta-block with one prefix code for each category.
 struct MetaBlockScratch {
-    lit_histo: HistogramLiteral,
-    cmd_histo: HistogramCommand,
-    dist_histo: HistogramDistance,
-    lit_depth: [u8; NUM_LITERAL_SYMBOLS],
-    lit_bits: [u16; NUM_LITERAL_SYMBOLS],
-    cmd_depth: [u8; NUM_COMMAND_SYMBOLS],
-    cmd_bits: [u16; NUM_COMMAND_SYMBOLS],
-    dist_depth: [u8; MAX_SIMPLE_DISTANCE_ALPHABET_SIZE],
-    dist_bits: [u16; MAX_SIMPLE_DISTANCE_ALPHABET_SIZE],
+    literal_histogram: HistogramLiteral,
+    command_histogram: HistogramCommand,
+    distance_histogram: HistogramDistance,
+    literal_depths: [u8; NUM_LITERAL_SYMBOLS],
+    literal_bits: [u16; NUM_LITERAL_SYMBOLS],
+    command_depths: [u8; NUM_COMMAND_SYMBOLS],
+    command_bits: [u16; NUM_COMMAND_SYMBOLS],
+    distance_depths: [u8; MAX_SIMPLE_DISTANCE_ALPHABET_SIZE],
+    distance_bits: [u16; MAX_SIMPLE_DISTANCE_ALPHABET_SIZE],
     tree: Vec<HuffmanTree>,
 }
 
 impl MetaBlockScratch {
     fn new() -> Result<Box<Self>, AllocError> {
         try_box(Self {
-            lit_histo: Histogram::new(),
-            cmd_histo: Histogram::new(),
-            dist_histo: Histogram::new(),
-            lit_depth: [0; NUM_LITERAL_SYMBOLS],
-            lit_bits: [0; NUM_LITERAL_SYMBOLS],
-            cmd_depth: [0; NUM_COMMAND_SYMBOLS],
-            cmd_bits: [0; NUM_COMMAND_SYMBOLS],
-            dist_depth: [0; MAX_SIMPLE_DISTANCE_ALPHABET_SIZE],
-            dist_bits: [0; MAX_SIMPLE_DISTANCE_ALPHABET_SIZE],
+            literal_histogram: Histogram::new(),
+            command_histogram: Histogram::new(),
+            distance_histogram: Histogram::new(),
+            literal_depths: [0; NUM_LITERAL_SYMBOLS],
+            literal_bits: [0; NUM_LITERAL_SYMBOLS],
+            command_depths: [0; NUM_COMMAND_SYMBOLS],
+            command_bits: [0; NUM_COMMAND_SYMBOLS],
+            distance_depths: [0; MAX_SIMPLE_DISTANCE_ALPHABET_SIZE],
+            distance_bits: [0; MAX_SIMPLE_DISTANCE_ALPHABET_SIZE],
             tree: try_vec(HuffmanTree::default(), MAX_HUFFMAN_TREE_SIZE)?,
         })
     }
@@ -1031,35 +1028,37 @@ pub(crate) fn store_meta_block_trivial(
         start_pos,
         mask,
         commands,
-        &mut s.lit_histo,
-        &mut s.cmd_histo,
-        &mut s.dist_histo,
+        &mut s.literal_histogram,
+        &mut s.command_histogram,
+        &mut s.distance_histogram,
     )?;
 
     store_trivial_splits_and_contexts(bw)?;
 
     build_and_store_huffman_tree(
-        &s.lit_histo.data,
+        &s.literal_histogram.data,
         NUM_LITERAL_SYMBOLS,
         &mut s.tree,
-        &mut s.lit_depth,
-        &mut s.lit_bits,
+        &mut s.literal_depths,
+        &mut s.literal_bits,
         bw,
     )?;
     build_and_store_huffman_tree(
-        &s.cmd_histo.data,
+        &s.command_histogram.data,
         NUM_COMMAND_SYMBOLS,
         &mut s.tree,
-        &mut s.cmd_depth,
-        &mut s.cmd_bits,
+        &mut s.command_depths,
+        &mut s.command_bits,
         bw,
     )?;
     build_and_store_huffman_tree(
-        s.dist_histo.data.sub(..MAX_SIMPLE_DISTANCE_ALPHABET_SIZE)?,
+        s.distance_histogram
+            .data
+            .sub(..MAX_SIMPLE_DISTANCE_ALPHABET_SIZE)?,
         num_distance_symbols,
         &mut s.tree,
-        &mut s.dist_depth,
-        &mut s.dist_bits,
+        &mut s.distance_depths,
+        &mut s.distance_bits,
         bw,
     )?;
     store_data_with_huffman_codes(
@@ -1067,12 +1066,12 @@ pub(crate) fn store_meta_block_trivial(
         start_pos,
         mask,
         commands,
-        &s.lit_depth,
-        &s.lit_bits,
-        &s.cmd_depth,
-        &s.cmd_bits,
-        &s.dist_depth,
-        &s.dist_bits,
+        &s.literal_depths,
+        &s.literal_bits,
+        &s.command_depths,
+        &s.command_bits,
+        &s.distance_depths,
+        &s.distance_bits,
         bw,
     )?;
     if is_last {
@@ -1118,8 +1117,8 @@ pub(crate) fn store_meta_block_fast(
             &histogram,
             num_literals,
             8,
-            &mut s.lit_depth,
-            &mut s.lit_bits,
+            &mut s.literal_depths,
+            &mut s.literal_bits,
             bw,
         )?;
         store_static_command_huffman_tree(bw)?;
@@ -1129,8 +1128,8 @@ pub(crate) fn store_meta_block_fast(
             start_pos,
             mask,
             commands,
-            &s.lit_depth,
-            &s.lit_bits,
+            &s.literal_depths,
+            &s.literal_bits,
             &STATIC_COMMAND_CODE_DEPTH,
             &STATIC_COMMAND_CODE_BITS,
             &STATIC_DISTANCE_CODE_DEPTH,
@@ -1143,35 +1142,35 @@ pub(crate) fn store_meta_block_fast(
             start_pos,
             mask,
             commands,
-            &mut s.lit_histo,
-            &mut s.cmd_histo,
-            &mut s.dist_histo,
+            &mut s.literal_histogram,
+            &mut s.command_histogram,
+            &mut s.distance_histogram,
         )?;
         build_and_store_huffman_tree_fast(
             &mut s.tree,
-            &s.lit_histo.data,
-            s.lit_histo.total_count,
+            &s.literal_histogram.data,
+            s.literal_histogram.total_count,
             8,
-            &mut s.lit_depth,
-            &mut s.lit_bits,
+            &mut s.literal_depths,
+            &mut s.literal_bits,
             bw,
         )?;
         build_and_store_huffman_tree_fast(
             &mut s.tree,
-            &s.cmd_histo.data,
-            s.cmd_histo.total_count,
+            &s.command_histogram.data,
+            s.command_histogram.total_count,
             10,
-            &mut s.cmd_depth,
-            &mut s.cmd_bits,
+            &mut s.command_depths,
+            &mut s.command_bits,
             bw,
         )?;
         build_and_store_huffman_tree_fast(
             &mut s.tree,
-            &s.dist_histo.data,
-            s.dist_histo.total_count,
+            &s.distance_histogram.data,
+            s.distance_histogram.total_count,
             distance_alphabet_bits,
-            &mut s.dist_depth,
-            &mut s.dist_bits,
+            &mut s.distance_depths,
+            &mut s.distance_bits,
             bw,
         )?;
         store_data_with_huffman_codes(
@@ -1179,12 +1178,12 @@ pub(crate) fn store_meta_block_fast(
             start_pos,
             mask,
             commands,
-            &s.lit_depth,
-            &s.lit_bits,
-            &s.cmd_depth,
-            &s.cmd_bits,
-            &s.dist_depth,
-            &s.dist_bits,
+            &s.literal_depths,
+            &s.literal_bits,
+            &s.command_depths,
+            &s.command_bits,
+            &s.distance_depths,
+            &s.distance_bits,
             bw,
         )?;
     }

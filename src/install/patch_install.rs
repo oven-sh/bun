@@ -134,7 +134,7 @@ fn resolve_patchfile_path<'a>(
 /// Returns `None` after logging a parse error. `log` copies the lines it quotes from `source`, so
 /// `log` may outlive `source`.
 pub(crate) fn parse_patch_source<'a>(
-    source: &'a Source,
+    source: &'a Source<'a>,
     log: &mut Log,
 ) -> Option<bun_patch::PatchFile<'a>> {
     let at = |offset: usize| Range {

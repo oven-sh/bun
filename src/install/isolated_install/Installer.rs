@@ -444,7 +444,7 @@ impl<'a> Installer<'a> {
         if let crate::patch_install::Callback::Apply(apply) = &mut patch_task.callback {
             if apply.logger.has_errors() {
                 let mut log = Log::init();
-                apply.logger.clone_to_with_recycled(&mut log, true);
+                apply.logger.append_to(&mut log);
                 return Err(TaskError::Patching(log));
             }
             let _ = apply.logger.print_to_stderr();

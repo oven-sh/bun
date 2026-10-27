@@ -2109,7 +2109,7 @@ fn root_package_json_source(
     manager: &mut PackageManager,
     root_package_json_path: &ZStr,
     has_lockfile: bool,
-) -> crate::Result<Source> {
+) -> crate::Result<Source<'static>> {
     let (verb, err) = match manager.workspace_package_json_cache.get_with_path(
         manager.log_mut(),
         root_package_json_path.as_bytes(),

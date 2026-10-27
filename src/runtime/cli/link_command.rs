@@ -66,10 +66,10 @@ pub(crate) fn load_package_for_link(
     let mut lockfile = Lockfile::default();
     let mut package = Package::default();
 
-    let package_json_source = match bun_ast::to_source(
-        manager.original_package_json_path.as_zstr(),
-        Default::default(),
-    ) {
+    // A copy: the source borrows its path while `parse` below borrows `manager` mutably.
+    let package_json_path =
+        bun_core::ZBox::from_bytes(manager.original_package_json_path.as_bytes());
+    let package_json_source = match bun_ast::to_source(&package_json_path, Default::default()) {
         Ok(s) => s,
         Err(e) => {
             Output::err_generic(

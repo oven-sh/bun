@@ -189,12 +189,9 @@ fn reset_match_state(
     // As long as indices go on, the ones in the tables are too low to be valid.
     let clean = force_reset_index == IndexResetPolicy::Reset && crp != CompResetPolicy::LeaveDirty;
     let use_rows = row_match_finder_used(c_params.strat(), use_row_match_finder);
-    // The tables suit the size of the input if it is known. Else it may be much too short to get to most of them.
-    let used_whole = src_size.is_some() || for_who == ResetTarget::CDict;
-    // An entry of a row is written before it is read.
-    (ms.hash_table).reset(sizes.h_size, clean, used_whole && !use_rows)?;
-    ms.chain_table.reset(sizes.chain_size, clean, false)?;
-    ms.hash_table3.reset(sizes.h3_size, clean, false)?;
+    ms.hash_table.reset(sizes.h_size, clean)?;
+    ms.chain_table.reset(sizes.chain_size, clean)?;
+    ms.hash_table3.reset(sizes.h3_size, clean)?;
     if force_reset_index == IndexResetPolicy::Reset {
         forget_unused_indices(ms);
     }
@@ -205,14 +202,19 @@ fn reset_match_state(
             ResetTarget::CDict => RowTags::Flat,
         };
         let tag_table_size = lazy::row_tag_table_size(ms.row_tags, sizes.h_size);
-        if for_who == ResetTarget::CCtx {
-            // A new salt instead of erasing the tags.
-            ms.tag_table.reset(tag_table_size, false, used_whole)?;
-            ms.hash_salt = bitmix(ms.hash_salt, 8) ^ bitmix(u64::from(ms.hash_salt_entropy), 4);
-        } else {
-            ms.tag_table.reset(tag_table_size, true, used_whole)?;
-            ms.hash_salt = 0;
+        // In a context, a new salt instead of erasing the tags.
+        let is_new = (ms.tag_table).reset(tag_table_size, for_who == ResetTarget::CDict)?;
+        // The table suits the size of the input if that is known. Most of it is then read before it is written, for
+        // which the system would provide each page twice. Else the input may be too short to get to most of it.
+        if is_new && (src_size.is_some() || for_who == ResetTarget::CDict) {
+            ms.tag_table.fill(0);
         }
+        ms.hash_salt = match for_who {
+            ResetTarget::CCtx => {
+                bitmix(ms.hash_salt, 8) ^ bitmix(u64::from(ms.hash_salt_entropy), 4)
+            }
+            ResetTarget::CDict => 0,
+        };
         let row_log = c_params.search_log.clamp(4, 6);
         ms.row_hash_log = c_params.hash_log - row_log;
     }

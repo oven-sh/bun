@@ -1404,32 +1404,22 @@ impl<T> Table<T> {
 }
 
 impl<T: bun_pod::Zeroable + Copy + Default> Table<T> {
-    /// Gives it the length `len`. What it holds is 0, or if `clean` is false possibly what it held at some time.
-    ///
-    /// `read_first` tells that most of it is to be read before it is written. New memory is then written to right away:
-    /// else the system would provide each page twice, once to be read and once to be written.
-    pub(crate) fn reset(&mut self, len: usize, clean: bool, read_first: bool) -> Result<()> {
+    /// Gives it the length `len`. What it holds is 0, or if `clean` is false possibly what it held at some time. Returns
+    /// whether it is new memory.
+    pub(crate) fn reset(&mut self, len: usize, clean: bool) -> Result<bool> {
         let end = self.start + len;
         if end > self.storage.capacity() {
             // First, so that both are not allocated at once.
             *self = Self::new();
             let slack = Self::CACHE_LINE / size_of::<T>();
-            let storage = if read_first {
-                let mut storage = Vec::new();
-                (storage.try_reserve_exact(len + slack))
-                    .map_err(|_| ErrorCode::MemoryAllocation)?;
-                storage.resize(len + slack, T::default());
-                storage
-            } else {
-                try_zeroed::<T>(len + slack)?
-            };
+            let storage = try_zeroed::<T>(len + slack)?;
             let start = storage.as_ptr().align_offset(Self::CACHE_LINE);
             *self = Self {
                 storage,
                 start: if start <= slack { start } else { 0 },
                 len,
             };
-            return Ok(());
+            return Ok(true);
         }
         if clean {
             self.storage.truncate(self.start);
@@ -1438,7 +1428,7 @@ impl<T: bun_pod::Zeroable + Copy + Default> Table<T> {
             self.storage.resize(end, T::default());
         }
         self.len = len;
-        Ok(())
+        Ok(false)
     }
 }
 

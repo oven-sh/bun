@@ -7,6 +7,8 @@ use crate::common::{
     ZSTD_BLOCKHEADERSIZE, ZSTD_REP_NUM,
 };
 use crate::error::{ErrorCode, Result};
+use core::hint::{Locality, prefetch_read};
+
 use crate::util::{BUG, SliceExt, highbit32, read_le32, read_le64, write_le24};
 
 pub(crate) const K_SEARCH_STRENGTH: u32 = 8;
@@ -694,6 +696,12 @@ impl<'a> Near<'a> {
         self.0.get(pos..pos + N)?.first_chunk()
     }
 
+    /// A hint that `pos`, which may be anything, is about to be read.
+    #[inline(always)]
+    pub(crate) fn prefetch(self, pos: u32) {
+        prefetch_read(self.0.as_ptr().wrapping_add(pos as usize), Locality::L1);
+    }
+
     #[inline(always)]
     pub(crate) fn read8(self, pos: u32) -> Option<u8> {
         self.0.get(pos as usize).copied()
@@ -731,22 +739,20 @@ impl<'a> Near<'a> {
         match_low: u32,
     ) -> u32 {
         let most = (pos - anchor).min(match_pos - match_low);
-        let mut len = 0;
-        while len < most
-            && let (Some(bytes), Some(match_bytes)) = (
-                self.read64((pos - len).wrapping_sub(8)),
-                self.read64((match_pos - len).wrapping_sub(8)),
-            )
+        // Whether there is anything to compare is as good as random: it takes no branch to find out.
+        if let (Some(bytes), Some(match_bytes)) = (
+            self.read64(pos.wrapping_sub(8)),
+            self.read64(match_pos.wrapping_sub(8)),
+        ) && bytes != match_bytes
         {
-            let diff = bytes ^ match_bytes;
-            if diff != 0 {
-                return (len + (diff.leading_zeros() >> 3)).min(most);
-            }
-            len += 8;
+            return ((bytes ^ match_bytes).leading_zeros() >> 3).min(most);
         }
-        if len >= most {
-            return most;
-        }
+        self.count_backwards_bytewise(pos, match_pos, most)
+    }
+
+    #[cold]
+    fn count_backwards_bytewise(self, pos: u32, match_pos: u32, most: u32) -> u32 {
+        let mut len = 0;
         while len < most
             && let Some(byte) = self.read8(pos - len - 1)
             && self.read8(match_pos - len - 1) == Some(byte)
@@ -781,6 +787,13 @@ pub(crate) fn table_swap(table: &mut [u32], hash: usize, index: u32) -> u32 {
         Some(cell) => core::mem::replace(cell, index),
         None => 0,
     }
+}
+
+/// The 4 bytes of `window` from `AT` on.
+#[inline(always)]
+pub(crate) fn le32_at<const AT: usize, const N: usize>(window: &[u8; N]) -> u32 {
+    let bytes = window.get(AT..).and_then(<[u8]>::first_chunk);
+    bytes.map_or(0, |bytes| u32::from_le_bytes(*bytes))
 }
 
 /// The 8 bytes of `window` from `AT` on.

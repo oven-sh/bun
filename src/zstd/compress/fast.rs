@@ -4,7 +4,8 @@ use super::internal::{
     BlockSrc, CompressionParameters, DictTableLoadMethod, HASH_READ_SIZE, K_SEARCH_STRENGTH,
     MatchState, Near, Prefix, REPCODE1_TO_OFFBASE, SeqSink, SeqStore, TableFillPurpose,
     ZSTD_SHORT_CACHE_TAG_BITS, compare_packed_tags, count, count_2segments, hash_of, hash_ptr,
-    index_overlap_check, le64_at, offset_to_offbase, table_put, table_swap, write_tagged_index,
+    index_overlap_check, le32_at, le64_at, offset_to_offbase, table_put, table_swap,
+    write_tagged_index,
 };
 use crate::common::ZSTD_REP_NUM;
 use crate::error::Result;
@@ -372,151 +373,204 @@ impl<'a> NoDictBlock<'a> {
     }
 }
 
-/// `ZSTD_compressBlock_fast_noDict_generic`
-///
-/// Each turn of the inner loop looks at two positions, `ip0` and the next one, for a match, and at `ip2` for a repeat.
-/// The C code computes hashes and reads the table one position ahead. Here that is left to the processor: a turn only
-/// takes the position and the 8 bytes there from the one before.
-fn compress_block_fast_no_dict_generic<const MLS: u32>(
-    ms: &mut MatchState,
-    seq_store: &mut SeqStore,
-    rep: &mut [u32; ZSTD_REP_NUM],
-    src: &BlockSrc<'_>,
-) -> Result<usize> {
-    const K_STEP_INCR: u32 = 1 << (K_SEARCH_STRENGTH - 1);
+/// Where `fast` and `dfast` put the matches they find in a block, when there is no dictionary and the window is one
+/// segment. All of it is read and written once per match, so that the search for the next one has the registers.
+pub(super) struct MatchSink<'a, 'b> {
+    seq_store: SeqSink<'b>,
+    /// The input from the lowest index a match can be at. Positions are in this.
+    near: Near<'a>,
+    /// The same with what is before it, as far as a repeat offset can reach.
+    older: Near<'a>,
+    /// How much that is.
+    older_len: u32,
+    /// The end of the last match.
+    anchor: u32,
+    failed: bool,
+}
 
-    let Some(block) = NoDictBlock::new(ms, rep, src)? else {
-        return Ok(src.end - src.start);
-    };
-    let near = block.near;
-    let candidates = block.candidates;
-    let mut rep_offset1 = block.offset_1;
-    let mut rep_offset2 = block.offset_2;
-    let hlog = ms.c_params.hash_log;
-    // The least step is 2, as two positions are looked at per turn.
-    let step_size = least_step(&ms.c_params) + 1;
-    let mut anchor = block.istart;
-    let mut ip0 = block.first;
-    let mut seq_store = SeqSink::new(seq_store);
-    let hash_table = ms.hash_table.sub_mut(..1 << hlog)?;
-    // The 8 bytes at `ip0`.
-    let Some(mut bytes0) = near.read64(ip0) else {
-        return Ok(src.end - src.start);
-    };
-
-    'start: loop {
-        let mut step = step_size;
-        let mut next_step = ip0 + K_STEP_INCR;
-        let mut ip2 = ip0 + step;
-
-        // Ends with where 4 bytes are the same, at `ip0` and at `match0`.
-        let (match0, back, offcode, current0) = loop {
-            // There is a position after `ip2` to look at, and that one is before the last that can be.
-            let Some(ahead) = near.window::<{ HASH_READ_SIZE + 2 }>(ip2) else {
-                break 'start;
-            };
-            let bytes2 = le64_at::<0, _>(ahead);
-            // As far as they are hashed or compared.
-            let bytes1 = bytes0 >> 8;
-            let current0 = block.base_index.wrapping_add(ip0);
-            let idx0 = table_swap(hash_table, hash_of::<MLS>(bytes0, hlog), current0);
-            // The next position is indexed whatever is found, as it is before the end of any match.
-            let idx1 = table_swap(hash_table, hash_of::<MLS>(bytes1, hlog), current0 + 1);
-
-            if rep_offset1 > 0 && near.read32(ip2.wrapping_sub(rep_offset1)) == Some(bytes2 as u32)
-            {
-                ip0 = ip2;
-                let match0 = ip0 - rep_offset1;
-                let back = u32::from(near.read8(ip0 - 1) == near.read8(match0.wrapping_sub(1)));
-                break (match0, back, REPCODE1_TO_OFFBASE, current0);
+impl MatchSink<'_, '_> {
+    /// The 4 bytes that are `offset` before `pos`.
+    #[inline(always)]
+    fn read32_before(&self, pos: u32, offset: u32) -> Option<u32> {
+        match self.near.read32(pos.wrapping_sub(offset)) {
+            Some(bytes) => Some(bytes),
+            None => {
+                core::hint::cold_path();
+                self.older
+                    .read32((pos + self.older_len).wrapping_sub(offset))
             }
-
-            let (idx, current0) = if candidates.read32(idx0.wrapping_sub(block.prefix_lowest_index))
-                == Some(bytes0 as u32)
-            {
-                (idx0, current0)
-            } else if candidates.read32(idx1.wrapping_sub(block.prefix_lowest_index))
-                == Some(bytes1 as u32)
-            {
-                ip0 += 1;
-                // `ip2` is certain to be before the end of the match only if the step is small.
-                if step <= 4 {
-                    table_put(
-                        hash_table,
-                        hash_of::<MLS>(bytes2, hlog),
-                        block.base_index.wrapping_add(ip2),
-                    );
-                }
-                (idx1, current0 + 1)
-            } else {
-                ip0 = ip2;
-                bytes0 = bytes2;
-                ip2 += step;
-                if ip2 >= next_step {
-                    step += 1;
-                    next_step += K_STEP_INCR;
-                }
-                continue;
-            };
-
-            let match0 = idx - block.base_index;
-            rep_offset2 = rep_offset1;
-            rep_offset1 = ip0 - match0;
-            let back = near.count_backwards(ip0, anchor, match0, block.prefix_lowest);
-            break (match0, back, offset_to_offbase(rep_offset1), current0);
-        };
-
-        let end = ip0 + 4 + near.count(ip0 + 4, match0 + 4);
-        let match_start = ip0 - back;
-        seq_store.store_seq(
-            match_start - anchor,
-            near,
-            anchor,
-            offcode,
-            end - match_start,
-        )?;
-        ip0 = end;
-        anchor = end;
-
-        // `ip0` is not past the last position that can be looked at.
-        let Some(around) = near.window::<{ 2 + HASH_READ_SIZE }>(ip0 - 2) else {
-            break 'start;
-        };
-        let to_insert = near.read64(current0 + 2 - block.base_index).ok_or(BUG)?;
-        table_put(hash_table, hash_of::<MLS>(to_insert, hlog), current0 + 2);
-        table_put(
-            hash_table,
-            hash_of::<MLS>(le64_at::<0, _>(around), hlog),
-            block.base_index.wrapping_add(ip0 - 2),
-        );
-        bytes0 = le64_at::<2, _>(around);
-
-        while rep_offset2 > 0 && near.read32(ip0.wrapping_sub(rep_offset2)) == Some(bytes0 as u32) {
-            let r_length = near.count(ip0 + 4, (ip0 + 4).wrapping_sub(rep_offset2)) + 4;
-            core::mem::swap(&mut rep_offset1, &mut rep_offset2);
-            table_put(
-                hash_table,
-                hash_of::<MLS>(bytes0, hlog),
-                block.base_index.wrapping_add(ip0),
-            );
-            ip0 += r_length;
-            seq_store.store_seq(0, near, anchor, REPCODE1_TO_OFFBASE, r_length)?;
-            anchor = ip0;
-            let Some(bytes) = near.read64(ip0) else {
-                break 'start;
-            };
-            bytes0 = bytes;
         }
     }
 
-    restore_rep(
-        rep,
-        rep_offset1,
-        rep_offset2,
-        block.offset_saved1,
-        block.offset_saved2,
-    );
-    Ok((near.len() - anchor) as usize)
+    /// How long what is at `pos` is the same as what is `offset` before.
+    #[inline(always)]
+    fn count_before(&self, pos: u32, offset: u32) -> u32 {
+        if offset <= pos {
+            self.near.count(pos, pos - offset)
+        } else {
+            core::hint::cold_path();
+            let pos = pos + self.older_len;
+            self.older.count(pos, pos.wrapping_sub(offset))
+        }
+    }
+
+    /// Stores the match from `ip` to `end`, with the literals before it.
+    #[inline(always)]
+    fn store(&mut self, ip: u32, end: u32, off_base: u32) {
+        let anchor = self.anchor;
+        self.anchor = end;
+        if (self.seq_store)
+            .store_seq(ip - anchor, self.near, anchor, off_base, end - ip)
+            .is_err()
+        {
+            core::hint::cold_path();
+            self.failed = true;
+        }
+    }
+
+    /// Whether the bytes before `ip` and before what is `offset` before it are the same.
+    #[inline(always)]
+    fn same_byte_before(&self, ip: u32, offset: u32) -> bool {
+        let ip = ip + self.older_len;
+        self.older.read8(ip - 1) == self.older.read8((ip - 1).wrapping_sub(offset))
+    }
+}
+
+/// What `fast` looks for matches with, when there is no dictionary and the window is one segment.
+struct Finder {
+    /// The index of the first position.
+    base_index: u32,
+    step_size: u32,
+    hlog: u32,
+    /// Where to start.
+    first: u32,
+    rep_offset1: u32,
+    rep_offset2: u32,
+}
+
+impl Finder {
+    /// `ZSTD_compressBlock_fast_noDict_generic`
+    ///
+    /// Each turn of the inner loop looks at two positions, that of index `current0` and the next one, for a match, and
+    /// at `ip2` for a repeat. The C code computes hashes and reads the table one position ahead. Here that is left to
+    /// the processor: a turn only takes the position and the 8 bytes there, `bytes0`, from the one before.
+    #[inline(never)]
+    fn find_matches<const MLS: u32>(
+        &mut self,
+        hash_table: &mut [u32],
+        sink: &mut MatchSink<'_, '_>,
+    ) {
+        const K_STEP_INCR: u32 = 1 << (K_SEARCH_STRENGTH - 1);
+        let Self {
+            base_index,
+            step_size,
+            hlog,
+            first: mut ip0,
+            mut rep_offset1,
+            mut rep_offset2,
+        } = *self;
+        let near = sink.near;
+        if hash_table.is_empty() {
+            return;
+        }
+        let Some(mut bytes0) = near.read64(ip0) else {
+            return;
+        };
+
+        'block: loop {
+            let mut step = step_size;
+            let mut next_step = ip0 + K_STEP_INCR;
+            let mut ip2 = ip0 + step;
+            let mut current0 = base_index.wrapping_add(ip0);
+
+            // Ends with where 4 bytes are the same as earlier.
+            let (ip, back, off_base) = loop {
+                // There is a position after `ip2` to look at, and that one is before the last that can be.
+                let Some(ahead) = near.window::<{ HASH_READ_SIZE + 2 }>(ip2) else {
+                    break 'block;
+                };
+                let idx0 = table_swap(hash_table, hash_of::<MLS>(bytes0, hlog), current0);
+
+                if sink.read32_before(ip2, rep_offset1) == Some(le32_at::<0, _>(ahead))
+                    && rep_offset1 > 0
+                {
+                    table_put(hash_table, hash_of::<MLS>(bytes0 >> 8, hlog), current0 + 1);
+                    let back = u32::from(sink.same_byte_before(ip2, rep_offset1));
+                    break (ip2, back, REPCODE1_TO_OFFBASE);
+                }
+                let mut match0 = idx0.wrapping_sub(base_index);
+                if near.read32(match0) == Some(bytes0 as u32) {
+                    table_put(hash_table, hash_of::<MLS>(bytes0 >> 8, hlog), current0 + 1);
+                } else {
+                    // As far as they are hashed or compared.
+                    let bytes1 = bytes0 >> 8;
+                    current0 += 1;
+                    let idx1 = table_swap(hash_table, hash_of::<MLS>(bytes1, hlog), current0);
+                    match0 = idx1.wrapping_sub(base_index);
+                    if near.read32(match0) != Some(bytes1 as u32) {
+                        current0 = base_index.wrapping_add(ip2);
+                        bytes0 = le64_at::<0, _>(ahead);
+                        ip2 += step;
+                        if ip2 >= next_step {
+                            core::hint::cold_path();
+                            step += 1;
+                            next_step += K_STEP_INCR;
+                        }
+                        continue;
+                    }
+                    // `ip2` is certain to be before the end of the match only if the step is small.
+                    if step <= 4 {
+                        table_put(
+                            hash_table,
+                            hash_of::<MLS>(le64_at::<0, _>(ahead), hlog),
+                            base_index.wrapping_add(ip2),
+                        );
+                    }
+                }
+                let ip = current0.wrapping_sub(base_index);
+                rep_offset2 = rep_offset1;
+                rep_offset1 = ip - match0;
+                let back = near.count_backwards(ip, sink.anchor, match0, 0);
+                break (ip, back, offset_to_offbase(rep_offset1));
+            };
+
+            ip0 = ip + 4 + sink.count_before(ip + 4, rep_offset1);
+            sink.store(ip - back, ip0, off_base);
+
+            // `ip0` is not past the last position that can be looked at.
+            let Some(around) = near.window::<{ 2 + HASH_READ_SIZE }>(ip0 - 2) else {
+                break 'block;
+            };
+            if let Some(to_insert) = near.read64((current0 + 2).wrapping_sub(base_index)) {
+                table_put(hash_table, hash_of::<MLS>(to_insert, hlog), current0 + 2);
+            }
+            table_put(
+                hash_table,
+                hash_of::<MLS>(le64_at::<0, _>(around), hlog),
+                base_index.wrapping_add(ip0 - 2),
+            );
+            bytes0 = le64_at::<2, _>(around);
+
+            while rep_offset2 > 0 && sink.read32_before(ip0, rep_offset2) == Some(bytes0 as u32) {
+                let end = ip0 + 4 + sink.count_before(ip0 + 4, rep_offset2);
+                core::mem::swap(&mut rep_offset1, &mut rep_offset2);
+                table_put(
+                    hash_table,
+                    hash_of::<MLS>(bytes0, hlog),
+                    base_index.wrapping_add(ip0),
+                );
+                sink.store(ip0, end, REPCODE1_TO_OFFBASE);
+                ip0 = end;
+                let Some(bytes) = near.read64(ip0) else {
+                    break 'block;
+                };
+                bytes0 = bytes;
+            }
+        }
+
+        self.rep_offset1 = rep_offset1;
+        self.rep_offset2 = rep_offset2;
+    }
 }
 
 /// `ZSTD_compressBlock_fast`
@@ -526,12 +580,46 @@ pub(crate) fn compress_block_fast(
     rep: &mut [u32; ZSTD_REP_NUM],
     src: &BlockSrc<'_>,
 ) -> Result<usize> {
+    let Some(block) = NoDictBlock::new(ms, rep, src)? else {
+        return Ok(src.end - src.start);
+    };
+    let hlog = ms.c_params.hash_log;
+    let mut finder = Finder {
+        base_index: block.prefix_lowest_index,
+        // The least step is 2, as two positions are looked at per turn.
+        step_size: least_step(&ms.c_params) + 1,
+        hlog,
+        first: block.first - block.prefix_lowest,
+        rep_offset1: block.offset_1,
+        rep_offset2: block.offset_2,
+    };
+    let mut sink = MatchSink {
+        seq_store: SeqSink::new(seq_store),
+        near: block.candidates,
+        older: block.near,
+        older_len: block.prefix_lowest,
+        anchor: block.istart - block.prefix_lowest,
+        failed: false,
+    };
+    let hash_table = ms.hash_table.sub_mut(..1 << hlog)?;
     match ms.c_params.min_match {
-        5 => compress_block_fast_no_dict_generic::<5>(ms, seq_store, rep, src),
-        6 => compress_block_fast_no_dict_generic::<6>(ms, seq_store, rep, src),
-        7 => compress_block_fast_no_dict_generic::<7>(ms, seq_store, rep, src),
-        _ => compress_block_fast_no_dict_generic::<4>(ms, seq_store, rep, src),
+        5 => finder.find_matches::<5>(hash_table, &mut sink),
+        6 => finder.find_matches::<6>(hash_table, &mut sink),
+        7 => finder.find_matches::<7>(hash_table, &mut sink),
+        _ => finder.find_matches::<4>(hash_table, &mut sink),
     }
+    if sink.failed {
+        return Err(BUG);
+    }
+
+    restore_rep(
+        rep,
+        finder.rep_offset1,
+        finder.rep_offset2,
+        block.offset_saved1,
+        block.offset_saved2,
+    );
+    Ok((sink.near.len() - sink.anchor) as usize)
 }
 
 /// `ZSTD_compressBlock_fast_dictMatchState_generic`

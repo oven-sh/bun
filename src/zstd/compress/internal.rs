@@ -758,9 +758,11 @@ impl<'a> Near<'a> {
         if let (Some(bytes), Some(match_bytes)) = (
             self.read64(pos.wrapping_sub(8)),
             self.read64(match_pos.wrapping_sub(8)),
-        ) && bytes != match_bytes
-        {
-            return ((bytes ^ match_bytes).leading_zeros() >> 3).min(most);
+        ) {
+            let same = (bytes ^ match_bytes).leading_zeros() >> 3;
+            if same < 8 || most <= 8 {
+                return same.min(most);
+            }
         }
         self.count_backwards_bytewise(pos, match_pos, most)
     }

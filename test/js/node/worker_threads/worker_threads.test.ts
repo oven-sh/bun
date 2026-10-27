@@ -758,6 +758,20 @@ an object, through a worker with no 'error' listener: {"events":["online",${unse
     );
   }
 
+  // Bun only: node delivers an object whose inspection is "". This render is complete and empty, so there is no
+  // text to post, and the Worker reads an empty text as "emit the clone". The listener got null.
+  test("is ERR_WORKER_UNSERIALIZABLE_ERROR for a value that does not clone and prints as the empty string", async () => {
+    const worker = new Worker(`throw { [Symbol.for("nodejs.util.inspect.custom")]() { return ""; }, fn() {} };`, {
+      eval: true,
+    });
+    const [err] = await once(worker, "error");
+    expect(err).toBeInstanceOf(Error);
+    expect({ message: err.message, code: err.code }).toEqual({
+      message: "Serializing an uncaught exception failed",
+      code: "ERR_WORKER_UNSERIALIZABLE_ERROR",
+    });
+  });
+
   // A node:vm timeout ends the render or the clone with a termination, as process.exit() does, but it stops no
   // worker. Only that watchdog can end the spin, at its deadline. The deadline has to fire inside the spin: a
   // debug build under load needs up to 250 ms to get there, and an earlier deadline gives another row's outcome.

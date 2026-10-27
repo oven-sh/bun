@@ -541,15 +541,13 @@ void WorkerMessagingProxy::postErrorToWorkerObject(Zig::GlobalObject& workerGlob
     case ErrorCloneResult::NotCloneable:
         break;
     }
-    switch (text) {
-    case WorkerErrorText::Rendered:
+    // node:worker_threads reads an empty message as "emit event.error", so only a render that has text goes out as text.
+    if (text == WorkerErrorText::Rendered && !message.isEmpty()) {
         postMessageErrorToWorkerObject(String { message });
         return;
-    case WorkerErrorText::RenderFailed:
-        // node's COULD_NOT_SERIALIZE_ERROR: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/main/worker_thread.js#L270-L284
-        postUnserializableErrorToWorkerObject();
-        return;
     }
+    // node's COULD_NOT_SERIALIZE_ERROR: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/main/worker_thread.js#L270-L284
+    postUnserializableErrorToWorkerObject();
 }
 
 void WorkerMessagingProxy::workerGlobalScopeDestroyed(int32_t exitCode, bool stoppedByParent)

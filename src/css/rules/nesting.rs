@@ -1,9 +1,10 @@
 use crate::context::{DeclarationContext, PropertyHandlerContext};
 use crate::css_rules::style::StyleRule;
 use crate::css_rules::{CssRule, CssRuleList, Location, MinifyContext};
-use crate::error::{MinifyErr, PrinterErrorKind};
-use crate::properties::Property;
-use crate::selectors::selector::serialize::{serialize_nesting, serialize_selector_list};
+use crate::error::MinifyErr;
+use crate::selectors::selector::serialize::{
+    NestingPosition, serialize_nesting, serialize_selector_list,
+};
 use crate::selectors::{Component, Selector, SelectorList};
 use crate::{DeclarationBlock, Feature, PrintErr, Printer};
 use bun_alloc::ArenaPtr;
@@ -47,21 +48,6 @@ pub struct NestedDeclarationsRule {
 
 impl NestedDeclarationsRule {
     pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        // CSS modules: the parser keeps a valid `composes` in the block of its rule, so this one is nested.
-        if dest.css_module.is_some()
-            && let Some(Property::Composes(composes)) = self
-                .declarations
-                .declarations
-                .iter()
-                .chain(self.declarations.important_declarations.iter())
-                .find(|decl| matches!(decl, Property::Composes(_)))
-        {
-            return dest.new_error(
-                PrinterErrorKind::invalid_composes_nesting,
-                Some(composes.cssparser_loc),
-            );
-        }
-
         // Read the `Copy` field directly: `Printer::context()` ties the borrow to `dest`.
         if let Some(ctx) = dest.ctx {
             // Nesting is compiled away: a block under the enclosing selectors, in that rule's prefix pass.
@@ -76,7 +62,7 @@ impl NestedDeclarationsRule {
         }
         if dest.targets.should_compile_same(Feature::Nesting) {
             // `@scope` clears the context: what `&` prints there stands in (#43165 makes it `:where(:scope)`).
-            serialize_nesting(dest, None, true)?;
+            serialize_nesting(dest, None, NestingPosition::SelectorStart)?;
             return self.block_to_css(dest);
         }
         self.write_declarations(dest, false)?;

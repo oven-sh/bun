@@ -1647,7 +1647,7 @@ impl CustomPropertyName {
                 let (_, name) = crate::VendorPrefix::strip_from(self.as_str());
                 strings::eql_any_case_insensitive_ascii(name, names)
             }
-            CustomPropertyName::Custom(_) => false,
+            CustomPropertyName::Custom(_) | CustomPropertyName::StarHack(_) => false,
         }
     }
 

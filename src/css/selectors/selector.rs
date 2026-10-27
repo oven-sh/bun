@@ -603,7 +603,7 @@ pub(crate) mod serialize {
 
     /// Where a `&` lands. lightningcss only has `first: bool` (parcel-bundler/lightningcss#1073).
     #[derive(Clone, Copy, PartialEq, Eq)]
-    enum NestingPosition {
+    pub(crate) enum NestingPosition {
         /// Nothing comes before it.
         SelectorStart,
         /// A combinator comes before it.

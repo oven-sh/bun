@@ -6,7 +6,7 @@ use bun_core::feature_flags as FeatureFlags;
 use bun_sys::Fd;
 
 use crate::fs;
-use crate::package_json::PackageJSON;
+use crate::package_json::{LoadError, PackageJSON};
 use crate::tsconfig_json::TSConfigJSON;
 
 pub use allocators::IndexType;
@@ -146,6 +146,23 @@ pub struct DirInfo {
     pub abs_real_path: &'static [u8],
 
     pub(crate) flags: Flags,
+    /// Why the "package.json" file of this directory gave no `package_json`.
+    pub(crate) package_json_load_error: Option<LoadError>,
+}
+
+// `package_json_load_error` takes what was padding after `flags`.
+const _: () = assert!(core::mem::size_of::<DirInfo>() == 104);
+
+/// The package.json that `bun run` acts on in a directory: [`DirInfo::script_package`].
+#[derive(Clone, Copy)]
+pub enum ScriptPackage {
+    Loaded(&'static PackageJSON),
+    /// The nearest "package.json", the file in `dir`, did not load.
+    Unloadable {
+        dir: &'static [u8],
+        error: LoadError,
+    },
+    Absent,
 }
 
 impl Default for DirInfo {
@@ -164,6 +181,7 @@ impl Default for DirInfo {
             tsconfig_json: None,
             abs_real_path: b"",
             flags: Flags::empty(),
+            package_json_load_error: None,
         }
     }
 }
@@ -206,6 +224,40 @@ impl DirInfo {
     #[inline]
     pub fn package_json(&self) -> Option<&'static PackageJSON> {
         self.package_json.map(arena_ref)
+    }
+
+    /// The nearest package.json, the one whose scripts `bun run` runs.
+    #[inline]
+    pub fn script_package(&self) -> ScriptPackage {
+        if self.package_json.is_none() {
+            if let Some((dir, error)) = self.nearest_package_json_load_error() {
+                return ScriptPackage::Unloadable { dir, error };
+            }
+        }
+        match self.enclosing_package_json {
+            Some(package_json) => ScriptPackage::Loaded(package_json),
+            None => ScriptPackage::Absent,
+        }
+    }
+
+    /// The directory of the nearest "package.json" file and why it did not load, if it did not.
+    #[cold]
+    #[inline(never)]
+    fn nearest_package_json_load_error(&self) -> Option<(&'static [u8], LoadError)> {
+        if let Some(error) = self.package_json_load_error {
+            return Some((self.abs_path, error));
+        }
+        let mut parent = self.get_parent();
+        while let Some(dir) = parent {
+            if dir.package_json.is_some() {
+                return None;
+            }
+            if let Some(error) = dir.package_json_load_error {
+                return Some((dir.abs_path, error));
+            }
+            parent = dir.get_parent();
+        }
+        None
     }
 
     /// Read-only view of `package_json_for_dependencies`. The field stores

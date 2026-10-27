@@ -1289,14 +1289,7 @@ pub(crate) fn scan_imports_and_exports(
                     } else if kind == ImportKind::Stmt
                         && export_kind == ExportsKind::EsmWithDynamicFallback
                     {
-                        // esbuild tests the imported file here, to keep its exports object
-                        // for a read of a run-time name:
-                        // https://github.com/evanw/esbuild/blob/v0.21.5/internal/linker/linker.go#L1958
-                        // That read gets its dependency per reading part instead
-                        // (`ImportTrackerStatus::DynamicFallback`). This arm tests the
-                        // importing file. Nothing reads the object it keeps, but the
-                        // imported file stays live because of it, which
-                        // `barrel/ExportStarOfCommonJSInReaderOfLazyModule` needs.
+                        // A read of a run-time name gets its dependency from `ImportTrackerStatus::DynamicFallback`, not from here.
                         this.graph.generate_symbol_import_and_use(
                             source_index,
                             part_index as u32,

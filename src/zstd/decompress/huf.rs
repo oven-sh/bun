@@ -41,12 +41,11 @@ impl Code {
         let mut share = [0u64; NB_RANKS + 1];
         let mut total = 0;
         for nb_bits in 1..=log as usize {
-            let weight = (table_log + 1).wrapping_sub(nb_bits);
-            let count = self.rank_stats.get(weight).copied().unwrap_or(0);
-            let of_these = if weight == 0 {
-                0
-            } else {
-                u64::from(count) << (weight - 1)
+            let of_these = match (table_log + 1).saturating_sub(nb_bits) {
+                0 => 0,
+                weight => {
+                    u64::from(self.rank_stats.get(weight).copied().unwrap_or(0)) << (weight - 1)
+                }
             };
             total += of_these;
             if let (Some(share), Some(one)) = (share.get_mut(nb_bits), one.get_mut(nb_bits)) {

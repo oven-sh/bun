@@ -2629,6 +2629,7 @@ impl RunCommand {
         );
         // Temporarily honor `--preserve-symlinks-main` / NODE_PRESERVE_SYMLINKS_MAIN
         // for this one resolve.
+        let prefixed: Vec<u8>;
         let resolution: ::core::result::Result<bun_resolver::Result, bun_resolver::Error> = {
             let saved_preserve = this_transpiler.resolver.opts.preserve_symlinks;
             this_transpiler.resolver.opts.preserve_symlinks =
@@ -2639,24 +2640,26 @@ impl RunCommand {
             // SAFETY: `Transpiler::init` always sets `fs`; resolver-cache lifetime.
             let top_level_dir = unsafe { (*this_transpiler.fs).top_level_dir() };
             // The process started a moment ago, so a miss here is not rechecked on disk.
-            let resolved = this_transpiler.resolver.with_trusted_cache(|resolver| {
-                match resolver.resolve(
+            let resolved = match this_transpiler.resolver.with_trusted_cache(|resolver| {
+                resolver.resolve(
                     top_level_dir,
                     target_name,
                     bun_ast::ImportKind::EntryPointRun,
-                ) {
-                    ok @ Ok(_) => ok,
-                    Err(_) => {
-                        // Retry with explicit `./` prefix.
-                        let prefixed: Vec<u8> = [b"./".as_slice(), target_name].concat();
+                )
+            }) {
+                ok @ Ok(_) => ok,
+                Err(_) => {
+                    // Retry with explicit `./` prefix.
+                    prefixed = [b"./".as_slice(), target_name].concat();
+                    this_transpiler.resolver.with_trusted_cache(|resolver| {
                         resolver.resolve(
                             top_level_dir,
                             &prefixed,
                             bun_ast::ImportKind::EntryPointRun,
                         )
-                    }
+                    })
                 }
-            });
+            };
             this_transpiler.resolver.opts.preserve_symlinks = saved_preserve;
             resolved
         };

@@ -503,10 +503,10 @@ describe("bytecode cache portability", () => {
           },
         },
         "bun build --bytecode happy-dom/lib/index.js": {
-          "js": "1415a67d0da987f3bb7fc68ca431e222b3898fa14be8af88e2845813c4120f43",
+          "js": "4b09b10d7ed2c3ed3581da7d715929c91b9ee540645488445512b45f15e003e1",
           "jsc": {
-            "bytes": 2218688,
-            "sha256": "5ce3d7541a1310ed4a60b611ab8952238a5efdf54cb3bfd8ea936a0194ccf33b",
+            "bytes": 2218592,
+            "sha256": "6b3145e404d1eee04ee4d7c6de9a59dac3c6b413e5e4e1dcba729912d26943a4",
           },
         },
         "bun build --bytecode immutable/dist/immutable.es.js": {
@@ -517,10 +517,10 @@ describe("bytecode cache portability", () => {
           },
         },
         "bun build --bytecode libraries.js": {
-          "js": "7b8ce5d1861461086be174e60797d52794328828458a2086f4d49b39a3f8b28a",
+          "js": "251a88797d5704f87c325eff4b31c9d8d51bf6fff5a6cb1428636c053a5f7a30",
           "jsc": {
-            "bytes": 21177808,
-            "sha256": "62bc4de3ff1aba67c153ff59c0e42e4d999b90ef6b87067005bcff30cc9d5e2c",
+            "bytes": 21177792,
+            "sha256": "2a634d37aeb8e37bde55c432ce5881b0ed04c16a697e7bb84f7131bf341dab93",
           },
         },
         "bun build --bytecode lodash/lodash.js": {

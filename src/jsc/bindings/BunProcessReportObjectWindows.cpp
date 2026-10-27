@@ -390,7 +390,7 @@ JSValue constructReportObjectWindows(VM& vm, Zig::GlobalObject* globalObject, Pr
     }
 
     // Native stack (empty for now)
-    JSArray* nativeStack = constructEmptyArray(globalObject, nullptr);
+    JSArray* nativeStack = Bun::constructProcessReportNativeStack(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     Bun::putDirectNamed(vm, report, "nativeStack"_s, nativeStack);
 

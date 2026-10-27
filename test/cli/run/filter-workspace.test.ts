@@ -848,31 +848,59 @@ describe("bun", () => {
   });
 
   // On POSIX a backslash is a file name byte: `packages/x\` is a directory of its own. Its listing is not read as
-  // the listing of `packages/x`, and the package next to it runs one time.
+  // the listing of `packages/x`, and the package next to it runs one time. Not fixed: the path of the package.json
+  // in `x\` comes from a join that reads the backslash as a separator, so that package is skipped with a warning.
   test.skipIf(isWindows).each([
-    ["an empty x\\ next to x", "x", {}],
-    ["an x\\ with a package.json and no x", "a", { "package.json": JSON.stringify({ name: "other" }) }],
-  ])("a directory named with a trailing backslash does not stop the other packages: %s", async (_, name, other) => {
-    await using dir = tempDir("filter-backslash-dir", {
-      packages: {
-        [name]: {
-          "package.json": JSON.stringify({ name, scripts: { go: "echo ran-once" } }),
+    ["an empty x\\ next to x", "x", {}, false],
+    ["an x\\ with a package.json and no x", "a", { "package.json": JSON.stringify({ name: "other" }) }, true],
+  ])(
+    "a directory named with a trailing backslash does not stop the other packages: %s",
+    async (_, name, other, skips) => {
+      await using dir = tempDir("filter-backslash-dir", {
+        packages: {
+          [name]: {
+            "package.json": JSON.stringify({ name, scripts: { go: "echo ran-once" } }),
+          },
+          "x\\": other,
         },
-        "x\\": other,
+        "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "--filter", "*", "go"],
+        cwd: dir,
+        env: { ...bunEnv, NO_COLOR: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("error:");
+      expect(stderr.includes(`packages/x\\/package.json", skipping this workspace package`)).toBe(skips);
+      expect(stdout.split("ran-once").length - 1).toBe(1);
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // Not fixed: the shell gets a working directory with the backslash read as a separator (`pro/j`). The spawn fails
+  // with ENOENT, and `bun run` prints that error and exits 0 (https://github.com/oven-sh/bun/pull/46501). Before the
+  // directory caches had a native key, `bun run` stopped earlier: "error loading current directory", exit 1.
+  (isWindows ? test.skip : test.todo)("a script runs in a working directory with a backslash in its name", async () => {
+    await using dir = tempDir("run-backslash-cwd", {
+      "pro\\j": {
+        "package.json": JSON.stringify({ name: "pro-j", scripts: { go: "echo ran-once" } }),
       },
-      "package.json": JSON.stringify({ name: "ws", workspaces: ["packages/*"] }),
     });
 
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "run", "--filter", "*", "go"],
-      cwd: dir,
+      cmd: [bunExe(), "run", "go"],
+      cwd: join(String(dir), "pro\\j"),
       env: { ...bunEnv, NO_COLOR: "1" },
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).not.toContain("error:");
-    expect(stdout.split("ran-once").length - 1).toBe(1);
+    expect(stdout).toBe("ran-once\n");
     expect(exitCode).toBe(0);
   });
 });

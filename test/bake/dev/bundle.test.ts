@@ -137,8 +137,8 @@ devTest("recovers from an unresolved import of a path that ends in a slash", {
     await c.expectMessage("value: 789");
   },
 });
-// The directory to evict is the one whose listing the failed lookup read. On POSIX an import path
-// reads `fr\/` as `fr/`, so for `<root>/fr\/late.ts` that is the listing of `fr`.
+// On POSIX an import path reads `fr\/` as `fr/`. The directory to evict after the failed resolution is `fr`, and
+// the path of the module is the one of its entry in `fr`.
 devTest("an absolute import through a directory spelled fr\\/ resolves after the file is created", {
   skip: ["win32"],
   files: {
@@ -153,13 +153,14 @@ devTest("an absolute import through a directory spelled fr\\/ resolves after the
     await using c = await dev.client("/");
     await c.expectMessage("start");
 
-    const specifier = dev.join("fr") + "\\/late.ts";
+    const specifier = dev.join("fr") + "\\/late";
     const source = `import { abc } from ${JSON.stringify(specifier)};\nconsole.log("value: " + abc);`;
     await dev.write("index.ts", source, {
       errors: [`index.ts:1:21: error: Could not resolve: "${specifier}"`],
     });
-    // The dev server watches a directory only for a relative specifier, so this write starts no build.
-    fs.writeFileSync(dev.join("fr/late.ts"), `export const abc = "456";`);
+    await c.expectNoWebSocketActivity(async () => {
+      await dev.write("fr/late.ts", `export const abc = "456";`, { errors: null });
+    });
     await c.expectReload(async () => {
       await dev.write("index.ts", source + "\n// saved again");
     });

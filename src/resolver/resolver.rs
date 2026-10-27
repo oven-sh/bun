@@ -2475,11 +2475,7 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    /// The key of the directory `path` in `dir_cache` and `fs.entries`: `path` without its
-    /// trailing native separators. Every lookup, fill and bust derives its key here, and the
-    /// walk of a miss takes each parent with `Dirname::dirname_native`.
-    /// On POSIX `open(2)` reads a backslash as part of the name, so `/a/b\` and `/a/b` are
-    /// two directories with two keys. A key is a spelling: `/a/b/.` is a third one.
+    /// The key of the directory `path` in `dir_cache` and `fs.entries`: on POSIX `/a/b\` is not `/a/b`.
     #[inline(always)]
     pub(crate) fn dir_cache_key(path: &[u8]) -> &[u8] {
         strings::without_trailing_slash_native(path)
@@ -2533,19 +2529,14 @@ impl<'a> Resolver<'a> {
     }
 
     fn bust_dir_cache_and_parent(&mut self, path: &[u8]) -> bool {
-        let a = self.bust_dir_cache(Self::import_path_dir(path));
+        // On Windows the dirname of `a\hello\` is `a\hello`, so strip first.
+        let path = strings::without_trailing_slash_windows_path(path);
+        let dir = bun_paths::dirname_platform(path, bun_paths::Platform::AUTO);
+
+        // `load_as_file` lists `/a/b` for the import path `/a/b\/c.js`.
+        let a = self.bust_dir_cache(strings::without_trailing_slash_windows_path(dir));
         let b = self.bust_dir_cache(path);
         a || b
-    }
-
-    /// The directory that `load_as_file` lists for the import path `path`. The bust for an
-    /// import path takes the directory here too, so it drops that listing.
-    /// Not `dir_cache_key` of a native dirname: the directory part of an import path is read
-    /// loosely. `import("/a/b\\/c.js")` loads `/a/b/c.js`, as node's ESM loader does (it parses
-    /// a URL). Node's `require` throws for it.
-    #[inline]
-    fn import_path_dir(path: &[u8]) -> &[u8] {
-        strings::without_trailing_slash_windows_path(Dirname::dirname(path))
     }
 
     pub(crate) fn load_node_modules(
@@ -5897,7 +5888,8 @@ impl<'a> Resolver<'a> {
             }};
         }
 
-        let dir_path = Self::import_path_dir(path);
+        // Not `dir_cache_key`: the directory part of an import path is read loosely, so `/a/b\/c.js` lists `/a/b`.
+        let dir_path = strings::without_trailing_slash_windows_path(Dirname::dirname(path));
 
         // PORT — `dir_entry` is a slot in the BSSMap singleton (ARENA, see
         // LIFETIMES.tsv); wrap in `BackRef` so later `&mut self` calls
@@ -6160,10 +6152,7 @@ impl<'a> Resolver<'a> {
         None
     }
 
-    /// The path that the entry of a file keeps for every spelling of its directory: `spelled`
-    /// when it spells the directory of the entry, otherwise that directory and the file name.
-    /// An import path can spell the directory as `/a/b\/`, and `/a/b\/c.js` is not a path to
-    /// the file.
+    /// The one path of a file entry for every spelling of its directory: `/a/b\/c.js` is not a path to `/a/b/c.js`.
     #[cold]
     #[inline(never)]
     fn intern_extension_path(entry_dir: &[u8], spelled: &[u8]) -> Interned {
@@ -6984,8 +6973,7 @@ impl Dirname {
         Self::dirname_with(path, bun_paths::is_sep_any)
     }
 
-    /// `dirname` with the separators of the host only, for the upward walk of the directory
-    /// caches. On POSIX the parent of `/a/b\c` is `/a/`, as `open(2)` reads it.
+    /// `dirname` that cuts at the separators of the host only: on POSIX the parent of `/a/b\c` is `/a/`.
     pub(crate) fn dirname_native(path: &[u8]) -> &[u8] {
         Self::dirname_with(path, bun_paths::is_sep_native)
     }

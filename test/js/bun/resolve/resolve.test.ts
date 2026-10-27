@@ -1523,18 +1523,18 @@ test.skipIf(isWindows).concurrent("a file created after a failed lookup through 
             resolve(event.data);
           };
         });
-      const lookups = {
-        "require, relative": ["late1.js", 'module.exports = "late1";', () => load("./fr" + B + "/late1")],
-        "require, absolute": ["late2.js", 'module.exports = "late2";', () => load(__dirname + "/fr" + B + "/late2")],
-        "Worker, relative": ["late3.js", 'postMessage("late3");', () => run("./fr" + B + "/late3.js")],
-        "Worker, absolute": ["late4.js", 'postMessage("late4");', () => run(__dirname + "/fr" + B + "/late4.js")],
-      };
+      const rows = [
+        [load, "./fr" + B + "/late1", "late1.js"],
+        [load, __dirname + "/fr" + B + "/late2", "late2.js"],
+        [run, "./fr" + B + "/late3.js", "late3.js"],
+        [run, __dirname + "/fr" + B + "/late4.js", "late4.js"],
+      ];
       (async () => {
-        const result = {};
-        for (const [name, [file, source, lookup]] of Object.entries(lookups)) {
-          const before = await lookup();
-          writeFileSync(__dirname + "/fr/" + file, source);
-          result[name] = [before, await lookup()];
+        const result = [];
+        for (const [lookup, specifier, file] of rows) {
+          const before = await lookup(specifier);
+          writeFileSync(__dirname + "/fr/" + file, lookup === run ? 'postMessage("found");' : 'module.exports = "found";');
+          result.push([specifier.replace(__dirname, "<dir>"), before, await lookup(specifier)]);
         }
         console.log(JSON.stringify(result));
       })();
@@ -1549,12 +1549,12 @@ test.skipIf(isWindows).concurrent("a file created after a failed lookup through 
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stripAsanWarning(stderr)).toBe("");
-  expect(JSON.parse(stdout)).toEqual({
-    "require, relative": ["MODULE_NOT_FOUND", "late1"],
-    "require, absolute": ["MODULE_NOT_FOUND", "late2"],
-    "Worker, relative": ["ModuleNotFound", "late3"],
-    "Worker, absolute": ["ModuleNotFound", "late4"],
-  });
+  expect(JSON.parse(stdout)).toEqual([
+    ["./fr\\/late1", "MODULE_NOT_FOUND", "found"],
+    ["<dir>/fr\\/late2", "MODULE_NOT_FOUND", "found"],
+    ["./fr\\/late3.js", "ModuleNotFound", "found"],
+    ["<dir>/fr\\/late4.js", "ModuleNotFound", "found"],
+  ]);
   expect(exitCode).toBe(0);
 });
 

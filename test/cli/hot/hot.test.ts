@@ -9,6 +9,7 @@ import {
   realpathSync,
   renameSync,
   rmSync,
+  symlinkSync,
   unlinkSync,
   writeFileSync,
 } from "fs";
@@ -1126,6 +1127,63 @@ it.skipIf(isWindows)("survives a directory event for a folder whose cached listi
   writeFileSync(join(cwd, "main.ts"), `console.log("reloaded");\nprocess.exit(0);\n`);
   expect(await stdout("reloaded")).toBe(true);
   expect(await runner.exited).toBe(0);
+});
+
+// The watcher reports a directory by its path, and the directory cache has an entry for that path. On POSIX `we\`
+// is the name of a directory. Its module is reached through a link, because an import path reads `we\/` as `we/`.
+it.skipIf(isWindows)("reads a package.json that is created in a watched directory named we\\", async () => {
+  const realModule = (run: number) => `
+    let answer;
+    try {
+      answer = import.meta.resolveSync("#x");
+    } catch (e) {
+      answer = e.code;
+    }
+    console.log("run ${run}: " + answer);
+  `;
+  using dir = tempDir("hot-backslash-dir", {
+    "node_modules/pkg/index.js": `module.exports = 1;`,
+    "we\\/real.js": realModule(0),
+    "main.mjs": `
+      import "./link.js";
+      globalThis.keepAlive ??= setInterval(() => {}, 1e6);
+    `,
+  });
+  const root = String(dir);
+  symlinkSync(join("we\\", "real.js"), join(root, "link.js"));
+  await using runner = spawn({
+    cmd: [bunExe(), "--no-install", "--hot", "--no-clear-screen", "main.mjs"],
+    env: bunEnv,
+    cwd: root,
+    stdout: "pipe",
+    stderr: "inherit",
+    stdin: "ignore",
+  });
+  const reader = runner.stdout.getReader();
+  let text = "";
+  /** The answer that run `run` printed. */
+  async function answerOf(run: number) {
+    const prefix = `run ${run}: `;
+    for (;;) {
+      const start = text.indexOf(prefix);
+      const end = start === -1 ? -1 : text.indexOf("\n", start);
+      if (end !== -1) return text.slice(start + prefix.length, end);
+      const { value, done } = await reader.read();
+      if (done) throw new Error(`bun --hot exited before run ${run}: ${text}`);
+      text += Buffer.from(value).toString();
+    }
+  }
+  expect(await answerOf(0)).toBe("ERR_MODULE_NOT_FOUND");
+
+  writeFileSync(join(root, "we\\", "package.json"), JSON.stringify({ imports: { "#x": "pkg" } }));
+  // The watcher reports the directory and the file as two events. A reload can run before the directory event.
+  let run = 0;
+  let answer: string;
+  do {
+    writeFileSync(join(root, "we\\", "real.js"), realModule(++run));
+    answer = await answerOf(run);
+  } while (answer === "ERR_MODULE_NOT_FOUND" && run < 5);
+  expect(answer).toBe(join(root, "node_modules", "pkg", "index.js"));
 });
 
 // Only inotify reports the changed entry's name, and PATH_MAX is 1024 on macOS.

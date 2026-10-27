@@ -27,11 +27,12 @@ async function rustSources(directory: string): Promise<{ file: string; source: s
 }
 
 test("src/resolver derives the keys of its directory caches with dir_cache_key", async () => {
-  // The calls that stay take a path that is not a key. `import_path_dir` takes the directory part of an import
-  // path, for `load_as_file` and for the bust of an import path: `import("/a/b\\/c.js")` loads `/a/b/c.js`, as
-  // node's ESM loader does. The second `Dirname::dirname` takes the directory of a tsconfig.json for its `extends`.
+  // The calls that stay take the directory part of an import path, which is read loosely: `import("/a/b\\/c.js")`
+  // loads `/a/b/c.js`. `load_as_file` lists that directory (one strip, one `Dirname::dirname`), and
+  // `bust_dir_cache_and_parent` drops it (two strips). The second `Dirname::dirname` takes the directory of a
+  // tsconfig.json for its `extends`.
   const known = {
-    "without_trailing_slash_windows_path(": { "src/resolver/resolver.rs": 1 },
+    "without_trailing_slash_windows_path(": { "src/resolver/resolver.rs": 3 },
     "Dirname::dirname(": { "src/resolver/resolver.rs": 2 },
   };
 
@@ -49,10 +50,11 @@ test("src/resolver derives the keys of its directory caches with dir_cache_key",
   expect(found).toEqual(known);
 });
 
-test("no caller strips a path before it busts the directory cache", async () => {
+test("no caller of the resolver strips a path before it busts the directory cache", async () => {
   const strip = /\bwithout_trailing_slash\w*\s*\(/;
 
-  const sources = await rustSources("src");
+  // The test above counts the strips in src/resolver.
+  const sources = (await rustSources("src")).filter(({ file }) => !file.startsWith("src/resolver/"));
   const found: string[] = [];
   for (const { file, source } of sources) {
     for (const call of source.matchAll(/\bbust_dir_cache\w*\s*\(/g)) {

@@ -244,7 +244,7 @@ for (const [api, resolveFrom] of Object.entries(resolveWithPaths)) {
     }
   });
 
-  // `we\ird` exists. Its parent is the root, where the package is. `we\` does not exist.
+  // `we\ird` exists and has no `node_modules`. Its parent is the root, where the package is. `we\` does not exist.
   for (const entries of [
     ["we\\ird", "we\\ird", "we\\ird/sub", "we\\ird"],
     ["we\\", "we\\ird", "we\\ird", "we\\ird/sub", "we\\ird"],
@@ -264,6 +264,24 @@ for (const [api, resolveFrom] of Object.entries(resolveWithPaths)) {
     });
   }
 
+  // Not fixed: Bun joins `we\ird` and `node_modules` with the backslash read as a separator, so it looks in
+  // `we/ird`. Bun gives the copy of the root for each entry.
+  todoPosix(`${api}: a lookup from we\\ird finds the package of we\\ird`, () => {
+    const { path: dir, cleanup } = createTempDir("paths-inner-backslash-pkg", {
+      "node_modules/backslash-paths-pkg/index.js": "module.exports = 1;",
+      "we\\ird/node_modules/backslash-paths-pkg/index.js": "module.exports = 2;",
+      "we\\ird/sub/.keep": "",
+    });
+
+    try {
+      const own = "/we\\ird/node_modules/backslash-paths-pkg/index.js";
+      const entries = ["we\\ird", "we\\ird/sub", "we\\ird"];
+      expect(resolveEach(resolveFrom, dir, entries)).toEqual(entries.map(entry => [entry, own]));
+    } finally {
+      cleanup();
+    }
+  });
+
   // Not fixed: Bun joins `plugins\` and `node_modules` with the backslash read as a separator, so the lookup
   // continues in `plugins`.
   todoPosix(`${api}: a lookup from an existing plugins\\ finds the package of plugins\\`, () => {
@@ -277,6 +295,131 @@ for (const [api, resolveFrom] of Object.entries(resolveWithPaths)) {
         ["plugins\\", "/plugins\\/node_modules/backslash-paths-pkg/index.js"],
         ["plugins", "/plugins/node_modules/backslash-paths-pkg/index.js"],
       ]);
+    } finally {
+      cleanup();
+    }
+  });
+}
+
+// The answer of `require.resolve` below `dir`, or the error code.
+function resolveBelow(dir, path, paths) {
+  try {
+    return require
+      .resolve(paths ? "backslash-paths-pkg" : dir + path, paths && { paths: [dir + path] })
+      .slice(dir.length);
+  } catch (e) {
+    return e.code;
+  }
+}
+
+// A directory that a lookup recorded as missing stays missing for the directories below it, also after it is
+// created (https://github.com/oven-sh/bun/pull/46805). Bun gives MODULE_NOT_FOUND for the last lookup of each row,
+// as it does for `plugins/sub` with no backslash in any lookup. These rows passed while `plugins\` had the cache
+// entry of `plugins`: the lookup of `plugins\` dropped that record by accident.
+for (const [name, steps, expected] of [
+  [
+    "plugins\\/sub created after a lookup from the missing plugins\\",
+    [["/plugins\\", true], "/plugins\\/sub", ["/plugins\\/sub", true]],
+    ["/node_modules/backslash-paths-pkg/index.js", "/node_modules/backslash-paths-pkg/index.js"],
+  ],
+  [
+    "plugins/sub created between two lookups from the missing plugins/sub\\",
+    [["/plugins/sub\\", true], "/plugins/sub", ["/plugins/sub\\", true], ["/plugins/sub", true]],
+    [
+      "/node_modules/backslash-paths-pkg/index.js",
+      "/node_modules/backslash-paths-pkg/index.js",
+      "/node_modules/backslash-paths-pkg/index.js",
+    ],
+  ],
+  [
+    "plugins/sub created after a lookup of the missing plugins\\ and of plugins/m.js",
+    [["/plugins\\", false], ["/plugins/m.js", false], "/plugins/sub", ["/plugins/sub", true]],
+    ["MODULE_NOT_FOUND", "MODULE_NOT_FOUND", "/node_modules/backslash-paths-pkg/index.js"],
+  ],
+]) {
+  todoPosix(`require.resolve: ${name}`, () => {
+    const { path: dir, cleanup } = createTempDir("paths-created-later", {
+      "node_modules/backslash-paths-pkg/index.js": "module.exports = 1;",
+    });
+
+    try {
+      const answers = [];
+      for (const step of steps) {
+        if (typeof step === "string") mkdirSync(dir + step, { recursive: true });
+        else answers.push(resolveBelow(dir, ...step));
+      }
+      expect(answers).toEqual(expected);
+    } finally {
+      cleanup();
+    }
+  });
+}
+
+// Not fixed: the path of a file entry comes from a join that reads a backslash as a separator, and the entry keeps
+// its first path. Bun gives `/we/ird/sub/index.js` and `/we/ird/file.js`, which do not exist.
+todoPosix("require.resolve: a directory in we\\ird, its index file and a file have one path each", () => {
+  const { path: dir, cleanup } = createTempDir("paths-inner-backslash-files", {
+    "we\\ird/sub/index.js": "module.exports = 1;",
+    "we\\ird/file.js": "module.exports = 2;",
+  });
+
+  try {
+    const specifiers = [
+      "/we\\ird/sub",
+      "/we\\ird/sub/index",
+      "/we\\ird/sub/index.js",
+      "/we\\ird/file.js",
+      "/we\\ird/file",
+    ];
+    expect(specifiers.map(specifier => resolveBelow(dir, specifier))).toEqual([
+      "/we\\ird/sub/index.js",
+      "/we\\ird/sub/index.js",
+      "/we\\ird/sub/index.js",
+      "/we\\ird/file.js",
+      "/we\\ird/file.js",
+    ]);
+  } finally {
+    cleanup();
+  }
+});
+
+// Not fixed: an absolute path that has `..` in it goes through a join that reads a backslash as a separator, so
+// `plugins\` is `plugins`. Bun gives `/plugins/index.js` and `/a..b/plugins/index.js`.
+todoPosix("require.resolve: plugins\\ is a missing directory also in a path that has two dots", () => {
+  const { path: dir, cleanup } = createTempDir("paths-dots-backslash", {
+    "plugins/index.js": "module.exports = 1;",
+    "a..b/plugins/index.js": "module.exports = 2;",
+  });
+
+  try {
+    const specifiers = ["/x/../plugins\\", "/a..b/plugins\\"];
+    expect(specifiers.map(specifier => resolveBelow(dir, specifier))).toEqual(["MODULE_NOT_FOUND", "MODULE_NOT_FOUND"]);
+  } finally {
+    cleanup();
+  }
+});
+
+// Not fixed: after a failed lookup of an absolute path, Bun drops the listing of the directory with `/` written for
+// each backslash, so the listing of `we\ird` stays. Bun gives MODULE_NOT_FOUND for the second lookup of each row.
+for (const [name, file] of [
+  ["in we\\ird", "/we\\ird/late"],
+  ["in a new directory of we\\ird", "/we\\ird/new/late"],
+]) {
+  todoPosix(`require: a file created ${name} after a failed lookup is found`, () => {
+    const { path: dir, cleanup } = createTempDir("paths-inner-backslash-later", { "we\\ird/present.js": "" });
+    const load = () => {
+      try {
+        return require(dir + file);
+      } catch (e) {
+        return e.code;
+      }
+    };
+
+    try {
+      const before = load();
+      mkdirSync(dirname(dir + file), { recursive: true });
+      writeFileSync(dir + file + ".js", "module.exports = 'late';");
+      expect([before, load()]).toEqual(["MODULE_NOT_FOUND", "late"]);
     } finally {
       cleanup();
     }

@@ -467,9 +467,7 @@ pub fn without_trailing_slash_windows_path(input: &[u8]) -> &[u8] {
     path
 }
 
-/// Strips the trailing separators of the host platform and keeps the filesystem root.
-/// On POSIX a backslash is a file name byte, so only `/` is stripped: `/a/b\` names a
-/// different directory than `/a/b`. On Windows this is `without_trailing_slash_windows_path`.
+/// Strips the trailing separators of the host and keeps the root: on POSIX only `/`, so `/a/b\` stays.
 #[inline]
 pub fn without_trailing_slash_native(input: &[u8]) -> &[u8] {
     #[cfg(windows)]

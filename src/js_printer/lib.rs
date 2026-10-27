@@ -6554,12 +6554,12 @@ pub(crate) mod __gated_printer {
             {
                 return text;
             }
-            // `relative_platform` has no length limit, unlike the `_buf` variant. On Windows a
-            // file on another volume has no relative path, and the result is its absolute path.
+            // `relative_platform` has no length limit, unlike the `_buf` variant.
             let rel = bun_paths::resolve_path::relative_platform::<
                 bun_paths::resolve_path::platform::Auto,
                 false,
             >(self.options.output_dir, text);
+            // No relative path leads to another Windows volume: `rel` is then absolute.
             let is_absolute = bun_paths::is_absolute(rel);
             let rel = rel.strip_suffix(&[bun_paths::SEP]).unwrap_or(rel);
             if rel.is_empty() {

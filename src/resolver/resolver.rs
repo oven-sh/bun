@@ -5709,7 +5709,11 @@ impl<'a> Resolver<'a> {
                 // `Box<[Box<[u8]>]>` heap buffer is owned by `self.opts` and
                 // never mutated during resolve.
                 let main_field_keys = bun_ptr::RawSlice::<Box<[u8]>>::new(&self.opts.main_fields);
-                let mf_ext_order = options::ExtOrder::MainField;
+                // The "main" order is for JavaScript. A CSS import keeps the CSS order.
+                let mf_ext_order = match extension_order {
+                    options::ExtOrder::Css => options::ExtOrder::Css,
+                    _ => options::ExtOrder::MainField,
+                };
                 // The bundler projects "user did not pass --main-fields" as an
                 // explicit bool because the owned `Box<[Box<[u8]>]>` can never
                 // alias a static default to compare pointers against.

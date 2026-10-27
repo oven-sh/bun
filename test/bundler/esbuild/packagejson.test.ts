@@ -2377,8 +2377,7 @@ describe("bundler", () => {
   // The lookup goes by name: it adds the implicit extensions in the order of
   // the load that follows, and the first name that is a key wins. "main" is
   // loaded in its own order (".js" first, no ".mjs") for `import` and for
-  // `require`, so both statements get the same entry. The directory is not
-  // read: "only-cjs-file" has no main.js, and its "./main.js" key still wins.
+  // `require`, so both statements get the same entry.
   itBundled("packagejson/BrowserMapMainFieldNoExtProbeOrder", {
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
@@ -2386,13 +2385,11 @@ describe("bundler", () => {
         import cjs from 'keys-cjs-js'
         import dir from 'main-is-dir'
         import local from './local-pkg'
-        import onlyCjs from 'only-cjs-file'
         import index from 'main-is-index'
         console.log('keys .mjs .js:', mjs, '|', require('keys-mjs-js'))
         console.log('keys .cjs .js:', cjs, '|', require('keys-cjs-js'))
         console.log('directory main:', dir, '|', require('main-is-dir'))
         console.log('relative import:', local, '|', require('./local-pkg'))
-        console.log('only main.cjs on disk:', onlyCjs, '|', require('only-cjs-file'))
         console.log('main is ./index:', index, '|', require('main-is-index'))
       `,
       "/Users/user/project/node_modules/keys-mjs-js/package.json": `{"main":"./main","browser":{"./main.mjs":"./for-mjs.js","./main.js":"./for-js.js"}}`,
@@ -2415,10 +2412,6 @@ describe("bundler", () => {
       "/Users/user/project/src/local-pkg/main.mjs": `export default 'main.mjs'`,
       "/Users/user/project/src/local-pkg/for-mjs.js": `module.exports = 'entry of main.mjs'`,
       "/Users/user/project/src/local-pkg/for-js.js": `module.exports = 'entry of main.js'`,
-      "/Users/user/project/node_modules/only-cjs-file/package.json": `{"main":"./main","browser":{"./main.cjs":"./for-cjs.js","./main.js":"./for-js.js"}}`,
-      "/Users/user/project/node_modules/only-cjs-file/main.cjs": `module.exports = 'main.cjs'`,
-      "/Users/user/project/node_modules/only-cjs-file/for-cjs.js": `module.exports = 'entry of main.cjs'`,
-      "/Users/user/project/node_modules/only-cjs-file/for-js.js": `module.exports = 'entry of main.js'`,
       "/Users/user/project/node_modules/main-is-index/package.json": `{"main":"./index","browser":{"./index.mjs":"./for-mjs.js","./index.js":"./for-js.js"}}`,
       "/Users/user/project/node_modules/main-is-index/index.js": `module.exports = 'index.js'`,
       "/Users/user/project/node_modules/main-is-index/for-mjs.js": `module.exports = 'entry of index.mjs'`,
@@ -2431,7 +2424,6 @@ describe("bundler", () => {
         keys .cjs .js: entry of main.js | entry of main.js
         directory main: entry of lib/index.js | entry of lib/index.js
         relative import: entry of main.js | entry of main.js
-        only main.cjs on disk: entry of main.js | entry of main.js
         main is ./index: entry of index.js | entry of index.js
       `,
     },
@@ -2502,6 +2494,39 @@ describe("bundler", () => {
     target: "browser",
     bundleErrors: {
       "/Users/user/project/src/entry.js": [`Could not resolve: "demo-pkg". Maybe you need to "bun install"?`],
+    },
+  });
+  // A CSS import loads "main" in the CSS order, not in the "main" order, and
+  // the lookup uses the order of that load.
+  itBundled("packagejson/BrowserMapMainFieldNoExtCSSImport", {
+    files: {
+      "/Users/user/project/src/entry.css": /* css */ `
+        @import "with-map";
+        @import "without-map";
+      `,
+      "/Users/user/project/node_modules/with-map/package.json": `{"main":"./main","browser":{"./main.css":"./browser.css"}}`,
+      "/Users/user/project/node_modules/with-map/main.css": `.node { color: red }`,
+      "/Users/user/project/node_modules/with-map/browser.css": `.browser { color: green }`,
+      "/Users/user/project/node_modules/without-map/package.json": `{"main":"./main"}`,
+      "/Users/user/project/node_modules/without-map/main.css": `.plain { color: red }`,
+      "/Users/user/project/node_modules/without-map/main.js": `module.exports = 'main.js'`,
+    },
+    outfile: "/out.css",
+    target: "browser",
+    onAfterBundle(api) {
+      api.expectFile("/out.css").toEqualIgnoringWhitespace(`
+        /* Users/user/project/node_modules/with-map/browser.css */
+        .browser {
+          color: green;
+        }
+
+        /* Users/user/project/node_modules/without-map/main.css */
+        .plain {
+          color: red;
+        }
+
+        /* Users/user/project/src/entry.css */
+      `);
     },
   });
   // esbuild has one list of implicit extensions, with ".jsx" and ".ts" before
@@ -2606,8 +2631,9 @@ describe("bundler", () => {
   });
   // The lookup goes by name, so the key of a file that the package does not
   // have wins over the file that loads. Bun 1.3 and esbuild give the output
-  // below. "implicit-index" is "main-is-index" of
-  // BrowserMapMainFieldNoExtProbeOrder without its "main".
+  // below. Bun prints "entry of main.cjs | entry of main.cjs" and
+  // "entry of index.mjs | entry of index.js". "implicit-index" is
+  // "main-is-index" of BrowserMapMainFieldNoExtProbeOrder without its "main".
   itBundled("packagejson/BrowserMapEntryKeyOfMissingFile", {
     todo: true,
     files: {

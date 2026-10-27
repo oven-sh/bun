@@ -1,9 +1,7 @@
 //! What `fetch()` and the `WebSocket` client read off an HTTP/1.x connection: the head of a response and a chunked
 //! body. No I/O and no allocation.
 //!
-//! Both derive from picohttpparser, and accept and reject what Bun did when it called that:
-//! - https://github.com/h2o/picohttpparser (Kazuho Oku, Tokuhiro Matsuno, Daisuke Murase, Shigeo Mitsunari; MIT or
-//!   the Perl license)
+//! Both derive from picohttpparser (notice in `LICENSE`), and accept and reject what Bun did when it called that.
 #![forbid(unsafe_code)]
 // The bytes come from whatever server answered, and a panic aborts the process.
 #![deny(

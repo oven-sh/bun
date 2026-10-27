@@ -6,6 +6,7 @@
 //   limit/      one of PngSuite's, decoded with a `maxPixels`
 //   damaged/    the above with chunks changed, one for each thing libspng had to say about such a file
 //   fuzz/       from fuzzing libspng and src/png side by side, one for each piece of code reached in either
+//   history/    made to set off the bugs libspng has had, named by the commit that fixed one or the issue, if any
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
 import zlib from "node:zlib";
@@ -17,7 +18,7 @@ const files = new Map(cases.decode.map(c => [c.name, Buffer.from(c.data, "base64
 
 describe("Bun.Image reads and writes PNG the way it was recorded to", () => {
   test("decode", async () => {
-    expect(cases.decode.length).toBe(833);
+    expect(cases.decode.length).toBe(1097);
     const results = await Promise.all(
       cases.decode.map(async c => ({
         index: c.name,
@@ -100,7 +101,7 @@ const rejects = (...chunks: Buffer[]) =>
 const iccp = (text: string, name = "name") =>
   chunk("iCCP", Buffer.concat([Buffer.from(`${name}\0\0`, "latin1"), zlib.deflateSync(Buffer.from(text))]));
 
-// Each of these was so with libspng too, whatever the specification says.
+// Each of these was so with libspng too, whatever the specification says, unless it says what libspng did.
 describe("chunks before the image", () => {
   const [rgbaHeader, rgbaData] = [ihdr(1, 1, 8, RGBA), idat([1, 2, 3, 4])];
   const palette = chunk("PLTE", [10, 11, 12, 20, 21, 22]);
@@ -130,39 +131,36 @@ describe("chunks before the image", () => {
     await rejects(rgbaHeader, chunk("PLTE", Buffer.alloc(257 * 3)), rgbaData, iend);
   });
 
-  test("a second PLTE replaces only the entries it has", async () => {
+  // libspng let it replace as many entries of the first as it had.
+  test("a second PLTE is refused where the pixels are indices into it", async () => {
     const first = chunk("PLTE", [1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4, 4]);
-    expect(await pixels(indexed, first, palette, indices, iend)).toEqual([
-      "0a0b0cff",
-      "141516ff",
-      "030303ff",
-      "040404ff",
-    ]);
+    await rejects(indexed, first, palette, indices, iend);
+    await rejects(indexed, palette, chunk("abCd"), palette, indices, iend);
+    expect(await pixels(rgbaHeader, first, palette, rgbaData, iend)).toEqual(["01020304"]);
   });
 
   test("PLTE may not follow tRNS, bKGD or hIST, unless they were passed over", async () => {
-    for (const [type, good, bad] of [
-      ["tRNS", [0, 128], [0, 128, 255]],
-      ["bKGD", [1], [2]],
-      ["hIST", [0, 1, 0, 2], [0, 1]],
-    ] as const) {
-      await rejects(indexed, palette, chunk(type, [...good]), palette, indices, iend);
-      expect(await pixels(indexed, palette, chunk(type, [...bad]), palette, indices, iend)).toEqual([
-        "0a0b0cff",
-        "141516ff",
-        "000000ff",
-        "000000ff",
-      ]);
-    }
-    // Nor where PLTE only suggests colors.
     const [rgbHeader, rgbData] = [ihdr(1, 1, 8, RGB), idat([1, 2, 3])];
-    await rejects(rgbHeader, chunk("tRNS", [0, 9, 0, 9, 0, 9]), palette, rgbData, iend);
-    await rejects(rgbHeader, chunk("bKGD", [0, 9, 0, 9, 0, 9]), palette, rgbData, iend);
-    for (const length of [5, 7]) {
-      expect(await pixels(rgbHeader, chunk("bKGD", Buffer.alloc(length)), palette, rgbData, iend)).toEqual([
-        "010203ff",
-      ]);
+    for (const [type, good, bad, goodIfIndexed] of [
+      ["tRNS", [0, 9, 0, 9, 0, 9], [0, 9, 0, 9, 0], [7]],
+      ["bKGD", [0, 9, 0, 9, 0, 9], [0, 9, 0, 9, 0, 9, 0], [0]],
+      ["hIST", [0, 1, 0, 2], [0, 1], [0, 1, 0, 2]],
+    ] as const) {
+      await rejects(rgbHeader, palette, chunk(type, [...good]), palette, rgbData, iend);
+      expect(await pixels(rgbHeader, palette, chunk(type, [...bad]), palette, rgbData, iend)).toEqual(["010203ff"]);
+      // With no palette yet to refer to, they are passed over.
+      expect((await pixels(indexed, chunk(type, [...goodIfIndexed]), palette, indices, iend))[0]).toBe("0a0b0cff");
     }
+    for (const type of ["tRNS", "bKGD"]) {
+      await rejects(rgbHeader, chunk(type, [0, 9, 0, 9, 0, 9]), palette, rgbData, iend);
+      expect(await pixels(rgbHeader, chunk(type, Buffer.alloc(5)), palette, rgbData, iend)).toEqual(["010203ff"]);
+    }
+    // hIST has to be as long as the last PLTE.
+    const one = chunk("PLTE", [1, 1, 1]);
+    await rejects(rgbHeader, palette, one, chunk("hIST", [0, 1]), palette, rgbData, iend);
+    expect(await pixels(rgbHeader, palette, one, chunk("hIST", [0, 1, 0, 2]), palette, rgbData, iend)).toEqual([
+      "010203ff",
+    ]);
   });
 
   test("tRNS gives the first palette entries their alpha", async () => {
@@ -177,17 +175,20 @@ describe("chunks before the image", () => {
     expect((await pixels(indexed, palette, chunk("tRNS", [7]), chunk("tRNS", [9]), indices, iend))[0]).toBe("0a0b0c07");
   });
 
-  test("tRNS for gray counts all 16 bits of its sample, at any depth", async () => {
+  // libspng compared all 16 bits with a gray sample of 8 bits or less, so that the second of each pair was opaque.
+  test("of a sample in tRNS, only as many bits count as a sample of the image has", async () => {
     const gray = (depth: number, trns: number[], row: number[]) =>
       pixels(ihdr(2, 1, depth, GRAY), chunk("tRNS", trns), idat(row), iend);
     expect(await gray(8, [0, 5], [5, 6])).toEqual(["05050500", "060606ff"]);
-    expect(await gray(8, [1, 5], [5, 6])).toEqual(["050505ff", "060606ff"]);
+    expect(await gray(8, [1, 5], [5, 6])).toEqual(["05050500", "060606ff"]);
+    expect(await gray(4, [0, 0x05], [0x56])).toEqual(["55555500", "666666ff"]);
+    expect(await gray(4, [0, 0x15], [0x56])).toEqual(["55555500", "666666ff"]);
     expect(await gray(2, [0, 2], [0b10_11_0000])).toEqual(["aaaaaa00", "ffffffff"]);
-    expect(await gray(2, [0, 6], [0b10_11_0000])).toEqual(["aaaaaaff", "ffffffff"]);
+    expect(await gray(2, [0, 6], [0b10_11_0000])).toEqual(["aaaaaa00", "ffffffff"]);
+    expect(await gray(1, [0, 0], [0b0_1_000000])).toEqual(["00000000", "ffffffff"]);
+    expect(await gray(1, [0xff, 0xfe], [0b0_1_000000])).toEqual(["00000000", "ffffffff"]);
     expect(await gray(16, [1, 5], [1, 5, 1, 6])).toEqual(["01010100", "010101ff"]);
-  });
 
-  test("tRNS for 8-bit RGB counts only the low byte of its samples", async () => {
     const rgb = (depth: number, trns: number[], row: number[]) =>
       pixels(ihdr(2, 1, depth, RGB), chunk("tRNS", trns), idat(row), iend);
     expect(await rgb(8, [0, 1, 0, 2, 0, 3], [1, 2, 3, 1, 2, 4])).toEqual(["01020300", "010204ff"]);

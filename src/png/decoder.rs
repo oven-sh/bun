@@ -64,17 +64,15 @@ impl<'a> Decoder<'a> {
 /// What the chunks between IHDR and the first IDAT leave behind.
 ///
 /// An ancillary chunk that breaks a rule is passed over. A critical one fails the decode. The rules are
-/// libspng's, which are not always the specification's.
+/// libspng's, which are not always the specification's, unless a comment says what libspng did.
 struct Chunks<'a> {
     header: Header,
     max_inflated: usize,
-    /// A second PLTE replaces only as many entries as it has.
-    palette: [[u8; 3]; 256],
-    /// Of the last PLTE. 0: there was none.
-    palette_len: usize,
+    /// Of the last PLTE. Empty: there was none.
+    palette: &'a [[u8; 3]],
     /// The data of a tRNS chunk of the right length for the color type.
     transparency: Option<&'a [u8]>,
-    /// There was a bKGD or hIST chunk, which PLTE may not follow.
+    /// No PLTE may follow: there was a bKGD or hIST chunk, or the PLTE of an indexed image.
     palette_is_final: bool,
     /// Also set by an iCCP chunk that was passed over.
     seen_iccp: bool,
@@ -89,8 +87,7 @@ impl<'a> Chunks<'a> {
         Self {
             header,
             max_inflated,
-            palette: [[0; 3]; 256],
-            palette_len: 0,
+            palette: &[],
             transparency: None,
             palette_is_final: false,
             seen_iccp: false,
@@ -106,7 +103,7 @@ impl<'a> Chunks<'a> {
         loop {
             let (len, chunk_type) = reader.next_chunk_header()?;
             if chunk_type == chunk::IDAT {
-                if self.header.color_type == ColorType::Indexed && self.palette_len == 0 {
+                if self.header.color_type == ColorType::Indexed && self.palette.is_empty() {
                     return Err(Error::MissingPalette);
                 }
                 return Ok(len);
@@ -132,7 +129,7 @@ impl<'a> Chunks<'a> {
         }
     }
 
-    fn on_plte(&mut self, data: &[u8]) -> Result<()> {
+    fn on_plte(&mut self, data: &'a [u8]) -> Result<()> {
         if self.transparency.is_some() || self.palette_is_final {
             return Err(Error::ChunkOutOfPlace);
         }
@@ -144,10 +141,9 @@ impl<'a> Chunks<'a> {
         if !remainder.is_empty() || entries.is_empty() || entries.len() > max {
             return Err(Error::InvalidPalette);
         }
-        for (to, from) in self.palette.iter_mut().zip(entries) {
-            *to = *from;
-        }
-        self.palette_len = entries.len();
+        self.palette = entries;
+        // libspng let a second PLTE replace as many colors of the first as it had.
+        self.palette_is_final = self.header.color_type == ColorType::Indexed;
         Ok(())
     }
 
@@ -155,7 +151,7 @@ impl<'a> Chunks<'a> {
         let fits = match self.header.color_type {
             ColorType::Grayscale => data.len() == 2,
             ColorType::Truecolor => data.len() == 6,
-            ColorType::Indexed => data.len() <= self.palette_len,
+            ColorType::Indexed => data.len() <= self.palette.len(),
             ColorType::GrayscaleAlpha | ColorType::TruecolorAlpha => false,
         };
         if fits && self.transparency.is_none() {
@@ -168,17 +164,17 @@ impl<'a> Chunks<'a> {
             ColorType::Grayscale | ColorType::GrayscaleAlpha => data.len() == 2,
             ColorType::Truecolor | ColorType::TruecolorAlpha => data.len() == 6,
             ColorType::Indexed => {
-                matches!(data, &[index] if usize::from(index) < self.palette_len)
+                matches!(data, &[index] if usize::from(index) < self.palette.len())
             }
         };
     }
 
     fn on_hist(&mut self, data: &[u8]) {
-        self.palette_is_final |= self.palette_len != 0 && data.len() / 2 == self.palette_len;
+        self.palette_is_final |= !self.palette.is_empty() && data.len() / 2 == self.palette.len();
     }
 
     fn on_iccp(&mut self, data: &[u8]) -> Result<()> {
-        if self.palette_len != 0 || self.seen_iccp {
+        if !self.palette.is_empty() || self.seen_iccp {
             return Ok(());
         }
         self.seen_iccp = true;
@@ -407,22 +403,21 @@ impl Expander {
             (ColorType::GrayscaleAlpha, _) => Layout::GrayAlpha16,
             (ColorType::Grayscale, 16) => Layout::Gray16(transparency.try_into().ok()),
             (ColorType::Grayscale, depth) => {
-                // All 16 bits of the sample in tRNS count, so one too large for the depth matches nothing.
-                let transparent = transparency.try_into().ok().map(u16::from_be_bytes);
                 let max = u8::MAX >> (8 - depth);
+                // Of the 16 bits in tRNS, only as many as a sample has count. libspng compared all 16.
+                let transparent = match *transparency {
+                    [_, low] => Some(low & max),
+                    _ => None,
+                };
                 for (sample, color) in (0..=max).zip(&mut table) {
                     let gray = sample * (u8::MAX / max);
-                    let alpha = if transparent == Some(u16::from(sample)) {
-                        0
-                    } else {
-                        255
-                    };
+                    let alpha = if transparent == Some(sample) { 0 } else { 255 };
                     *color = [gray, gray, gray, alpha];
                 }
                 Layout::Lookup(depth)
             }
             (ColorType::Indexed, depth) => {
-                for (color, &[r, g, b]) in table.iter_mut().zip(&chunks.palette) {
+                for (color, &[r, g, b]) in table.iter_mut().zip(chunks.palette) {
                     *color = [r, g, b, 255];
                 }
                 for ([.., alpha], entry_alpha) in table.iter_mut().zip(transparency) {

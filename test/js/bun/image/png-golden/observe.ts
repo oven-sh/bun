@@ -9,6 +9,8 @@ export type DecodeCase = {
   data: string;
   maxPixels?: number;
   result: string;
+  /** Why `result` is not what it was with libspng. */
+  unlikeLibspng?: string;
 };
 
 export type EncodeCase = {
@@ -16,6 +18,7 @@ export type EncodeCase = {
   source: string;
   options: PngOptions;
   result: string;
+  unlikeLibspng?: string;
 };
 
 export type Cases = { decode: DecodeCase[]; encode: EncodeCase[] };
@@ -40,8 +43,8 @@ export const linesOf = (chunks: { type: string; data: Buffer }[]) =>
   Buffer.from(Bun.inflateSync(Buffer.concat(chunks.filter(c => c.type === "IDAT").map(c => c.data)).subarray(2, -4)));
 
 /**
- * Only the last line depends on how zlib compresses. Should that change, the lines before it still hold what
- * was recorded with libspng: the chunks, the filter chosen for each row with the filtered row, and the profile.
+ * Only the last line depends on how zlib compresses. Should that change, the lines before it stay as they were
+ * recorded: the chunks, the filter chosen for each row with the filtered row, and the profile.
  */
 async function observe(png: Uint8Array, maxPixels: number | undefined, options: PngOptions, wholeFile: boolean) {
   let out: Buffer;

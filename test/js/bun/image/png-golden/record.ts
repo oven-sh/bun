@@ -1,33 +1,40 @@
 // Fills in the `result` of every case in cases.json.gz from the Bun that runs this script:
 //
 //   <a build of 92e819d895> record.ts [new-cases.json]
-//   bun bd record.ts --accept [new-cases.json]
+//   bun bd record.ts --accept=<why> [new-cases.json]
 //
-// The results in the repository are those of 92e819d895, which read and wrote PNG with libspng. So the first form
-// is the one to add cases with. The second records the code under test, for after a change that is meant, and
-// lists the cases it changed.
+// The results in the repository are those of 92e819d895, which read and wrote PNG with libspng, but for the cases
+// with an `unlikeLibspng`. So the first form is the one to add cases with. It leaves those cases as they are. The
+// second is for after a change that is meant: it records the code under test, and lists the cases it changed, which
+// get `unlikeLibspng: <why>`.
 //
 // new-cases.json replaces the cases. It is a `Cases` of observe.ts, in which `result` may be left out.
 import { join } from "node:path";
 import { loadCases, observeDecode, observeEncode, type Cases } from "./observe";
 
 const args = process.argv.slice(2);
-if (!Bun.revision.startsWith("92e819d895") && !args.includes("--accept")) {
+const why = args.find(arg => arg.startsWith("--accept="))?.slice("--accept=".length);
+if (!Bun.revision.startsWith("92e819d895") && !why) {
   throw new Error(
     `This is Bun ${Bun.revision}, not the one the results were recorded with. ` +
-      "Run it with a build of 92e819d895, or pass --accept after a change that is meant.",
+      "Run it with a build of 92e819d895, or pass --accept=<why> after a change that is meant.",
   );
 }
 const fixture = join(import.meta.dir, "cases.json.gz");
-const [newCases] = args.filter(arg => arg !== "--accept");
+const [newCases] = args.filter(arg => !arg.startsWith("--accept="));
 const cases: Cases = newCases ? await Bun.file(newCases).json() : await loadCases(fixture);
 
 const files = new Map(cases.decode.map(c => [c.name, Buffer.from(c.data, "base64")]));
 // The fixture does not show in a diff, so say which results are no longer the recorded ones.
 const changed: string[] = [];
-function record(c: { result?: string }, name: string, result: string) {
+function record(c: { result?: string; unlikeLibspng?: string }, name: string, result: string) {
+  if (!why && c.unlikeLibspng !== undefined) return;
+  if (why && c.result === undefined) throw new Error(`Record ${name} with a build of 92e819d895 first.`);
   const exceptCompression = (text: string) => text.replace(/^file .*\n/m, "");
-  if (c.result !== undefined && exceptCompression(c.result) !== exceptCompression(result)) changed.push(name);
+  if (c.result !== undefined && exceptCompression(c.result) !== exceptCompression(result)) {
+    changed.push(name);
+    c.unlikeLibspng = why;
+  }
   c.result = result;
 }
 for (const c of cases.decode) record(c, c.name, await observeDecode(files.get(c.name)!, c.maxPixels));

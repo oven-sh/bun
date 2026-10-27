@@ -195,7 +195,7 @@ impl ZStr {
     }
     /// Borrow a NUL-terminated FFI C string as `&ZStr`, or `EMPTY` if `p` is
     /// null. Single audited funnel for the `strlen`-then-`from_raw` shape that
-    /// previously appeared as ad-hoc local helpers in libarchive / uSockets /
+    /// previously appeared as ad-hoc local helpers in uSockets /
     /// HTTPCertError. Returns `&'a ZStr` so the *caller* picks the lifetime.
     ///
     /// # Safety
@@ -466,22 +466,6 @@ impl WStr {
         // SAFETY: `buf[buf.len()-1] == 0` (debug-asserted; caller contract in
         // release) and `buf[..buf.len()-1]` is in-bounds by slice invariant.
         unsafe { Self::from_raw(buf.as_ptr(), buf.len() - 1) }
-    }
-    /// Borrow a NUL-terminated FFI wide string as `&WStr`, or [`EMPTY`] if
-    /// `p` is null. UTF-16 mirror of [`ZStr::from_c_ptr`]; single audited
-    /// funnel for the `wcslen`-then-`from_raw` shape at libarchive `_w`
-    /// accessors and Windows path-API ingestion points.
-    ///
-    /// # Safety
-    /// If non-null, `p` must point to a NUL-terminated u16 sequence readable
-    /// for `'a`. Null is explicitly allowed (→ `WStr::EMPTY`).
-    #[inline]
-    pub unsafe fn from_ptr<'a>(p: *const u16) -> &'a WStr {
-        if p.is_null() {
-            return Self::EMPTY;
-        }
-        // SAFETY: non-null and NUL-terminated per caller contract.
-        unsafe { Self::from_raw(p, crate::ffi::wcslen(p)) }
     }
     #[inline]
     pub const fn as_slice(&self) -> &[u16] {
@@ -1528,7 +1512,7 @@ pub mod fd {
 }
 
 // ─── FileKind / Mode / kind_from_mode (from bun_sys) ──────────────────────
-// Pure S_IFMT arithmetic, no syscalls (libarchive_sys req).
+// Pure S_IFMT arithmetic, no syscalls.
 pub type Mode = u32; // POSIX `mode_t`
 
 /// `stat` mode-flag constants and predicates.

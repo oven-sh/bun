@@ -333,13 +333,25 @@ impl DevServer {
         let mut watch_for_route_file = false;
         let file_is_missing = matches!(err.name(), "ENOENT" | "FileNotFound" | "ModuleNotFound");
         if file_is_missing {
+            let mut gone = StringArrayHashMap::<()>::default();
             // Special-case files being deleted: the importers report them.
             match graph {
-                bake::Graph::Server | bake::Graph::Ssr => {
-                    self.on_file_deleted(abs_path, graph, bv2)?
-                }
+                bake::Graph::Server | bake::Graph::Ssr => self
+                    .server_graph
+                    .on_file_deleted(abs_path, bv2, &mut gone)?,
                 bake::Graph::Client => {
-                    self.on_file_deleted(abs_path, graph, bv2)?;
+                    self.client_graph
+                        .on_file_deleted(abs_path, bv2, &mut gone)?;
+                    // The importers of a client component are in the server graph.
+                    if self
+                        .server_graph
+                        .bundled_files
+                        .get(abs_path)
+                        .is_some_and(|file| file.is_client_component_boundary)
+                    {
+                        self.server_graph
+                            .on_file_deleted(abs_path, bv2, &mut gone)?;
+                    }
                     // The html file of a route has no importer.
                     if let Some(file) = self
                         .client_graph
@@ -355,6 +367,13 @@ impl DevServer {
                         )?;
                     }
                 }
+            }
+            // An importer whose file is gone too is handled like the file, for both graphs. Not inside a step: a step frees edges of the lists that other steps walk.
+            let mut handled = 0;
+            while let Some(path) = gone.keys().get(handled).cloned() {
+                handled += 1;
+                self.client_graph.on_file_deleted(&path, bv2, &mut gone)?;
+                self.server_graph.on_file_deleted(&path, bv2, &mut gone)?;
             }
         } else {
             let key = incremental_graph::InsertFailureKey::AbsPath(abs_path, graph);
@@ -378,47 +397,6 @@ impl DevServer {
             )?;
         }
         Ok(file_is_missing)
-    }
-
-    /// Builds the importers of a deleted file again. An importer that the resolver does not find is handled like the file.
-    fn on_file_deleted(
-        &mut self,
-        abs_path: &[u8],
-        graph: bake::Graph,
-        bv2: &mut BundleV2,
-    ) -> Result<(), AllocError> {
-        let mut walk = incremental_graph::DeletedFileWalk::default();
-        let client = graph == bake::Graph::Client;
-        // A graph that did not read the file in this build has it from an earlier build: the file is gone there too.
-        let other_graph_too = !bv2.has_source_of(abs_path, !client);
-        let in_client_graph = (client || other_graph_too)
-            && self
-                .client_graph
-                .on_file_deleted(abs_path, bv2, &mut walk)?;
-        let in_server_graph = (!client || other_graph_too)
-            && self
-                .server_graph
-                .on_file_deleted(abs_path, bv2, &mut walk)?;
-        let in_graph = if client {
-            in_client_graph
-        } else {
-            in_server_graph
-        };
-        // A loop and not a recursion: a step frees edges of the dependency lists of other files.
-        let mut handled = 0;
-        while let Some(path) = walk.unresolved.keys().get(handled).cloned() {
-            handled += 1;
-            // The file is gone for both graphs.
-            self.client_graph.on_file_deleted(&path, bv2, &mut walk)?;
-            self.server_graph.on_file_deleted(&path, bv2, &mut walk)?;
-        }
-
-        if in_graph {
-            // Bust the resolution cache of the dir containing this file.
-            let dirname = paths::dirname(abs_path).unwrap_or(abs_path);
-            let _ = bv2.transpiler.resolver.bust_dir_cache(dirname);
-        }
-        Ok(())
     }
 
     /// Return a log to write resolution failures into.

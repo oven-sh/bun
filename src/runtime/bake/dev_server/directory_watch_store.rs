@@ -303,29 +303,17 @@ impl DirectoryWatchStore {
         // Try to use an existing open directory handle
         // SAFETY: server_transpiler is initialized by Framework::init_transpiler
         // before DevServer accepts requests; `dev` is a valid *mut DevServer.
-        let resolver = &mut unsafe { (*dev).server_transpiler.assume_init_mut() }.resolver;
-        let cache_fd: Option<bun_sys::Fd> = match resolver.read_dir_info(dir_name_to_watch) {
-            Ok(Some(cache)) => {
-                let fd = cache.get_file_descriptor();
-                if fd.is_valid() { Some(fd) } else { None }
-            }
-            Ok(None) => {
-                // A directory that is gone gets no watch, and a package specifier never makes the resolver look again.
-                let mut gone = dir_name_to_watch;
-                loop {
-                    let _ = resolver.bust_dir_cache(gone);
-                    let parent =
-                        bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(gone);
-                    let is_root = parent.is_empty() || parent.len() >= gone.len();
-                    if is_root || resolver.read_dir_info_ignore_error(parent).is_some() {
-                        break;
-                    }
-                    gone = parent;
+        let cache_fd: Option<bun_sys::Fd> =
+            match unsafe { (*dev).server_transpiler.assume_init_mut() }
+                .resolver
+                .read_dir_info(dir_name_to_watch)
+            {
+                Ok(Some(cache)) => {
+                    let fd = cache.get_file_descriptor();
+                    if fd.is_valid() { Some(fd) } else { None }
                 }
-                None
-            }
-            Err(_) => None,
-        };
+                Ok(None) | Err(_) => None,
+            };
 
         let (fd, owned_fd): (bun_sys::Fd, bool) = if bun_watcher::REQUIRES_FILE_DESCRIPTORS {
             if let Some(fd) = cache_fd {

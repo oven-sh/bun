@@ -1,7 +1,7 @@
 //! Dev server: fails the files that import a source whose file was not there to read.
 
 use bun_ast::{ImportRecord, import_record};
-use bun_collections::{ArrayHashMap, StringHashMap};
+use bun_collections::{ArrayHashMap, StringArrayHashMap, StringHashMap};
 
 use crate::bun_fs as Fs;
 use crate::bundle_v2::BundleV2;
@@ -18,7 +18,7 @@ pub(crate) enum MissingSource {
         /// The target of the parse task. The row of a failed task in `graph.ast` keeps the default target.
         target: Target,
     },
-    /// The resolver does not find this file, so no task read it.
+    /// An importer of a deleted file whose own file is gone. No task read it.
     File(Box<[u8]>),
 }
 
@@ -58,7 +58,7 @@ pub(crate) fn note_file(this: &mut BundleV2, path: &[u8]) {
 /// The noted sources by index, and the sides that did not find each path.
 struct Noted {
     by_index: ArrayHashMap<IndexInt, ()>,
-    by_path: StringHashMap<u8>,
+    by_path: StringArrayHashMap<u8>,
 }
 
 impl Noted {
@@ -89,7 +89,7 @@ impl Noted {
 pub(crate) fn report(this: &mut BundleV2, dev: DevServerHandle) {
     let mut noted = Noted {
         by_index: ArrayHashMap::new(),
-        by_path: StringHashMap::new(),
+        by_path: StringArrayHashMap::new(),
     };
     for missing in &this.missing_sources {
         let (path, sides): (&[u8], u8) = match missing {
@@ -119,6 +119,26 @@ pub(crate) fn report(this: &mut BundleV2, dev: DevServerHandle) {
         }
         if !bound.is_empty() {
             report_importer(this, dev, importer, &bound);
+        }
+    }
+    forget_missing_dirs(this, &noted);
+}
+
+/// A lookup of this build can leave the directory of a noted file as not found. A package specifier never makes the resolver look again.
+fn forget_missing_dirs(this: &mut BundleV2, noted: &Noted) {
+    let resolver = &mut this.transpiler.resolver;
+    let mut seen: StringHashMap<()> = StringHashMap::new();
+    for path in noted.by_path.keys() {
+        let mut parent = bun_paths::dirname(path);
+        if parent.is_some_and(|dir| bun_core::handle_oom(seen.get_or_put(dir)).found_existing) {
+            continue;
+        }
+        // Up to the first directory that is there: the lookup of a directory leaves each missing one above it as not found too.
+        while let Some(dir) = parent
+            && resolver.read_dir_info_ignore_error(dir).is_none()
+        {
+            let _ = resolver.bust_dir_cache(dir);
+            parent = bun_paths::dirname(dir);
         }
     }
 }

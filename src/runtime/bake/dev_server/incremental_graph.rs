@@ -279,15 +279,6 @@ struct TempLookup {
     seen: bool,
 }
 
-/// The state of one `DevServer::on_file_deleted` walk. It allocates nothing while every importer resolves.
-#[derive(Default)]
-pub(crate) struct DeletedFileWalk {
-    /// The importers that the resolver does not find, in walk order. Each one is handled like the deleted file.
-    pub(crate) unresolved: StringArrayHashMap<()>,
-    /// The directories whose listing this walk dropped from the resolver.
-    pub(crate) dropped_dirs: StringArrayHashMap<()>,
-}
-
 /// Parameterized via `adt_const_params` on `bake::Side`; `File` itself is
 /// still the folded union (see TODO above) until a trait dispatch picks the
 /// per-side layout.
@@ -1621,15 +1612,15 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     // ────────────────────────────────────────────────────────────────────────
 
     /// `IncrementalGraph(side).onFileDeleted` (spec :1528).
-    /// One step of `DevServer::on_file_deleted`. Returns false if this graph does not have the file.
+    /// An importer whose file is gone too is not built: it goes to `gone`, and the caller handles it like this file.
     pub(crate) fn on_file_deleted(
         &mut self,
         abs_path: &[u8],
         bv2: &mut bun_bundler::BundleV2<'_>,
-        walk: &mut DeletedFileWalk,
-    ) -> Result<bool, bun_alloc::AllocError> {
+        gone: &mut StringArrayHashMap<()>,
+    ) -> Result<(), bun_alloc::AllocError> {
         let Some(index) = self.get_file_index(abs_path) else {
-            return Ok(false);
+            return Ok(());
         };
 
         // Disconnect all imports.
@@ -1641,7 +1632,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             self.disconnect_edge_from_dependency_list(edge_index);
             self.free_edge(edge_index);
         }
-        // The cached code has no imports now. A build that finds the file again parses it.
+        // The cached module has no imports now. A build that finds the file again parses it.
         self.ensure_stale_bit_capacity(true)?;
         self.stale_files.set(index.get() as usize);
 
@@ -1651,68 +1642,42 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             let dep = self.edges[edge_index.get() as usize];
             it = dep.next_dependency;
             debug_assert_eq!(dep.imported.get(), index.get());
-            self.rebuild_importer_of_deleted_file(dep.dependency, bv2, walk)?;
-        }
-        Ok(true)
-    }
-
-    /// Queues one importer of a deleted file, for each target that bundles it.
-    fn rebuild_importer_of_deleted_file(
-        &self,
-        importer: FileIndex<SIDE>,
-        bv2: &mut bun_bundler::BundleV2<'_>,
-        walk: &mut DeletedFileWalk,
-    ) -> Result<(), bun_alloc::AllocError> {
-        use bun_bundler::bundle_v2::InvalidationOutcome;
-
-        let key: &[u8] = &self.bundled_files.keys()[importer.get() as usize];
-        // A file that imports two deleted files comes here two times.
-        if walk.unresolved.contains(key) {
-            return Ok(());
-        }
-        let file = &self.bundled_files.values()[importer.get() as usize];
-        let loader = file
-            .html_route_bundle_index
-            .is_some()
-            .then_some(bun_ast::Loader::Html);
-        let targets = match SIDE {
-            Side::Client => [Some(bun_ast::Target::Browser), None],
-            Side::Server => [
-                file.is_rsc.then_some(bun_ast::Target::Bun),
-                file.rebundles_for_ssr_graph()
-                    .then_some(bun_ast::Target::ServerComponentsSsr),
-            ],
-        };
-        for target in targets.into_iter().flatten() {
-            let enqueue = |bv2: &mut bun_bundler::BundleV2<'_>| {
+            let key = &self.bundled_files.keys()[dep.dependency.get() as usize];
+            // The resolver can have a directory listing from before the removal, so ask the file system. A key that is not a path has no file.
+            if bun_paths::is_absolute(key) && !bun_sys::exists(key) {
+                if !gone.get_or_put(key)?.found_existing {
+                    bv2.note_missing_file(key);
+                }
+                continue;
+            }
+            let file = &self.bundled_files.values()[dep.dependency.get() as usize];
+            let loader = file
+                .html_route_bundle_index
+                .is_some()
+                .then_some(bun_ast::Loader::Html);
+            let mut enqueue = |target| {
                 bun_core::handle_oom(
                     bv2.enqueue_file_from_dev_server_incremental_graph_invalidation(
                         key, target, loader,
                     ),
                 )
             };
-            let mut outcome = enqueue(bv2);
-            if matches!(outcome, InvalidationOutcome::Unresolved) {
-                // A listing older than the file does not have it. One re-read per directory per walk: a drop leaves the old listing allocated.
-                let dirname = bun_paths::dirname(key).unwrap_or(key);
-                if !walk.dropped_dirs.get_or_put(dirname)?.found_existing
-                    && bv2.transpiler.resolver.bust_dir_cache(dirname)
-                {
-                    outcome = enqueue(bv2);
-                }
-            }
-            match outcome {
-                InvalidationOutcome::Queued
-                | InvalidationOutcome::AlreadyInBundle
-                | InvalidationOutcome::NotAFilePath => {}
-                InvalidationOutcome::Unresolved => {
-                    bv2.note_missing_file(key);
-                    walk.unresolved.put(key, ())?;
-                    // The other target has the same file.
-                    break;
+            match SIDE {
+                Side::Client => enqueue(bun_ast::Target::Browser),
+                Side::Server => {
+                    if file.is_rsc {
+                        enqueue(bun_ast::Target::Bun);
+                    }
+                    if file.rebundles_for_ssr_graph() {
+                        enqueue(bun_ast::Target::ServerComponentsSsr);
+                    }
                 }
             }
         }
+
+        // Bust the resolution cache of the dir containing this file.
+        let dirname = bun_paths::dirname(abs_path).unwrap_or(abs_path);
+        let _ = bv2.transpiler.resolver.bust_dir_cache(dirname);
         Ok(())
     }
 

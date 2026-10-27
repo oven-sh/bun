@@ -20,10 +20,7 @@ pub use bv2_impl::{
     EventLoop, ImportTracker, PartRange, StableRef, WrapKind, generic_path_with_pretty_initialized,
     target_from_hashbang,
 };
-pub use bv2_impl::{
-    DevServerInput, DevServerOutput, ImportTrackerIterator, ImportTrackerStatus,
-    InvalidationOutcome,
-};
+pub use bv2_impl::{DevServerInput, DevServerOutput, ImportTrackerIterator, ImportTrackerStatus};
 // Flatten the impl-body module into this file's namespace so external callers
 // (`bun_runtime::cli::*`, `linker_context::*`) reference items as
 // `bundle_v2::Foo` rather than naming the implementation submodule.
@@ -3061,25 +3058,18 @@ pub mod bv2_impl {
             }
         }
 
-        /// Dev server: the resolver does not find `path`, so no parse task of this build read it.
+        /// Dev server: the file at `path` is gone, so an import that this build bound to it fails.
         pub fn note_missing_file(&mut self, path: &[u8]) {
             missing_sources::note_file(self, path);
         }
 
-        /// Dev server: true if this build has a source of `path` for the client graph (`client`) or for a server graph.
-        pub fn has_source_of(&self, path: &[u8], client: bool) -> bool {
-            self.graph.build_graphs.iter().any(|(target, sources)| {
-                (target == Target::Browser) == client && sources.get(path).is_some()
-            })
-        }
-
-        /// `loader`: see `requested_file_loader`. An `Err` is out of memory.
+        /// `loader`: see `requested_file_loader`.
         pub fn enqueue_file_from_dev_server_incremental_graph_invalidation(
             &mut self,
             path_slice: &[u8],
             target: options::Target,
             loader: Option<Loader>,
-        ) -> Result<InvalidationOutcome, Error> {
+        ) -> Result<(), Error> {
             // TODO: plugins with non-file namespaces
             // borrowck: get-then-put (instead of a single get-or-put) so the map
             // borrow doesn't span the resolver / `&mut self` calls below.
@@ -3088,18 +3078,14 @@ pub mod bv2_impl {
                 .get(path_slice)
                 .is_some()
             {
-                return Ok(InvalidationOutcome::AlreadyInBundle);
+                return Ok(());
             }
-            // `resolve_entry_point` would print its message as an error of this build.
-            let Some(mut result) = self
+            let mut result = match self
                 .transpiler_for_target(target)
-                .resolve_entry_point_quiet(path_slice)
-            else {
-                return Ok(if bun_paths::is_absolute(path_slice) {
-                    InvalidationOutcome::Unresolved
-                } else {
-                    InvalidationOutcome::NotAFilePath
-                });
+                .resolve_entry_point(path_slice)
+            {
+                Ok(r) => r,
+                Err(_) => return Ok(()),
             };
             let mut path = result.path_pair.primary;
             self.increment_scan_counter();
@@ -3155,7 +3141,7 @@ pub mod bv2_impl {
 
                 self.graph.pool().schedule(task);
             }
-            Ok(InvalidationOutcome::Queued)
+            Ok(())
         }
 
         /// The dev server passes `Loader::Html` for the html file of a route: its extension need not be `.html`.
@@ -8512,19 +8498,6 @@ pub mod bv2_impl {
         pub chunks: &'a mut [Chunk],
         pub css_file_list: ArrayHashMap<Index, CssEntryPointMeta>,
         pub html_files: ArrayHashMap<Index, ()>,
-    }
-
-    /// What `enqueue_file_from_dev_server_incremental_graph_invalidation` did with a file.
-    #[must_use]
-    pub enum InvalidationOutcome {
-        /// A parse task for the file is queued.
-        Queued,
-        /// This bundle already has the file. Nothing is queued.
-        AlreadyInBundle,
-        /// The resolver does not find the file. Nothing is queued.
-        Unresolved,
-        /// The key is not an absolute path and did not resolve: a plugin namespace keys its files by their pretty path.
-        NotAFilePath,
     }
 
     pub(crate) fn generate_unique_key() -> u64 {

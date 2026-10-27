@@ -467,8 +467,8 @@ pub(crate) trait HasherImpl {
     /// Empties the table. If `one_shot`, the first `input_size` bytes of `data` are all the input there will be.
     fn prepare(&mut self, one_shot: bool, input_size: usize, data: &[u8]) -> Checked;
 
-    /// Makes room for the positions below `input_end`. No other will be added before the next call.
-    fn reserve(&mut self, _input_end: usize) -> Result<(), AllocError> {
+    /// Makes room for `positions` positions in all. No more will be added before the next call.
+    fn reserve(&mut self, _positions: usize) -> Result<(), AllocError> {
         Ok(())
     }
 
@@ -604,6 +604,10 @@ macro_rules! with_hasher {
     };
 }
 
+/// While a stream has no more input than this, its table only has room for what there is, and is copied when it grows. By
+/// then it is an eighth of a whole one at most.
+const SHORT_STREAM: usize = 1 << 10;
+
 impl Hasher {
     pub(crate) fn new() -> Self {
         Self {
@@ -658,17 +662,29 @@ impl Hasher {
                 HasherType::H68x32 => HasherKind::H68x32(H68::new()?),
             };
         }
-        match &self.kind {
+        // Without the memory for that, there is no hasher, as before the first use.
+        let kind = core::mem::replace(&mut self.kind, HasherKind::NotSetUp);
+        let is_prepared = core::mem::take(&mut self.is_prepared);
+        self.kind = match kind {
             HasherKind::H58x16Sparse(h) if input_end > H58Sparse::<16>::MAX_INPUT => {
-                self.kind = HasherKind::H58x16(h.to_dense()?);
+                HasherKind::H58x16(h.into_dense()?)
             }
             HasherKind::H58x32Sparse(h) if input_end > H58Sparse::<32>::MAX_INPUT => {
-                self.kind = HasherKind::H58x32(h.to_dense()?);
+                HasherKind::H58x32(h.into_dense()?)
             }
-            _ => {}
-        }
+            kind => kind,
+        };
+        self.is_prepared = is_prepared;
 
-        with_hasher!(&mut self.kind, hasher => hasher.reserve(input_end).map_err(EncoderError::from))?;
+        // After a block that is not the last there can be any amount of input. A table that grows is copied, with the old
+        // and the new one there at once. So once a stream is no longer short, its table gets all the room it can ever use,
+        // as in the reference encoder.
+        let positions = if is_last || input_end <= SHORT_STREAM {
+            input_end
+        } else {
+            usize::MAX
+        };
+        with_hasher!(&mut self.kind, hasher => hasher.reserve(positions).map_err(EncoderError::from))?;
 
         if !self.is_prepared {
             with_hasher!(&mut self.kind, hasher => hasher.prepare(one_shot, input_size, data))?;
@@ -932,4 +948,82 @@ pub(crate) fn lookup_all_compound_dictionary_matches(
         }
     }
     Ok(total_found)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::enc::EncoderMode;
+    use crate::enc::compound_dictionary::CompoundDictionary;
+    use crate::enc::params::DistanceParams;
+
+    /// The hasher after blocks of these sizes, the last of which ends the stream or does not.
+    fn hasher_after(quality: i32, blocks: &[usize], ends: bool) -> Fallible<HasherKind> {
+        let params = EncoderParams {
+            mode: EncoderMode::Generic,
+            quality,
+            lgwin: 22,
+            lgblock: 0,
+            stream_offset: 0,
+            size_hint: 0,
+            disable_literal_context_modeling: false,
+            large_window: false,
+            dist: DistanceParams::default(),
+            dictionary: CompoundDictionary::default(),
+        };
+        let mut hasher = Hasher::new();
+        let mut position = 0;
+        for (i, &size) in blocks.iter().enumerate() {
+            hasher.setup(&params, &[], position, size, ends && i + 1 == blocks.len())?;
+            position += size;
+        }
+        Ok(hasher.kind)
+    }
+
+    #[test]
+    fn a_table_has_room_for_all_buckets_once_more_input_can_follow_the_start() -> Fallible {
+        const ALL: usize = 1 << bucket_table::BUCKET_BITS;
+        for (blocks, ends, expected) in [
+            (&[5000][..], true, 5000..ALL),
+            (&[1 << 20], true, ALL..ALL + 1),
+            (&[SHORT_STREAM], false, SHORT_STREAM..ALL / 16 + 1),
+            (&[2, SHORT_STREAM - 2], false, SHORT_STREAM..ALL / 16 + 1),
+            (&[2, 5000], true, 5000..ALL),
+            (&[SHORT_STREAM + 1], false, ALL..ALL + 1),
+            (&[500, 500, 500], false, ALL..ALL + 1),
+            (&[5000, 1], true, ALL..ALL + 1),
+        ] {
+            let HasherKind::H5(h) = hasher_after(7, blocks, ends)? else {
+                return Err(Bug.into());
+            };
+            assert!(
+                expected.contains(&h.capacity()),
+                "{blocks:?} {ends}: {}",
+                h.capacity()
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn quality_5_goes_over_to_a_block_for_every_bucket_after_16_kib() -> Fallible {
+        let most = H58Sparse::<16>::MAX_INPUT;
+        assert!(matches!(
+            hasher_after(5, &[most], true)?,
+            HasherKind::H58x16Sparse(_)
+        ));
+        assert!(matches!(
+            hasher_after(5, &[most + 1], true)?,
+            HasherKind::H58x16(_)
+        ));
+        assert!(matches!(
+            hasher_after(5, &[most - 1, 1], false)?,
+            HasherKind::H58x16Sparse(_)
+        ));
+        assert!(matches!(
+            hasher_after(5, &[most - 1, 1, 1], false)?,
+            HasherKind::H58x16(_)
+        ));
+        Ok(())
+    }
 }

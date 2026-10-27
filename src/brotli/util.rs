@@ -159,8 +159,8 @@ pub(crate) fn try_vec<T: Clone>(value: T, len: usize) -> Result<Vec<T>, AllocErr
     Ok(vec)
 }
 
-/// Makes room for `needed` elements in all. The capacity at least doubles when it grows, but does not go beyond `most`,
-/// which is as much as is ever needed.
+/// Makes room for `needed` elements in all. If that takes more than one step, the capacity at least doubles with each, but
+/// does not go beyond `most`, which is as much as is ever needed.
 pub(crate) fn try_reserve_up_to<T>(
     vec: &mut Vec<T>,
     needed: usize,

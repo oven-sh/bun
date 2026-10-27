@@ -7,6 +7,7 @@ use super::{
     StaticDictionarySearch, find_longest_match_at_last_distances, for_each_position,
     hash_low_bytes, hash_u32, search_in_static_dictionary,
 };
+use crate::enc::Fallible;
 use crate::util::{
     Bug, Checked, SliceExt, load_u32_le, load_u64_le, try_reserve_up_to, try_vec, try_zeroed,
 };
@@ -129,16 +130,40 @@ impl<const N: usize> SparseBuckets<N> {
         Ok(())
     }
 
-    fn to_dense(&self) -> Result<DenseBuckets<N>, AllocError> {
-        let mut dense = DenseBuckets::new(self.heads.len().trailing_zeros())?;
-        let buckets = dense.added.iter_mut().zip(&mut dense.blocks);
-        for (&[block, added], (dense_added, dense_block)) in self.heads.iter().zip(buckets) {
-            if let Some(block) = self.blocks.get(usize::from(block).wrapping_sub(1)) {
-                *dense_added = added;
-                *dense_block = *block;
+    /// The blocks move within their allocation, if that has room for all buckets.
+    fn into_dense(mut self) -> Fallible<DenseBuckets<N>> {
+        const NONE: u16 = u16::MAX;
+        let num_buckets = self.heads.len();
+        if num_buckets > usize::from(NONE) {
+            return Err(Bug.into());
+        }
+        let mut counts = try_zeroed(num_buckets)?;
+        // The bucket of the block at each index. An empty block has none.
+        let mut owners = try_vec(NONE, num_buckets)?;
+        for (key, (&[block, added], count)) in self.heads.iter().zip(&mut counts).enumerate() {
+            *count = added;
+            if let Some(index) = usize::from(block).checked_sub(1) {
+                owners.put(index, key as u16)?;
             }
         }
-        Ok(dense)
+        self.reserve(usize::MAX)?;
+        self.blocks.resize(num_buckets, Block::EMPTY);
+        for index in 0..num_buckets {
+            // Each turn takes a block to where it stays.
+            loop {
+                let owner = owners.at(index)?;
+                let target = usize::from(owner);
+                if owner == NONE || target == index {
+                    break;
+                }
+                self.blocks.swap(index, target);
+                owners.swap(index, target);
+            }
+        }
+        Ok(DenseBuckets {
+            added: counts,
+            blocks: self.blocks,
+        })
     }
 }
 
@@ -222,11 +247,9 @@ impl<const LONG: bool, const N: usize> HashLongestMatchTagged<LONG, N, SparseBuc
     /// With more input than this, [`DenseBuckets`] pay off.
     pub(crate) const MAX_INPUT: usize = N << 10;
 
-    pub(crate) fn to_dense(
-        &self,
-    ) -> Result<HashLongestMatchTagged<LONG, N, DenseBuckets<N>>, AllocError> {
+    pub(crate) fn into_dense(self) -> Fallible<HashLongestMatchTagged<LONG, N, DenseBuckets<N>>> {
         Ok(HashLongestMatchTagged {
-            buckets: self.buckets.to_dense()?,
+            buckets: self.buckets.into_dense()?,
             is_clear: self.is_clear,
         })
     }
@@ -371,5 +394,40 @@ mod tests {
         assert_eq!(H58::BUCKET_BITS, 14);
         assert_eq!(H68::BUCKET_BITS, 15);
         assert_eq!(NUM_LAST_DISTANCES_TO_CHECK, 4);
+    }
+
+    #[test]
+    fn a_bucket_keeps_its_block_when_all_get_one() -> Fallible {
+        const BUCKETS: usize = 64;
+        // Two thirds of the buckets, in an order of their own.
+        let keys = (0..BUCKETS)
+            .map(|i| i * 37 % BUCKETS)
+            .filter(|key| key % 3 != 0);
+        for room in [usize::MAX, BUCKETS * 2 / 3] {
+            let mut sparse = SparseBuckets::<16>::new(BUCKETS.trailing_zeros())?;
+            sparse.reserve(room)?;
+            let allocation = sparse.blocks.as_ptr();
+            for key in keys.clone() {
+                for _ in 0..=key % 4 {
+                    let (_, block) = sparse.add(key)?;
+                    block.positions = [key as u32; 16];
+                    block.tags = [key as u8; 16];
+                }
+            }
+            let dense = sparse.into_dense()?;
+            assert_eq!(dense.blocks.len(), BUCKETS);
+            assert!(room != usize::MAX || dense.blocks.as_ptr() == allocation);
+            for (key, (block, &added)) in dense.blocks.iter().zip(&dense.added).enumerate() {
+                let (value, count) = if key % 3 != 0 {
+                    (key, key % 4 + 1)
+                } else {
+                    (0, 0)
+                };
+                assert_eq!(block.positions, [value as u32; 16], "bucket {key}");
+                assert_eq!(block.tags, [value as u8; 16], "bucket {key}");
+                assert_eq!(usize::from(added), count, "bucket {key}");
+            }
+        }
+        Ok(())
     }
 }

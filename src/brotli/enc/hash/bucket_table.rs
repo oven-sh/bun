@@ -18,7 +18,7 @@ pub(crate) struct BucketTable {
     block_bits: u32,
     heads: Vec<Head>,
     /// Ring buffers of `block_size` positions. A bucket gets one with its first position, so that a short input does
-    /// not take the room for all of them, which can be 32 MiB.
+    /// not touch the room for all of them, which can be 32 MiB.
     pub(crate) blocks: Vec<u32>,
     /// `heads` is all 0 and `blocks` is empty.
     is_clear: bool,

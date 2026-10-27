@@ -25,6 +25,12 @@ impl<const LONG: bool> HashLongestMatch<LONG> {
         })
     }
 
+    /// How many buckets there is room for.
+    #[cfg(test)]
+    pub(crate) fn capacity(&self) -> usize {
+        self.table.blocks.capacity() / self.table.block_size
+    }
+
     #[inline(always)]
     fn hash_bytes(data: &[u8], pos: usize) -> Checked<usize> {
         Ok(if LONG {

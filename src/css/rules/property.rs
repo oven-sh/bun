@@ -114,17 +114,11 @@ impl PropertyRule {
 
         // `initial-value` is required unless the syntax is a universal definition.
         let initial_value = match p.initial_value {
-            Some(InitialValue {
-                value: Some(value), ..
-            }) => Some(value?),
-            Some(InitialValue { start, value: None }) => {
-                let mut end = input.state();
+            Some(start) => {
                 input.reset(&start);
                 let value =
                     input.parse_until_before(Delimiters::SEMICOLON, |i| syntax.parse_value(i))?;
-                // `Parser::reset` drops the import records after the count of its state.
-                end.import_record_count = input.state().import_record_count;
-                input.reset(&end);
+                while input.next().is_ok() {}
                 Some(value)
             }
             None if matches!(syntax, SyntaxString::Universal) => None,
@@ -144,15 +138,8 @@ impl PropertyRule {
 pub(crate) struct PropertyRuleDeclarationParser {
     pub syntax: Option<SyntaxString>,
     pub inherits: Option<bool>,
-    pub initial_value: Option<InitialValue>,
-}
-
-/// The last `initial-value` descriptor of the body.
-pub(crate) struct InitialValue {
-    /// Where the value starts.
-    start: css::ParserState,
-    /// `None` until `syntax` is known: `PropertyRule::parse` then reads the value from `start`.
-    value: Option<css::Result<ParsedComponent>>,
+    /// Where the value starts. It is read once the whole body has given the `syntax`.
+    pub initial_value: Option<css::ParserState>,
 }
 
 // Parser trait impls for `@property` rule bodies.
@@ -160,7 +147,7 @@ const _: () = {
     use css::css_parser::{
         AtRuleParser, DeclarationParser, QualifiedRuleParser, RuleBodyItemParser,
     };
-    use css::{BasicParseErrorKind, Maybe, Parser, ParserError, ParserState, Result};
+    use css::{Parser, ParserError, Result};
 
     impl DeclarationParser for PropertyRuleDeclarationParser {
         type Declaration = ();
@@ -173,10 +160,6 @@ const _: () = {
             crate::match_ignore_ascii_case! { name, {
                 b"syntax" => {
                     this.syntax = Some(SyntaxString::parse(input)?);
-                    // A value that was read under an earlier `syntax` is read again.
-                    if let Some(initial_value) = &mut this.initial_value {
-                        initial_value.value = None;
-                    }
                 },
                 b"inherits" => {
                     let location = input.current_source_location();
@@ -188,28 +171,8 @@ const _: () = {
                     }});
                 },
                 b"initial-value" => {
-                    let mut start = input.state();
-                    if let Some(previous) = &this.initial_value {
-                        // Drop the replaced value's import records. No other descriptor adds any.
-                        start.import_record_count = previous.start.import_record_count;
-                        input.reset(&start);
-                    }
-                    let value = match &this.syntax {
-                        Some(syntax) => {
-                            let result = syntax.parse_value(input);
-                            if result.is_err() {
-                                // The error counts only when no later value replaces this one.
-                                input.reset(&start);
-                                while input.next().is_ok() {}
-                            }
-                            Some(result)
-                        }
-                        None => {
-                            while input.next().is_ok() {}
-                            None
-                        }
-                    };
-                    this.initial_value = Some(InitialValue { start, value });
+                    this.initial_value = Some(input.state());
+                    while input.next().is_ok() {}
                 },
                 _ => return Err(input.new_custom_error(ParserError::invalid_declaration)),
             }}
@@ -231,52 +194,10 @@ const _: () = {
     impl AtRuleParser for PropertyRuleDeclarationParser {
         type Prelude = ();
         type AtRule = ();
-
-        fn parse_prelude(
-            _this: &mut Self,
-            name: &[u8],
-            input: &mut Parser,
-        ) -> Result<Self::Prelude> {
-            Err(
-                input.new_error(BasicParseErrorKind::at_rule_invalid(std::ptr::from_ref::<
-                    [u8],
-                >(name))),
-            )
-        }
-
-        fn parse_block(
-            _this: &mut Self,
-            _prelude: Self::Prelude,
-            _start: &ParserState,
-            input: &mut Parser,
-        ) -> Result<Self::AtRule> {
-            Err(input.new_error(BasicParseErrorKind::at_rule_body_invalid))
-        }
-
-        fn rule_without_block(
-            _this: &mut Self,
-            _prelude: Self::Prelude,
-            _start: &ParserState,
-        ) -> Maybe<Self::AtRule, ()> {
-            Err(())
-        }
     }
 
     impl QualifiedRuleParser for PropertyRuleDeclarationParser {
         type Prelude = ();
         type QualifiedRule = ();
-
-        fn parse_prelude(_this: &mut Self, input: &mut Parser) -> Result<Self::Prelude> {
-            Err(input.new_error(BasicParseErrorKind::qualified_rule_invalid))
-        }
-
-        fn parse_block(
-            _this: &mut Self,
-            _prelude: Self::Prelude,
-            _start: &ParserState,
-            input: &mut Parser,
-        ) -> Result<Self::QualifiedRule> {
-            Err(input.new_error(BasicParseErrorKind::qualified_rule_invalid))
-        }
     }
 };

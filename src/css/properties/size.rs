@@ -110,7 +110,7 @@ impl Size {
             return Ok(Size::FitContentFunction(v));
         }
 
-        let lp = input.try_parse(LengthPercentage::parse)?;
+        let lp = input.try_parse(LengthPercentage::parse_non_negative)?;
         Ok(Size::LengthPercentage(lp))
     }
 
@@ -244,7 +244,7 @@ impl MaxSize {
             return Ok(MaxSize::FitContentFunction(v));
         }
 
-        match input.try_parse(LengthPercentage::parse) {
+        match input.try_parse(LengthPercentage::parse_non_negative) {
             Ok(v) => Ok(MaxSize::LengthPercentage(v)),
             Err(e) => Err(e),
         }
@@ -469,6 +469,7 @@ macro_rules! property_helper {
 
 macro_rules! logical_unparsed_helper {
     ($this:expr, $unparsed:expr, $physical_id:expr, $physical_flag:expr, $logical_supported:expr, $dest:expr, $context:expr) => {{
+        $this.flush($dest, $context);
         let bump = $dest.bump();
         if $logical_supported {
             $this.flushed_properties.insert(
@@ -697,6 +698,7 @@ impl SizeHandler {
                 | PropertyIdTag::MaxWidth
                 | PropertyIdTag::MinHeight
                 | PropertyIdTag::MaxHeight => {
+                    self.flush(dest, context);
                     self.flushed_properties.insert(
                         SizeProperty::try_from_property_id_tag(unparsed.property_id.tag()).unwrap(),
                     );

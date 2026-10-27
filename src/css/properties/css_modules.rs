@@ -48,13 +48,6 @@ impl Composes {
         })
     }
 
-    /// For a declaration the parser drops: releases the `from "<file>"` import record.
-    pub(crate) fn discard(&self, input: &mut Parser) {
-        if let Some(Specifier::ImportRecordIndex(import_record_idx)) = self.from {
-            input.mark_import_record_unused(import_record_idx);
-        }
-    }
-
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         use crate::css_values::ident::CustomIdentFns;
         dest.write_separated(
@@ -171,7 +164,7 @@ impl Specifier {
         match self {
             Specifier::Global => dest.write_str(b"global"),
             Specifier::ImportRecordIndex(import_record_index) => {
-                let url = dest.get_import_record_url(*import_record_index)?;
+                let (url, _) = dest.get_import_record_url(*import_record_index)?;
                 // SAFETY: `url` borrows printer-owned import-record storage
                 // which outlives the `serialize_string` call. Detach so `dest`
                 // is reborrowable as the `WriteAll` sink.

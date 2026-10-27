@@ -55,6 +55,11 @@ impl ColorScheme {
             }
         }
 
+        // `inherit` or `auto`: without a scheme we know, the value is not `normal`.
+        if res.is_empty() {
+            return Err(input.new_custom_error(css::ParserError::invalid_value));
+        }
+
         Ok(res)
     }
 

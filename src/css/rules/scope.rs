@@ -45,10 +45,8 @@ impl<R> ScopeRule<R> {
                 dest.write_char(b' ')?;
             }
             dest.write_str("to (")?;
-            // `&` in <scope-end> is the scoping root (css-cascade-6), not <scope-start>.
-            dest.with_cleared_context(scope_end, |scope_end, d: &mut Printer| {
-                serialize_selector_list(scope_end.v.slice(), d, None, false)
-            })?;
+            // `&` in <scope-end> is the scoping root, not <scope-start>.
+            serialize_selector_list(scope_end.v.slice(), dest, None, false)?;
             dest.write_char(b')')?;
             dest.whitespace()?;
         }

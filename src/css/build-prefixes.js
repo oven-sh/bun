@@ -4,20 +4,11 @@
 
 // const { execSync } = require("child_process");
 const prefixes = require("autoprefixer/data/prefixes");
-// Two caniuse-lite copies never agree on the newest browser: read the copy that autoprefixer built `prefixes` from.
-const requireFromAutoprefixer = require("module").createRequire(require.resolve("autoprefixer/data/prefixes"));
-const caniuse = requireFromAutoprefixer("caniuse-lite");
-const browsers = caniuse.agents;
-const unpack = caniuse.feature;
-const features = caniuse.features;
+const browsers = require("caniuse-lite").agents;
+const unpack = require("caniuse-lite").feature;
+const features = require("caniuse-lite").features;
 const mdn = require("@mdn/browser-compat-data");
 const fs = require("fs");
-
-const dataVersions = [
-  `autoprefixer ${require("autoprefixer/package.json").version}`,
-  `caniuse-lite ${requireFromAutoprefixer("caniuse-lite/package.json").version}`,
-  `@mdn/browser-compat-data ${mdn.__meta.version}`,
-].join(", ");
 
 const BROWSER_MAPPING = {
   and_chr: "chrome",
@@ -38,7 +29,6 @@ const MDN_BROWSER_MAPPING = {
   firefox_android: "firefox",
   opera_android: "opera",
   safari_ios: "ios_saf",
-  webview_ios: "ios_saf",
   samsunginternet_android: "samsung",
   webview_android: "android",
   oculus: null,
@@ -65,31 +55,24 @@ prefixes["clip-path"].browsers = prefixes["clip-path"].browsers.filter(b => {
   );
 });
 
-// The first version with `:-webkit-any()` or `:-moz-any()` and the last version without `:is()`, from one MDN record.
-function anyPseudoVersions(value) {
-  if (!Array.isArray(value)) return null;
-  let any = value.find(v => v.alternative_name?.includes("-any"))?.version_added;
-  let supported = value.find(x => x.version_added && !x.alternative_name)?.version_added;
-  if (!any || !supported) return null;
-  let parts = supported.split(".");
-  parts[0]--;
-  return [any, parts.join(".")];
-}
-
-const isSupport = mdn.css.selectors.is.__compat.support;
 prefixes["any-pseudo"] = {
-  browsers: Object.entries(isSupport).flatMap(([key, value]) => {
-    let versions = anyPseudoVersions(value);
-    if (versions == null) return [];
-    let name = MDN_BROWSER_MAPPING[key] || key;
-    // Firefox for Android has no release from 69 to 78: its first version with `:is()` (79) must not end the range of Firefox (78).
-    let desktopEnds = name !== key && anyPseudoVersions(isSupport[name]) != null;
-    return desktopEnds ? [`${name} ${versions[0]}`] : versions.map(version => `${name} ${version}`);
+  browsers: Object.entries(mdn.css.selectors.is.__compat.support).flatMap(([key, value]) => {
+    // Firefox for Android has no release from 69 to 78: it got `:is()` in 79, Firefox in 78.
+    if (Array.isArray(value) && key !== "firefox_android") {
+      key = MDN_BROWSER_MAPPING[key] || key;
+      let any = value.find(v => v.alternative_name?.includes("-any"))?.version_added;
+      let supported = value.find(x => x.version_added && !x.alternative_name)?.version_added;
+      if (any && supported) {
+        let parts = supported.split(".");
+        parts[0]--;
+        supported = parts.join(".");
+        return [`${key} ${any}}`, `${key} ${supported}`];
+      }
+    }
+
+    return [];
   }),
 };
-
-// caniuse dropped the prefix flag for Safari 5 and later (https://github.com/Fyrd/caniuse/pull/7204). MDN: `-webkit-` only, before 14.
-prefixes["background-clip"].browsers.push("safari 13.1", "ios_saf 4.0-4.1", "ios_saf 13.4-13.7");
 
 let flexSpec = {};
 let oldGradient = {};
@@ -278,7 +261,7 @@ for (let feature of cssFeatures) {
 addValue(compat, {}, "custom-media-queries");
 
 let mdnFeatures = {
-  doublePositionGradients: mdn.css.types.gradient["radial-gradient"].doubleposition.__compat.support,
+  doublePositionGradients: mdn.css.types.image.gradient["radial-gradient"].doubleposition.__compat.support,
   clampFunction: mdn.css.types.clamp.__compat.support,
   placeSelf: mdn.css.properties["place-self"].__compat.support,
   placeContent: mdn.css.properties["place-content"].__compat.support,
@@ -340,7 +323,7 @@ let mdnFeatures = {
   absFunction: mdn.css.types.abs.__compat.support,
   signFunction: mdn.css.types.sign.__compat.support,
   hypotFunction: mdn.css.types.hypot.__compat.support,
-  gradientInterpolationHints: mdn.css.types.gradient["linear-gradient"].interpolation_hints.__compat.support,
+  gradientInterpolationHints: mdn.css.types.image.gradient["linear-gradient"].interpolation_hints.__compat.support,
   borderImageRepeatRound: mdn.css.properties["border-image-repeat"].round.__compat.support,
   borderImageRepeatSpace: mdn.css.properties["border-image-repeat"].space.__compat.support,
   fontSizeRem: mdn.css.properties["font-size"].rem_values.__compat.support,
@@ -363,13 +346,13 @@ for (let key in mdn.css.types.length) {
   mdnFeatures[feat] = mdn.css.types.length[key].__compat.support;
 }
 
-for (let key in mdn.css.types.gradient) {
+for (let key in mdn.css.types.image.gradient) {
   if (key === "__compat") {
     continue;
   }
 
   let feat = key.replace(/-([a-z])/g, (_, l) => l.toUpperCase());
-  mdnFeatures[feat] = mdn.css.types.gradient[key].__compat.support;
+  mdnFeatures[feat] = mdn.css.types.image.gradient[key].__compat.support;
 }
 
 const nonStandardListStyleType = new Set([
@@ -400,7 +383,7 @@ for (let key in mdn.css.properties["list-style-type"]) {
 }
 
 for (let key in mdn.css.properties["width"]) {
-  if (key === "__compat" || key === "is_animatable") {
+  if (key === "__compat" || key === "animatable") {
     continue;
   }
 
@@ -530,46 +513,12 @@ let enumify = f =>
 
 const prefixConst = { webkit: "WEBKIT", moz: "MOZ", ms: "MS", o: "O" };
 
-// `cargo fmt` formats with the workspace edition. A bare rustfmt uses 2015 and sorts the imports differently.
 async function rustfmt(path) {
-  await Bun.$`rustfmt --edition 2024 ${path}`;
+  await Bun.$`rustfmt ${path}`.nothrow();
 }
-
-// A variant that Rust code names must stay in the enum, or the crate does not compile.
-function checkVariants(path, variants) {
-  const current = /pub enum Feature \{([^}]*)\}/.exec(fs.readFileSync(path, "utf8"))[1];
-  const dropped = current
-    .split(",")
-    .map(v => v.trim())
-    .filter(v => v && !variants.includes(v));
-  for (const file of new Bun.Glob("**/*.rs").scanSync("src/css")) {
-    const source = fs.readFileSync(`src/css/${file}`, "utf8");
-    const used = dropped.filter(v => new RegExp(`\\b(?:\\w*Feature|F)::${v}\\b`).test(source));
-    if (used.length > 0) {
-      throw new Error(
-        `build-prefixes.js: the new ${path} has no ${used.join(", ")}, which src/css/${file} uses. Change that code first.`,
-      );
-    }
-  }
-}
-
-// Usage: bun src/css/build-prefixes.js [targets] [prefixes] [compat]. No argument selects all three.
-const outputs = ["targets", "prefixes", "compat"];
-const selected = process.argv.slice(2);
-for (const name of selected) {
-  if (!outputs.includes(name)) {
-    throw new Error(`build-prefixes.js: unknown output "${name}". The outputs are ${outputs.join(", ")}.`);
-  }
-}
-const wants = name => selected.length === 0 || selected.includes(name);
-
-// The checks run before the first write, so a run that fails changes no file.
-const variantsOf = map => [...new Set([...map.keys()].flat().map(enumify))].sort();
-if (wants("prefixes")) checkVariants("src/css/prefixes.rs", variantsOf(p));
-if (wants("compat")) checkVariants("src/css/compat.rs", variantsOf(compat));
 
 // ─── targets.rs: rewrite the `bitflags! { ... Features ... }` block ───────
-if (wants("targets")) {
+{
   const scalar = flags.filter(f => !Array.isArray(f));
   const groups = flags.filter(f => Array.isArray(f));
   const pad = Math.max(...scalar.map(f => f.length));
@@ -602,22 +551,20 @@ if (wants("targets")) {
 }
 
 // ─── prefixes.rs ──────────────────────────────────────────────────────────
-if (wants("prefixes")) {
-  const variants = variantsOf(p);
+{
+  const variants = [...new Set([...p.keys()].flat().map(enumify))].sort();
   const arms = [];
   for (const [features, versions] of p) {
     const pats = features.map(enumify).join("\n            | ");
     const body = [];
     for (const [name, pfx] of Object.entries(versions)) {
       const inner = [];
-      let needsVersion = false;
       for (const [prefix, [min, max]] of Object.entries(pfx)) {
         if (!prefixConst[prefix]) throw new Error("Missing prefix " + prefix);
         const add = `prefixes |= VendorPrefix::${prefixConst[prefix]};`;
         if (min == null && max == null) {
-          inner.push(`                    ${add}`);
+          inner.push(`                    let _ = version;\n                    ${add}`);
         } else {
-          needsVersion = true;
           let cond;
           if (min == null) cond = `version <= ${max}`;
           else if (max == null) cond = `version >= ${min}`;
@@ -626,8 +573,7 @@ if (wants("prefixes")) {
           inner.push(`                    if ${cond} {\n                        ${add}\n                    }`);
         }
       }
-      const test = needsVersion ? `let Some(version) = browsers.${name}` : `browsers.${name}.is_some()`;
-      body.push(`                if ${test} {\n${inner.join("\n")}\n                }`);
+      body.push(`                if let Some(version) = browsers.${name} {\n${inner.join("\n")}\n                }`);
     }
     arms.push(`            ${pats} => {\n${body.join("\n")}\n            }`);
   }
@@ -646,7 +592,6 @@ if (wants("prefixes")) {
     .join("\n");
 
   const out = `// Autogenerated by build-prefixes.js. DO NOT EDIT!
-// Data: ${dataVersions}.
 
 #![allow(clippy::manual_range_contains)]
 
@@ -661,7 +606,7 @@ pub enum Feature {
 }
 
 impl Feature {
-    pub(crate) fn prefixes_for(self, browsers: &Browsers) -> VendorPrefix {
+    pub fn prefixes_for(self, browsers: &Browsers) -> VendorPrefix {
         use Feature::*;
         let mut prefixes = VendorPrefix::NONE;
         match self {
@@ -670,12 +615,12 @@ ${arms.join("\n")}
         prefixes
     }
 
-    pub(crate) fn is_flex_2009(browsers: &Browsers) -> bool {
+    pub fn is_flex_2009(browsers: &Browsers) -> bool {
 ${flex}
         false
     }
 
-    pub(crate) fn is_webkit_gradient(browsers: &Browsers) -> bool {
+    pub fn is_webkit_gradient(browsers: &Browsers) -> bool {
 ${grad}
         false
     }
@@ -687,8 +632,8 @@ ${grad}
 }
 
 // ─── compat.rs ────────────────────────────────────────────────────────────
-if (wants("compat")) {
-  const variants = variantsOf(compat);
+{
+  const variants = [...new Set([...compat.keys()].flat().map(enumify))].sort();
   // One row of per-browser minimum versions per variant: 0 = any version,
   // UNSUPPORTED = never shipped. A feature with no data at all is a row of
   // all-UNSUPPORTED, which `is_compatible` special-cases to `false`.

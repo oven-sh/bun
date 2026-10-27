@@ -153,11 +153,14 @@ impl<D> DimensionPercentage<D> {
         Self: crate::values::calc::CalcValue,
         D: protocol::Parse,
     {
-        if let Ok(calc_value) = input.try_parse(Calc::<Self>::parse) {
-            if let Calc::Value(v) = calc_value {
-                return Ok(*v);
+        match input.try_parse(Calc::<Self>::parse) {
+            Ok(Calc::Value(v)) => return Ok(*v),
+            // `calc(0)` is a number, and unlike `0` not a dimension.
+            Ok(Calc::Number(_)) => {
+                return Err(input.new_custom_error(ParserError::invalid_value));
             }
-            return Ok(Self::Calc(Box::new(calc_value)));
+            Ok(calc) => return Ok(Self::Calc(Box::new(calc))),
+            Err(_) => {}
         }
 
         if let Ok(length) = input.try_parse(D::parse) {

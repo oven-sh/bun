@@ -5,7 +5,7 @@ use crate::values::angle::{Angle, AnglePercentage};
 use crate::values::color::{ColorFallbackKind, CssColor};
 use crate::values::length::{Length, LengthPercentage};
 use crate::values::number::{CSSNumber, CSSNumberFns};
-use crate::values::percentage::{DimensionPercentage, NumberOrPercentage, Percentage};
+use crate::values::percentage::{NumberOrPercentage, Percentage};
 use crate::values::position::{
     HorizontalPositionKeyword, Position, PositionComponent, VerticalPositionKeyword,
 };
@@ -28,9 +28,6 @@ use bun_alloc::Arena;
 pub trait GradientPosition: Sized + Clone + PartialEq {
     fn parse(input: &mut Parser) -> Result<Self>;
     fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr>;
-    /// `true` iff this is `DimensionPercentage::Percentage(p)` with `p.v == v`.
-    /// Used by `serialize_items` and `is_midpoint_hint` to find the useless `50%` interpolation hint.
-    fn is_percentage_with_value(&self, v: f32) -> bool;
 }
 
 // Only two `D` instantiations exist (`LengthValue` / `Angle`); both already
@@ -44,10 +41,6 @@ macro_rules! impl_gradient_position {
             #[inline]
             fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
                 <$ty>::to_css(self, dest)
-            }
-            #[inline]
-            fn is_percentage_with_value(&self, v: f32) -> bool {
-                matches!(self, DimensionPercentage::Percentage(p) if p.v == v)
             }
         }
     };
@@ -235,16 +228,10 @@ impl Gradient {
     /// Returns a copy of the gradient with the given vendor prefix.
     pub(crate) fn get_prefixed(&self, bump: &Arena, prefix: VendorPrefix) -> Gradient {
         match self {
-            Gradient::Linear(linear) => Gradient::Linear({
-                let mut x = linear.deep_clone(bump);
-                x.vendor_prefix = prefix;
-                x
-            }),
-            Gradient::RepeatingLinear(linear) => Gradient::RepeatingLinear({
-                let mut x = linear.deep_clone(bump);
-                x.vendor_prefix = prefix;
-                x
-            }),
+            Gradient::Linear(linear) => Gradient::Linear(linear.get_prefixed(bump, prefix)),
+            Gradient::RepeatingLinear(linear) => {
+                Gradient::RepeatingLinear(linear.get_prefixed(bump, prefix))
+            }
             Gradient::Radial(radial) => Gradient::Radial({
                 let mut x = radial.deep_clone(bump);
                 x.vendor_prefix = prefix;
@@ -319,7 +306,7 @@ impl LinearGradient {
             input.expect_comma()?;
             dir
         } else {
-            LineDirection::Vertical(VerticalPositionKeyword::Bottom)
+            LineDirection::default(vendor_prefix != VendorPrefix::NONE)
         };
         let items = parse_items::<LengthPercentage>(input)?;
         Ok(LinearGradient {
@@ -329,33 +316,23 @@ impl LinearGradient {
         })
     }
 
-    fn to_css(&self, dest: &mut Printer, is_prefixed: bool) -> core::result::Result<(), PrintErr> {
-        let angle: f32 = match &self.direction {
-            LineDirection::Vertical(v) => match v {
-                VerticalPositionKeyword::Bottom => 180.0,
-                VerticalPositionKeyword::Top => 0.0,
-            },
-            LineDirection::Angle(a) => a.to_degrees(),
-            _ => -1.0,
-        };
-
-        // We can omit `to bottom` or `180deg` because it is the default.
-        if angle == 180.0 {
-            // todo_stuff.depth
-            serialize_items::<LengthPercentage>(&self.items, dest)?;
-        } else {
-            if self.direction != LineDirection::Vertical(VerticalPositionKeyword::Bottom)
-                && self.direction != LineDirection::Angle(Angle::Deg(180.0))
-            {
-                self.direction.to_css(dest, is_prefixed)?;
-                dest.delim(b',', false)?;
-            }
-
-            if serialize_items::<LengthPercentage>(&self.items, dest).is_err() {
-                return Err(dest.add_fmt_error());
-            }
+    fn get_prefixed(&self, bump: &Arena, prefix: VendorPrefix) -> LinearGradient {
+        let mut x = self.deep_clone(bump);
+        let was_prefixed = self.vendor_prefix != VendorPrefix::NONE;
+        if self.direction.is_default(was_prefixed) {
+            x.direction = LineDirection::default(prefix != VendorPrefix::NONE);
         }
-        Ok(())
+        x.vendor_prefix = prefix;
+        x
+    }
+
+    fn to_css(&self, dest: &mut Printer, is_prefixed: bool) -> core::result::Result<(), PrintErr> {
+        if !self.direction.is_default(is_prefixed) {
+            self.direction.to_css(dest, is_prefixed)?;
+            dest.delim(b',', false)?;
+        }
+        // todo_stuff.depth
+        serialize_items::<LengthPercentage>(&self.items, dest)
     }
 
     pub(crate) fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
@@ -901,6 +878,23 @@ impl LineDirection {
         Ok(LineDirection::Vertical(y))
     }
 
+    /// `to bottom`. The prefixed syntax names the side a gradient starts from: there it is `top`.
+    fn default(is_prefixed: bool) -> LineDirection {
+        LineDirection::Vertical(if is_prefixed {
+            VerticalPositionKeyword::Top
+        } else {
+            VerticalPositionKeyword::Bottom
+        })
+    }
+
+    /// Whether the direction can be left out. A prefixed angle stays as written.
+    fn is_default(&self, is_prefixed: bool) -> bool {
+        match self {
+            LineDirection::Angle(angle) => !is_prefixed && angle.to_degrees() == 180.0,
+            _ => *self == Self::default(is_prefixed),
+        }
+    }
+
     fn to_css(&self, dest: &mut Printer, is_prefixed: bool) -> core::result::Result<(), PrintErr> {
         match self {
             LineDirection::Angle(angle) => angle.to_css(dest),
@@ -1416,28 +1410,6 @@ pub(crate) fn parse_items<D: GradientPosition>(
     Ok(items)
 }
 
-/// Whether the `50%` hint `hint` of `items` is halfway between its two stops. Without color stop fixup that is only known between a first stop at 0% and a stop at 100%.
-#[cold]
-fn is_midpoint_hint<D: GradientPosition>(items: &[GradientItem<D>], hint: &D) -> bool {
-    let [
-        GradientItem::ColorStop(a),
-        GradientItem::Hint(second),
-        GradientItem::ColorStop(b),
-        rest @ ..,
-    ] = items
-    else {
-        return false;
-    };
-    core::ptr::eq(second, hint)
-        && a.position
-            .as_ref()
-            .is_none_or(|p| p.is_percentage_with_value(0.0))
-        && match &b.position {
-            Some(p) => p.is_percentage_with_value(1.0),
-            None => rest.is_empty(),
-        }
-}
-
 fn serialize_items<D: GradientPosition>(
     items: &[GradientItem<D>],
     dest: &mut Printer,
@@ -1445,13 +1417,6 @@ fn serialize_items<D: GradientPosition>(
     let mut first = true;
     let mut last: Option<&GradientItem<D>> = None;
     for item in items.iter() {
-        // Skip useless hints
-        if let GradientItem::Hint(h) = item {
-            if h.is_percentage_with_value(0.5) && is_midpoint_hint(items, h) {
-                continue;
-            }
-        }
-
         // Use double position stop if the last stop is the same color and all targets support it.
         if let Some(prev) = last {
             if !dest.targets.should_compile(

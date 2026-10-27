@@ -94,16 +94,11 @@ pub(crate) fn downlevel_selectors<'bump>(
     necessary_prefixes
 }
 
-/// How the `:is()` lists of one style rule lower to `:-webkit-any()` /
-/// `:-moz-any()`, collected across the whole selector list (nested lists
-/// included) because the prefixed copy repeats the whole rule.
+/// The `:-webkit-any()` / `:-moz-any()` copies that one style rule gets. A copy repeats the
+/// whole selector list, so one `:is()` that has to stay `:is()` blocks them.
 #[derive(Default)]
 struct AnyLowering {
-    /// Prefixes requested by the `:is()` lists that can be lowered.
     prefixes: VendorPrefix,
-    /// Some `:is()` list has to stay `:is()` (see `can_downlevel_is_to_any`).
-    /// A prefixed copy of the rule would still contain it, and every browser
-    /// that needs the copy drops the whole rule, so none is emitted.
     blocked: bool,
 }
 
@@ -288,6 +283,34 @@ pub(crate) fn get_prefix(selectors: &SelectorList) -> VendorPrefix {
     }
 
     prefix
+}
+
+/// Whether `selectors` is a list in which the author wrote a vendor prefix. An engine that does
+/// not know the prefix drops the whole list, which browser hacks like `.a *::-ms-backdrop, .a`
+/// rely on, so such a list prints as written.
+pub(crate) fn is_list_with_vendor_prefix(selectors: &[Selector]) -> bool {
+    fn is_vendor_name(name: &[u8]) -> bool {
+        name.starts_with(b"-") && !name.starts_with(b"--")
+    }
+    fn is_vendor(prefix: VendorPrefix) -> bool {
+        !prefix.is_empty() && !prefix.contains(VendorPrefix::NONE)
+    }
+    selectors.len() > 1
+        && selectors.iter().any(|selector| {
+            selector.components.iter().any(|component| match component {
+                Component::NonTsPseudoClass(
+                    PseudoClass::Custom { name } | PseudoClass::CustomFunction { name, .. },
+                )
+                | Component::PseudoElement(
+                    PseudoElement::Custom { name } | PseudoElement::CustomFunction { name, .. },
+                ) => is_vendor_name(name),
+                Component::NonTsPseudoClass(pseudo) => is_vendor(pseudo.get_prefix()),
+                Component::PseudoElement(PseudoElement::WebkitScrollbar(_))
+                | Component::Any { .. } => true,
+                Component::PseudoElement(pseudo) => is_vendor(pseudo.get_prefix()),
+                _ => false,
+            })
+        })
 }
 
 pub(crate) fn is_compatible(selectors: &[parser::Selector], targets: &Targets) -> bool {
@@ -594,14 +617,10 @@ fn is_selector_unused(
 }
 
 /// The serialization module ported from lightningcss.
-///
-/// Note that we have two serialization modules, one from lightningcss and one from servo.
-///
-/// This is because it actually uses both implementations. This is confusing.
 pub(crate) mod serialize {
     use super::*;
 
-    /// Where a `&` lands. lightningcss only has `first: bool` (parcel-bundler/lightningcss#1073).
+    /// Where a `&` lands in the printed selector.
     #[derive(Clone, Copy, PartialEq, Eq)]
     pub(crate) enum NestingPosition {
         /// Nothing comes before it.
@@ -617,9 +636,7 @@ pub(crate) mod serialize {
         match position {
             NestingPosition::SelectorStart => true,
             NestingPosition::CompoundStart => is_simple(selector),
-            NestingPosition::MidCompound => {
-                !has_type_selector_past_nesting(selector) && is_simple(selector)
-            }
+            NestingPosition::MidCompound => !has_type_selector(selector) && is_simple(selector),
         }
     }
 
@@ -670,7 +687,7 @@ pub(crate) mod serialize {
             Some(ctx)
                 if start != NestingPosition::SelectorStart
                     && ctx.selectors.v.len() == 1
-                    && has_pseudo_element(ctx.selectors.v.at(0)) =>
+                    && ctx.selectors.v.at(0).has_pseudo_element() =>
             {
                 NestingPosition::SelectorStart
             }
@@ -717,9 +734,7 @@ pub(crate) mod serialize {
             sel: selector,
             i: 0,
         };
-        // The end of `@scope (.a) to (&)` replaces its `&` even when the targets have nesting.
-        let should_compile_nesting =
-            context.is_some() || dest.targets.should_compile_same(Feature::Nesting);
+        let should_compile_nesting = dest.targets.should_compile_same(Feature::Nesting);
 
         let mut first = true;
         let mut combinators_exhausted = false;
@@ -741,9 +756,7 @@ pub(crate) mod serialize {
                 continue;
             }
 
-            // When nesting is compiled, `&div` swaps to `div&` in every compound.
-            let has_leading_nesting =
-                (first || should_compile_nesting) && matches!(compound[0], Component::Nesting);
+            let has_leading_nesting = first && matches!(compound[0], Component::Nesting);
             let first_index: usize = if has_leading_nesting { 1 } else { 0 };
             let compound_position = if first {
                 start
@@ -765,7 +778,7 @@ pub(crate) mod serialize {
             let (can_elide_namespace, first_non_namespace) = if first_index >= compound.len() {
                 (true, first_index)
             } else {
-                match compound[first_index] {
+                match compound[0] {
                     Component::ExplicitAnyNamespace
                     | Component::ExplicitNoNamespace
                     | Component::Namespace { .. } => (false, first_index + 1),
@@ -1031,11 +1044,11 @@ pub(crate) mod serialize {
             }
             Component::Class(class) => {
                 dest.write_char(b'.')?;
-                return dest.write_ident_or_ref(*class, dest.css_module.is_some());
+                return dest.write_ident_or_ref(*class);
             }
             Component::Id(id) => {
                 dest.write_char(b'#')?;
-                return dest.write_ident_or_ref(*id, dest.css_module.is_some());
+                return dest.write_ident_or_ref(*id);
             }
             Component::Host(selector) => {
                 dest.write_str(b":host")?;
@@ -1051,8 +1064,47 @@ pub(crate) mod serialize {
                 serialize_selector(selector, dest, context, false)?;
                 dest.write_char(b')')?;
             }
-            _ => {
-                tocss_servo::to_css_component(component, dest)?;
+            Component::Part(part_names) => {
+                dest.write_str(b"::part(")?;
+                for (i, name) in part_names.iter().enumerate() {
+                    if i != 0 {
+                        dest.write_char(b' ')?;
+                    }
+                    IdentFns::to_css(name, dest)?;
+                }
+                dest.write_char(b')')?;
+            }
+            Component::LocalName(local_name) => local_name.to_css(dest)?,
+            Component::ExplicitUniversalType => dest.write_char(b'*')?,
+            Component::DefaultNamespace(_) => {}
+            Component::ExplicitNoNamespace => dest.write_char(b'|')?,
+            Component::ExplicitAnyNamespace => dest.write_str(b"*|")?,
+            Component::Namespace { prefix, .. } => {
+                IdentFns::to_css(prefix, dest)?;
+                dest.write_char(b'|')?;
+            }
+            Component::AttributeInNoNamespaceExists { local_name, .. } => {
+                dest.write_char(b'[')?;
+                IdentFns::to_css(local_name, dest)?;
+                dest.write_char(b']')?;
+            }
+            Component::AttributeOther(attr_selector) => attr_selector.to_css(dest)?,
+            Component::Root => dest.write_str(b":root")?,
+            Component::Empty => dest.write_str(b":empty")?,
+            Component::Scope => dest.write_str(b":scope")?,
+            Component::Nth(nth_data) => {
+                nth_data.write_start(dest, nth_data.is_function_())?;
+                if nth_data.is_function_() {
+                    nth_data.write_affine(dest)?;
+                    dest.write_char(b')')?;
+                }
+            }
+            Component::NthOf(nth_of_data) => {
+                nth_of_data.data.write_start(dest, true)?;
+                nth_of_data.data.write_affine(dest)?;
+                dest.write_str(b" of ")?;
+                serialize_selector_list(&nth_of_data.selectors, dest, context, false)?;
+                dest.write_char(b')')?;
             }
         }
         Ok(())
@@ -1080,7 +1132,7 @@ pub(crate) mod serialize {
         Ok(())
     }
 
-    pub(crate) fn serialize_pseudo_class(
+    fn serialize_pseudo_class(
         pseudo_class: &parser::PseudoClass,
         dest: &mut Printer,
         context: Option<&StyleContext>,
@@ -1258,7 +1310,7 @@ pub(crate) mod serialize {
         Ok(())
     }
 
-    pub(crate) fn serialize_pseudo_element(
+    fn serialize_pseudo_element(
         pseudo_element: &parser::PseudoElement,
         dest: &mut Printer,
         context: Option<&StyleContext>,
@@ -1431,340 +1483,11 @@ pub(crate) mod serialize {
                 serialize_selector_list(ctx.selectors.v.slice(), dest, ctx.parent, false)?;
                 dest.write_char(b')')?;
             }
+        } else if dest.targets.should_compile_same(Feature::Nesting) {
+            // At the root and directly in `@scope`, `&` is `:scope` with no specificity.
+            dest.write_str(b":where(:scope)")?;
         } else {
-            // If there is no context, we are at the root if nesting is supported. This is equivalent to :scope.
-            // Otherwise, if nesting is supported, serialize the nesting selector directly.
-            if dest.targets.should_compile_same(Feature::Nesting) {
-                dest.write_str(b":scope")?;
-            } else {
-                dest.write_char(b'&')?;
-            }
-        }
-        Ok(())
-    }
-}
-
-pub(crate) mod tocss_servo {
-    use super::*;
-
-    fn to_css_selector_list(
-        selectors: &[parser::Selector],
-        dest: &mut Printer,
-    ) -> Result<(), PrintErr> {
-        if selectors.is_empty() {
-            return Ok(());
-        }
-
-        to_css_selector(&selectors[0], dest)?;
-
-        if selectors.len() > 1 {
-            for selector in &selectors[1..] {
-                dest.write_str(b", ")?;
-                to_css_selector(selector, dest)?;
-            }
-        }
-        Ok(())
-    }
-
-    fn to_css_selector(selector: &parser::Selector, dest: &mut Printer) -> Result<(), PrintErr> {
-        // Compound selectors invert the order of their contents, so we need to
-        // undo that during serialization.
-        //
-        // This two-iterator strategy involves walking over the selector twice.
-        // We could do something more clever, but selector serialization probably
-        // isn't hot enough to justify it, and the stringification likely
-        // dominates anyway.
-        //
-        // NB: A parse-order iterator is a Rev<>, which doesn't expose as_slice(),
-        // which we need for |split|. So we split by combinators on a match-order
-        // sequence and then reverse.
-        let mut combinators = CombinatorIter {
-            sel: selector,
-            i: 0,
-        };
-        let mut compound_selectors = CompoundSelectorIter {
-            sel: selector,
-            i: 0,
-        };
-
-        let mut combinators_exhausted = false;
-        while let Some(compound) = compound_selectors.next() {
-            debug_assert!(!combinators_exhausted);
-
-            // https://drafts.csswg.org/cssom/#serializing-selectors
-            if compound.is_empty() {
-                continue;
-            }
-
-            // 1. If there is only one simple selector in the compound selectors
-            //    which is a universal selector, append the result of
-            //    serializing the universal selector to s.
-            //
-            // Check if `!compound{}` first--this can happen if we have
-            // something like `... > ::before`, because we store `>` and `::`
-            // both as combinators internally.
-            //
-            // If we are in this case, after we have serialized the universal
-            // selector, we skip Step 2 and continue with the algorithm.
-            let (can_elide_namespace, first_non_namespace): (bool, usize) = if compound.is_empty() {
-                (true, 0)
-            } else {
-                match compound[0] {
-                    Component::ExplicitAnyNamespace
-                    | Component::ExplicitNoNamespace
-                    | Component::Namespace { .. } => (false, 1),
-                    Component::DefaultNamespace(_) => (true, 1),
-                    _ => (true, 0),
-                }
-            };
-            let mut perform_step_2 = true;
-            let next_combinator = combinators.next();
-            if first_non_namespace == compound.len() - 1 {
-                // We have to be careful here, because if there is a
-                // pseudo element "combinator" there isn't really just
-                // the one simple selector. Technically this compound
-                // selector contains the pseudo element selector as well
-                // -- Combinator::PseudoElement, just like
-                // Combinator::SlotAssignment, don't exist in the
-                // spec.
-                if next_combinator == Some(parser::Combinator::PseudoElement)
-                    && compound[first_non_namespace].as_combinator()
-                        == Some(parser::Combinator::SlotAssignment)
-                {
-                    // do nothing
-                } else if matches!(
-                    compound[first_non_namespace],
-                    Component::ExplicitUniversalType
-                ) {
-                    // Iterate over everything so we serialize the namespace
-                    // too.
-                    for simple in compound {
-                        to_css_component(simple, dest)?;
-                    }
-                    // Skip step 2, which is an "otherwise".
-                    perform_step_2 = false;
-                } else {
-                    // do nothing
-                }
-            }
-
-            // 2. Otherwise, for each simple selector in the compound selectors
-            //    that is not a universal selector of which the namespace prefix
-            //    maps to a namespace that is not the default namespace
-            //    serialize the simple selector and append the result to s.
-            //
-            // See https://github.com/w3c/csswg-drafts/issues/1606, which is
-            // proposing to change this to match up with the behavior asserted
-            // in cssom/serialize-namespaced-type-selectors.html, which the
-            // following code tries to match.
-            if perform_step_2 {
-                for simple in compound {
-                    if matches!(simple, Component::ExplicitUniversalType) {
-                        // Can't have a namespace followed by a pseudo-element
-                        // selector followed by a universal selector in the same
-                        // compound selector, so we don't have to worry about the
-                        // real namespace being in a different `compound`.
-                        if can_elide_namespace {
-                            continue;
-                        }
-                    }
-                    to_css_component(simple, dest)?;
-                }
-            }
-
-            // 3. If this is not the last part of the chain of the selector
-            //    append a single SPACE (U+0020), followed by the combinator
-            //    ">", "+", "~", ">>", "||", as appropriate, followed by another
-            //    single SPACE (U+0020) if the combinator was not whitespace, to
-            //    s.
-            if let Some(c) = next_combinator {
-                to_css_combinator(c, dest)?;
-            } else {
-                combinators_exhausted = true;
-            }
-
-            // 4. If this is the last part of the chain of the selector and
-            //    there is a pseudo-element, append "::" followed by the name of
-            //    the pseudo-element, to s.
-            //
-            // (we handle this above)
-        }
-        Ok(())
-    }
-
-    pub(crate) fn to_css_component(
-        component: &parser::Component,
-        dest: &mut Printer,
-    ) -> Result<(), PrintErr> {
-        match component {
-            Component::Combinator(c) => to_css_combinator(*c, dest)?,
-            Component::Slotted(selector) => {
-                dest.write_str(b"::slotted(")?;
-                to_css_selector(selector, dest)?;
-                dest.write_char(b')')?;
-            }
-            Component::Part(part_names) => {
-                dest.write_str(b"::part(")?;
-                for (i, name) in part_names.iter().enumerate() {
-                    if i != 0 {
-                        dest.write_char(b' ')?;
-                    }
-                    IdentFns::to_css(name, dest)?;
-                }
-                dest.write_char(b')')?;
-            }
-            Component::PseudoElement(p) => {
-                p.to_css(dest)?;
-            }
-            Component::Id(s) => {
-                dest.write_char(b'#')?;
-                dest.write_ident_or_ref(*s, dest.css_module.is_some())?;
-            }
-            Component::Class(s) => {
-                dest.write_char(b'.')?;
-                dest.write_ident_or_ref(*s, dest.css_module.is_some())?;
-            }
-            Component::LocalName(local_name) => {
-                local_name.to_css(dest)?;
-            }
-            Component::ExplicitUniversalType => {
-                dest.write_char(b'*')?;
-            }
-            Component::DefaultNamespace(_) => return Ok(()),
-
-            Component::ExplicitNoNamespace => {
-                dest.write_char(b'|')?;
-            }
-            Component::ExplicitAnyNamespace => {
-                dest.write_str(b"*|")?;
-            }
-            Component::Namespace { prefix, .. } => {
-                IdentFns::to_css(prefix, dest)?;
-                dest.write_char(b'|')?;
-            }
-            Component::AttributeInNoNamespaceExists { local_name, .. } => {
-                dest.write_char(b'[')?;
-                IdentFns::to_css(local_name, dest)?;
-                dest.write_char(b']')?;
-            }
-            Component::AttributeInNoNamespace {
-                local_name,
-                operator,
-                value,
-                case_sensitivity,
-                ..
-            } => {
-                dest.write_char(b'[')?;
-                IdentFns::to_css(local_name, dest)?;
-                operator.to_css(dest)?;
-                CSSStringFns::to_css(value, dest)?;
-                match case_sensitivity {
-                    parser::attrs::ParsedCaseSensitivity::CaseSensitive
-                    | parser::attrs::ParsedCaseSensitivity::AsciiCaseInsensitiveIfInHtmlElementInHtmlDocument => {}
-                    parser::attrs::ParsedCaseSensitivity::AsciiCaseInsensitive => dest.write_str(b" i")?,
-                    parser::attrs::ParsedCaseSensitivity::ExplicitCaseSensitive => dest.write_str(b" s")?,
-                }
-                dest.write_char(b']')?;
-            }
-            Component::AttributeOther(attr_selector) => {
-                attr_selector.to_css(dest)?;
-            }
-            // Pseudo-classes
-            Component::Root => {
-                dest.write_str(b":root")?;
-            }
-            Component::Empty => {
-                dest.write_str(b":empty")?;
-            }
-            Component::Scope => {
-                dest.write_str(b":scope")?;
-            }
-            Component::Host(selector) => {
-                dest.write_str(b":host")?;
-                if let Some(sel) = selector {
-                    dest.write_char(b'(')?;
-                    to_css_selector(sel, dest)?;
-                    dest.write_char(b')')?;
-                }
-            }
-            Component::Nth(nth_data) => {
-                nth_data.write_start(dest, nth_data.is_function_())?;
-                if nth_data.is_function_() {
-                    nth_data.write_affine(dest)?;
-                    dest.write_char(b')')?;
-                }
-            }
-            Component::NthOf(nth_of_data) => {
-                let nth_data = nth_of_data.nth_data();
-                nth_data.write_start(dest, true)?;
-                // A selector must be a function to hold An+B notation
-                debug_assert!(nth_data.is_function);
-                nth_data.write_affine(dest)?;
-                // Only :nth-child or :nth-last-child can be of a selector list
-                debug_assert!(
-                    nth_data.ty == parser::NthType::Child
-                        || nth_data.ty == parser::NthType::LastChild
-                );
-                // The selector list should not be empty
-                debug_assert!(!nth_of_data.selectors.is_empty());
-                dest.write_str(b" of ")?;
-                to_css_selector_list(&nth_of_data.selectors, dest)?;
-                dest.write_char(b')')?;
-            }
-            Component::Is(_)
-            | Component::Where(_)
-            | Component::Negation(_)
-            | Component::Has(_)
-            | Component::Any { .. } => {
-                match component {
-                    Component::Where(_) => dest.write_str(b":where(")?,
-                    Component::Is(_) => dest.write_str(b":is(")?,
-                    Component::Negation(_) => dest.write_str(b":not(")?,
-                    Component::Has(_) => dest.write_str(b":has(")?,
-                    Component::Any { vendor_prefix, .. } => {
-                        dest.write_char(b':')?;
-                        vendor_prefix.to_css(dest)?;
-                        dest.write_str(b"any(")?;
-                    }
-                    _ => unreachable!(),
-                }
-                to_css_selector_list(
-                    match component {
-                        Component::Where(list)
-                        | Component::Is(list)
-                        | Component::Negation(list)
-                        | Component::Has(list) => list,
-                        Component::Any { selectors, .. } => selectors,
-                        _ => unreachable!(),
-                    },
-                    dest,
-                )?;
-                dest.write_str(b")")?;
-            }
-            Component::NonTsPseudoClass(pseudo) => {
-                pseudo.to_css(dest)?;
-            }
-            Component::Nesting => dest.write_char(b'&')?,
-        }
-        Ok(())
-    }
-
-    fn to_css_combinator(
-        combinator: parser::Combinator,
-        dest: &mut Printer,
-    ) -> Result<(), PrintErr> {
-        match combinator {
-            parser::Combinator::Child => dest.write_str(b" > ")?,
-            parser::Combinator::Descendant => dest.write_str(b" ")?,
-            parser::Combinator::NextSibling => dest.write_str(b" + ")?,
-            parser::Combinator::LaterSibling => dest.write_str(b" ~ ")?,
-            parser::Combinator::Deep => dest.write_str(b" /deep/ ")?,
-            parser::Combinator::DeepDescendant => {
-                dest.write_str(b" >>> ")?;
-            }
-            parser::Combinator::PseudoElement
-            | parser::Combinator::Part
-            | parser::Combinator::SlotAssignment => return Ok(()),
+            dest.write_char(b'&')?;
         }
         Ok(())
     }
@@ -1781,18 +1504,9 @@ pub(crate) fn should_unwrap_is(selectors: &[parser::Selector]) -> bool {
     false
 }
 
-/// Whether `:is(selectors)` can be written as the legacy `:-webkit-any()` /
-/// `:-moz-any()` for old browsers without changing the cascade in new ones.
-///
-/// The legacy forms take compound selectors only, and Blink and WebKit still
-/// parse `:-webkit-any()` today with the specificity of one pseudo-class,
-/// (0,1,0), whatever its arguments are. `:is()` takes the specificity of its
-/// most specific argument. When that is below (0,1,0), for example
-/// `:is(span, p)` or `:is(*)`, the prefixed copy of the rule outranks the
-/// `:is()` copy in every browser that supports both, and wins cascades that
-/// the authored selector loses. At or above (0,1,0) the prefixed copy can
-/// never outrank the `:is()` copy, so it is a safe fallback.
-pub(crate) fn can_downlevel_is_to_any(selectors: &[parser::Selector]) -> bool {
+/// `:-webkit-any()` takes no combinators and always weighs (0,1,0) in Blink and WebKit, so a
+/// copy of a lighter list such as `:is(span, p)` would outrank the `:is()` rule.
+fn can_downlevel_is_to_any(selectors: &[parser::Selector]) -> bool {
     let mut max: u32 = 0;
     for selector in selectors {
         if selector.has_combinator() {
@@ -1805,19 +1519,7 @@ pub(crate) fn can_downlevel_is_to_any(selectors: &[parser::Selector]) -> bool {
 }
 
 fn has_type_selector(selector: &parser::Selector) -> bool {
-    leads_with_type_selector(selector.iter_raw_match_order())
-}
-
-/// Also true for `&div`, which prints as `div&`.
-fn has_type_selector_past_nesting(selector: &parser::Selector) -> bool {
     let mut iter = selector.iter_raw_match_order();
-    if matches!(selector.components.first(), Some(Component::Nesting)) {
-        iter.next();
-    }
-    leads_with_type_selector(iter)
-}
-
-fn leads_with_type_selector<'a>(mut iter: impl Iterator<Item = &'a parser::Component>) -> bool {
     let first = iter.next();
 
     if is_namespace(first) {
@@ -1848,15 +1550,6 @@ fn is_type_selector(component: Option<&parser::Component>) -> bool {
         );
     }
     false
-}
-
-fn has_pseudo_element(selector: &parser::Selector) -> bool {
-    selector.components.iter().any(|component| {
-        matches!(
-            component,
-            Component::PseudoElement(_) | Component::Part(_) | Component::Slotted(_)
-        )
-    })
 }
 
 fn is_simple(selector: &parser::Selector) -> bool {

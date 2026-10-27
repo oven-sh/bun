@@ -98,7 +98,7 @@ impl SyntaxString {
         Ok(SyntaxString::Components(components))
     }
 
-    /// Parses a value as the first component that matches all of it, else as tokens to print as written.
+    /// Parses a value as the first component that matches all of it, else as tokens.
     pub(crate) fn parse_value(&self, input: &mut css::Parser) -> CssResult<ParsedComponent> {
         // A value of only white space is empty. `TokenList::parse` would keep it as one token.
         input.skip_whitespace();
@@ -211,11 +211,6 @@ impl SyntaxString {
                     }
 
                     input.reset(&state);
-                }
-
-                // An empty value is a missing one, which is an error for a typed syntax.
-                if input.is_exhausted() {
-                    return Err(input.new_error_for_next_token());
                 }
             }
         }

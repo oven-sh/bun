@@ -55,31 +55,16 @@ impl NestedDeclarationsRule {
             dest.ctx = ctx.parent;
             dest.nesting_expansions = 0;
             let result = serialize_selector_list(ctx.selectors.v.slice(), dest, ctx.parent, false)
-                .and_then(|()| self.block_to_css(dest));
+                .and_then(|()| super::decl_block_to_css(&self.declarations, dest));
             dest.ctx = Some(ctx);
             dest.vendor_prefix = vendor_prefix;
             return result;
         }
         if dest.targets.should_compile_same(Feature::Nesting) {
-            // `@scope` clears the context: what `&` prints there stands in (#43165 makes it `:where(:scope)`).
+            // `@scope` clears the context: what `&` prints there stands in.
             serialize_nesting(dest, None, NestingPosition::SelectorStart)?;
-            return self.block_to_css(dest);
+            return super::decl_block_to_css(&self.declarations, dest);
         }
-        self.write_declarations(dest, false)?;
-        dest.pending_semicolon = dest.minify && !self.declarations.is_empty();
-        Ok(())
-    }
-
-    fn block_to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        dest.block(|d| self.write_declarations(d, true))
-    }
-
-    /// Writes the declarations, one per line. Minified, the last one gets no `;`.
-    fn write_declarations(
-        &self,
-        dest: &mut Printer,
-        newline_before_first: bool,
-    ) -> Result<(), PrintErr> {
         let len = self.declarations.len();
         let mut i: usize = 0;
         for (decls, important) in [
@@ -87,7 +72,7 @@ impl NestedDeclarationsRule {
             (&self.declarations.important_declarations, true),
         ] {
             for decl in decls.iter() {
-                if newline_before_first || i > 0 {
+                if i > 0 {
                     dest.newline()?;
                 }
                 decl.to_css(dest, important)?;
@@ -97,6 +82,7 @@ impl NestedDeclarationsRule {
                 }
             }
         }
+        dest.pending_semicolon = dest.minify && len > 0;
         Ok(())
     }
 
@@ -109,9 +95,6 @@ impl NestedDeclarationsRule {
     where
         R: for<'b> crate::generics::DeepClone<'b>,
     {
-        // With nesting compiled away, this rule prints the enclosing selector list once more.
-        context.charge_selector_expansion(1, self.loc)?;
-
         context.handler_context.context = DeclarationContext::StyleRule;
         self.declarations.minify(
             super::dc::decl_handler_static(&mut *context.handler),
@@ -124,14 +107,13 @@ impl NestedDeclarationsRule {
             return Ok((Vec::new(), Vec::new()));
         }
 
-        // Known gap (parcel-bundler/lightningcss#1179): the `:dir()` rules print before the nested rules, not at this rule.
         let mut dir_rules = CssRuleList::<R> { v: Vec::new() };
         match enclosing {
+            // The style rule prints them with its own `:dir()` rules, before its nested rules.
             Some(enclosing) => {
                 enclosing.ltr.append(&mut context.handler_context.ltr);
                 enclosing.rtl.append(&mut context.handler_context.rtl);
             }
-            // Known gap: on `&` the `:dir()` follows `:is(list)` or a pseudo-element, unlike `Selector::append`.
             None => {
                 let nesting = SelectorList::from_selector(Selector::from_component_in(
                     Component::Nesting,
@@ -146,17 +128,11 @@ impl NestedDeclarationsRule {
         context
             .handler_context
             .get_dark_rule(None, self.loc, &mut fallbacks);
-        fallbacks.extend(
-            context
-                .handler_context
-                .get_supports_rules_on(None, self.loc),
-        );
+        fallbacks.extend(context.handler_context.get_supports_rules(None, self.loc));
         context.handler_context.reset();
 
         // Lowers `:dir()` for the targets, after the reset: minifying a style rule drains the context.
-        if !dir_rules.v.is_empty() {
-            dir_rules.minify(context, false)?;
-        }
+        dir_rules.minify(context, false)?;
         Ok((dir_rules.v, fallbacks))
     }
 

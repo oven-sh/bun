@@ -5,7 +5,6 @@ use bun_alloc::Arena;
 /// A generic value that represents a value with two components, e.g. a border radius.
 ///
 /// When serialized, only a single component will be written if both are equal.
-#[derive(PartialEq, Eq)]
 pub struct Size2D<T> {
     pub(crate) a: T,
     pub(crate) b: T,
@@ -18,23 +17,19 @@ impl<T> Size2D<T>
 where
     T: Clone + PartialEq,
 {
-    fn parse_val(input: &mut Parser) -> Result<T>
-    where
-        T: Parse,
-    {
-        // f32 → CSSNumberFns::parse, LengthPercentage → LengthPercentage::parse,
-        // else → T::parse — all unified under the `Parse` trait in Rust.
-        T::parse(input)
-    }
-
     pub(crate) fn parse(input: &mut Parser) -> Result<Size2D<T>>
     where
         T: Parse,
     {
-        let first = Self::parse_val(input)?;
-        let second = input
-            .try_parse(Self::parse_val)
-            .unwrap_or_else(|_| first.clone());
+        Self::parse_with(input, T::parse)
+    }
+
+    pub(crate) fn parse_with(
+        input: &mut Parser,
+        parse_fn: fn(&mut Parser) -> Result<T>,
+    ) -> Result<Size2D<T>> {
+        let first = parse_fn(input)?;
+        let second = input.try_parse(parse_fn).unwrap_or_else(|_| first.clone());
         Ok(Size2D {
             a: first,
             b: second,
@@ -73,6 +68,11 @@ where
     fn val_eql(lhs: &T, rhs: &T) -> bool {
         // f32 → `lhs.* == rhs.*`, else → `lhs.eql(rhs)` — unified under PartialEq.
         lhs == rhs
+    }
+
+    #[inline]
+    pub(crate) fn eql(lhs: &Self, rhs: &Self) -> bool {
+        lhs.a == rhs.a && lhs.b == rhs.b
     }
 }
 

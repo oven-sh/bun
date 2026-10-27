@@ -511,7 +511,7 @@ mod inherent_bridge {
     impl<T: Clone + PartialEq> CssEql for Size2D<T> {
         #[inline]
         fn eql(&self, other: &Self) -> bool {
-            PartialEq::eq(self, other)
+            Size2D::<T>::eql(self, other)
         }
     }
     impl<'bump, T: Clone + PartialEq> DeepClone<'bump> for Size2D<T> {
@@ -589,8 +589,10 @@ mod inherent_bridge {
     bridge_eql!(BorderImage);
 
     use crate::properties::border_radius::BorderRadius;
+    // BorderRadius has inherent deep_clone/eql (Size2D<T> lacks
+    // Clone/PartialEq derives — see border_radius.rs).
     bridge_deep_clone!(BorderRadius);
-    bridge_eql_partialeq!(BorderRadius);
+    bridge_eql!(BorderRadius);
 
     // ── properties/background ──
     use crate::properties::background::{

@@ -104,19 +104,12 @@ impl KeyframesName {
 /// A [named timeline range](https://drafts.csswg.org/scroll-animations-1/#view-timelines-ranges).
 #[derive(Clone, Copy, css::DefineEnumProperty)]
 pub enum TimelineRangeName {
-    /// The full range of the view progress timeline.
     Cover,
-    /// The range in which the principal box is contained by, or covers, its visibility range.
     Contain,
-    /// The range in which the principal box enters the view progress visibility range.
     Entry,
-    /// The range in which the principal box exits the view progress visibility range.
     Exit,
-    /// The range in which the principal box crosses the end border edge.
     EntryCrossing,
-    /// The range in which the principal box crosses the start border edge.
     ExitCrossing,
-    /// The full range of the scroll container. In the spec and Chromium, not in lightningcss.
     Scroll,
 }
 
@@ -128,15 +121,8 @@ pub enum KeyframeSelector {
     /// The `to` keyword. Equivalent to 100%.
     To,
     /// A [named timeline range selector](https://drafts.csswg.org/scroll-animations-1/#named-range-keyframes).
-    TimelineRangePercentage {
-        /// The name of the timeline range.
-        name: TimelineRangeName,
-        /// The progress between the start and the end of the range. Not limited to 0%..100%.
-        percentage: Percentage,
-    },
+    TimelineRangePercentage(TimelineRangeName, Percentage),
 }
-
-const _: () = assert!(core::mem::size_of::<KeyframeSelector>() == 8);
 
 impl KeyframeSelector {
     fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
@@ -158,7 +144,7 @@ impl KeyframeSelector {
             KeyframeSelector::To => {
                 dest.write_str("to")?;
             }
-            KeyframeSelector::TimelineRangePercentage { name, percentage } => {
+            KeyframeSelector::TimelineRangePercentage(name, percentage) => {
                 name.to_css(dest)?;
                 dest.write_char(b' ')?;
                 percentage.to_css(dest)?;
@@ -174,10 +160,7 @@ impl KeyframeSelector {
             Self::Percentage(p) => Self::Percentage(*p),
             Self::From => Self::From,
             Self::To => Self::To,
-            Self::TimelineRangePercentage { name, percentage } => Self::TimelineRangePercentage {
-                name: *name,
-                percentage: *percentage,
-            },
+            Self::TimelineRangePercentage(name, p) => Self::TimelineRangePercentage(*name, *p),
         }
     }
 }
@@ -198,10 +181,7 @@ impl KeyframeSelector {
         } else if let Some(name) =
             <TimelineRangeName as css::EnumProperty>::from_ascii_case_insensitive(ident)
         {
-            Ok(KeyframeSelector::TimelineRangePercentage {
-                name,
-                percentage: Percentage::parse(input)?,
-            })
+            Ok(KeyframeSelector::TimelineRangePercentage(name, Percentage::parse(input)?))
         } else {
             Err(location.new_unexpected_token_error(css::Token::Ident(ident)))
         }
@@ -335,7 +315,7 @@ const _: () = {
     use css::css_parser::{
         AtRuleParser, DeclarationParser, QualifiedRuleParser, RuleBodyItemParser,
     };
-    use css::{BasicParseErrorKind, Maybe, Parser, ParserOptions, ParserState, Result};
+    use css::{BasicParseErrorKind, Parser, ParserOptions, ParserState, Result};
 
     impl DeclarationParser for KeyframesListParser {
         type Declaration = Keyframe;
@@ -367,35 +347,6 @@ const _: () = {
     impl AtRuleParser for KeyframesListParser {
         type Prelude = ();
         type AtRule = Keyframe;
-
-        fn parse_prelude(
-            _this: &mut Self,
-            name: &[u8],
-            input: &mut Parser,
-        ) -> Result<Self::Prelude> {
-            Err(
-                input.new_error(BasicParseErrorKind::at_rule_invalid(std::ptr::from_ref::<
-                    [u8],
-                >(name))),
-            )
-        }
-
-        fn parse_block(
-            _this: &mut Self,
-            _prelude: Self::Prelude,
-            _start: &ParserState,
-            input: &mut Parser,
-        ) -> Result<Self::AtRule> {
-            Err(input.new_error(BasicParseErrorKind::at_rule_body_invalid))
-        }
-
-        fn rule_without_block(
-            _this: &mut Self,
-            _prelude: Self::Prelude,
-            _start: &ParserState,
-        ) -> Maybe<Self::AtRule, ()> {
-            Err(())
-        }
     }
 
     impl QualifiedRuleParser for KeyframesListParser {
@@ -412,7 +363,6 @@ const _: () = {
             _start: &ParserState,
             input: &mut Parser,
         ) -> Result<Self::QualifiedRule> {
-            // For now there are no options that apply within @keyframes
             let mut options = ParserOptions::default(None);
             // Unlike lightningcss: a browser drops an invalid item and keeps the keyframe.
             options.error_recovery = true;

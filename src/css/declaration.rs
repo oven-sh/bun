@@ -7,7 +7,7 @@ use crate::css_properties::align::AlignHandler;
 use crate::css_properties::background::BackgroundHandler;
 use crate::css_properties::border::BorderHandler;
 use crate::css_properties::box_shadow::BoxShadowHandler;
-use crate::css_properties::custom::{CustomProperty, CustomPropertyName};
+use crate::css_properties::custom::CustomPropertyName;
 use crate::css_properties::flex::FlexHandler;
 use crate::css_properties::font::FontHandler;
 use crate::css_properties::margin_padding::{
@@ -19,7 +19,6 @@ use crate::css_properties::text::Direction;
 use crate::css_properties::transform::TransformHandler;
 use crate::css_properties::transition::TransitionHandler;
 use crate::css_properties::ui::ColorSchemeHandler;
-use crate::css_values::ident::Ident;
 
 pub type DeclarationList<'bump> = bun_alloc::ArenaVec<'bump, css::Property>;
 
@@ -45,20 +44,6 @@ impl<'bump> DeclarationBlock<'bump> {
 
     pub(crate) fn len(&self) -> usize {
         self.declarations.len() + self.important_declarations.len()
-    }
-
-    /// Whether a declaration is an IE star hack (`*zoom: 1`).
-    pub(crate) fn has_star_hack(&self) -> bool {
-        self.declarations
-            .iter()
-            .chain(self.important_declarations.iter())
-            .any(|property| {
-                matches!(
-                    property,
-                    css::Property::Custom(custom)
-                        if matches!(custom.name, CustomPropertyName::StarHack(_))
-                )
-            })
     }
 
     pub(crate) fn new_in(bump: &'bump Bump) -> Self {
@@ -112,6 +97,8 @@ impl<'bump> DeclarationBlock<'bump> {
         handle(&mut self.declarations, context, handler, false);
 
         handler.finalize(context);
+        // A flush stages rules too.
+        context.is_important = true;
         important_handler.finalize(context);
         // The old bumpalo Vecs drop implicitly on overwrite (arena reclaims
         // on reset).
@@ -234,49 +221,11 @@ pub(crate) struct PropertyDeclarationParser<'a, 'bump> {
 impl<'a, 'bump> css::AtRuleParser for PropertyDeclarationParser<'a, 'bump> {
     type Prelude = ();
     type AtRule = ();
-
-    fn parse_prelude(
-        _this: &mut Self,
-        name: &[u8],
-        input: &mut css::Parser,
-    ) -> Result<Self::Prelude> {
-        Err(input.new_error(css::BasicParseErrorKind::at_rule_invalid(name)))
-    }
-
-    fn parse_block(
-        _this: &mut Self,
-        _: Self::Prelude,
-        _: &css::ParserState,
-        input: &mut css::Parser,
-    ) -> Result<Self::AtRule> {
-        Err(input.new_error(css::BasicParseErrorKind::at_rule_body_invalid))
-    }
-
-    fn rule_without_block(
-        _this: &mut Self,
-        _: Self::Prelude,
-        _: &css::ParserState,
-    ) -> css::Maybe<Self::AtRule, ()> {
-        Err(())
-    }
 }
 
 impl<'a, 'bump> css::QualifiedRuleParser for PropertyDeclarationParser<'a, 'bump> {
     type Prelude = ();
     type QualifiedRule = ();
-
-    fn parse_prelude(_this: &mut Self, input: &mut css::Parser) -> Result<Self::Prelude> {
-        Err(input.new_error(css::BasicParseErrorKind::qualified_rule_invalid))
-    }
-
-    fn parse_block(
-        _this: &mut Self,
-        _prelude: Self::Prelude,
-        _start: &css::ParserState,
-        input: &mut css::Parser,
-    ) -> Result<Self::QualifiedRule> {
-        Err(input.new_error(css::BasicParseErrorKind::qualified_rule_invalid))
-    }
 }
 
 impl<'a, 'bump> css::DeclarationParser for PropertyDeclarationParser<'a, 'bump> {
@@ -288,20 +237,6 @@ impl<'a, 'bump> css::DeclarationParser for PropertyDeclarationParser<'a, 'bump> 
         input: &mut css::Parser,
     ) -> Result<Self::Declaration> {
         parse_declaration(
-            name,
-            input,
-            this.declarations,
-            this.important_declarations,
-            this.options,
-        )
-    }
-
-    fn parse_star_hack(
-        this: &mut Self,
-        name: &'static [u8],
-        input: &mut css::Parser,
-    ) -> Result<Self::Declaration> {
-        parse_star_hack(
             name,
             input,
             this.declarations,
@@ -360,8 +295,40 @@ where
     ) {
         delimiters |= css::Delimiters::CURLY_BRACKET;
     }
-    let source_location = input.current_source_location();
-    let mut property = input.parse_until_before(delimiters, |input2: &mut css::Parser| {
+    let mut composing_class = None;
+    if input.flags.css_modules() && matches!(property_id, css::PropertyId::Composes) {
+        let source_location = input.current_source_location();
+        match composes_ctx.composes_state() {
+            css::ComposesState::Allow { class, .. } => composing_class = Some(class),
+            css::ComposesState::DisallowEntirely => options.warn_fmt(
+                format_args!("\"composes\" is not valid here"),
+                source_location.line,
+                source_location.column,
+            ),
+            css::ComposesState::DisallowNested(info) => options.warn_fmt(
+                format_args!("\"composes\" is not allowed inside nested selectors"),
+                info.line,
+                info.column,
+            ),
+            css::ComposesState::DisallowNotSingleClass(info) => options.warn_fmt_with_notes(
+                format_args!("\"composes\" only works inside single class selectors"),
+                source_location.line,
+                source_location.column,
+                Box::new([bun_ast::Data {
+                    text: b"The parent selector is not a single class selector because of the syntax here:"
+                        .as_slice()
+                        .into(),
+                    location: Some(info.to_logger_location(options.filename)),
+                }]),
+            ),
+        }
+        if composing_class.is_none() {
+            // Dropped unread: its `from "<file>"` must not import the file.
+            while input.next().is_ok() {}
+            return Ok(());
+        }
+    }
+    let property = input.parse_until_before(delimiters, |input2: &mut css::Parser| {
         css::Property::parse(property_id, input2, options)
     })?;
     let important = input
@@ -372,77 +339,9 @@ where
         .is_ok();
     input.expect_exhausted()?;
 
-    if input.flags.css_modules() {
-        if let css::Property::Composes(composes) = &mut property {
-            // `StyleRule::to_css_base` relies on rejected declarations being dropped here.
-            match composes_ctx.composes_state() {
-                css::ComposesState::Allow(_) => {
-                    composes_ctx.record_composes(composes);
-                }
-                css::ComposesState::DisallowEntirely => {
-                    options.warn_fmt(
-                        format_args!("\"composes\" is not valid here"),
-                        source_location.line,
-                        source_location.column,
-                    );
-                    composes.discard(input);
-                    return Ok(());
-                }
-                css::ComposesState::DisallowNested(info) => {
-                    options.warn_fmt(
-                        format_args!("\"composes\" is not allowed inside nested selectors"),
-                        info.line,
-                        info.column,
-                    );
-                    composes.discard(input);
-                    return Ok(());
-                }
-                css::ComposesState::DisallowNotSingleClass(info) => {
-                    options.warn_fmt_with_notes(
-                        format_args!("\"composes\" only works inside single class selectors"),
-                        source_location.line,
-                        source_location.column,
-                        Box::new([bun_ast::Data {
-                            text: b"The parent selector is not a single class selector because of the syntax here:"
-                                .as_slice()
-                                .into(),
-                            location: Some(info.to_logger_location(options.filename)),
-                        }]),
-                    );
-                    composes.discard(input);
-                    return Ok(());
-                }
-            }
-        }
+    if let (Some(class), css::Property::Composes(composes)) = (composing_class, &property) {
+        composes_ctx.record_composes(class, composes);
     }
-    if important {
-        important_declarations.push(property);
-    } else {
-        declarations.push(property);
-    }
-
-    Ok(())
-}
-
-/// The value of a `*property` declaration, read as the value of an unknown
-/// property is read above. `name` keeps its `*`: it is not `property`.
-#[cold]
-pub(crate) fn parse_star_hack<'bump>(
-    name: &'static [u8],
-    input: &mut css::Parser,
-    declarations: &mut DeclarationList<'bump>,
-    important_declarations: &mut DeclarationList<'bump>,
-    options: &css::ParserOptions,
-) -> Result<()> {
-    let name = CustomPropertyName::StarHack(Ident { v: name });
-    let value = input.parse_until_before(
-        css::Delimiters::BANG | css::Delimiters::CURLY_BRACKET,
-        |input2: &mut css::Parser| CustomProperty::parse(name, input2, options),
-    )?;
-    let important = input.try_parse(css::parse_important).is_ok();
-    input.expect_exhausted()?;
-
-    let property = css::Property::Custom(value);
     if important {
         important_declarations.push(property);
     } else {

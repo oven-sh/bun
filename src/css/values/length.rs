@@ -5,7 +5,7 @@ use crate::targets::Browsers;
 use crate::values::angle::Angle;
 use crate::values::calc::{Calc, MathFunction};
 use crate::values::number::CSSNumber;
-use crate::values::percentage::DimensionPercentage;
+use crate::values::percentage::{DimensionPercentage, Percentage};
 use crate::values::protocol;
 
 use core::cmp::Ordering;
@@ -38,6 +38,21 @@ impl Default for LengthOrNumber {
 }
 
 pub(crate) type LengthPercentage = DimensionPercentage<LengthValue>;
+
+impl LengthPercentage {
+    /// `<length-percentage [0,∞]>`: a math function below zero means zero, a literal is invalid.
+    pub(crate) fn parse_non_negative(input: &mut Parser) -> CssResult<Self> {
+        let start = input.state();
+        let is_math = matches!(input.next(), Ok(Token::Function(_)));
+        input.reset(&start);
+        let clamp = |v: f32| if is_math && v < 0.0 { 0.0 } else { v };
+        Ok(match Self::parse(input)? {
+            Self::Dimension(length) => Self::Dimension(length.map_value(clamp)),
+            Self::Percentage(p) => Self::Percentage(Percentage { v: clamp(p.v) }),
+            calc => calc,
+        })
+    }
+}
 
 /// Either a [`<length-percentage>`](https://www.w3.org/TR/css-values-4/#typedef-length-percentage), or the `auto` keyword.
 #[derive(Clone, PartialEq, css::Parse, css::ToCss)]
@@ -274,7 +289,8 @@ impl LengthValue {
                     return Ok(v);
                 }
             }
-            Token::Number(num) => return Ok(Self::Px(num.value)),
+            // Outside of quirks mode only `0` is a length without a unit.
+            Token::Number(num) if num.value == 0.0 => return Ok(Self::Px(num.value)),
             _ => {}
         }
         Err(location.new_unexpected_token_error(token))
@@ -414,12 +430,15 @@ impl Length {
     }
 
     pub(crate) fn parse(input: &mut Parser) -> CssResult<Length> {
-        if let Ok(calc_value) = input.try_parse(Calc::<Length>::parse) {
+        match input.try_parse(Calc::<Length>::parse) {
             // PERF: I don't like this redundant allocation
-            if let Calc::Value(v) = calc_value {
-                return Ok(*v);
+            Ok(Calc::Value(v)) => return Ok(*v),
+            // `calc(0)` is a number, and unlike `0` not a length.
+            Ok(Calc::Number(_)) => {
+                return Err(input.new_custom_error(css::ParserError::invalid_value));
             }
-            return Ok(Self::Calc(Box::new(calc_value)));
+            Ok(calc) => return Ok(Self::Calc(Box::new(calc))),
+            Err(_) => {}
         }
 
         let len = LengthValue::parse(input)?;

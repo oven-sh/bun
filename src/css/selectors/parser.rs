@@ -7,7 +7,6 @@ use bun_alloc::{Arena as Bump, ArenaPtr};
 use bun_core::strings;
 use bun_css as css;
 use bun_css::css_values::ident::{CustomIdent, Ident};
-use bun_css::selector::serialize;
 use bun_css::{
     CSSStringFns, IdentFns, Parser as CssParser, ParserOptions, PrintErr, Printer, SmallList,
     Token, TokenList,
@@ -719,7 +718,7 @@ fn parse_compound_selector<Impl: BunSelectorImpl>(
 
     loop {
         let result: SimpleSelectorParseResult<Impl> = {
-            let ret = parse_one_simple_selector::<Impl>(parser, input, state)?;
+            let ret = parse_one_simple_selector::<Impl>(parser, input, state, builder)?;
             match ret {
                 Some(result) => result,
                 None => break,
@@ -785,7 +784,11 @@ fn parse_compound_selector<Impl: BunSelectorImpl>(
             }
             SimpleSelectorParseResult::PseudoElement(p) => {
                 if !p.is_unknown() {
-                    state.insert(SelectorParsingState::AFTER_PSEUDO_ELEMENT);
+                    state.insert(if p.is_element_backed() {
+                        SelectorParsingState::AFTER_PART
+                    } else {
+                        SelectorParsingState::AFTER_PSEUDO_ELEMENT
+                    });
                     builder.push_combinator(Combinator::PseudoElement);
                 } else {
                     state.insert(SelectorParsingState::AFTER_UNKNOWN_PSEUDO_ELEMENT);
@@ -795,7 +798,17 @@ fn parse_compound_selector<Impl: BunSelectorImpl>(
                     state.insert(SelectorParsingState::AFTER_NON_STATEFUL_PSEUDO_ELEMENT);
                 }
 
-                state.insert(p.following_pseudo_class_state());
+                if p.is_webkit_scrollbar() {
+                    state.insert(SelectorParsingState::AFTER_WEBKIT_SCROLLBAR);
+                }
+
+                if p.is_view_transition() {
+                    state.insert(SelectorParsingState::AFTER_VIEW_TRANSITION);
+                }
+
+                if matches!(p, PseudoElement::Selection(_)) {
+                    state.insert(SelectorParsingState::AFTER_SELECTION);
+                }
 
                 builder.push_simple_selector(GenericComponent::PseudoElement(p));
             }
@@ -829,7 +842,10 @@ fn parse_relative_selector<Impl: BunSelectorImpl>(
         None
     };
 
-    let scope: GenericComponent<Impl> = if nesting_requirement == NestingRequirement::Implicit {
+    let scope: GenericComponent<Impl> = if matches!(
+        nesting_requirement,
+        NestingRequirement::Implicit | NestingRequirement::Scoped
+    ) {
         GenericComponent::Nesting
     } else {
         GenericComponent::Scope
@@ -1040,13 +1056,6 @@ impl PseudoClass {
         self.eql(other)
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        // A buffered intermediate `Printer` would only matter for
-        // length-dependent minification decisions made by callers (none
-        // here), so write directly to `dest`.
-        serialize::serialize_pseudo_class(self, dest, None)
-    }
-
     // eql / hash — provided by `#[derive(CssEql, CssHash)]` (variant-wise; the
     // `Box<Selector>` arms recurse via the `CssEql for GenericSelector` impl
     // below). `deep_clone` is `Clone` — the selector AST is global-alloc and
@@ -1187,7 +1196,7 @@ impl<'a> SelectorParser<'a> {
         raw: Str,
         loc: usize,
     ) -> <impl_::Selectors as SelectorImpl>::LocalIdentifier {
-        if input.flags.css_modules() {
+        if input.flags.local_scope() {
             return <impl_::Selectors as SelectorImpl>::LocalIdentifier::from_ref(
                 input.add_symbol_for_name(
                     raw,
@@ -1320,9 +1329,9 @@ impl<'a> SelectorParser<'a> {
                 self.options.warn(&loc.new_custom_error(
                     SelectorParseErrorKind::UnsupportedPseudoClassOrElement(name),
                 ));
-            } else if (self.options.css_modules.is_some()
-                && strings::eql_case_insensitive_ascii_check_length(name, b"local"))
-                || strings::eql_case_insensitive_ascii_check_length(name, b"global")
+            } else if self.options.css_modules.is_some()
+                && (strings::eql_case_insensitive_ascii_check_length(name, b"local")
+                    || strings::eql_case_insensitive_ascii_check_length(name, b"global"))
             {
                 return Err(
                     loc.new_custom_error(SelectorParseErrorKind::AmbiguousCssModuleClass(name))
@@ -1363,10 +1372,14 @@ impl<'a> SelectorParser<'a> {
                 direction: Direction::parse(parser)?,
             },
             b"local" if self.options.css_modules.is_some() => PseudoClass::Local {
-                selector: Box::new(Selector::parse(self, parser)?),
+                selector: Box::new(
+                    parser.parse_with_global_scope(false, |parser| Selector::parse(self, parser))?,
+                ),
             },
             b"global" if self.options.css_modules.is_some() => PseudoClass::Global {
-                selector: Box::new(Selector::parse(self, parser)?),
+                selector: Box::new(
+                    parser.parse_with_global_scope(true, |parser| Selector::parse(self, parser))?,
+                ),
             },
             _ => {
                 if !strings::starts_with_char(name, b'-') {
@@ -1820,6 +1833,11 @@ impl<Impl: BunSelectorImpl> GenericSelector<Impl> {
         false
     }
 
+    /// Also true for `::part()` and `::slotted()`.
+    pub(crate) fn has_pseudo_element(&self) -> bool {
+        !self.specificity_and_flags.flags.is_empty()
+    }
+
     /// Returns count of simple selectors and combinators in the Selector.
     pub(crate) fn len(&self) -> usize {
         self.components.len()
@@ -1952,7 +1970,6 @@ pub enum GenericComponent<Impl: SelectorImpl> {
         local_name: Impl::LocalName,
         local_name_lower: Impl::LocalName,
     },
-    /// Used only when local_name is already lowercase.
     AttributeInNoNamespace {
         local_name: Impl::LocalName,
         operator: attrs::AttrSelectorOperator,
@@ -2492,12 +2509,8 @@ impl NthSelectorData {
     }
 
     pub(crate) fn is_function_(&self) -> bool {
-        match self.ty {
-            // No `:first-col` shorthand exists.
-            NthType::Col | NthType::LastCol => true,
-            NthType::OnlyChild | NthType::OnlyOfType => false,
-            _ => self.a != 0 || self.b != 1,
-        }
+        // There is no `:first-col`.
+        matches!(self.ty, NthType::Col | NthType::LastCol) || self.a != 0 || self.b != 1
     }
 
     fn number_sign(num: i32) -> &'static str {
@@ -2563,9 +2576,6 @@ impl<Impl: BunSelectorImpl> NthOfSelectorData<Impl> {
             selectors: deep_clone_selector_slice(&self.selectors),
         }
     }
-    pub(crate) fn nth_data(&self) -> NthSelectorData {
-        self.data
-    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2585,7 +2595,7 @@ bitflags::bitflags! {
         /// whatever comes after them if so.
         const AFTER_SLOTTED = 1 << 1;
 
-        /// Whether we've parsed a ::part() pseudo-element already.
+        /// Whether we've parsed a ::part() or an element-backed pseudo-element already.
         ///
         /// If so, then we can only parse a subset of pseudo-elements, and
         /// whatever comes after them if so.
@@ -2653,7 +2663,7 @@ impl SelectorParsingState {
     }
 
     pub(crate) fn allows_custom_functional_pseudo_classes(self) -> bool {
-        !self.after_any_pseudo()
+        !self.intersects(Self::AFTER_SLOTTED | Self::AFTER_PSEUDO_ELEMENT)
     }
 }
 
@@ -2702,6 +2712,8 @@ pub enum NestingRequirement {
     Prefixed,
     Contained,
     Implicit,
+    /// Directly in `@scope`: a leading combinator follows `&`, and nothing else is added.
+    Scoped,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, strum::IntoStaticStr, CssHash)]
@@ -3009,46 +3021,28 @@ impl PseudoElement {
         true
     }
 
-    /// The bit, if any, that `parse_simple_pseudo_class` tests for this kind of pseudo-element.
-    pub(crate) fn following_pseudo_class_state(&self) -> SelectorParsingState {
-        use PseudoElement as PE;
-        use SelectorParsingState as S;
-        // No `_` arm, so that a new variant has to be classified here.
-        match self {
-            PE::WebkitScrollbar(_) => S::AFTER_WEBKIT_SCROLLBAR,
-            PE::ViewTransitionGroup { .. }
-            | PE::ViewTransitionImagePair { .. }
-            | PE::ViewTransitionOld { .. }
-            | PE::ViewTransitionNew { .. }
-            | PE::ViewTransitionGroupChildren { .. } => S::AFTER_VIEW_TRANSITION,
-            // `::-moz-selection` too: the prefixer prints it beside `::selection`.
-            PE::Selection(_) => S::AFTER_SELECTION,
-            PE::After
-            | PE::Before
-            | PE::FirstLine
-            | PE::FirstLetter
-            | PE::Placeholder(_)
-            | PE::Marker
-            | PE::Backdrop(_)
-            | PE::FileSelectorButton(_)
-            | PE::Cue
-            | PE::CueRegion
-            | PE::CueFunction { .. }
-            | PE::CueRegionFunction { .. }
-            | PE::ViewTransition
-            | PE::DetailsContent
-            | PE::PickerIcon
-            | PE::Checkmark
-            | PE::PickerFunction { .. }
-            | PE::Custom { .. }
-            | PE::CustomFunction { .. } => S::empty(),
-        }
+    pub(crate) fn is_webkit_scrollbar(&self) -> bool {
+        matches!(self, PseudoElement::WebkitScrollbar(_))
     }
 
-    pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        // See PseudoClass::to_css — write directly to `dest`; no caller makes
-        // length-dependent minification decisions here.
-        serialize::serialize_pseudo_element(self, dest, None)
+    pub(crate) fn is_view_transition(&self) -> bool {
+        use PseudoElement as PE;
+        matches!(
+            self,
+            PE::ViewTransitionGroup { .. }
+                | PE::ViewTransitionImagePair { .. }
+                | PE::ViewTransitionNew { .. }
+                | PE::ViewTransitionOld { .. }
+                | PE::ViewTransitionGroupChildren { .. }
+        )
+    }
+
+    /// Whether pseudo-classes and pseudo-elements can follow, as after `::part()`.
+    pub(crate) fn is_element_backed(&self) -> bool {
+        matches!(
+            self,
+            PseudoElement::DetailsContent | PseudoElement::PickerFunction { .. }
+        )
     }
 }
 
@@ -3207,6 +3201,7 @@ pub(crate) fn parse_one_simple_selector<Impl: BunSelectorImpl>(
     parser: &mut SelectorParser,
     input: &mut CssParser,
     state: &mut SelectorParsingState,
+    builder: &SelectorBuilder<Impl>,
 ) -> CResult<Option<SimpleSelectorParseResult<Impl>>> {
     type S<Impl> = SimpleSelectorParseResult<Impl>;
 
@@ -3266,7 +3261,16 @@ pub(crate) fn parse_one_simple_selector<Impl: BunSelectorImpl>(
             };
             let is_pseudo_element = !is_single_colon || is_css2_pseudo_element(name);
             if is_pseudo_element {
-                if !state.allows_pseudos() {
+                // css-pseudo-4 allows `::before::marker` and `::after::marker`.
+                let is_marker_of_generated_content = !is_functional
+                    && strings::eql_case_insensitive_ascii_check_length(name, b"marker")
+                    && matches!(
+                        builder.last_simple_selector(),
+                        Some(GenericComponent::PseudoElement(
+                            PseudoElement::Before | PseudoElement::After
+                        ))
+                    );
+                if !state.allows_pseudos() && !is_marker_of_generated_content {
                     return Err(input.new_custom_error(
                         SelectorParseErrorKind::InvalidState.into_default_parser_error(),
                     ));
@@ -3499,7 +3503,7 @@ pub(crate) fn parse_attribute_selector<Impl: BunSelectorImpl>(
     let attribute_flags = parse_attribute_flags(input)?;
 
     let value: Impl::AttrValue = std::ptr::from_ref::<[u8]>(value_str);
-    let (local_name_lower, local_name_is_ascii_lowercase): (Impl::LocalName, bool) = 'brk: {
+    let local_name_lower: Impl::LocalName = 'brk: {
         let first_uppercase = 'a: {
             for (i, &b) in local_name.iter().enumerate() {
                 if b >= b'A' && b <= b'Z' {
@@ -3511,19 +3515,16 @@ pub(crate) fn parse_attribute_selector<Impl: BunSelectorImpl>(
         if let Some(first_uppercase) = first_uppercase {
             let str_ = &local_name[first_uppercase..];
             let lowered: *const [u8] = arena_lowercase(input.arena(), str_);
-            break 'brk (Ident { v: lowered }, false);
+            break 'brk Ident { v: lowered };
         } else {
-            break 'brk (
-                Ident {
-                    v: std::ptr::from_ref::<[u8]>(local_name),
-                },
-                true,
-            );
+            break 'brk Ident {
+                v: std::ptr::from_ref::<[u8]>(local_name),
+            };
         }
     };
     let case_sensitivity: attrs::ParsedCaseSensitivity =
         attribute_flags.to_case_sensitivity(local_name_lower.v(), namespace.is_some());
-    if namespace.is_some() && !local_name_is_ascii_lowercase {
+    if namespace.is_some() {
         Ok(GenericComponent::AttributeOther(Box::new(
             attrs::AttrSelectorWithOptionalNamespace::<Impl> {
                 namespace,
@@ -3587,12 +3588,12 @@ pub(crate) fn parse_functional_pseudo_class<Impl: BunSelectorImpl>(
     state: &mut SelectorParsingState,
 ) -> CResult<GenericComponent<Impl>> {
     crate::match_ignore_ascii_case! { name, {
-        b"nth-child" => return parse_nth_pseudo_class::<Impl>(parser, input, *state, NthType::Child),
-        b"nth-of-type" => return parse_nth_pseudo_class::<Impl>(parser, input, *state, NthType::OfType),
-        b"nth-last-child" => return parse_nth_pseudo_class::<Impl>(parser, input, *state, NthType::LastChild),
-        b"nth-last-of-type" => return parse_nth_pseudo_class::<Impl>(parser, input, *state, NthType::LastOfType),
-        b"nth-col" => return parse_nth_pseudo_class::<Impl>(parser, input, *state, NthType::Col),
-        b"nth-last-col" => return parse_nth_pseudo_class::<Impl>(parser, input, *state, NthType::LastCol),
+        b"nth-child" => return parse_nth_pseudo_class::<Impl>(parser, input, state, NthType::Child),
+        b"nth-of-type" => return parse_nth_pseudo_class::<Impl>(parser, input, state, NthType::OfType),
+        b"nth-last-child" => return parse_nth_pseudo_class::<Impl>(parser, input, state, NthType::LastChild),
+        b"nth-last-of-type" => return parse_nth_pseudo_class::<Impl>(parser, input, state, NthType::LastOfType),
+        b"nth-col" => return parse_nth_pseudo_class::<Impl>(parser, input, state, NthType::Col),
+        b"nth-last-col" => return parse_nth_pseudo_class::<Impl>(parser, input, state, NthType::LastCol),
         b"is" => if parser.parse_is_and_where() {
             return parse_is_or_where::<Impl, _>(parser, input, state, |s| GenericComponent::convert_helper_is(s));
         },
@@ -3699,7 +3700,7 @@ pub(crate) fn parse_simple_pseudo_class<Impl: BunSelectorImpl>(
 pub(crate) fn parse_nth_pseudo_class<Impl: BunSelectorImpl>(
     parser: &mut SelectorParser,
     input: &mut CssParser,
-    state: SelectorParsingState,
+    state: &mut SelectorParsingState,
     ty: NthType,
 ) -> CResult<GenericComponent<Impl>> {
     if !state.allows_tree_structural_pseudo_classes() {
@@ -3727,7 +3728,7 @@ pub(crate) fn parse_nth_pseudo_class<Impl: BunSelectorImpl>(
     // Whitespace between "of" and the selector list is optional
     // https://github.com/w3c/csswg-drafts/issues/8285
     let mut child_state = {
-        let mut s = state;
+        let mut s = *state;
         s.insert(SelectorParsingState::SKIP_DEFAULT_NAMESPACE);
         s.insert(SelectorParsingState::DISALLOW_PSEUDOS);
         s
@@ -3743,6 +3744,9 @@ pub(crate) fn parse_nth_pseudo_class<Impl: BunSelectorImpl>(
         ParseErrorRecovery::DiscardList,
         NestingRequirement::None,
     )?;
+    if child_state.contains(SelectorParsingState::AFTER_NESTING) {
+        state.insert(SelectorParsingState::AFTER_NESTING);
+    }
 
     Ok(GenericComponent::NthOf(NthOfSelectorData {
         data: nth_data,
@@ -4170,7 +4174,7 @@ impl ViewTransitionPartSelector {
         }
         for class in self.classes.iter() {
             dest.write_char(b'.')?;
-            dest.write_ident_or_ref(*class, dest.css_module.is_some())?;
+            dest.write_ident_or_ref(*class)?;
         }
         Ok(())
     }

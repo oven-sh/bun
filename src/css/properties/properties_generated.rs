@@ -619,11 +619,7 @@ impl PropertyIdTag {
 /// A known CSS property name + (for prefixable properties) the vendor
 /// prefix it was parsed with. Variants without payload are unprefixed.
 //
-// Do NOT `#[derive(PartialEq, Eq)]` here — the spec-correct
-// equality ignores the
-// `Custom(CustomPropertyName)` payload and is hand-written below. A derived
-// impl would (a) conflict (E0119) and (b) diverge by comparing custom-name
-// bytes.
+// `PartialEq` is hand-written below: `CustomPropertyName` has no `PartialEq`.
 #[derive(Debug, Clone, Copy)]
 pub enum PropertyId {
     BackgroundColor,
@@ -882,29 +878,25 @@ pub enum PropertyId {
     Custom(CustomPropertyName),
 }
 
-// `PropertyId` equality compares the tag, then *only* compares the payload
-// when its type is `VendorPrefix` — for `Custom` (whose payload is
-// `CustomPropertyName`) and all unit variants it returns `true` on tag match
-// alone. A derived `PartialEq` would compare the `CustomPropertyName` bytes,
-// diverging from the duplicate-detection semantics in `rules/style.rs`.
-// `prefix()` already returns the `VendorPrefix` payload for the 65 prefixed
-// variants and `VendorPrefix::empty()` for every other variant (including
-// `Custom`/`All`/`Unparsed`), so `tag` + `prefix` equality is exactly that.
 impl PartialEq for PropertyId {
     #[inline]
     fn eq(&self, other: &Self) -> bool {
-        self.tag() == other.tag() && self.prefix() == other.prefix()
+        match (self, other) {
+            (PropertyId::Custom(a), PropertyId::Custom(b)) => css::generic::eql(a, b),
+            _ => self.tag() == other.tag() && self.prefix() == other.prefix(),
+        }
     }
 }
 
 impl Eq for PropertyId {}
 
-// Hash only the tag discriminant so PropertyId can key a hash map
-// consistent with `eq`.
 impl core::hash::Hash for PropertyId {
     #[inline]
     fn hash<H: core::hash::Hasher>(&self, h: &mut H) {
         (self.tag() as u16).hash(h);
+        if let PropertyId::Custom(name) = self {
+            h.write(name.as_str());
+        }
     }
 }
 
@@ -1892,6 +1884,15 @@ fn parse_value<T: css::generic::ParseWithOptions>(
     input.expect_exhausted().is_ok().then_some(value)
 }
 
+/// `parse_value` for the two radii of a corner, whose range is `[0,∞]`.
+fn parse_corner_radius(
+    input: &mut css::Parser,
+) -> Option<css::css_values::size::Size2D<css::css_values::length::LengthPercentage>> {
+    use css::css_values::{length::LengthPercentage, size::Size2D};
+    let value = Size2D::parse_with(input, LengthPercentage::parse_non_negative).ok()?;
+    input.expect_exhausted().is_ok().then_some(value)
+}
+
 impl Property {
     /// Returns the [`PropertyId`] for this declaration.
     pub(crate) fn property_id(&self) -> PropertyId {
@@ -2833,66 +2834,42 @@ impl Property {
                 }
             }
             PropertyId::BorderTopLeftRadius(pre) => {
-                if let Some(c) = parse_value::<
-                    css::css_values::size::Size2D<css::css_values::length::LengthPercentage>,
-                >(input, options)
-                {
+                if let Some(c) = parse_corner_radius(input) {
                     return Ok(Property::BorderTopLeftRadius((c, pre)));
                 }
             }
             PropertyId::BorderTopRightRadius(pre) => {
-                if let Some(c) = parse_value::<
-                    css::css_values::size::Size2D<css::css_values::length::LengthPercentage>,
-                >(input, options)
-                {
+                if let Some(c) = parse_corner_radius(input) {
                     return Ok(Property::BorderTopRightRadius((c, pre)));
                 }
             }
             PropertyId::BorderBottomLeftRadius(pre) => {
-                if let Some(c) = parse_value::<
-                    css::css_values::size::Size2D<css::css_values::length::LengthPercentage>,
-                >(input, options)
-                {
+                if let Some(c) = parse_corner_radius(input) {
                     return Ok(Property::BorderBottomLeftRadius((c, pre)));
                 }
             }
             PropertyId::BorderBottomRightRadius(pre) => {
-                if let Some(c) = parse_value::<
-                    css::css_values::size::Size2D<css::css_values::length::LengthPercentage>,
-                >(input, options)
-                {
+                if let Some(c) = parse_corner_radius(input) {
                     return Ok(Property::BorderBottomRightRadius((c, pre)));
                 }
             }
             PropertyId::BorderStartStartRadius => {
-                if let Some(c) = parse_value::<
-                    css::css_values::size::Size2D<css::css_values::length::LengthPercentage>,
-                >(input, options)
-                {
+                if let Some(c) = parse_corner_radius(input) {
                     return Ok(Property::BorderStartStartRadius(c));
                 }
             }
             PropertyId::BorderStartEndRadius => {
-                if let Some(c) = parse_value::<
-                    css::css_values::size::Size2D<css::css_values::length::LengthPercentage>,
-                >(input, options)
-                {
+                if let Some(c) = parse_corner_radius(input) {
                     return Ok(Property::BorderStartEndRadius(c));
                 }
             }
             PropertyId::BorderEndStartRadius => {
-                if let Some(c) = parse_value::<
-                    css::css_values::size::Size2D<css::css_values::length::LengthPercentage>,
-                >(input, options)
-                {
+                if let Some(c) = parse_corner_radius(input) {
                     return Ok(Property::BorderEndStartRadius(c));
                 }
             }
             PropertyId::BorderEndEndRadius => {
-                if let Some(c) = parse_value::<
-                    css::css_values::size::Size2D<css::css_values::length::LengthPercentage>,
-                >(input, options)
-                {
+                if let Some(c) = parse_corner_radius(input) {
                     return Ok(Property::BorderEndEndRadius(c));
                 }
             }
@@ -3606,6 +3583,8 @@ impl Property {
                 if let Some(c) = parse_value::<SmallList<animation::Animation, 1>>(input, options) {
                     return Ok(Property::Animation((c, pre)));
                 }
+                input.reset(&state);
+                return animation::parse_unparsed(property_id, input, options);
             }
             PropertyId::AnimationName(pre) => {
                 if let Some(c) =
@@ -3613,6 +3592,8 @@ impl Property {
                 {
                     return Ok(Property::AnimationName((c, pre)));
                 }
+                input.reset(&state);
+                return animation::parse_unparsed(property_id, input, options);
             }
             PropertyId::Transform(pre) => {
                 if let Some(c) = parse_value::<transform::TransformList>(input, options) {
@@ -3684,10 +3665,11 @@ impl Property {
                     return Ok(Property::Direction(c));
                 }
             }
-            PropertyId::Composes => {
+            PropertyId::Composes if input.flags.css_modules() => {
                 return css::generic::parse_with_options::<css_modules::Composes>(input, options)
                     .map(Property::Composes);
             }
+            PropertyId::Composes => {}
             PropertyId::MaskImage(pre) => {
                 if let Some(c) =
                     parse_value::<SmallList<css::css_values::image::Image, 1>>(input, options)

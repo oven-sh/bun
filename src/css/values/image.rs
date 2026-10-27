@@ -450,7 +450,7 @@ impl ImageSetOption {
                     dependencies.push(css::Dependency::Url(dep));
                 }
             } else {
-                let record_url = dest.get_import_record_url(url.import_record_idx)?;
+                let (record_url, _) = dest.get_import_record_url(url.import_record_idx)?;
                 // SAFETY: `record_url` borrows arena-backed `import_info` data
                 // valid for the printer's `'a`; detach so `dest` is reusable.
                 let record_url: &[u8] = unsafe { &*std::ptr::from_ref::<[u8]>(record_url) };

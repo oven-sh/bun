@@ -342,15 +342,14 @@ impl FontFamily {
         // SAFETY: arena outlives the returned `FontFamily` (parser source/arena lives for 'bump).
         let bump: &'static bun_alloc::Arena =
             unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(input.arena()) };
-        let value: *const [u8] = std::ptr::from_ref::<[u8]>(input.expect_ident()?);
+        let value = input.expect_ident_cloned()?;
         // AST crate: ArrayListUnmanaged fed input.arena() (arena) → bumpalo Vec
         let mut string: Option<bun_alloc::ArenaVec<'_, u8>> = None;
         while let Ok(ident) = input.try_parse(|p| p.expect_ident().map(std::ptr::from_ref::<[u8]>))
         {
             if string.is_none() {
                 let mut s = bun_alloc::ArenaVec::<u8>::new_in(bump);
-                // SAFETY: arena-owned slice valid for 'bump.
-                s.extend_from_slice(unsafe { crate::arena_str(value) });
+                s.extend_from_slice(value);
                 string = Some(s);
             }
 
@@ -363,7 +362,11 @@ impl FontFamily {
 
         let final_value: *const [u8] = match string {
             Some(s) => std::ptr::from_ref::<[u8]>(s.into_bump_slice()),
-            None => value,
+            // On its own, a css-wide keyword is the whole declaration's value, not a name.
+            None if is_reserved_custom_ident(value) => {
+                return Err(input.new_custom_error(ParserError::invalid_value));
+            }
+            None => std::ptr::from_ref::<[u8]>(value),
         };
 
         Ok(FontFamily::FamilyName(final_value))
@@ -379,31 +382,30 @@ impl FontFamily {
                 // CSS wide keywords, as well as "default", must also be quoted.
                 // https://www.w3.org/TR/css-fonts-4/#family-name-syntax
 
-                // Like lightningcss, drop a blank at either end: in published CSS it is a typo.
-                let name = val.strip_prefix(b" ").unwrap_or(val);
-                let name = name.strip_suffix(b" ").unwrap_or(name);
-                let mut words = bun_core::strings::split(name, b" ");
-                let first = words.next().unwrap_or(b"");
-                let generic_first = !is_reserved_custom_ident(first)
-                    && <GenericFontFamily as css::EnumProperty>::from_ascii_case_insensitive(first)
-                        .is_some();
-                // Parsed back, a leading generic family is the keyword, and blanks collapse to one.
-                let mut quoted =
-                    first.is_empty() || generic_first || is_reserved_custom_ident(name);
-                if !quoted {
-                    dest.scratchbuf.clear();
-                    let _ = css::serializer::serialize_identifier(first, &mut dest.scratchbuf);
-                    for word in words {
-                        if word.is_empty() {
-                            quoted = true;
-                            break;
+                // Browsers read a leading generic name as the keyword, whatever follows it.
+                let word = bun_core::strings::split(val, b" ").next().unwrap_or(val);
+                if !is_reserved_custom_ident(val)
+                    && <GenericFontFamily as css::EnumProperty>::from_ascii_case_insensitive(word)
+                        .is_none()
+                {
+                    // AST crate: std.Io.Writer.Allocating on dest.arena (arena) → bumpalo Vec
+                    let mut id = bun_alloc::ArenaVec::<u8>::new_in(dest.arena);
+                    let mut first = true;
+                    for slice in bun_core::strings::split(val, b" ") {
+                        // Without quotes, a run of blanks reads back as one.
+                        if slice.is_empty() {
+                            return dest.serialize_string(val);
                         }
-                        dest.scratchbuf.push(b' ');
-                        let _ = css::serializer::serialize_identifier(word, &mut dest.scratchbuf);
+                        if first {
+                            first = false;
+                        } else {
+                            id.push(b' ');
+                        }
+                        // `ArenaVec<u8>: WriteAll<Error = Infallible>` — cannot fail.
+                        let _ = css::serializer::serialize_identifier(slice, &mut id);
                     }
-                    let len = dest.scratchbuf.len();
-                    if !quoted && len < name.len() + 2 {
-                        return dest.write_scratchbuf(0..len);
+                    if id.len() < val.len() + 2 {
+                        return dest.write_str(&id[..]);
                     }
                 }
                 dest.serialize_string(val)
@@ -466,21 +468,6 @@ pub enum GenericFontFamily {
     UiSansSerif,
     UiMonospace,
     UiRounded,
-
-    // CSS wide keywords. These must be parsed as identifiers so they
-    // don't get serialized as strings.
-    // https://www.w3.org/TR/css-values-4/#common-keywords
-    Initial,
-    Inherit,
-    Unset,
-    // Default is also reserved by the <custom-ident> type.
-    // https://www.w3.org/TR/css-values-4/#custom-idents
-    Default,
-
-    // CSS defaulting keywords
-    // https://drafts.csswg.org/css-cascade-5/#defaulting-keywords
-    Revert,
-    RevertLayer,
 }
 
 impl GenericFontFamily {
@@ -712,8 +699,7 @@ impl Font {
                 }
             }
 
-            if variant_caps.is_some() {
-                // Intentionally checks `is_some()` to match upstream lightningcss (likely a bug there; should be `is_none()`)
+            if variant_caps.is_none() {
                 if let Ok(value) = input.try_parse(FontVariantCaps::parse_css2) {
                     variant_caps = Some(value);
                     count += 1;
@@ -774,8 +760,11 @@ impl Font {
             dest.write_char(b' ')?;
         }
 
-        if self.stretch != FontStretch::default() {
-            self.stretch.to_css(dest)?;
+        // `font` takes no percentage, which is what `FontStretch::to_css` minifies a keyword to.
+        if let FontStretch::Keyword(stretch) = self.stretch
+            && stretch != FontStretchKeyword::default()
+        {
+            stretch.to_css(dest)?;
             dest.write_char(b' ')?;
         }
 
@@ -846,7 +835,7 @@ pub struct FontHandler {
     line_height: Option<LineHeight>,
     variant_caps: Option<FontVariantCaps>,
     flushed_properties: FontProperty,
-    /// A `font` is buffered. Unlike lightningcss, `flush` writes `font` only then: it also resets longhands with no field here.
+    /// `flush` writes `font` only if the rule did: it also resets longhands with no field here.
     has_shorthand: bool,
     has_any: bool,
 }
@@ -927,9 +916,13 @@ impl FontHandler {
                 }
             }
             Property::Custom(val) => {
-                // Emit anything buffered before a sub-property that `font` resets, so
-                // it stays after a shorthand it was written after.
-                if val.name.is_unknown_any_of(UNTYPED_FONT_SUBPROPERTIES) {
+                // `font` resets `font-kerning` and the like, so they stay behind a buffered `font`.
+                if self.has_shorthand
+                    && bun_core::strings::starts_with_case_insensitive_ascii(
+                        val.name.as_str(),
+                        b"font-",
+                    )
+                {
                     self.flush(dest, context);
                 }
                 return false;
@@ -1002,6 +995,8 @@ impl FontHandler {
         ) && has_shorthand
         {
             let caps = *variant_caps_v;
+            let stretch = stretch.unwrap();
+            let is_keyword = matches!(stretch, FontStretch::Keyword(_));
             push_prop!(
                 Font,
                 Font {
@@ -1009,7 +1004,11 @@ impl FontHandler {
                     size: size.unwrap(),
                     style: style.unwrap(),
                     weight: weight.unwrap(),
-                    stretch: stretch.unwrap(),
+                    stretch: if is_keyword {
+                        stretch
+                    } else {
+                        FontStretch::default()
+                    },
                     line_height: line_height.unwrap(),
                     variant_caps: if caps.is_css2() {
                         caps
@@ -1023,6 +1022,11 @@ impl FontHandler {
             // If we have a CSS 3+ value, we need to add a separate property.
             if !caps.is_css2() {
                 push_prop!(FontVariantCaps, FONT_VARIANT_CAPS, caps);
+            }
+
+            // Nor does it accept a percentage for font-stretch.
+            if !is_keyword {
+                push_prop!(FontStretch, FONT_STRETCH, stretch);
             }
         } else {
             if let Some(val) = family {
@@ -1075,49 +1079,41 @@ const DEFAULT_SYSTEM_FONTS: &[&[u8]] = &[
     b"Helvetica Neue",
 ];
 
-fn system_font(name: &'static [u8]) -> FontFamily {
-    FontFamily::FamilyName(std::ptr::from_ref::<[u8]>(name))
-}
-
 #[inline]
 fn compatible_font_family(
-    family: Option<Vec<FontFamily>>,
+    _family: Option<Vec<FontFamily>>,
     is_supported: bool,
 ) -> Option<Vec<FontFamily>> {
+    let mut family = _family;
     if is_supported {
         return family;
     }
-    let families = family?;
-    let Some(system_ui) = families.slice_const().iter().position(is_system_ui) else {
-        return Some(families);
-    };
 
-    // Unlike lightningcss, keep every other repeat: https://github.com/parcel-bundler/lightningcss/issues/1221
-    let mut inserted = [true; DEFAULT_SYSTEM_FONTS.len()];
-    let mut expanded = Vec::with_capacity(families.len() + DEFAULT_SYSTEM_FONTS.len());
-    for (i, entry) in families.into_iter().enumerate() {
-        let fallback = DEFAULT_SYSTEM_FONTS
-            .iter()
-            .position(|&name| entry == system_font(name));
-        if let Some(fallback) = fallback {
-            if i < system_ui {
-                inserted[fallback] = false;
-            } else if inserted[fallback] {
-                continue;
-            }
-        }
-        expanded.push(entry);
-
-        if i == system_ui {
-            for (fallback, &name) in DEFAULT_SYSTEM_FONTS.iter().enumerate() {
-                if inserted[fallback] {
-                    expanded.push(system_font(name));
+    if let Some(families) = family.as_mut() {
+        // Iterating the slice while inserting into `families` mid-loop would
+        // alias the &mut needed for `insert` (and `insert` may reallocate,
+        // invalidating the iterator).
+        // Capture the system-ui index first, drop the borrow, then
+        // perform the inserts using the captured index.
+        if let Some(i) = families.slice_const().iter().position(is_system_ui) {
+            let mut at = i + 1;
+            for name in DEFAULT_SYSTEM_FONTS {
+                let fallback = FontFamily::FamilyName(std::ptr::from_ref::<[u8]>(*name));
+                // A fallback the list already names is not added a second time.
+                match families.slice_const().iter().position(|f| *f == fallback) {
+                    Some(j) if j < i => continue,
+                    Some(j) => {
+                        let _ = families.ordered_remove(j);
+                    }
+                    None => {}
                 }
+                families.insert(at, fallback);
+                at += 1;
             }
         }
     }
 
-    Some(expanded)
+    family
 }
 
 #[inline]
@@ -1135,26 +1131,3 @@ fn is_font_property(property_id: &crate::properties::PropertyId) -> bool {
             | PropertyId::Font
     )
 }
-
-/// Sub-properties that the `font` shorthand resets but that have no typed
-/// `Property` variant, so they reach the handler as `Property::Custom`.
-/// https://drafts.csswg.org/css-fonts-4/#font-prop
-/// `font-synthesis-*` and `-webkit-font-smoothing` are not sub-properties of
-/// `font` and are deliberately absent.
-const UNTYPED_FONT_SUBPROPERTIES: &[&[u8]] = &[
-    b"font-variant",
-    b"font-variant-ligatures",
-    b"font-variant-alternates",
-    b"font-variant-numeric",
-    b"font-variant-east-asian",
-    b"font-variant-position",
-    b"font-variant-emoji",
-    b"font-width",
-    b"font-size-adjust",
-    b"font-kerning",
-    b"font-feature-settings",
-    b"font-language-override",
-    b"font-optical-sizing",
-    b"font-variation-settings",
-    b"font-palette",
-];

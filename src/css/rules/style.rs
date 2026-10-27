@@ -1,6 +1,6 @@
 use crate as css;
 use crate::css_rules::{CssRule, CssRuleList, Location, MinifyContext};
-use crate::declaration::DeclarationBlock;
+use crate::declaration::{DeclarationBlock, DeclarationList};
 use crate::error::MinifyErr;
 use crate::selectors::selector;
 use crate::{PrintErr, Printer, VendorPrefix};
@@ -36,23 +36,29 @@ impl<R> StyleRule<R> {
     /// Returns a hash of this rule for use when deduplicating.
     /// Includes the selectors and properties.
     pub(crate) fn hash_key(&self) -> u64 {
+        use core::hash::Hash;
         // Wyhash seeded with 0 — same algorithm as bun.hash
         let mut hasher = bun_wyhash::Wyhash::init(0);
         self.selectors.hash(&mut hasher);
-        // Inlined `DeclarationBlock::hash_property_ids`: hash just the u16
-        // property-id tag bytes.
         for decl in self.declarations.declarations.iter() {
-            let tag = decl.property_id().tag() as u16;
-            hasher.update(&tag.to_ne_bytes());
+            decl.property_id().hash(&mut hasher);
         }
         for decl in self.declarations.important_declarations.iter() {
-            let tag = decl.property_id().tag() as u16;
-            hasher.update(&tag.to_ne_bytes());
+            decl.property_id().hash(&mut hasher);
         }
         hasher.final_()
     }
 
+    /// Not with nested rules: the `:is(list)` that their `&` compiles to forgives the unknown prefix.
+    fn prints_selectors_as_written(&self) -> bool {
+        self.rules.v.is_empty() && selector::is_list_with_vendor_prefix(self.selectors.v.slice())
+    }
+
     pub(crate) fn update_prefix(&mut self, context: &mut MinifyContext<'_, '_>) {
+        if self.prints_selectors_as_written() {
+            self.vendor_prefix = VendorPrefix::empty();
+            return;
+        }
         self.vendor_prefix = selector::get_prefix(&self.selectors);
         if self.vendor_prefix.contains(VendorPrefix::NONE)
             && context.targets.should_compile_selectors()
@@ -69,12 +75,12 @@ impl<R> StyleRule<R> {
         selector::is_compatible(self.selectors.v.slice(), targets)
     }
 
-    /// How many rules this rule prints as. Each selector that a target cannot parse moves to its own copy of the rule, because one `:is(list)` would change what the selectors match and weigh.
+    /// How many rules this rule prints as: a selector that a target cannot parse gets its own copy.
     pub(crate) fn split_rule_count(&self, targets: &css::targets::Targets) -> u32 {
         let selectors = self.selectors.v.slice();
         if selectors.len() <= 1
             || !targets.should_compile_selectors()
-            || self.is_compatible(targets)
+            || self.prints_selectors_as_written()
         {
             return 1;
         }
@@ -213,10 +219,8 @@ impl<R> StyleRule<R> {
             ];
             for (decls, important) in decls_groups {
                 for decl in decls {
-                    // `composes` was validated and recorded by the parser (`StyleSheet::composes`).
-                    // Don't re-check nesting here like lightningcss: the bundler wraps imported
-                    // files in their `@import` conditions, so output nesting is meaningless.
-                    if dest.css_module.is_some() && matches!(decl, Property::Composes(_)) {
+                    // The parser checked it and recorded it in `StyleSheet::composes`.
+                    if matches!(decl, Property::Composes(_)) {
                         continue;
                     }
 
@@ -377,7 +381,21 @@ impl<R> StyleRule<R> {
         &self,
         context: &mut MinifyContext<'_, '_>,
     ) -> Result<(), MinifyErr> {
-        context.charge_selector_expansion(self.selectors.v.len(), self.loc)
+        if context.selector_expansion_multiplier > 1 {
+            context.selector_expansion_total = context.selector_expansion_total.saturating_add(
+                context
+                    .selector_expansion_multiplier
+                    .saturating_mul(self.selectors.v.len().max(1)),
+            );
+            if context.selector_expansion_total > super::MAX_SELECTOR_EXPANSION {
+                context.err = Some(crate::error::MinifyError {
+                    kind: crate::error::MinifyErrorKind::selector_expansion_limit_exceeded,
+                    loc: self.loc,
+                });
+                return Err(MinifyErr::minify_err);
+            }
+        }
+        Ok(())
     }
 
     /// Minify this rule's nested rules, bumping the selector-expansion
@@ -422,46 +440,19 @@ impl<R> StyleRule<R> {
     }
 
     /// Returns whether this rule is a duplicate of another rule.
-    /// This means it has the same selectors and properties.
+    /// This means it has the same selectors, properties, and importance.
     #[inline]
     pub(crate) fn is_duplicate(&self, other: &Self) -> bool {
-        self.declarations.len() == other.declarations.len()
+        let same_property_ids = |a: &DeclarationList<'_>, b: &DeclarationList<'_>| {
+            a.len() == b.len()
+                && a.iter()
+                    .zip(b.iter())
+                    .all(|(a, b)| a.property_id() == b.property_id())
+        };
+        let (a, b) = (&self.declarations, &other.declarations);
+        same_property_ids(&a.declarations, &b.declarations)
+            && same_property_ids(&a.important_declarations, &b.important_declarations)
             && self.selectors.eql(&other.selectors)
-            && 'brk: {
-                let mut len = self
-                    .declarations
-                    .declarations
-                    .len()
-                    .min(other.declarations.declarations.len());
-                // len is the min of the two lengths, so truncation is intended.
-                for (a, b) in self.declarations.declarations[..len]
-                    .iter()
-                    .zip(&other.declarations.declarations[..len])
-                {
-                    // `PropertyId`'s `PartialEq` is a tag+prefix compare.
-                    if a.property_id() != b.property_id() {
-                        break 'brk false;
-                    }
-                }
-                len = self
-                    .declarations
-                    .important_declarations
-                    .len()
-                    .min(other.declarations.important_declarations.len());
-                for (a, b) in self.declarations.important_declarations[..len]
-                    .iter()
-                    .zip(&other.declarations.important_declarations[..len])
-                {
-                    if a.property_id() != b.property_id() {
-                        break 'brk false;
-                    }
-                }
-                true
-            }
-            // `PropertyId` equality takes `*zoom` for `zoom`, and the loops do
-            // not pair a normal declaration with an important one.
-            && !self.declarations.has_star_hack()
-            && !other.declarations.has_star_hack()
     }
 }
 

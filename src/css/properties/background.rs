@@ -718,15 +718,15 @@ impl BackgroundHandler {
                 for b in val.slice() {
                     images.append_assume_capacity(b.image.deep_clone(arena));
                 }
+                flush_helper!(self, images, &images, dest, context);
+                let arena = dest.bump();
                 let color = val.last().unwrap().color.deep_clone(arena);
+                flush_helper!(self, color, &color, dest, context);
+                let arena = dest.bump();
                 let mut clips: SmallList<BackgroundClip, 1> = SmallList::init_capacity(val.len());
                 for b in val.slice() {
                     clips.append_assume_capacity(b.clip);
                 }
-
-                // Every flush decision comes before the new value is recorded.
-                flush_helper!(self, images, &images, dest, context);
-                flush_helper!(self, color, &color, dest, context);
                 let mut clips_vp = VendorPrefix::NONE;
                 // Drop the `self.clips` borrow before calling flush().
                 let needs_flush = if let Some((existing_clips, existing_vp)) = &self.clips {
@@ -804,13 +804,7 @@ impl BackgroundHandler {
         true
     }
 
-    /// Records `images` as the current value. Call it after every flush
-    /// decision of the arm, so that `self.decls.last()` and `self.images`
-    /// always describe the same declaration.
-    ///
-    /// A prefixed declaration is held in `self.decls` as written. `flush`
-    /// writes the held ones ahead of the current value. An unprefixed value
-    /// with targets drops the held ones: the needed prefixes are generated.
+    /// Call it after every flush of the arm: to `flush`, the last of `self.decls` is `self.images`.
     fn set_images(
         &mut self,
         images: SmallList<Image, 1>,
@@ -818,6 +812,8 @@ impl BackgroundHandler {
         dest: &mut DeclarationList,
         context: &mut PropertyHandlerContext,
     ) {
+        // Store prefixed properties. Clear if we hit an unprefixed property and we have
+        // targets. In this case, the necessary prefixes will be generated.
         self.has_prefix = images.any(|item: &Image| item.has_vendor_prefix());
         if self.has_prefix {
             let arena = dest.bump();
@@ -830,14 +826,13 @@ impl BackgroundHandler {
 
     fn flush(&mut self, dest: &mut DeclarationList, context: &mut PropertyHandlerContext) {
         if !self.has_any {
-            debug_assert!(self.decls.is_empty() && !self.has_prefix);
             return;
         }
         self.has_any = false;
         let arena = dest.bump();
 
-        // Held prefixed declarations go out first. The last one mirrors
-        // `self.images`, which is written below with its fallbacks.
+        // If the last declaration is prefixed, pop the last value
+        // so it isn't duplicated when we flush.
         if self.has_prefix {
             let _ = self.decls.pop();
             self.has_prefix = false;

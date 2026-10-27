@@ -324,7 +324,7 @@ impl<V: CalcValue> Calc<V> {
                 // can we use stack fallback here if the common case is that there will be 1 argument?
                 Self::reduce_args(&mut reduced, Ordering::Less);
                 if reduced.len() == 1 {
-                    return Ok(reduced.swap_remove(0));
+                    return Ok(Self::single_argument(reduced.swap_remove(0)));
                 }
                 Ok(Calc::Function(Box::new(MathFunction::Min(reduced))))
             }
@@ -335,7 +335,7 @@ impl<V: CalcValue> Calc<V> {
                 // PERF: i don't like this additional allocation
                 Self::reduce_args(&mut reduced, Ordering::Greater);
                 if reduced.len() == 1 {
-                    return Ok(reduced.remove(0));
+                    return Ok(Self::single_argument(reduced.remove(0)));
                 }
                 Ok(Calc::Function(Box::new(MathFunction::Max(reduced))))
             }
@@ -377,7 +377,7 @@ impl<V: CalcValue> Calc<V> {
                 Self::parse_math_fn(
                     i,
                     strategy,
-                    |s, a, b| round((), a, b, s),
+                    round,
                     |s, a, b| MathFunction::Round {
                         strategy: s,
                         value: a,
@@ -485,6 +485,16 @@ impl<V: CalcValue> Calc<V> {
                 }
                 Ok(Calc::Function(Box::new(MathFunction::Sign(v))))
             }),
+        }
+    }
+
+    /// A sum or a product is only valid inside a math function.
+    fn single_argument(arg: Self) -> Self {
+        match arg {
+            Calc::Sum { .. } | Calc::Product { .. } => {
+                Calc::Function(Box::new(MathFunction::Calc(arg)))
+            }
+            _ => arg,
         }
     }
 
@@ -778,28 +788,14 @@ impl<V: CalcValue> Calc<V> {
             }
         }
 
-        match try_parse_atan2_args::<Length>(input) {
-            Ok(v) => return Ok(v),
-            Err(e) => {
-                if hit_unrecoverable(input) {
-                    return Err(e);
-                }
-            }
-        }
-        match try_parse_atan2_args::<Percentage>(input) {
-            Ok(v) => return Ok(v),
-            Err(e) => {
-                if hit_unrecoverable(input) {
-                    return Err(e);
-                }
-            }
-        }
-        match try_parse_atan2_args::<Time>(input) {
-            Ok(v) => return Ok(v),
-            Err(e) => {
-                if hit_unrecoverable(input) {
-                    return Err(e);
-                }
+        for try_parse_args in [
+            try_parse_atan2_args::<Length>,
+            try_parse_atan2_args::<Percentage>,
+            try_parse_atan2_args::<Time>,
+        ] {
+            let result = try_parse_args(input);
+            if result.is_ok() || hit_unrecoverable(input) {
+                return result;
             }
         }
 
@@ -944,7 +940,7 @@ impl<V: CalcValue> Calc<V> {
                     let div = 1.0 / num;
                     calc.to_css(dest)?;
                     dest.delim(b'/', true)?;
-                    CSSNumberFns::to_css_rounded(div, dest)?;
+                    CSSNumberFns::to_css(div, dest)?;
                 } else {
                     CSSNumberFns::to_css(num, dest)?;
                     dest.delim(b'*', true)?;
@@ -1359,13 +1355,15 @@ fn arr2<T>(a: T, b: T) -> Vec<T> {
     vec![a, b]
 }
 
-fn round(_: (), value: f32, to: f32, strategy: RoundingStrategy) -> f32 {
-    let v = value / to;
+/// The sign of the step is ignored, and a tie goes up.
+fn round(strategy: RoundingStrategy, value: f32, to: f32) -> f32 {
+    let step = to.abs();
+    let v = value / step;
     match strategy {
-        RoundingStrategy::Down => v.floor() * to,
-        RoundingStrategy::Up => v.ceil() * to,
-        RoundingStrategy::Nearest => v.round() * to,
-        RoundingStrategy::ToZero => v.trunc() * to,
+        RoundingStrategy::Down => v.floor() * step,
+        RoundingStrategy::Up => v.ceil() * step,
+        RoundingStrategy::Nearest => (v + 0.5).floor() * step,
+        RoundingStrategy::ToZero => v.trunc() * step,
     }
 }
 
@@ -1601,10 +1599,10 @@ impl CalcValue for Percentage {
     fn into_calc(self) -> Calc<Self> {
         Calc::Value(Box::new(self))
     }
-    fn from_calc(c: Calc<Self>, _input: &mut css::Parser) -> CssResult<Self> {
+    fn from_calc(c: Calc<Self>, input: &mut css::Parser) -> CssResult<Self> {
         match c {
             Calc::Value(v) => Ok(*v),
-            _ => Ok(Percentage { v: f32::NAN }),
+            _ => Err(input.new_custom_error(css::ParserError::invalid_value)),
         }
     }
 }

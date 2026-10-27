@@ -20,7 +20,7 @@ impl Targets {
     pub(crate) fn browser_default() -> Targets {
         Targets {
             browsers: Some(*BROWSER_DEFAULT),
-            // The light-dark() polyfill depends on a compiled `color-scheme` rule (docs/bundler/css.mdx).
+            // The light-dark() polyfill is invalid where no compiled `color-scheme` covers the element.
             exclude: Features::LIGHT_DARK,
             ..Default::default()
         }

@@ -12,7 +12,10 @@ use crate::css_values::size::Size2D;
 use bun_alloc::ArenaVecExt as _;
 
 /// A value for the [border-radius](https://www.w3.org/TR/css-backgrounds-3/#border-radius) property.
-#[derive(PartialEq)]
+// `Size2D<T>` carries no `Clone`/`PartialEq` derives (it exposes
+// inherent `deep_clone`/`eql` instead), so
+// `BorderRadius` can't `#[derive]` them either. The handler below uses
+// `Size2D::deep_clone`/`Size2D::eql` directly.
 pub struct BorderRadius {
     /// The x and y radius values for the top left corner.
     pub(crate) top_left: Size2D<LengthPercentage>,
@@ -34,11 +37,19 @@ impl BorderRadius {
         }
     }
 
+    pub fn eql(&self, other: &Self) -> bool {
+        Size2D::eql(&self.top_left, &other.top_left)
+            && Size2D::eql(&self.top_right, &other.top_right)
+            && Size2D::eql(&self.bottom_right, &other.bottom_right)
+            && Size2D::eql(&self.bottom_left, &other.bottom_left)
+    }
+
     pub fn parse(input: &mut css::Parser) -> css::Result<BorderRadius> {
-        let widths = Rect::<LengthPercentage>::parse_with(input, LengthPercentage::parse)?;
+        let widths =
+            Rect::<LengthPercentage>::parse_with(input, LengthPercentage::parse_non_negative)?;
         let heights = if input.try_parse(|i| i.expect_delim(b'/')).is_ok() {
             // errdefer-style cleanup of `widths` is implicit via Drop on the `?` path.
-            Rect::<LengthPercentage>::parse_with(input, LengthPercentage::parse)?
+            Rect::<LengthPercentage>::parse_with(input, LengthPercentage::parse_non_negative)?
         } else {
             // `LengthPercentage` is
             // `Clone`-via-derive (no arena indirection), so per-field `.clone()` is exact.
@@ -123,6 +134,9 @@ impl BorderRadius {
         }
         Ok(())
     }
+
+    // deep_clone comes from #[derive(Clone)].
+    // eql comes from #[derive(PartialEq)].
 }
 
 #[derive(Default)]
@@ -161,7 +175,7 @@ macro_rules! maybe_flush {
         // If two vendor prefixes for the same property have different
         // values, we need to flush what we have immediately to preserve order.
         if let Some(existing) = &$self.$prop {
-            if existing.0 != *$val && !existing.1.contains($vp) {
+            if !Size2D::eql(&existing.0, $val) && !existing.1.contains($vp) {
                 $self.flush($d, $ctx);
             }
         }

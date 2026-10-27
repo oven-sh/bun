@@ -490,12 +490,6 @@ impl FlexLinePack {
 
 pub(crate) type BoxOrdinalGroup = CSSInteger;
 
-/// The vendor prefixes the author wrote for the 2009 `box-*` property buffered in `slot`.
-fn authored_prefixes<T>(slot: &Option<(T, VendorPrefix)>) -> VendorPrefix {
-    slot.as_ref()
-        .map_or(VendorPrefix::empty(), |(_, prefix)| *prefix)
-}
-
 // A handler for flex-related properties that manages both standard and legacy vendor prefixed values.
 #[derive(Default)]
 pub struct FlexHandler {
@@ -570,8 +564,16 @@ impl FlexHandler {
         }
 
         match property {
-            // `box_orient` and `box_direction` stay: `display: -webkit-box` still reads them (https://drafts.csswg.org/css-overflow-4/#webkit-line-clamp).
-            Property::FlexDirection(val) => property_helper!(direction, &val.0, &val.1),
+            Property::FlexDirection(val) => {
+                // `display: -webkit-box` reads these two: drop them only if `flush` adds its own.
+                if let Some(browsers) = &context.targets.browsers
+                    && PrefixFeature::is_flex_2009(browsers)
+                {
+                    self.box_direction = None;
+                    self.box_orient = None;
+                }
+                property_helper!(direction, &val.0, &val.1);
+            }
             Property::BoxOrient(val) => property_helper!(box_orient, &val.0, &val.1),
             Property::BoxDirection(val) => property_helper!(box_direction, &val.0, &val.1),
             Property::FlexWrap(val) => {
@@ -582,6 +584,12 @@ impl FlexHandler {
             }
             Property::BoxLines(val) => property_helper!(box_lines, &val.0, &val.1),
             Property::FlexFlow(val) => {
+                if let Some(browsers) = &context.targets.browsers
+                    && PrefixFeature::is_flex_2009(browsers)
+                {
+                    self.box_direction = None;
+                    self.box_orient = None;
+                }
                 property_helper!(direction, &val.0.direction, &val.1);
                 property_helper!(wrap, &val.0.wrap, &val.1);
             }
@@ -671,8 +679,8 @@ impl FlexHandler {
         let mut grow: Option<(CSSNumber, VendorPrefix)> = self.grow.take();
         let mut shrink: Option<(CSSNumber, VendorPrefix)> = self.shrink.take();
         let mut basis = self.basis.take();
-        let box_orient = self.box_orient.take();
-        let box_direction = self.box_direction.take();
+        let mut box_orient = self.box_orient.take();
+        let mut box_direction = self.box_direction.take();
         let mut box_flex = self.box_flex.take();
         let mut box_ordinal_group = self.box_ordinal_group.take();
         let mut box_lines = self.box_lines.take();
@@ -696,9 +704,9 @@ impl FlexHandler {
             }};
         }
 
-        // Legacy properties. Except `box-orient` and `box-direction`, these are only set if the final standard properties were unset.
-        legacy_property!(BoxOrient, box_orient);
-        legacy_property!(BoxDirection, box_direction);
+        // Legacy properties. These are only set if the final standard properties were unset.
+        legacy_property!(BoxOrient, box_orient.take());
+        legacy_property!(BoxDirection, box_direction.take());
         legacy_property!(BoxOrdinalGroup, box_ordinal_group.take());
         legacy_property!(BoxFlex, box_flex.take());
         legacy_property!(BoxLines, box_lines.take());
@@ -722,15 +730,8 @@ impl FlexHandler {
                 }
                 if !prefixes_2009.is_empty() {
                     let (orient, newdir) = dir.to_2009();
-                    let orient_prefixes = prefixes_2009.difference(authored_prefixes(&box_orient));
-                    if !orient_prefixes.is_empty() {
-                        dest.push(Property::BoxOrient((orient, orient_prefixes)));
-                    }
-                    let direction_prefixes =
-                        prefixes_2009.difference(authored_prefixes(&box_direction));
-                    if !direction_prefixes.is_empty() {
-                        dest.push(Property::BoxDirection((newdir, direction_prefixes)));
-                    }
+                    dest.push(Property::BoxOrient((orient, prefixes_2009)));
+                    dest.push(Property::BoxDirection((newdir, prefixes_2009)));
                 }
             }
         }

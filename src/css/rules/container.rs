@@ -2,7 +2,7 @@ use crate as css;
 use crate::css_rules::{CssRuleList, Location};
 use crate::css_values::ident::{CustomIdent, CustomIdentFns};
 use crate::media_query::{self, MediaFeatureType, Operator, QueryCondition, QueryFeature, ToCss};
-use crate::properties::{Property, PropertyId};
+use crate::properties::Property;
 use crate::{PrintErr, Printer};
 
 /// A [`<container-name>`](https://drafts.csswg.org/css-contain-3/#typedef-container-name).
@@ -12,12 +12,7 @@ pub struct ContainerName {
 
 impl ContainerName {
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        // Container names are shared by declarations and queries across CSS
-        // modules. The `container` and `container-name` declarations are
-        // currently emitted as written, so hashing only the `@container`
-        // prelude makes the query refer to a name no declaration defines.
-        // Keep container names global until declarations can participate in
-        // CSS-module scoping as well.
+        // Global in a CSS module, like the name in `container` and `container-name`.
         CustomIdentFns::to_css_with_options(&self.v, dest, false)
     }
 }
@@ -34,7 +29,6 @@ impl ContainerName {
 // ─── ContainerName parse ──────────────────────────────────────────────────
 impl ContainerName {
     pub fn parse(input: &mut css::Parser) -> css::Result<ContainerName> {
-        use crate::css_values::ident::CustomIdentFns;
         use bun_core::strings;
         let ident = CustomIdentFns::parse(input)?;
 
@@ -95,11 +89,8 @@ impl crate::media_query::FeatureIdTrait for ContainerSizeFeatureId {
 
 /// Represents a style query within a container condition.
 pub enum StyleQuery {
-    /// A property declaration (a name and a value), implicitly parenthesized.
+    /// A style feature, implicitly parenthesized.
     Feature(Box<Property>),
-
-    /// A property name without a value, implicitly parenthesized.
-    Property(PropertyId),
 
     /// A negation of a condition.
     Not(Box<StyleQuery>),
@@ -151,25 +142,10 @@ impl QueryCondition for StyleQuery {
     fn feature_to_css(f: &Property, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         f.to_css(dest, false)
     }
-    fn extra_to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        let Self::Property(property_id) = self else {
-            unreachable!()
-        };
-        property_id.to_css(dest)
-    }
 
     fn parse_feature(input: &mut css::Parser) -> css::Result<Self> {
-        let property_id = PropertyId::parse(input)?;
-        if let Err(e) = input.expect_colon() {
-            // `style(--a)`: nothing follows the property name.
-            if matches!(
-                e.kind,
-                css::error::ParserErrorKind::basic(css::BasicParseErrorKind::end_of_input)
-            ) {
-                return Ok(StyleQuery::Property(property_id));
-            }
-            return Err(e);
-        }
+        let property_id = crate::properties::PropertyId::parse(input)?;
+        input.expect_colon()?;
         input.skip_whitespace();
         // The arena gets re-threaded as part of the crate-wide `'bump`
         // lifetime work (see css_parser.rs).
@@ -194,7 +170,7 @@ impl QueryCondition for StyleQuery {
         match self {
             StyleQuery::Not(_) => true,
             StyleQuery::Operation { operator, .. } => Some(*operator) != parent_operator,
-            StyleQuery::Feature(_) | StyleQuery::Property(_) => true,
+            StyleQuery::Feature(_) => true,
         }
     }
 }
@@ -205,7 +181,6 @@ impl StyleQuery {
         // the per-variant `DeepClone` derives land in `properties_generated.rs`.
         match self {
             Self::Feature(p) => Self::Feature(Box::new(super::dc::property(p, bump))),
-            Self::Property(property_id) => Self::Property(*property_id),
             Self::Not(c) => Self::Not(Box::new(c.deep_clone(bump))),
             Self::Operation {
                 operator,
@@ -233,6 +208,8 @@ pub enum ContainerCondition {
     },
     /// A style query.
     Style(StyleQuery),
+    /// `<general-enclosed>`, as its source text.
+    Unknown(&'static [u8]),
 }
 
 impl ToCss for ContainerCondition {
@@ -275,13 +252,17 @@ impl QueryCondition for ContainerCondition {
     ) -> core::result::Result<(), PrintErr> {
         f.to_css(dest)
     }
+    const GENERAL_ENCLOSED: Option<fn(&'static [u8]) -> Self> = Some(ContainerCondition::Unknown);
     fn extra_to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        let Self::Style(query) = self else {
-            unreachable!()
-        };
-        dest.write_str("style(")?;
-        query.to_css(dest)?;
-        dest.write_char(b')')
+        match self {
+            Self::Style(query) => {
+                dest.write_str("style(")?;
+                query.to_css(dest)?;
+                dest.write_char(b')')
+            }
+            Self::Unknown(raw) => dest.write_bytes(raw),
+            _ => unreachable!(),
+        }
     }
 
     fn parse_feature(input: &mut css::Parser) -> css::Result<Self> {
@@ -313,7 +294,7 @@ impl QueryCondition for ContainerCondition {
             ContainerCondition::Not(_) => true,
             ContainerCondition::Operation { operator, .. } => Some(*operator) != parent_operator,
             ContainerCondition::Feature(f) => f.needs_parens(parent_operator, targets),
-            ContainerCondition::Style(_) => false,
+            ContainerCondition::Style(_) | ContainerCondition::Unknown(_) => false,
         }
     }
 }
@@ -333,6 +314,7 @@ impl ContainerCondition {
                 conditions: conditions.iter().map(|c| c.deep_clone(bump)).collect(),
             },
             Self::Style(q) => Self::Style(q.deep_clone(bump)),
+            Self::Unknown(raw) => Self::Unknown(raw),
         }
     }
 }

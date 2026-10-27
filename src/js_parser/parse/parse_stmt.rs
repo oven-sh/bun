@@ -1271,8 +1271,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         b"cannot use export statement with \"type\" attribute",
                     );
                 } else if path.loader == Some(bun_ast::Loader::Css) {
-                    p.import_records.items_mut()[import_record_index as usize].loader =
-                        path.loader;
+                    p.import_records.items_mut()[import_record_index as usize].loader = path.loader;
                 }
 
                 if Self::TRACK_SYMBOL_USAGE_DURING_PARSE_PASS {

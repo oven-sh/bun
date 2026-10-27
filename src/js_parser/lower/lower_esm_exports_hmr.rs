@@ -429,6 +429,18 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                 .flags
                 .remove(import_record::Flags::IS_UNUSED);
 
+            // The dev server reports an import with `type: "css"`. Keep that attribute,
+            // and where it is, when the older record is a plain import of the file.
+            let duplicate = &p.import_records.items()[import_record_index as usize];
+            if duplicate.loader == Some(bun_ast::Loader::Css) {
+                let range = duplicate.range;
+                let record = &mut p.import_records.items_mut()[stmt.import_record_index as usize];
+                if record.loader.is_none() {
+                    record.loader = Some(bun_ast::Loader::Css);
+                    record.range = range;
+                }
+            }
+
             let items_len = items.len();
             if items_len > 0 {
                 if stmt.items.is_empty() {

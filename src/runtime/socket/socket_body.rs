@@ -3789,7 +3789,8 @@ fn string_or_buffer_to_write<'a>(
     tls_socket_functions::string_or_buffer(global, data, encoding)
 }
 
-/// As [`string_or_buffer_to_write`], and the bytes of a blob or of a body. Outside `NewSocket`, which is generic.
+/// As [`string_or_buffer_to_write`], and the bytes of a blob or of a body.
+/// A free function, so it is not instantiated for each `SSL`.
 fn data_to_write<'a>(
     global: &JSGlobalObject,
     data: SocketData<'a>,

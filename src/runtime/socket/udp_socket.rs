@@ -1319,29 +1319,32 @@ impl UDPSocket {
             }
         };
 
-        // The backing store is kept alive by `data` on the JS stack.
-        let (array_buffer, payload_text) = match data {
+        let payload_view;
+        let mut payload_str = Utf8Bytes::EMPTY;
+        // Hoisted so the `slice()` borrow outlives the `match`; the
+        // backing store is kept alive by `data` on the JS stack.
+        let array_buffer;
+        let payload: &[u8] = match data {
             UDPPayload::Buffer(bytes) => {
-                (Some(bytes.as_array_buffer(global_this)), BunString::EMPTY)
+                array_buffer = bytes.as_array_buffer(global_this);
+                array_buffer.slice()
             }
-            UDPPayload::Text(text) => (None, text),
-            // A boxed `StringObject`/`DerivedStringObject` is resolved
-            // via `toPrimitive` — safe here:
-            // `parseAddr` already ran, there is only one payload so
-            // `toPrimitive` cannot invalidate an earlier captured pointer,
-            // and `this.socket orelse throw` below handles a
-            // close-during-`toPrimitive`.
-            UDPPayload::StringObject(text) => (None, loose_string(global_this, text)?),
+            UDPPayload::String(text) => {
+                // A boxed `StringObject`/`DerivedStringObject` is resolved
+                // via `toPrimitive` — safe here:
+                // `parseAddr` already ran, there is only one payload so
+                // `toPrimitive` cannot invalidate an earlier captured pointer,
+                // and `this.socket orelse throw` below handles a
+                // close-during-`toPrimitive`.
+                payload_view = text.to_js().to_js_string_view(global_this)?;
+                payload_str = payload_view.to_utf8();
+                payload_str.slice()
+            }
             UDPPayload::Other => {
                 return Err(global_this.throw_invalid_arguments(format_args!(
                     "Expected ArrayBufferView or string as first argument"
                 )));
             }
-        };
-        let payload_str = payload_text.to_utf8();
-        let payload: &[u8] = match &array_buffer {
-            Some(array_buffer) => array_buffer.slice(),
-            None => payload_str.slice(),
         };
 
         let Some(socket) = self.socket.get() else {

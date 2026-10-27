@@ -17,12 +17,11 @@ const certificate = { ...js, returns: b.object.optional } as const;
 
 export const looseString = b.conversion(b.string.loose);
 
-/** A `String` object is converted after the encoding. */
+/** `string` is converted after the encoding. */
 export const TextOrBytes = b.union({
   missing: b.undefined,
-  text: b.string,
+  string: b.stringLike,
   buffer: b.bufferSource.allowShared,
-  stringObject: b.stringObject,
   other: b.ignored,
 });
 /** What a socket writes. */

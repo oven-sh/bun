@@ -31,6 +31,18 @@ test("fetch(request subclass with headers)", async () => {
   expect(headers.get("hello")).toBe("world");
 });
 
+test("fetch(request subclass) does not convert the request to a string", async () => {
+  const toString = mock(() => server!.url + "from-toString");
+  class MyRequest extends Request {
+    toString = toString;
+  }
+  const myRequest = new MyRequest(server!.url + "from-request", { headers: { hello: "world" } });
+  const { url, headers } = await fetch(myRequest);
+
+  expect({ url, hello: headers.get("hello") }).toEqual({ url: server!.url + "from-request", hello: "world" });
+  expect(toString).not.toHaveBeenCalled();
+});
+
 test("fetch(host:port/path) without a scheme is an http request", async () => {
   // `new URL()` reads `localhost` as the scheme of this string. The client reads a host and a port.
   const response = await fetch(`localhost:${server!.port}/hello`, { headers: { hello: "world" } });

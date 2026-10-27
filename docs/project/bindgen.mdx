@@ -561,8 +561,9 @@ So the order only matters between alternatives that overlap, and one that takes 
 value goes last. An alternative that can never be chosen is an error when the schema is
 loaded. Choosing tests whether the value is a cell once, loads the type byte once and
 repeats no test. Strings as UTF-8, dictionaries and unions are then converted in the
-place they end up in. A union whose conversion cannot throw is returned instead: every value goes to an
-alternative that only tests it, and each alternative is a number, a boolean or a handle.
+place they end up in. A union is returned by value instead when its conversion cannot
+throw: every value goes to an alternative that only tests it, and each alternative is a
+number, a boolean, a handle or an instance of a class.
 
 A union is returned as what the alternative it holds is. One that is only returned owns its
 strings: `b.string.utf8` in it is a `Vec<u8>`.

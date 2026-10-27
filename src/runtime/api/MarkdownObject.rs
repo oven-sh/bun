@@ -137,8 +137,7 @@ fn input_from_js(
     input: MarkdownInput<'_>,
 ) -> JsResult<StringOrBuffer<'static>> {
     let buffer = match input {
-        MarkdownInput::Text(str) => Some(StringOrBuffer::String(str.into_utf8_with_string())),
-        MarkdownInput::Boxed(boxed) => StringOrBuffer::from_js_stable(global, boxed.to_js())?,
+        MarkdownInput::String(string) => StringOrBuffer::from_js_stable(global, string.to_js())?,
         MarkdownInput::Buffer(buffer) => StringOrBuffer::from_js_stable(global, buffer.to_js())?,
         MarkdownInput::Other => None,
     };

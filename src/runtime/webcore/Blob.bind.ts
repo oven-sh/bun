@@ -115,6 +115,7 @@ export const Blob = b.class({
       expected: { chunkSize: "chunkSize must be a number" },
       returns: b.object,
       passThis: true,
+      length: 1,
     },
     text: method,
     type: { getter: b.string.local, capability: "js" },

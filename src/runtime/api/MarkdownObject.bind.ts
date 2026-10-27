@@ -115,10 +115,9 @@ export const ComponentOverrides = b.dictionary(
 
 const js = { capability: "js", throws: true } as const;
 
-/** A `String` object is converted once the getters of the other arguments have run. */
+/** `string` is converted once the getters of the other arguments have run. */
 export const MarkdownInput = b.union({
-  text: b.string,
-  boxed: b.stringObject,
+  string: b.stringLike,
   buffer: b.bufferSource.allowShared,
   other: b.ignored,
 });

@@ -40,14 +40,14 @@ const BuildArtifact = b.wrapped("Bun::Bindgen::Generated::JSBuildArtifact", "Gen
   tsType: "Bun.BuildArtifact",
 });
 /**
- * It is also a member of a dictionary, where what keeps an instance alive is its `.withValue`.
+ * It is also a member of a dictionary, where an instance comes with its value: `.withValue`.
  * A `DataView` is not among the buffers: like `object`, it is an async iterable or else the parts of a `Blob`, as `other` is.
  */
 export const BodyInit = b.union(
   {
     undefined: b.undefined,
     null: b.null,
-    text: b.stringLike,
+    string: b.stringLike,
     dataView: b.dataView,
     buffer: b.bufferSource.allowShared,
     formData: b.wrapped("WebCore::JSDOMFormData", "JSDOMFormData.h", {

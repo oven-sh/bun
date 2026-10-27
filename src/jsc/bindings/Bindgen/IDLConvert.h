@@ -391,13 +391,6 @@ struct WebCore::Converter<Bun::Bindgen::IDLRawCell<JSClass, name>> : Bun::Defaul
     }
 
     template<Bun::IDLConversionContext Ctx>
-    static JSC::JSValue uncheckedConvert(JSC::JSGlobalObject&, JSC::JSValue value, Ctx&)
-    {
-        ASSERT(value.inherits<JSClass>());
-        return value;
-    }
-
-    template<Bun::IDLConversionContext Ctx>
     static void throwConversionFailed(JSC::JSGlobalObject& globalObject, JSC::ThrowScope& scope, Ctx& ctx)
     {
         constexpr auto className = Bun::idlHumanReadableName<Bun::Bindgen::IDLRawCell<JSClass, name>>();
@@ -414,14 +407,14 @@ struct WebCore::Converter<Bun::Bindgen::IDLWrappedInterface<JSClass, name>> : Bu
     static std::optional<void*> tryConvert(JSC::JSGlobalObject&, JSC::JSValue value, Ctx&)
     {
         if (auto* object = dynamicDowncast<JSClass>(value))
-            return wrappedBy(object);
+            return wrapped(object);
         return std::nullopt;
     }
 
     template<Bun::IDLConversionContext Ctx>
     static void* uncheckedConvert(JSC::JSGlobalObject&, JSC::JSValue value, Ctx&)
     {
-        return wrappedBy(uncheckedDowncast<JSClass>(value));
+        return wrapped(uncheckedDowncast<JSClass>(value));
     }
 
     template<Bun::IDLConversionContext Ctx>
@@ -431,7 +424,7 @@ struct WebCore::Converter<Bun::Bindgen::IDLWrappedInterface<JSClass, name>> : Bu
     }
 
 private:
-    static void* wrappedBy(JSClass* object)
+    static void* wrapped(JSClass* object)
     {
         if constexpr (requires { object->payload(); })
             return object->payload();

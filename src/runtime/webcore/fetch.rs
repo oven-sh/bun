@@ -429,8 +429,14 @@ fn fetch_impl<'a, const ALLOW_GET_BODY: bool>(
     // If it's NOT a Request or a subclass of Request, treat the first argument as a URL.
     let url_str_optional = match input {
         FetchInput::Text(url) => Some(url),
-        FetchInput::Object(_) if request.is_some() => None,
-        FetchInput::Object(object) => StringOrURL::from_js(object.object().to_js(), global_this)?,
+        FetchInput::Object(object) => {
+            let first_arg = object.object().to_js();
+            if first_arg.as_::<Request>().is_none() {
+                StringOrURL::from_js(first_arg, global_this)?
+            } else {
+                None
+            }
+        }
         FetchInput::Other(value) => StringOrURL::from_js(value.to_js(), global_this)?,
     };
 

@@ -23,11 +23,10 @@ export const UDPAddress = b.union({ missing: b.undefined, text: b.string, other:
 /** `other` is converted to a number where the port is checked. */
 export const UDPPort = b.union({ missing: b.undefined, number: b.f64, other: b.opaque });
 export const looseNumber = b.conversion(b.f64.loose);
-/** A `String` object is converted after the destination. */
+/** `string` is converted after the destination. */
 export const UDPPayload = b.union({
   buffer: b.bufferSource.allowShared,
-  text: b.string,
-  stringObject: b.stringObject,
+  string: b.stringLike,
   other: b.ignored,
 });
 const membership = {

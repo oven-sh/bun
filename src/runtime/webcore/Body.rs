@@ -917,7 +917,7 @@ impl Value {
         let value = match value {
             BodyInit::Undefined | BodyInit::Null => return Ok(Value::Null),
 
-            BodyInit::Text(value) => {
+            BodyInit::String(value) => {
                 let str = value.to_js().to_bun_string(global_this)?;
                 if str.length() == 0 {
                     return Ok(Value::Empty);

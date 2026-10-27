@@ -9,13 +9,12 @@ use std::sync::Arc;
 use bun_core::fmt::{NodeNumber, OutOfRangeOptions, double, out_of_range};
 use bun_core::{Timespec, TimespecMockMode};
 use bun_jsc::bindgen::{self, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper, to_js};
-use bun_jsc::{ErrorCode, JSGlobalObject, JSMap, JSValue, JsResult, MAX_SAFE_INTEGER};
+use bun_jsc::{ErrorCode, JSGlobalObject, JSMap, JSValue, JsResult};
 use bun_threading::Guarded;
 
 use crate::generated_bindgen::histogram::{
     HistogramJSON, RecordedValue, js_ELDHistogram, js_RecordableHistogram,
 };
-use crate::node::util::validators;
 use crate::timer::event_loop_delay_monitor;
 
 /// The GC is told what JavaScriptCore tells it of a `SharedArrayBuffer`, which also grows and which a structured clone
@@ -312,10 +311,7 @@ impl Histogram {
                 }
                 val.as_big_int().to_int64() as u64
             }
-            RecordedValue::Other(val) => {
-                let max = Some(MAX_SAFE_INTEGER);
-                validators::validate_integer(cx.global(), val.to_js(), "val", Some(1), max)? as u64
-            }
+            RecordedValue::Number(val) => val,
         };
         let (_, grown) = self.with(|state| state.histogram.record(value));
         Self::report_growth(&cx.heap, this_value, grown);

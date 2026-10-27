@@ -106,13 +106,6 @@ fn promise_to_js(p: *mut JSPromise) -> JSValue {
 /// Shared epilog for every Valkey prototype method: build a `Command`,
 /// `this.send()` it, and convert the result to a `JsResult<JSValue>` —
 /// `Ok(promise.toJS())` on success, a JS-side Redis error value on failure.
-///
-/// All 4 `cmd*!` macros and ~24 hand-written methods (`get`, `getBuffer`,
-/// `set`, `incr`, `decr`, `exists`, `expire`, `ttl`, `srem`, `sadd`,
-/// `sismember`, `hmget`, `hincrby`, `hset`, `smove`, `publish`,
-/// `send_unsubscribe_request_and_cleanup`, …) duplicated this 15-line block
-/// byte-identically; the only per-caller variation is the args slice, the
-/// `meta` flags, and the error-message prefix.
 #[inline]
 fn send_cmd(
     this: &JSValkeyClient,
@@ -121,7 +114,7 @@ fn send_cmd(
     command: &[u8],
     args: CommandArgs<'_>,
     meta: CommandMeta,
-    err_msg: &str,
+    err_msg: impl core::fmt::Display,
 ) -> JsResult<JSValue> {
     match this.send(
         global,
@@ -133,7 +126,7 @@ fn send_cmd(
         },
     ) {
         Ok(p) => Ok(promise_to_js(p)),
-        Err(err) => send_err_to_js(global, err_msg, &err),
+        Err(err) => send_err_to_js(global, &err_msg.to_string(), &err),
     }
 }
 
@@ -164,38 +157,14 @@ pub(crate) mod compile {
             ClientStateRequirement::DontCare => Ok(()),
         }
     }
-
-    /// What the methods of one shape differ in.
-    pub(crate) struct Method {
-        pub(crate) name: &'static str,
-        pub(crate) command: &'static str,
-        pub(crate) state: ClientStateRequirement,
-    }
-
-    impl Method {
-        pub(crate) fn send(
-            &self,
-            this: &JSValkeyClient,
-            global: &JSGlobalObject,
-            this_js: JSValue,
-            args: &[JSArgument],
-            meta: CommandMeta,
-        ) -> JsResult<JSValue> {
-            let command = Command {
-                command: self.command.as_bytes(),
-                args: CommandArgs::Args(args),
-                meta,
-            };
-            match this.send(global, this_js, &command) {
-                Ok(p) => Ok(promise_to_js(p)),
-                Err(err) => {
-                    send_err_to_js(global, &format!("Failed to send {}", self.command), &err)
-                }
-            }
-        }
-    }
 }
-use compile::Method;
+
+/// A method that a `cmd*!` macro defines: its JS name, the command it sends, and the client state it requires.
+struct Method {
+    name: &'static str,
+    command: &'static str,
+    state: compile::ClientStateRequirement,
+}
 
 macro_rules! method {
     ($name:literal, $command:literal, $state:ident) => {
@@ -208,7 +177,8 @@ macro_rules! method {
 }
 
 // Note: each command-shape generator is a `macro_rules!` that emits a
-// method inside the `impl JSValkeyClient` block, which calls the function all methods of the shape share:
+// method inside the `impl JSValkeyClient` block, which calls the function
+// that all methods of the shape share:
 // cmd! (each argument listed as `parameter: "name in the error message"`),
 // cmd_key_varargs! (key: RedisKey, ...args: RedisKey[]),
 // cmd_strings_varargs! (...strings: string[]),
@@ -229,15 +199,15 @@ macro_rules! cmd {
 
 macro_rules! cmd_key_varargs {
     ($fn_name:ident, $name:literal, $command:literal, $arg0_name:literal, $state:ident) => {
-        pub(crate) fn $fn_name<'a>(
+        pub(crate) fn $fn_name(
             &self,
-            this_value: JsWrapper<'a, Self>,
-            cx: &mut JsScope<'a>,
-            key: RedisArgument<'a>,
-            arguments: Rest<'a, RedisArgument<'a>>,
+            this_value: JsWrapper<'_, Self>,
+            cx: &mut JsScope<'_>,
+            key: RedisArgument<'_>,
+            arguments: Rest<'_, RedisArgument<'_>>,
         ) -> JsResult<JSValue> {
             let method = method!($name, $command, $state);
-            self.cmd_key_varargs(this_value, cx, method, (key, $arg0_name), arguments)
+            self.cmd_key_varargs(this_value, cx, method, key, $arg0_name, arguments)
         }
     };
 }
@@ -272,6 +242,21 @@ macro_rules! cmd_key_value_varargs {
     };
 }
 
+fn additional_argument(
+    global: &JSGlobalObject,
+    method: &Method,
+    arg: RedisArgument<'_>,
+) -> JsResult<JSArgument> {
+    let Some(another) = from_argument(global, arg)? else {
+        return Err(global.throw_invalid_argument_type(
+            method.name,
+            "additional arguments",
+            "string or buffer",
+        ));
+    };
+    Ok(another)
+}
+
 impl JSValkeyClient {
     fn cmd(
         &self,
@@ -283,6 +268,7 @@ impl JSValkeyClient {
         let global = cx.global();
         compile::test_correct_state(self, method.name, method.state)?;
 
+        // No `cmd!` has more than three arguments.
         let mut args: SmallVec<[JSArgument; 3]> = SmallVec::new();
 
         for &(arg, arg_name) in arguments {
@@ -295,22 +281,25 @@ impl JSValkeyClient {
             };
             args.push(arg);
         }
-        method.send(
+        send_cmd(
             self,
             global,
             this_value.to_js(),
-            &args,
+            method.command.as_bytes(),
+            CommandArgs::Args(&args),
             CommandMeta::default(),
+            format_args!("Failed to send {}", method.command),
         )
     }
 
-    fn cmd_key_varargs<'a>(
+    fn cmd_key_varargs(
         &self,
-        this_value: JsWrapper<'a, Self>,
-        cx: &mut JsScope<'a>,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
         method: &Method,
-        (key, arg0_name): (RedisArgument<'a>, &str),
-        arguments: Rest<'a, RedisArgument<'a>>,
+        key: RedisArgument<'_>,
+        arg0_name: &'static str,
+        arguments: Rest<'_, RedisArgument<'_>>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
         compile::test_correct_state(self, method.name, method.state)?;
@@ -321,31 +310,23 @@ impl JSValkeyClient {
 
         let mut args: Vec<JSArgument> = Vec::with_capacity(1 + arguments.len());
 
-        let mut push = |arg: RedisArgument<'a>| -> JsResult<()> {
+        args.push(additional_argument(global, method, key)?);
+        for arg in arguments.iter() {
+            let arg = arg.convert(global)?;
             if matches!(arg, RedisArgument::Missing) {
-                return Ok(());
+                continue;
             }
 
-            let Some(another) = from_argument(global, arg)? else {
-                return Err(global.throw_invalid_argument_type(
-                    method.name,
-                    "additional arguments",
-                    "string or buffer",
-                ));
-            };
-            args.push(another);
-            Ok(())
-        };
-        push(key)?;
-        for arg in arguments.iter() {
-            push(arg.convert(global)?)?;
+            args.push(additional_argument(global, method, arg)?);
         }
-        method.send(
+        send_cmd(
             self,
             global,
             this_value.to_js(),
-            &args,
+            method.command.as_bytes(),
+            CommandArgs::Args(&args),
             CommandMeta::default(),
+            format_args!("Failed to send {}", method.command),
         )
     }
 
@@ -363,16 +344,17 @@ impl JSValkeyClient {
         let mut args: Vec<JSArgument> = Vec::with_capacity(arguments.len());
 
         for arg in arguments.iter() {
-            let Some(another) = from_argument(global, arg.convert(global)?)? else {
-                return Err(global.throw_invalid_argument_type(
-                    method.name,
-                    "additional arguments",
-                    "string or buffer",
-                ));
-            };
-            args.push(another);
+            args.push(additional_argument(global, method, arg.convert(global)?)?);
         }
-        method.send(self, global, this_value.to_js(), &args, meta)
+        send_cmd(
+            self,
+            global,
+            this_value.to_js(),
+            method.command.as_bytes(),
+            CommandArgs::Args(&args),
+            meta,
+            format_args!("Failed to send {}", method.command),
+        )
     }
 
     fn cmd_key_value_varargs(
@@ -393,21 +375,16 @@ impl JSValkeyClient {
                 continue;
             }
 
-            let Some(another) = from_argument(global, arg)? else {
-                return Err(global.throw_invalid_argument_type(
-                    method.name,
-                    "additional arguments",
-                    "string or buffer",
-                ));
-            };
-            args.push(another);
+            args.push(additional_argument(global, method, arg)?);
         }
-        method.send(
+        send_cmd(
             self,
             global,
             this_value.to_js(),
-            &args,
+            method.command.as_bytes(),
+            CommandArgs::Args(&args),
             CommandMeta::default(),
+            format_args!("Failed to send {}", method.command),
         )
     }
 }

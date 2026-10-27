@@ -1368,8 +1368,7 @@ impl Terminal {
             TerminalData::Missing => {
                 return Err(global_object.throw(format_args!("write() requires data argument")));
             }
-            TerminalData::Text(text) => Some(StringOrBuffer::Utf8(text.to_utf8())),
-            TerminalData::Object(data) => StringOrBuffer::from_js(global_object, data.to_js())?,
+            TerminalData::String(data) => StringOrBuffer::from_js(global_object, data.to_js())?,
             TerminalData::Buffer(data) => StringOrBuffer::from_js(global_object, data.to_js())?,
             TerminalData::Other => None,
         };

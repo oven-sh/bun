@@ -61,13 +61,7 @@ fn run_async<A: FsArgument>(
     cx: &mut JsScope<'_>,
     callback: Option<JsLocal<'_, Callable>>,
     from_js: impl FnOnce(&JSGlobalObject, &mut Parsing) -> JsResult<A>,
-    create_task: fn(
-        &bun_jsc::JsThread<'_>,
-        &Binding,
-        ThreadIsolated<A>,
-        &mut VirtualMachine,
-        Option<JSValue>,
-    ) -> JSValue,
+    create_task: CreateTask<A>,
 ) -> JsResult<JSValue> {
     /// Does not depend on `from_js`, so the two forms of an operation share one copy.
     #[inline(never)]
@@ -75,19 +69,14 @@ fn run_async<A: FsArgument>(
         this: &Binding,
         cx: &mut JsScope<'_>,
         callback: Option<JsLocal<'_, Callable>>,
-        args: ParsedAsyncArgs<A>,
-        create_task: fn(
-            &bun_jsc::JsThread<'_>,
-            &Binding,
-            ThreadIsolated<A>,
-            &mut VirtualMachine,
-            Option<JSValue>,
-        ) -> JSValue,
+        args: A,
+        parsing: Parsing,
+        create_task: CreateTask<A>,
     ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
         let global = cx.global();
         let callback = callback.map(JsLocal::to_js);
-        let args = match args {
+        let args = match parsed_async_args(global, args, parsing) {
             ParsedAsyncArgs::Args(args) => args,
             ParsedAsyncArgs::Rejected(error) => {
                 return reject_before_schedule(global, callback, error);
@@ -96,9 +85,18 @@ fn run_async<A: FsArgument>(
         let vm: &mut VirtualMachine = global.bun_vm().as_mut();
         Ok(create_task(&cx, this, args, vm, callback))
     }
-    let args = parse_async_args(cx.global(), from_js)?;
-    schedule(this, cx, callback, args, create_task)
+    let mut parsing = Parsing::new(Flavor::Async);
+    let args = from_js(cx.global(), &mut parsing)?;
+    schedule(this, cx, callback, args, parsing, create_task)
 }
+
+type CreateTask<A> = fn(
+    &bun_jsc::JsThread<'_>,
+    &Binding,
+    ThreadIsolated<A>,
+    &mut VirtualMachine,
+    Option<JSValue>,
+) -> JSValue;
 
 enum ParsedAsyncArgs<A> {
     Args(ThreadIsolated<A>),
@@ -113,6 +111,15 @@ fn parse_async_args<A: FsArgument>(
 ) -> JsResult<ParsedAsyncArgs<A>> {
     let mut parsing = Parsing::new(Flavor::Async);
     let args = from_js(global, &mut parsing)?;
+    Ok(parsed_async_args(global, args, parsing))
+}
+
+/// `args` were parsed with `parsing`, under [`Flavor::Async`].
+fn parsed_async_args<A: FsArgument>(
+    global: &JSGlobalObject,
+    args: A,
+    mut parsing: Parsing,
+) -> ParsedAsyncArgs<A> {
     // SAFETY: parsed under [`Flavor::Async`]: its strings are thread-safe and its buffers pinned.
     let args = unsafe { ThreadIsolated::new(args) };
 
@@ -121,13 +128,13 @@ fn parse_async_args<A: FsArgument>(
             .signal()
             .and_then(|signal| signal.node_abort_error_if_aborted(global))
         {
-            return Ok(ParsedAsyncArgs::Rejected(abort_error));
+            return ParsedAsyncArgs::Rejected(abort_error);
         }
     }
     if let Some(err) = parsing.deferred_error.take() {
-        return Ok(ParsedAsyncArgs::Rejected((*err).to_error_instance(global)));
+        return ParsedAsyncArgs::Rejected((*err).to_error_instance(global));
     }
-    Ok(ParsedAsyncArgs::Args(args))
+    ParsedAsyncArgs::Args(args)
 }
 
 /// An error found before scheduling. The callback goes to nextTick bare: it asserts against an `AsyncContextFrame`.

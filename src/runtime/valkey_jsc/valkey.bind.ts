@@ -4,7 +4,7 @@ import { SocketOptionsTLS } from "../socket/SocketConfig.bind.ts";
 import { Blob } from "../webcore/Blob.bind.ts";
 
 /**
- * What goes on the wire as one bulk string. Each command refuses `other` in its own words, and refuses, skips or stops at `none`.
+ * What goes on the wire as one bulk string. Each command refuses `other` in its own words, and refuses or skips `missing`.
  * It only tells kinds apart: `toString` of a `String` object runs when the command gets to that argument.
  */
 export const RedisArgument = b.union(

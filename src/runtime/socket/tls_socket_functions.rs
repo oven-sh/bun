@@ -1206,8 +1206,7 @@ pub(super) fn string_or_buffer(
     encoding: Encoding,
 ) -> JsResult<Option<StringOrBuffer<'static>>> {
     let text = match value {
-        TextOrBytes::Text(text) => text,
-        TextOrBytes::StringObject(text) => loose_string(global, text)?,
+        TextOrBytes::String(text) => loose_string(global, text)?,
         TextOrBytes::Buffer(bytes) => {
             return StringOrBuffer::buffer_from_js(global, bytes.to_js(), Flavor::Sync).map(Some);
         }

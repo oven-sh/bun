@@ -240,20 +240,6 @@ impl JSValue {
     pub fn is_any_int(self) -> bool {
         JSC__JSValue__isAnyInt(self)
     }
-    /// ECMA-262 20.1.2.3 `Number.isInteger`.
-    #[inline]
-    pub fn is_integer(self) -> bool {
-        if self.is_int32() {
-            return true;
-        }
-        if self.is_double() {
-            let num = self.as_double();
-            if num.is_finite() && num.trunc() == num {
-                return true;
-            }
-        }
-        false
-    }
     #[inline]
     pub fn is_string(self) -> bool {
         self.is_cell() && self.js_type().is_string_like()

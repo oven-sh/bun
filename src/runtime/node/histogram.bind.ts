@@ -52,13 +52,23 @@ export const Histogram = b.class({
   },
 });
 
-export const RecordedValue = b.union({ bigInt: b.bigInt, other: b.opaque });
+export const RecordedValue = b.union({
+  bigInt: b.bigInt,
+  number: b.u64.validateInteger(1, Number.MAX_SAFE_INTEGER),
+});
 
 export const RecordableHistogram = b.class({
   ...nodeClass,
   extends: Histogram,
   proto: {
-    record: { args: { val: RecordedValue }, length: 1, passThis: true, capability: "js", throws: true },
+    record: {
+      args: { val: RecordedValue },
+      expected: { val: ["number"] },
+      length: 1,
+      passThis: true,
+      capability: "js",
+      throws: true,
+    },
     recordDelta: grows,
     add: { ...grows, args: { other: b.self }, expected: { other: ["RecordableHistogram"] } },
   },

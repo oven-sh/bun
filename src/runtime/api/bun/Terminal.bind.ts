@@ -7,8 +7,7 @@ export const termiosFlags = b.conversion(b.f64.loose);
 /** It only tells kinds apart: `toString` of a `String` object runs once the terminal is known to be open. */
 export const TerminalData = b.union({
   missing: b.null,
-  text: b.string.view,
-  object: b.stringObject,
+  string: b.stringLike,
   buffer: b.bufferSource.allowShared,
   other: b.ignored,
 });

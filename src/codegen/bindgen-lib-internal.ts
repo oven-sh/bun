@@ -350,6 +350,10 @@ export abstract class Type {
   get returnsValueUnchanged(): boolean {
     return false;
   }
+  /** Rust gets a pointer that the conversion took out of the value, or a value read from it. */
+  get pointsIntoValue(): boolean {
+    return !this.returnsValueUnchanged && (this.needsLifetime || this.borrowsCell || this.passesValue);
+  }
   /** Points into memory JavaScript can detach, resize or free: not for a function that can run it, and only for an argument, read once all are converted. */
   get borrowsHeap(): boolean {
     return this.dependencies.some(type => type.borrowsHeap);
@@ -422,11 +426,11 @@ export abstract class Type {
   rustFromExtern(expr: string, scope: RustScope): string {
     return expr;
   }
-  /** `Bun::Bindgen::toExtern` changes the type of the C++ value, which is trivially copyable, and no bits. */
-  get cppToExternIsBitCast(): boolean {
+  /** `Bun::Bindgen::toExtern` is a `std::bit_cast`: the C++ value is trivially copyable and is represented as its extern type. */
+  get cppCanBitCastToExtern(): boolean {
     return this.returnsValueUnchanged;
   }
-  /** `rustFromExtern` changes the type and no bits. */
+  /** `rustFromExtern` is a `transmute`: the Rust type is represented as the extern type. */
   get rustFromExternIsTransmute(): boolean {
     return false;
   }
@@ -492,7 +496,7 @@ export class PrimitiveType extends Type {
   rustType(): string {
     return this.rustName;
   }
-  get cppToExternIsBitCast(): boolean {
+  get cppCanBitCastToExtern(): boolean {
     return true;
   }
   get rustFromExternIsTransmute(): boolean {
@@ -1764,7 +1768,7 @@ export class WrappedType extends Type {
   rustFromExtern(expr: string): string {
     return `bindgen::class_ref_from_extern::<${this.options.rustPath}>(${expr}, heap)`;
   }
-  get cppToExternIsBitCast(): boolean {
+  get cppCanBitCastToExtern(): boolean {
     return true;
   }
   get rustFromExternIsTransmute(): boolean {
@@ -1903,6 +1907,9 @@ export class OptionalType extends Type {
   get returnsValueUnchanged(): boolean {
     return this.inner.returnsValueUnchanged;
   }
+  get pointsIntoValue(): boolean {
+    return this.inner.pointsIntoValue;
+  }
   get passesValue(): boolean {
     return this.inner.passesValue;
   }
@@ -2039,7 +2046,7 @@ export class WithValueType extends Type {
   get convertsInPlace(): boolean {
     return this.inner.convertsInPlace;
   }
-  get cppToExternIsBitCast(): boolean {
+  get cppCanBitCastToExtern(): boolean {
     return this.#isInstance;
   }
   cppConvert(value: string, ctx: string): string {
@@ -2372,7 +2379,7 @@ export class EnumerationType extends NamedType {
   rustExternType(scope: RustScope): string {
     return this.path(scope, this.name);
   }
-  get cppToExternIsBitCast(): boolean {
+  get cppCanBitCastToExtern(): boolean {
     return true;
   }
   get rustFromExternIsTransmute(): boolean {
@@ -2827,26 +2834,33 @@ export class UnionType extends NamedType {
   #lastOf(candidates: readonly number[]): Type | undefined {
     return this.alternatives[candidates.at(-1) ?? -1]?.type;
   }
-  /** None of `candidates` may take the value. As the last, one that takes every object reports what is not an object itself. */
+  /** Whether every one of `candidates` can refuse a value. As the last, one that takes every object reports what is not an object itself. */
   mayMatchNone(candidates: readonly number[]): boolean {
     const last = this.#lastOf(candidates);
     return !last || (!!last.refuses && !refusesNonObjects(last));
   }
-  /** A conversion that cannot throw returns the union, which takes a trivially copyable one. */
+  /** A converter that cannot throw returns the union by value, so the union has to be trivially copyable. */
   get conversionThrows(): boolean {
     return (
-      !this.cppToExternIsBitCast ||
+      !this.cppCanBitCastToExtern ||
       this.#held.some(type => type.tryConvertThrows) ||
       [...this.alternativesByKind.values()]
         .map(candidates => this.#lastOf(candidates))
         .some(last => !last || last.refuses)
     );
   }
-  get #held(): Type[] {
-    return this.alternatives.map(a => a.type).filter(type => !(type instanceof UnitType));
+  get pointsIntoValue(): boolean {
+    return this.alternatives.some(a => a.type.pointsIntoValue);
   }
-  get cppToExternIsBitCast(): boolean {
-    return this.#held.length > 0 && this.#held.every(type => type.cppToExternIsBitCast);
+  /** The alternatives that hold a value. */
+  get heldAlternatives(): readonly Alternative[] {
+    return this.alternatives.filter(a => !(a.type instanceof UnitType));
+  }
+  get #held(): Type[] {
+    return this.heldAlternatives.map(a => a.type);
+  }
+  get cppCanBitCastToExtern(): boolean {
+    return this.#held.length > 0 && this.#held.every(type => type.cppCanBitCastToExtern);
   }
   /** The enum is then `#[repr(C, u8)]`. */
   get rustFromExternIsTransmute(): boolean {
@@ -3802,7 +3816,7 @@ export class ClassType extends NamedType {
   rustFromExtern(expr: string): string {
     return `bindgen::class_ref_from_extern::<${this.rustPath}>(${expr}, heap)`;
   }
-  get cppToExternIsBitCast(): boolean {
+  get cppCanBitCastToExtern(): boolean {
     return true;
   }
   get rustFromExternIsTransmute(): boolean {

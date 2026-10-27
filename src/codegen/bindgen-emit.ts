@@ -318,32 +318,34 @@ function cppConvertToAlternative(type: UnionType, candidates: readonly number[])
     .map(i => {
       const { name, type: alternative } = type.alternatives[i];
       const member = `result.${name}`;
-      const success = type.conversionThrows ? "return true;" : "return result;";
-      if (alternative instanceof UnitType) return `result.tag = ${i};\n${success}`;
+      const returnSuccess = type.conversionThrows ? "return true;" : "return result;";
+      if (alternative instanceof UnitType) return `result.tag = ${i};\n${returnSuccess}`;
       // As the last, its own conversion reports what is not an object.
       const reportsNonObjects = refusesNonObjects(alternative) && i === candidates.at(-1);
-      // The value is of a kind of which the alternative takes every value, and `tryConvert` only tests the kind.
-      const isTaken =
+      // Choosing by kind has already run the only test `tryConvert` makes.
+      const isKnownToConvert =
         alternative.conversionThrows &&
         !alternative.tryConvertThrows &&
         (refusesNonObjects(alternative)
           ? !reportsNonObjects
           : alternative.valueKinds !== "any" && !alternative.refuses);
       const convert = (target: string) =>
-        isTaken
-          ? `${target} = Bun::uncheckedConvertIDL<${alternative.idlType}>(*globalObject, value, ctx);`
-          : alternative.cppConvertInto(target, "value", "ctx", "", "false");
+        !isKnownToConvert
+          ? alternative.cppConvertInto(target, "value", "ctx", "", "false")
+          : alternative.returnsValueUnchanged
+            ? `${target} = value;`
+            : `${target} = Bun::uncheckedConvertIDL<${alternative.idlType}>(*globalObject, value, ctx);`;
       const take = `result.tag = ${i};
 std::construct_at(&${member});
 ${alternative.convertsInPlace ? cppEmplace(member, convert) : convert(member)}
-${success}`;
+${returnSuccess}`;
       if (refusesNonObjects(alternative))
         return reportsNonObjects ? take : `if (value.isObject()) {\n${indent(take, 4)}\n}`;
       if (alternative.refuses)
         return `if (auto converted = Bun::tryConvertIDL<${alternative.idlType}>(*globalObject, value, ctx)) {
     std::construct_at(&${member}, WTF::move(*converted));
     result.tag = ${i};
-    ${success}
+    ${returnSuccess}
 }${alternative.tryConvertThrows ? "\nRETURN_IF_EXCEPTION(scope, false);" : ""}`;
       return take;
     })
@@ -363,7 +365,7 @@ function cppHeaderForUnion(type: UnionType): string {
       ? []
       : `case ${index}: {\n${indent(cppConvertToAlternative(type, candidates), 4)}${type.mayMatchNone(candidates) ? "\n    break;" : ""}\n}`,
   );
-  const held = alternatives.filter(a => !(a.type instanceof UnitType));
+  const held = type.heldAlternatives;
   const switchOnHeld = (statement: (name: string) => string) =>
     held.length === 0
       ? ""
@@ -401,20 +403,19 @@ ${chooseAlternative}
     : `template<> struct WebCore::Converter<${type.idlType}> : WebCore::DefaultConverter<${type.idlType}> {
     static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
     {
-        auto* globalObject = &lexicalGlobalObject;
-        Bun::DefaultConversionContext ctx;
+        [[maybe_unused]] auto* globalObject = &lexicalGlobalObject;
+        [[maybe_unused]] Bun::DefaultConversionContext ctx;
         ReturnType result;
 ${chooseAlternative}
         RELEASE_ASSERT_NOT_REACHED();
     }
 };`;
-  const isTrivial = type.cppToExternIsBitCast;
   return `
 namespace Bun::Bindgen::Generated {
 // Only the alternative that \`tag\` names is constructed.
 struct ${name} {
 ${cppDefaultConstructor(type)}${
-    type.needsLifetime || isTrivial
+    type.needsLifetime || type.cppCanBitCastToExtern
       ? ""
       : `
     ${name}(${name}&& other)
@@ -429,7 +430,7 @@ ${cppDefaultConstructor(type)}${
         return *this;
     }`
   }${
-    isTrivial
+    type.cppCanBitCastToExtern
       ? ""
       : `
     ~${name}()
@@ -437,7 +438,7 @@ ${cppDefaultConstructor(type)}${
         ${switchOnHeld(member => `std::destroy_at(&${member})`)}
     }`
   }
-    uint8_t tag${isTrivial ? "" : ` { ${alternatives.length} }`};
+    uint8_t tag${type.cppCanBitCastToExtern ? "" : ` { ${alternatives.length} }`};
 ${
   held.length === 0
     ? ""
@@ -459,8 +460,8 @@ template<> struct Bun::Bindgen::ExternTraits<${type.cpp}> {
     static ExternType convertToExtern(${type.cpp}&& value)
     {
 ${
-  isTrivial
-    ? `${held.map(a => `        static_assert(Bun::Bindgen::toExternIsBitCast<decltype(value.${a.name})>);`).join("\n")}
+  type.cppCanBitCastToExtern
+    ? `${held.map(a => `        static_assert(Bun::Bindgen::canBitCastToExtern<decltype(value.${a.name})>);`).join("\n")}
         return std::bit_cast<ExternType>(value);`
     : `        ExternType result;
         result.tag = value.tag;
@@ -660,7 +661,7 @@ const cppStaticContext = (variable: string, ...contexts: string[]) =>
 type ContextFields = Pick<Conversion, "name" | "expected">;
 
 /**
- * Declares what reports the `i`th argument or member, a `type`: nothing, if converting one cannot throw.
+ * Declares the conversion context of the `i`th argument or member, which is a `type`. Declares nothing if `type` converts without throwing.
  * A shared conversion passes one entry for each conversion: all have a list, the same one, or all a message, or none has either.
  */
 function cppDeclareContext(i: number, type: Type, contexts: readonly ContextFields[]): string[] {
@@ -832,11 +833,10 @@ function cppDeclareConverted(
   ];
 }
 
-/** EnsureStillAliveScope is for a pointer a conversion takes out of the value. A Rust type with no lifetime has none. */
 const cppHeldValue = (type: Type, variable: string) =>
-  type.returnsValueUnchanged || !(type.needsLifetime || type.borrowsCell || type.passesValue)
-    ? { holder: "JSC::JSValue", value: variable }
-    : { holder: "JSC::EnsureStillAliveScope", value: `${variable}.value()` };
+  type.pointsIntoValue
+    ? { holder: "JSC::EnsureStillAliveScope", value: `${variable}.value()` }
+    : { holder: "JSC::JSValue", value: variable };
 
 /**
  * Whether each argument goes by pointer: one that the C ABI would copy to the stack, because it does not fit two

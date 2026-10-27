@@ -88,17 +88,32 @@ test("heapStats() counts the histograms of each class", () => {
   ]);
 });
 
-test("histograms that grew are collected without an explicit GC", () => {
+test.each([
+  [
+    "RecordableHistogram",
+    "record",
+    () => {
+      const histogram = perf.createHistogram();
+      for (const value of valuesInEveryChunk) histogram.record(value);
+    },
+  ],
+  ["RecordableHistogram", "recordCorrected", () => perf.createHistogram().recordCorrected(Number.MAX_SAFE_INTEGER, 1)],
+  [
+    "SlidingWindowHistogram",
+    "record",
+    () => {
+      const window = perf.createSlidingWindowHistogram({ chunks: 1, recordsPerChunk: valuesInEveryChunk.length });
+      for (const value of valuesInEveryChunk) window.record(value);
+    },
+  ],
+])("%s objects that grew by %s() are collected without an explicit GC", (type, _, createAndGrow) => {
   // How many it takes depends on the size of the heap, but 720 MB is far more than enough.
   let created = 0;
   withoutAggressiveGC(() => {
     do {
-      for (let i = 0; i < 100; i++) {
-        const histogram = perf.createHistogram();
-        for (const value of valuesInEveryChunk) histogram.record(value);
-      }
+      for (let i = 0; i < 100; i++) createAndGrow();
       created += 100;
-    } while (created < 2000 && heapStats().objectTypeCounts.RecordableHistogram > created / 2);
+    } while (created < 2000 && heapStats().objectTypeCounts[type] > created / 2);
   });
   expect(created).toBeLessThan(2000);
 });

@@ -1964,7 +1964,9 @@ describe("two histograms", () => {
 
   test("with itself, with its clone and with an empty one", () => {
     const h = filled(upTo(100));
-    for (const other of [h, structuredClone(h), createHistogram()]) {
+    // In this order: nothing shares the values until there is a clone.
+    for (const make of [() => h, () => structuredClone(h), () => h, createHistogram]) {
+      const other = make();
       assert.deepStrictEqual(
         [h.ksTest(other), h.cohensD(other), h.cliffsD(other), h.mannWhitneyTest(other), h.welchTest(other)],
         [0, 0, 0, noDifference.mannWhitney, noDifference.welch],
@@ -2811,12 +2813,26 @@ describe("the options of monitorEventLoopDelay", () => {
     h.enable();
     // The wait is what is tested: nothing tells JavaScript that the event loop is idle.
     await new Promise(resolve => setTimeout(resolve, 300));
-    const idle = h.max;
+    // The sum, as something else can wake the event loop in between.
+    const idle = h.count * h.mean;
     await turns(1);
     for (const start = performance.now(); performance.now() - start < 100;);
     await turns(2);
     assert.ok(h.max >= 95e6, `${h.max} ns after 100 ms of work`);
     assert.ok(idle < 250e6, `${idle} ns after a wait of 300 ms`);
+  });
+
+  test("the samples of samplePerIteration do not overlap", async () => {
+    using h = monitorEventLoopDelay({ samplePerIteration: true });
+    const start = performance.now();
+    h.enable();
+    for (let i = 0; i < 10; i++) await new Promise(resolve => setTimeout(resolve, 5));
+    await turns(1);
+    h.disable();
+    const elapsed = (performance.now() - start) * 1e6;
+    assert.ok(h.count >= 10, `${h.count} samples`);
+    // A bucket is at most 0.1% wide.
+    assert.ok(h.count * h.mean <= elapsed * 1.01, `${h.count * h.mean} ns in ${elapsed} ns`);
   });
 
   test("samplePerIteration does not keep the process running", () => {
@@ -3136,6 +3152,17 @@ describe("edges", () => {
         [9002801208229888, 2],
       ],
     );
+  });
+
+  test("toJSON and inspect have what the getters have", () => {
+    const h = filled([5, 70, 7, 7, 900], { halfLife: 2, threshold: 50 });
+    const json = h.toJSON();
+    for (const key of ["skewness", "kurtosis", "ewmaMean", "ewmaStddev", "ewmaErrorRate"]) {
+      assert.strictEqual(json[key], h[key], key);
+    }
+    assert.ok(inspect(h).includes(`skewness: ${h.skewness},\n  kurtosis: ${h.kurtosis},`), inspect(h));
+    assert.strictEqual(inspect(h, { depth: 0 }), "Histogram [Object]");
+    assert.match(inspect(h, { depth: 1, breakLength: Infinity }), /, percentiles: \[Map\] \}$/);
   });
 
   test("reset of a sliding window begins a chunk", () => {

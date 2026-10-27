@@ -1,160 +1,69 @@
-// If port exhaustion occurs, these tests fail.
-// These tests fail by timing out.
+// If port exhaustion occurs, these tests fail: fetch() rejects with a connect error.
+// If a socket never closes, the fixture runs into its deadline and these tests fail on its counts.
 
 import { expect, test } from "bun:test";
-import { getMaxFD, isCI, isMacOS } from "harness";
+import { bunEnv, bunExe, isCI, isDebug, isMacOS } from "harness";
+import { join } from "node:path";
 
 // Since we bumped MAX_CONNECTIONS to 4, we should halve the threshold on macOS.
 const PORT_EXHAUSTION_THRESHOLD = isMacOS ? 8 * 1024 : 16 * 1024;
 
-type SocketData = { read?: boolean; written?: boolean };
+const batchSize = 48;
+// A debug build needs about 25 s for one case at twice the threshold, so it stays below it. No CI lane runs one.
+const batches = Math.ceil((isDebug ? 2 * 1024 : PORT_EXHAUSTION_THRESHOLD * 2) / batchSize);
+const connections = batches * batchSize;
 
-async function runStressTest({
-  onServerWritten,
-  onFetchWritten,
-}: {
-  onServerWritten: (socket) => void;
-  onFetchWritten: (socket) => void;
-}) {
-  const total = PORT_EXHAUSTION_THRESHOLD * 2;
-  let sockets: Bun.Socket<SocketData>[] = [];
-  const batch = 48;
-  let toClose = 0;
-  let pendingClose = Promise.withResolvers();
-  const objects: { method: string; body: string; keepalive: boolean }[] = [];
-  for (let i = 0; i < total; i++) {
-    objects.push({
-      method: "POST",
-      body: "--BYTEMARKER: " + (10 + i) + " ",
-      keepalive: false,
+type CloseMethod = "end" | "shutdown" | "terminate";
+
+// One fetch-tcp-stress-fixture.ts process for each case: the cases run at the
+// same time, and each one measures only its own file descriptors.
+const cases: [name: string, afterWrite: CloseMethod, afterFetch: CloseMethod | "none"][] = [
+  ["shutdown after timeout", "end", "none"],
+  ["close after TCP fin", "shutdown", "end"],
+  ["shutdown then terminate", "shutdown", "terminate"],
+  // The same as "shutdown after timeout": the two have had one body since #11512.
+  ["gently close", "end", "none"],
+];
+
+// Fails on the macOS CI hosts only (#14514).
+test.todoIf(isCI && isMacOS).concurrent.each(cases)(
+  "%s",
+  async (_, afterWrite, afterFetch) => {
+    const deadline = 26_000;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        join(import.meta.dir, "fetch-tcp-stress-fixture.ts"),
+        afterWrite,
+        afterFetch,
+        String(batches),
+        String(batchSize),
+        String(deadline),
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      // A fixture whose JS thread is stuck cannot act on its deadline, and the
+      // runner does not kill the process of a concurrent test that times out.
+      timeout: deadline + 2_000,
+      killSignal: "SIGKILL",
     });
-  }
-
-  const server = await Bun.listen<SocketData>({
-    port: 0,
-    socket: {
-      open(socket) {},
-      data(socket, data) {
-        const text = new TextDecoder().decode(data);
-        const i = parseInt(text.slice(text.indexOf("--BYTEMARKER: ") + "--BYTEMARKER: ".length).slice(0, 3)) - 10;
-        if (text.includes(objects[i].body)) {
-          socket.data ??= {};
-          socket.data.read = true;
-          sockets[i] = socket;
-          if (socket.write("200 OK\r\nCo") === "200 OK\r\nCo".length) {
-            socket.data.written = true;
-            onServerWritten(socket);
-          }
-          return;
-        }
-
-        console.log("Data is missing!");
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const { maxFD, ...counts } = JSON.parse(stdout || "{}");
+    expect({ stderr, signalCode: proc.signalCode, exitCode, counts }).toEqual({
+      stderr: "",
+      signalCode: null,
+      exitCode: 0,
+      counts: {
+        // The server closes before fetch() has a response to parse.
+        fetches: { ECONNRESET: connections },
+        served: connections,
+        closed: connections,
+        serverErrors: [],
       },
-      drain(socket) {
-        if (!socket.data?.read || socket.data?.written) {
-          return;
-        }
-
-        if (socket.write("200 OK\r\nCo") === "200 OK\r\nCo".length) {
-          socket.data.written = true;
-          onServerWritten(socket);
-        }
-      },
-      error(socket, err) {
-        console.log(err);
-      },
-      timeout() {},
-      close(socket) {
-        toClose--;
-        if (toClose === 0) {
-          pendingClose.resolve();
-        }
-      },
-    },
-    hostname: "127.0.0.1",
-  });
-  let initialMaxFD = -1;
-  for (let remaining = total; remaining > 0; remaining -= batch) {
-    pendingClose = Promise.withResolvers();
-    {
-      const promises: Promise<Response>[] = [];
-      toClose = batch;
-      for (let i = 0; i < batch; i++) {
-        promises.push(
-          fetch(`http://127.0.0.1:${server.port}`, objects[i]).finally(() => {
-            onFetchWritten(sockets[i]);
-          }),
-        );
-      }
-      await Promise.allSettled(promises);
-
-      promises.length = 0;
-    }
-
-    await pendingClose.promise;
-    if (total) sockets = [];
-
-    if (initialMaxFD === -1) {
-      initialMaxFD = getMaxFD();
-    }
-  }
-  server.stop(true);
-  await Bun.sleep(10);
-  expect(getMaxFD()).toBeLessThan(initialMaxFD + 10);
-}
-
-test.todoIf(isCI && isMacOS)(
-  "shutdown after timeout",
-  async () => {
-    await runStressTest({
-      onServerWritten(socket) {
-        socket.end();
-      },
-      onFetchWritten(socket) {},
     });
+    expect(maxFD.atEnd).toBeLessThan(maxFD.afterFirstBatch + 10);
   },
-  30 * 1000,
-);
-
-test.todoIf(isCI && isMacOS)(
-  "close after TCP fin",
-  async () => {
-    await runStressTest({
-      onServerWritten(socket) {
-        socket.shutdown();
-      },
-      onFetchWritten(socket) {
-        socket.end();
-      },
-    });
-  },
-  30 * 1000,
-);
-
-test.todoIf(isCI && isMacOS)(
-  "shutdown then terminate",
-  async () => {
-    await runStressTest({
-      onServerWritten(socket) {
-        socket.shutdown();
-      },
-      onFetchWritten(socket) {
-        socket.terminate();
-      },
-    });
-  },
-  30 * 1000,
-);
-
-test.todoIf(isCI && isMacOS)(
-  "gently close",
-  async () => {
-    await runStressTest({
-      onServerWritten(socket) {
-        socket.end();
-      },
-      onFetchWritten(socket) {},
-    });
-  },
-  30 * 1000,
+  // The default, 5 s, is too short on the slower lanes.
+  30_000,
 );

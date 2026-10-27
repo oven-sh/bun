@@ -322,6 +322,31 @@ describe.concurrent("Bun.serve http2 protocol", () => {
     });
   }
 
+  // What a literal may not say, a reference to the dynamic table may not say either.
+  for (const [what, name, value] of [
+    ["value with LF", "x-a", "a\nb"],
+    ["value with NUL", "x-a", "a\0b"],
+    ["name with trailing SP", "x-a ", "1"],
+  ]) {
+    test(`malformed field (${what}) replayed from the dynamic table → RST_STREAM PROTOCOL_ERROR`, async () => {
+      const raw = await RawH2.connect(fx.port, secure);
+      const request = hpackLiteral(baseHeaders("/hello"));
+      // Literal with incremental indexing: index 62 from here on.
+      const insert = Buffer.from(
+        `\x40${String.fromCharCode(name.length)}${name}${String.fromCharCode(value.length)}${value}`,
+        "latin1",
+      );
+      raw.write(frame(T.HEADERS, F.END_HEADERS | F.END_STREAM, 1, Buffer.concat([request, insert])));
+      expect(await raw.rst(1)).toBe(1);
+      raw.write(frame(T.HEADERS, F.END_HEADERS | F.END_STREAM, 3, Buffer.concat([request, Buffer.from([0x80 | 62])])));
+      expect(await raw.rst(3)).toBe(1);
+      raw.headers(5, baseHeaders("/hello"));
+      const d = await raw.waitFor(f => f.type === T.DATA && f.streamId === 5);
+      expect(d.payload.toString()).toBe("hello");
+      raw.close();
+    });
+  }
+
   // ── frame-format checks (h2spec §4–6, hyper frame::*::load, Go TestServer_Rejects_*) ──
   for (const [name, build, code] of [
     ["DATA on stream 0", () => frame(T.DATA, F.END_STREAM, 0, Buffer.from("x")), 1],

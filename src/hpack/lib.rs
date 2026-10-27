@@ -498,6 +498,7 @@ mod tests {
             "203f",              // a size update, then one that is cut off
             "3fe21f82",          // size update to 4097
             "0f",                // integer cut off
+            "3f",                // the same in a size update
             "7fffffffff10",      // integer over 32 bits
             "000161 0261",       // string cut off
             "000161 81ff",       // 8 bits of padding
@@ -522,11 +523,14 @@ mod tests {
             // "~" takes 13 bits, so the value is sent as it is.
             let value = "~".repeat(value_len);
             let mut block = Vec::new();
+            // There is a size update to send each time.
+            encoder.set_max_capacity(value_len as u32 % 4096);
             let encoded =
                 encoder.encode(&mut block, name.as_bytes(), value.as_bytes(), Indexing::Add);
             assert_eq!(encoded.is_ok(), fits);
             if !fits {
-                assert_eq!(block, []);
+                // A field that is refused leaves no trace, in the block or in the table.
+                assert_eq!((&block[..], encoder.table_size()), (&[][..], 0));
                 encoder.encode_verbatim(&mut block, name.as_bytes(), value.as_bytes());
             }
             let mut pos = 0;
@@ -781,5 +785,342 @@ mod tests {
                 ),
             ],
         );
+    }
+
+    // From here on: the reproducers in ls-hpack's own history, by the commit that fixed each.
+
+    /// test_int.c, with f427d19 and b692931: shifts of 35 bits, and of 15 by 28 as an `int`.
+    #[test]
+    fn ls_hpack_integers() {
+        for (prefix_bits, bytes, value) in [
+            (7, "7f02", Some(0x81)),
+            (7, "7f818203", Some(0xc101 + 127)),
+            (7, "7f81828303", Some(0x60c101 + 127)),
+            (7, "7f80ffffff0f", Some(u32::MAX)),
+            (7, "7f90ffffff0f", None),
+            (7, "7fffffffffffffffffffff", None),
+            (4, "fe", Some(0xe)),
+            (6, "3f64", Some(0x3f + 0x64)),
+            (4, "ff", None),
+            (3, "87f0807f", Some(0x1fc077)),
+            (3, "8780808001", Some(0x200007)),
+            (3, "878080808001", Some(0x10000007)),
+        ] {
+            let bytes = hex(bytes);
+            let mut pos = 0;
+            assert_eq!(integer::decode(&bytes, &mut pos, prefix_bits), value);
+            for len in 0..bytes.len() {
+                assert_eq!(integer::decode(&bytes[..len], &mut 0, prefix_bits), None);
+            }
+            if let Some(value) = value {
+                assert_eq!(pos, bytes.len());
+                let mut out = Vec::new();
+                let flags = bytes[0] & (0xff << prefix_bits);
+                integer::encode(&mut out, flags, prefix_bits, value);
+                assert_eq!(out, bytes);
+            }
+        }
+    }
+
+    /// fb24b7a (8 bits of padding), ae2304a and 6b9a958 (padding that is not ones), cf3ac6b (bytes after the end).
+    #[test]
+    fn ls_hpack_huffman_padding() {
+        let invalid = Err(Error::Invalid);
+        assert_eq!(decode_huffman(b"", 9), Ok(vec![]));
+        assert_eq!(decode_huffman(&hex("bfd037d9"), 9), Ok(b"Dj1D3".to_vec()));
+        assert_eq!(decode_huffman(&hex("bfd037d9ff"), 99), invalid);
+        assert_eq!(decode_huffman(&hex("d96863844cfe77a0bcc9ff"), 99), invalid);
+        let lite_speed = Ok(b"LiteSpeed".to_vec());
+        assert_eq!(decode_huffman(&hex("ce649775652c9f"), 9), lite_speed);
+        assert_eq!(decode_huffman(&hex("ce649775652c9e"), 9), invalid);
+        for string in [
+            &b"Dude, where is my car?"[..],
+            b"Dude, where is my car\\",
+            b"\x01\x02\x03Where is your\\ car, ,\\dude?",
+        ] {
+            check_huffman(string);
+            let mut coded = Vec::new();
+            huffman::encode(string, &mut coded);
+            for garbage in [&[0xff][..], &[0xff, 0xff]] {
+                assert_eq!(decode_huffman(&[&coded, garbage].concat(), 99), invalid);
+            }
+            *coded.last_mut().unwrap() &= !1;
+            assert_eq!(decode_huffman(&coded, 99), invalid);
+        }
+    }
+
+    /// test_huff_dec_fallback: a code of 19 bits at every place among codes of 13, and more and more of them.
+    #[test]
+    fn ls_hpack_huffman_long_codes_among_short_ones() {
+        let mut string = [b'@'; 26];
+        string[25] = 0;
+        for i in 0..string.len() {
+            string[i] = b'\\';
+            check_huffman(&string);
+        }
+    }
+
+    /// 45f36ef, 16cf6a7 and a1f1ea8: the Huffman encoder wrote or read past the end, or shifted by 32 bits.
+    #[test]
+    fn ls_hpack_huffman_encoder_boundaries() {
+        let block = encode(&mut Encoder::new(), "x-a", "zzz", Indexing::Skip);
+        assert_eq!(block[block.len() - 4..], hex("83f7efdf"));
+        // Pairs of codes that have 32 bits together.
+        for pair in [&b"\\\0"[..], b"\xc3\0", b"&\t", b" \xc0", b"\xd2 "] {
+            check_huffman(&pair.repeat(4));
+        }
+        // Around the 12 + 2 bytes it read ahead.
+        for len in 0..24 {
+            check_huffman(&b"a".repeat(len));
+        }
+        // The length takes two bytes, of the code and of a string that is sent as it is.
+        for value in [[b'A'; 435], [200; 435]] {
+            let (mut encoder, mut block) = (Encoder::new(), Vec::new());
+            let encoded = encoder.encode(&mut block, b"header", &value, Indexing::Add);
+            assert!(encoded.is_ok());
+            assert_eq!(decode(&mut Decoder::new(), &block).unwrap()[0].1, value);
+        }
+    }
+
+    /// 04054d2 (index 0), 984fc14 (one byte of a literal and nothing else), test_hdec_table_size_updates.
+    #[test]
+    fn ls_hpack_decoder_errors() {
+        // The last two would be "a: b" if what follows index 0 were read as a literal.
+        let index_0 = ["80 026475 026465 00", "80 00 0161 0162", "80 0161 0162"];
+        for block in index_0.into_iter().chain(["00", "10", "40"]) {
+            let decoded = decode(&mut Decoder::new(), &hex(block));
+            assert_eq!(decoded, Err(Error::Invalid), "{block}");
+        }
+        let mut decoder = Decoder::new();
+        decoder.set_max_capacity(0x11);
+        assert_eq!(decode(&mut decoder, &hex("3e 88")), Err(Error::Invalid));
+        for block in ["3e 88", "20 34 88"] {
+            let fields = decode(&mut Decoder::new(), &hex(block)).unwrap();
+            assert_eq!(fields[0].1, b"200", "{block}");
+        }
+    }
+
+    /// 9cabf89, undone by 13646d4: white space at the end of a name was cut off, also in the table.
+    #[test]
+    fn ls_hpack_names_are_opaque() {
+        let name = b"cookie \t\x0b\x0c\r\n";
+        let block = [&[0x40, 12][..], name, b"\x05value", &[0xbe]].concat();
+        let mut decoder = Decoder::new();
+        let fields = decode(&mut decoder, &block).unwrap();
+        assert_eq!((&fields[0].0[..], &fields[1].0[..]), (&name[..], &name[..]));
+        assert_eq!(decoder.table_size(), 12 + 5 + 32);
+    }
+
+    /// e10b99d: a field with an empty value never matched the static table.
+    #[test]
+    fn ls_hpack_static_entries_take_one_byte() {
+        for index in 1..=static_table::LEN {
+            let (name, value) = static_table::get(index).unwrap();
+            let (mut encoder, mut block) = (Encoder::with_history(), Vec::new());
+            let encoded = encoder.encode(&mut block, name, value, Indexing::Add);
+            assert!(encoded.is_ok());
+            assert_eq!(block, [0x80 | index as u8]);
+        }
+    }
+
+    /// 1b7a5c3: an entry was added without making room, so the table was over its capacity until the next one.
+    #[test]
+    fn ls_hpack_the_table_stays_within_its_capacity() {
+        let (mut encoder, mut decoder) = (Encoder::new(), Decoder::new());
+        encoder.set_max_capacity(100);
+        for i in 0..9 {
+            let value = "v".repeat(i * 7 % 30);
+            let block = encode(&mut encoder, "x-a", &value, Indexing::Add);
+            assert!(decode(&mut decoder, &block).is_ok());
+            assert!(decoder.table_size() <= 100);
+            assert_eq!(decoder.table_size(), encoder.table_size());
+        }
+    }
+
+    /// 7a90325: changing the capacity switched the history on.
+    #[test]
+    fn ls_hpack_no_history_after_a_capacity_change() {
+        let mut encoder = Encoder::new();
+        encoder.set_max_capacity(1000);
+        encode(&mut encoder, "x-a", "", Indexing::Add);
+        // More than a history for that capacity holds, each for the first time.
+        for i in 0..20 {
+            let block = encode(&mut encoder, "x-a", &i.to_string(), Indexing::Add);
+            assert_eq!(representation(&block), "added", "{i}");
+        }
+    }
+
+    /// test_henc_boundary2: an index that takes two bytes.
+    #[test]
+    fn ls_hpack_an_index_of_two_bytes() {
+        let (mut encoder, mut decoder) = (Encoder::new(), Decoder::new());
+        let mut block = Vec::new();
+        for value in (62..=127).chain([62]) {
+            block.clear();
+            let encoded = encoder.encode(&mut block, b"header", &[value], Indexing::Add);
+            assert!(encoded.is_ok());
+            assert_eq!(decode(&mut decoder, &block).unwrap()[0].1, [value]);
+        }
+        assert_eq!(block, hex("ff00"));
+    }
+
+    /// test_hpack_self_enc_dec_test_firefox_error: references into a nearly full table that the block evicts from.
+    #[test]
+    fn ls_hpack_firefox_error() {
+        let entries = [
+            ("content-length", "2145"),
+            ("etag", "\"1e0c-54feefd5-7bfd383f\""),
+            ("content-length", "31793"),
+            ("etag", "\"3235d-54feefd5-9d7c08af\""),
+            ("content-length", "407"),
+            ("content-type", "text/css"),
+            ("etag", "\"6bc-54feefd5-a7725cbd\""),
+            ("content-length", "1884"),
+            ("etag", "\"1b5a-54feefd5-b6a3dc2a\""),
+            ("content-length", "2308"),
+            ("etag", "\"1aee-54feefd5-1d91a5e4\""),
+            ("content-length", "702"),
+            ("etag", "\"5f8-54feefd5-197a93f1\""),
+            ("content-length", "556"),
+            ("etag", "\"52b-54feefd5-e6075901\""),
+            ("content-length", "6913"),
+            ("etag", "\"5767-54feefd5-4a868698\""),
+            ("content-length", "6724"),
+            ("etag", "\"64de-54feefd5-fb73534f\""),
+            ("content-length", "2568"),
+            ("etag", "\"2530-54feefd5-cccfff57\""),
+            ("content-length", "973"),
+            ("etag", "\"b00-54feefd5-e48546d\""),
+            ("content-length", "709"),
+            ("etag", "\"6a4-54feefd5-82d8609d\""),
+            ("content-length", "6520"),
+            ("etag", "\"5b0d-54feefd5-44735f27\""),
+            ("content-length", "3954"),
+            ("etag", "\"22ac-54feefd5-600b05fd\""),
+            ("content-length", "32825"),
+            ("etag", "\"16bb3-54feefd5-d669865d\""),
+            ("content-length", "1055"),
+            ("etag", "\"a37-54feefd5-59e4760e\""),
+            ("date", "Tue, 10 Mar 2015 19:00:06 GMT"),
+            ("content-length", "737"),
+            ("etag", "\"63d-54feefd5-c244a03a\""),
+            ("expires", "Tue, 17 Mar 2015 19:00:06 GMT"),
+            ("content-length", "3205"),
+            ("etag", "\"37cf-54feefd5-10e8e54\""),
+            ("content-length", "6336"),
+            ("etag", "\"58d9-54feefd5-f0d60c72\""),
+            ("content-length", "2707"),
+            ("etag", "\"285b-54feefd5-2e2834bf\""),
+            ("content-length", "9050"),
+            ("etag", "\"87ed-54feefd5-741b49ef\""),
+            ("content-length", "7562"),
+            ("etag", "\"795a-54feefd5-9e535995\""),
+            ("content-length", "8780"),
+            ("etag", "\"9759-54feefd5-6c09a64d\""),
+            ("content-length", "1842"),
+            ("etag", "\"1288-54feefd5-51ae6c5a\""),
+            ("content-length", "9153"),
+            ("etag", "\"a2af-54feefd5-83098d2b\""),
+            ("content-length", "437"),
+            ("etag", "\"2eb-54feefd5-26eef95\""),
+            ("content-length", "37451"),
+            ("content-type", "application/javascript"),
+            ("etag", "\"27df1-54feefd5-fe76c415\""),
+            ("expires", "Tue, 17 Mar 2015 19:00:05 GMT"),
+            ("cache-control", "public, max-age=604800"),
+            ("server", "LiteSpeed"),
+            ("accept-ranges", "bytes"),
+            ("date", "Tue, 10 Mar 2015 19:00:05 GMT"),
+            ("vary", "Accept-Encoding"),
+            ("content-encoding", "gzip"),
+            ("content-length", "5298"),
+            ("content-type", "text/html"),
+            ("last-modified", "Tue, 10 Mar 2015 13:21:25 GMT"),
+            ("etag", "\"748f-54feefd5-dca65763\""),
+        ];
+        let (mut encoder, mut decoder) = (Encoder::new(), Decoder::new());
+        for (name, value) in entries.into_iter().rev() {
+            let block = encode(&mut encoder, name, value, Indexing::Add);
+            assert!(decode(&mut decoder, &block).is_ok());
+        }
+        let block = hex(concat!(
+            "88f96496df697e940baa681d8a08016d40bf7000b80754c5a37f6292fe4221bab36d4a52cb236b0d",
+            "e13e17052ff3ff045f87352398ac5754df5c8369d75b6196df697e940814d03b141002da817ee001",
+            "700ea98b46ffff01ff00",
+        ));
+        let mut encoded = Vec::new();
+        for (name, value, _) in decode(&mut decoder, &block).unwrap() {
+            let result = encoder.encode(&mut encoded, &name, &value, Indexing::Add);
+            assert!(result.is_ok());
+        }
+        assert_eq!(encoded, block);
+    }
+
+    // From here on: what has gone wrong in other HPACK implementations.
+
+    /// HAProxy took an index of 2^31 or more for a negative one, which is under any limit (CVE-2018-14645).
+    #[test]
+    fn an_index_far_past_the_tables() {
+        for index in [63, 1 << 16, 1 << 31, (1 << 31) + 62, u32::MAX] {
+            for (flags, prefix_bits) in [(0x80, 7), (0x40, 6), (0x10, 4), (0x00, 4)] {
+                // One entry, which an index that wraps around or is cut short would find.
+                let mut block = hex("4003782d610131");
+                integer::encode(&mut block, flags, prefix_bits, index);
+                block.extend(hex("0161"));
+                let decoded = decode(&mut Decoder::new(), &block);
+                assert_eq!(decoded, Err(Error::Invalid), "{index} {flags}");
+            }
+        }
+    }
+
+    /// Jetty multiplied the length of a Huffman string until it was negative, and then made room for it (CVE-2023-36478).
+    #[test]
+    fn a_string_far_longer_than_the_block() {
+        for len in [2, 1 << 16, 1 << 29, 1 << 30, 1 << 31, u32::MAX] {
+            for huffman in [0x00, 0x80] {
+                for before in ["00", "000161", "41"] {
+                    let (mut decoder, mut block) = (Decoder::new(), hex(before));
+                    integer::encode(&mut block, huffman, 7, len);
+                    block.push(0x1f);
+                    assert_eq!(decode(&mut decoder, &block), Err(Error::Invalid));
+                    assert!(decoder.heap_size() < 4096, "{len}");
+                }
+            }
+        }
+    }
+
+    /// 124 entries of 33 bytes. Tables sized for larger entries have overflowed, and HAProxy's lost track at one of no bytes (CVE-2020-11100).
+    #[test]
+    fn the_smallest_entries_there_are() {
+        let (mut encoder, mut decoder) = (Encoder::new(), Decoder::new());
+        for name in 0..=255 {
+            let mut block = Vec::new();
+            let encoded = encoder.encode(&mut block, &[name], b"", Indexing::Add);
+            assert!(encoded.is_ok());
+            assert_eq!(decode(&mut decoder, &block).unwrap()[0].0, [name]);
+            let size = 33 * (usize::from(name) + 1).min(124);
+            assert_eq!((encoder.table_size(), decoder.table_size()), (size, size));
+        }
+        // The oldest that is left, and the one before it.
+        assert_eq!(decode(&mut decoder, &hex("ff3a")).unwrap()[0].0, [132]);
+        assert_eq!(decode(&mut decoder, &hex("ff3b")), Err(Error::Invalid));
+        let mut block = Vec::new();
+        for name in [132, 131] {
+            let encoded = encoder.encode(&mut block, &[name], b"", Indexing::Skip);
+            assert!(encoded.is_ok());
+        }
+        assert_eq!(block, hex("ff3a 00018300"));
+        // There is no entry of 32 bytes: a name has at least one.
+        assert_eq!(decode(&mut decoder, &hex("400000")), Err(Error::Invalid));
+    }
+
+    /// One decoder called itself for each.
+    #[test]
+    fn many_size_updates_in_a_row() {
+        let mut decoder = Decoder::new();
+        assert!(decode(&mut decoder, &hex("4003782d610131")).is_ok());
+        let block = [hex("3fe11f20").repeat(2000), hex("3f05 be")].concat();
+        assert_eq!(decode(&mut decoder, &block), Err(Error::Invalid));
+        assert_eq!(decoder.table_size(), 0);
     }
 }

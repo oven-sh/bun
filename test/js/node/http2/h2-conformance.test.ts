@@ -2960,6 +2960,56 @@ describe("HPACK (RFC 7541)", () => {
     }
   });
 
+  test("a block of references to one large entry is refused, and the tables stay in step", async () => {
+    const { srv, seen, port } = await listen();
+    const c = await RawH2.connect(port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      // "x" with 4000 bytes becomes index 62. The rest of a 16 KiB frame refers to it: 49 MB of fields.
+      const value = Buffer.alloc(4000, "v");
+      const insert = Buffer.concat([Buffer.from([0x40]), hpackLiteral("x"), Buffer.from([0x7f, 0xa1, 0x1e]), value]);
+      const start = requestHeaderBlock("GET", insert);
+      c.sendFrame(FrameType.HEADERS, 0x5, 1, Buffer.concat([start, Buffer.alloc(16384 - start.length, 0x80 | 62)]));
+      const refusal = await c.waitFor(f => f.type === FrameType.RST_STREAM || f.type === FrameType.GOAWAY);
+      expect([refusal.type, refusal.streamId]).toEqual([FrameType.RST_STREAM, 1]);
+      expect(refusal.payload.readUInt32BE(0)).toBe(ErrorCode.ENHANCE_YOUR_CALM);
+      c.sendFrame(FrameType.HEADERS, 0x5, 3, requestHeaderBlock("GET", Buffer.from([0x80 | 62])));
+      expect((await c.waitFor(headersOrGoaway(3))).type).toBe(FrameType.HEADERS);
+      expect(seen.map(headers => headers.x)).toEqual([value.toString()]);
+    } finally {
+      c.destroy();
+      srv.close();
+    }
+  });
+
+  test.each([
+    ["a value with LF", "x-a", "a\nb"],
+    ["a value with NUL", "x-a", "a\0b"],
+    ["a name with trailing SP", "x-a ", "1"],
+  ])("%s is refused again when it comes from the dynamic table", async (_, name, value) => {
+    const { srv, seen, port } = await listen();
+    const c = await RawH2.connect(port);
+    try {
+      c.sendPreface();
+      c.sendEmptySettings();
+      const insert = Buffer.concat([Buffer.from([0x40]), hpackLiteral(name), hpackLiteral(value)]);
+      c.sendFrame(FrameType.HEADERS, 0x5, 1, requestHeaderBlock("GET", insert));
+      c.sendFrame(FrameType.HEADERS, 0x5, 3, requestHeaderBlock("GET", Buffer.from([0x80 | 62])));
+      c.sendFrame(FrameType.HEADERS, 0x5, 5, requestHeaderBlock("GET"));
+      expect((await c.waitFor(headersOrGoaway(5))).type).toBe(FrameType.HEADERS);
+      const resets = c.frames.filter(f => f.type === FrameType.RST_STREAM);
+      expect(resets.map(f => [f.streamId, f.payload.readUInt32BE(0)])).toEqual([
+        [1, ErrorCode.PROTOCOL_ERROR],
+        [3, ErrorCode.PROTOCOL_ERROR],
+      ]);
+      expect(seen.length).toBe(1);
+    } finally {
+      c.destroy();
+      srv.close();
+    }
+  });
+
   test("a server's encoder follows the client's SETTINGS_HEADER_TABLE_SIZE", async () => {
     const { srv, port } = await listen();
     const c = await RawH2.connect(port);

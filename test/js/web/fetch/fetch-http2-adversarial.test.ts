@@ -812,6 +812,37 @@ function hpackInt(prefixBits: number, flags: number, n: number) {
   return Buffer.from(bytes);
 }
 
+// What a literal may not say, a reference to the dynamic table may not say either.
+test.each([
+  ["a value with LF", "x-a", "a\nb"],
+  ["a value with NUL", "x-a", "a\0b"],
+  ["a name with trailing SP", "x-a ", "1"],
+])("%s in an HTTP/2 response is refused again when it comes from the dynamic table", async (_, name, value) => {
+  const string = (s: string) => Buffer.concat([Buffer.from([s.length]), Buffer.from(s, "latin1")]);
+  const blocks = [
+    // Literal with incremental indexing: index 62 from here on.
+    Buffer.concat([hpackStatus200, Buffer.from([0x40]), string(name), string(value)]),
+    Buffer.concat([hpackStatus200, Buffer.from([0x80 | 62])]),
+    hpackStatus200,
+  ];
+  await withAdversarialServer(
+    { onStream: (socket, id) => socket.write(frame(1, 5, id, blocks[(id - 1) / 2])) },
+    async (url, state) => {
+      const results: unknown[] = [];
+      for (const _ of blocks) {
+        results.push(
+          await fetch(url, { protocol: "http2", tls: { rejectUnauthorized: false } }).then(
+            res => res.status,
+            e => e.code,
+          ),
+        );
+      }
+      expect(results).toEqual(["HTTP2ProtocolError", "HTTP2ProtocolError", 200]);
+      expect(state.connections).toBe(1);
+    },
+  );
+});
+
 // A value that trims to nothing still counts toward the decoded header list
 // cap (256 KiB), because the decoder produced it. One dynamic table entry of
 // 4000 SP and 70 one-byte references to it decode to 284 KB from a 4 KB block.

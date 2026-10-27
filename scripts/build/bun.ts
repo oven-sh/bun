@@ -162,8 +162,8 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
 
   // Each Rust crate produces an rlib the link takes beside the C/C++
   // objects. Rust `include!`s codegen
-  // `.rs` outputs (written as side effects of the generate-classes /
-  // bundle-modules / generate-jssink edges), so the codegen output set
+  // `.rs` outputs (written as side effects of the bindgen /
+  // bundle-modules edges), so the codegen output set
   // is forwarded to order the workspace crates after it (order-only; the
   // crates' dep-info then tracks exactly the files they read).
   // lol-html is a direct path dep of `bun_runtime`/`bun_bundler`
@@ -278,9 +278,9 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // Unified sources: bundle the globbed .cpp into N-per-TU wrappers (see
   // unified.ts for N). Generated at configure time; depfiles track the underlying
   // .cpp files so editing one rebuilds its bundle. Codegen .cpp are kept
-  // separate — those are already large single TUs (ZigGeneratedClasses.cpp
-  // is 3.3 MB) and bundling them would serialize work. Always called so
-  // stale bundles are pruned even with --unifiedSources=false.
+  // separate — those are already large single TUs and bundling them would
+  // serialize work. Always called so stale bundles are pruned even with
+  // --unifiedSources=false.
   const split = generateUnifiedSources(cfg, sources.cxx);
   const cxxSources = [...split.unified, ...split.standalone];
   const cSources = [...sources.c];

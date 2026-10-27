@@ -202,8 +202,7 @@ A full debug build can take a few minutes when Rust or C++ has changed; cargo's 
 
 Bun's build process runs several code generation scripts automatically when certain files change:
 
-- `./src/codegen/generate-jssink.ts` -- Generates `build/debug/codegen/JSSink.cpp`, `build/debug/codegen/JSSink.h` which implement various classes for interfacing with `ReadableStream`. This is internally how `FileSink`, `ArrayBufferSink`, `"type": "direct"` streams and other code related to streams work.
-- `./src/codegen/generate-classes.ts` -- Generates Rust & C++ bindings for JavaScriptCore classes implemented in Rust. `**/*.classes.ts` files define the interfaces for classes, methods, prototypes, and getters/setters; the code generator reads them to generate the boilerplate that implements the JavaScript objects in C++ and wires them up to Rust.
+- `./src/codegen/bindgen.ts` -- Generates Rust, C++ & TypeScript bindings for functions and JavaScriptCore classes implemented in Rust. `**/*.bind.ts` files declare the functions, classes, methods, getters/setters and the types of their arguments; the generator emits the C++ objects, the argument conversions and the calls into Rust. See [Bindgen](/project/bindgen).
 - `./src/codegen/cppbind.ts` -- Scans the C++ bindings for functions marked with an export attribute and generates automatic Rust FFI wrappers (`cpp.rs`) for them.
 - `./src/codegen/bundle-modules.ts` -- Bundles built-in modules like `node:fs`, `bun:ffi` into files included in the final binary. In development, these can be reloaded without rebuilding native code (you still need to run `bun run build`, but it re-reads the transpiled files from disk afterwards). In release builds, these are embedded into the binary.
 - `./src/codegen/bundle-functions.ts` -- Bundles globally-accessible functions implemented in JavaScript/TypeScript like `ReadableStream` and `WritableStream`. These are used similarly to the builtin modules, but the output more closely aligns with what WebKit/Safari does for Safari's built-in functions, so implementations can be copy-pasted from WebKit as a starting point.
@@ -344,14 +343,6 @@ Then set GCC 11 as the default compiler:
 ```bash
 sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 100
 sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-11 100
-```
-
-### libarchive
-
-If you see an error on macOS when compiling `libarchive`, run:
-
-```bash
-brew install pkg-config
 ```
 
 ### macOS `library not found for -lSystem`

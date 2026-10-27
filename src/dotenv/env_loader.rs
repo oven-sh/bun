@@ -145,7 +145,11 @@ pub struct Loader {
     /// only populated with files specified explicitly (e.g. --env-file arg)
     pub(crate) custom_files_loaded: StringSet,
 
+    /// Hides the `[Nms] ".env"` line and the `error loading .env file` lines.
     pub quiet: bool,
+
+    /// Hides the `[Nms] ".env"` line only.
+    pub quiet_loaded_files: bool,
 
     pub(crate) did_load_process: bool,
     pub(crate) reject_unauthorized: Cell<Option<bool>>,
@@ -548,6 +552,7 @@ impl Loader {
             default_files_loaded: EnumSet::empty(),
             custom_files_loaded: StringSet::new(),
             quiet: false,
+            quiet_loaded_files: false,
             did_load_process: false,
             reject_unauthorized: Cell::new(None),
             aws_credentials: None,
@@ -561,6 +566,7 @@ impl Loader {
             default_files_loaded: EnumSet::empty(),
             custom_files_loaded: self.custom_files_loaded.clone()?,
             quiet: false,
+            quiet_loaded_files: false,
             did_load_process: false,
             reject_unauthorized: Cell::new(None),
             aws_credentials: None,
@@ -575,6 +581,7 @@ impl Loader {
             default_files_loaded: self.default_files_loaded,
             custom_files_loaded: self.custom_files_loaded.clone()?,
             quiet: self.quiet,
+            quiet_loaded_files: self.quiet_loaded_files,
             did_load_process: self.did_load_process,
             reject_unauthorized: Cell::new(None),
             aws_credentials: None,
@@ -650,7 +657,7 @@ impl Loader {
             }
         }
 
-        if !self.quiet && self.loaded_count() > loaded_before {
+        if !self.quiet && !self.quiet_loaded_files && self.loaded_count() > loaded_before {
             self.print_loaded(start);
         }
         Ok(())

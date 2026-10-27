@@ -9,7 +9,6 @@ on:
     paths:
       - "src/**/*.rs"
       - "src/**/Cargo.toml"
-      - "src/**/*.classes.ts"
       - "src/**/*.bind.ts"
       - "src/codegen/**"
       - "scripts/build/**"
@@ -34,7 +33,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  BUN_VERSION: "1.4.2"
+  BUN_VERSION: "1.4.4"
   LLVM_VERSION_MAJOR: "23"
   # Pin the toolchain explicitly so rustup ignores rust-toolchain.toml's
   # `targets` list (11 cross triples ≈ 450 MB of prebuilt std we don't need

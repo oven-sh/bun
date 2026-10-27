@@ -619,6 +619,33 @@ it("should work for a file", async () => {
   );
 });
 
+it("keeps serving from a Worker after a request for a file that doesn't exist", async () => {
+  using dir = tempDir("serve-worker-missing-file", {
+    "a.txt": "hello",
+    "server.mjs": `
+      import { join } from "node:path";
+      import { parentPort } from "node:worker_threads";
+      const server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        fetch: req => new Response(Bun.file(join(import.meta.dirname, new URL(req.url).pathname))),
+      });
+      parentPort.postMessage(server.port);
+    `,
+  });
+  const worker = new Worker(join(String(dir), "server.mjs"));
+  const errors: unknown[] = [];
+  worker.on("error", error => errors.push(error.code));
+  try {
+    const [port] = await once(worker, "message");
+    const get = (path: string) => fetch(`http://127.0.0.1:${port}${path}`).then(res => res.status);
+    const statuses = [await get("/missing.txt"), await get("/a.txt").catch(error => error.code)];
+    expect({ statuses, errors }).toEqual({ statuses: [500, 200], errors: [] });
+  } finally {
+    await worker.terminate();
+  }
+});
+
 it("request.url should log successfully", async () => {
   const fixture = resolve(import.meta.dir, "./fetch.js.txt");
   const textToExpect = readFileSync(fixture, "utf-8");

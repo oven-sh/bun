@@ -243,8 +243,8 @@ static ALWAYS_INLINE void putNodeInstanceGetter(VM& vm, JSObject* target, ASCIIL
     } while (0)
 
 // Pin the owning database for the duration of a StatementSync call that
-// may re-enter JS (bindParams getters, UDFs, aggregate callbacks). Must
-// follow REQUIRE_STMT so database() is known live.
+// may re-enter JS (bindParams getters, UDFs, aggregate callbacks). It
+// goes before REQUIRE_STMT because entering the scope can run a callback.
 #define BUSY_SCOPE_STMT(self) \
     JSDatabaseSync::BusyScope busy__ { (self)->database() }
 
@@ -323,7 +323,7 @@ static inline JSValue sqliteToJS(JSGlobalObject* globalObject, Source source, bo
     case SQLITE_INTEGER: {
         int64_t v = source.int64();
         if (useBigInts)
-            RELEASE_AND_RETURN(scope, JSBigInt::makeHeapBigIntOrBigInt32(globalObject, v));
+            RELEASE_AND_RETURN(scope, JSBigInt::createFrom(globalObject, v));
         if (v > JSC::maxSafeInteger() || v < -JSC::maxSafeInteger()) {
             Bun::throwError(globalObject, scope, ErrorCode::ERR_OUT_OF_RANGE,
                 makeString("Value is too large to be represented as a JavaScript number: "_s, v));
@@ -374,7 +374,7 @@ static SqliteFromJS sqliteFromJS(JSGlobalObject* globalObject, ThrowScope& scope
     } else if (value.isBigInt()) {
         // toBigInt64 truncates; detect loss by round-tripping.
         int64_t v = JSBigInt::toBigInt64(value);
-        JSValue roundTrip = JSBigInt::makeHeapBigIntOrBigInt32(globalObject, v);
+        JSValue roundTrip = JSBigInt::createFrom(globalObject, v);
         RETURN_IF_EXCEPTION(scope, SqliteFromJS::Done);
         if (JSBigInt::compare(value, roundTrip) != JSBigInt::ComparisonResult::Equal)
             return SqliteFromJS::BigIntTooLarge;
@@ -610,7 +610,6 @@ void JSDatabaseSync::trackStatement(JSStatementSync& statement)
 
 void JSDatabaseSync::finalizeStatements(bool mayCallScript)
 {
-    mayCallScript |= !hasCallbacks();
     // From the head each time: xFinal can run script, so a GC can sweep
     // (and unlink) any other statement in between.
     while (!m_statements.isEmpty())
@@ -897,8 +896,8 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncDispose, (JSGlobalObject * globalObject, 
 JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncExec, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     THIS_DATABASE();
-    REQUIRE_DB_OPEN(self);
     JSDatabaseSync::BusyScope busy { self };
+    REQUIRE_DB_OPEN(self);
     JSValue sqlVal = callFrame->argument(0);
     if (!sqlVal.isString()) {
         return throwNodeArgType(globalObject, scope, "sql"_s, "a string"_s);
@@ -923,8 +922,8 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncExec, (JSGlobalObject * globalObject, Cal
 JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncPrepare, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     THIS_DATABASE();
-    REQUIRE_DB_OPEN(self);
     JSDatabaseSync::BusyScope busy { self };
+    REQUIRE_DB_OPEN(self);
     JSValue sqlVal = callFrame->argument(0);
     if (!sqlVal.isString()) {
         return throwNodeArgType(globalObject, scope, "sql"_s, "a string"_s);
@@ -1038,6 +1037,8 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncEnableLoadExtension, (JSGlobalObject * gl
 JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncLoadExtension, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     THIS_DATABASE();
+    // The extension's entry point can run SQL, which calls the authorizer.
+    JSDatabaseSync::BusyScope busy { self };
     REQUIRE_DB_OPEN(self);
     if (!self->allowLoadExtension() || !self->enableLoadExtensionIsOn()) {
         return throwNodeState(globalObject, scope, "extension loading is not allowed"_s);
@@ -1065,8 +1066,6 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncLoadExtension, (JSGlobalObject * globalOb
         entryPtr = entryUtf8.legacyCStringPointer();
     }
 
-    // The extension's entry point can run SQL, which calls the authorizer.
-    JSDatabaseSync::BusyScope busy { self };
     char* errmsg = nullptr;
     int r = sqlite3_load_extension(self->connection(), pathUtf8.legacyCStringPointer(), entryPtr, &errmsg);
     if (r != SQLITE_OK) {
@@ -1488,6 +1487,8 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncEnableDefensive, (JSGlobalObject * global
 // CHECK_UDF_EXCEPTION observes to surface it over "not authorized".
 static int nodeSqliteAuthorizerCallback(void* userData, int actionCode, const char* p1, const char* p2, const char* p3, const char* p4)
 {
+    if (sqliteScriptIsForbidden) [[unlikely]]
+        return SQLITE_DENY;
     auto* db = static_cast<JSDatabaseSync*>(userData);
     auto* globalObject = db->globalObject();
     auto& vm = getVM(globalObject);
@@ -1585,8 +1586,8 @@ JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncSetAuthorizer, (JSGlobalObject * globalOb
 JSC_DEFINE_HOST_FUNCTION(jsDatabaseSyncSerialize, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     THIS_DATABASE();
-    REQUIRE_DB_OPEN(self);
     JSDatabaseSync::BusyScope busy { self };
+    REQUIRE_DB_OPEN(self);
 
     WTF::String dbName = "main"_s;
     JSValue arg0 = callFrame->argument(0);
@@ -2065,12 +2066,12 @@ JSStatementSync::~JSStatementSync()
     // Do NOT dereference m_database unless this is on the list. Otherwise GC
     // may have already destroyed the JSDatabaseSync, leaving the WriteBarrier
     // pointing at freed memory.
-    if (auto* database = m_database.unvalidatedGet(); isOnList() && database->hasCallbacks() && sqliteCommitsWhenFinalized(m_stmt)) {
+    if (auto* database = m_database.unvalidatedGet(); isOnList() && database->m_authorizer && sqliteCommitsWhenFinalized(m_stmt)) {
         remove();
         database->orphanStatement(m_stmt);
         return;
     }
-    finalizeStatement();
+    finalizeStatement(false);
 }
 
 void JSStatementSync::reset()
@@ -2369,9 +2370,9 @@ static EncodedJSValue statementStepRun(VM& vm, JSGlobalObject* globalObject, Thr
     sqlite3_int64 changes = sqlite3_changes64(db);
     sqlite3_int64 rowid = sqlite3_last_insert_rowid(db);
     if (self->useBigInts()) {
-        Bun::putDirectNamed(vm, result, "changes"_s, JSBigInt::makeHeapBigIntOrBigInt32(globalObject, static_cast<int64_t>(changes)));
+        Bun::putDirectNamed(vm, result, "changes"_s, JSBigInt::createFrom(globalObject, static_cast<int64_t>(changes)));
         RETURN_IF_EXCEPTION(scope, {});
-        Bun::putDirectNamed(vm, result, "lastInsertRowid"_s, JSBigInt::makeHeapBigIntOrBigInt32(globalObject, static_cast<int64_t>(rowid)));
+        Bun::putDirectNamed(vm, result, "lastInsertRowid"_s, JSBigInt::createFrom(globalObject, static_cast<int64_t>(rowid)));
         RETURN_IF_EXCEPTION(scope, {});
     } else {
         Bun::putDirectNamed(vm, result, "changes"_s, jsNumber(static_cast<double>(changes)));
@@ -2439,9 +2440,9 @@ static EncodedJSValue statementStepAll(JSGlobalObject* globalObject, ThrowScope&
 JSC_DEFINE_HOST_FUNCTION(jsStatementSyncRun, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     THIS_STATEMENT();
+    BUSY_SCOPE_STMT(self);
     REQUIRE_STMT(self);
     REQUIRE_STMT_IDLE(self);
-    BUSY_SCOPE_STMT(self);
     self->reset();
     CHECK_UDF_EXCEPTION(scope);
     if (!self->bindParams(globalObject, scope, callFrame)) return {};
@@ -2451,9 +2452,9 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncRun, (JSGlobalObject * globalObject, Cal
 JSC_DEFINE_HOST_FUNCTION(jsStatementSyncGet, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     THIS_STATEMENT();
+    BUSY_SCOPE_STMT(self);
     REQUIRE_STMT(self);
     REQUIRE_STMT_IDLE(self);
-    BUSY_SCOPE_STMT(self);
     self->reset();
     CHECK_UDF_EXCEPTION(scope);
     if (!self->bindParams(globalObject, scope, callFrame)) return {};
@@ -2463,9 +2464,9 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncGet, (JSGlobalObject * globalObject, Cal
 JSC_DEFINE_HOST_FUNCTION(jsStatementSyncAll, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     THIS_STATEMENT();
+    BUSY_SCOPE_STMT(self);
     REQUIRE_STMT(self);
     REQUIRE_STMT_IDLE(self);
-    BUSY_SCOPE_STMT(self);
     self->reset();
     CHECK_UDF_EXCEPTION(scope);
     if (!self->bindParams(globalObject, scope, callFrame)) return {};
@@ -2475,9 +2476,9 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncAll, (JSGlobalObject * globalObject, Cal
 JSC_DEFINE_HOST_FUNCTION(jsStatementSyncIterate, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     THIS_STATEMENT();
+    BUSY_SCOPE_STMT(self);
     REQUIRE_STMT(self);
     REQUIRE_STMT_IDLE(self);
-    BUSY_SCOPE_STMT(self);
     self->reset();
     CHECK_UDF_EXCEPTION(scope);
     if (!self->bindParams(globalObject, scope, callFrame)) return {};
@@ -2676,6 +2677,7 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncIteratorNext, (JSGlobalObject * globalOb
         return JSValue::encode(createIterResult(vm, globalObject, true, jsNull()));
     }
     JSStatementSync* stmt = self->statement();
+    JSDatabaseSync::BusyScope busy { stmt ? stmt->database() : nullptr };
     if (!stmt || stmt->isFinalized()) {
         return throwNodeState(globalObject, scope, "statement has been finalized"_s);
     }
@@ -2685,7 +2687,6 @@ JSC_DEFINE_HOST_FUNCTION(jsStatementSyncIteratorNext, (JSGlobalObject * globalOb
     if (stmt->isStepping()) [[unlikely]] {
         return throwNodeState(globalObject, scope, "statement is currently executing"_s);
     }
-    JSDatabaseSync::BusyScope busy { stmt->database() };
     JSStatementSync::SteppingScope stepping { stmt };
 
     int r = sqlite3_step(stmt->statement());
@@ -2851,6 +2852,12 @@ static EncodedJSValue sessionChangesetCommon(JSGlobalObject* globalObject, CallF
 {
     THIS_SESSION();
     JSDatabaseSync* db = self->database();
+    // sqlite3session_changeset/patchset internally run SAVEPOINT + prepared
+    // SELECTs on the connection, which fires the authorizer. BusyScope
+    // defers db.close() (and so deleteTrackedSessions/sweepOrphanedSessions)
+    // until this frame unwinds; inUse refuses session.close()/Symbol.dispose
+    // so the handle isn't freed under sessionGenerateChangeset().
+    JSDatabaseSync::BusyScope busy { db };
     if (self->isStale()) {
         return throwNodeState(globalObject, scope, "database is not open"_s);
     }
@@ -2861,12 +2868,6 @@ static EncodedJSValue sessionChangesetCommon(JSGlobalObject* globalObject, CallF
     if (record->inUse) {
         return throwNodeState(globalObject, scope, "session is already generating a changeset"_s);
     }
-    // sqlite3session_changeset/patchset internally run SAVEPOINT + prepared
-    // SELECTs on the connection, which fires the authorizer. BusyScope
-    // defers db.close() (and so deleteTrackedSessions/sweepOrphanedSessions)
-    // until this frame unwinds; inUse refuses session.close()/Symbol.dispose
-    // so the handle isn't freed under sessionGenerateChangeset().
-    JSDatabaseSync::BusyScope busy { db };
     record->inUse = true;
     sqlite3* conn = db->connection();
     int nChangeset = 0;

@@ -52,7 +52,7 @@ export const cases: Record<string, Case> = {
  4|function add(n: number) {
  4|  total += n;
  -|}
- 1|for (let i = 0; i < 3; i++) {
+ 4|for (let i = 0; i < 3; i++) {
  3|  add(i);
  -|}
  1|add(1);
@@ -75,7 +75,7 @@ export const cases: Record<string, Case> = {
  0|      return "one";
  1|    case 2:
  1|      return "two";
- -|    default:
+ 0|    default:
  0|      return "many";
  -|  }
  -|}
@@ -138,7 +138,7 @@ export const cases: Record<string, Case> = {
  -|declare const d: number;
  1|export const e: B = {
  1|  a: 1,
- -|};
+ 1|};
  0|export function f(x: C): A | undefined {
  0|  return undefined;
  -|}
@@ -167,6 +167,124 @@ export const cases: Record<string, Case> = {
  0|  1,
  0|  2,
  0|];
+`,
+  },
+  // Both braces of an object literal are code, and of a pattern that is assigned to, which a `var` in a block becomes.
+  // Those of a block, a body, a class and a binding are not.
+  "braces.ts": {
+    functions: "5/7",
+    lines: `
+ 2|const twice = (
+ 2|  n: number,
+ 2|): { x: number } => ({
+ 2|  x: n,
+ 2|});
+ 1|const typed: {
+ -|  v: number;
+ 1|} = {
+ 1|  v: 1,
+ 1|};
+ 3|const thrice = () =>
+ 3|  ({
+ 3|    y: typed.v,
+ 3|  });
+ 1|export const never = () =>
+ 0|  ({
+ 0|    z: 1,
+ 0|  });
+ 1|const list = [
+ 1|  {
+ 1|    one: 1,
+ 1|  },
+ 1|  {
+ 1|    two: 2,
+ 1|  },
+ 1|];
+ 1|export const chosen = !typed.v
+ 0|  ? {
+ 0|      yes: 1,
+ 0|    }
+ 1|  : {
+ 1|      no: 1,
+ 1|    };
+ 1|export const neither = !typed.v &&
+ 0|  {
+ 0|    and: 1,
+ 0|  };
+ 1|export const empty = {
+ 1|};
+ 1|const withMethod = {
+ 1|  method() {
+ 1|    return 1;
+ -|  },
+ 1|};
+ 1|withMethod.method();
+ 1|function pattern(
+ -|  {
+ 1|    one,
+ -|  }: { one?: number },
+ -|) {
+ 1|  return one;
+ -|}
+ 1|pattern({ one: 1 });
+ 2|for (const item of list) ({
+ 2|  two: item.two,
+ 2|}).two;
+ 2|for (const item of list) {
+ 2|  twice(item.one ?? 0);
+ -|}
+ 1|function early() {
+ 1|  if (typed.v) {
+ 1|    return 1;
+ -|  }
+ 0|  return 2;
+ -|}
+ 1|early();
+ 1|if (typed.v)
+ -|{
+ 1|  thrice();
+ -|}
+ 0|else
+ -|{
+ 0|  Object(0);
+ -|}
+ 1|if (!typed.v)
+ -|{
+ 0|  Object(0);
+ -|}
+ 1|else
+ -|{
+ 1|  Object(1);
+ -|}
+ 1|switch (typed.v) {
+ 1|  case 1:
+ -|  {
+ 1|    thrice();
+ -|  }
+ -|}
+ -|{
+ 1|  thrice();
+ -|}
+ 1|export class Empty
+ -|{
+ -|}
+ 1|let first: any;
+ 1|[
+ 1|  {
+ 1|    a: first,
+ 1|  },
+ 1|] = [{ a: 1 }];
+ 1|if (typed.v) {
+ -|  var
+ 1|  {
+ 1|    v: hoisted,
+ 1|  }
+ 1|  = typed;
+ -|}
+ 1|export const spaced = {
+ 0|  async am
+ 0|  () {},
+ 1|};
 `,
   },
   // Where a constant is inlined, its value has the position of its declaration.
@@ -263,7 +381,7 @@ export const cases: Record<string, Case> = {
     functions: "1/1",
     lines: `
  3|function f() {}
- 1|for (let i = 0; i < 3; i++) {
+ 4|for (let i = 0; i < 3; i++) {
  3|  if (i > 5)
  0|    break;
  3|  if (i === 1)
@@ -296,7 +414,7 @@ export const cases: Record<string, Case> = {
     lines: `
  9|function g() {}
  1|let n = 0;
- 1|for (const key in { a: 1, b: 2, c: 3 }) {
+ 3|for (const key in { a: 1, b: 2, c: 3 }) {
  3|  n++;
  -|}
  1|g();
@@ -304,11 +422,11 @@ export const cases: Record<string, Case> = {
  0|  n++;
  -|}
  1|g();
- 1|for (const value of [1, 2]) {
+ 2|for (const value of [1, 2]) {
  2|  n++;
  -|}
  1|g();
- 1|while (n > 3) {
+ 3|while (n > 3) {
  2|  n--;
  -|}
  1|g();
@@ -316,8 +434,8 @@ export const cases: Record<string, Case> = {
  0|  n--;
  -|}
  1|g();
- 1|outer: for (let i = 0; i < 2; i++) {
- 2|  for (let j = 0; j < 3; j++) {
+ 3|outer: for (let i = 0; i < 2; i++) {
+ 4|  for (let j = 0; j < 3; j++) {
  4|    if (j === 1) {
  2|      continue outer;
  -|    }
@@ -385,7 +503,7 @@ export const cases: Record<string, Case> = {
  3|    case 3:
  3|      g();
  3|      break;
- -|    default:
+ 0|    default:
  0|      return 4;
  -|  }
  3|  g();
@@ -419,6 +537,75 @@ export const cases: Record<string, Case> = {
  1|try {
  1|  rethrows();
  1|} catch {}
+`,
+  },
+  // `case` and `default` ran as often as what follows them, not as often as a `case` was compared.
+  "switch.ts": {
+    functions: "6/7",
+    lines: `
+ 3|function defaultLast(x: number) {
+ 3|  switch (x) {
+ 1|    case
+ 1|      1:
+ 1|      at();
+ 1|      break;
+ 2|    default:
+ 2|      at();
+ -|  }
+ -|}
+ 1|defaultLast(1);
+ 1|defaultLast(2);
+ 1|defaultLast(2);
+ 3|function defaultFirst(x: number) {
+ 3|  switch (x) {
+ 2|    default:
+ 2|      at();
+ 3|    case 1:
+ 3|      at();
+ -|  }
+ -|}
+ 1|defaultFirst(1);
+ 1|defaultFirst(2);
+ 1|defaultFirst(2);
+ 3|function blocks(x: number) {
+ 3|  switch (x) {
+ 1|    case 1: {
+ 1|      at();
+ 1|      break;
+ -|    }
+ 2|    default: {
+ 2|      at();
+ -|    }
+ -|  }
+ -|}
+ 1|blocks(1);
+ 1|blocks(2);
+ 1|blocks(2);
+ 1|function empty(x: number) {
+ 1|  switch (x) {
+ 1|    case 1:
+ 1|    default:
+ -|  }
+ -|}
+ 1|empty(1);
+ 2|function uncalledArrow(x: unknown) {
+ 2|  switch (x) {
+ 2|    case 1:
+ 2|    case () => 1:
+ 2|      at();
+ -|  }
+ -|}
+ 1|uncalledArrow(1);
+ 1|uncalledArrow(1);
+ 3|function sameLine(x: number) {
+ 3|  switch (x) {
+ 2|    case 1: return; default:
+ 2|      at();
+ -|  }
+ -|}
+ 1|sameLine(1);
+ 1|sameLine(2);
+ 1|sameLine(2);
 `,
   },
   // `finally` ran as often as its block, however the `try` was left.
@@ -465,7 +652,7 @@ export const cases: Record<string, Case> = {
  1|  throws();
  1|} catch {}
  1|function continues() {
- 1|  for (let i = 0; i < 3; i++) {
+ 4|  for (let i = 0; i < 3; i++) {
  3|    try {
  3|      continue;
  3|    } finally {

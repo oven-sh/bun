@@ -297,7 +297,7 @@ impl TestFailure {
     /// Fold in a `ZigException` that `print_error_instance_body` has already
     /// populated. A test can throw more than once (body, then `afterEach`);
     /// the first name/message win and every stack is appended.
-    pub(crate) fn record(slot: &mut Option<TestFailure>, exception: &jsc::ZigException) {
+    pub(crate) fn record(slot: &mut Option<TestFailure>, exception: &jsc::ZigException<'_>) {
         let failure = slot.get_or_insert_default();
         let name = exception.name.to_utf8();
         let raw_message = exception.message.to_utf8();
@@ -373,7 +373,7 @@ impl TestFailure {
     }
 
     /// VirtualMachine::on_print_error_zig_exception thunk.
-    pub(crate) fn record_cb(ctx: *mut core::ffi::c_void, exception: &jsc::ZigException) {
+    pub(crate) fn record_cb(ctx: *mut core::ffi::c_void, exception: &jsc::ZigException<'_>) {
         // SAFETY: `ctx` was set to `&mut CommandLineReporter.test_failure` by
         // `on_uncaught_exception` for the duration of a single
         // `run_error_handler` call; single-threaded, no other borrow live.
@@ -2758,6 +2758,8 @@ impl TestCommand {
             jest::Jest::RUNNER.write(None);
         }
         drop(reporter);
+        // `global_exit()` does not return, so nothing is dropped after it.
+        drop(all_test_files);
         {
             let vm_ptr: *mut VirtualMachine = vm;
             // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
@@ -2899,7 +2901,8 @@ impl TestCommand {
         // lock on `reporter` for the entire function body.
         scopeguard::defer! { unsafe { (*reporter_ptr).jest.only = prev_only; } }
 
-        let resolution = vm.transpiler.resolve_entry_point(file_name)?;
+        let dot_slash = core::cell::OnceCell::new();
+        let resolution = vm.transpiler.resolve_entry_point(file_name, &dot_slash)?;
         vm.clear_entry_point()?;
 
         // `append_slice` interns into the process-static `FilenameStore` and

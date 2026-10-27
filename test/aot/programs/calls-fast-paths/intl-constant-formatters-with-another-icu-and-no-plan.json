@@ -1,0 +1,5 @@
+{
+  "env": {
+    "JSC_formatPatternsOfAnotherICUForTesting": "2"
+  }
+}

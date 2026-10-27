@@ -1,0 +1,8 @@
+a member as the tag: the object | the object
+in parentheses: the object | the object
+behind a comma: the global object | undefined
+a key in brackets behind a comma: the global object | undefined
+with a value in the template: undefined
+the same as a call: the global object | undefined
+a built-in: TypeError
+inside a function: undefined

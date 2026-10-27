@@ -1,0 +1,3455 @@
+////: Builder
+class Builder {
+  parts: string[] = [];
+  add(part: string): Builder {
+    this.parts.push(part);
+    return this;
+  }
+  build(): string {
+    return this.parts.join("");
+  }
+}
+////: Cell-4
+class Cell {
+  value = 1;
+  text = "one";
+  list: number[] = [1, 2, 3, 4];
+  inner = { depth: 1 };
+  touch(): void {}
+}
+////: Cell-6
+////= Cell-4
+
+////= storing
+
+////= swapping
+
+////= around
+
+////= lengths
+
+////= nested
+
+////= loop
+////: Circle-4
+class Circle {
+  r = 2;
+  area(): number {
+    return this.r * this.r * 3;
+  }
+}
+////: Gate
+class Gate {
+  passes = 0;
+  open(): number {
+    return ++this.passes;
+  }
+}
+////: Labeled
+class Labeled extends Point {
+  label = "labeled";
+  norm(): number {
+    return -1;
+  }
+}
+////: Point-30
+////= Point-9
+
+////= Labeled
+
+////= use-4
+
+////= store
+
+////= total-4
+
+////= replacements
+////: Point-9
+class Point {
+  x: number;
+  y: number;
+  constructor(x: number, y: number) {
+    this.x = x;
+    this.y = y;
+  }
+  clone(): Point {
+    return new Point(this.x, this.y);
+  }
+  norm(): number {
+    return this.x * this.x + this.y * this.y;
+  }
+}
+////: Sink
+class Sink {
+  take(p: Pair): void {}
+  takeList(list: number[]): void {}
+  takeFunction(f: () => number): void {}
+}
+////: Table
+class Table {
+  row(): number[] {
+    return [1, 2, 3];
+  }
+}
+////: around
+function around(c: Cell): string {
+  const a = c.value;
+  const s = c.text;
+  c.touch();
+  return a + " " + c.value + " " + s + " " + c.text;
+}
+////: churn
+function churn(): number {
+  let total = 0;
+  for (let i = 0; i < 20000; i++) {
+    const junk = { x: -i, y: -i, z: [i, i, i] };
+    total += junk.z.length + junk.x - junk.y;
+  }
+  return total;
+}
+////: copying
+function copying(this: Builder, part: string): Builder {
+  const next = new Builder();
+  next.parts = [...this.parts, part.toUpperCase()];
+  return next;
+}
+////: counting
+function counting(this: Circle): number {
+  calls++;
+  return this.r + calls;
+}
+////: diverting
+function diverting(part: string): Builder {
+  spare.parts.push(part);
+  return spare;
+}
+////: feed
+function feed(s: Sink, i: number): number {
+  const p = { x: i, y: i * 2 };
+  s.take(p);
+  return p.x + p.y;
+}
+////: feed-2
+////= feed
+
+////= feedList
+
+////= feedFunction
+
+////= churn
+
+////= round-4
+////: feedFunction
+function feedFunction(s: Sink, i: number): number {
+  let count = i;
+  s.takeFunction(() => ++count);
+  return count;
+}
+////: feedList
+function feedList(s: Sink, i: number): string {
+  const list = [i, i + 1];
+  s.takeList(list);
+  return list.length + ":" + list.join();
+}
+////: grow
+function grow(t: Table): string {
+  const r = t.row();
+  try {
+    r.push(4);
+    r[0] = 100;
+  } catch (error) {
+    return "threw " + (error instanceof Error ? error.constructor.name : typeof error) + " " + show(r);
+  }
+  return show(r);
+}
+////: guarded
+function guarded(g: Gate): string {
+  try {
+    return "opened " + g.open();
+  } catch (error) {
+    return "caught " + (error instanceof Error ? error.constructor.name : typeof error);
+  } finally {
+    log.push("finally");
+  }
+}
+////: guarded-3
+////= guarded
+
+////= partial
+
+////= stores
+
+////= inALoop-4
+////: ignoring
+function ignoring(b: Builder): string {
+  b.add("p");
+  b.add("q");
+  return b.build();
+}
+////: inALoop-4
+function inALoop(g: Gate): string {
+  let done = 0;
+  let failed = 0;
+  for (let i = 0; i < 4; i++) {
+    try {
+      g.open();
+      done++;
+    } catch {
+      failed++;
+    }
+  }
+  return done + " done, " + failed + " failed, " + g.passes + " passes";
+}
+////: integers
+function integers(t: Table): string {
+  const r = t.row();
+  return [r[0] | 0, r[1] + 1, r[2] * 2, r[0] / 2, r.length].map(n => (Object.is(n, -0) ? "-0" : String(n))).join(" ");
+}
+////: keepList
+function keepList(list: number[]): void {
+  keptLists.push(list);
+  list.push(-1);
+}
+////: keepPair
+function keepPair(p: Pair): void {
+  keptPairs.push(p);
+  p.y = 1000 + p.x;
+}
+////: lengths
+function lengths(c: Cell): string {
+  const list = c.list;
+  const n = list.length;
+  c.touch();
+  return n + " " + list.length + " " + c.list.length + " " + (list === c.list) + " " + String(list[n - 1]);
+}
+////: lines-135
+class «1» {
+  kept = 1;
+  constructor() {
+    Object.«2»(this);
+  }
+}
+////: loop
+function loop(c: Cell): string {
+  const seen: string[] = [];
+  for (let i = 0; i < c.list.length; i++) {
+    seen.push(String(c.list[i]));
+    c.touch();
+  }
+  return seen.join();
+}
+////: loop-3
+function loop(b: Builder): string {
+  let at = b;
+  for (let i = 0; i < 4; i++) at = at.add(String(i));
+  return at.build() + " / " + b.build();
+}
+////: loop-4
+function loop(c: Circle, rounds: number): number {
+  let total = 0;
+  for (let i = 0; i < rounds; i++) total += c.area();
+  return total;
+}
+////: nested
+function nested(c: Cell): string {
+  const inner = c.inner;
+  const d = inner.depth;
+  c.touch();
+  return d + " " + inner.depth + " " + c.inner.depth + " " + (inner === c.inner);
+}
+////: outer
+function outer(g: Gate): string {
+  try {
+    return "sum " + unguarded(g);
+  } catch (error) {
+    return "caught outside " + (error instanceof Error ? error.constructor.name : typeof error) + " after " + g.passes;
+  }
+}
+////: overwritten
+function overwritten(c: Circle): number {
+  let x = c.area();
+  x = c.area();
+  return x;
+}
+////: partial
+function partial(g: Gate): string {
+  const steps: number[] = [];
+  try {
+    steps.push(1);
+    g.open();
+    steps.push(2);
+    g.open();
+    steps.push(3);
+  } catch {
+    steps.push(-1);
+  }
+  return steps.join();
+}
+////: replacements
+const replacements: [string, (this: Point) => Point][] = [
+  [
+    "a subclass",
+    function () {
+      return new Labeled(this.x, this.y);
+    },
+  ],
+  [
+    "a literal with its members in another order",
+    function () {
+      return { norm: () => -2, y: this.y, extra: "extra", x: this.x, clone: this.clone };
+    },
+  ],
+  [
+    "the receiver itself",
+    function () {
+      return this;
+    },
+  ],
+  [
+    "a frozen point",
+    function () {
+      return Object.freeze(new Point(this.x, this.y));
+    },
+  ],
+  [
+    "a proxy of a point",
+    function () {
+      return new Proxy(new Point(this.x, this.y), {});
+    },
+  ],
+  [
+    "a literal with getters",
+    function () {
+      const source = this;
+      return {
+        get x() {
+          return source.x * 100;
+        },
+        set x(value: number) {},
+        get y() {
+          return source.y * 100;
+        },
+        set y(value: number) {},
+        norm: () => -3,
+        clone: source.clone,
+      };
+    },
+  ],
+  [
+    "a point with fractions",
+    function () {
+      return new Point(this.x + 0.25, -0);
+    },
+  ],
+];
+////: replacements-2
+const replacements: [string, () => number[]][] = [
+  ["fractions", () => [0.5, 1.5, 2.5]],
+  ["holes", () => new Array<number>(3)],
+  [
+    "a hole in the middle",
+    () => {
+      const list = [1, 2, 3];
+      delete list[1];
+      return list;
+    },
+  ],
+  ["minus zero and not a number", () => [-0, NaN, Infinity]],
+  ["empty", () => []],
+  ["one shared array", () => shared],
+  [
+    "a frozen array",
+    () => {
+      const list = [1, 2, 3];
+      Object.freeze(list);
+      return list;
+    },
+  ],
+  ["a subclass that overrides push", () => Noisy.from([1, 2, 3])],
+  ["large numbers", () => [2 ** 31, 2 ** 32, -(2 ** 31) - 1]],
+];
+////: round
+function round(label: string, c: Circle): void {
+  calls = 0;
+  const parts: string[] = [];
+  for (const [name, run] of [
+    ["unused", () => unused(c)],
+    ["twice", () => twice(c)],
+    ["loop", () => loop(c, 5)],
+    ["short circuit, true", () => shortCircuit(c, true)],
+    ["short circuit, false", () => shortCircuit(c, false)],
+    ["overwritten", () => overwritten(c)],
+    ["times zero", () => timesZero(c)],
+    ["in a condition", () => inACondition(c)],
+  ] satisfies [string, () => unknown][]) {
+    const before = calls;
+    parts.push(name + " " + String(run()) + " (" + (calls - before) + ")");
+  }
+  console.log(label + ": " + parts.join(", "));
+}
+////: round-4
+function round(label: string, s: Sink): void {
+  const parts: string[] = [];
+  for (let i = 1; i <= 3; i++) parts.push(feed(s, i) + " " + feedList(s, i) + " " + feedFunction(s, i));
+  console.log(label + ": " + parts.join(" | "));
+}
+////: round-5
+function round(label: string): void {
+  log.length = 0;
+  console.log(label + ": " + guarded(new Gate()) + " | " + partial(new Gate()) + " | " + stores(new Gate()) + " | " + inALoop(new Gate()) + " | " + outer(new Gate()) + " | " + log.join());
+}
+////: round-6
+function round(label: string): void {
+  spare.parts.length = 0;
+  console.log(label + ": " + chain(new Builder()) + " | " + same(new Builder()) + " | " + ignoring(new Builder()) + " | " + loop(new Builder()) + " | spare " + spare.build());
+}
+////: same
+function same(b: Builder): string {
+  const r = b.add("x");
+  return (r === b) + " " + r.parts.length + " " + b.parts.length;
+}
+////: same-3
+////= same
+
+////= ignoring
+
+////= loop-3
+
+////= round-6
+////: show-20
+function show(list: number[]): string {
+  const parts: string[] = [];
+  for (let i = 0; i < list.length; i++) parts.push(i in list ? (Object.is(list[i], -0) ? "-0" : String(list[i])) : "hole");
+  return "[" + parts.join() + "]";
+}
+////: show-40
+////= show-20
+
+////= sum-5
+
+////= grow
+
+////= two
+
+////= integers
+
+////= replacements-2
+////: store
+function store(p: Point): string {
+  const c = p.clone();
+  try {
+    c.x = 50;
+    c.y += 0.5;
+  } catch (error) {
+    return "threw " + (error instanceof Error ? error.constructor.name : typeof error) + " " + c.x + " " + c.y;
+  }
+  return c.x + " " + c.y + " " + p.x + " " + p.y;
+}
+////: stores
+function stores(g: Gate): string {
+  const record: { a?: number; b?: number } = {};
+  let local = 0;
+  try {
+    record.a = 1;
+    local = 1;
+    g.open();
+    record.b = 2;
+    local = 2;
+  } catch {}
+  return JSON.stringify(record) + " " + local;
+}
+////: storing
+function storing(this: Cell): void {
+  this.value += 10;
+  this.text += "!";
+  this.list.pop();
+  this.inner.depth++;
+}
+////: sum-5
+function sum(t: Table): string {
+  const r = t.row();
+  let total = 0;
+  for (let i = 0; i < r.length; i++) total += r[i];
+  return String(total);
+}
+////: swapping
+function swapping(this: Cell): void {
+  this.list = [9, 9];
+  this.inner = { depth: -1 };
+}
+////: throwing
+function throwing(this: Gate): number {
+  this.passes++;
+  throw new RangeError("closed");
+}
+////: total-4
+function total(p: Point, rounds: number): number {
+  let sum = 0;
+  for (let i = 0; i < rounds; i++) {
+    const c = p.clone();
+    sum += c.x + c.y;
+  }
+  return sum;
+}
+////: two
+function two(t: Table): string {
+  const a = t.row();
+  const b = t.row();
+  try {
+    a[1] = -5;
+  } catch (error) {
+    return "threw " + (error instanceof Error ? error.constructor.name : typeof error) + " " + show(a);
+  }
+  return (a === b) + " " + show(a) + " " + show(b);
+}
+////: unused
+function unused(c: Circle): string {
+  c.area();
+  c.area();
+  return "nothing used";
+}
+////: use-4
+function use(p: Point): string {
+  const c = p.clone();
+  return c.x + " " + c.y + " " + c.norm() + " " + (c instanceof Point) + " " + (c === p) + " " + Object.keys(c).join() + " " + JSON.stringify(c) + " " + Object.is(c.y, -0);
+}
+//// a-method-that-calls-super-is-taken-off-its-object.ts
+////= show-6
+
+class Base {
+  size: number = 1;
+  name: string = "base";
+  measure(): number {
+    return this.size;
+  }
+  describe(): string {
+    return "base " + this.name;
+  }
+  get doubled(): number {
+    return this.size * 2;
+  }
+  set doubled(value: number) {
+    this.size = value / 2;
+  }
+  static make(): string {
+    return "made by " + this.name;
+  }
+}
+
+class Derived extends Base {
+  extra: number = 10;
+  measure(): number {
+    return super.measure() + this.extra;
+  }
+  describe(): string {
+    return super.describe() + " derived";
+  }
+  onlySuper(): number {
+    return super.measure();
+  }
+  superGetter(): number {
+    return super.doubled;
+  }
+  superStore(): number {
+    super.doubled = 100;
+    return this.size;
+  }
+  arrowInside(): number {
+    const inner = (): number => super.measure() + this.extra;
+    return inner();
+  }
+  static make(): string {
+    return super.make() + "!";
+  }
+}
+
+const d = new Derived();
+const { measure, describe, onlySuper, superGetter, superStore, arrowInside } = d;
+
+show("honest measure", () => d.measure());
+show("honest describe", () => d.describe());
+show("honest superGetter", () => d.superGetter());
+show("bare measure", () => measure());
+show("bare describe", () => describe());
+show("bare onlySuper", () => onlySuper());
+show("bare superGetter", () => superGetter());
+show("bare superStore", () => superStore());
+show("bare arrowInside", () => arrowInside());
+
+const like = { size: 100, name: "like", extra: 1000 };
+show("on a look-alike: measure", () => d.measure.call(like));
+show("on a look-alike: describe", () => d.describe.call(like));
+show("on a look-alike: onlySuper", () => d.onlySuper.call(like));
+show("on a look-alike: superGetter", () => d.superGetter.call(like));
+show("on a look-alike: arrowInside", () => d.arrowInside.call(like));
+show("on a look-alike: superStore", () => d.superStore.call(like));
+show("the look-alike afterwards", () => JSON.stringify(like));
+show("on a base instance: measure", () => d.measure.call(new Base()));
+show("on a base instance: describe", () => d.describe.call(new Base()));
+show("on a number: onlySuper", () => d.onlySuper.call(5));
+
+const borrowed = { size: 7, name: "borrowed", extra: 70, measure: d.measure, describe: d.describe };
+show("as a member of another object: measure", () => borrowed.measure());
+show("as a member of another object: describe", () => borrowed.describe());
+
+const make = Derived.make;
+show("honest static", () => Derived.make());
+show("bare static", () => make());
+show("static on a look-alike", () => Derived.make.call({ name: "look-alike" }));
+
+const original = Base.prototype.measure;
+Base.prototype.measure = function (): number {
+  return -1;
+};
+show("super sees a replaced method, on a look-alike", () => d.onlySuper.call(like));
+Base.prototype.measure = original;
+show("honest superStore", () => d.superStore());
+show("keys afterwards", () => Object.keys(d).join());
+//// a-method-that-changed-nothing-honest.ts
+////= Cell-6
+
+function sum(c: Cell): number {
+  return c.value + (c.touch(), c.value) + c.value;
+}
+
+function round(label: string): void {
+  console.log(label + ": " + around(new Cell()) + " | " + lengths(new Cell()) + " | " + nested(new Cell()) + " | " + loop(new Cell()) + " | " + sum(new Cell()));
+}
+
+const original = Cell.prototype.touch;
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += around(new Cell()).length + lengths(new Cell()).length + loop(new Cell()).length + sum(new Cell());
+console.log("2000 honest: " + warm);
+round("the method");
+round("one that stores into the fields");
+round("one that replaces the array and the object");
+round("put back");
+
+export {};
+//// a-method-that-changed-nothing-is-replaced-by-one-that-stores-by-a-plain-store.ts
+////= Cell-6
+
+function sum(c: Cell): number {
+  return c.value + (c.touch(), c.value) + c.value;
+}
+
+function round(label: string): void {
+  console.log(label + ": " + around(new Cell()) + " | " + lengths(new Cell()) + " | " + nested(new Cell()) + " | " + loop(new Cell()) + " | " + sum(new Cell()));
+}
+
+const original = Cell.prototype.touch;
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += around(new Cell()).length + lengths(new Cell()).length + loop(new Cell()).length + sum(new Cell());
+console.log("2000 honest: " + warm);
+round("the method");
+Cell.prototype.touch = storing;
+round("one that stores into the fields");
+Cell.prototype.touch = swapping;
+round("one that replaces the array and the object");
+Cell.prototype.touch = original;
+round("put back");
+
+export {};
+//// a-method-that-changed-nothing-is-replaced-by-one-that-stores-through-object-assign.ts
+////= Cell-6
+
+function sum(c: Cell): number {
+  return c.value + (c.touch(), c.value) + c.value;
+}
+
+function round(label: string): void {
+  console.log(label + ": " + around(new Cell()) + " | " + lengths(new Cell()) + " | " + nested(new Cell()) + " | " + loop(new Cell()) + " | " + sum(new Cell()));
+}
+
+const original = Cell.prototype.touch;
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += around(new Cell()).length + lengths(new Cell()).length + loop(new Cell()).length + sum(new Cell());
+console.log("2000 honest: " + warm);
+round("the method");
+Object.assign(Cell.prototype, { touch: storing });
+round("one that stores into the fields");
+Object.assign(Cell.prototype, { touch: swapping });
+round("one that replaces the array and the object");
+Object.assign(Cell.prototype, { touch: original });
+round("put back");
+
+export {};
+//// a-method-that-dropped-its-argument-honest.ts
+////= Pair-5
+
+////= Sink
+
+const keptPairs: Pair[] = [];
+const keptLists: number[][] = [];
+const keptFunctions: (() => number)[] = [];
+
+////= keepPair
+
+////= keepList
+
+function keepFunction(f: () => number): void {
+  keptFunctions.push(f);
+}
+
+////= feed-2
+
+const s = new Sink();
+const originals = { take: s.take, takeList: s.takeList, takeFunction: s.takeFunction };
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += feed(s, i) + feedList(s, i).length + feedFunction(s, i);
+console.log("2000 honest: " + warm);
+round("the methods", s);
+
+round("ones that keep what they get", s);
+console.log("churn: " + churn());
+Bun.gc(true);
+console.log("churn: " + churn());
+console.log("kept pairs: " + JSON.stringify(keptPairs));
+console.log("kept lists: " + JSON.stringify(keptLists));
+console.log("kept functions: " + keptFunctions.map(f => f() + " " + f()).join());
+
+round("put back", s);
+console.log("kept since: " + keptPairs.length + " " + keptLists.length + " " + keptFunctions.length);
+
+export {};
+//// a-method-that-dropped-its-argument-is-replaced-by-one-that-keeps-it-by-a-plain-store.ts
+////= Pair-5
+
+////= Sink
+
+const keptPairs: Pair[] = [];
+const keptLists: number[][] = [];
+const keptFunctions: (() => number)[] = [];
+
+////= keepPair
+
+////= keepList
+
+function keepFunction(f: () => number): void {
+  keptFunctions.push(f);
+}
+
+////= feed-2
+
+const s = new Sink();
+const originals = { take: s.take, takeList: s.takeList, takeFunction: s.takeFunction };
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += feed(s, i) + feedList(s, i).length + feedFunction(s, i);
+console.log("2000 honest: " + warm);
+round("the methods", s);
+
+Sink.prototype.take = keepPair;
+Sink.prototype.takeList = keepList;
+Sink.prototype.takeFunction = keepFunction;
+round("ones that keep what they get", s);
+console.log("churn: " + churn());
+Bun.gc(true);
+console.log("churn: " + churn());
+console.log("kept pairs: " + JSON.stringify(keptPairs));
+console.log("kept lists: " + JSON.stringify(keptLists));
+console.log("kept functions: " + keptFunctions.map(f => f() + " " + f()).join());
+
+Sink.prototype.take = originals.take;
+Sink.prototype.takeList = originals.takeList;
+Sink.prototype.takeFunction = originals.takeFunction;
+round("put back", s);
+console.log("kept since: " + keptPairs.length + " " + keptLists.length + " " + keptFunctions.length);
+
+export {};
+//// a-method-that-dropped-its-argument-is-replaced-by-one-that-keeps-it-through-object-assign.ts
+////= Pair-5
+
+////= Sink
+
+const keptPairs: Pair[] = [];
+const keptLists: number[][] = [];
+const keptFunctions: (() => number)[] = [];
+
+////= keepPair
+
+////= keepList
+
+function keepFunction(f: () => number): void {
+  keptFunctions.push(f);
+}
+
+////= feed-2
+
+const s = new Sink();
+const originals = { take: s.take, takeList: s.takeList, takeFunction: s.takeFunction };
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += feed(s, i) + feedList(s, i).length + feedFunction(s, i);
+console.log("2000 honest: " + warm);
+round("the methods", s);
+
+Object.assign(Sink.prototype, { take: keepPair });
+Object.assign(Sink.prototype, { takeList: keepList });
+Object.assign(Sink.prototype, { takeFunction: keepFunction });
+round("ones that keep what they get", s);
+console.log("churn: " + churn());
+Bun.gc(true);
+console.log("churn: " + churn());
+console.log("kept pairs: " + JSON.stringify(keptPairs));
+console.log("kept lists: " + JSON.stringify(keptLists));
+console.log("kept functions: " + keptFunctions.map(f => f() + " " + f()).join());
+
+Object.assign(Sink.prototype, { take: originals.take });
+Object.assign(Sink.prototype, { takeList: originals.takeList });
+Object.assign(Sink.prototype, { takeFunction: originals.takeFunction });
+round("put back", s);
+console.log("kept since: " + keptPairs.length + " " + keptLists.length + " " + keptFunctions.length);
+
+export {};
+//// a-method-that-lost-its-object-passes-this-on.ts
+////= show-6
+
+const registry: Item[] = [];
+
+////= lines-20	weightOf	item	Item	number	return	item.weight
+////= lines-32	nameLength	item	Item	number	item.name.length
+
+////= lines-146	Wrapper	inner	Item	weight	number	inner.weight
+
+class Item {
+  weight: number = 3;
+  name: string = "item";
+  parent: Item | null = null;
+  toHelper(): number {
+    return weightOf(this);
+  }
+  toSecondHelper(): number {
+    return nameLength(this);
+  }
+  register(): number {
+    return registry.push(this);
+  }
+  wrap(): Wrapper {
+    return new Wrapper(this);
+  }
+  adopt(child: Item): void {
+    child.parent = this;
+  }
+  isItem(): boolean {
+    return this instanceof Item;
+  }
+  isSame(other: Item): boolean {
+    return this === other;
+  }
+  names(): string {
+    const out: string[] = [];
+    for (const key in this) out.push(key);
+    return out.join("+");
+  }
+  copy(): number {
+    return { ...this }.weight;
+  }
+  inList(): number {
+    return [this, this].map(weightOf).length;
+  }
+  captured(): () => number {
+    return () => weightOf(this);
+  }
+}
+
+const item = new Item();
+const like = { weight: 30, name: "like", parent: null };
+const wrong = { weight: "heavy", name: 5, parent: null };
+
+function all(title: string, receiver: unknown): void {
+  show(title + " toHelper", () => item.toHelper.call(receiver));
+  show(title + " toSecondHelper", () => item.toSecondHelper.call(receiver));
+  show(title + " register", () => item.register.call(receiver));
+  show(title + " wrap, then weight", () => item.wrap.call(receiver).weight());
+  show(title + " isItem", () => item.isItem.call(receiver));
+  show(title + " isSame", () => item.isSame.call(receiver, item));
+  show(title + " names", () => item.names.call(receiver));
+  show(title + " copy", () => item.copy.call(receiver));
+  show(title + " inList", () => item.inList.call(receiver));
+  show(title + " captured", () => item.captured.call(receiver)());
+  show(title + " adopt", () => {
+    const child = new Item();
+    item.adopt.call(receiver, child);
+    return typeof child.parent + " " + (child.parent === null ? "null" : typeof child.parent?.weight);
+  });
+}
+
+all("honest", item);
+all("look-alike", like);
+all("wrong kinds", wrong);
+all("nothing", undefined);
+all("a number", 5);
+all("honest again", new Item());
+
+show("what was registered", () => registry.map(entry => typeof entry).join());
+show("weights of what was registered", () => registry.map(entry => {
+  try {
+    return typeof entry.weight + " " + entry.weight;
+  } catch (error) {
+    return "threw";
+  }
+}).join(", "));
+show("honest helper", () => weightOf(item) + nameLength(item));
+//// a-method-that-made-fresh-arrays-of-integers-honest.ts
+////= Table
+
+////= Noisy
+
+const shared = [7, 8, 9];
+
+////= show-40
+
+function round(label: string, t: Table): void {
+  console.log(label + ": " + sum(t) + " | " + grow(t) + " | " + two(t) + " | " + integers(t) + " | " + t.row().constructor.name);
+}
+
+const t = new Table();
+const original = Table.prototype.row;
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += sum(t).length + grow(t).length + two(t).length + integers(t).length;
+console.log("2000 honest: " + warm);
+round("the method", t);
+for (const [label, replacement] of replacements) {
+  round("never installed: " + label, t);
+}
+console.log("the shared array at the end: " + show(shared));
+round("put back", t);
+
+export {};
+//// a-method-that-made-fresh-arrays-of-integers-is-replaced-by-a-plain-store.ts
+////= Table
+
+////= Noisy
+
+const shared = [7, 8, 9];
+
+////= show-40
+
+function round(label: string, t: Table): void {
+  console.log(label + ": " + sum(t) + " | " + grow(t) + " | " + two(t) + " | " + integers(t) + " | " + t.row().constructor.name);
+}
+
+const t = new Table();
+const original = Table.prototype.row;
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += sum(t).length + grow(t).length + two(t).length + integers(t).length;
+console.log("2000 honest: " + warm);
+round("the method", t);
+for (const [label, replacement] of replacements) {
+  Table.prototype.row = replacement;
+  round(label, t);
+}
+console.log("the shared array at the end: " + show(shared));
+Table.prototype.row = original;
+round("put back", t);
+
+export {};
+//// a-method-that-made-fresh-arrays-of-integers-is-replaced-through-object-assign.ts
+////= Table
+
+////= Noisy
+
+const shared = [7, 8, 9];
+
+////= show-40
+
+function round(label: string, t: Table): void {
+  console.log(label + ": " + sum(t) + " | " + grow(t) + " | " + two(t) + " | " + integers(t) + " | " + t.row().constructor.name);
+}
+
+const t = new Table();
+const original = Table.prototype.row;
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += sum(t).length + grow(t).length + two(t).length + integers(t).length;
+console.log("2000 honest: " + warm);
+round("the method", t);
+for (const [label, replacement] of replacements) {
+  Object.assign(Table.prototype, { row: replacement });
+  round(label, t);
+}
+console.log("the shared array at the end: " + show(shared));
+Object.assign(Table.prototype, { row: original });
+round("put back", t);
+
+export {};
+//// a-method-that-made-points-honest.ts
+////= Point-30
+
+function round(label: string): void {
+  console.log(label + ": " + use(new Point(3, 4)) + " | " + store(new Point(3, 4)) + " | " + total(new Point(3, 4), 3));
+}
+
+const original = Point.prototype.clone;
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += use(new Point(i, 1)).length + total(new Point(i, 1), 2);
+console.log("2000 honest: " + warm);
+round("the method");
+for (const [label, replacement] of replacements) {
+  round("never installed: " + label);
+}
+round("put back");
+
+export {};
+//// a-method-that-made-points-is-replaced-by-one-that-makes-look-alikes-by-a-plain-store.ts
+////= Point-30
+
+function round(label: string): void {
+  console.log(label + ": " + use(new Point(3, 4)) + " | " + store(new Point(3, 4)) + " | " + total(new Point(3, 4), 3));
+}
+
+const original = Point.prototype.clone;
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += use(new Point(i, 1)).length + total(new Point(i, 1), 2);
+console.log("2000 honest: " + warm);
+round("the method");
+////= for-55	Point.prototype.clone = replacement
+Point.prototype.clone = original;
+round("put back");
+
+export {};
+//// a-method-that-made-points-is-replaced-by-one-that-makes-look-alikes-through-object-assign.ts
+////= Point-30
+
+function round(label: string): void {
+  console.log(label + ": " + use(new Point(3, 4)) + " | " + store(new Point(3, 4)) + " | " + total(new Point(3, 4), 3));
+}
+
+const original = Point.prototype.clone;
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += use(new Point(i, 1)).length + total(new Point(i, 1), 2);
+console.log("2000 honest: " + warm);
+round("the method");
+////= for-55	Object.assign(Point.prototype, { clone: replacement })
+Object.assign(Point.prototype, { clone: original });
+round("put back");
+
+export {};
+//// a-method-that-never-threw-honest.ts
+const log: string[] = [];
+
+////= Gate
+
+////= throwing
+
+////= lines-34	throwingAString	number	throw	"a string"
+
+////= guarded-3
+
+////= lines-267	unguarded	g	Gate	g.open	g.open
+
+////= outer
+
+////= round-5
+
+const original = Gate.prototype.open;
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += guarded(new Gate()).length + partial(new Gate()).length + outer(new Gate()).length;
+console.log("2000 honest: " + warm);
+round("the method");
+round("one that throws an error");
+round("one that throws a string");
+round("put back");
+
+export {};
+//// a-method-that-never-threw-is-replaced-by-one-that-throws-by-a-plain-store.ts
+const log: string[] = [];
+
+////= Gate
+
+////= throwing
+
+////= lines-34	throwingAString	number	throw	"a string"
+
+////= guarded-3
+
+////= lines-267	unguarded	g	Gate	g.open	g.open
+
+////= outer
+
+////= round-5
+
+const original = Gate.prototype.open;
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += guarded(new Gate()).length + partial(new Gate()).length + outer(new Gate()).length;
+console.log("2000 honest: " + warm);
+round("the method");
+Gate.prototype.open = throwing;
+round("one that throws an error");
+Gate.prototype.open = throwingAString;
+round("one that throws a string");
+Gate.prototype.open = original;
+round("put back");
+
+export {};
+//// a-method-that-never-threw-is-replaced-by-one-that-throws-through-object-assign.ts
+const log: string[] = [];
+
+////= Gate
+
+////= throwing
+
+////= lines-34	throwingAString	number	throw	"a string"
+
+////= guarded-3
+
+////= lines-267	unguarded	g	Gate	g.open	g.open
+
+////= outer
+
+////= round-5
+
+const original = Gate.prototype.open;
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += guarded(new Gate()).length + partial(new Gate()).length + outer(new Gate()).length;
+console.log("2000 honest: " + warm);
+round("the method");
+Object.assign(Gate.prototype, { open: throwing });
+round("one that throws an error");
+Object.assign(Gate.prototype, { open: throwingAString });
+round("one that throws a string");
+Object.assign(Gate.prototype, { open: original });
+round("put back");
+
+export {};
+//// a-method-that-reads-a-private-name-is-called-bare-and-on-its-object.ts
+class Subject {
+  #secret: number = 42;
+  readSecret(): number {
+    return this.#secret;
+  }
+}
+const s = new Subject();
+const readSecret = s.readSecret;
+try {
+  console.log("gives " + readSecret());
+} catch (error) {
+  console.log("threw " + (error instanceof TypeError));
+}
+console.log("gives " + s.readSecret());
+//// a-method-that-returned-its-receiver-honest.ts
+////= Builder
+
+////= copying
+
+const spare = new Builder();
+
+////= diverting
+
+function chain(b: Builder): string {
+  return b.add("a").add("b").add("c").build() + " / " + b.build();
+}
+
+////= same-3
+
+const original = Builder.prototype.add;
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += chain(new Builder()).length + same(new Builder()).length + loop(new Builder()).length;
+console.log("2000 honest: " + warm);
+round("the method");
+round("one that returns a copy");
+round("one that returns a shared builder");
+round("put back");
+
+export {};
+//// a-method-that-returned-its-receiver-is-replaced-by-one-that-returns-another-object-by-a-plain-store.ts
+////= Builder
+
+////= copying
+
+const spare = new Builder();
+
+////= diverting
+
+function chain(b: Builder): string {
+  return b.add("a").add("b").add("c").build() + " / " + b.build();
+}
+
+////= same-3
+
+const original = Builder.prototype.add;
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += chain(new Builder()).length + same(new Builder()).length + loop(new Builder()).length;
+console.log("2000 honest: " + warm);
+round("the method");
+Builder.prototype.add = copying;
+round("one that returns a copy");
+Builder.prototype.add = diverting;
+round("one that returns a shared builder");
+Builder.prototype.add = original;
+round("put back");
+
+export {};
+//// a-method-that-returned-its-receiver-is-replaced-by-one-that-returns-another-object-through-object-assign.ts
+////= Builder
+
+////= copying
+
+const spare = new Builder();
+
+////= diverting
+
+function chain(b: Builder): string {
+  return b.add("a").add("b").add("c").build() + " / " + b.build();
+}
+
+////= same-3
+
+const original = Builder.prototype.add;
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += chain(new Builder()).length + same(new Builder()).length + loop(new Builder()).length;
+console.log("2000 honest: " + warm);
+round("the method");
+Object.assign(Builder.prototype, { add: copying });
+round("one that returns a copy");
+Object.assign(Builder.prototype, { add: diverting });
+round("one that returns a shared builder");
+Object.assign(Builder.prototype, { add: original });
+round("put back");
+
+export {};
+//// a-method-that-stores-into-this-is-constructed-all-the-same.ts
+// bump and the setter store into `this`, which they declare to be a Counter: they are methods. Somebody constructs them all the same.
+interface Counter { count: number; step: number; bump(): number; stride: number }
+function Counter(this: Counter, step: number) {
+  this.count = 0;
+  this.step = step;
+}
+Counter.prototype.bump = function bump(this: Counter) {
+  this.count += this.step;
+  return this.count;
+};
+const descriptor = {
+  set: function setStride(this: Counter, step: number) {
+    this.step = step;
+  },
+  get: function getStride(this: Counter) {
+    return this.step;
+  },
+};
+Object.defineProperty(Counter.prototype, "stride", descriptor);
+const CounterConstructor = Counter as unknown as new (step: number) => Counter;
+
+const lines: string[] = [];
+const counter = new CounterConstructor(2);
+let total = 0;
+for (let i = 0; i < 2000; i++) {
+  if (i === 1000) counter.stride = 3;
+  total += counter.bump();
+}
+lines.push(String(total), Object.keys(counter).join(","), String(counter.stride));
+
+type Constructible = new (...values: unknown[]) => Record<string, unknown>;
+const Bump = counter.bump as unknown as Constructible;
+const bumped = new Bump();
+lines.push(Object.keys(bumped).join(","), String(bumped.count), String(bumped instanceof Bump), String(bumped instanceof Counter));
+lines.push(String(Object.getPrototypeOf(bumped) === Bump.prototype));
+
+const SetStride = descriptor.set as unknown as Constructible;
+const made = new SetStride(7);
+lines.push(JSON.stringify(made), String(made instanceof SetStride));
+
+// What the method made is handed to the method, and to the other one.
+lines.push(String(counter.bump.call(made as unknown as Counter)), JSON.stringify(made));
+(made as unknown as Counter).count = 1;
+lines.push(String(counter.bump.call(made as unknown as Counter)), JSON.stringify(made));
+descriptor.set.call(bumped as unknown as Counter, 5);
+lines.push(JSON.stringify(bumped));
+
+// Many of them, beside the real ones, through one function.
+////= lines-68	countOf	value	Counter	number	value.count	value.step
+let sum = 0;
+for (let i = 0; i < 3000; i++) {
+  const value = i % 3 === 0 ? (new SetStride(i) as unknown as Counter) : new CounterConstructor(i);
+  const count = countOf(value);
+  sum += count === count ? count : 1;
+}
+lines.push(String(sum));
+console.log(lines.join("\n"));
+//// a-method-that-takes-a-function-is-called-with-something-else.ts
+////= text-12
+
+class Plan {
+  steps: number = 3;
+  run(): number {
+    return this.steps;
+  }
+}
+
+type Wide = (() => number) | number | string | Plan | null | undefined;
+
+interface Runner {
+  run(v: Wide): number;
+  runTwice(v: Wide): number;
+  kind(v: Wide): string;
+  arity(v: Wide): number;
+  title(v: Wide): string;
+  viaCall(v: Wide): number;
+  viaApply(v: Wide): number;
+  bound(v: Wide): number;
+  keep(v: Wide): void;
+  each(v: Wide): number[];
+}
+
+class FunctionRunner implements Runner {
+  kept: () => number = () => -1;
+  run(f: () => number): number {
+    return f();
+  }
+  runTwice(f: () => number): number {
+    return f() + f();
+  }
+  kind(f: () => number): string {
+    return typeof f;
+  }
+  arity(f: () => number): number {
+    return f.length;
+  }
+  title(f: () => number): string {
+    return f.name;
+  }
+  viaCall(f: () => number): number {
+    return f.call(undefined);
+  }
+  viaApply(f: () => number): number {
+    return f.apply(undefined);
+  }
+  bound(f: () => number): number {
+    return f.bind(undefined)();
+  }
+  keep(f: () => number): void {
+    this.kept = f;
+  }
+  each(f: () => number): number[] {
+    return [1, 2].map(f);
+  }
+}
+
+const own = new FunctionRunner();
+const runner: Runner = own;
+////= lines-34	seven	number	return	7
+const values: [string, Wide][] = [
+  ["function", seven],
+  ["arrow", () => 8],
+  ["number", 5],
+  ["string", "text"],
+  ["plan", new Plan()],
+  ["null", null],
+  ["undefined", undefined],
+  ["function again", seven],
+];
+
+for (const [label, value] of values) {
+  show(label + " run", () => runner.run(value));
+  show(label + " runTwice", () => runner.runTwice(value));
+  show(label + " kind", () => runner.kind(value));
+  show(label + " arity", () => runner.arity(value));
+  show(label + " title", () => runner.title(value));
+  show(label + " viaCall", () => runner.viaCall(value));
+  show(label + " viaApply", () => runner.viaApply(value));
+  show(label + " bound", () => runner.bound(value));
+  show(label + " each", () => runner.each(value));
+  show(label + " keep", () => runner.keep(value));
+  show(label + " kept kind", () => typeof own.kept);
+  show(label + " kept called", () => own.kept());
+}
+//// a-method-that-takes-a-number-is-called-with-a-string.ts
+////= text-12
+
+interface Meter {
+  same(v: number | string | null | undefined | boolean | bigint): number;
+  plusOne(v: number | string | null | undefined | boolean | bigint): number;
+  twice(v: number | string | null | undefined | boolean | bigint): number;
+  whole(v: number | string | null | undefined | boolean | bigint): number;
+  unsigned(v: number | string | null | undefined | boolean | bigint): number;
+  negated(v: number | string | null | undefined | boolean | bigint): number;
+  fixed(v: number | string | null | undefined | boolean | bigint): string;
+  below(v: number | string | null | undefined | boolean | bigint): boolean;
+  isFive(v: number | string | null | undefined | boolean | bigint): boolean;
+  truthy(v: number | string | null | undefined | boolean | bigint): string;
+  root(v: number | string | null | undefined | boolean | bigint): number;
+  next(v: number | string | null | undefined | boolean | bigint): number;
+  keep(v: number | string | null | undefined | boolean | bigint): void;
+  index(v: number | string | null | undefined | boolean | bigint): string;
+}
+
+class NumberMeter implements Meter {
+  last: number = 0;
+  all: number[] = [];
+  same(n: number): number {
+    return n;
+  }
+  plusOne(n: number): number {
+    return n + 1;
+  }
+  twice(n: number): number {
+    return n * 2;
+  }
+  whole(n: number): number {
+    return n | 0;
+  }
+  unsigned(n: number): number {
+    return n >>> 0;
+  }
+  negated(n: number): number {
+    return -n;
+  }
+  fixed(n: number): string {
+    return n.toFixed(1);
+  }
+  below(n: number): boolean {
+    return n < 10;
+  }
+  isFive(n: number): boolean {
+    return n === 5;
+  }
+  truthy(n: number): string {
+    return n ? "yes" : "no";
+  }
+  root(n: number): number {
+    return Math.sqrt(n);
+  }
+  next(n: number): number {
+    n++;
+    return n;
+  }
+  keep(n: number): void {
+    this.last = n;
+    this.all.push(n);
+  }
+  index(n: number): string {
+    return "abcdefgh"[n];
+  }
+}
+
+const own = new NumberMeter();
+const meter: Meter = own;
+const values: [string, number | string | null | undefined | boolean | bigint][] = [
+  ["5", 5],
+  ["2.5", 2.5],
+  ["-0", -0],
+  ["NaN", NaN],
+  ["'5'", "5"],
+  ["'text'", "text"],
+  ["''", ""],
+  ["null", null],
+  ["undefined", undefined],
+  ["true", true],
+  ["7n", 7n],
+];
+
+for (const [label, value] of values) {
+  show(label + " same", () => meter.same(value));
+  show(label + " plusOne", () => meter.plusOne(value));
+  show(label + " twice", () => meter.twice(value));
+  show(label + " whole", () => meter.whole(value));
+  show(label + " unsigned", () => meter.unsigned(value));
+  show(label + " negated", () => meter.negated(value));
+  show(label + " fixed", () => meter.fixed(value));
+  show(label + " below", () => meter.below(value));
+  show(label + " isFive", () => meter.isFive(value));
+  show(label + " truthy", () => meter.truthy(value));
+  show(label + " root", () => meter.root(value));
+  show(label + " next", () => meter.next(value));
+  show(label + " index", () => meter.index(value));
+  show(label + " keep", () => meter.keep(value));
+  show(label + " kept", () => own.last);
+  show(label + " kept plus one", () => own.last + 1);
+}
+show("all kept", () => own.all.map(n => typeof n).join());
+show("sum of all but the last", () => {
+  let sum = 0;
+  for (let i = 0; i < own.all.length - 1; i++) sum += own.all[i];
+  return sum;
+});
+//// a-method-that-takes-a-string-is-called-with-a-number.ts
+////= text-12
+
+type Wide = string | number | null | undefined | string[] | { length: number };
+
+interface Reader {
+  same(v: Wide): string;
+  size(v: Wide): number;
+  first(v: Wide): string;
+  code(v: Wide): number;
+  upper(v: Wide): string;
+  joined(v: Wide): string;
+  template(v: Wide): string;
+  slice(v: Wide): string;
+  has(v: Wide): boolean;
+  equal(v: Wide): boolean;
+  before(v: Wide): boolean;
+  letters(v: Wide): string;
+  keep(v: Wide): void;
+  asKey(v: Wide): number;
+}
+
+const table: Record<string, number> = { abc: 1, "5": 2, undefined: 3, null: 4, "a,b": 5 };
+
+class StringReader implements Reader {
+  last: string = "";
+  all: string[] = [];
+  same(s: string): string {
+    return s;
+  }
+  size(s: string): number {
+    return s.length;
+  }
+  first(s: string): string {
+    return s[0];
+  }
+  code(s: string): number {
+    return s.charCodeAt(0);
+  }
+  upper(s: string): string {
+    return s.toUpperCase();
+  }
+  joined(s: string): string {
+    return s + "!";
+  }
+  template(s: string): string {
+    return `<${s}>`;
+  }
+  slice(s: string): string {
+    return s.slice(1);
+  }
+  has(s: string): boolean {
+    return s.includes("b");
+  }
+  equal(s: string): boolean {
+    return s === "abc";
+  }
+  before(s: string): boolean {
+    return s < "b";
+  }
+  letters(s: string): string {
+    let out = "";
+    for (const letter of s) out += "[" + letter + "]";
+    return out;
+  }
+  keep(s: string): void {
+    this.last = s;
+    this.all.push(s);
+  }
+  asKey(s: string): number {
+    return table[s];
+  }
+}
+
+const own = new StringReader();
+const reader: Reader = own;
+const values: [string, Wide][] = [
+  ["'abc'", "abc"],
+  ["''", ""],
+  ["5", 5],
+  ["NaN", NaN],
+  ["null", null],
+  ["undefined", undefined],
+  ["['a','b']", ["a", "b"]],
+  ["{length:2}", { length: 2 }],
+];
+
+for (const [label, value] of values) {
+  show(label + " same", () => reader.same(value));
+  show(label + " size", () => reader.size(value));
+  show(label + " first", () => reader.first(value));
+  show(label + " code", () => reader.code(value));
+  show(label + " upper", () => reader.upper(value));
+  show(label + " joined", () => reader.joined(value));
+  show(label + " template", () => reader.template(value));
+  show(label + " slice", () => reader.slice(value));
+  show(label + " has", () => reader.has(value));
+  show(label + " equal", () => reader.equal(value));
+  show(label + " before", () => reader.before(value));
+  show(label + " letters", () => reader.letters(value));
+  show(label + " asKey", () => reader.asKey(value));
+  show(label + " keep", () => reader.keep(value));
+  show(label + " kept", () => own.last);
+  show(label + " kept length", () => own.last.length);
+}
+show("all kept", () => own.all.map(s => typeof s).join());
+show("all kept joined", () => own.all.join("|"));
+//// a-method-that-takes-a-wider-literal-shape-reads-a-member-that-is-not-there.ts
+////= text-12
+
+////= lines-27	Point2	x	number	y	number
+interface Point3 extends Point2 {
+  z: number;
+  label: string;
+}
+
+interface Plotter {
+  depth(p: Point2): number;
+  sum(p: Point2): number;
+  title(p: Point2): string;
+  raise(p: Point2): void;
+  copy(p: Point2): Point3;
+}
+
+const plotter: Plotter = {
+  depth(p: Point3) {
+    return p.z;
+  },
+  sum(p: Point3) {
+    return p.x + p.y + p.z;
+  },
+  title(p: Point3) {
+    return p.label.toUpperCase();
+  },
+  raise(p: Point3) {
+    p.z += 1;
+  },
+  copy(p: Point3) {
+    return { ...p };
+  },
+};
+
+function makers(): [string, Point2][] {
+  const extra = { x: 1, y: 2, w: "extra", z: "a string called z" };
+  const reordered = { label: "r", z: 30, y: 20, x: 10 };
+  const whole: Point3 = { x: 1, y: 2, z: 3, label: "p" };
+  return [
+    ["honest", whole],
+    ["flat", { x: 1, y: 2 }],
+    ["another z", extra],
+    ["reordered", reordered],
+    ["class", new (class Flat { x = 5; y = 6; })()],
+    ["honest again", reordered],
+  ];
+}
+
+for (const [kind, p] of makers()) {
+  show(kind + " depth", () => plotter.depth(p));
+  show(kind + " sum", () => plotter.sum(p));
+  show(kind + " title", () => plotter.title(p));
+  show(kind + " copy", () => plotter.copy(p));
+  show(kind + " raise", () => plotter.raise(p));
+  show(kind + " afterwards", () => p);
+  show(kind + " keys", () => Object.keys(p).join());
+}
+
+const honest: Point3 = { x: 1, y: 1, z: 1, label: "h" };
+let total = 0;
+for (let i = 0; i < 2000; i++) total += plotter.sum(honest);
+show("2000 honest sums", () => total);
+show("then a flat one", () => plotter.sum({ x: 1, y: 1 }));
+show("then an honest one", () => plotter.sum(honest));
+//// a-method-that-takes-an-array-is-called-with-something-else.ts
+////= text-12
+
+type Wide = number[] | string | Set<number> | { length: number; 0: number } | Float64Array | null;
+
+interface Summer {
+  size(v: Wide): number;
+  first(v: Wide): number;
+  sum(v: Wide): number;
+  sumOf(v: Wide): number;
+  add(v: Wide): number;
+  doubled(v: Wide): number[];
+  spread(v: Wide): number[];
+  head(v: Wide): number;
+  put(v: Wide): void;
+  isArray(v: Wide): boolean;
+}
+
+class ArraySummer implements Summer {
+  size(list: number[]): number {
+    return list.length;
+  }
+  first(list: number[]): number {
+    return list[0];
+  }
+  sum(list: number[]): number {
+    let sum = 0;
+    for (let i = 0; i < list.length; i++) sum += list[i];
+    return sum;
+  }
+  sumOf(list: number[]): number {
+    let sum = 0;
+    for (const n of list) sum += n;
+    return sum;
+  }
+  add(list: number[]): number {
+    return list.push(4);
+  }
+  doubled(list: number[]): number[] {
+    return list.map(n => n * 2);
+  }
+  spread(list: number[]): number[] {
+    return [...list, 99];
+  }
+  head(list: number[]): number {
+    const [head] = list;
+    return head;
+  }
+  put(list: number[]): void {
+    list[1] = 50;
+  }
+  isArray(list: number[]): boolean {
+    return Array.isArray(list);
+  }
+}
+
+const summer: Summer = new ArraySummer();
+const makers: [string, () => Wide][] = [
+  ["array", () => [1, 2, 3]],
+  ["string", () => "123"],
+  ["set", () => new Set([1, 2, 3])],
+  ["array-like", () => ({ length: 2, 0: 10, 1: 20 })],
+  ["float64", () => new Float64Array([1.5, 2.5, 3.5])],
+  ["null", () => null],
+  ["array again", () => [4, 5, 6]],
+];
+
+for (const [label, make] of makers) {
+  show(label + " size", () => summer.size(make()));
+  show(label + " first", () => summer.first(make()));
+  show(label + " sum", () => summer.sum(make()));
+  show(label + " sumOf", () => summer.sumOf(make()));
+  show(label + " add", () => summer.add(make()));
+  show(label + " doubled", () => summer.doubled(make()));
+  show(label + " spread", () => summer.spread(make()));
+  show(label + " head", () => summer.head(make()));
+  show(label + " isArray", () => summer.isArray(make()));
+  show(label + " put", () => {
+    const value = make();
+    summer.put(value);
+    return value instanceof Set ? [...value, Object.keys(value).join()] : value;
+  });
+}
+//// a-method-that-takes-containers-of-dogs-gets-containers-of-cats.ts
+////= Person-5
+
+interface Wide {
+  list(v: Animal[]): string;
+  legsTotal(v: Animal[]): number;
+  map(v: Map<string, Animal>): string;
+  set(v: Set<Animal>): string;
+  home(v: { pet: Animal }): string;
+  deep(v: { home: { pet: Animal } }): string;
+  maker(v: () => Animal): string;
+  pair(v: [Animal, Animal]): string;
+  record(v: Record<string, Animal>): string;
+  later(v: Promise<Animal>): Promise<string>;
+  closure(v: Animal): () => string;
+}
+
+function about(d: Dog): string {
+  let bark: string;
+  try {
+    bark = d.bark();
+  } catch (error) {
+    bark = "no bark";
+  }
+  return typeof d.legs + " " + d.legs + " " + typeof d.tag + " " + typeof d.owner + " " + bark;
+}
+
+class Narrow implements Wide {
+  list(dogs: Dog[]): string {
+    return dogs.map(about).join("; ");
+  }
+  legsTotal(dogs: Dog[]): number {
+    let total = 0;
+    for (const d of dogs) total += d.legs;
+    return total;
+  }
+  map(dogs: Map<string, Dog>): string {
+    const out: string[] = [];
+    for (const [key, d] of dogs) out.push(key + " " + about(d));
+    return out.join("; ");
+  }
+  set(dogs: Set<Dog>): string {
+    return [...dogs].map(about).join("; ");
+  }
+  home(home: { pet: Dog }): string {
+    return about(home.pet);
+  }
+  deep(v: { home: { pet: Dog } }): string {
+    return typeof v.home.pet.legs + " " + (v.home.pet.legs + 1);
+  }
+  maker(make: () => Dog): string {
+    return about(make());
+  }
+  pair([first, second]: [Dog, Dog]): string {
+    return about(first) + "; " + about(second);
+  }
+  record(dogs: Record<string, Dog>): string {
+    return Object.keys(dogs).map(key => key + " " + about(dogs[key])).join("; ");
+  }
+  async later(dog: Promise<Dog>): Promise<string> {
+    return about(await dog);
+  }
+  closure(d: Dog): () => string {
+    return () => about(d);
+  }
+}
+
+const wide: Wide = new Narrow();
+const rex = new Dog("rex");
+const tom = new Cat("tom");
+const boris = new Spider("boris");
+
+show("list of dogs", () => wide.list([rex, rex]));
+show("list with a cat", () => wide.list([rex, tom, boris]));
+show("legs of dogs", () => wide.legsTotal([rex, rex]));
+show("legs with a cat", () => wide.legsTotal([rex, tom]));
+show("legs with a spider", () => wide.legsTotal([rex, boris]));
+show("map of dogs", () => wide.map(new Map([["r", rex]])));
+show("map with a cat", () => wide.map(new Map<string, Animal>([["r", rex], ["t", tom]])));
+show("set with a cat", () => wide.set(new Set<Animal>([rex, tom])));
+show("home of a dog", () => wide.home({ pet: rex }));
+show("home of a cat", () => wide.home({ pet: tom }));
+show("deep home of a dog", () => wide.deep({ home: { pet: rex } }));
+show("deep home of a cat", () => wide.deep({ home: { pet: tom } }));
+show("deep home of a spider", () => wide.deep({ home: { pet: boris } }));
+show("maker of a dog", () => wide.maker(() => rex));
+show("maker of a cat", () => wide.maker(() => tom));
+show("pair", () => wide.pair([tom, rex]));
+show("record", () => wide.record({ r: rex, t: tom }));
+const dogClosure = wide.closure(rex);
+const catClosure = wide.closure(tom);
+show("closure over a dog", dogClosure);
+show("closure over a cat", catClosure);
+show("closure over a dog again", dogClosure);
+show("honest call of the helper", () => about(rex));
+
+wide.later(Promise.resolve(rex)).then(result => {
+  console.log("promise of a dog: " + result);
+  return wide.later(Promise.resolve(tom));
+}).then(result => console.log("promise of a cat: " + result));
+//// a-method-that-takes-numbers-gets-an-array-of-something-else.ts
+////= text-12
+
+type Loose = (number | string | undefined | null | boolean | number[] | { valueOf(): number })[];
+
+interface Stats {
+  sum(list: Loose): number;
+  sumOf(list: Loose): number;
+  reduced(list: Loose): number;
+  doubled(list: Loose): number[];
+  whole(list: Loose): number[];
+  largest(list: Loose): number;
+  sorted(list: Loose): number[];
+  sortedByValue(list: Loose): number[];
+  first(list: Loose): number;
+  firstFixed(list: Loose): string;
+  hasTwo(list: Loose): boolean;
+  grown(list: Loose): number;
+  toFloats(list: Loose): number[];
+  kinds(list: Loose): string;
+}
+
+class NumberStats implements Stats {
+  sum(list: number[]): number {
+    let total = 0;
+    for (let i = 0; i < list.length; i++) total += list[i];
+    return total;
+  }
+  sumOf(list: number[]): number {
+    let total = 0;
+    for (const n of list) total += n;
+    return total;
+  }
+  reduced(list: number[]): number {
+    return list.reduce((a, b) => a + b, 0);
+  }
+  doubled(list: number[]): number[] {
+    return list.map(n => n * 2);
+  }
+  whole(list: number[]): number[] {
+    return list.map(n => n | 0);
+  }
+  largest(list: number[]): number {
+    return Math.max(...list);
+  }
+  sorted(list: number[]): number[] {
+    return [...list].sort();
+  }
+  sortedByValue(list: number[]): number[] {
+    return [...list].sort((a, b) => a - b);
+  }
+  first(list: number[]): number {
+    return list[0];
+  }
+  firstFixed(list: number[]): string {
+    return list[0].toFixed(1);
+  }
+  hasTwo(list: number[]): boolean {
+    return list.includes(2);
+  }
+  grown(list: number[]): number {
+    const copy = list.slice();
+    copy.push(1.5);
+    return copy[copy.length - 1] + copy.length;
+  }
+  toFloats(list: number[]): number[] {
+    return Array.from(new Float64Array(list));
+  }
+  kinds(list: number[]): string {
+    return list.map(n => typeof n).join();
+  }
+}
+
+const stats: Stats = new NumberStats();
+const holes: number[] = [1, 2, 3];
+delete holes[1];
+const lists: [string, Loose][] = [
+  ["whole numbers", [3, 1, 2]],
+  ["fractions", [1.5, 0.5, 2]],
+  ["strings", ["3", "1", "2"]],
+  ["words", ["b", "a"]],
+  ["mixed", [1, "2", 3]],
+  ["undefined inside", [1, undefined, 3]],
+  ["null inside", [1, null, 3]],
+  ["booleans", [true, false]],
+  ["nested", [[1], [2, 3]]],
+  ["objects", [{ valueOf: () => 4 }, { valueOf: () => 2 }]],
+  ["holes", holes],
+  ["empty", []],
+  ["whole numbers again", [3, 1, 2]],
+];
+
+function list(values: unknown[]): string {
+  return values.map(v => typeof v + ":" + (Object.is(v, -0) ? "-0" : String(v))).join(" ");
+}
+
+for (const [label, values] of lists) {
+  show(label + " sum", () => stats.sum(values));
+  show(label + " sumOf", () => stats.sumOf(values));
+  show(label + " reduced", () => stats.reduced(values));
+  show(label + " doubled", () => list(stats.doubled(values)));
+  show(label + " whole", () => list(stats.whole(values)));
+  show(label + " largest", () => stats.largest(values));
+  show(label + " sorted", () => list(stats.sorted(values)));
+  show(label + " sortedByValue", () => list(stats.sortedByValue(values)));
+  show(label + " first", () => stats.first(values));
+  show(label + " firstFixed", () => stats.firstFixed(values));
+  show(label + " hasTwo", () => stats.hasTwo(values));
+  show(label + " grown", () => stats.grown(values));
+  show(label + " toFloats", () => list(stats.toFloats(values)));
+  show(label + " kinds", () => stats.kinds(values));
+}
+//// a-method-that-takes-one-member-of-a-union-gets-another.ts
+////= text-12
+
+////= lines-27	Circle	kind	"circle"	radius	number
+////= lines-27	Square	kind	"square"	side	number
+interface Label {
+  kind: "label";
+  text: string;
+  radius: string;
+}
+type Shape = Circle | Square | Label;
+
+interface Wide {
+  kind(s: Shape): string;
+  isCircle(s: Shape): boolean;
+  isNotCircle(s: Shape): boolean;
+  radius(s: Shape): number;
+  area(s: Shape): number;
+  guarded(s: Shape): number;
+  switched(s: Shape): string;
+  grow(s: Shape): void;
+  onlyUndefined(v: undefined | number | null | string): string;
+  onlyNull(v: undefined | number | null | string): string;
+  onlyTrue(v: boolean | number): string;
+  onlyOne(v: number): string;
+}
+
+class Narrow implements Wide {
+  kind(c: Circle): string {
+    return c.kind;
+  }
+  isCircle(c: Circle): boolean {
+    return c.kind === "circle";
+  }
+  isNotCircle(c: Circle): boolean {
+    return c.kind !== "circle";
+  }
+  radius(c: Circle): number {
+    return c.radius;
+  }
+  area(c: Circle): number {
+    return c.radius * c.radius * 3;
+  }
+  guarded(c: Circle): number {
+    return c.kind === "circle" ? c.radius : -1;
+  }
+  switched(c: Circle): string {
+    switch (c.kind) {
+      case "circle":
+        return "a circle";
+      default:
+        return "something else";
+    }
+  }
+  grow(c: Circle): void {
+    c.radius += 1;
+  }
+  onlyUndefined(u: undefined): string {
+    return (u === undefined) + " " + typeof u + " " + (u ?? "fallback") + " " + String(u);
+  }
+  onlyNull(n: null): string {
+    return (n === null) + " " + typeof n + " " + (n ?? "fallback") + " " + String(n);
+  }
+  onlyTrue(t: true): string {
+    return (t === true) + " " + (t ? "yes" : "no") + " " + !t + " " + String(t);
+  }
+  onlyOne(one: 1): string {
+    return (one === 1) + " " + (one + 1) + " " + one * 2 + " " + String(one);
+  }
+}
+
+const wide: Wide = new Narrow();
+const shapes: [string, () => Shape][] = [
+  ["circle", () => ({ kind: "circle", radius: 2 })],
+  ["square", () => ({ kind: "square", side: 3 })],
+  ["label", () => ({ kind: "label", text: "t", radius: "wide" })],
+  ["circle with other key order", () => ({ radius: 4, kind: "circle" })],
+];
+for (const [label, make] of shapes) {
+  show(label + " kind", () => wide.kind(make()));
+  show(label + " isCircle", () => wide.isCircle(make()));
+  show(label + " isNotCircle", () => wide.isNotCircle(make()));
+  show(label + " radius", () => wide.radius(make()));
+  show(label + " area", () => wide.area(make()));
+  show(label + " guarded", () => wide.guarded(make()));
+  show(label + " switched", () => wide.switched(make()));
+  show(label + " grow", () => {
+    const shape = make();
+    wide.grow(shape);
+    return shape;
+  });
+}
+for (const value of [undefined, null, 0, 5, "", "text"]) {
+  show(String(value) + " (" + typeof value + ") as undefined", () => wide.onlyUndefined(value));
+  show(String(value) + " (" + typeof value + ") as null", () => wide.onlyNull(value));
+}
+for (const value of [true, false, 1, 0]) show(String(value) + " as true", () => wide.onlyTrue(value));
+for (const value of [1, 2, 0, -0, NaN, 1.5]) show(String(value) + " as 1", () => wide.onlyOne(value));
+//// a-method-that-uses-its-number-as-an-index-or-a-count-gets-something-else.ts
+////= text-12
+
+type Wide = number | string | null | undefined | boolean;
+
+interface Counts {
+  at(v: Wide): string;
+  put(v: Wide): string;
+  loop(v: Wide): number;
+  down(v: Wide): number;
+  fresh(v: Wide): number;
+  repeat(v: Wide): string;
+  slice(v: Wide): string;
+  odd(v: Wide): number;
+  shift(v: Wide): number;
+  floor(v: Wide): number;
+  char(v: Wide): string;
+  clamp(v: Wide): number;
+  typed(v: Wide): number;
+}
+
+const letters = ["a", "b", "c", "d"];
+
+class NumberCounts implements Counts {
+  at(i: number): string {
+    return letters[i];
+  }
+  put(i: number): string {
+    const copy = ["a", "b"];
+    copy[i] = "z";
+    return copy.length + " " + Object.keys(copy).join("+");
+  }
+  loop(n: number): number {
+    let rounds = 0;
+    for (let i = 0; i < n; i++) rounds++;
+    return rounds;
+  }
+  down(n: number): number {
+    let rounds = 0;
+    while (n > 0 && rounds < 10) {
+      n--;
+      rounds++;
+    }
+    return rounds;
+  }
+  fresh(n: number): number {
+    return new Array<number>(n).length;
+  }
+  repeat(n: number): string {
+    return "x".repeat(n);
+  }
+  slice(n: number): string {
+    return letters.slice(n).join("");
+  }
+  odd(n: number): number {
+    return n % 2;
+  }
+  shift(n: number): number {
+    return n << 1;
+  }
+  floor(n: number): number {
+    return Math.floor(n);
+  }
+  char(n: number): string {
+    return "abcd".charAt(n);
+  }
+  clamp(n: number): number {
+    return Math.min(Math.max(n, 0), 3);
+  }
+  typed(n: number): number {
+    return new Uint8Array([7, 8, 9])[n];
+  }
+}
+
+const counts: Counts = new NumberCounts();
+const values: [string, Wide][] = [
+  ["2", 2],
+  ["1.5", 1.5],
+  ["-1", -1],
+  ["-0", -0],
+  ["NaN", NaN],
+  ["2 ** 31", 2 ** 31],
+  ["2 ** 32 + 1", 2 ** 32 + 1],
+  ["'2'", "2"],
+  ["'02'", "02"],
+  ["'length'", "length"],
+  ["''", ""],
+  ["null", null],
+  ["undefined", undefined],
+  ["true", true],
+  ["2 again", 2],
+];
+
+for (const [label, value] of values) {
+  show(label + " at", () => counts.at(value));
+  show(label + " put", () => counts.put(value));
+  if (value !== 2 ** 31 && value !== 2 ** 32 + 1) show(label + " loop", () => counts.loop(value));
+  show(label + " down", () => counts.down(value));
+  if (value !== 2 ** 31) show(label + " fresh", () => counts.fresh(value));
+  if (value !== 2 ** 31 && value !== 2 ** 32 + 1) show(label + " repeat", () => counts.repeat(value));
+  show(label + " slice", () => counts.slice(value));
+  show(label + " odd", () => counts.odd(value));
+  show(label + " shift", () => counts.shift(value));
+  show(label + " floor", () => counts.floor(value));
+  show(label + " char", () => counts.char(value));
+  show(label + " clamp", () => counts.clamp(value));
+  show(label + " typed", () => counts.typed(value));
+}
+//// a-method-without-effects-honest.ts
+////= Circle-4
+
+let calls = 0;
+
+////= counting
+
+////= unused
+
+////= lines-267	twice	c	Circle	c.area	c.area
+
+////= loop-4
+
+function shortCircuit(c: Circle, flag: boolean): boolean {
+  return flag && c.area() > 0;
+}
+
+////= overwritten
+
+////= lines-277	timesZero	c	Circle	c.area	0
+
+function inACondition(c: Circle): string {
+  return c.area() === c.area() ? "equal" : "different";
+}
+
+////= round
+
+const c = new Circle();
+const original = Circle.prototype.area;
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += twice(c) + loop(c, 3) + overwritten(c) + unused(c).length;
+console.log("2000 honest: " + warm);
+round("the method", c);
+round("replaced", c);
+round("a new circle", new Circle());
+round("put back", c);
+
+export {};
+//// a-method-without-effects-is-replaced-by-one-that-counts-its-calls-by-a-plain-store.ts
+////= Circle-4
+
+let calls = 0;
+
+////= counting
+
+////= unused
+
+////= lines-267	twice	c	Circle	c.area	c.area
+
+////= loop-4
+
+function shortCircuit(c: Circle, flag: boolean): boolean {
+  return flag && c.area() > 0;
+}
+
+////= overwritten
+
+////= lines-277	timesZero	c	Circle	c.area	0
+
+function inACondition(c: Circle): string {
+  return c.area() === c.area() ? "equal" : "different";
+}
+
+////= round
+
+const c = new Circle();
+const original = Circle.prototype.area;
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += twice(c) + loop(c, 3) + overwritten(c) + unused(c).length;
+console.log("2000 honest: " + warm);
+round("the method", c);
+Circle.prototype.area = counting;
+round("replaced", c);
+round("a new circle", new Circle());
+Circle.prototype.area = original;
+round("put back", c);
+
+export {};
+//// a-method-without-effects-is-replaced-by-one-that-counts-its-calls-through-object-assign.ts
+////= Circle-4
+
+let calls = 0;
+
+////= counting
+
+////= unused
+
+////= lines-267	twice	c	Circle	c.area	c.area
+
+////= loop-4
+
+function shortCircuit(c: Circle, flag: boolean): boolean {
+  return flag && c.area() > 0;
+}
+
+////= overwritten
+
+////= lines-277	timesZero	c	Circle	c.area	0
+
+function inACondition(c: Circle): string {
+  return c.area() === c.area() ? "equal" : "different";
+}
+
+////= round
+
+const c = new Circle();
+const original = Circle.prototype.area;
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += twice(c) + loop(c, 3) + overwritten(c) + unused(c).length;
+console.log("2000 honest: " + warm);
+round("the method", c);
+Object.assign(Circle.prototype, { area: counting });
+round("replaced", c);
+round("a new circle", new Circle());
+Object.assign(Circle.prototype, { area: original });
+round("put back", c);
+
+export {};
+//// a-mixin-adds-a-field-stored-in-its-constructor.ts
+////= describe-7
+
+let calls = 0;
+
+////= lines-150	Mixed	Base	object	later	"stored later"
+
+const Made = Mixed(Point);
+const made = new Made();
+console.log(describe(made));
+console.log("its own: " + made.later + " calls " + calls);
+console.log("instance: " + (made instanceof Point) + " " + (made instanceof Made));
+console.log("a second one: " + describe(new Made()));
+//// a-mixin-adds-a-field-without-a-value.ts
+////= describe-7
+
+let calls = 0;
+
+function Mixed(Base: new () => object) {
+  return class extends Base {
+    later: string | undefined;
+  };
+}
+
+const Made = Mixed(Point);
+const made = new Made();
+console.log(describe(made));
+console.log("its own: " + String(made.later) + " calls " + calls);
+console.log("instance: " + (made instanceof Point) + " " + (made instanceof Made));
+console.log("a second one: " + describe(new Made()));
+//// a-mixin-adds-an-arrow-function-field.ts
+////= describe-7
+
+let calls = 0;
+
+function Mixed(Base: new () => object) {
+  return class extends Base {
+    hello = (): string => "hello " + Object.keys(this).length;
+  };
+}
+
+const Made = Mixed(Point);
+const made = new Made();
+console.log(describe(made));
+console.log("its own: " + made.hello() + " calls " + calls);
+console.log("instance: " + (made instanceof Point) + " " + (made instanceof Made));
+console.log("a second one: " + describe(new Made()));
+//// a-mixin-adds-nothing-at-all.ts
+////= describe-7
+
+let calls = 0;
+
+function Mixed(Base: new () => object) {
+  return class extends Base {
+  };
+}
+
+const Made = Mixed(Point);
+const made = new Made();
+console.log(describe(made));
+console.log("its own: " + "nothing" + " calls " + calls);
+console.log("instance: " + (made instanceof Point) + " " + (made instanceof Made));
+console.log("a second one: " + describe(new Made()));
+//// a-mixin-adds-only-a-constructor.ts
+////= describe-7
+
+let calls = 0;
+
+function Mixed(Base: new () => object) {
+  return class extends Base {
+    constructor() {
+      super();
+      calls++;
+    }
+  };
+}
+
+const Made = Mixed(Point);
+const made = new Made();
+console.log(describe(made));
+console.log("its own: " + String(calls) + " calls " + calls);
+console.log("instance: " + (made instanceof Point) + " " + (made instanceof Made));
+console.log("a second one: " + describe(new Made()));
+//// a-mixin-adds-only-a-getter.ts
+////= describe-7
+
+let calls = 0;
+
+function Mixed(Base: new () => object) {
+  return class extends Base {
+    get hello(): string {
+      return "hello there";
+    }
+  };
+}
+
+const Made = Mixed(Point);
+const made = new Made();
+console.log(describe(made));
+console.log("its own: " + made.hello + " calls " + calls);
+console.log("instance: " + (made instanceof Point) + " " + (made instanceof Made));
+console.log("a second one: " + describe(new Made()));
+//// a-mixin-adds-only-a-method.ts
+////= describe-7
+
+let calls = 0;
+
+////= lines-108	Mixed	string	"hello there"
+
+const Made = Mixed(Point);
+const made = new Made();
+console.log(describe(made));
+console.log("its own: " + made.hello() + " calls " + calls);
+console.log("instance: " + (made instanceof Point) + " " + (made instanceof Made));
+console.log("a second one: " + describe(new Made()));
+//// a-mixin-adds-only-a-private-name.ts
+////= describe-7
+
+let calls = 0;
+
+function Mixed(Base: new () => object) {
+  return class extends Base {
+    #hidden = "hello there";
+    hello(): string {
+      return this.#hidden;
+    }
+  };
+}
+
+const Made = Mixed(Point);
+const made = new Made();
+console.log(describe(made));
+console.log("its own: " + made.hello() + " calls " + calls);
+console.log("instance: " + (made instanceof Point) + " " + (made instanceof Made));
+console.log("a second one: " + describe(new Made()));
+//// a-mixin-adds-only-a-static-member.ts
+////= describe-7
+
+let calls = 0;
+
+function Mixed(Base: new () => object) {
+  return class extends Base {
+    static hello = "hello there";
+  };
+}
+
+const Made = Mixed(Point);
+const made = new Made();
+console.log(describe(made));
+console.log("its own: " + Made.hello + " calls " + calls);
+console.log("instance: " + (made instanceof Point) + " " + (made instanceof Made));
+console.log("a second one: " + describe(new Made()));
+//// a-mixin-and-its-base-read-new-target.ts
+////= describe
+
+const seen: string[] = [];
+
+class Base {
+  made: string;
+  constructor() {
+    this.made = "for " + new.target.name;
+    seen.push("base sees " + new.target.name);
+  }
+}
+
+function Named(Parent: new () => Base) {
+  return class Middle extends Parent {
+    middle: string;
+    constructor() {
+      super();
+      this.middle = "for " + new.target.name;
+      seen.push("middle sees " + new.target.name);
+    }
+  };
+}
+
+class Top extends Named(Base) {
+  top = "top field";
+}
+
+console.log(describe(new Top()));
+console.log(describe(new (Named(Base))()));
+console.log(seen.join(", "));
+//// a-mixin-calls-the-methods-and-accessors-of-its-base-through-super.ts
+////= describe
+
+class Base {
+  n = 2;
+  twice(): number {
+    return this.n * 2;
+  }
+  get label(): string {
+    return "base " + this.n;
+  }
+  static kind(): string {
+    return "base kind";
+  }
+}
+
+function Louder(Parent: typeof Base) {
+  return class extends Parent {
+    extra = 1;
+    twice(): number {
+      return super.twice() + this.extra;
+    }
+    get label(): string {
+      return super.label + " and more";
+    }
+    static kind(): string {
+      return super.kind() + " and more";
+    }
+  };
+}
+
+const Made = Louder(Base);
+const made = new Made();
+console.log(describe(made));
+console.log("twice " + made.twice() + " label [" + made.label + "] kind [" + Made.kind() + "]");
+const Twice = Louder(Louder(Base));
+console.log("applied twice: " + new Twice().twice() + " [" + new Twice().label + "] [" + Twice.kind() + "] " + describe(new Twice()));
+//// a-mixin-defines-has-instance-species-and-to-string-tag.ts
+////= describe-9
+
+function Fancy(Base: new () => number[]) {
+  return class extends Base {
+    label = "fancy";
+    static get [Symbol.species](): ArrayConstructor {
+      return Array;
+    }
+    static [Symbol.hasInstance](value: unknown): boolean {
+      return Array.isArray(value);
+    }
+    get [Symbol.toStringTag](): string {
+      return "Fancy";
+    }
+  };
+}
+
+const Made = Fancy(Array<number>);
+const made = new Made();
+made.push(1, 2, 3);
+console.log("keys: " + Object.keys(made).join(" ") + " length " + made.length + " label " + made.label);
+const mapped = made.map(n => n * 2);
+console.log("mapped: " + mapped.join(" ") + " keys " + Object.keys(mapped).join(" ") + " plain: " + (Object.getPrototypeOf(mapped) === Array.prototype));
+const plain: unknown = [1];
+console.log("instanceof: " + (plain instanceof Made) + " " + (made instanceof Made) + " tag: " + Object.prototype.toString.call(made));
+//// a-mixin-has-a-written-constructor-and-a-private-name.ts
+////= Point-10
+function Secret(Base: new () => object) {
+  return class extends Base {
+    #hidden = 5;
+    constructor() {
+      super();
+    }
+    reveal(): number {
+      return this.#hidden;
+    }
+  };
+}
+const A = Secret(Point);
+const B = Secret(Point);
+console.log("zq a " + new A().reveal());
+console.log("zq b " + new B().reveal());
+//// a-mixin-instance-is-used-by-typed-functions-written-for-its-base.ts
+////= describe
+
+class Account {
+  balance = 10;
+  history: number[] = [];
+  deposit(amount: number): number {
+    this.balance += amount;
+    this.history.push(amount);
+    return this.balance;
+  }
+}
+
+function Audited(Base: new () => Account) {
+  return class extends Base {
+    audits = 0;
+    deposit(amount: number): number {
+      this.audits++;
+      return super.deposit(amount * 2);
+    }
+  };
+}
+
+function pay(a: Account, amount: number): number {
+  return a.deposit(amount) + a.balance;
+}
+
+function total(accounts: Account[]): number {
+  let sum = 0;
+  for (const a of accounts) sum += a.balance + a.history.length;
+  return sum;
+}
+
+const plain = new Account();
+const audited = new (Audited(Account))();
+const twice = new (Audited(Audited(Account)))();
+let warm = 0;
+for (let i = 0; i < 2000; i++) warm += pay(new Account(), 1);
+console.log("2000 honest rounds: " + warm);
+console.log("pay: " + pay(plain, 1) + " " + pay(audited, 1) + " " + pay(twice, 1));
+console.log("total: " + total([plain, audited, twice]));
+console.log(describe(plain) + " | " + describe(audited) + " | " + describe(twice));
+//// a-mixin-its-base-and-its-user-live-in-three-modules/main.ts
+import { Point } from "./point.ts";
+import { describe } from "./show.ts";
+import { Tagged } from "./tagged.ts";
+
+const Made = Tagged(Point);
+const made = new Made();
+console.log(describe(made));
+console.log("tag: " + made.tag + " instance: " + (made instanceof Point));
+////= lines-18	Local	here	"local"
+console.log(describe(new (Tagged(Local))()));
+console.log(describe(new Made()));
+//// a-mixin-its-base-and-its-user-live-in-three-modules/point.ts
+////= Point-19
+//// a-mixin-its-base-and-its-user-live-in-three-modules/show.ts
+export function describe(made: object): string {
+  return "keys [" + Object.keys(made).join(" ") + "] json " + JSON.stringify(made);
+}
+//// a-mixin-its-base-and-its-user-live-in-three-modules/tagged.ts
+export function Tagged<T extends object>(Base: new () => T) {
+  const Parent: new () => object = Base;
+  return class extends Parent {
+    tag = "tagged";
+  };
+}
+//// a-mixin-over-a-base-whose-constructor-freezes-or-seals-the-instance.ts
+////= describe
+
+////= lines-135	Frozen	freeze
+
+////= lines-135	Sealed	seal
+
+////= lines-135	Closed	preventExtensions
+
+////= lines-18	Open	kept	1
+
+////= Tagged
+
+for (const Base of [Open, Frozen, Sealed, Closed, Open]) {
+  try {
+    console.log(Base.name + ": " + describe(new (Tagged(Base))()));
+  } catch (error) {
+    console.log(Base.name + ": threw a TypeError: " + (error instanceof TypeError));
+  }
+}
+//// a-mixin-over-a-base-with-a-base-of-its-own.ts
+////= describe
+
+////= lines-18	Root	root	"r"
+
+////= lines-14	class	Base	extends	Root	x	1
+
+////= Tagged
+
+const Made = Tagged(Base);
+const made = new Made();
+console.log(describe(made));
+console.log("all own keys: " + Reflect.ownKeys(made).map(String).join(" "));
+console.log("tag: " + made.tag + " instance: " + (made instanceof Base));
+console.log("the base alone: " + describe(new Base()));
+console.log("a second one: " + describe(new Made()));
+//// a-mixin-over-a-base-with-a-field-of-the-same-name-as-the-mixin.ts
+////= describe
+
+////= lines-48	Base	tag	"the tag of the base"	x	1
+
+////= Tagged
+
+const Made = Tagged(Base);
+const made = new Made();
+console.log(describe(made));
+console.log("all own keys: " + Reflect.ownKeys(made).map(String).join(" "));
+console.log("tag: " + made.tag + " instance: " + (made instanceof Base));
+console.log("the base alone: " + describe(new Base()));
+console.log("a second one: " + describe(new Made()));
+//// a-mixin-over-a-base-with-a-field-stored-in-its-constructor.ts
+////= describe
+
+class Base {
+  x: number;
+  constructor() {
+    this.x = 1;
+  }
+}
+
+////= Tagged
+
+const Made = Tagged(Base);
+const made = new Made();
+console.log(describe(made));
+console.log("all own keys: " + Reflect.ownKeys(made).map(String).join(" "));
+console.log("tag: " + made.tag + " instance: " + (made instanceof Base));
+console.log("the base alone: " + describe(new Base()));
+console.log("a second one: " + describe(new Made()));
+//// a-mixin-over-a-base-with-a-field-that-holds-a-list-and-one-that-holds-an-object.ts
+////= describe
+
+class Base {
+  list = [1, 2];
+  inner = { n: 1 };
+}
+
+////= Tagged
+
+const Made = Tagged(Base);
+const made = new Made();
+console.log(describe(made));
+console.log("all own keys: " + Reflect.ownKeys(made).map(String).join(" "));
+console.log("tag: " + made.tag + " instance: " + (made instanceof Base));
+console.log("the base alone: " + describe(new Base()));
+console.log("a second one: " + describe(new Made()));
+//// a-mixin-over-a-base-with-a-parameter-property.ts
+////= describe
+
+class Base {
+  constructor(public x: number = 1) {}
+}
+
+////= Tagged
+
+const Made = Tagged(Base);
+const made = new Made();
+console.log(describe(made));
+console.log("all own keys: " + Reflect.ownKeys(made).map(String).join(" "));
+console.log("tag: " + made.tag + " instance: " + (made instanceof Base));
+console.log("the base alone: " + describe(new Base()));
+console.log("a second one: " + describe(new Made()));
+//// a-mixin-over-a-base-with-a-private-name.ts
+////= describe
+
+class Base {
+  #hidden = 5;
+  x = 1;
+  reveal(): number {
+    return this.#hidden;
+  }
+}
+
+////= Tagged
+
+const Made = Tagged(Base);
+const made = new Made();
+console.log(describe(made));
+console.log("all own keys: " + Reflect.ownKeys(made).map(String).join(" "));
+console.log("tag: " + made.tag + " instance: " + (made instanceof Base));
+console.log("the base alone: " + describe(new Base()));
+console.log("a second one: " + describe(new Made()));
+//// a-mixin-over-a-base-with-an-accessor-pair.ts
+////= describe
+
+class Base {
+  #x = 1;
+  get x(): number {
+    return this.#x;
+  }
+  set x(value: number) {
+    this.#x = value;
+  }
+}
+
+////= Tagged
+
+const Made = Tagged(Base);
+const made = new Made();
+console.log(describe(made));
+console.log("all own keys: " + Reflect.ownKeys(made).map(String).join(" "));
+console.log("tag: " + made.tag + " instance: " + (made instanceof Base));
+console.log("the base alone: " + describe(new Base()));
+console.log("a second one: " + describe(new Made()));
+//// a-mixin-over-a-base-with-members-added-with-object-assign.ts
+////= describe
+
+class Base {
+  x = 1;
+  constructor() {
+    Object.assign(this, { added: "by assign" });
+  }
+}
+
+////= Tagged
+
+const Made = Tagged(Base);
+const made = new Made();
+console.log(describe(made));
+console.log("all own keys: " + Reflect.ownKeys(made).map(String).join(" "));
+console.log("tag: " + made.tag + " instance: " + (made instanceof Base));
+console.log("the base alone: " + describe(new Base()));
+console.log("a second one: " + describe(new Made()));
+//// a-mixin-over-a-base-with-no-fields.ts
+////= describe
+
+////= lines-38	Base	hello	string	"hello from the base"
+
+////= Tagged
+
+const Made = Tagged(Base);
+const made = new Made();
+console.log(describe(made));
+console.log("all own keys: " + Reflect.ownKeys(made).map(String).join(" "));
+console.log("tag: " + made.tag + " instance: " + (made instanceof Base));
+console.log("the base alone: " + describe(new Base()));
+console.log("a second one: " + describe(new Made()));
+//// a-mixin-over-a-base-with-one-field-with-an-initializer.ts
+////= describe
+
+////= lines-18	Base	x	1
+
+////= Tagged
+
+const Made = Tagged(Base);
+const made = new Made();
+console.log(describe(made));
+console.log("all own keys: " + Reflect.ownKeys(made).map(String).join(" "));
+console.log("tag: " + made.tag + " instance: " + (made instanceof Base));
+console.log("the base alone: " + describe(new Base()));
+console.log("a second one: " + describe(new Made()));
+//// a-mixin-over-a-base-with-symbol-and-numeric-keys.ts
+////= describe
+
+const key = Symbol("key");
+
+class Base {
+  [key] = "symbol";
+  0 = "zero";
+  x = 1;
+}
+
+////= Tagged
+
+const Made = Tagged(Base);
+const made = new Made();
+console.log(describe(made));
+console.log("all own keys: " + Reflect.ownKeys(made).map(String).join(" "));
+console.log("tag: " + made.tag + " instance: " + (made instanceof Base));
+console.log("the base alone: " + describe(new Base()));
+console.log("a second one: " + describe(new Made()));
+//// a-mixin-over-a-base-with-twelve-fields.ts
+////= describe
+
+class Base {
+  f0 = 0;
+  f1 = 1;
+  f2 = 2;
+  f3 = 3;
+  f4 = 4;
+  f5 = 5;
+  f6 = 6;
+  f7 = 7;
+  f8 = 8;
+  f9 = 9;
+  f10 = 10;
+  f11 = 11;
+}
+
+////= Tagged
+
+const Made = Tagged(Base);
+const made = new Made();
+console.log(describe(made));
+console.log("all own keys: " + Reflect.ownKeys(made).map(String).join(" "));
+console.log("tag: " + made.tag + " instance: " + (made instanceof Base));
+console.log("the base alone: " + describe(new Base()));
+console.log("a second one: " + describe(new Made()));
+//// a-mixin-over-the-built-in-regexp.ts
+function Tagged(Base: new (pattern: string) => object) {
+  return class extends Base {
+    tag = "tagged";
+  };
+}
+
+const Made = Tagged(RegExp);
+const made = new Made("a+");
+console.log("own keys: " + Object.keys(made).join(" ") + " tag: " + made.tag);
+console.log(made instanceof RegExp ? "source " + made.source + " test " + made.test("caat") + " replace " + "caat".replace(made, "-") : "no pattern");
+console.log("instance: " + (made instanceof Made) + " own tag: " + Object.hasOwn(made, "tag"));
+made.tag = "stored";
+console.log("after a store: " + made.tag + " keys " + Object.keys(made).join(" "));
+//// a-mixin-passes-arguments-on-to-its-base.ts
+////= describe
+
+class Base {
+  given: string;
+  count: number;
+  constructor(first: string, ...rest: number[]) {
+    this.given = first;
+    this.count = rest.length;
+  }
+}
+
+function Tagged(Parent: new (first: string, ...rest: number[]) => Base) {
+  return class extends Parent {
+    tag = "tagged";
+  };
+}
+
+function Fixed(Parent: new (first: string, ...rest: number[]) => Base) {
+  return class extends Parent {
+    fixed: boolean;
+    constructor() {
+      super("fixed by the mixin", 1, 2, 3);
+      this.fixed = true;
+    }
+  };
+}
+
+console.log(describe(new (Tagged(Base))("one")));
+console.log(describe(new (Tagged(Base))("two", 1, 2)));
+console.log(describe(new (Fixed(Base))()));
+console.log(describe(new (Fixed(Tagged(Base)))()));
+//// a-mixin-stores-and-reads-through-super.ts
+////= describe
+
+class Base {
+  n = 1;
+  get label(): string {
+    return "label " + this.n;
+  }
+  set label(value: string) {
+    this.n = value.length;
+  }
+}
+
+function Writer(Parent: typeof Base) {
+  return class extends Parent {
+    extra = "dq";
+    write(): string {
+      super.label = "four";
+      return super.label;
+    }
+  };
+}
+
+const made = new (Writer(Base))();
+console.log(describe(made));
+console.log(made.write());
+console.log(describe(made));
+//// a-mixin-with-accessors.ts
+////= describe
+
+const seen: string[] = [];
+
+class Store {
+  level = 1;
+  constructor() {
+    this.level = 2;
+  }
+}
+
+function Guarded(Base: new () => Store) {
+  return class extends Base {
+    get doubled(): number {
+      seen.push("get doubled");
+      return this.level * 2;
+    }
+    set doubled(value: number) {
+      seen.push("set doubled");
+      this.level = value / 2;
+    }
+    static get kind(): string {
+      return "guarded kind";
+    }
+  };
+}
+
+const Made = Guarded(Store);
+const made = new Made();
+console.log(describe(made));
+console.log("doubled: " + made.doubled);
+made.doubled = 10;
+console.log("level: " + made.level + " doubled: " + made.doubled);
+console.log("static: " + Made.kind);
+console.log("own doubled: " + Object.hasOwn(made, "doubled") + " in: " + ("doubled" in made));
+console.log("seen: " + seen.join(", "));
+//// a-mixin-with-async-and-generator-methods.ts
+export {};
+
+////= describe-7
+
+function Streaming(Base: new () => Point) {
+  return class extends Base {
+    step = 10;
+    async later(): Promise<number> {
+      await null;
+      return this.x + this.step;
+    }
+    *each(): Generator<number> {
+      yield this.x;
+      yield this.y;
+      yield this.step;
+    }
+    async *slowly(): AsyncGenerator<number> {
+      yield this.sum();
+      yield this.step;
+    }
+  };
+}
+
+const made = new (Streaming(Point))();
+console.log(describe(made));
+console.log("later: " + (await made.later()));
+console.log("each: " + [...made.each()].join(" "));
+const slow: number[] = [];
+for await (const n of made.slowly()) slow.push(n);
+console.log("slowly: " + slow.join(" "));
+//// a-mixin-with-auto-accessors-and-computed-names.ts
+////= describe-7
+
+const computedName = "computed1";
+
+function Fancy(Base: new () => object) {
+  return class extends Base {
+    accessor level = 1;
+    static accessor shared = "shared";
+    [computedName] = "under a computed name";
+    ["quoted key"] = true;
+    7 = "seven";
+  };
+}
+
+const Made = Fancy(Point);
+const made = new Made();
+console.log(describe(made));
+console.log("level: " + made.level + " own: " + Object.hasOwn(made, "level") + " shared: " + Made.shared);
+made.level = 5;
+Made.shared = "stored";
+console.log("level: " + made.level + " shared: " + Made.shared + " another: " + new Made().level);
+//// a-mixin-with-private-names.ts
+////= describe-7
+
+function Secret(Base: new () => object) {
+  return class Keeper extends Base {
+    #hidden = 5;
+    #twice(): number {
+      return this.#hidden * 2;
+    }
+    static #made = 0;
+    open = "open";
+    constructor() {
+      super();
+      Keeper.#made++;
+    }
+    reveal(): string {
+      return this.#hidden + " " + this.#twice() + " " + Keeper.#made;
+    }
+    static owns(value: object): boolean {
+      return #hidden in value;
+    }
+  };
+}
+
+const A = Secret(Point);
+const B = Secret(Point);
+const a = new A();
+console.log(describe(a) + " reveal " + a.reveal());
+console.log("a second one: " + new A().reveal());
+console.log("brands: " + A.owns(a) + " " + B.owns(a) + " " + A.owns(new Point()));
+try {
+  console.log(B.prototype.reveal.call(a));
+} catch (error) {
+  console.log("the other class's method threw a TypeError: " + (error instanceof TypeError));
+}
+//// a-mixin-with-static-blocks-and-static-members.ts
+////= describe-7
+
+const seen: string[] = [];
+
+function Counted(Base: new () => object) {
+  return class Counter extends Base {
+    static made = 0;
+    static label = "label of " + Base.name;
+    static {
+      seen.push("static block for " + Base.name);
+    }
+    static create(): Counter {
+      Counter.made++;
+      return new this();
+    }
+    mine = "mine";
+  };
+}
+
+////= lines-18	Other	first	"f"
+
+const A = Counted(Point);
+const B = Counted(Other);
+A.create();
+A.create();
+B.create();
+console.log("blocks: " + seen.join(", "));
+console.log("counts: " + A.made + " " + B.made + " labels: " + A.label + ", " + B.label);
+console.log("made: " + describe(A.create()) + " | " + describe(B.create()));
+console.log("static keys: " + Object.keys(A).join(" "));
+//// a-mixin-written-in-javascript-is-applied-to-typed-classes/main.ts
+////= describe-7
+
+import { Tagged } from "./tagged.js";
+
+const Made = Tagged(Point);
+const made = new Made();
+console.log(describe(made));
+console.log("members: " + made.x + " " + made.y + " " + made.sum() + " " + made.tag + " " + made.late);
+console.log("instance: " + (made instanceof Point));
+class Typed extends Tagged(Point) {
+  typed = "a typed field on top";
+}
+console.log(describe(new Typed()) + " " + new Typed().sum());
+//// a-mixin-written-in-javascript-is-applied-to-typed-classes/tagged.js
+export function Tagged(Base) {
+  return class extends Base {
+    tag = "tagged in javascript";
+    constructor(...args) {
+      super(...args);
+      this.late = "stored in javascript";
+    }
+  };
+}
+//// a-module-augmentation-adds-exports-that-the-module-never-makes/library.ts
+export const real: number = 1;
+
+////= lines-254	realTwice
+
+export namespace Shapes {
+  export const sides: number = 4;
+}
+
+////= lines-164	export	Mode	Off	On
+//// a-module-augmentation-adds-exports-that-the-module-never-makes/main.ts
+import * as library from "./library.ts";
+import { Mode, Shapes } from "./library.ts";
+import { addedPlusOne } from "./more.ts";
+
+////= text-26
+
+show("the real ones", () => [library.real, library.realTwice(2), Shapes.sides, Mode.On]);
+show("the added number", () => [library.added, typeof library.added, library.added + 1, plusOne(library.added)]);
+show("the added number in the file that added it", () => addedPlusOne());
+show("the added text", () => library.addedTitle);
+show("the length of the added text", () => library.addedTitle.length);
+show("the added function", () => typeof library.addedThrice);
+show("the added function called", () => library.addedThrice(1));
+show("a member added to the namespace", () => [Shapes.corners, Shapes.corners + Shapes.sides, Object.keys(Shapes)]);
+show("a function added to the enum", () => typeof Mode.parse);
+show("that function called", () => Mode.parse("On"));
+show("keys of the enum", () => Object.keys(Mode));
+show("keys of the module", () => Object.keys(library));
+show("in", () => ["added" in library, "real" in library]);
+
+let nans = 0;
+for (let i = 0; i < 2000; i++) if (Number.isNaN(addedPlusOne()) && Number.isNaN(Shapes.corners + i)) nans++;
+show("2000 rounds", () => nans);
+//// a-module-augmentation-adds-exports-that-the-module-never-makes/more.ts
+import * as library from "./library.ts";
+
+declare module "./library.ts" {
+  const added: number;
+  let addedTitle: string;
+  function addedThrice(n: number): number;
+  namespace Shapes {
+    const corners: number;
+  }
+  namespace Mode {
+    function parse(text: string): Mode;
+  }
+}
+
+export function addedPlusOne(): number {
+  return library.added + 1;
+}
+//// a-module-exports-a-declared-constant-by-default/broken.ts
+declare const neverMade: number;
+
+console.log("the module starts");
+
+export const before: number = 1;
+
+export default neverMade;
+
+export const after: number = 2;
+//// a-module-exports-a-declared-constant-by-default/fine.ts
+declare const neverMade: number;
+
+////= lines-100	read	number	neverMade
+
+export default typeof neverMade;
+//// a-module-exports-a-declared-constant-by-default/main.ts
+import kind, { read } from "./fine.ts";
+
+////= text-11
+
+async function load(label: string): Promise<void> {
+  try {
+    const loaded = await import("./broken.ts");
+    show(label, () => [loaded.default, loaded.before, loaded.after]);
+  } catch (error) {
+    show(label, () => {
+      throw error;
+    });
+  }
+}
+
+show("a module that only asks for its type", () => kind);
+show("a function of that module", () => read());
+await load("the first load");
+await load("the second load");
+show("a function of the other module again", () => read());
+//// a-module-namespace-object-stands-in-for-a-plain-object/main.ts
+import * as values from "./values.ts";
+
+////= Point-2
+
+////= lines-28	Labeled	label	string
+
+////= attempt-7
+
+////= lines-159	read	p	Point	p.x	100	p.y
+
+////= setX-2
+
+////= listing-2	o	object	walked
+
+function sumWhileMoving(p: Point): number {
+  let sum = 0;
+  for (let i = 0; i < 2000; i++) {
+    sum += p.x;
+    if (i === 999) values.move(1);
+  }
+  return sum;
+}
+
+const plain: Point = { x: 1, y: 2 };
+let total = 0;
+for (let i = 0; i < 2000; i++) total += read(plain);
+console.log("2000 plain: " + total);
+
+const point: Point = values;
+console.log("the namespace as a point: " + read(point));
+console.log("its keys are sorted: " + listing(point));
+values.move(10);
+console.log("after the module moved: " + read(point) + " " + point.x + " " + values.x);
+console.log("a loop during which the module moves: " + sumWhileMoving(point));
+
+attempt("a store", () => setX(point, 5));
+attempt("an increment", () => point.y++);
+attempt("Object.assign", () => Object.assign(point, { x: 5 }).x);
+attempt("Reflect.set", () => Reflect.set(point, "x", 5));
+attempt("defineProperty", () => Object.defineProperty(point, "x", { value: 5 }).x);
+attempt("delete", () => Reflect.deleteProperty(point, "x"));
+console.log("unchanged: " + read(point));
+console.log("frozen " + Object.isFrozen(point) + " sealed " + Object.isSealed(point) + " extensible " + Object.isExtensible(point));
+console.log("prototype is null: " + (Object.getPrototypeOf(point) === null) + ", tag " + Object.prototype.toString.call(point));
+attempt("turned into a string", () => String(point));
+attempt("hasOwnProperty as a method", () => Object.hasOwn(point, "x") + " " + ("hasOwnProperty" in point));
+
+const copy: Point = { ...point };
+values.move(1);
+console.log("a copy does not follow: " + read(copy) + " against " + read(point));
+console.log("a copy can be stored to: " + setX(copy, 5));
+
+const labeled: Labeled = values;
+console.log("a string member: " + labeled.label);
+values.rename("renamed");
+console.log("after the module renamed it: " + labeled.label);
+
+class Holder {
+  constructor(public point: Point) {}
+  read(): number {
+    return this.point.x * 100 + this.point.y;
+  }
+}
+const holder = new Holder(values);
+console.log("a field: " + holder.read());
+values.move(1);
+console.log("a field, after a move: " + holder.read());
+
+const list: Point[] = [plain, values, copy];
+console.log("elements: " + list.map(read).join());
+attempt("stores through elements", () => list.map(p => setX(p, 0)).join());
+console.log("afterwards: " + list.map(read).join());
+
+const { x, y } = point;
+values.move(1);
+console.log("a pattern takes the values of that moment: " + x + " " + y + " against " + point.x + " " + point.y);
+//// a-module-namespace-object-stands-in-for-a-plain-object/values.ts
+export let y = 2;
+export let x = 1;
+export let label = "values";
+
+export function move(by: number): void {
+  x += by;
+  y += by;
+}
+
+////= lines-213	rename	to	string	label
+//// a-module-patches-a-class-that-another-module-already-uses/logger.ts
+export class Logger {
+  lines: string[] = [];
+  prefix = "log";
+  format(message: string): string {
+    return this.prefix + ": " + message;
+  }
+  write(message: string): number {
+    return this.lines.push(this.format(message));
+  }
+  static create(): Logger {
+    return new Logger();
+  }
+}
+
+export const shared = Logger.create();
+//// a-module-patches-a-class-that-another-module-already-uses/main.ts
+import { early, use } from "./user.ts";
+import { remove } from "./plugin.ts";
+import { shared } from "./logger.ts";
+
+console.log("before the plugin loaded: " + early);
+console.log("after it loaded: " + use("first"));
+
+let letters = 0;
+for (let i = 0; i < 2000; i++) letters += use("w").length;
+console.log("2000 rounds: " + letters);
+
+remove();
+console.log("the plugin removed: " + use("second"));
+console.log("lines of the shared logger: " + shared.lines.length + ", " + shared.lines[0] + ", " + shared.lines[1] + ", " + shared.lines[shared.lines.length - 1]);
+//// a-module-patches-a-class-that-another-module-already-uses/plugin.ts
+import { Logger } from "./logger.ts";
+
+const format = Logger.prototype.format;
+const create = Logger.create;
+
+Logger.prototype.format = function (message) {
+  return "[" + format.call(this, message) + "]";
+};
+
+Logger.create = () => {
+  const made = create();
+  made.prefix = "plugin";
+  return made;
+};
+
+export function remove(): void {
+  Logger.prototype.format = format;
+  Logger.create = create;
+}
+//// a-module-patches-a-class-that-another-module-already-uses/user.ts
+import { Logger, shared } from "./logger.ts";
+
+export function use(message: string): string {
+  shared.write(message);
+  const own = Logger.create();
+  own.write(message);
+  return shared.lines[shared.lines.length - 1] + " | " + own.lines.join() + " | " + own.format("direct");
+}
+
+export const early = use("while the modules load");
+//// a-module-reads-its-own-exports-that-are-only-declared/library.ts
+export declare const limit: number;
+export declare let title: string;
+export declare function twice(n: number): number;
+////= lines-209	Box	value
+
+export function kinds(): string[] {
+  return [typeof limit, typeof title, typeof twice, typeof Box];
+}
+
+////= lines-211	limitPlusOne	limit
+
+export function titleLength(): number {
+  return title.length;
+}
+
+////= lines-255	twiceOf	n	number	twice
+
+export function makeBox(): Box {
+  return new Box();
+}
+
+////= lines-213	setTitle	text	string	title
+//// a-module-reads-its-own-exports-that-are-only-declared/main.ts
+import { kinds, limitPlusOne, makeBox, setTitle, titleLength, twiceOf } from "./library.ts";
+
+////= text-11
+
+declare global {
+  var limit: number;
+  var title: string;
+}
+
+show("typeof", () => kinds());
+show("the number", () => limitPlusOne());
+show("the text", () => titleLength());
+show("the function", () => twiceOf(1));
+show("the class", () => makeBox());
+show("a store", () => setTitle("stored"));
+show("typeof after the store", () => kinds());
+
+globalThis.limit = 4;
+globalThis.title = "global";
+show("after globals of those names are made: typeof", () => kinds());
+show("the number", () => limitPlusOne());
+show("the text", () => titleLength());
+show("a store", () => {
+  setTitle("stored");
+  return [titleLength(), globalThis.title];
+});
+
+let sum = 0;
+for (let i = 0; i < 2000; i++) {
+  globalThis.limit = i;
+  sum += limitPlusOne();
+}
+show("2000 rounds", () => sum);
+//// a-module-variable-typed-number-is-tested-for-null-inside-a-function.ts
+let held: number = 1;
+function describe(): string {
+  if (held === null) return "null";
+  return "not null";
+}
+const source: number[] = [2];
+const wide: unknown[] = source;
+wide.push(null);
+console.log(describe());
+held = source[1];
+console.log(describe());
+export {};
+//// a-named-class-extends-the-result-of-a-mixin.ts
+////= describe-7
+
+////= lines-77	Tagged	Point	tag	"tagged"
+
+class Named extends Tagged(Point) {
+  named = "named";
+  all(): string {
+    return this.x + " " + this.y + " " + this.tag + " " + this.named + " " + this.sum();
+  }
+}
+
+const made = new Named();
+console.log(describe(made));
+console.log(made.all());
+console.log("instance: " + (made instanceof Named) + " " + (made instanceof Point));
+////= lines-14	class	Deeper	extends	Named	deeper	"deeper"
+console.log(describe(new Deeper()) + " " + new Deeper().all());
+//// a-namespace-gives-a-function-its-own-call-apply-and-bind.ts
+////= text-11
+
+function adder(this: unknown, a: number, b: number): number {
+  return a + b;
+}
+namespace adder {
+  export function call(label: string): string {
+    return "own call " + label;
+  }
+  export function apply(label: string): string {
+    return "own apply " + label;
+  }
+  export function bind(label: string): string {
+    return "own bind " + label;
+  }
+  export function toString(): string {
+    return "own toString";
+  }
+}
+
+function plain(this: unknown, a: number, b: number): number {
+  return a * b;
+}
+
+class Tool {
+  static run(n: number): number {
+    return n + 1;
+  }
+}
+namespace Tool {
+  export function call(label: string): string {
+    return "the call of the class " + label;
+  }
+}
+
+show("the function runs", () => adder(1, 2));
+show("call", () => adder.call("x"));
+show("apply", () => adder.apply("y"));
+show("bind", () => adder.bind("z"));
+show("toString", () => [adder.toString(), String(adder), `${adder}`]);
+show("keys", () => Object.keys(adder));
+show("the built-in call on it", () => Function.prototype.call.call(adder, undefined, 1, 2));
+show("Reflect.apply", () => Reflect.apply(adder, undefined, [3, 4]));
+show("a function without a namespace", () => [plain.call(undefined, 2, 3), plain.apply(undefined, [2, 4]), plain.bind(undefined, 2)(5)]);
+show("the class", () => [Tool.call("c"), Tool.run(1), Tool.run.call(Tool, 2), Object.keys(Tool)]);
+
+let letters = 0;
+let sum = 0;
+for (let i = 0; i < 2000; i++) {
+  letters += adder.call("x").length;
+  sum += plain.call(undefined, i, 1) + adder(i, 1);
+}
+show("2000 rounds", () => [letters, sum]);

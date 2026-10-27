@@ -1,0 +1,1 @@
+{ "skipInShell": "it needs node:async_hooks, process.nextTick, queueMicrotask, timers and Bun.gc, which the jsc shell does not have" }

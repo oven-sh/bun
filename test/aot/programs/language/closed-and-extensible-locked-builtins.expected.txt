@@ -1,0 +1,38 @@
+closed entirely
+Object.prototype: a new name TypeError, hasOwnProperty TypeError, index 0 TypeError, extensible false
+Promise.prototype: a new name TypeError, then TypeError, index 0 TypeError, extensible false
+the prototype of generators: a new name TypeError, next TypeError, index 0 TypeError, extensible false
+the prototype of async generators: a new name TypeError, next TypeError, index 0 TypeError, extensible false
+members fixed, new names allowed
+Array.prototype: a new name stored, push TypeError, index 0 TypeError, extensible true
+Date.prototype: a new name stored, toJSON TypeError, index 0 TypeError, extensible true
+Promise: a new name stored, resolve TypeError, index 0 stored, extensible true
+Symbol: a new name stored, for TypeError, index 0 stored, extensible true
+Array: a new name stored, from TypeError, index 0 stored, extensible true
+Object: a new name stored, keys TypeError, index 0 stored, extensible true
+Math: a new name stored, max TypeError, index 0 stored, extensible true
+JSON: a new name stored, rawJSON TypeError, index 0 stored, extensible true
+Reflect: a new name stored, get TypeError, index 0 stored, extensible true
+the prototype of all iterators: a new name stored, Symbol(Symbol.iterator) TypeError, index 0 TypeError, extensible true
+the prototype of array iterators: a new name stored, next TypeError, index 0 TypeError, extensible true
+the prototype of map iterators: a new name stored, next TypeError, index 0 TypeError, extensible true
+the prototype of set iterators: a new name stored, next TypeError, index 0 TypeError, extensible true
+the prototype of string iterators: a new name stored, next TypeError, index 0 TypeError, extensible true
+the prototype of regexp string iterators: a new name stored, next TypeError, index 0 TypeError, extensible true
+the prototype of iterator helpers: a new name stored, next TypeError, index 0 TypeError, extensible true
+the prototype of what Iterator.from wraps: a new name stored, next TypeError, index 0 TypeError, extensible true
+the prototype of async iterators: a new name stored, Symbol(Symbol.asyncIterator) TypeError, index 0 TypeError, extensible true
+globalThis.Symbol: TypeError
+globalThis.Map: TypeError
+globalThis.Math: TypeError
+not locked
+Error.prototype: a new name stored, toString stored, index 0 stored, extensible true
+Error: a new name stored, captureStackTrace stored, index 0 stored, extensible true
+Intl: a new name stored, getCanonicalLocales stored, index 0 stored, extensible true
+a generator function's own prototype: a new name stored, next stored, index 0 stored, extensible true
+a class of the program: a new name stored, method stored, index 0 stored, extensible true
+JSON.parse, a member that packages replace: stored
+Date.prototype.toString, a member that packages replace: stored
+Date.prototype.next, a name that a package adds: stored
+globalThis.Date: stored
+globalThis.Promise: stored

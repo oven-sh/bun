@@ -1,0 +1,5 @@
+an element added to Array.prototype: TypeError
+undefined undefined false
+true false
+a name added to Array.prototype: no error added
+true false

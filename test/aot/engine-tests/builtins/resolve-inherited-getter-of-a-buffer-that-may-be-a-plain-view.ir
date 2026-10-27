@@ -1,0 +1,37 @@
+# Buffer and Uint8Array have one cell type, so a Uint8Array passes the test for a Buffer. byteLength and length are the same getters for both:
+# what may be either, and is not proven to be a Buffer as it was made, takes the test that the instances of both classes pass. What can only be a Buffer takes the test of a Buffer.
+# FORM: Prepared
+# RUN: pass SplitUnions ResolveBuiltins PlaceTypeTests
+# CHECK: outcome: Changed
+
+module m0 path="main.js" displayPath="main.js"
+function f0 name="byteLengthOfEither" parameters=[{type=string|Buffer|Uint8Array}] results=[{type=anything}] {
+    v1 = PropGet v0 key="byteLength"
+    Return v1
+# CHECK: = TypeTest {{*}} testedType=Buffer
+# CHECK: ([[either0]]: Buffer):
+# CHECK-NEXT: [[isEither0]]: boolean = IsPristine [[either0]] builtinClass=Uint8Array aspects=[NamesKeptBelow]
+# CHECK-NEXT: Branch [[isEither0]] -> taken
+# CHECK: = CallBuiltin [[either0]] overload=TypedArrayPrototypeByteLength/0
+}
+
+function f1 name="lengthOfEither" parameters=[{type=string|Buffer|Uint8Array}] results=[{type=anything}] {
+    v1 = PropGet v0 key="length"
+    Return v1
+# CHECK: ([[either1]]: Buffer):
+# CHECK-NEXT: [[isEither1]]: boolean = IsPristine [[either1]] builtinClass=Uint8Array aspects=[NamesKeptBelow]
+}
+
+function f2 name="byteLengthOfWhatCanOnlyBeABuffer" parameters=[{type=Buffer}] results=[{type=anything}] {
+    v1 = PropGet v0 key="byteLength"
+    Return v1
+# CHECK: [[isBuffer2]]: boolean = IsPristine v0 builtinClass=Buffer aspects=[Names]
+# CHECK-NEXT: Branch [[isBuffer2]] -> taken
+}
+
+function f3 name="byteLengthOfABufferAsItWasMade" parameters=[{type=Buffer<anything, pristine[Names]>}] results=[{type=anything}] {
+    v1 = PropGet v0 key="byteLength"
+    Return v1
+# CHECK-NOT: IsPristine
+# CHECK: = CallBuiltin v0 overload=TypedArrayPrototypeByteLength/0
+}

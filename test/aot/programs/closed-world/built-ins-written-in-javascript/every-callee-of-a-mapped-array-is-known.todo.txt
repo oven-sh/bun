@@ -1,0 +1,4 @@
+15 callees and 24 receivers are unknown: the code behind map (1 call) and traverseArray (14 calls) is entered with operands nobody knows, whoever calls map.
+Entered with what the callers pass, both counts are 0 here (built and run privately), and the real programs lose proofs: accesses proven on Hono 1,817 -> 1,676, Express 4,245 -> 3,987, TypeScript 6 9,512 -> 9,120,
+because in one shared body the operands of all callers meet: they escape through operations that only a schema describes, are converted, are stored into, and reach the callbacks of other callers.
+It takes a body whose operations do nothing to objects that it has not made itself.

@@ -1,0 +1,10 @@
+import { createHistogram, monitorEventLoopDelay } from "node:perf_hooks";
+const h = createHistogram();
+h.record(5);
+h.record(9);
+console.log(h);
+console.log(String(Object.keys(h)), h.min, h.max, h.count, typeof h.percentiles);
+const d = monitorEventLoopDelay({ resolution: 20 });
+d.enable();
+d.disable();
+console.log(typeof d.min, Object.prototype.toString.call(d));

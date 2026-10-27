@@ -1,0 +1,6 @@
+the file by its constant name: inside
+the file by a computed name: refused
+the file through module.require: refused
+the entry point by a computed name: true
+a built-in module that the program names: true
+the file by a computed import: refused

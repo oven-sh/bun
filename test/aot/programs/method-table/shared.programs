@@ -1,0 +1,175 @@
+////: Base
+class Base {
+  constructor(public n: number) {}
+  kind(): number {
+    return 1;
+  }
+  describe(): number {
+    return this.kind() * 10 + this.n;
+  }
+}
+////: Bell
+class Bell {
+  constructor(public tone: number) {}
+}
+////: Bell-2
+interface Bell {
+  ring(): number;
+}
+////: Bright
+class Bright extends Lamp {
+  factor(): number {
+    return 2;
+  }
+}
+////: Double
+class Double extends Meter {
+  read(): number {
+    return this.base * 2;
+  }
+}
+////: Echo
+class Echo extends Bell {
+  ring(): number {
+    return super.ring() + 1;
+  }
+}
+////: Echo-2
+////= Echo
+
+////= ringOf
+////: Gong
+class Gong extends Bell {
+  ring(): number {
+    return this.tone * 10;
+  }
+}
+////: Lamp
+class Lamp {
+  constructor(public watts: number) {}
+  factor(): number {
+    return 1;
+  }
+  power(): number {
+    return this.watts * this.factor();
+  }
+}
+////: Lamp-6
+////= Lamp
+////= Bright
+////= Triple
+////: Meter
+class Meter {
+  constructor(public base: number) {}
+  read(): number {
+    return this.base + 1;
+  }
+}
+////: Meter-2
+////= Meter
+////= Double
+////: Note
+class Note {
+  constructor(public pitch: number) {}
+  sound(): number {
+    return this.pitch;
+  }
+}
+////: Note-3
+////= Note
+////= Sharp
+////: Sharp
+class Sharp extends Note {
+  sound(): number {
+    return this.pitch + 1;
+  }
+}
+////: Triple
+class Triple extends Lamp {
+  factor(): number {
+    return 3;
+  }
+  power(): number {
+    return super.power() + 1000;
+  }
+}
+////: attempt
+function attempt(run: () => number): number {
+  try {
+    return run();
+  } catch (error) {
+    return error instanceof TypeError ? -1 : -2;
+  }
+}
+////: attempt-10
+////= attempt
+
+////= note
+////: attempt-2
+function attempt(bell: Bell): number {
+  try {
+    return ringOf(bell);
+  } catch (error) {
+    return error instanceof TypeError ? -1 : -2;
+  }
+}
+////: lines
+function «1»(«2»: «3»[]): number {
+  let sum = 0;
+  for (const «4» of «2») sum = sum * «5» + «6»();
+  return sum;
+}
+////: lines-14
+class «1» extends «2» {
+  «3» «4»(): number {
+    return «5»;
+  }
+}
+////: lines-3
+function «1»(«2»: «3»): number {
+  return «4»();
+}
+////: lines-6
+class «1» extends «2» {
+  «3»(): number {
+    return «4»;
+  }
+}
+////: lines-7
+class «1» {
+  «2»(): number {
+    return «3»;
+  }
+}
+////: lines-9
+function «1»(«2»: «3»[]): number {
+  let sum = 0;
+  for (const «4» of «2») sum += «5»();
+  return sum;
+}
+////: note
+function note(label: string, value: number): void {
+  console.log(label + ": " + value);
+}
+////: note-2
+function note(value: number): void {
+  checksum = (Math.imul(checksum, 31) + value) | 0;
+}
+////: powerOf
+function powerOf(lamp: Lamp): number {
+  return lamp.power();
+}
+////: ringOf
+function ringOf(bell: Bell): number {
+  return bell.ring();
+}
+////: soundOf
+function soundOf(one: Note): number {
+  return one.sound();
+}
+////: total
+function total(meters: Meter[]): number {
+  let sum = 0;
+  for (const meter of meters) sum += meter.read();
+  return sum;
+}

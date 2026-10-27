@@ -1,0 +1,106 @@
+////: attempt
+function attempt(label, run) {
+  try {
+    console.log(label, run());
+  } catch (error) {
+    console.log(label, "threw", error.constructor.name);
+  }
+}
+////: extend
+function extend(target, source) {
+  for (const key in source) target[key] = source[key];
+  return target;
+}
+//// a-copy-loop-fills-objects-of-the-program-and-strings-stay-as-they-are.js
+// A helper stores under computed keys into whatever it is handed. What it is handed here are objects of the program, some of them out of places that nobody follows.
+////= extend
+const parsed = JSON.parse('{"kind":"parsed"}');
+const made = extend(parsed, { shout() { return this.kind + "!"; }, size: 3 });
+const other = extend({}, { shout() { return "other"; }, trim: "not the method" });
+console.log(made.shout(), made.size, other.shout(), other.trim);
+
+const text = "  text  ";
+console.log(text.trim(), text.shout, text.size, (5).shout, true.size, 10n.shout, Symbol.iterator.size);
+console.log("kind" in String.prototype, Object.keys(String.prototype).length, Object.keys(Number.prototype).length);
+for (const value of [text, 5, true, 10n, Symbol.iterator, made]) console.log(typeof value, typeof value.shout, typeof value["si" + "ze"]);
+//// a-helper-called-from-a-reviver-extends-the-prototype-of-arrays-and-the-name-is-read.js
+// The helper is also called from the reviver of JSON.parse, so its operand holds a value nobody knows, and it lists Array.prototype beside that. No text is evaluated. The new name is read by name below.
+////= extend
+////= attempt
+const revived = JSON.parse('{"inner":{"kind":"parsed"}}', (key, value) => (typeof value === "object" ? extend(value, { size: 1 }) : value));
+attempt("unknown", () => Object.keys(revived.inner).join(" "));
+attempt("extend", () => typeof extend(Array.prototype, { last() { return this[this.length - 1]; } }));
+attempt("by name", () => [1, 2, 3].last());
+attempt("by key", () => [1, 2, 3]["la" + (process.argv.length > 100 ? "x" : "st")]());
+attempt("keys", () => Object.keys(Array.prototype).join(" "));
+attempt("loop", () => {
+  const seen = [];
+  for (const key in [7]) seen.push(key);
+  return seen.join(" ");
+});
+//// a-helper-that-also-takes-unknown-objects-extends-the-prototype-of-arrays-and-only-computed-keys-read-it.js
+// As its neighbor, but no statement names the new member: it is found under keys put together at run time.
+////= extend
+////= attempt
+const unknown = (0, eval)("({ kind: 'made by text' })");
+extend(unknown, { size: 1 });
+const name = "fir" + (process.argv.length > 100 ? "x" : "st");
+attempt("extend", () => typeof extend(Array.prototype, { [name]() { return this[0]; }, ["twice" + name]: 2 }));
+attempt("call", () => [4, 5, 6][name]());
+attempt("value", () => [4]["twice" + name] * 21);
+attempt("typeof", () => typeof [][name] + " " + typeof []["twice" + name] + " " + typeof []["push"]);
+attempt("apply", () => Reflect.apply([][name], [9, 8], []));
+attempt("has", () => name in [] && Object.hasOwn(Array.prototype, name));
+//// a-helper-that-also-takes-unknown-objects-extends-the-prototype-of-arrays-and-the-name-is-read.js
+// The helper's operand holds an object that text has made, so nobody knows it, and it lists Array.prototype beside that. The new name is read by name below.
+////= extend
+////= attempt
+const unknown = (0, eval)("({ kind: 'made by text' })");
+attempt("unknown", () => Object.keys(extend(unknown, { size: 1 })).join(" "));
+attempt("extend", () => typeof extend(Array.prototype, { last() { return this[this.length - 1]; } }));
+attempt("by name", () => [1, 2, 3].last());
+attempt("by key", () => [1, 2, 3]["la" + (process.argv.length > 100 ? "x" : "st")]());
+attempt("keys", () => Object.keys(Array.prototype).join(" "));
+attempt("loop", () => {
+  const seen = [];
+  for (const key in [7]) seen.push(key);
+  return seen.join(" ");
+});
+//// a-statement-that-names-the-prototype-of-arrays-adds-members-under-computed-keys.js
+// The receiver is Array.prototype itself and nothing else: the store is the program's own, whatever the key.
+const table = { last: list => list[list.length - 1], first: list => list[0] };
+for (const name of Object.keys(table)) {
+  Array.prototype[name] = function () {
+    return table[name](this);
+  };
+}
+Object.defineProperty(Array.prototype, "si" + "ze", {
+  configurable: true,
+  get() {
+    return this.length;
+  },
+});
+console.log([1, 2, 3].last(), [1, 2, 3].first(), [1, 2, 3].size, [][process.argv.length > 100 ? "first" : "last"]());
+console.log(Object.keys(Array.prototype).sort().join(" "));
+//// a-statement-that-names-the-prototype-of-strings-adds-members-under-computed-keys.js
+// As the colors package does: the receiver is String.prototype itself, the names come out of a table.
+const styles = { red: 31, green: 32 };
+for (const name of Object.keys(styles)) {
+  Object.defineProperty(String.prototype, name, {
+    configurable: true,
+    get() {
+      return "<" + styles[name] + ">" + this + "</>";
+    },
+  });
+}
+for (const name of ["twice", "thrice"]) {
+  String.prototype[name] = function () {
+    return this.repeat(name === "twice" ? 2 : 3);
+  };
+}
+Number.prototype["half" + (process.argv.length > 100 ? "x" : "")] = function () {
+  return this / 2;
+};
+console.log("a".red, "b".green, "c".twice(), "d".thrice(), (8).half());
+const asked = process.argv.length > 100 ? "green" : "red";
+console.log("e"[asked], typeof "f"["twi" + "ce"], Object.keys(String.prototype).sort().join(" "));

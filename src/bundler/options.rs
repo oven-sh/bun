@@ -91,7 +91,7 @@ pub(crate) fn is_node_builtin(str: &[u8]) -> bool {
     bun_resolve_builtins::Alias::has(str, bun_ast::Target::Node, Default::default())
 }
 
-const DEFAULT_WILDCARD_PATTERNS: &[(&[u8], &[u8])] = &[
+pub(crate) const DEFAULT_WILDCARD_PATTERNS: &[(&[u8], &[u8])] = &[
     (b"/bun:", b""),
     // (b"/src:", b""),
     // (b"/blob:", b""),
@@ -1306,6 +1306,8 @@ pub struct BundleOptions<'a> {
     pub inline_entrypoint_import_meta_main: bool,
     pub minify_whitespace: bool,
     pub minify_syntax: bool,
+    /// See `Features::is_library` of the parser.
+    pub is_library: bool,
     pub minify_identifiers: bool,
     pub keep_names: bool,
     pub dead_code_elimination: bool,
@@ -1414,6 +1416,11 @@ fn clone_macro_remap(src: &MacroRemap) -> MacroRemap {
 }
 
 impl<'a> BundleOptions<'a> {
+    pub(crate) fn clear_output_dir(&mut self) {
+        self.output_dir = Box::default();
+        self.output_dir_handle = None;
+    }
+
     pub(crate) fn is_test(&self) -> bool {
         self.rewrite_jest_for_tests
     }
@@ -1534,6 +1541,7 @@ impl<'a> BundleOptions<'a> {
             inline_entrypoint_import_meta_main: self.inline_entrypoint_import_meta_main,
             minify_whitespace: self.minify_whitespace,
             minify_syntax: self.minify_syntax,
+            is_library: self.is_library,
             minify_identifiers: self.minify_identifiers,
             keep_names: self.keep_names,
             dead_code_elimination: self.dead_code_elimination,
@@ -1792,6 +1800,7 @@ impl<'a> BundleOptions<'a> {
             inline_entrypoint_import_meta_main: false,
             minify_whitespace: false,
             minify_syntax: false,
+            is_library: false,
             minify_identifiers: false,
             keep_names: false,
             dead_code_elimination: true,

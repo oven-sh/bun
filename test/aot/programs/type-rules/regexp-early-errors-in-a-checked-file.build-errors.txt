@@ -1,0 +1,5 @@
+error: TS1534: This backreference refers to a group that does not exist. There are no capturing groups in this regular expression.
+error: TS1507: There is nothing available for repetition.
+error: TS1532: There is no capturing group named 'b' in this regular expression.
+error: TS1517: Range out of order in character class.
+error: TS100307: Invalid regular expression: duplicate group specifier name

@@ -203,8 +203,7 @@ impl MacroEntryPoint {
         let unquoted = bun_fmt::JSONFormatterUTF8Options { quote: false };
         let name = bun_fmt::format_json_string_utf8(function_name, quoted);
 
-        // The builtin alias resolves to the bare path `bun`. A user file named
-        // `bun.ts` has a directory and an extension.
+        // The builtin alias is the bare path `bun`, not a file named `bun.ts`.
         if import_path.dir.is_empty() && import_path.filename == b"bun" {
             write!(
                 buf,

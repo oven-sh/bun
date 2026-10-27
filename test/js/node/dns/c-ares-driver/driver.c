@@ -913,16 +913,6 @@ static int configure(Word cmd, Word *w, size_t n)
     f->data = NULL; f->len = 0; f->readable = 0; f->has_mtime = 0;
     return READ_OK;
   }
-  if (weq(cmd, "touch") && n == 2) {
-    unsigned char *path = w_text(w[0], &len);
-    if (!path) return READ_FAIL;
-    File *f = find_file((char *)path);
-    free(path);
-    int64_t mtime;
-    if (!f || !w_i64(w[1], &mtime)) return READ_FAIL;
-    f->has_mtime = 1; f->mtime = mtime;
-    return READ_OK;
-  }
   if (weq(cmd, "etc") && n == 1) {
     if (weq(w[0], "-")) return UNSUPPORTED;
     unsigned char *v = w_text(w[0], &len);

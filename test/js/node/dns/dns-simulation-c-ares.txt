@@ -6086,6 +6086,74 @@ send 2 28fb01000001000000000000016104746573740000010001
 watch 2 r-
 timer 4000
 ? @
+=== resolv.conf and hosts are read where the system keeps them
+etc /x/
+file /x/resolv.conf nameserver%2010.0.0.9%0A
+file /x/hosts 10.0.0.1%20box%0A
+lookup box 0 4
+query A a.test
+---
+? @
+? @
+? @
+start
+read /x/resolv.conf
+read /x/nsswitch.conf
+servers 10.0.0.9#53#53#0
+read /x/hosts
+done 0 name=box 10.0.0.1#0/0
+? @
+open 1 udp 10.0.0.9#53#0
+send 1 dd7401000001000000000000016104746573740000010001
+watch 1 r-
+timer 2000
+? @
+=== what arrived while nobody was told is read once the socket is readable
+file /etc/resolv.conf nameserver%2010.0.0.1%0A
+query A a.test
+query A b.test
+queue 1 dd748180000100010000000001610474657374000001000101610474657374000001000100000064000401010101
+queue 1 547d8180000100010000000001620474657374000001000101620474657374000001000100000064000402020202
+readable 1
+---
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+open 1 udp 10.0.0.1#53#0
+send 1 dd7401000001000000000000016104746573740000010001
+watch 1 r-
+timer 2000
+? @
+send 1 547d01000001000000000000016204746573740000010001
+? @
+? @
+? @
+close 1
+done 0 name=a.test 1.1.1.1/100
+done 1 name=b.test 2.2.2.2/100
+timer none
+? @
+=== the answer to a CNAME question is the target of its first CNAME
+file /etc/resolv.conf nameserver%2010.0.0.1%0A
+query CNAME a.test
+deliver 1 dd74818000010001000000000161047465737400000500010161047465737400000500010000006400080162047465737400
+---
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+open 1 udp 10.0.0.1#53#0
+send 1 dd7401000001000000000000016104746573740000050001
+watch 1 r-
+timer 2000
+? @
+close 1
+done 0 b.test
+timer none
+? @
 === differs: 031, by a TAB in resolv.conf
 file /etc/resolv.conf options%09timeout:256%20%0Aoptions%09ndots:3%09ndots:5%0Anameserver%20fec0::1%254294967296%0Asearch%20-,%20.%20x;c%0Ahostresorder%20%09%20bind,file%0Anameserver%20fe80::1%25eth0%0A
 lookup a.test 0 0
@@ -7239,4 +7307,38 @@ open 7 udp 10.0.0.1#53#0
 watch 7 r-
 send 7 4f380100000100000000000002713104746573740000010001
 timer 12250
+? @
+=== differs: an address in the answer to a CNAME question makes the name that was asked for its own CNAME
+file /etc/resolv.conf nameserver%2010.0.0.1%0A
+query CNAME a.test
+deliver 1 dd748180000100010000000001610474657374000005000101610474657374000001000100000064000401020304
+---
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+open 1 udp 10.0.0.1#53#0
+send 1 dd7401000001000000000000016104746573740000050001
+watch 1 r-
+timer 2000
+? @
+close 1
+done 0 a.test
+timer none
+? @
++++
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+open 1 udp 10.0.0.1#53#0
+watch 1 r-
+send 1 dd7401000001000000000000016104746573740000050001
+timer 2000
+? @
+close 1
+done 0 error ENODATA
+timer none
 ? @

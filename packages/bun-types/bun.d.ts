@@ -3494,9 +3494,11 @@ declare module "bun" {
      * This applies to pure barrel files, where every named export is a
      * re-export (`export { X } from './x'`). A barrel file with a local
      * export, or one that an importer loads with `import *`, loads all of its
-     * submodules. It does not make the package side-effect free: to let the
-     * linker drop unused files of a package, use `"sideEffects": false` in
-     * its `package.json`.
+     * submodules. `export * from './x'` targets are always loaded. The option
+     * does not make the package side-effect free: to let the linker drop
+     * unused files of a package, its `package.json` declares
+     * `"sideEffects": false` (when no file has side effects) or lists the
+     * files that do.
      *
      * This is also enabled automatically for any package with
      * `"sideEffects": false` in its `package.json`.

@@ -18,7 +18,7 @@ use super::entropy_encode_static::{
 };
 use super::fast_log::log2_floor_nonzero;
 use super::histogram::{Histogram, HistogramCommand, HistogramDistance, HistogramLiteral};
-use super::metablock::MetaBlockSplit;
+use super::meta_block::MetaBlockSplit;
 use super::params::DistanceParams;
 use crate::common::constants::{
     BLOCK_LENGTH_PREFIX_CODE, CODE_LENGTH_CODES, DISTANCE_CONTEXT_BITS, LARGE_MAX_DISTANCE_BITS,
@@ -27,7 +27,8 @@ use crate::common::constants::{
     distance_alphabet_size,
 };
 use crate::common::context::{ContextType, context_lut};
-use crate::util::{Bug, Checked, OutOfMemory, SliceExt, try_box, try_vec, try_zeroed};
+use crate::util::{Bug, Checked, SliceExt, try_box, try_vec, try_zeroed};
+use bun_core::AllocError;
 
 pub(crate) const MAX_HUFFMAN_TREE_SIZE: usize = 2 * NUM_COMMAND_SYMBOLS + 1;
 
@@ -1000,9 +1001,9 @@ pub(crate) fn store_meta_block(
         if cmd.copy_len() != 0 {
             prev_byte2 = input.at(pos.wrapping_sub(2) & mask)?;
             prev_byte = input.at(pos.wrapping_sub(1) & mask)?;
-            if cmd.cmd_prefix >= 128 {
-                let dist_code = usize::from(cmd.dist_prefix & 0x3FF);
-                let distnumextra = usize::from(cmd.dist_prefix >> 10);
+            if cmd.has_distance_symbol() {
+                let dist_code = cmd.dist_prefix.symbol();
+                let distnumextra = cmd.dist_prefix.num_extra_bits() as usize;
                 if mb.distance_context_map.is_empty() {
                     distance_enc.store_symbol(dist_code, bw)?;
                 } else {
@@ -1041,8 +1042,8 @@ fn build_histograms(
             pos += 1;
         }
         pos += cmd.copy_len() as usize;
-        if cmd.copy_len() != 0 && cmd.cmd_prefix >= 128 {
-            dist_histo.add(usize::from(cmd.dist_prefix & 0x3FF))?;
+        if cmd.has_distance_symbol() {
+            dist_histo.add(cmd.dist_prefix.symbol())?;
         }
     }
     Ok(())
@@ -1078,9 +1079,9 @@ fn store_data_with_huffman_codes(
             pos += 1;
         }
         pos += cmd.copy_len() as usize;
-        if cmd.copy_len() != 0 && cmd.cmd_prefix >= 128 {
-            let dist_code = usize::from(cmd.dist_prefix & 0x3FF);
-            let distnumextra = usize::from(cmd.dist_prefix >> 10);
+        if cmd.has_distance_symbol() {
+            let dist_code = cmd.dist_prefix.symbol();
+            let distnumextra = cmd.dist_prefix.num_extra_bits() as usize;
             bw.write_bits(
                 usize::from(dist_depth.at(dist_code)?),
                 u64::from(dist_bits.at(dist_code)?),
@@ -1091,7 +1092,7 @@ fn store_data_with_huffman_codes(
     Ok(())
 }
 
-struct MetablockArena {
+struct MetaBlockArena {
     lit_histo: HistogramLiteral,
     cmd_histo: HistogramCommand,
     dist_histo: HistogramDistance,
@@ -1104,8 +1105,8 @@ struct MetablockArena {
     tree: [HuffmanTree; MAX_HUFFMAN_TREE_SIZE],
 }
 
-impl MetablockArena {
-    fn new() -> Result<Box<Self>, OutOfMemory> {
+impl MetaBlockArena {
+    fn new() -> Result<Box<Self>, AllocError> {
         try_box(Self {
             lit_histo: Histogram::new(),
             cmd_histo: Histogram::new(),
@@ -1132,7 +1133,7 @@ pub(crate) fn store_meta_block_trivial(
     commands: &[Command],
     bw: &mut BitWriter<'_>,
 ) -> Fallible {
-    let arena = &mut *MetablockArena::new()?;
+    let arena = &mut *MetaBlockArena::new()?;
     let num_distance_symbols = dist.alphabet_size_max as usize;
 
     store_compressed_meta_block_header(is_last, length, bw)?;
@@ -1207,7 +1208,7 @@ pub(crate) fn store_meta_block_fast(
     commands: &[Command],
     bw: &mut BitWriter<'_>,
 ) -> Fallible {
-    let arena = &mut *MetablockArena::new()?;
+    let arena = &mut *MetaBlockArena::new()?;
     let num_distance_symbols = dist.alphabet_size_max as usize;
     let distance_alphabet_bits = log2_floor_nonzero(num_distance_symbols - 1) as usize + 1;
 

@@ -7,12 +7,12 @@ use super::cluster::{HistogramPair, histogram_bit_cost_distance, histogram_combi
 use super::command::Command;
 use super::fast_log::fast_log2;
 use super::histogram::{Histogram, NUM_HISTOGRAM_DISTANCE_SYMBOLS};
-use super::params::EncoderParams;
-use super::quality::HQ_ZOPFLIFICATION_QUALITY;
+use super::params::{EncoderParams, HQ_ZOPFLIFICATION_QUALITY};
 use crate::common::constants::{
     MAX_NUMBER_OF_BLOCK_TYPES, NUM_COMMAND_SYMBOLS, NUM_LITERAL_SYMBOLS,
 };
-use crate::util::{Bug, Checked, OutOfMemory, SliceExt, try_box, try_vec, try_zeroed};
+use crate::util::{Bug, Checked, SliceExt, try_box, try_vec, try_zeroed};
+use bun_core::AllocError;
 
 const MAX_LITERAL_HISTOGRAMS: usize = 100;
 const MAX_COMMAND_HISTOGRAMS: usize = 50;
@@ -44,17 +44,17 @@ pub(crate) struct BlockSplit {
 
 impl BlockSplit {
     /// Makes room for `num_blocks` blocks.
-    pub(crate) fn ensure_capacity(&mut self, num_blocks: usize) -> Result<(), OutOfMemory> {
+    pub(crate) fn ensure_capacity(&mut self, num_blocks: usize) -> Result<(), AllocError> {
         if self.types.len() < num_blocks {
             self.types
                 .try_reserve(num_blocks - self.types.len())
-                .map_err(|_| OutOfMemory)?;
+                .map_err(|_| AllocError)?;
             self.types.resize(num_blocks, 0);
         }
         if self.lengths.len() < num_blocks {
             self.lengths
                 .try_reserve(num_blocks - self.lengths.len())
-                .map_err(|_| OutOfMemory)?;
+                .map_err(|_| AllocError)?;
             self.lengths.resize(num_blocks, 0);
         }
         Ok(())
@@ -343,11 +343,11 @@ fn cluster_blocks<T: Copy + Into<usize>, const N: usize>(
     let mut all_histograms = Vec::<Histogram<N>>::new();
     all_histograms
         .try_reserve(expected_num_clusters)
-        .map_err(|_| OutOfMemory)?;
+        .map_err(|_| AllocError)?;
     let mut cluster_size = Vec::<u32>::new();
     cluster_size
         .try_reserve(expected_num_clusters)
-        .map_err(|_| OutOfMemory)?;
+        .map_err(|_| AllocError)?;
     let mut num_clusters = 0usize;
     let mut histograms = try_vec(Histogram::<N>::new(), num_blocks.min(HISTOGRAMS_PER_BATCH))?;
     let mut max_num_pairs = HISTOGRAMS_PER_BATCH * HISTOGRAMS_PER_BATCH / 2;
@@ -396,10 +396,10 @@ fn cluster_blocks<T: Copy + Into<usize>, const N: usize>(
         )?;
         all_histograms
             .try_reserve(num_new_clusters)
-            .map_err(|_| OutOfMemory)?;
+            .map_err(|_| AllocError)?;
         cluster_size
             .try_reserve(num_new_clusters)
-            .map_err(|_| OutOfMemory)?;
+            .map_err(|_| AllocError)?;
         for (j, &cluster) in new_clusters.sub(..num_new_clusters)?.iter().enumerate() {
             all_histograms.push(histograms.get(cluster as usize).ok_or(Bug)?.clone());
             cluster_size.push(sizes.at(cluster as usize)?);
@@ -421,7 +421,7 @@ fn cluster_blocks<T: Copy + Into<usize>, const N: usize>(
     let mut clusters = Vec::new();
     clusters
         .try_reserve_exact(num_clusters)
-        .map_err(|_| OutOfMemory)?;
+        .map_err(|_| AllocError)?;
     clusters.extend(0..num_clusters as u32);
     let num_final_clusters = histogram_combine(
         &mut all_histograms,
@@ -572,7 +572,7 @@ pub(crate) fn split_block(
         let mut literals = Vec::new();
         literals
             .try_reserve_exact(count_literals(cmds))
-            .map_err(|_| OutOfMemory)?;
+            .map_err(|_| AllocError)?;
         copy_literals_to_byte_array(cmds, data, offset, mask, &mut literals)?;
         split_byte_vector::<u8, NUM_LITERAL_SYMBOLS>(
             &literals,
@@ -589,7 +589,7 @@ pub(crate) fn split_block(
         let mut insert_and_copy_codes = Vec::new();
         insert_and_copy_codes
             .try_reserve_exact(cmds.len())
-            .map_err(|_| OutOfMemory)?;
+            .map_err(|_| AllocError)?;
         insert_and_copy_codes.extend(cmds.iter().map(|cmd| cmd.cmd_prefix));
         split_byte_vector::<u16, NUM_COMMAND_SYMBOLS>(
             &insert_and_copy_codes,
@@ -606,11 +606,11 @@ pub(crate) fn split_block(
         let mut distance_prefixes = Vec::new();
         distance_prefixes
             .try_reserve_exact(cmds.len())
-            .map_err(|_| OutOfMemory)?;
+            .map_err(|_| AllocError)?;
         distance_prefixes.extend(
             cmds.iter()
-                .filter(|cmd| cmd.copy_len() != 0 && cmd.cmd_prefix >= 128)
-                .map(|cmd| cmd.dist_prefix & 0x3FF),
+                .filter(|cmd| cmd.has_distance_symbol())
+                .map(|cmd| cmd.dist_prefix.symbol() as u16),
         );
         split_byte_vector::<u16, NUM_HISTOGRAM_DISTANCE_SYMBOLS>(
             &distance_prefixes,

@@ -7,13 +7,13 @@ use super::{BackwardMatch, HASH_MUL_32};
 use crate::common::constants::WINDOW_GAP;
 use crate::enc::Fallible;
 use crate::enc::find_match_length::find_match_length_with_limit;
-use crate::enc::params::EncoderParams;
-use crate::enc::quality::HQ_ZOPFLIFICATION_QUALITY;
+use crate::enc::params::{EncoderParams, HQ_ZOPFLIFICATION_QUALITY};
 use crate::enc::static_dict::{
     INVALID_MATCH, MAX_STATIC_DICTIONARY_MATCH_LEN, find_all_static_dictionary_matches,
 };
 use crate::enc::static_dict_lut::{StaticDictionaryLut, static_dictionary_lut};
-use crate::util::{Checked, OutOfMemory, SliceExt, load_u32_le, try_zeroed};
+use crate::util::{Checked, SliceExt, load_u32_le, try_zeroed};
+use bun_core::AllocError;
 
 const BUCKET_BITS: u32 = 17;
 const BUCKET_SIZE: usize = 1 << BUCKET_BITS;
@@ -64,7 +64,7 @@ impl H10 {
         Ok(())
     }
 
-    pub(super) fn reserve(&mut self, _input_end: usize) -> Result<(), OutOfMemory> {
+    pub(super) fn reserve(&mut self, _input_end: usize) -> Result<(), AllocError> {
         Ok(())
     }
 

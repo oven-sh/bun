@@ -2,6 +2,8 @@
 
 use core::slice::SliceIndex;
 
+use bun_core::AllocError;
+
 /// An index or a length that the algorithm keeps in range was out of range. No input should be able to cause it.
 /// The decoder reports it as [`crate::DecoderErrorCode::Unreachable`] and the encoder as a failed call.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -141,31 +143,24 @@ impl Loads<'_, 4> {
     }
 }
 
-/// The allocation failed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct OutOfMemory;
-
 /// `len` zeros, or nothing if there is no memory for them. Of a large table, the parts that are never used cost nothing.
-pub(crate) fn try_zeroed<T: bun_core::Zeroable>(len: usize) -> Result<Vec<T>, OutOfMemory> {
-    bun_core::vec::try_zeroed(len).map_err(|_| OutOfMemory)
-}
+pub(crate) use bun_core::vec::try_zeroed;
 
 /// `value` on the heap, or nothing if there is no memory for it.
-pub(crate) fn try_box<T>(value: T) -> Result<Box<T>, OutOfMemory> {
-    Box::try_new(value).map_err(|_| OutOfMemory)
+pub(crate) fn try_box<T>(value: T) -> Result<Box<T>, AllocError> {
+    Box::try_new(value).map_err(|_| AllocError)
 }
 
 /// An empty `Vec` with room for `capacity` elements, or nothing if there is no memory for them.
-pub(crate) fn try_with_capacity<T>(capacity: usize) -> Result<Vec<T>, OutOfMemory> {
+pub(crate) fn try_with_capacity<T>(capacity: usize) -> Result<Vec<T>, AllocError> {
     let mut vec = Vec::new();
-    vec.try_reserve_exact(capacity).map_err(|_| OutOfMemory)?;
+    vec.try_reserve_exact(capacity).map_err(|_| AllocError)?;
     Ok(vec)
 }
 
 /// `len` copies of `value`, or nothing if there is no memory for them.
-pub(crate) fn try_vec<T: Clone>(value: T, len: usize) -> Result<Vec<T>, OutOfMemory> {
-    let mut vec = Vec::new();
-    vec.try_reserve_exact(len).map_err(|_| OutOfMemory)?;
+pub(crate) fn try_vec<T: Clone>(value: T, len: usize) -> Result<Vec<T>, AllocError> {
+    let mut vec = try_with_capacity(len)?;
     vec.resize(len, value);
     Ok(vec)
 }

@@ -5,12 +5,12 @@ use super::backward_references_hq::{
     create_hq_zopfli_backward_references, create_zopfli_backward_references,
 };
 use super::bit_cost::bits_entropy;
-use super::bit_writer::BitWriter;
-use super::brotli_bit_stream::{
+use super::bit_stream::{
     store_meta_block, store_meta_block_fast, store_meta_block_trivial,
     store_uncompressed_meta_block,
 };
-use super::command::{Command, get_length_code};
+use super::bit_writer::BitWriter;
+use super::command::Command;
 use super::compound_dictionary::{CompoundDictionary, PreparedDictionary};
 use super::compress_fragment::{OnePassArena, compress_fragment_fast};
 use super::compress_fragment_two_pass::{
@@ -18,20 +18,19 @@ use super::compress_fragment_two_pass::{
 };
 use super::fast_log::{fast_log2, log2_floor_nonzero};
 use super::hash::Hasher;
-use super::metablock::{
+use super::meta_block::{
     MAX_STATIC_CONTEXTS, MetaBlockSplit, build_meta_block, build_meta_block_greedy,
     init_distance_params, optimize_histograms,
 };
-use super::params::{DistanceParams, EncoderMode, EncoderParams, HasherParams};
-use super::quality::{
-    FAST_ONE_PASS_COMPRESSION_QUALITY, FAST_TWO_PASS_COMPRESSION_QUALITY,
-    HQ_ZOPFLIFICATION_QUALITY, MAX_NUM_DELAYED_SYMBOLS, MAX_QUALITY_FOR_STATIC_ENTROPY_CODES,
-    MIN_QUALITY_FOR_BLOCK_SPLIT, MIN_QUALITY_FOR_CONTEXT_MODELING,
-    MIN_QUALITY_FOR_HQ_BLOCK_SPLITTING, MIN_QUALITY_FOR_HQ_CONTEXT_MODELING,
-    MIN_QUALITY_FOR_NONZERO_DISTANCE_PARAMS, MIN_QUALITY_FOR_OPTIMIZE_HISTOGRAMS,
-    ZOPFLIFICATION_QUALITY, max_hash_table_size,
+use super::params::{
+    DistanceParams, EncoderMode, EncoderParams, FAST_ONE_PASS_COMPRESSION_QUALITY,
+    FAST_TWO_PASS_COMPRESSION_QUALITY, HQ_ZOPFLIFICATION_QUALITY, HasherParams,
+    MAX_NUM_DELAYED_SYMBOLS, MAX_QUALITY_FOR_STATIC_ENTROPY_CODES, MIN_QUALITY_FOR_BLOCK_SPLIT,
+    MIN_QUALITY_FOR_CONTEXT_MODELING, MIN_QUALITY_FOR_HQ_BLOCK_SPLITTING,
+    MIN_QUALITY_FOR_HQ_CONTEXT_MODELING, MIN_QUALITY_FOR_NONZERO_DISTANCE_PARAMS,
+    MIN_QUALITY_FOR_OPTIMIZE_HISTOGRAMS, ZOPFLIFICATION_QUALITY, max_hash_table_size,
 };
-use super::ringbuffer::RingBuffer;
+use super::ring_buffer::RingBuffer;
 use super::utf8_util::{MIN_UTF8_RATIO, is_mostly_utf8};
 use super::{
     DEFAULT_QUALITY, DEFAULT_WINDOW, EncoderOperation, EncoderParameter, Fallible, MAX_WINDOW_BITS,
@@ -42,7 +41,8 @@ use crate::common::constants::{
 };
 use crate::common::context::{ContextType, context_lut};
 use crate::io::{Output, SpareCapacity};
-use crate::util::{Bug, Checked, OutOfMemory, SliceExt, try_zeroed};
+use crate::util::{Bug, Checked, SliceExt, try_zeroed};
+use bun_core::AllocError;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum StreamState {
@@ -138,7 +138,7 @@ fn wrap_position(position: u64) -> u32 {
 }
 
 /// Makes `storage` at least `size` long. What it held is lost.
-fn get_storage(storage: &mut Vec<u8>, size: usize) -> Result<&mut [u8], OutOfMemory> {
+fn get_storage(storage: &mut Vec<u8>, size: usize) -> Result<&mut [u8], AllocError> {
     if storage.len() < size {
         *storage = Vec::new();
         *storage = try_zeroed(size)?;
@@ -647,12 +647,12 @@ fn extend_last_command(
         return Ok(());
     }
     let at = |pos: u64| data.at((pos & u64::from(mask)) as usize);
+    let bytes_before = *bytes;
     if cmd_dist <= max_distance {
         while *bytes != 0
             && at(u64::from(*wrapped_last_processed_pos))?
                 == at(u64::from(*wrapped_last_processed_pos).wrapping_sub(cmd_dist))?
         {
-            last_command.copy_len += 1;
             *bytes -= 1;
             *wrapped_last_processed_pos = wrapped_last_processed_pos.wrapping_add(1);
         }
@@ -667,28 +667,24 @@ fn extend_last_command(
         }
         let mut br_offset = address - dict.chunk_offsets.at(br_index)?;
         let mut chunk: &[u8] = &dict.chunks.get(br_index).ok_or(Bug)?.source;
-        while *bytes != 0 && at(u64::from(*wrapped_last_processed_pos))? == chunk.at(br_offset)? {
-            last_command.copy_len += 1;
+        'extend: while *bytes != 0
+            && at(u64::from(*wrapped_last_processed_pos))? == chunk.at(br_offset)?
+        {
             *bytes -= 1;
             *wrapped_last_processed_pos = wrapped_last_processed_pos.wrapping_add(1);
             br_offset += 1;
-            if br_offset == chunk.len() {
+            // A dictionary may be empty.
+            while br_offset == chunk.len() {
                 br_index += 1;
                 br_offset = 0;
                 match dict.chunks.get(br_index) {
                     Some(next) => chunk = &next.source,
-                    None => break,
+                    None => break 'extend,
                 }
             }
         }
     }
-    // The copy is no longer than a meta-block, so there is a code for it. The reference encoder adds the high 7 bits as
-    // an unsigned number here, and the output depends on it.
-    last_command.cmd_prefix = get_length_code(
-        last_command.insert_len as usize,
-        (last_command.copy_len() as i32 + (last_command.copy_len >> 25) as i32) as usize,
-        last_command.dist_prefix & 0x3FF == 0,
-    );
+    last_command.lengthen_copy(bytes_before - *bytes);
     Ok(())
 }
 
@@ -948,7 +944,7 @@ impl Encoder {
             let newsize = newsize + bytes as usize / 4 + 16;
             self.commands
                 .try_reserve_exact(newsize - self.commands.len())
-                .map_err(|_| OutOfMemory)?;
+                .map_err(|_| AllocError)?;
         }
 
         let data = self.ringbuffer.buffer();
@@ -1031,19 +1027,20 @@ impl Encoder {
         }
 
         {
-            let max_length = self.params.max_metablock_size();
+            let max_length = self.params.max_meta_block_size();
             let max_literals = max_length / 8;
             let max_commands = max_length / 8;
             let processed_bytes = (self.input_pos - self.last_flush_pos) as usize;
             // Flush now if another block of the largest size would not fit in the meta-block.
-            let next_input_fits_metablock = processed_bytes + self.input_block_size() <= max_length;
+            let next_input_fits_meta_block =
+                processed_bytes + self.input_block_size() <= max_length;
             // Without block splitting there is nothing to gain from a long meta-block.
             let should_flush = self.params.quality < MIN_QUALITY_FOR_BLOCK_SPLIT
                 && self.num_literals + self.commands.len() >= MAX_NUM_DELAYED_SYMBOLS;
             if !is_last
                 && !force_flush
                 && !should_flush
-                && next_input_fits_metablock
+                && next_input_fits_meta_block
                 && self.num_literals < max_literals
                 && self.commands.len() < max_commands
             {
@@ -1069,15 +1066,15 @@ impl Encoder {
         }
         debug_assert!(self.input_pos - self.last_flush_pos <= 1 << 24);
 
-        let metablock_size = (self.input_pos - self.last_flush_pos) as usize;
-        let storage = get_storage(&mut self.storage, 2 * metablock_size + 503)?;
+        let meta_block_size = (self.input_pos - self.last_flush_pos) as usize;
+        let storage = get_storage(&mut self.storage, 2 * meta_block_size + 503)?;
         storage.write_at(0, &self.last_bytes.to_le_bytes())?;
         let mut bw = BitWriter::new(storage, usize::from(self.last_bytes_bits))?;
         write_meta_block_internal(
             self.ringbuffer.buffer(),
             mask as usize,
             self.last_flush_pos,
-            metablock_size,
+            meta_block_size,
             is_last,
             literal_context_mode,
             &self.params,

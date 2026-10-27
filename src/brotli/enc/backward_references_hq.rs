@@ -12,13 +12,13 @@ use super::hash::{
     BackwardMatch, H10, Hasher, MAX_NUM_MATCHES_H10, lookup_all_compound_dictionary_matches,
 };
 use super::literal_cost::estimate_bit_costs_for_literals;
-use super::params::{DistanceParams, EncoderParams};
-use super::quality::LONG_COPY_QUICK_STEP;
+use super::params::{DistanceParams, EncoderParams, LONG_COPY_QUICK_STEP};
 use crate::common::constants::{
     NUM_COMMAND_SYMBOLS, NUM_DISTANCE_SHORT_CODES, NUM_LITERAL_SYMBOLS, max_backward_limit,
 };
 use crate::common::context::ContextLut;
-use crate::util::{Bug, Checked, OutOfMemory, SliceExt, try_vec, try_zeroed};
+use crate::util::{Bug, Checked, SliceExt, try_vec, try_zeroed};
+use bun_core::AllocError;
 
 /// `calculate_distance_code_limit(MAX_ALLOWED_DISTANCE, 3, 120).max_alphabet_size`.
 const MAX_EFFECTIVE_DISTANCE_ALPHABET_SIZE: usize = 544;
@@ -134,7 +134,7 @@ fn set_cost(histogram: &[u32], literal_histogram: bool, cost: &mut [f32]) {
 }
 
 impl ZopfliCostModel {
-    fn new(dist: &DistanceParams, num_bytes: usize) -> Result<Self, OutOfMemory> {
+    fn new(dist: &DistanceParams, num_bytes: usize) -> Result<Self, AllocError> {
         Ok(Self {
             cost_cmd: [0.0; NUM_COMMAND_SYMBOLS],
             cost_dist: try_zeroed(dist.alphabet_size_limit as usize)?,
@@ -182,7 +182,7 @@ impl ZopfliCostModel {
         for command in commands {
             let inslength = command.insert_len as usize;
             let copylength = command.copy_len() as usize;
-            let distcode = usize::from(command.dist_prefix & 0x3FF);
+            let distcode = command.dist_prefix.symbol();
             let cmdcode = usize::from(command.cmd_prefix);
 
             *histogram_cmd.at_mut(cmdcode)? += 1;
@@ -589,15 +589,14 @@ fn update_nodes(
             let is_dictionary_match = dist > dictionary_start + gap;
             // The last distances were tried already, so this does not look for a short code.
             let dist_code = dist + NUM_DISTANCE_SHORT_CODES as usize - 1;
-            let (dist_symbol, _) = prefix_encode_copy_distance(
+            let (dist_prefix, _) = prefix_encode_copy_distance(
                 dist_code,
                 params.dist.num_direct_distance_codes as usize,
                 params.dist.distance_postfix_bits as usize,
             );
-            let distnumextra = dist_symbol >> 10;
             let dist_cost = base_cost
-                + f32::from(distnumextra)
-                + model.distance_cost(usize::from(dist_symbol & 0x3FF))?;
+                + dist_prefix.num_extra_bits() as f32
+                + model.distance_cost(dist_prefix.symbol())?;
 
             // All the lengths up to that of the match, or only that one for a dictionary word and for a long match.
             let max_match_len = m.length();
@@ -665,9 +664,7 @@ fn zopfli_create_commands(
     let mut pos = 0usize;
     let mut offset = nodes.at(0)?.u;
     let mut first = true;
-    commands
-        .try_reserve(num_commands)
-        .map_err(|_| OutOfMemory)?;
+    commands.try_reserve(num_commands).map_err(|_| AllocError)?;
     while offset != u32::MAX {
         let next = nodes.at(pos + offset as usize)?;
         let copy_length = next.copy_length() as usize;
@@ -1040,9 +1037,7 @@ pub(crate) fn create_hq_zopfli_backward_references(
     let max_zopfli_len = params.max_zopfli_len();
     let mut num_matches = try_zeroed::<u32>(num_bytes)?;
     let mut matches: Vec<BackwardMatch> = Vec::new();
-    matches
-        .try_reserve(4 * num_bytes)
-        .map_err(|_| OutOfMemory)?;
+    matches.try_reserve(4 * num_bytes).map_err(|_| AllocError)?;
     let mut buffers = MatchBuffers::new();
     let store_end = store_end(position, num_bytes);
     let gap = params.dictionary.total_size;
@@ -1057,7 +1052,7 @@ pub(crate) fn create_hq_zopfli_backward_references(
             num_bytes - i,
             params,
         )?;
-        matches.try_reserve(found.len()).map_err(|_| OutOfMemory)?;
+        matches.try_reserve(found.len()).map_err(|_| AllocError)?;
         match found {
             [.., last] if last.length() > max_zopfli_len => {
                 // A long match is taken without looking at the others, and nothing is looked for at its other bytes.

@@ -19,16 +19,31 @@ static COPY_EXTRA: [u32; NUM_INS_COPY_CODES] = [
     0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 7, 8, 9, 10, 24,
 ];
 
-/// Returns the distance symbol, with the number of extra bits in its high 6 bits, and the extra bits. `distance_code` is
-/// one of the 16 short codes, or the distance + 15.
+/// A distance symbol in the low 10 bits and the number of its extra bits in the high 6.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct DistancePrefix(u16);
+
+impl DistancePrefix {
+    #[inline(always)]
+    pub(crate) fn symbol(self) -> usize {
+        usize::from(self.0 & 0x3FF)
+    }
+
+    #[inline(always)]
+    pub(crate) fn num_extra_bits(self) -> u32 {
+        u32::from(self.0 >> 10)
+    }
+}
+
+/// Returns the distance symbol and its extra bits. `distance_code` is one of the 16 short codes, or the distance + 15.
 #[inline(always)]
 pub(crate) fn prefix_encode_copy_distance(
     distance_code: usize,
     num_direct_codes: usize,
     postfix_bits: usize,
-) -> (u16, u32) {
+) -> (DistancePrefix, u32) {
     if distance_code < NUM_DISTANCE_SHORT_CODES as usize + num_direct_codes {
-        return (distance_code as u16, 0);
+        return (DistancePrefix(distance_code as u16), 0);
     }
     let dist = (1usize << (postfix_bits + 2))
         + (distance_code - NUM_DISTANCE_SHORT_CODES as usize - num_direct_codes);
@@ -43,7 +58,10 @@ pub(crate) fn prefix_encode_copy_distance(
             + num_direct_codes
             + ((2 * (nbits - 1) + prefix) << postfix_bits)
             + postfix);
-    (code as u16, ((dist - offset) >> postfix_bits) as u32)
+    (
+        DistancePrefix(code as u16),
+        ((dist - offset) >> postfix_bits) as u32,
+    )
 }
 
 #[inline(always)]
@@ -125,12 +143,11 @@ pub(crate) struct Command {
     pub(crate) insert_len: u32,
     /// The copy length in the low 25 bits. In the high 7, what to add to it for the length that is encoded, which differs
     /// for a transformed dictionary word.
-    pub(crate) copy_len: u32,
+    copy_len_and_delta: u32,
     /// The extra bits of the distance.
     pub(crate) dist_extra: u32,
     pub(crate) cmd_prefix: u16,
-    /// The distance symbol in the low 10 bits and the number of extra bits in the high 6.
-    pub(crate) dist_prefix: u16,
+    pub(crate) dist_prefix: DistancePrefix,
 }
 
 impl Command {
@@ -152,11 +169,11 @@ impl Command {
         let cmd_prefix = get_length_code(
             insertlen,
             (copylen as i32).wrapping_add(copylen_code_delta) as usize,
-            dist_prefix & 0x3FF == 0,
+            dist_prefix.symbol() == 0,
         );
         Self {
             insert_len: insertlen as u32,
-            copy_len: copylen as u32 | (delta << 25),
+            copy_len_and_delta: copylen as u32 | (delta << 25),
             dist_extra,
             cmd_prefix,
             dist_prefix,
@@ -168,21 +185,21 @@ impl Command {
     pub(crate) fn new_insert(insertlen: usize) -> Self {
         Self {
             insert_len: insertlen as u32,
-            copy_len: 4 << 25,
+            copy_len_and_delta: 4 << 25,
             dist_extra: 0,
             cmd_prefix: get_length_code(insertlen, 4, false),
-            dist_prefix: NUM_DISTANCE_SHORT_CODES as u16,
+            dist_prefix: DistancePrefix(NUM_DISTANCE_SHORT_CODES as u16),
         }
     }
 
     /// The `distance_code` that [`Self::new`] was given.
     #[inline(always)]
     pub(crate) fn restore_distance_code(&self, dist: &DistanceParams) -> u32 {
-        let dcode = u32::from(self.dist_prefix & 0x3FF);
+        let dcode = self.dist_prefix.symbol() as u32;
         if dcode < NUM_DISTANCE_SHORT_CODES + dist.num_direct_distance_codes {
             return dcode;
         }
-        let nbits = u32::from(self.dist_prefix >> 10);
+        let nbits = self.dist_prefix.num_extra_bits();
         let extra = self.dist_extra;
         let postfix_mask = (1u32 << dist.distance_postfix_bits) - 1;
         let xcode = dcode - dist.num_direct_distance_codes - NUM_DISTANCE_SHORT_CODES;
@@ -208,14 +225,31 @@ impl Command {
 
     #[inline(always)]
     pub(crate) fn copy_len(&self) -> u32 {
-        self.copy_len & 0x1FF_FFFF
+        self.copy_len_and_delta & 0x1FF_FFFF
+    }
+
+    /// Whether the stream has a distance symbol for it: it copies something, and not implicitly from the last distance.
+    #[inline(always)]
+    pub(crate) fn has_distance_symbol(&self) -> bool {
+        self.copy_len() != 0 && self.cmd_prefix >= 128
     }
 
     /// The copy length that is encoded.
     #[inline(always)]
     pub(crate) fn copy_len_code(&self) -> u32 {
-        let modifier = self.copy_len >> 25;
+        let modifier = self.copy_len_and_delta >> 25;
         let delta = i32::from((modifier | ((modifier & 0x40) << 1)) as u8 as i8);
-        ((self.copy_len & 0x1FF_FFFF) as i32).wrapping_add(delta) as u32
+        (self.copy_len() as i32).wrapping_add(delta) as u32
+    }
+
+    /// Makes the copy `extra` bytes longer. It stays shorter than a meta-block, so there is a code for it.
+    pub(crate) fn lengthen_copy(&mut self, extra: u32) {
+        self.copy_len_and_delta += extra;
+        // The reference encoder adds the high 7 bits as an unsigned number here, and the output depends on it.
+        self.cmd_prefix = get_length_code(
+            self.insert_len as usize,
+            (self.copy_len() as i32 + (self.copy_len_and_delta >> 25) as i32) as usize,
+            self.dist_prefix.symbol() == 0,
+        );
     }
 }

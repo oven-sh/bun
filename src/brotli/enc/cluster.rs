@@ -4,7 +4,8 @@ use super::Fallible;
 use super::bit_cost::population_cost;
 use super::fast_log::fast_log2;
 use super::histogram::Histogram;
-use crate::util::{Bug, Checked, OutOfMemory, SliceExt, try_box, try_vec, try_zeroed};
+use crate::util::{Bug, Checked, SliceExt, try_box, try_vec, try_zeroed};
+use bun_core::AllocError;
 
 /// Two clusters that could be merged.
 #[derive(Clone, Copy, Default)]
@@ -288,7 +289,7 @@ fn histogram_reindex<const N: usize>(
     }
     let mut tmp = Vec::new();
     tmp.try_reserve_exact(next_index as usize)
-        .map_err(|_| OutOfMemory)?;
+        .map_err(|_| AllocError)?;
     for symbol in symbols.iter_mut() {
         let index = new_index.at(*symbol as usize)?;
         if index as usize == tmp.len() {
@@ -321,7 +322,7 @@ pub(crate) fn cluster_histograms<const N: usize>(
     let mut tmp = try_box(Histogram::new())?;
 
     let mut out = Vec::new();
-    out.try_reserve_exact(in_size).map_err(|_| OutOfMemory)?;
+    out.try_reserve_exact(in_size).map_err(|_| AllocError)?;
     out.extend_from_slice(input);
     for (i, (histogram, symbol)) in out.iter_mut().zip(histogram_symbols.iter_mut()).enumerate() {
         histogram.bit_cost = population_cost(histogram)?;
@@ -353,7 +354,7 @@ pub(crate) fn cluster_histograms<const N: usize>(
     if pairs.len() < max_num_pairs + 1 {
         pairs
             .try_reserve_exact(max_num_pairs + 1 - pairs.len())
-            .map_err(|_| OutOfMemory)?;
+            .map_err(|_| AllocError)?;
         pairs.resize(max_num_pairs + 1, HistogramPair::default());
     }
     num_clusters = histogram_combine(

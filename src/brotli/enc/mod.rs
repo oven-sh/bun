@@ -3,16 +3,16 @@
 mod backward_references;
 mod backward_references_hq;
 mod bit_cost;
+mod bit_stream;
 mod bit_writer;
 mod block_splitter;
-mod brotli_bit_stream;
 mod cluster;
 mod command;
 mod compound_dictionary;
 mod compress_fragment;
 mod compress_fragment_two_pass;
 mod dictionary_hash;
-mod encode;
+mod encoder;
 mod entropy_encode;
 mod entropy_encode_static;
 mod fast_log;
@@ -20,19 +20,19 @@ mod find_match_length;
 mod hash;
 mod histogram;
 mod literal_cost;
-mod metablock;
+mod meta_block;
 mod params;
-mod quality;
-mod ringbuffer;
+mod ring_buffer;
 mod static_dict;
 mod static_dict_lut;
 mod utf8_util;
 
 pub use compound_dictionary::PreparedDictionary;
-pub use encode::{Encoder, compress, compress_append, max_compressed_size};
+pub use encoder::{Encoder, compress, compress_append, max_compressed_size};
 pub use params::EncoderMode;
 
-use crate::util::{Bug, OutOfMemory};
+use crate::util::Bug;
+use bun_core::AllocError;
 
 pub const MIN_WINDOW_BITS: i32 = 10;
 /// Without [`EncoderParameter::LargeWindow`].
@@ -114,9 +114,9 @@ impl From<Bug> for Failure {
     }
 }
 
-impl From<OutOfMemory> for Failure {
+impl From<AllocError> for Failure {
     #[cold]
-    fn from(_: OutOfMemory) -> Self {
+    fn from(_: AllocError) -> Self {
         Self::OutOfMemory
     }
 }

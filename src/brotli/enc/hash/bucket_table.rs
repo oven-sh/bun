@@ -1,7 +1,8 @@
 //! The storage of the hasher that keeps the last few positions of each hash.
 
 use crate::enc::params::HasherParams;
-use crate::util::{Bug, Checked, OutOfMemory, SliceExt, try_zeroed};
+use crate::util::{Bug, Checked, SliceExt, try_zeroed};
+use bun_core::AllocError;
 
 /// Which block is the bucket's own, counted from 1, or 0 if it has none yet. Then how many positions were added to the
 /// bucket, modulo 65536.
@@ -31,7 +32,7 @@ pub(crate) struct Buckets<'a> {
 }
 
 impl BucketTable {
-    pub(crate) fn new(hasher: &HasherParams) -> Result<Self, OutOfMemory> {
+    pub(crate) fn new(hasher: &HasherParams) -> Result<Self, AllocError> {
         let bucket_size = 1usize << hasher.bucket_bits;
         let block_size = 1usize << hasher.block_bits;
         Ok(Self {
@@ -51,11 +52,11 @@ impl BucketTable {
     }
 
     /// Makes room for a block for each of `positions` positions.
-    pub(crate) fn reserve(&mut self, positions: usize) -> Result<(), OutOfMemory> {
+    pub(crate) fn reserve(&mut self, positions: usize) -> Result<(), AllocError> {
         let needed = positions.min(self.heads.len()) * self.block_size;
         self.blocks
             .try_reserve(needed.saturating_sub(self.blocks.len()))
-            .map_err(|_| OutOfMemory)
+            .map_err(|_| AllocError)
     }
 
     /// Forgets all positions.

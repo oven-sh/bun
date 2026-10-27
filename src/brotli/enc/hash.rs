@@ -25,7 +25,8 @@ use super::find_match_length::find_match_length_with_limit;
 use super::params::EncoderParams;
 use super::{Failure, Fallible};
 use crate::common::dictionary::{DATA, OFFSETS_BY_LENGTH, SIZE_BITS_BY_LENGTH};
-use crate::util::{Bug, Checked, OutOfMemory, SliceExt, load_u32_le, load_u64_le, try_box};
+use crate::util::{Bug, Checked, SliceExt, load_u32_le, load_u64_le, try_box};
+use bun_core::AllocError;
 
 /// Odd, so that the highest bit is not lost, without long runs of ones or zeros, and tuned against benchmarks.
 pub(crate) const HASH_MUL_32: u32 = 0x1E35_A7BD;
@@ -362,7 +363,7 @@ pub(crate) trait HasherImpl {
     fn prepare(&mut self, one_shot: bool, input_size: usize, data: &[u8]) -> Checked;
 
     /// Makes room for the positions below `input_end`. No other will be added before the next call.
-    fn reserve(&mut self, _input_end: usize) -> Result<(), OutOfMemory> {
+    fn reserve(&mut self, _input_end: usize) -> Result<(), AllocError> {
         Ok(())
     }
 

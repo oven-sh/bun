@@ -1,11 +1,11 @@
 //! The decoder.
 
 mod bit_reader;
-mod decode;
+mod decoder;
 mod huffman;
 mod prefix;
 
-pub use decode::Decoder;
+pub use decoder::Decoder;
 
 use core::ffi::CStr;
 

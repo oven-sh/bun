@@ -138,13 +138,13 @@ pub(crate) fn build_histograms_with_context(
         if cmd.copy_len() != 0 {
             prev_byte2 = ringbuffer.at(pos.wrapping_sub(2) & mask)?;
             prev_byte = ringbuffer.at(pos.wrapping_sub(1) & mask)?;
-            if cmd.cmd_prefix >= 128 {
+            if cmd.has_distance_symbol() {
                 dist_it.next()?;
                 let context =
                     (dist_it.type_ << DISTANCE_CONTEXT_BITS) + cmd.distance_context() as usize;
                 copy_dist_histograms
                     .at_mut(context)?
-                    .add(usize::from(cmd.dist_prefix & 0x3FF))?;
+                    .add(cmd.dist_prefix.symbol())?;
             }
         }
     }

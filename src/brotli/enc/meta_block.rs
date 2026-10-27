@@ -76,7 +76,7 @@ fn recompute_distance_prefixes(
         return;
     }
     for cmd in cmds {
-        if cmd.copy_len() != 0 && cmd.cmd_prefix >= 128 {
+        if cmd.has_distance_symbol() {
             (cmd.dist_prefix, cmd.dist_extra) = prefix_encode_copy_distance(
                 cmd.restore_distance_code(orig_params) as usize,
                 new_params.num_direct_distance_codes as usize,
@@ -99,7 +99,7 @@ fn compute_distance_cost(
     tmp.clear();
 
     for cmd in cmds {
-        if cmd.copy_len() != 0 && cmd.cmd_prefix >= 128 {
+        if cmd.has_distance_symbol() {
             let dist_prefix = if equal_params {
                 cmd.dist_prefix
             } else {
@@ -114,8 +114,8 @@ fn compute_distance_cost(
                 )
                 .0
             };
-            tmp.add(usize::from(dist_prefix & 0x3FF))?;
-            extra_bits += f64::from(dist_prefix >> 10);
+            tmp.add(dist_prefix.symbol())?;
+            extra_bits += f64::from(dist_prefix.num_extra_bits());
         }
     }
 
@@ -759,8 +759,8 @@ fn build_meta_block_greedy_internal<L: LiteralBlocks>(
         if cmd.copy_len() != 0 {
             prev_byte2 = ringbuffer.at(pos.wrapping_sub(2) & mask)?;
             prev_byte = ringbuffer.at(pos.wrapping_sub(1) & mask)?;
-            if cmd.cmd_prefix >= 128 {
-                dist_blocks.add_symbol(usize::from(cmd.dist_prefix & 0x3FF))?;
+            if cmd.has_distance_symbol() {
+                dist_blocks.add_symbol(cmd.dist_prefix.symbol())?;
             }
         }
     }

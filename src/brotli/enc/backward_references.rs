@@ -7,8 +7,7 @@ use super::hash::{
     Hasher, HasherCommon, HasherImpl, HasherKind, HasherSearchResult, SCORE_BASE,
     StaticDictionarySearch, lookup_compound_dictionary_match,
 };
-use super::params::EncoderParams;
-use super::quality::MIN_QUALITY_FOR_EXTENSIVE_REFERENCE_SEARCH;
+use super::params::{EncoderParams, MIN_QUALITY_FOR_EXTENSIVE_REFERENCE_SEARCH};
 use crate::common::constants::{NUM_DISTANCE_SHORT_CODES, max_backward_limit};
 use crate::common::context::ContextLut;
 use crate::util::{Bug, Checked};

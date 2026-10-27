@@ -2,7 +2,8 @@
 
 use super::Fallible;
 use super::params::EncoderParams;
-use crate::util::{Checked, OutOfMemory, SliceExt};
+use crate::util::{Checked, SliceExt};
+use bun_core::AllocError;
 
 /// So that 8 bytes can be hashed at every position.
 const SLACK_FOR_EIGHT_BYTE_HASHING_EVERYWHERE: usize = 7;
@@ -58,12 +59,12 @@ impl RingBuffer {
     }
 
     /// Makes room for `buflen` bytes and keeps the `pos` bytes that are there.
-    fn init_buffer(&mut self, buflen: u32) -> Result<(), OutOfMemory> {
+    fn init_buffer(&mut self, buflen: u32) -> Result<(), AllocError> {
         self.buffer.truncate(self.pos as usize);
         let capacity = buflen as usize + SLACK_FOR_EIGHT_BYTE_HASHING_EVERYWHERE;
         self.buffer
             .try_reserve_exact(capacity - self.buffer.len())
-            .map_err(|_| OutOfMemory)?;
+            .map_err(|_| AllocError)?;
         self.cur_size = buflen;
         Ok(())
     }

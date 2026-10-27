@@ -51,8 +51,8 @@ enum State {
     Uninited,
     LargeWindowBits,
     Initialize,
-    MetablockBegin,
-    MetablockHeader,
+    MetaBlockBegin,
+    MetaBlockHeader,
     MetablockHeader2,
     ContextModes,
     CommandBegin,
@@ -62,10 +62,10 @@ enum State {
     Uncompressed,
     Metadata,
     CommandInnerWrite,
-    MetablockDone,
+    MetaBlockDone,
     CommandPostWrite1,
     CommandPostWrite2,
-    BeforeCompressedMetablockHeader,
+    BeforeCompressedMetaBlockHeader,
     HuffmanCode0,
     HuffmanCode1,
     HuffmanCode2,
@@ -73,12 +73,12 @@ enum State {
     ContextMap1,
     ContextMap2,
     TreeGroup,
-    BeforeCompressedMetablockBody,
+    BeforeCompressedMetaBlockBody,
     Done,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum MetablockHeaderState {
+enum MetaBlockHeaderState {
     None,
     Empty,
     Nibbles,
@@ -295,14 +295,14 @@ pub struct Decoder {
     /// The one for the distance of the current command.
     dist_htree: u32,
 
-    substate_metablock_header: MetablockHeaderState,
+    substate_meta_block_header: MetaBlockHeaderState,
     substate_uncompressed: UncompressedState,
     substate_decode_uint8: DecodeUint8State,
     substate_read_block_length: ReadBlockLengthState,
 
     new_ringbuffer_size: i32,
 
-    is_last_metablock: bool,
+    is_last_meta_block: bool,
     is_uncompressed: bool,
     is_metadata: bool,
     should_wrap_ringbuffer: bool,
@@ -1067,12 +1067,12 @@ impl Decoder {
             distance_code: 0,
             dist_htrees: [0; 1 << DISTANCE_CONTEXT_BITS],
             dist_htree: 0,
-            substate_metablock_header: MetablockHeaderState::None,
+            substate_meta_block_header: MetaBlockHeaderState::None,
             substate_uncompressed: UncompressedState::None,
             substate_decode_uint8: DecodeUint8State::None,
             substate_read_block_length: ReadBlockLengthState::None,
             new_ringbuffer_size: 0,
-            is_last_metablock: false,
+            is_last_meta_block: false,
             is_uncompressed: false,
             is_metadata: false,
             should_wrap_ringbuffer: false,
@@ -1200,42 +1200,42 @@ impl Decoder {
     fn decode_meta_block_length(&mut self, input: &[u8]) -> Step {
         let br = &mut self.br;
         loop {
-            match self.substate_metablock_header {
-                MetablockHeaderState::None => {
+            match self.substate_meta_block_header {
+                MetaBlockHeaderState::None => {
                     let bits = br.safe_read_bits(input, 1).ok_or(E::NeedsMoreInput)?;
-                    self.is_last_metablock = bits != 0;
+                    self.is_last_meta_block = bits != 0;
                     self.meta_block_remaining_len = 0;
                     self.is_uncompressed = false;
                     self.is_metadata = false;
-                    self.substate_metablock_header = if self.is_last_metablock {
-                        MetablockHeaderState::Empty
+                    self.substate_meta_block_header = if self.is_last_meta_block {
+                        MetaBlockHeaderState::Empty
                     } else {
-                        MetablockHeaderState::Nibbles
+                        MetaBlockHeaderState::Nibbles
                     };
                 }
 
-                MetablockHeaderState::Empty => {
+                MetaBlockHeaderState::Empty => {
                     let bits = br.safe_read_bits(input, 1).ok_or(E::NeedsMoreInput)?;
                     if bits != 0 {
-                        self.substate_metablock_header = MetablockHeaderState::None;
+                        self.substate_meta_block_header = MetaBlockHeaderState::None;
                         return Ok(());
                     }
-                    self.substate_metablock_header = MetablockHeaderState::Nibbles;
+                    self.substate_meta_block_header = MetaBlockHeaderState::Nibbles;
                 }
 
-                MetablockHeaderState::Nibbles => {
+                MetaBlockHeaderState::Nibbles => {
                     let bits = br.safe_read_bits(input, 2).ok_or(E::NeedsMoreInput)?;
                     self.size_nibbles = bits as u8 + 4;
                     self.loop_counter = 0;
                     if bits == 3 {
                         self.is_metadata = true;
-                        self.substate_metablock_header = MetablockHeaderState::Reserved;
+                        self.substate_meta_block_header = MetaBlockHeaderState::Reserved;
                     } else {
-                        self.substate_metablock_header = MetablockHeaderState::Size;
+                        self.substate_meta_block_header = MetaBlockHeaderState::Size;
                     }
                 }
 
-                MetablockHeaderState::Size => {
+                MetaBlockHeaderState::Size => {
                     let size_nibbles = i32::from(self.size_nibbles);
                     while self.loop_counter < size_nibbles {
                         let i = self.loop_counter;
@@ -1246,38 +1246,38 @@ impl Decoder {
                         self.meta_block_remaining_len |= (bits << (i * 4)) as i32;
                         self.loop_counter += 1;
                     }
-                    self.substate_metablock_header = MetablockHeaderState::Uncompressed;
+                    self.substate_meta_block_header = MetaBlockHeaderState::Uncompressed;
                 }
 
-                MetablockHeaderState::Uncompressed => {
-                    if !self.is_last_metablock {
+                MetaBlockHeaderState::Uncompressed => {
+                    if !self.is_last_meta_block {
                         let bits = br.safe_read_bits(input, 1).ok_or(E::NeedsMoreInput)?;
                         self.is_uncompressed = bits != 0;
                     }
                     self.meta_block_remaining_len += 1;
-                    self.substate_metablock_header = MetablockHeaderState::None;
+                    self.substate_meta_block_header = MetaBlockHeaderState::None;
                     return Ok(());
                 }
 
-                MetablockHeaderState::Reserved => {
+                MetaBlockHeaderState::Reserved => {
                     let bits = br.safe_read_bits(input, 1).ok_or(E::NeedsMoreInput)?;
                     if bits != 0 {
                         return Err(E::FormatReserved);
                     }
-                    self.substate_metablock_header = MetablockHeaderState::Bytes;
+                    self.substate_meta_block_header = MetaBlockHeaderState::Bytes;
                 }
 
-                MetablockHeaderState::Bytes => {
+                MetaBlockHeaderState::Bytes => {
                     let bits = br.safe_read_bits(input, 2).ok_or(E::NeedsMoreInput)?;
                     if bits == 0 {
-                        self.substate_metablock_header = MetablockHeaderState::None;
+                        self.substate_meta_block_header = MetaBlockHeaderState::None;
                         return Ok(());
                     }
                     self.size_nibbles = bits as u8;
-                    self.substate_metablock_header = MetablockHeaderState::Metadata;
+                    self.substate_meta_block_header = MetaBlockHeaderState::Metadata;
                 }
 
-                MetablockHeaderState::Metadata => {
+                MetaBlockHeaderState::Metadata => {
                     let size_bytes = i32::from(self.size_nibbles);
                     while self.loop_counter < size_bytes {
                         let i = self.loop_counter;
@@ -1289,7 +1289,7 @@ impl Decoder {
                         self.loop_counter += 1;
                     }
                     self.meta_block_remaining_len += 1;
-                    self.substate_metablock_header = MetablockHeaderState::None;
+                    self.substate_meta_block_header = MetaBlockHeaderState::None;
                     return Ok(());
                 }
             }
@@ -2128,7 +2128,7 @@ impl Decoder {
                         continue;
                     }
                     if s.meta_block_remaining_len <= 0 {
-                        s.state = State::MetablockDone;
+                        s.state = State::MetaBlockDone;
                         return Ok(());
                     }
                     label = Label::CommandPostDecodeLiterals;
@@ -2191,7 +2191,7 @@ impl Decoder {
                         }
                     }
                     if s.meta_block_remaining_len <= 0 {
-                        s.state = State::MetablockDone;
+                        s.state = State::MetaBlockDone;
                         return Ok(());
                     }
                     label = Label::CommandBegin;
@@ -2215,7 +2215,7 @@ impl Decoder {
                         }
                     }
                     if s.meta_block_remaining_len <= 0 {
-                        s.state = State::MetablockDone;
+                        s.state = State::MetaBlockDone;
                         return Ok(());
                     }
                     label = Label::CommandBegin;
@@ -2250,7 +2250,7 @@ impl Decoder {
         result
     }
 
-    fn metablock_begin(&mut self) {
+    fn meta_block_begin(&mut self) {
         self.meta_block_remaining_len = 0;
         self.block_length = [BLOCK_SIZE_CAP; 3];
         self.num_block_types = [1; 3];
@@ -2259,7 +2259,7 @@ impl Decoder {
         self.literal_htree = 0;
     }
 
-    fn cleanup_after_metablock(&mut self) {
+    fn cleanup_after_meta_block(&mut self) {
         self.context_modes = Vec::new();
         self.context_map = Vec::new();
         self.dist_context_map = Vec::new();
@@ -2399,15 +2399,15 @@ impl Decoder {
 
             State::Initialize => {
                 s.max_backward_distance = (1 << s.window_bits) - WINDOW_GAP as i32;
-                s.state = State::MetablockBegin;
+                s.state = State::MetaBlockBegin;
             }
 
-            State::MetablockBegin => {
-                s.metablock_begin();
-                s.state = State::MetablockHeader;
+            State::MetaBlockBegin => {
+                s.meta_block_begin();
+                s.state = State::MetaBlockHeader;
             }
 
-            State::MetablockHeader => {
+            State::MetaBlockHeader => {
                 s.decode_meta_block_length(input)?;
                 if (s.is_metadata || s.is_uncompressed) && !s.br.jump_to_byte_boundary() {
                     return Err(E::FormatPadding1);
@@ -2417,18 +2417,18 @@ impl Decoder {
                     return Ok(Flow::Continue);
                 }
                 if s.meta_block_remaining_len == 0 {
-                    s.state = State::MetablockDone;
+                    s.state = State::MetaBlockDone;
                     return Ok(Flow::Continue);
                 }
                 s.calculate_ring_buffer_size();
                 s.state = if s.is_uncompressed {
                     State::Uncompressed
                 } else {
-                    State::BeforeCompressedMetablockHeader
+                    State::BeforeCompressedMetaBlockHeader
                 };
             }
 
-            State::BeforeCompressedMetablockHeader => {
+            State::BeforeCompressedMetaBlockHeader => {
                 s.loop_counter = 0;
                 s.header.sub_loop_counter = 0;
                 s.header.substate_huffman = HuffmanState::None;
@@ -2508,12 +2508,12 @@ impl Decoder {
 
             State::Uncompressed => {
                 s.copy_uncompressed_block_to_output(input, output)?;
-                s.state = State::MetablockDone;
+                s.state = State::MetaBlockDone;
             }
 
             State::Metadata => {
                 s.skip_metadata_block()?;
-                s.state = State::MetablockDone;
+                s.state = State::MetaBlockDone;
             }
 
             State::MetablockHeader2 => {
@@ -2593,11 +2593,11 @@ impl Decoder {
                     .huffman_tree_group_decode(&mut s.br, input, hgroup)?;
                 s.loop_counter += 1;
                 if s.loop_counter >= 3 {
-                    s.state = State::BeforeCompressedMetablockBody;
+                    s.state = State::BeforeCompressedMetaBlockBody;
                 }
             }
 
-            State::BeforeCompressedMetablockBody => {
+            State::BeforeCompressedMetaBlockBody => {
                 s.prepare_literal_decoding()?;
                 s.prepare_distance_decoding()?;
                 s.htree_command = s.insert_copy_hgroup.htrees.at(0)? as usize;
@@ -2636,7 +2636,7 @@ impl Decoder {
                             }
                         }
                         s.state = if s.meta_block_remaining_len == 0 {
-                            State::MetablockDone
+                            State::MetaBlockDone
                         } else {
                             State::CommandBegin
                         };
@@ -2646,7 +2646,7 @@ impl Decoder {
                         s.state = if s.loop_counter != 0 {
                             State::CommandInner
                         } else if s.meta_block_remaining_len == 0 {
-                            State::MetablockDone
+                            State::MetaBlockDone
                         } else {
                             State::CommandPostDecodeLiterals
                         };
@@ -2654,13 +2654,13 @@ impl Decoder {
                 }
             }
 
-            State::MetablockDone => {
+            State::MetaBlockDone => {
                 if s.meta_block_remaining_len < 0 {
                     return Err(E::FormatBlockLength2);
                 }
-                s.cleanup_after_metablock();
-                if !s.is_last_metablock {
-                    s.state = State::MetablockBegin;
+                s.cleanup_after_meta_block();
+                if !s.is_last_meta_block {
+                    s.state = State::MetaBlockBegin;
                     return Ok(Flow::Continue);
                 }
                 if !s.br.jump_to_byte_boundary() {

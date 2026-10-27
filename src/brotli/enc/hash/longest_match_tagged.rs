@@ -9,9 +9,8 @@ use super::{
 use crate::enc::Fallible;
 use crate::enc::find_match_length::find_match_length_with_limit;
 use crate::enc::params::EncoderParams;
-use crate::util::{
-    Bug, Checked, Loads, OutOfMemory, SliceExt, load_u32_le, load_u64_le, try_vec, try_zeroed,
-};
+use crate::util::{Bug, Checked, Loads, SliceExt, load_u32_le, load_u64_le, try_vec, try_zeroed};
+use bun_core::AllocError;
 
 const TAG_HASH_BITS: u32 = 8;
 const NUM_LAST_DISTANCES_TO_CHECK: usize = 4;
@@ -68,13 +67,13 @@ fn rotate_right<const N: usize>(x: u64, n: usize) -> u64 {
 /// The buckets of a table.
 pub(crate) trait TaggedBuckets<const N: usize>: Sized {
     /// `1 << bucket_bits` empty buckets.
-    fn new(bucket_bits: u32) -> Result<Self, OutOfMemory>;
+    fn new(bucket_bits: u32) -> Result<Self, AllocError>;
 
     /// How many positions were added to bucket `key`, modulo 65536, and the last of them.
     fn bucket_mut(&mut self, key: usize) -> Checked<(&mut u16, &mut Block<N>)>;
 
     /// Makes room for `positions` positions.
-    fn reserve(&mut self, positions: usize) -> Result<(), OutOfMemory>;
+    fn reserve(&mut self, positions: usize) -> Result<(), AllocError>;
 
     /// Empties all buckets.
     fn clear(&mut self);
@@ -87,7 +86,7 @@ pub(crate) struct DenseBuckets<const N: usize> {
 }
 
 impl<const N: usize> TaggedBuckets<N> for DenseBuckets<N> {
-    fn new(bucket_bits: u32) -> Result<Self, OutOfMemory> {
+    fn new(bucket_bits: u32) -> Result<Self, AllocError> {
         Ok(Self {
             added: try_zeroed(1 << bucket_bits)?,
             blocks: try_vec(Block::EMPTY, 1 << bucket_bits)?,
@@ -99,7 +98,7 @@ impl<const N: usize> TaggedBuckets<N> for DenseBuckets<N> {
         Ok((self.added.at_mut(key)?, self.blocks.at_mut(key)?))
     }
 
-    fn reserve(&mut self, _positions: usize) -> Result<(), OutOfMemory> {
+    fn reserve(&mut self, _positions: usize) -> Result<(), AllocError> {
         Ok(())
     }
 
@@ -130,7 +129,7 @@ impl<const N: usize> SparseBuckets<N> {
         Ok(())
     }
 
-    fn to_dense(&self) -> Result<DenseBuckets<N>, OutOfMemory> {
+    fn to_dense(&self) -> Result<DenseBuckets<N>, AllocError> {
         let mut dense = DenseBuckets::new(self.heads.len().trailing_zeros())?;
         let buckets = dense.added.iter_mut().zip(&mut dense.blocks);
         for (&[block, added], (dense_added, dense_block)) in self.heads.iter().zip(buckets) {
@@ -144,7 +143,7 @@ impl<const N: usize> SparseBuckets<N> {
 }
 
 impl<const N: usize> TaggedBuckets<N> for SparseBuckets<N> {
-    fn new(bucket_bits: u32) -> Result<Self, OutOfMemory> {
+    fn new(bucket_bits: u32) -> Result<Self, AllocError> {
         Ok(Self {
             heads: try_zeroed(1 << bucket_bits)?,
             blocks: Vec::new(),
@@ -160,11 +159,11 @@ impl<const N: usize> TaggedBuckets<N> for SparseBuckets<N> {
         Ok((added, self.blocks.at_mut(usize::from(*block) - 1)?))
     }
 
-    fn reserve(&mut self, positions: usize) -> Result<(), OutOfMemory> {
+    fn reserve(&mut self, positions: usize) -> Result<(), AllocError> {
         let needed = positions.min(self.heads.len());
         self.blocks
             .try_reserve(needed.saturating_sub(self.blocks.len()))
-            .map_err(|_| OutOfMemory)
+            .map_err(|_| AllocError)
     }
 
     fn clear(&mut self) {
@@ -236,7 +235,7 @@ impl<const LONG: bool, const N: usize> HashLongestMatchTagged<LONG, N, SparseBuc
 
     pub(crate) fn to_dense(
         &self,
-    ) -> Result<HashLongestMatchTagged<LONG, N, DenseBuckets<N>>, OutOfMemory> {
+    ) -> Result<HashLongestMatchTagged<LONG, N, DenseBuckets<N>>, AllocError> {
         Ok(HashLongestMatchTagged {
             buckets: self.buckets.to_dense()?,
             is_clear: self.is_clear,
@@ -257,7 +256,7 @@ impl<const LONG: bool, const N: usize, B: TaggedBuckets<N>> HasherImpl
         Ok(())
     }
 
-    fn reserve(&mut self, input_end: usize) -> Result<(), OutOfMemory> {
+    fn reserve(&mut self, input_end: usize) -> Result<(), AllocError> {
         self.buckets.reserve(input_end)
     }
 

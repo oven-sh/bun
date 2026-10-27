@@ -3,8 +3,8 @@
 //! The prefix code for literals is built from a sample of the block it is used for. The ones for commands and distances
 //! are built from the statistics of the block before.
 
+use super::bit_stream::{build_and_store_huffman_tree_fast, store_huffman_tree};
 use super::bit_writer::BitWriter;
-use super::brotli_bit_stream::{build_and_store_huffman_tree_fast, store_huffman_tree};
 use super::entropy_encode::{HuffmanTree, convert_bit_depths_to_symbols, create_huffman_tree};
 use super::fast_log::{fast_log2, log2_floor_nonzero};
 use super::find_match_length::find_match_length_with_limit;
@@ -12,7 +12,8 @@ use super::hash::HASH_MUL_32;
 use crate::common::constants::{
     NUM_COMMAND_SYMBOLS, NUM_LITERAL_SYMBOLS, WINDOW_GAP, max_backward_limit,
 };
-use crate::util::{Bug, Checked, OutOfMemory, SliceExt, load_u64_le, try_box};
+use crate::util::{Bug, Checked, SliceExt, load_u64_le, try_box};
+use bun_core::AllocError;
 
 const MAX_DISTANCE: usize = max_backward_limit(18);
 
@@ -42,7 +43,7 @@ pub(crate) struct OnePassArena {
 }
 
 impl OnePassArena {
-    pub(crate) fn new() -> Result<Box<Self>, OutOfMemory> {
+    pub(crate) fn new() -> Result<Box<Self>, AllocError> {
         try_box(Self {
             lit_depth: [0; 256],
             lit_bits: [0; 256],
@@ -444,7 +445,7 @@ fn compress_fragment_fast_impl<const TABLE_BITS: u32, const TABLE_SIZE: usize>(
     // The first byte that no copy covers yet. What lies between it and the next copy is written as literals.
     let mut next_emit = 0usize;
 
-    let mut metablock_start = input;
+    let mut meta_block_start = input;
     let mut block_size = input_size.min(FIRST_BLOCK_SIZE);
     let mut total_block_size = block_size;
     // Where the MLEN field of the meta-block header is, in case the meta-block is made longer.
@@ -542,7 +543,7 @@ fn compress_fragment_fast_impl<const TABLE_BITS: u32, const TABLE_SIZE: usize>(
                     if insert < 6210 {
                         cmd.emit_insert_len(insert, bw)?;
                     } else if should_use_uncompressed_mode(
-                        next_emit - metablock_start,
+                        next_emit - meta_block_start,
                         insert,
                         literal_ratio,
                     ) {
@@ -610,7 +611,7 @@ fn compress_fragment_fast_impl<const TABLE_BITS: u32, const TABLE_SIZE: usize>(
 
         if let Scan::Uncompressed { end } = scan {
             emit_uncompressed_meta_block(
-                all_input.sub(metablock_start..end)?,
+                all_input.sub(meta_block_start..end)?,
                 mlen_storage_ix - 3,
                 bw,
             )?;
@@ -648,12 +649,12 @@ fn compress_fragment_fast_impl<const TABLE_BITS: u32, const TABLE_SIZE: usize>(
                     cmd.emit_insert_len(insert, bw)?;
                     emit_literals(all_input.sub(next_emit..ip_end)?, lit_depth, lit_bits, bw)?;
                 } else if should_use_uncompressed_mode(
-                    next_emit - metablock_start,
+                    next_emit - meta_block_start,
                     insert,
                     literal_ratio,
                 ) {
                     emit_uncompressed_meta_block(
-                        all_input.sub(metablock_start..ip_end)?,
+                        all_input.sub(meta_block_start..ip_end)?,
                         mlen_storage_ix - 3,
                         bw,
                     )?;
@@ -669,7 +670,7 @@ fn compress_fragment_fast_impl<const TABLE_BITS: u32, const TABLE_SIZE: usize>(
             break;
         }
         // A new meta-block, with new prefix codes.
-        metablock_start = input;
+        meta_block_start = input;
         block_size = input_size.min(FIRST_BLOCK_SIZE);
         total_block_size = block_size;
         mlen_storage_ix = bw.pos() + 3;

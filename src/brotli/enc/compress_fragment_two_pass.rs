@@ -2,8 +2,8 @@
 //! their statistics.
 
 use super::bit_cost::bits_entropy;
+use super::bit_stream::{build_and_store_huffman_tree_fast, store_huffman_tree};
 use super::bit_writer::BitWriter;
-use super::brotli_bit_stream::{build_and_store_huffman_tree_fast, store_huffman_tree};
 use super::compress_fragment::{emit_literals, store_meta_block_header};
 use super::entropy_encode::{HuffmanTree, convert_bit_depths_to_symbols, create_huffman_tree};
 use super::fast_log::log2_floor_nonzero;
@@ -12,7 +12,8 @@ use super::hash::HASH_MUL_32;
 use crate::common::constants::{
     NUM_COMMAND_SYMBOLS, NUM_LITERAL_SYMBOLS, WINDOW_GAP, max_backward_limit,
 };
-use crate::util::{Bug, Checked, OutOfMemory, SliceExt, load_u64_le, try_box};
+use crate::util::{Bug, Checked, SliceExt, load_u64_le, try_box};
+use bun_core::AllocError;
 
 const MAX_DISTANCE: usize = max_backward_limit(18);
 
@@ -33,7 +34,7 @@ pub(crate) struct TwoPassArena {
 }
 
 impl TwoPassArena {
-    pub(crate) fn new() -> Result<Box<Self>, OutOfMemory> {
+    pub(crate) fn new() -> Result<Box<Self>, AllocError> {
         try_box(Self {
             lit_histo: [0; 256],
             lit_depth: [0; 256],

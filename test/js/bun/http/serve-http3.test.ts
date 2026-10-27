@@ -1683,6 +1683,57 @@ describe("Bun.serve HTTP/3 lifecycle", () => {
       expect({ text, pendingRequests: server.pendingRequests }).toEqual({ text: "streamed", pendingRequests: 0 });
       await server.stop();
     });
+
+    // The end of the response is asynchronous here, so an async-iterable body is closed from the
+    // reaction to it. Nothing of a finished body waits on what its return() gave back: one
+    // promise that stays pending does not keep the bodies that shared it. The child counts them
+    // from a heap that holds nothing else.
+    test("finished async-iterable bodies are not kept alive by a return() whose promise stays pending", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          import { heapStats } from "bun:jsc";
+          const tls = ${JSON.stringify(tls)};
+          const pending = new Promise(() => {});
+          let received = 0;
+          for (let i = 0; i < 10; i++) {
+            const chunks = ["streamed"];
+            await using server = Bun.serve({
+              port: 0,
+              tls,
+              http3: true,
+              http1: false,
+              fetch: () =>
+                new Response({
+                  [Symbol.asyncIterator]: () => ({
+                    next: async () => (chunks.length ? { done: false, value: chunks.shift() } : { done: true, value: undefined }),
+                    return: () => pending,
+                  }),
+                }),
+            });
+            const response = await fetch("https://127.0.0.1:" + server.port + "/", { protocol: "http3", tls: { rejectUnauthorized: false } });
+            if ((await response.text()) === "streamed") received++;
+          }
+          for (let turn = 0; turn < 4; turn++) await new Promise(resolve => setImmediate(resolve));
+          Bun.gc(true);
+          Bun.gc(true);
+          console.log(JSON.stringify({ received, kept: heapStats().objectTypeCounts.AsyncIteratorSourceOperation ?? 0 }));
+          process.exit(0);
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      const { received, kept } = JSON.parse(stdout);
+      expect(received).toBe(10);
+      // 10 without the fix. Not an exact 0: the count is taken from a live heap.
+      expect(kept).toBeLessThan(5);
+      expect(exitCode).toBe(0);
+    });
   });
 
   // C: req.signal fires when the client resets the H3 stream mid-request.

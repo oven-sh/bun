@@ -1,5 +1,6 @@
 //! Hash tables of the input seen so far, in which backward references are looked up.
 
+mod bucket_table;
 mod composite;
 mod forgetful_chain;
 mod longest_match;

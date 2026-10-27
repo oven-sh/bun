@@ -1312,7 +1312,8 @@ impl Encoder {
             }
 
             if self.input_pos != self.last_flush_pos {
-                if !self.encode_data(false, true)? {
+                let (is_last, force_flush) = (false, true);
+                if !self.encode_data(is_last, force_flush)? {
                     return Ok(false);
                 }
                 continue;

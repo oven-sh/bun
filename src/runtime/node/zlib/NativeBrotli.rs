@@ -384,8 +384,10 @@ mod _impl {
         }
 
         pub(crate) fn do_work(&mut self) {
-            // SAFETY: `set_buffers` took `next_in`/`avail_in` from a slice that
-            // the caller keeps alive until the write completes.
+            // SAFETY: `set_buffers` took `next_in`/`avail_in` from a slice of a
+            // buffer that `write()` keeps alive and pinned until the write
+            // completes. As with every buffer lent to the thread pool, JS is
+            // not to write to it before then.
             let whole_input = unsafe { bun_core::ffi::slice(self.next_in, self.avail_in) };
             // "in" and "out" can be views of the same ArrayBuffer.
             let in_start = self.next_in.addr();
@@ -398,8 +400,7 @@ mod _impl {
                 } else {
                     whole_input
                 };
-            // SAFETY: as above, and nothing else refers to these bytes:
-            // `input` does not overlap them.
+            // SAFETY: as above, and `input` does not overlap these bytes.
             let mut output = unsafe { bun_core::ffi::slice_mut(self.next_out, self.avail_out) };
             match &mut self.state {
                 // A handle driven before `init()`.
@@ -441,7 +442,9 @@ mod _impl {
                         return Error::init(
                             c"Decompression failed".as_ptr(),
                             self.error as i32,
-                            code_for_error(self.error),
+                            // Node builds this as `"ERR_"` and the name brotli has for the error, which keeps
+                            // its leading underscore: `ERR__ERROR_FORMAT_PADDING_2`.
+                            self.error.node_code().as_ptr(),
                         );
                     } else if self.flush == Op::Finish
                         && self.decode_result == DecoderResult::NeedsMoreInput
@@ -465,48 +468,6 @@ mod _impl {
     }
 
     crate::__impl_compression_stream!(NativeBrotli, Context, js_NativeBrotli);
-
-    fn code_for_error(err: DecoderErrorCode) -> *const core::ffi::c_char {
-        // Node builds these as `"ERR_" + <brotli enum suffix>` where the suffix
-        // keeps its leading underscore (`_ERROR_FORMAT_*`), yielding codes like
-        // `ERR__ERROR_FORMAT_PADDING_2` (double underscore). Match node exactly:
-        // `"ERR_"` + `DecoderErrorCode::name()`, as a C string.
-        use DecoderErrorCode as E;
-        let s: &core::ffi::CStr = match err {
-            E::NoError => c"ERR__NO_ERROR",
-            E::Success => c"ERR__SUCCESS",
-            E::NeedsMoreInput => c"ERR__NEEDS_MORE_INPUT",
-            E::NeedsMoreOutput => c"ERR__NEEDS_MORE_OUTPUT",
-            E::FormatExuberantNibble => c"ERR__ERROR_FORMAT_EXUBERANT_NIBBLE",
-            E::FormatReserved => c"ERR__ERROR_FORMAT_RESERVED",
-            E::FormatExuberantMetaNibble => c"ERR__ERROR_FORMAT_EXUBERANT_META_NIBBLE",
-            E::FormatSimpleHuffmanAlphabet => c"ERR__ERROR_FORMAT_SIMPLE_HUFFMAN_ALPHABET",
-            E::FormatSimpleHuffmanSame => c"ERR__ERROR_FORMAT_SIMPLE_HUFFMAN_SAME",
-            E::FormatClSpace => c"ERR__ERROR_FORMAT_CL_SPACE",
-            E::FormatHuffmanSpace => c"ERR__ERROR_FORMAT_HUFFMAN_SPACE",
-            E::FormatContextMapRepeat => c"ERR__ERROR_FORMAT_CONTEXT_MAP_REPEAT",
-            E::FormatBlockLength1 => c"ERR__ERROR_FORMAT_BLOCK_LENGTH_1",
-            E::FormatBlockLength2 => c"ERR__ERROR_FORMAT_BLOCK_LENGTH_2",
-            E::FormatTransform => c"ERR__ERROR_FORMAT_TRANSFORM",
-            E::FormatDictionary => c"ERR__ERROR_FORMAT_DICTIONARY",
-            E::FormatWindowBits => c"ERR__ERROR_FORMAT_WINDOW_BITS",
-            E::FormatPadding1 => c"ERR__ERROR_FORMAT_PADDING_1",
-            E::FormatPadding2 => c"ERR__ERROR_FORMAT_PADDING_2",
-            E::FormatDistance => c"ERR__ERROR_FORMAT_DISTANCE",
-            E::FormatBlockSwitch => c"ERR__ERROR_FORMAT_BLOCK_SWITCH",
-            E::CompoundDictionary => c"ERR__ERROR_COMPOUND_DICTIONARY",
-            E::DictionaryNotSet => c"ERR__ERROR_DICTIONARY_NOT_SET",
-            E::InvalidArguments => c"ERR__ERROR_INVALID_ARGUMENTS",
-            E::AllocContextModes => c"ERR__ERROR_ALLOC_CONTEXT_MODES",
-            E::AllocTreeGroups => c"ERR__ERROR_ALLOC_TREE_GROUPS",
-            E::AllocContextMap => c"ERR__ERROR_ALLOC_CONTEXT_MAP",
-            E::AllocRingBuffer1 => c"ERR__ERROR_ALLOC_RING_BUFFER_1",
-            E::AllocRingBuffer2 => c"ERR__ERROR_ALLOC_RING_BUFFER_2",
-            E::AllocBlockTypeTrees => c"ERR__ERROR_ALLOC_BLOCK_TYPE_TREES",
-            E::Unreachable => c"ERR__ERROR_UNREACHABLE",
-        };
-        s.as_ptr()
-    }
 
     /// Placeholder for `WorkPoolTask.callback` — overwritten before scheduling
     /// (see `CompressionStreamImpl::write` in node_zlib_binding.rs).

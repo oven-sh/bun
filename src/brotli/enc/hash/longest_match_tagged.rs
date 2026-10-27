@@ -1,6 +1,7 @@
 //! A hash table that keeps the last few positions of each hash, and 8 more bits of the hash of each of them, so that
 //! most of the positions that do not match are skipped without looking at the input.
 
+use super::bucket_table::BucketTable;
 use super::{
     HASH_MUL_32, HASH_MUL_64, HasherImpl, HasherSearchResult, StaticDictionarySearch,
     backward_reference_score, find_longest_match_at_last_distances, prepare_distance_cache,
@@ -9,7 +10,7 @@ use super::{
 use crate::enc::Fallible;
 use crate::enc::find_match_length::find_match_length_with_limit;
 use crate::enc::params::EncoderParams;
-use crate::util::{Checked, SliceExt, load_u32_le, load_u64_le, try_with_capacity, try_zeroed};
+use crate::util::{Checked, SliceExt, load_u32_le, load_u64_le, try_with_capacity};
 
 const TAG_HASH_BITS: u32 = 8;
 const TAG_HASH_MASK: usize = (1 << TAG_HASH_BITS) - 1;
@@ -35,66 +36,32 @@ fn get_matching_tag_mask(tag: u8, tag_bucket: &[u8], head: usize) -> u64 {
 
 /// Hashes 5 bytes if `LONG`, which is for large inputs, else 4.
 pub(crate) struct HashLongestMatchTagged<const LONG: bool> {
-    /// The number of buckets.
-    bucket_size: usize,
-    /// How many positions a bucket holds. Older ones are forgotten.
-    block_size: usize,
-    /// What is left of a 32-bit hash after this shift is the bucket and the tag.
-    hash_shift: u32,
-    block_mask: usize,
-    block_bits: u32,
-    num_last_distances_to_check: usize,
-    /// For each bucket, in the low 16 bits how many positions were added to it, modulo 65536. In the high 16 bits which
-    /// block of `blocks` is its own, counted from 1, or 0 if it has none yet.
-    heads: Vec<u32>,
-    /// The tag of each position in `blocks`.
+    /// The blocks are filled from their end.
+    table: BucketTable,
+    /// The tag of each position in `table.blocks`.
     tags: Vec<u8>,
-    /// Ring buffers of `block_size` positions that are filled from their end. A bucket gets one with its first
-    /// position, so that a short input only touches what it uses of the room for all of them.
-    blocks: Vec<u32>,
-    /// `heads` is all 0, `tags` and `blocks` are empty.
-    is_clear: bool,
 }
 
 impl<const LONG: bool> HashLongestMatchTagged<LONG> {
     pub(crate) fn new(params: &EncoderParams) -> Fallible<Self> {
-        let hasher = &params.hasher;
-        debug_assert!(!LONG || hasher.bucket_bits == 15);
-        debug_assert!((4..=6).contains(&hasher.block_bits));
-        let bucket_size = 1usize << hasher.bucket_bits;
-        let block_size = 1usize << hasher.block_bits;
+        debug_assert!(!LONG || params.hasher.bucket_bits == 15);
+        let table = BucketTable::new(&params.hasher, TAG_HASH_BITS)?;
+        debug_assert!(matches!(table.block_size, 16 | 32 | 64));
         Ok(Self {
-            bucket_size,
-            block_size,
-            hash_shift: (32 - hasher.bucket_bits) as u32 - TAG_HASH_BITS,
-            block_mask: block_size - 1,
-            block_bits: hasher.block_bits as u32,
-            num_last_distances_to_check: hasher.num_last_distances_to_check as usize,
-            heads: try_zeroed(bucket_size)?,
-            tags: try_with_capacity(bucket_size * block_size)?,
-            blocks: try_with_capacity(bucket_size * block_size)?,
-            is_clear: true,
+            tags: try_with_capacity(table.blocks.capacity())?,
+            table,
         })
     }
 
-    /// The block of bucket `key`, its tags, and 65535 less how many positions were added to it so far, modulo 65536,
-    /// which is what the reference encoder keeps. Counts one more.
+    /// Where the block of bucket `key` and its tags start, and 65535 less how many positions were added to it so far,
+    /// modulo 65536, which is what the reference encoder keeps. Counts one more.
     #[inline(always)]
-    fn add_to_bucket(&mut self, key: usize) -> Checked<(&mut [u32], &mut [u8], u16)> {
-        let head = self.heads.at_mut(key)?;
-        if *head >> 16 == 0 {
-            self.blocks.resize(self.blocks.len() + self.block_size, 0);
-            self.tags.resize(self.blocks.len(), 0);
-            *head |= ((self.blocks.len() >> self.block_bits) as u32) << 16;
+    fn add_to_bucket(&mut self, key: usize) -> Checked<(usize, u16)> {
+        let (start, added) = self.table.add_to_bucket(key)?;
+        if self.tags.len() < self.table.blocks.len() {
+            self.tags.resize(self.table.blocks.len(), 0);
         }
-        let num = !(*head as u16);
-        let start = ((*head >> 16) as usize - 1) << self.block_bits;
-        *head = (*head & !0xFFFF) | (head.wrapping_add(1) & 0xFFFF);
-        Ok((
-            self.blocks.sub_mut(start..)?.sub_mut(..self.block_size)?,
-            self.tags.sub_mut(start..)?.sub_mut(..self.block_size)?,
-            num,
-        ))
+        Ok((start, !added))
     }
 
     /// The bucket, and under it the tag.
@@ -105,7 +72,7 @@ impl<const LONG: bool> HashLongestMatchTagged<LONG> {
             Ok((h >> (64 - 15 - TAG_HASH_BITS)) as usize)
         } else {
             let h = load_u32_le(data, pos)?.wrapping_mul(HASH_MUL_32);
-            Ok((h >> self.hash_shift) as usize)
+            Ok((h >> self.table.hash_shift) as usize)
         }
     }
 }
@@ -116,18 +83,18 @@ impl<const LONG: bool> HasherImpl for HashLongestMatchTagged<LONG> {
 
     fn prepare(&mut self, one_shot: bool, input_size: usize, data: &[u8]) -> Checked {
         // Clearing an entry at a time is 100 times slower for each of them.
-        let partial_prepare_threshold = self.bucket_size >> 6;
-        if self.is_clear {
-            self.is_clear = false;
-        } else if one_shot && input_size <= partial_prepare_threshold {
+        let partial_prepare_threshold = self.table.bucket_size >> 6;
+        if self.table.take_is_clear() {
+            return Ok(());
+        }
+        if one_shot && input_size <= partial_prepare_threshold {
             for i in 0..input_size {
                 let key = self.hash_bytes(data, i)? >> TAG_HASH_BITS;
-                *self.heads.at_mut(key)? &= !0xFFFF;
+                self.table.clear_bucket(key)?;
             }
         } else {
-            self.heads.fill(0);
+            self.table.clear();
             self.tags.clear();
-            self.blocks.clear();
         }
         Ok(())
     }
@@ -137,16 +104,15 @@ impl<const LONG: bool> HasherImpl for HashLongestMatchTagged<LONG> {
         let hash = self.hash_bytes(data, ix & mask)?;
         let key = hash >> TAG_HASH_BITS;
         let tag = (hash & TAG_HASH_MASK) as u8;
-        let block_mask = self.block_mask;
-        let (bucket, tag_bucket, num) = self.add_to_bucket(key)?;
-        let minor_ix = usize::from(num) & block_mask;
-        bucket.put(minor_ix, ix as u32)?;
-        tag_bucket.put(minor_ix, tag)
+        let (start, num) = self.add_to_bucket(key)?;
+        let offset = start + (usize::from(num) & self.table.block_mask);
+        self.table.blocks.put(offset, ix as u32)?;
+        self.tags.put(offset, tag)
     }
 
     #[inline(always)]
     fn prepare_distance_cache(&self, distance_cache: &mut [i32; 16]) {
-        prepare_distance_cache(distance_cache, self.num_last_distances_to_check);
+        prepare_distance_cache(distance_cache, self.table.num_last_distances_to_check);
     }
 
     #[inline(always)]
@@ -170,9 +136,10 @@ impl<const LONG: bool> HasherImpl for HashLongestMatchTagged<LONG> {
         let mut best_len = out.len;
         let hash = self.hash_bytes(data, cur_ix_masked)?;
         let key = hash >> TAG_HASH_BITS;
-        let (block_size, block_mask) = (self.block_size, self.block_mask);
-        let num_last_distances_to_check = self.num_last_distances_to_check;
-        let (bucket, tag_bucket, num) = self.add_to_bucket(key)?;
+        let (block_size, block_mask) = (self.table.block_size, self.table.block_mask);
+        let (start, num) = self.add_to_bucket(key)?;
+        let bucket = self.table.blocks.sub_mut(start..)?.sub_mut(..block_size)?;
+        let tag_bucket = self.tags.sub_mut(start..)?.sub_mut(..block_size)?;
         // The tags are looked at this early so that they are on their way from memory during what follows.
         let tag = (hash & TAG_HASH_MASK) as u8;
         // The newest position.
@@ -190,7 +157,7 @@ impl<const LONG: bool> HasherImpl for HashLongestMatchTagged<LONG> {
             data,
             ring_buffer_mask,
             distance_cache,
-            num_last_distances_to_check,
+            self.table.num_last_distances_to_check,
             cur_ix,
             max_length,
             max_backward,

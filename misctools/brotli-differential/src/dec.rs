@@ -103,9 +103,6 @@ pub fn compare(case: &DecCase, expect: Option<&[u8]>) -> Result<Outcome, String>
         if c.has_more_output() != r.has_more_output() {
             return Err(format!("has_more_output differs c={} at {}", c.has_more_output(), ctx()));
         }
-        if c.is_used() != r.is_used() || c.is_finished() != r.is_finished() {
-            return Err(format!("is_used/is_finished differs at {}", ctx()));
-        }
         pos += cused;
         total_out += cmade;
         if expect.is_some() {

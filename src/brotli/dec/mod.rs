@@ -7,6 +7,8 @@ mod prefix;
 
 pub use decode::Decoder;
 
+use core::ffi::CStr;
+
 use crate::util::Bug;
 
 /// What [`Decoder::decompress_stream`] returns.
@@ -39,6 +41,18 @@ macro_rules! error_codes {
             pub const fn name(self) -> &'static str {
                 match self {
                     $(Self::$variant => $name,)*
+                }
+            }
+
+            /// `"ERR_"` and [`Self::name`], which is the `code` of the error in `node:zlib`.
+            pub const fn node_code(self) -> &'static CStr {
+                match self {
+                    $(Self::$variant => const {
+                        match CStr::from_bytes_with_nul(concat!("ERR_", $name, "\0").as_bytes()) {
+                            Ok(code) => code,
+                            Err(_) => panic!(),
+                        }
+                    },)*
                 }
             }
         }

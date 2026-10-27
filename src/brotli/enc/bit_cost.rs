@@ -20,12 +20,40 @@ pub(crate) fn bits_entropy(population: &[u32]) -> f64 {
     retval.max(sum as f64)
 }
 
-/// The cost of the symbols and of the prefix code for them.
-pub(crate) fn population_cost<const N: usize>(histogram: &Histogram<N>) -> Checked<f64> {
-    const ONE_SYMBOL_HISTOGRAM_COST: f64 = 12.0;
+const ONE_SYMBOL_HISTOGRAM_COST: f64 = 12.0;
+
+/// [`population_cost`] where only `count` symbols occur, which is at most 4. `histo` starts with how often each does.
+fn simple_population_cost(histo: [u32; 5], count: usize, total_count: usize) -> Option<f64> {
     const TWO_SYMBOL_HISTOGRAM_COST: f64 = 20.0;
     const THREE_SYMBOL_HISTOGRAM_COST: f64 = 28.0;
     const FOUR_SYMBOL_HISTOGRAM_COST: f64 = 37.0;
+    match count {
+        1 => Some(ONE_SYMBOL_HISTOGRAM_COST),
+        2 => Some(TWO_SYMBOL_HISTOGRAM_COST + total_count as f64),
+        3 => {
+            let [histo0, histo1, histo2, ..] = histo;
+            let histomax = histo0.max(histo1).max(histo2);
+            let twice = 2u32.wrapping_mul(histo0.wrapping_add(histo1).wrapping_add(histo2));
+            Some(THREE_SYMBOL_HISTOGRAM_COST + f64::from(twice) - f64::from(histomax))
+        }
+        4 => {
+            let [mut histo @ .., _] = histo;
+            histo.sort_unstable_by(|a, b| b.cmp(a));
+            let h23 = histo[2].wrapping_add(histo[3]);
+            let histomax = h23.max(histo[0]);
+            Some(
+                FOUR_SYMBOL_HISTOGRAM_COST
+                    + f64::from(3u32.wrapping_mul(h23))
+                    + f64::from(2u32.wrapping_mul(histo[0].wrapping_add(histo[1])))
+                    - f64::from(histomax),
+            )
+        }
+        _ => None,
+    }
+}
+
+/// The cost of the symbols and of the prefix code for them.
+pub(crate) fn population_cost<const N: usize>(histogram: &Histogram<N>) -> Checked<f64> {
     if histogram.total_count == 0 {
         return Ok(ONE_SYMBOL_HISTOGRAM_COST);
     }
@@ -39,26 +67,8 @@ pub(crate) fn population_cost<const N: usize>(histogram: &Histogram<N>) -> Check
         *slot = n;
         count += 1;
     }
-    match count {
-        1 => return Ok(ONE_SYMBOL_HISTOGRAM_COST),
-        2 => return Ok(TWO_SYMBOL_HISTOGRAM_COST + histogram.total_count as f64),
-        3 => {
-            let [histo0, histo1, histo2, ..] = histo;
-            let histomax = histo0.max(histo1).max(histo2);
-            let twice = 2u32.wrapping_mul(histo0.wrapping_add(histo1).wrapping_add(histo2));
-            return Ok(THREE_SYMBOL_HISTOGRAM_COST + f64::from(twice) - f64::from(histomax));
-        }
-        4 => {
-            let [mut histo @ .., _] = histo;
-            histo.sort_unstable_by(|a, b| b.cmp(a));
-            let h23 = histo[2].wrapping_add(histo[3]);
-            let histomax = h23.max(histo[0]);
-            return Ok(FOUR_SYMBOL_HISTOGRAM_COST
-                + f64::from(3u32.wrapping_mul(h23))
-                + f64::from(2u32.wrapping_mul(histo[0].wrapping_add(histo[1])))
-                - f64::from(histomax));
-        }
-        _ => {}
+    if let Some(cost) = simple_population_cost(histo, count, histogram.total_count) {
+        return Ok(cost);
     }
 
     // The entropy of the histogram and, along with it, a simplified histogram of the code length codes: with the code

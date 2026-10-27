@@ -63,12 +63,18 @@ impl Format {
 /// Growth granularity of a step's output buffer.
 const CHUNK: usize = 16 * 1024;
 
-/// Room for one codec call: grows `out` by up to [`CHUNK`], clamped to `cap`.
-fn spare(out: &mut Vec<u8>, cap: usize) -> Result<&mut [core::mem::MaybeUninit<u8>], CodecError> {
+/// Grows `out` by up to [`CHUNK`], clamped to `cap`. Returns how far it is from `cap`.
+fn reserve_chunk(out: &mut Vec<u8>, cap: usize) -> Result<usize, CodecError> {
     debug_assert!(out.len() < cap);
     let budget = cap - out.len();
     out.try_reserve(budget.min(CHUNK))
         .map_err(|_| CodecError::OutOfMemory)?;
+    Ok(budget)
+}
+
+/// Room for one codec call.
+fn spare(out: &mut Vec<u8>, cap: usize) -> Result<&mut [core::mem::MaybeUninit<u8>], CodecError> {
+    let budget = reserve_chunk(out, cap)?;
     let spare = out.spare_capacity_mut();
     let len = spare.len().min(budget);
     Ok(&mut spare[..len])
@@ -79,9 +85,7 @@ fn brotli_spare(
     out: &mut Vec<u8>,
     cap: usize,
 ) -> Result<bun_brotli::SpareCapacity<'_>, CodecError> {
-    debug_assert!(out.len() < cap);
-    out.try_reserve((cap - out.len()).min(CHUNK))
-        .map_err(|_| CodecError::OutOfMemory)?;
+    reserve_chunk(out, cap)?;
     Ok(bun_brotli::SpareCapacity::new(out, cap))
 }
 

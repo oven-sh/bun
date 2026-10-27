@@ -106,7 +106,12 @@ enum ContextMapState {
     None,
     ReadPrefix,
     Huffman,
-    Decode,
+    Decode {
+        /// How much of the map was filled in.
+        context_index: u32,
+        /// The symbol of a run of zeros of which the extra bits were not read yet, or 0xFFFF.
+        code: u32,
+    },
     Transform,
 }
 
@@ -177,9 +182,7 @@ struct HeaderArena {
     htree_index: usize,
     next: usize,
 
-    context_index: u32,
     max_run_length_prefix: u32,
-    code: u32,
 }
 
 pub struct Decoder {
@@ -493,9 +496,7 @@ impl HeaderArena {
             code_length_histo: [0; HUFFMAN_MAX_CODE_LENGTH + 1],
             htree_index: 0,
             next: 0,
-            context_index: 0,
             max_run_length_prefix: 0,
-            code: 0,
         }
     }
 
@@ -1090,16 +1091,6 @@ impl Decoder {
         !self.ringbuffer.is_empty() && self.unwritten_bytes(false) != 0
     }
 
-    /// Whether any input was consumed.
-    pub fn is_used(&self) -> bool {
-        self.state != State::Uninited || self.br.available_bits() != 0
-    }
-
-    /// Whether the stream has ended and all of the output was written.
-    pub fn is_finished(&self) -> bool {
-        self.state == State::Done && !self.has_more_output()
-    }
-
     /// Reads the window size from 1 to 7 bits, or the 8 bits that announce a large window. The accumulator holds at
     /// least 8 bits.
     fn decode_window_bits(&mut self) -> Step {
@@ -1251,7 +1242,6 @@ impl Decoder {
                 ContextMapState::None => {
                     decode_var_len_uint8(&mut self.substate_decode_uint8, br, input, num_htrees)?;
                     *num_htrees += 1;
-                    h.context_index = 0;
                     *context_map =
                         try_zeroed(context_map_size as usize).map_err(|_| E::AllocContextMap)?;
                     if *num_htrees <= 1 {
@@ -1282,23 +1272,27 @@ impl Decoder {
                         alphabet_size,
                         &mut self.context_map_table,
                     )?;
-                    h.code = 0xFFFF;
-                    h.substate_context_map = ContextMapState::Decode;
+                    h.substate_context_map = ContextMapState::Decode {
+                        context_index: 0,
+                        code: 0xFFFF,
+                    };
                 }
 
-                ContextMapState::Decode => {
-                    let mut context_index = h.context_index;
+                ContextMapState::Decode {
+                    mut context_index,
+                    mut code,
+                } => {
                     let max_run_length_prefix = h.max_run_length_prefix;
-                    let mut code = h.code;
-                    // The symbol of a run of zeros was read in an earlier call, and its extra bits were not.
                     let mut skip_preamble = code != 0xFFFF;
                     while context_index < context_map_size || skip_preamble {
                         if !skip_preamble {
                             let Some(symbol) =
                                 safe_read_symbol(&self.context_map_table, br, input)?
                             else {
-                                h.code = 0xFFFF;
-                                h.context_index = context_index;
+                                h.substate_context_map = ContextMapState::Decode {
+                                    context_index,
+                                    code: 0xFFFF,
+                                };
                                 return Err(E::NeedsMoreInput);
                             };
                             code = symbol;
@@ -1320,8 +1314,10 @@ impl Decoder {
                             skip_preamble = false;
                         }
                         let Some(reps) = br.safe_read_bits(input, code) else {
-                            h.code = code;
-                            h.context_index = context_index;
+                            h.substate_context_map = ContextMapState::Decode {
+                                context_index,
+                                code,
+                            };
                             return Err(E::NeedsMoreInput);
                         };
                         let reps = reps as u32 + (1 << code);

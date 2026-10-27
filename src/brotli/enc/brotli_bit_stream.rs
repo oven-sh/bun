@@ -90,8 +90,8 @@ impl BlockTypeCodeCalculator {
     }
 }
 
-/// `MLEN - 1`, how many bits it is written in, and the 2 bits of `MNIBBLES`. `length` is from 1 to `1 << 24`.
-fn encode_mlen(length: usize) -> (u64, usize, u64) {
+/// Writes `MNIBBLES` and `MLEN - 1`. `length` is from 1 to `1 << 24`.
+fn store_mlen(length: usize, bw: &mut BitWriter<'_>) -> Checked {
     let lg = if length == 1 {
         1
     } else {
@@ -99,7 +99,8 @@ fn encode_mlen(length: usize) -> (u64, usize, u64) {
     };
     let mnibbles = (if lg < 16 { 16 } else { lg + 3 }) / 4;
     debug_assert!(length > 0 && length <= 1 << 24);
-    ((length - 1) as u64, mnibbles * 4, (mnibbles - 4) as u64)
+    bw.write_bits(2, (mnibbles - 4) as u64)?;
+    bw.write_bits(mnibbles * 4, (length - 1) as u64)
 }
 
 #[inline(always)]
@@ -147,9 +148,7 @@ fn store_compressed_meta_block_header(
         bw.write_bits(1, 0)?;
     }
 
-    let (lenbits, nlenbits, nibblesbits) = encode_mlen(length);
-    bw.write_bits(2, nibblesbits)?;
-    bw.write_bits(nlenbits, lenbits)?;
+    store_mlen(length, bw)?;
 
     if !is_final_block {
         // ISUNCOMPRESSED
@@ -161,9 +160,7 @@ fn store_compressed_meta_block_header(
 fn store_uncompressed_meta_block_header(length: usize, bw: &mut BitWriter<'_>) -> Checked {
     // ISLAST. An uncompressed meta-block cannot be the last one.
     bw.write_bits(1, 0)?;
-    let (lenbits, nlenbits, nibblesbits) = encode_mlen(length);
-    bw.write_bits(2, nibblesbits)?;
-    bw.write_bits(nlenbits, lenbits)?;
+    store_mlen(length, bw)?;
     // ISUNCOMPRESSED
     bw.write_bits(1, 1)
 }

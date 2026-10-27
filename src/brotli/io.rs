@@ -17,6 +17,7 @@ impl Output for &mut [u8] {
 
     #[inline]
     fn write(&mut self, bytes: &[u8]) {
+        debug_assert!(bytes.len() <= self.len());
         let buffer = core::mem::take(self);
         if let Some((head, tail)) = buffer.split_at_mut_checked(bytes.len()) {
             head.copy_from_slice(bytes);
@@ -48,6 +49,7 @@ impl Output for SpareCapacity<'_> {
 
     #[inline]
     fn write(&mut self, bytes: &[u8]) {
+        debug_assert!(bytes.len() <= self.available());
         if bytes.len() <= self.available() {
             self.vec.extend_from_slice(bytes);
         }

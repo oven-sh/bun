@@ -59,6 +59,16 @@ impl BlockSplit {
         }
         Ok(())
     }
+
+    /// Adds `length` symbols as a block of the only type.
+    fn add_only_block(&mut self, length: usize) -> Fallible {
+        self.ensure_capacity(self.num_blocks + 1)?;
+        self.num_types = 1;
+        self.types.put(self.num_blocks, 0)?;
+        self.lengths.put(self.num_blocks, length as u32)?;
+        self.num_blocks += 1;
+        Ok(())
+    }
 }
 
 fn count_literals(cmds: &[Command]) -> usize {
@@ -506,12 +516,7 @@ fn split_byte_vector<T: Copy + Into<usize>, const N: usize>(
     }
 
     if length < MIN_LENGTH_FOR_BLOCK_SPLITTING {
-        split.ensure_capacity(split.num_blocks + 1)?;
-        split.num_types = 1;
-        split.types.put(split.num_blocks, 0)?;
-        split.lengths.put(split.num_blocks, length as u32)?;
-        split.num_blocks += 1;
-        return Ok(());
+        return split.add_only_block(length);
     }
 
     let mut histograms = try_vec(Histogram::<N>::new(), num_histograms)?;

@@ -3,7 +3,7 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "7c459b105db8f51e3c6d48be055dfff8b1aa94da";
+export const WEBKIT_VERSION = "61e155bcefa37df329e54d0e402f65831d754e26";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.
@@ -71,6 +71,11 @@ function prebuiltSuffix(cfg: Config): string {
     if (cfg.fuzzilli) s += "-coverage";
   }
   if (cfg.hardened) s += "-hardened";
+  // JavaScriptCore's ahead-of-time compiler, which Bun does not use. Only what
+  // ships is also built without it; every other variant has it, and "-aot" at
+  // the end of its name (`variants` in lanes.mjs).
+  const ships = !cfg.debug && !cfg.asan && !/-assertions|-coverage/.test(s) && (!cfg.hardened || cfg.lto);
+  if (!ships) s += "-aot";
   return s;
 }
 

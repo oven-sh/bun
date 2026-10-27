@@ -449,12 +449,7 @@ impl DefineDataExt for DefineData {
         bun_ast::Stmt::data_store_create();
         let arena_value: &[u8] = bump.alloc_slice_copy(value_str);
         let source = bun_ast::Source {
-            // `Source.contents` is typed `&'static [u8]` as a stand-in for an
-            // arena lifetime (see logger/lib.rs `Str` note). `arena_value` lives in `bump`,
-            // which the caller (`Define::init`) owns for the lifetime of the
-            // `Define` table — i.e. as long as any `ExprData` produced here is
-            // reachable. Route through `StoreStr` for the lifetime erasure.
-            contents: std::borrow::Cow::Borrowed(bun_ast::StoreStr::new(arena_value).slice()),
+            contents: std::borrow::Cow::Borrowed(arena_value),
             path: defines_path(),
             ..Default::default()
         };

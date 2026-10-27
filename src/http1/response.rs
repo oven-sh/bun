@@ -116,16 +116,22 @@ impl HeadScanner {
     /// As [`parse_response`] of `buf` and `max_headers` slots. After `Incomplete`, the next `buf` begins with this one.
     pub fn scan(&mut self, buf: &[u8], max_headers: usize) -> Result<usize, ParseError> {
         loop {
+            let Self {
+                start, unsearched, ..
+            } = *self;
             let (next, at) = match self.part {
                 Part::Version => (Part::Status, buf.len() - http_version(buf)?.1.len()),
                 Part::Status => {
-                    let digits = skip_spaces(buf.get(self.start..).unwrap_or_default());
+                    let digits = skip_spaces(buf.get(start..).unwrap_or_default());
                     self.go_to(Part::Status, buf.len() - digits.len());
                     (Part::Reason, buf.len() - status_code(digits)?.1.len())
                 }
-                Part::Reason => (Part::LineStart, self.resume(reason, buf)?),
+                Part::Reason => (
+                    Part::LineStart,
+                    self.end_of_part(buf, reason(buf, start, unsearched))?,
+                ),
                 Part::LineStart => {
-                    let line_start = line_start(buf, self.start, self.header_count)?;
+                    let line_start = line_start(buf, start, self.header_count)?;
                     if let LineStart::EndOfHead(end) = line_start {
                         if self.has_folded_line {
                             return Err(ParseError::Malformed);
@@ -140,13 +146,19 @@ impl HeadScanner {
                     self.header_count += 1;
                     if matches!(line_start, LineStart::Folded) {
                         self.has_folded_line = true;
-                        (Part::Value, self.start)
+                        (Part::Value, start)
                     } else {
-                        (Part::Name, self.start)
+                        (Part::Name, start)
                     }
                 }
-                Part::Name => (Part::Value, self.resume(field_name, buf)?),
-                Part::Value => (Part::LineStart, self.resume(line, buf)?),
+                Part::Name => (
+                    Part::Value,
+                    self.end_of_part(buf, field_name(buf, start, unsearched))?,
+                ),
+                Part::Value => (
+                    Part::LineStart,
+                    self.end_of_part(buf, line(buf, start, unsearched))?,
+                ),
             };
             self.go_to(next, at);
         }
@@ -163,18 +175,17 @@ impl HeadScanner {
         self.unsearched = start;
     }
 
-    /// Where the part ends that `read` reads.
-    fn resume<'a>(
+    /// Where the part ends, from what [`line`], [`reason`] or [`field_name`] made of it.
+    fn end_of_part(
         &mut self,
-        read: impl FnOnce(&'a [u8], usize, usize) -> Result<(&'a [u8], usize), ParseError>,
-        buf: &'a [u8],
+        buf: &[u8],
+        part: Result<(&[u8], usize), ParseError>,
     ) -> Result<usize, ParseError> {
-        let result = read(buf, self.start, self.unsearched);
-        if result == Err(ParseError::Incomplete) {
+        if part == Err(ParseError::Incomplete) {
             // A CR at the end has yet to be told from the one of a CRLF.
             self.unsearched = buf.len() - usize::from(buf.ends_with(b"\r"));
         }
-        Ok(result?.1)
+        Ok(part?.1)
     }
 }
 

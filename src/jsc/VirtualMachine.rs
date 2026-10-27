@@ -105,10 +105,8 @@ pub struct InitOptions {
     /// created with its `WebCore::Worker*` already wired. `null` for the
     /// main-thread / bake paths.
     pub worker_ptr: *mut c_void,
-    /// Debugger script-execution-context id. Main thread = 1, workers receive
-    /// `WebWorker::execution_context_id`; `None` lets [`init`] derive it from
-    /// `is_main_thread` (matches the previous behaviour for non-worker init).
-    pub context_id: Option<i32>,
+    /// `WebWorker::execution_context_id` for a worker's VM, `None` for every other VM.
+    pub worker_context_id: Option<crate::ContextId>,
     /// Forwarded as `mini_mode` to `Zig__GlobalObject__create`. For the
     /// main-thread path this is `smol`; for workers it is `WebWorker::mini`.
     pub mini_mode: bool,
@@ -128,7 +126,7 @@ impl Default for InitOptions {
             eval_mode: false,
             is_main_thread: false,
             worker_ptr: core::ptr::null_mut(),
-            context_id: None,
+            worker_context_id: None,
             mini_mode: false,
         }
     }
@@ -399,7 +397,7 @@ pub struct VirtualMachine {
         bun_collections::StringArrayHashMap<crate::node_module_module::CustomLoader>,
     pub has_mutated_built_in_extensions: u32,
 
-    pub initial_script_execution_context_identifier: i32,
+    pub initial_script_execution_context_identifier: crate::ContextId,
 
     /// Owns what script running in this VM's global opens. `bun test --isolate`
     /// stops it at every file swap.
@@ -468,7 +466,7 @@ unsafe extern "C" {
         global: &JSGlobalObject,
     ) -> *const crate::ScriptExecutionContext;
     /// The identifier of the global's `WebCore::ScriptExecutionContext`.
-    safe fn Zig__GlobalObject__contextIdentifier(global: &JSGlobalObject) -> u32;
+    safe fn Zig__GlobalObject__contextIdentifier(global: &JSGlobalObject) -> crate::ContextId;
     /// ModuleGraph.cpp: make the graph of this `WebCore::ScriptExecutionContext` current;
     /// returns the async context to restore.
     /// (Empty: there was nothing to do.)
@@ -3176,14 +3174,28 @@ pub fn runtime_hooks() -> Option<&'static RuntimeHooks> {
     Some(&__BUN_RUNTIME_HOOKS)
 }
 
+/// Which VM a global is the first global of: `Zig::GlobalObjectKind` in ZigGlobalObject.h.
+#[repr(u8)]
+enum GlobalObjectKind {
+    /// The main thread's: its context is [`ContextId::MAIN`](crate::ContextId::MAIN).
+    Main = 0,
+    /// A Worker's: its context takes the identifier its `WorkerMessagingProxy` drew.
+    Worker = 1,
+    /// Any other VM's (a macro's, the debugger's): its context takes one drawn for it.
+    Other = 2,
+}
+
 #[allow(improper_ctypes)] // VirtualMachine is opaque to C++; passed as `void*`
 unsafe extern "C" {
+    /// The next identifier of the counter every `WebCore::ScriptExecutionContext` draws from.
+    safe fn ScriptExecutionContext__generateIdentifier() -> crate::ContextId;
     // safe: `console`/`worker_ptr` are opaque round-trip pointers C++ stores
     // into the new ZigGlobalObject (never dereferenced as Rust data); remaining
     // args are by-value scalars.
     safe fn Zig__GlobalObject__create(
         console: *mut c_void,
-        context_id: i32,
+        kind: GlobalObjectKind,
+        context_id: crate::ContextId,
         mini_mode: bool,
         eval_mode: bool,
         worker_ptr: *mut c_void,
@@ -3283,9 +3295,15 @@ impl VirtualMachine {
         let console =
             bun_core::heap::into_raw(console_box).cast::<crate::console_object::ConsoleObject>();
 
-        let context_id = opts
-            .context_id
-            .unwrap_or(if opts.is_main_thread { 1 } else { i32::MAX });
+        // Known before the global is made: `WTFTimer__create` runs while it is, and reads it.
+        let (kind, context_id) = match opts.worker_context_id {
+            Some(id) => (GlobalObjectKind::Worker, id),
+            None if opts.is_main_thread => (GlobalObjectKind::Main, crate::ContextId::MAIN),
+            None => (
+                GlobalObjectKind::Other,
+                ScriptExecutionContext__generateIdentifier(),
+            ),
+        };
 
         // SAFETY: `vm` is a fresh unique zeroed allocation on this thread. All
         // writes go through `addr_of_mut!` so no `&mut VirtualMachine` is
@@ -3411,6 +3429,7 @@ impl VirtualMachine {
         // the main thread).
         let global = Zig__GlobalObject__create(
             console.cast(),
+            kind,
             context_id,
             opts.mini_mode,
             opts.eval_mode,
@@ -3425,9 +3444,9 @@ impl VirtualMachine {
         // `*mut VM` directly (no `&VM` reborrow), preserving mutable provenance.
         let jsc_vm = unsafe {
             (*vm).global = global;
-            (*vm).root_context.bind(crate::ContextId::from_raw(
-                Zig__GlobalObject__contextIdentifier(&*global),
-            ));
+            (*vm)
+                .root_context
+                .bind(Zig__GlobalObject__contextIdentifier(&*global));
             (*vm).regular_event_loop.global = NonNull::new(global);
             let jsc_vm = (*global).vm_ptr();
             (*vm).jsc_vm = jsc_vm;
@@ -4920,7 +4939,7 @@ impl VirtualMachine {
             // The global is created with the worker's messaging proxy, context id
             // and `mini` so the C++ ZigGlobalObject is born with its options wired.
             worker_ptr: worker.messaging_proxy(),
-            context_id: Some(worker.execution_context_id() as i32),
+            worker_context_id: Some(worker.execution_context_id()),
             mini_mode: worker.mini(),
             ..Default::default()
         };
@@ -4940,7 +4959,6 @@ impl VirtualMachine {
         // executable) resolve against the real filesystem and fail.
         vm_ref.transpiler.resolver.standalone_module_graph = opts.graph;
         vm_ref.hot_reload = worker.hot_reload();
-        vm_ref.initial_script_execution_context_identifier = worker.execution_context_id() as i32;
         if opts.graph.is_none() {
             vm_ref.transpiler.configure_linker();
         } else {

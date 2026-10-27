@@ -170,6 +170,9 @@ impl ContextId {
     /// No script's context. Never handed out to one.
     pub const NONE: ContextId = ContextId(0);
 
+    /// The main thread's: `ScriptExecutionContext::mainThreadIdentifier`.
+    pub const MAIN: ContextId = ContextId(1);
+
     /// `VirtualMachine::dead_context`'s, in every VM. Never handed out to another: the
     /// identifiers contexts are given count up from 1.
     pub const DEAD: ContextId = ContextId(u32::MAX);
@@ -182,6 +185,12 @@ impl ContextId {
     #[inline]
     pub const fn raw(self) -> u32 {
         self.0
+    }
+}
+
+impl core::fmt::Display for ContextId {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.0.fmt(f)
     }
 }
 

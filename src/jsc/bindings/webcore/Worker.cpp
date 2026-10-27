@@ -327,7 +327,7 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
         }
 
         // Main thread starts at 1
-        threadId = jsNumber(proxy->workerContextIdentifier() - 1);
+        threadId = jsNumber(std::to_underlying(proxy->workerContextIdentifier()) - 1);
         // isolatedCopy: this JSString lives in the worker heap; it must own a
         // worker-local impl so its GC deref never races m_options.name's
         // (non-atomic) refcount on the parent thread.

@@ -226,6 +226,52 @@ test("threadId module and worker property is consistent", async () => {
   await worker2.terminate();
 });
 
+// A Worker's threadId is the identifier of its context, less one. Every context of the process (a
+// Worker's, a Bun.ModuleGraph's, a ShadowRealm's) draws its identifier from one counter, which
+// 2^31 `new Bun.ModuleGraph()` calls move past 2^31 in about an hour. No test can count that far,
+// so each case runs in a process of its own that sets the identifier the next context draws.
+// 2^31 - 1 used to double as a request for another identifier. From 2^31 on an identifier is
+// negative as an int32, which used to make the Worker's global the main thread's kind.
+describe("script execution context identifiers from 2^31 - 1 on", () => {
+  async function fixture(role: string, identifier: number) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "context-identifier-fixture.js", role, String(identifier)],
+      env: bunEnv,
+      cwd: import.meta.dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+  const printed = (value: unknown) => ({ stdout: JSON.stringify(value) + "\n", stderr: "", exitCode: 0 });
+
+  const identifiers = [2 ** 31 - 1, 2 ** 31, 2 ** 32 - 2];
+
+  test.concurrent.each(identifiers)("a node:worker_threads Worker: %d", async identifier => {
+    expect(await fixture("node", identifier)).toEqual(
+      printed({
+        seenByParent: identifier - 1,
+        seenByWorker: { isMainThread: false, threadId: identifier - 1 },
+        heapStatistics: "number",
+        exitCode: 1,
+        mainThread: "received",
+      }),
+    );
+  });
+
+  test.concurrent.each(identifiers)("a global Worker: %d", async identifier => {
+    expect(await fixture("web", identifier)).toEqual(
+      printed({
+        seenByParent: identifier - 1,
+        whileStarting: { echo: "posted while it starts", isMainThread: false },
+        whileRunning: { echo: "posted while it runs", isMainThread: false },
+        mainThread: "received",
+      }),
+    );
+  });
+});
+
 test("receiveMessageOnPort works across threads", async () => {
   const { port1, port2 } = new MessageChannel();
   const worker = new Worker(new URL("./worker.js", import.meta.url), {

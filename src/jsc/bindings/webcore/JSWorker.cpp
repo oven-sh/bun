@@ -446,7 +446,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsWorker_threadIdGetter, (JSGlobalObject * lexicalGloba
     //
     // Note that we cannot use posix thread ids here because we don't know their thread id until the thread starts
     //
-    return JSValue::encode(jsNumber(worker.clientIdentifier() - 1));
+    return JSValue::encode(jsNumber(std::to_underlying(worker.clientIdentifier()) - 1));
 }
 
 /* Hash table for prototype */

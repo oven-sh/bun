@@ -32,7 +32,7 @@ namespace WebCore {
 
 class MessagePort;
 class ScriptExecutionContext;
-using ScriptExecutionContextIdentifier = uint32_t;
+enum class ScriptExecutionContextIdentifier : uint32_t;
 
 class MessagePortPipe final : public ThreadSafeRefCounted<MessagePortPipe> {
 public:
@@ -101,7 +101,7 @@ private:
         // handler transfers the port mid-batch, detach() puts them back in front of `inbox`
         // so the next owner sees everything, in order; close() drops them with the rest.
         WTF::Deque<MessageWithMessagePorts> draining WTF_GUARDED_BY_LOCK(lock);
-        ScriptExecutionContextIdentifier ctxId WTF_GUARDED_BY_LOCK(lock) { 0 };
+        ScriptExecutionContextIdentifier ctxId WTF_GUARDED_BY_LOCK(lock) {};
         // The loop `ctxId` was running when this side attached there; drains and the peer-close
         // notification are posted to it.
         BunLoopKind ctxLoopKind WTF_GUARDED_BY_LOCK(lock) { BunLoopKind::Regular };

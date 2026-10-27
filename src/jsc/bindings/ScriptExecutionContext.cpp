@@ -18,9 +18,7 @@
 extern "C" void Bun__startLoop(us_loop_t* loop);
 
 namespace WebCore {
-static constexpr ScriptExecutionContextIdentifier INITIAL_IDENTIFIER_INTERNAL = 1;
-
-static std::atomic<unsigned> lastUniqueIdentifier = INITIAL_IDENTIFIER_INTERNAL;
+static std::atomic<std::underlying_type_t<ScriptExecutionContextIdentifier>> lastUniqueIdentifier { std::to_underlying(ScriptExecutionContext::mainThreadIdentifier) };
 
 #if ASSERT_ENABLED
 static ScriptExecutionContextIdentifier initialIdentifier()
@@ -28,12 +26,12 @@ static ScriptExecutionContextIdentifier initialIdentifier()
     static bool hasCalledInitialIdentifier = false;
     ASSERT_WITH_MESSAGE(!hasCalledInitialIdentifier, "ScriptExecutionContext::initialIdentifier() cannot be called more than once. Use generateIdentifier() instead.");
     hasCalledInitialIdentifier = true;
-    return INITIAL_IDENTIFIER_INTERNAL;
+    return ScriptExecutionContext::mainThreadIdentifier;
 }
 #else
 static ScriptExecutionContextIdentifier initialIdentifier()
 {
-    return INITIAL_IDENTIFIER_INTERNAL;
+    return ScriptExecutionContext::mainThreadIdentifier;
 }
 #endif
 
@@ -63,7 +61,7 @@ ScriptExecutionContext::ScriptExecutionContext(JSC::VM* vm, Zig::GlobalObject* g
     , m_globalObject(globalObject)
     , m_bunVM(WebCore::clientData(*vm)->bunVM)
     , m_vmHandle(WebCore::clientData(*vm)->vmHandle)
-    , m_identifier(identifier == std::numeric_limits<int32_t>::max() ? ++lastUniqueIdentifier : identifier)
+    , m_identifier(identifier)
     , m_contextThreadUID(Thread::currentSingleton().uid())
     , m_bunContext(Bun__VirtualMachine__rootContext(m_bunVM))
 {
@@ -73,7 +71,7 @@ ScriptExecutionContext::ScriptExecutionContext(JSC::VM* vm, Zig::GlobalObject* g
 ScriptExecutionContext::ScriptExecutionContext(ScriptExecutionContext& parent)
     : m_bunVM(parent.m_bunVM)
     , m_vmHandle(parent.m_vmHandle)
-    , m_identifier(++lastUniqueIdentifier)
+    , m_identifier(generateIdentifier())
     , m_contextThreadUID(parent.m_contextThreadUID)
     , m_parent(&parent)
     , m_bunContext(Bun__ScriptExecutionContext__create(m_bunVM, this, m_identifier))
@@ -134,7 +132,7 @@ ScriptExecutionContextIdentifier ScriptExecutionContext::ownerOfSQLiteDatabase(J
 {
     auto* context = defaultGlobalObject(globalObject)->currentScriptExecutionContext();
     if (!context->isForModuleGraph())
-        return 0;
+        return {};
     // Opened by what a disposed graph had queued: closed from the queue, not under its caller.
     if (context->isStopped())
         Bun__VM__queueTask(context->m_bunVM, new EventLoopTask([protectedThis = Ref { *context }](ScriptExecutionContext&) { protectedThis->closeSQLiteDatabases(); }));
@@ -168,7 +166,7 @@ static HashMap<ScriptExecutionContextIdentifier, ScriptExecutionContext*>& allSc
 
 ScriptExecutionContext* ScriptExecutionContext::getScriptExecutionContext(ScriptExecutionContextIdentifier identifier)
 {
-    if (identifier == 0) {
+    if (identifier == ScriptExecutionContextIdentifier {}) {
         return nullptr;
     }
     Locker locker { allScriptExecutionContextsMapLock };
@@ -391,7 +389,7 @@ bool ScriptExecutionContext::ensureOnContextThread(ScriptExecutionContextIdentif
 ScriptExecutionContext* ScriptExecutionContext::getMainThreadScriptExecutionContext()
 {
     Locker locker { allScriptExecutionContextsMapLock };
-    return allScriptExecutionContextsMap().get(1);
+    return allScriptExecutionContextsMap().get(mainThreadIdentifier);
 }
 
 void ScriptExecutionContext::checkConsistency() const
@@ -410,7 +408,22 @@ void ScriptExecutionContext::checkConsistency() const
 
 ScriptExecutionContextIdentifier ScriptExecutionContext::generateIdentifier()
 {
-    return ++lastUniqueIdentifier;
+    auto identifier = ++lastUniqueIdentifier;
+    // The registry's deleted key. After it come zero and the identifiers of live contexts.
+    if (identifier == std::numeric_limits<decltype(identifier)>::max()) [[unlikely]]
+        BUN_PANIC("Ran out of script execution context identifiers");
+    return ScriptExecutionContextIdentifier { identifier };
+}
+
+ScriptExecutionContextIdentifier ScriptExecutionContext::setNextIdentifierForTesting(ScriptExecutionContextIdentifier next)
+{
+    return ScriptExecutionContextIdentifier { lastUniqueIdentifier.exchange(std::to_underlying(next) - 1) + 1 };
+}
+
+// VirtualMachine::init draws here for a VM that is neither the main thread's nor a Worker's.
+extern "C" ScriptExecutionContextIdentifier ScriptExecutionContext__generateIdentifier()
+{
+    return ScriptExecutionContext::generateIdentifier();
 }
 
 // The identifier of the VM's root context: its first global's, which every global
@@ -423,7 +436,7 @@ extern "C" ScriptExecutionContextIdentifier Zig__GlobalObject__contextIdentifier
 void ScriptExecutionContext::regenerateIdentifier()
 {
 
-    m_identifier = ++lastUniqueIdentifier;
+    m_identifier = generateIdentifier();
 
     addToContextsMap();
 }

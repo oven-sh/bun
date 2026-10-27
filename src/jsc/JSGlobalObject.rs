@@ -1279,20 +1279,7 @@ pub use crate::{IntegerRange, ValidateObjectOpts};
 /// this and layers `global_object()` / `bun_vm()` accessors on top.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash)]
-pub struct ScriptExecutionContextIdentifier(pub u32);
-
-impl From<u32> for ScriptExecutionContextIdentifier {
-    #[inline]
-    fn from(id: u32) -> Self {
-        Self(id)
-    }
-}
-impl From<ScriptExecutionContextIdentifier> for u32 {
-    #[inline]
-    fn from(id: ScriptExecutionContextIdentifier) -> u32 {
-        id.0
-    }
-}
+pub struct ScriptExecutionContextIdentifier(pub crate::ContextId);
 
 use bun_core::fmt::VecWriter as WriteVec;
 
@@ -1489,6 +1476,8 @@ impl ScriptExecutionContextIdentifier {
 }
 
 unsafe extern "C" {
-    // safe: by-value `u32` in, raw nullable pointer out (caller checks before deref).
-    safe fn ScriptExecutionContextIdentifier__getGlobalObject(id: u32) -> *mut JSGlobalObject;
+    // safe: by-value id in, raw nullable pointer out (caller checks before deref).
+    safe fn ScriptExecutionContextIdentifier__getGlobalObject(
+        id: crate::ContextId,
+    ) -> *mut JSGlobalObject;
 }

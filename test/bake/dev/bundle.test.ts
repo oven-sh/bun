@@ -1309,6 +1309,8 @@ const firstBuild = async (dev: Dev, route: string) => {
 // pass does not defer a re-export for /every and /star. It still bundles the barrel again.
 // twice-lib has two statements for a.js, as rxjs and lodash-es have for some files. space-lib
 // defers two namespaces, as lucide-react does for one. chain-lib re-exports from two-lib.
+// Kind.js of enum-lib assigns its export again, as a compiled TypeScript enum does. The module
+// has a getter for that export, and the getter only returns the variable of the module.
 for (const [page, loaded, route, what] of [
   ["/first", "first: A", "/third", "the same export"],
   ["/all", "all: ABC", "/every", "every export"],
@@ -1316,13 +1318,14 @@ for (const [page, loaded, route, what] of [
   ["/twice", "twice: A", "/again", "a barrel with two statements for one file"],
   ["/space", "space: A", "/room", "a barrel with a namespace that it does not load"],
   ["/chain", "chain: A", "/link", "a barrel with a copy of an export of another barrel"],
+  ["/kind", "kind: a", "/sort", "a barrel with a copy of an export that its module assigns again"],
 ] as const) {
   devTest(`barrel optimization: the first build of a route that reads ${what} does not reload an open page`, {
     files: {
       ...Object.fromEntries(
-        ["first", "third", "all", "every", "star", "twice", "again", "space", "room", "chain", "link", "more"].map(
-          name => [`${name}.html`, emptyHtmlFile({ scripts: [`${name}.ts`] })],
-        ),
+        "first third all every star twice again space room chain link more kind sort"
+          .split(" ")
+          .map(name => [`${name}.html`, emptyHtmlFile({ scripts: [`${name}.ts`] })]),
       ),
       "first.ts": `import { a } from 'two-lib'; console.log('first: ' + a);`,
       "third.ts": `import { a } from 'two-lib'; console.log('third: ' + a);`,
@@ -1338,10 +1341,13 @@ for (const [page, loaded, route, what] of [
         import { a as twice } from 'twice-lib';
         import { a as space } from 'space-lib';
         import { a as chain } from 'chain-lib';
-        console.log('more: ' + a + twice + space + chain);
+        import { Kind } from 'enum-lib';
+        console.log('more: ' + a + twice + space + chain + Kind.A);
       `,
       "chain.ts": `import { a } from 'chain-lib'; console.log('chain: ' + a);`,
       "link.ts": `import { a } from 'chain-lib'; console.log('link: ' + a);`,
+      "kind.ts": `import { Kind } from 'enum-lib'; console.log('kind: ' + Kind.A);`,
+      "sort.ts": `import { Kind } from 'enum-lib'; console.log('sort: ' + Kind.A);`,
       ...deferringBarrel("two-lib", ["a", "b", "c"]),
       "node_modules/star-lib/package.json": JSON.stringify({
         name: "star-lib",
@@ -1366,6 +1372,11 @@ for (const [page, loaded, route, what] of [
       `,
       ...deferringBarrel("chain-lib", ["spare"]),
       "node_modules/chain-lib/index.js": `export { a } from 'two-lib';\nexport { spare } from './spare.js';`,
+      ...deferringBarrel("enum-lib", ["Kind", "spare"]),
+      "node_modules/enum-lib/Kind.js": `
+        export var Kind;
+        (function (Kind) { Kind["A"] = "a"; })(Kind || (Kind = {}));
+      `,
     },
     async test(dev) {
       // two-lib defers a re-export in this build, so each later build bundles it again.

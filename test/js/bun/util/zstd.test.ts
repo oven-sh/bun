@@ -1459,6 +1459,15 @@ describe("bugs of zstd 1.5.7", () => {
     expect(() => Bun.zstdDecompressSync(frame)).toThrow();
   });
 
+  // No decoder checked that. A streaming one keeps little more than the window, and gave whatever was there by then.
+  it("an offset beyond the window is an error once a streaming decoder has let go of what it is for", () => {
+    // A window of 1 KB, 1 KB each of "a", "b" and "c", then "xyz" and 4 bytes from 1500 bytes back.
+    const frame = Buffer.from("28b52ffd00000220006102200062022000635d00001878797a0154030a01df05", "hex");
+    expect(() => zlib.zstdDecompressSync(frame)).toThrow(
+      expect.objectContaining({ code: "ZSTD_error_corruption_detected" }),
+    );
+  });
+
   // With workers, only a frame of one job was checked. Any other came out with the wrong size in its header.
   it.each([-1, 1])("with workers, input that is %i off the pledged size is an error", async difference => {
     const c = zlib.constants;

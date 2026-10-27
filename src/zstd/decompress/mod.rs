@@ -798,7 +798,11 @@ impl DState {
     ) -> Result<usize> {
         let ext_dict = match self.ext {
             ExtKind::Dict => ExtDict::Dict(ddict.map_or(&[], |ddict| &*ddict.content)),
-            ExtKind::Within { end, len } => ExtDict::Within { end, len },
+            ExtKind::Within { end, len } => ExtDict::Within {
+                end,
+                len,
+                window: self.f_params.window_size as usize,
+            },
         };
         self.block.decompress_block(
             BlockOutput {

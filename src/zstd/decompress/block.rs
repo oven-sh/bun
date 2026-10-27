@@ -76,8 +76,12 @@ pub(crate) enum ExtDict<'a> {
     /// The content of a dictionary. Empty if there is none.
     Dict(&'a [u8]),
     /// The `len` bytes up to `end` of the buffer that the output goes to, which is the streaming decoder's and has
-    /// wrapped around.
-    Within { end: usize, len: usize },
+    /// wrapped around. What is further back than `window` is being overwritten.
+    Within {
+        end: usize,
+        len: usize,
+        window: usize,
+    },
 }
 
 impl ExtDict<'_> {
@@ -86,6 +90,16 @@ impl ExtDict<'_> {
         match *self {
             ExtDict::Dict(dict) => dict.len(),
             ExtDict::Within { len, .. } => len,
+        }
+    }
+
+    /// The largest offset there can be, `in_prefix` bytes after it. In 1.5.7 that is all there is in either case, and
+    /// a frame whose offsets go beyond its window gets whatever copies that go too far have left there.
+    #[inline(always)]
+    fn reach(&self, in_prefix: usize) -> usize {
+        match *self {
+            ExtDict::Dict(dict) => in_prefix + dict.len(),
+            ExtDict::Within { len, window, .. } => window.min(in_prefix + len),
         }
     }
 
@@ -1197,7 +1211,7 @@ impl<'a> Executor<'_, 'a> {
         let in_prefix = op - self.prefix_start;
         let mut match_pos = op.wrapping_sub(offset);
         if offset > in_prefix {
-            if offset > in_prefix + self.ext_dict.len() {
+            if offset > self.ext_dict.reach(in_prefix) {
                 return Err(ErrorCode::CorruptionDetected);
             }
             let back = offset - in_prefix;
@@ -1363,7 +1377,7 @@ impl<'a> Executor<'_, 'a> {
     /// The last offsets are those of the 3 sequences before, which are rewritten for that where it takes it.
     #[inline(never)]
     fn exec_batch(&mut self, sequences: &mut [RawSequence], index: usize) -> usize {
-        self.exec_batch_with::<NO_EXT>(sequences, index, &[], 0..0)
+        self.exec_batch_with::<NO_EXT>(sequences, index, &[], 0..0, 0)
     }
 
     /// The same where matches in `dict`, which comes before the output, are of the common kind too.
@@ -1374,7 +1388,7 @@ impl<'a> Executor<'_, 'a> {
         index: usize,
         dict: &[u8],
     ) -> usize {
-        self.exec_batch_with::<EXT_DICT>(sequences, index, dict, 0..0)
+        self.exec_batch_with::<EXT_DICT>(sequences, index, dict, 0..0, 0)
     }
 
     /// The same for `within` of the buffer that the output goes to.
@@ -1384,8 +1398,9 @@ impl<'a> Executor<'_, 'a> {
         sequences: &mut [RawSequence],
         index: usize,
         within: Range<usize>,
+        window: usize,
     ) -> usize {
-        self.exec_batch_with::<EXT_WITHIN>(sequences, index, &[], within)
+        self.exec_batch_with::<EXT_WITHIN>(sequences, index, &[], within, window)
     }
 
     /// What comes before the output is nothing of the common kind, `dict` or `within`, as `EXT` tells.
@@ -1396,6 +1411,7 @@ impl<'a> Executor<'_, 'a> {
         mut index: usize,
         dict: &[u8],
         within: Range<usize>,
+        window: usize,
     ) -> usize {
         // Positions fit in 32 bits, so that the compiler sees that nothing added to them overflows.
         const MAX_BACK: usize = 3 << 30;
@@ -1473,7 +1489,7 @@ impl<'a> Executor<'_, 'a> {
             if EXT == EXT_WITHIN && offset_value as usize > o_lit_end + 3 {
                 let back = offset_value as usize - 3 - o_lit_end;
                 // All that gets copied is of the older part, which is more than the match.
-                if back > within.len() || back < 64 {
+                if back > within.len() || back < 64 || offset_value as usize - 3 > window {
                     break;
                 }
                 match_end += within.end;
@@ -1651,8 +1667,8 @@ impl<'a> Executor<'_, 'a> {
                 ExtDict::Dict(dict) if !dict.is_empty() => {
                     self.exec_batch_after_dict(sequences, index, dict)
                 }
-                ExtDict::Within { end, len } if len != 0 => {
-                    self.exec_batch_after_wrap(sequences, index, end - len..end)
+                ExtDict::Within { end, len, window } if len != 0 => {
+                    self.exec_batch_after_wrap(sequences, index, end - len..end, window)
                 }
                 _ => self.exec_batch(sequences, index),
             };

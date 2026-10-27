@@ -6,7 +6,7 @@ use crate::common::constants::{
 
 /// What an insert-and-copy length symbol stands for.
 #[derive(Clone, Copy)]
-pub(crate) struct CmdLutElement {
+pub(crate) struct CommandLutEntry {
     pub(crate) insert_len_extra_bits: u8,
     pub(crate) copy_len_extra_bits: u8,
     /// 0 if the command implies that distance code, -1 if a distance code follows it. With a `bool` here decoding takes
@@ -18,7 +18,7 @@ pub(crate) struct CmdLutElement {
     pub(crate) copy_len_offset: u16,
 }
 
-impl CmdLutElement {
+impl CommandLutEntry {
     /// The distance is the last one, and no distance code follows the command.
     #[inline(always)]
     pub(crate) const fn implicit_distance(self) -> bool {
@@ -26,14 +26,14 @@ impl CmdLutElement {
     }
 }
 
-pub(crate) static CMD_LUT: [CmdLutElement; NUM_COMMAND_SYMBOLS] = build();
+pub(crate) static COMMAND_LUT: [CommandLutEntry; NUM_COMMAND_SYMBOLS] = build();
 
 #[allow(clippy::indexing_slicing, reason = "evaluated by the compiler")]
-const fn build() -> [CmdLutElement; NUM_COMMAND_SYMBOLS] {
+const fn build() -> [CommandLutEntry; NUM_COMMAND_SYMBOLS] {
     // For each run of 64 symbols, which 8 insert codes (`& 0x18`) and which 8 copy codes (`<< 3 & 0x18`) it covers.
     const CELL_POS: [usize; 11] = [0, 1, 0, 1, 8, 9, 2, 16, 10, 17, 18];
 
-    let mut items = [CmdLutElement {
+    let mut items = [CommandLutEntry {
         insert_len_extra_bits: 0,
         copy_len_extra_bits: 0,
         distance_code: 0,
@@ -49,7 +49,7 @@ const fn build() -> [CmdLutElement; NUM_COMMAND_SYMBOLS] {
         let insert_code = (cell_pos & 0x18) + ((symbol >> 3) & 7);
         let insert = INSERT_LENGTH_PREFIX_CODE[insert_code];
         let copy = COPY_LENGTH_PREFIX_CODE[copy_code];
-        items[symbol] = CmdLutElement {
+        items[symbol] = CommandLutEntry {
             insert_len_extra_bits: insert.nbits,
             copy_len_extra_bits: copy.nbits,
             distance_code: if cell_idx >= 2 { -1 } else { 0 },

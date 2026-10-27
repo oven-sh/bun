@@ -47,7 +47,7 @@ pub(crate) const SYMBOL_LIST_BASE: usize = HUFFMAN_MAX_CODE_LENGTH + 1;
 #[derive(Default)]
 pub(crate) struct HuffmanTreeGroup {
     /// Where in `codes` each tree starts.
-    pub(crate) htrees: Vec<u32>,
+    pub(crate) starts: Vec<usize>,
     pub(crate) codes: Vec<HuffmanCode>,
     /// Decides how many bits a symbol of a simple code takes. Can be more than `alphabet_size_limit`.
     pub(crate) alphabet_size_max: u16,

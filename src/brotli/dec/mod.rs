@@ -1,9 +1,9 @@
 //! The decoder.
 
 mod bit_reader;
+mod command_lut;
 mod decoder;
 mod huffman;
-mod prefix;
 
 pub use decoder::Decoder;
 

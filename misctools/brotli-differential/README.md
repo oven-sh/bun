@@ -43,6 +43,7 @@ quality `q`: `0xFFF` for all of them.
 | `enc-offset-dict <seed> <iterations> <mask>` | a stream offset and a dictionary: a copy from the dictionary that ends with a block of input, and then what the dictionary has that many bytes earlier. The C encoder goes on with the copy. Qualities 5 and up |
 | `enc-blocks <seed> <iterations> <max length> <mask>` | stretches of many different kinds: many blocks, block types and histograms to cluster |
 | `enc-parts <seed> <iterations> <max length> <mask>` | a stream in parts, each by an encoder of its own with a stream offset, with dictionaries, and more input than the window holds. After a copy from a dictionary comes what could be taken for more of it. The whole has to decode. Also dictionaries that one encoder or decoder hands on to the next |
+| `race <seed> <iterations> <max length> <mask>` | Rust only: another thread changes the input while the encoder or the decoder reads it, as JavaScript can. No panic, no hang, no error that stands for a bug. Best in a debug build. A failure cannot be repeated by its seed |
 | `enc-flint <mask>` | the start of a stream with an offset: every combination of three operations with little input and little room for output. None may be refused, and the stream has to decode |
 | `enc-states <seed> <iterations> <mask>` | calls in any order, with any amount of input and room, whether or not the call before was completed or refused |
 | `enc-select <seed> <length>` | every quality with every window size and size hints on both sides of 1 MiB: all that decides which hasher is used |
@@ -54,6 +55,7 @@ quality `q`: `0xFFF` for all of them.
 | `oom-cold` | the same for the first call in a process, which builds the tables that later calls share; a process for each allocation |
 | `gen-corpus <dir> <n>`, `replay-dec <dir>` | seeds for the libFuzzer targets; runs a `fuzz_dec` corpus (for coverage) |
 | `bench-dec` / `bench-enc <file> <quality> <lgwin> <repetitions>`, `bench-small <file> <length> <quality> <lgwin> <repetitions>`, `bench-first <file> <length> <quality>` | speed, see below. `ONLY=c` or `ONLY=rust` leaves the other one out of `bench-dec` and `bench-enc`. `bench-first` measures Rust, or C with `ONLY=c` |
+| `mem-scan <mask> <max length>` | how much memory the two allocate: most at a time, what a stream holds before its last call, and how many allocations, over a grid of qualities, windows, lengths, kinds of data and ways of calling. A block that grows counts twice while it does |
 | `perf-scan <seed> <iterations> <max length>` | looks for inputs and ways of calling for which Rust is much slower than C. `ALL=1` prints every case |
 | `stack` | the smallest thread stack with which each quality works |
 

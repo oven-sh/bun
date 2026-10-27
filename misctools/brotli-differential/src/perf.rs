@@ -170,3 +170,176 @@ pub fn run(seed0: u64, iters: u64, max_len: usize, corpus: &r#gen::Corpus) {
         }
     }
 }
+
+/// (bytes held after the last flush, most bytes at a time, allocations)
+type Memory = (usize, usize, usize);
+
+fn c_memory(f: impl FnOnce(&mut dyn FnMut())) -> Memory {
+    *crate::ffi::METER.lock().unwrap() = Some(Default::default());
+    let mut idle = 0;
+    f(&mut || idle = crate::ffi::METER.lock().unwrap().as_ref().unwrap().live);
+    let m = crate::ffi::METER.lock().unwrap().take().unwrap();
+    assert!(m.live == 0, "the reference leaks {}", m.live);
+    (idle, m.peak, m.count)
+}
+
+/// How much memory the two need: the encoders for `data`, given in pieces of `chunk` bytes, and the decoders for the result.
+fn memory(data: &[u8], params: &[(i32, u32)], chunk: usize, flush: bool) -> [(Memory, Memory); 2] {
+    use crate::oom::{meter_read, meter_reset, metered};
+    let mut buf = vec![0u8; 1 << 16];
+    let mut stream = Vec::with_capacity(data.len() + data.len() / 2 + 4096);
+    let c_enc = c_memory(|idle| {
+        let mut e = CEncoder::new();
+        for &(k, v) in params {
+            e.set(k, v);
+        }
+        let mut pieces = data.chunks(chunk.max(1)).peekable();
+        loop {
+            let mut piece = pieces.next().unwrap_or(&[]);
+            let op = if pieces.peek().is_none() { 2 } else { i32::from(flush) };
+            if op == 2 {
+                idle();
+            }
+            loop {
+                let (ok, used, made) = e.stream(op, piece, &mut buf);
+                assert!(ok);
+                piece = &piece[used..];
+                stream.extend_from_slice(&buf[..made]);
+                if piece.is_empty() && !e.has_more_output() {
+                    break;
+                }
+            }
+            if op == 2 {
+                break;
+            }
+        }
+    });
+    meter_reset();
+    let mut idle = 0;
+    {
+        let mut e = metered(|| Box::new(Encoder::new()));
+        for &(k, v) in params {
+            assert!(metered(|| e.set_parameter(EncoderParameter::from_raw(k as u32).unwrap(), v)));
+        }
+        let mut pieces = data.chunks(chunk.max(1)).peekable();
+        let mut pos = 0;
+        loop {
+            let mut piece = pieces.next().unwrap_or(&[]);
+            let op = if pieces.peek().is_none() { EncoderOperation::Finish } else if flush { EncoderOperation::Flush } else { EncoderOperation::Process };
+            if op == EncoderOperation::Finish {
+                idle = meter_read().0;
+            }
+            loop {
+                let cap = buf.len();
+                let mut o: &mut [u8] = &mut buf;
+                metered(|| e.compress_stream(op, &mut piece, &mut o)).unwrap();
+                let made = cap - o.len();
+                assert!(stream[pos..pos + made] == buf[..made]);
+                pos += made;
+                if piece.is_empty() && !e.has_more_output() {
+                    break;
+                }
+            }
+            if op == EncoderOperation::Finish {
+                break;
+            }
+        }
+        metered(|| drop(e));
+    }
+    let (live, peak, count) = meter_read();
+    if live != 0 {
+        println!("# kept for good after an encoder with {params:?} and {} bytes: {live} bytes", data.len());
+    }
+    let r_enc = (idle, peak, count);
+
+    // The decoders get the stream in pieces of 4096 bytes. "Idle" is before the last of them.
+    let last = stream.len().saturating_sub(1) / 4096 * 4096;
+    let c_dec = c_memory(|idle| {
+        let mut d = CDecoder::new();
+        d.set(1, 1);
+        let mut pos = 0;
+        loop {
+            if pos == last {
+                idle();
+            }
+            let end = (pos / 4096 * 4096 + 4096).min(stream.len());
+            let (r, used, _) = d.stream(&stream[pos..end], &mut buf);
+            pos += used;
+            if r == 1 {
+                break;
+            }
+            assert!(r != 0);
+        }
+    });
+    meter_reset();
+    let mut idle = 0;
+    {
+        let mut d = metered(|| Box::new(Decoder::new()));
+        d.set_parameter(bun_brotli::DecoderParameter::LargeWindow, 1);
+        let mut pos = 0;
+        loop {
+            if pos == last {
+                idle = meter_read().0;
+            }
+            let end = (pos / 4096 * 4096 + 4096).min(stream.len());
+            let mut input = &stream[pos..end];
+            let mut o: &mut [u8] = &mut buf;
+            let r = metered(|| d.decompress_stream(&mut input, &mut o));
+            pos = end - input.len();
+            match r {
+                bun_brotli::DecoderResult::Success => break,
+                bun_brotli::DecoderResult::Error => panic!(),
+                _ => {}
+            }
+        }
+        metered(|| drop(d));
+    }
+    let (live, peak, count) = meter_read();
+    if live != 0 {
+        println!("# kept for good after a decoder: {live} bytes");
+    }
+    [(c_enc, r_enc), (c_dec, (idle, peak, count))]
+}
+
+/// A grid of qualities, windows, lengths, kinds of data and ways of calling.
+pub fn run_memory(qualities: u64, max_len: usize, corpus: &r#gen::Corpus) {
+    let qs = crate::args::qualities(qualities, 0..12);
+    println!("kind\tquality\tlgwin\tlength\tdata\tchunk\tflush\tC peak\tRust peak\tratio\tC idle\tRust idle\tC allocations\tRust allocations");
+    let mut worst = [(0f64, String::new()), (0f64, String::new())];
+    for &q in &qs {
+        for lgwin in [10u32, 16, 18, 22, 24, 27, 30] {
+            for len in [0usize, 1, 100, 5_000, 70_000, 300_000, 1_500_000, 9_000_000, 40_000_000] {
+                if len > max_len || (q >= 10 && len > 9_000_000) {
+                    continue;
+                }
+                for kind in ["mixed", "records", "random", "zeros"] {
+                    let mut rng = Rng(len as u64 + 1);
+                    let data = match kind {
+                        "mixed" => r#gen::data(&mut rng, corpus, len),
+                        "records" => crate::ring::records(&mut rng, len),
+                        "random" => (0..len).map(|_| rng.next() as u8).collect(),
+                        _ => vec![0u8; len],
+                    };
+                    for (chunk, flush) in [(usize::MAX, false), (1 << 16, false), (1000, false), (1000, true)] {
+                        if chunk == 1000 && len > 1_500_000 || chunk < len.max(1) && len < 5_000 {
+                            continue;
+                        }
+                        let mut params = vec![(1, q), (2, lgwin)];
+                        if lgwin > 24 {
+                            params.insert(0, (6, 1));
+                        }
+                        for (i, (c, r)) in memory(&data, &params, chunk, flush).into_iter().enumerate() {
+                            let ratio = r.1 as f64 / c.1 as f64;
+                            let row = format!("{}\t{q}\t{lgwin}\t{len}\t{kind}\t{chunk}\t{flush}\t{}\t{}\t{ratio:.3}\t{}\t{}\t{}\t{}", ["ENC", "DEC"][i], c.1, r.1, c.0, r.0, c.2, r.2);
+                            println!("{row}");
+                            if ratio > worst[i].0 {
+                                worst[i] = (ratio, row);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    println!("worst:\n{}\n{}", worst[0].1, worst[1].1);
+}

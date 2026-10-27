@@ -31,17 +31,55 @@ fn fails() -> bool {
 
 unsafe impl GlobalAlloc for Failing {
     unsafe fn alloc(&self, l: Layout) -> *mut u8 {
+        meter(0, l.size());
         if fails() { std::ptr::null_mut() } else { unsafe { System.alloc(l) } }
     }
     unsafe fn alloc_zeroed(&self, l: Layout) -> *mut u8 {
+        meter(0, l.size());
         if fails() { std::ptr::null_mut() } else { unsafe { System.alloc_zeroed(l) } }
     }
     unsafe fn realloc(&self, p: *mut u8, l: Layout, n: usize) -> *mut u8 {
+        // An allocator that cannot grow a block in place has both for a moment.
+        meter(0, n);
+        meter(l.size(), 0);
         if fails() { std::ptr::null_mut() } else { unsafe { System.realloc(p, l, n) } }
     }
     unsafe fn dealloc(&self, p: *mut u8, l: Layout) {
+        meter(l.size(), 0);
         unsafe { System.dealloc(p, l) }
     }
+}
+
+/// For `mem-scan`: what is allocated while this is set.
+static METERED: AtomicBool = AtomicBool::new(false);
+static LIVE: AtomicI64 = AtomicI64::new(0);
+static PEAK: AtomicI64 = AtomicI64::new(0);
+static ALLOCATIONS: AtomicU64 = AtomicU64::new(0);
+
+fn meter(freed: usize, allocated: usize) {
+    if METERED.load(Relaxed) {
+        let live = LIVE.fetch_add(allocated as i64 - freed as i64, Relaxed) + allocated as i64 - freed as i64;
+        PEAK.fetch_max(live, Relaxed);
+        ALLOCATIONS.fetch_add(u64::from(allocated != 0), Relaxed);
+    }
+}
+
+pub fn meter_reset() {
+    LIVE.store(0, Relaxed);
+    PEAK.store(0, Relaxed);
+    ALLOCATIONS.store(0, Relaxed);
+}
+
+/// (bytes now, most bytes at a time, allocations) of what ran in `metered` since `meter_reset`.
+pub fn meter_read() -> (usize, usize, usize) {
+    (LIVE.load(Relaxed) as usize, PEAK.load(Relaxed) as usize, ALLOCATIONS.load(Relaxed) as usize)
+}
+
+pub fn metered<T>(f: impl FnOnce() -> T) -> T {
+    METERED.store(true, Relaxed);
+    let r = f();
+    METERED.store(false, Relaxed);
+    r
 }
 
 fn armed<T>(f: impl FnOnce() -> T) -> T {

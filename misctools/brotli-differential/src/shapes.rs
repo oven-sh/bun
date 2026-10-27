@@ -760,3 +760,153 @@ pub fn run_flint(qualities: u64) {
     }
     println!("ok: {cases} cases");
 }
+
+/// Bytes that another thread changes while they are read, as JavaScript can do to the buffer of a `write()` that is under
+/// way. What comes out is anybody's guess, but it has to be an answer: no panic, no hang, and none of the errors that stand
+/// for a bug. A failure cannot be repeated by its seed; the message says where it was.
+pub fn run_race(seed0: u64, iters: u64, max_len: usize, qualities: u64, corpus: &r#gen::Corpus) {
+    use std::sync::atomic::{AtomicBool, AtomicU8, Ordering::Relaxed};
+    /// Stops the other thread, also after a panic: the scope waits for it.
+    struct Stop<'a>(&'a AtomicBool);
+    impl Drop for Stop<'_> {
+        fn drop(&mut self) {
+            self.0.store(true, Relaxed);
+        }
+    }
+    let qs = crate::args::qualities(qualities, 0..12);
+    let (mut encoded, mut refused, mut decoded, mut failed) = (0usize, 0usize, 0usize, 0usize);
+    for it in 0..iters {
+        let seed = seed0 + it;
+        let mut rng = Rng(seed);
+        let q = *rng.pick(&qs);
+        let len = match rng.below(4) {
+            0 => rng.range(1, 2000),
+            1 => rng.range(1, 40_000),
+            _ => rng.range(1, max_len),
+        };
+        // Two texts that take turns.
+        let one = r#gen::data(&mut rng, corpus, len);
+        let other: Vec<u8> = match rng.below(5) {
+            0 => (0..len).map(|_| rng.next() as u8).collect(),
+            1 => vec![rng.next() as u8; len],
+            2 => one.iter().map(|b| b ^ 0x20).collect(),
+            3 => one.iter().rev().copied().collect(),
+            _ => r#gen::data(&mut rng, corpus, len),
+        };
+        let params = vec![(1, q), (2, rng.range(10, 24) as u32)];
+        let streams = [rust_stream(&one, &params, &[], EncoderOperation::Finish).unwrap(), rust_stream(&other, &params, &[], EncoderOperation::Finish).unwrap()];
+        let how = rng.below(4);
+        let changer = |shared: &[AtomicU8], texts: [&[u8]; 2], stop: &AtomicBool, mut rng: Rng| {
+            let n = shared.len();
+            while !stop.load(Relaxed) {
+                let from = texts[rng.below(2)];
+                let (at, most) = (rng.below(n), match how { 0 => 1, 1 => 16, 2 => 1000, _ => n });
+                for i in at..(at + rng.range(1, most)).min(n) {
+                    shared[i].store(if how == 0 && rng.chance(1, 2) { rng.next() as u8 } else { from[i.min(from.len() - 1)] }, Relaxed);
+                }
+            }
+        };
+        // The encoder.
+        let shared: Vec<AtomicU8> = one.iter().map(|&b| AtomicU8::new(b)).collect();
+        let stop = AtomicBool::new(false);
+        let chunk = *rng.pick(&[usize::MAX, usize::MAX, 1 << 16, 5000, 300]);
+        let flush = rng.chance(1, 3);
+        std::thread::scope(|s| {
+            s.spawn(|| changer(&shared, [&one, &other], &stop, Rng(seed ^ 0x5555)));
+            let _stop = Stop(&stop);
+            // SAFETY: there is none. This is the data race that the test is about.
+            let data = unsafe { std::slice::from_raw_parts(shared.as_ptr().cast::<u8>(), shared.len()) };
+            for _ in 0..if len < 40_000 { 30 } else { 6 } {
+                let mut e = Encoder::new();
+                for &(k, v) in &params {
+                    assert!(e.set_parameter(EncoderParameter::from_raw(k as u32).unwrap(), v));
+                }
+                let mut out = Vec::new();
+                let mut buf = vec![0u8; 1 << 16];
+                let mut pieces = data.chunks(chunk).peekable();
+                'stream: loop {
+                    let mut piece = pieces.next().unwrap_or(&[]);
+                    let op = if pieces.peek().is_none() { EncoderOperation::Finish } else if flush { EncoderOperation::Flush } else { EncoderOperation::Process };
+                    loop {
+                        let mut o: &mut [u8] = &mut buf;
+                        if let Err(e) = e.compress_stream(op, &mut piece, &mut o) {
+                            println!("seed {seed}: quality {q}, {len} bytes, chunk {chunk}, flush {flush}: the encoder says {e:?}");
+                            refused += 1;
+                            break 'stream;
+                        }
+                        let made = (1 << 16) - o.len();
+                        out.extend_from_slice(&buf[..made]);
+                        if piece.is_empty() && !e.has_more_output() {
+                            break;
+                        }
+                    }
+                    if op == EncoderOperation::Finish {
+                        break;
+                    }
+                }
+                encoded += 1;
+                // All at once: with room for the largest result, it cannot fail.
+                let mut whole = vec![0u8; bun_brotli::max_compressed_size(len).unwrap()];
+                let n = bun_brotli::compress(q as i32, params[1].1 as i32, bun_brotli::EncoderMode::Generic, data, &mut whole);
+                assert!(n.is_some(), "seed {seed}: quality {q}, {len} bytes: compress fails");
+                // It need not be a valid stream.
+                let mut d = Decoder::new();
+                let mut input = &out[..];
+                loop {
+                    let mut o: &mut [u8] = &mut buf;
+                    match d.decompress_stream(&mut input, &mut o) {
+                        DecoderResult::NeedsMoreOutput => {}
+                        DecoderResult::Error => {
+                            assert!(d.error_code() as i32 != -31, "seed {seed}: unreachable");
+                            break;
+                        }
+                        _ => break,
+                    }
+                }
+            }
+        });
+        // The decoder.
+        let n = streams[0].len().max(streams[1].len());
+        let shared: Vec<AtomicU8> = (0..n).map(|i| AtomicU8::new(*streams[0].get(i).unwrap_or(&0))).collect();
+        let stop = AtomicBool::new(false);
+        let n_in = *rng.pick(&[usize::MAX, usize::MAX, 4096, 100, 3]);
+        let room = *rng.pick(&[1 << 16, 1 << 16, 1000, 7]);
+        std::thread::scope(|s| {
+            s.spawn(|| changer(&shared, [&streams[0], &streams[1]], &stop, Rng(seed ^ 0x3333)));
+            let _stop = Stop(&stop);
+            // SAFETY: as above.
+            let data = unsafe { std::slice::from_raw_parts(shared.as_ptr().cast::<u8>(), shared.len()) };
+            let mut buf = vec![0u8; room];
+            for _ in 0..if len < 40_000 { 30 } else { 6 } {
+                let mut d = Decoder::new();
+                let mut pos = 0usize;
+                let mut total = 0usize;
+                loop {
+                    let end = pos.saturating_add(n_in).min(n);
+                    let mut input = &data[pos..end];
+                    let mut o: &mut [u8] = &mut buf;
+                    let r = d.decompress_stream(&mut input, &mut o);
+                    pos = end - input.len();
+                    total += room - o.len();
+                    match r {
+                        DecoderResult::Success => break,
+                        DecoderResult::Error => {
+                            assert!(d.error_code() as i32 != -31, "seed {seed}: unreachable");
+                            failed += 1;
+                            break;
+                        }
+                        DecoderResult::NeedsMoreInput if pos == n => break,
+                        _ => {}
+                    }
+                    // A changed stream can be a bomb.
+                    if total > 64 << 20 {
+                        break;
+                    }
+                }
+                decoded += 1;
+            }
+        });
+    }
+    assert!(refused == 0, "seed {seed0}: the encoder failed {refused} times");
+    println!("ok: {encoded} streams encoded, {decoded} decoded, {failed} of them with an error");
+}

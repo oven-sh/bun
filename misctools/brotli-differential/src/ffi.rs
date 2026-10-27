@@ -80,7 +80,29 @@ pub fn plain_malloc() {
     FILL.set(None).unwrap();
 }
 
+/// What the reference has allocated, for `mem-scan`: (bytes now, most bytes at a time, allocations).
+pub static METER: std::sync::Mutex<Option<Meter>> = std::sync::Mutex::new(None);
+
+#[derive(Default)]
+pub struct Meter {
+    sizes: std::collections::HashMap<usize, usize>,
+    pub live: usize,
+    pub peak: usize,
+    pub count: usize,
+}
+
 extern "C" fn c_alloc(_: *mut c_void, n: usize) -> *mut c_void {
+    let p = c_alloc_unmetered(n);
+    if let Some(m) = METER.lock().unwrap().as_mut() {
+        m.sizes.insert(p.addr(), n);
+        m.live += n;
+        m.peak = m.peak.max(m.live);
+        m.count += 1;
+    }
+    p
+}
+
+fn c_alloc_unmetered(n: usize) -> *mut c_void {
     unsafe {
         match *FILL.get_or_init(|| Some(std::env::var("C_FILL").map_or(0, |s| crate::args::parse(&s) as u8))) {
             None => malloc(n),
@@ -97,6 +119,9 @@ extern "C" fn c_alloc(_: *mut c_void, n: usize) -> *mut c_void {
 }
 
 extern "C" fn c_free(_: *mut c_void, p: *mut c_void) {
+    if let Some(m) = METER.lock().unwrap().as_mut() {
+        m.live -= m.sizes.remove(&p.addr()).unwrap_or(0);
+    }
     unsafe { free(p) }
 }
 

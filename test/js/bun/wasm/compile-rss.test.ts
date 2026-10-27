@@ -19,43 +19,48 @@ const laterBursts = !isMacOS;
 test.skipIf(isDebug || isASAN)(
   "WebAssembly.compile does not retain memory in idle compiler threads (#41438)",
   async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        path.join(import.meta.dir, "compile-rss-fixture.mjs"),
-        String(idleTargetMiB),
-        laterBursts ? "later" : "first",
-      ],
-      env: {
-        ...bunEnv,
-        // The retained amount scales with the compiler thread count. Pin it so the test does not
-        // depend on the core count of the machine.
-        BUN_JSC_numberOfWasmCompilerThreads: "8",
-      },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toBe("");
-    const result = JSON.parse(stdout.trim().split("\n").at(-1)!);
     type Burst = { peakDeltaMiB: number; idleDeltaMiB: number; stalled: boolean };
-    const first: Burst = result.first;
-    const released = (result.bursts as Burst[]).filter(burst => burst.idleDeltaMiB < idleTargetMiB);
+    let result: { first: Burst; bursts: Burst[] };
+    for (let attempt = 0; ; attempt++) {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          path.join(import.meta.dir, "compile-rss-fixture.mjs"),
+          String(idleTargetMiB),
+          laterBursts ? "later" : "first",
+        ],
+        env: {
+          ...bunEnv,
+          // The retained amount scales with the compiler thread count. Pin it so the test does not
+          // depend on the core count of the machine.
+          BUN_JSC_numberOfWasmCompilerThreads: "8",
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      result = JSON.parse(stdout.trim().split("\n").at(-1)!);
+      // A first burst that stalled and stayed over the target says nothing about the release (the
+      // fixture says why), and only a new process has threads that never released. Measure again.
+      if (attempt === 2 || !result.first.stalled || result.first.idleDeltaMiB < idleTargetMiB) break;
+    }
+    const released = result.bursts.filter(burst => burst.idleDeltaMiB < idleTargetMiB);
     // The whole measurement is in the object so a failure prints it. The compiles have to grow RSS
-    // well past the target first, or the idle check means nothing. The fixture says what a stall
-    // excuses, why the first burst is not enough, and how often it repeats a later one.
+    // well past the target first, or the idle check means nothing. The fixture says why the first
+    // burst is not enough, and how often it repeats a later one.
     expect({
       ...result,
-      firstGrew: first.peakDeltaMiB > idleTargetMiB * 2,
-      firstReleased: first.idleDeltaMiB < idleTargetMiB || first.stalled,
+      firstGrew: result.first.peakDeltaMiB > idleTargetMiB * 2,
+      firstReleased: result.first.idleDeltaMiB < idleTargetMiB,
       laterGrew: released.every(burst => burst.peakDeltaMiB > idleTargetMiB * 2),
       laterReleased: !laterBursts || released.length >= 2,
     }).toMatchObject({ firstGrew: true, firstReleased: true, laterGrew: true, laterReleased: true });
-    expect(exitCode).toBe(0);
   },
-  // A run that fails polls every burst for its whole second, 5 bursts in all. That is to be
-  // reported by the assertion with its numbers, and not as a timeout.
-  15_000,
+  // A run that fails polls every burst for its whole second, 5 bursts in all, and can do so 3
+  // times. That is to be reported by the assertion with its numbers, and not as a timeout.
+  30_000,
 );
 
 // A build of Bun configured with webAssembly off (scripts/build/config.ts) has no WebAssembly global.

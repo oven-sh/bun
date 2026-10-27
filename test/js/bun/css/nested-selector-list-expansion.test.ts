@@ -257,3 +257,10 @@ test("bun build does not hang on deeply nested multi-selector css spanning @star
   expect(exitCode).toBe(1);
   expect(await Bun.file(`${dir}/out/input.css`).exists()).toBe(false);
 });
+
+// The 15 style rules alone stay 4 selectors under the limit. The declaration prints the
+// whole chain of enclosing selectors once more, 2^15 of them.
+test("declarations directly in a nested at-rule count against the limit", () => {
+  const src = nestedAcrossAtRule("@media print", ".a, .b", 15, 0);
+  expect(() => minifyTest(src, "", OLD_TARGETS)).toThrow(LIMIT_ERROR);
+});

@@ -95,6 +95,9 @@ impl NestedDeclarationsRule {
     where
         R: for<'b> crate::generics::DeepClone<'b>,
     {
+        // With nesting compiled away, this rule prints the enclosing selector list once more.
+        context.charge_selector_expansion(1, self.loc)?;
+
         context.handler_context.context = DeclarationContext::StyleRule;
         self.declarations.minify(
             super::dc::decl_handler_static(&mut *context.handler),

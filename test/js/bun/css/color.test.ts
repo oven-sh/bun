@@ -969,7 +969,7 @@ describe("named colors in any letter case", () => {
   });
 
   // U+212A KELVIN SIGN lowercases to "k" in Unicode. Only ASCII letters fold.
-  test.each(["Redd", "blacK"])("%j is not a color", input => {
+  test.each(["Redd", "blac\u212A"])("%j is not a color", input => {
     expect(color(input, "hex")).toBeNull();
   });
 });

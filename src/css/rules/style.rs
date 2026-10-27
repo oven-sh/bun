@@ -381,21 +381,7 @@ impl<R> StyleRule<R> {
         &self,
         context: &mut MinifyContext<'_, '_>,
     ) -> Result<(), MinifyErr> {
-        if context.selector_expansion_multiplier > 1 {
-            context.selector_expansion_total = context.selector_expansion_total.saturating_add(
-                context
-                    .selector_expansion_multiplier
-                    .saturating_mul(self.selectors.v.len().max(1)),
-            );
-            if context.selector_expansion_total > super::MAX_SELECTOR_EXPANSION {
-                context.err = Some(crate::error::MinifyError {
-                    kind: crate::error::MinifyErrorKind::selector_expansion_limit_exceeded,
-                    loc: self.loc,
-                });
-                return Err(MinifyErr::minify_err);
-            }
-        }
-        Ok(())
+        context.charge_selector_expansion(self.selectors.v.len(), self.loc)
     }
 
     /// Minify this rule's nested rules, bumping the selector-expansion

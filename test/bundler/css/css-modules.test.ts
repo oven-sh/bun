@@ -747,7 +747,7 @@ describe("css modules", () => {
   const keyframes = "@keyframes spin { to { opacity: 0 } }";
   const keyframesOut = "@keyframes spin_H { to { opacity: 0; } }";
 
-  test.each([
+  test.concurrent.each([
     {
       name: "a @counter-style name stays global, as the list-style that names it does",
       css: `@counter-style thumbs { system: cyclic; symbols: "x" } .a { list-style: thumbs }`,
@@ -827,7 +827,7 @@ describe("css modules", () => {
   const nested = '"composes" is not allowed inside nested selectors';
   const notSingleClass = '"composes" only works inside single class selectors';
 
-  test.each([
+  test.concurrent.each([
     {
       name: "after a nested rule",
       css: `.c { color: red } .a { &:hover { color: green } composes: c; color: blue }`,
@@ -871,7 +871,7 @@ describe("css modules", () => {
     expect(result.css).not.toContain("composes");
   });
 
-  test("composes in a module imported with layer()", async () => {
+  test.concurrent("composes in a module imported with layer()", async () => {
     expect(
       await bundle({
         "wrap.css": `@import "./styles.module.css" layer(base);`,
@@ -880,13 +880,13 @@ describe("css modules", () => {
     ).toEqual({ logs: [], css: `@layer base { .c_H { color: red; } .b_H { color: #00f; } }`, styles: {} });
   });
 
-  test("composes of a name that only :global() holds is an error", async () => {
+  test.concurrent("composes of a name that only :global() holds is an error", async () => {
     expect(await bundle({ "styles.module.css": `:global(.g) { color: red } .a { composes: g }` })).toEqual({
       logs: [expect.stringContaining('The name "g" never appears in')],
     });
   });
 
-  test("the composes conflict check sees the custom properties of every rule of a class", async () => {
+  test.concurrent("the composes conflict check sees the custom properties of every rule of a class", async () => {
     const { logs } = await bundle({
       "styles.module.css": `.button { --x: 2; composes: other from "./other.module.css" } .button { --y: 3 }`,
       "other.module.css": `.other { --x: 1; --y: 1 }`,
@@ -897,7 +897,7 @@ describe("css modules", () => {
     ]);
   });
 
-  test("composes in a plain stylesheet is an unknown property, not an import", async () => {
+  test.concurrent("composes in a plain stylesheet is an unknown property, not an import", async () => {
     expect(
       await bundle({
         "plain.css": `.k { composes: g from "./g.css" } .j { composes: m from "./missing.css" } .i { composes: 12px }`,

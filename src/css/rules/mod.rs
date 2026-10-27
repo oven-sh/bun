@@ -1296,3 +1296,27 @@ pub struct MinifyContext<'a, 'bump> {
     /// will expand to, checked against [`MAX_SELECTOR_EXPANSION`].
     pub(crate) selector_expansion_total: u32,
 }
+
+impl MinifyContext<'_, '_> {
+    /// See `StyleRule::charge_selector_expansion`. The rule at `loc` prints `selectors` selectors.
+    pub(crate) fn charge_selector_expansion(
+        &mut self,
+        selectors: u32,
+        loc: Location,
+    ) -> Result<(), MinifyErr> {
+        if self.selector_expansion_multiplier > 1 {
+            self.selector_expansion_total = self.selector_expansion_total.saturating_add(
+                self.selector_expansion_multiplier
+                    .saturating_mul(selectors.max(1)),
+            );
+            if self.selector_expansion_total > MAX_SELECTOR_EXPANSION {
+                self.err = Some(crate::error::MinifyError {
+                    kind: crate::error::MinifyErrorKind::selector_expansion_limit_exceeded,
+                    loc,
+                });
+                return Err(MinifyErr::minify_err);
+            }
+        }
+        Ok(())
+    }
+}

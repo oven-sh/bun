@@ -8747,7 +8747,7 @@ describe("named colors in any letter case", () => {
     '@property --accent{syntax:"<color>";inherits:false;initial-value:White}',
     '@property --accent{syntax:"<color>";inherits:false;initial-value:#fff}',
   );
-  minify_test(".a{color:blacK}", ".a{color:blacK}");
+  minify_test(".a{color:blac\u212A}", ".a{color:blac\u212A}");
 });
 
 describe("rotate: 0deg is not none", () => {

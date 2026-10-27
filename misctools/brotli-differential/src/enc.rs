@@ -162,11 +162,20 @@ pub fn run_op(p: &mut Pair, rng: &mut Rng, op: i32, mut input: &[u8], big: bool)
     }
 }
 
+/// [`run_op`] where a refusal by both is a failure too, unless calls before it were out of order.
+fn run_valid_op(case: &EncCase, p: &mut Pair, rng: &mut Rng, op: i32, input: &[u8], big: bool) -> Result<bool, String> {
+    let ok = run_op(p, rng, op, input, big)?;
+    if !ok && !case.misuse {
+        return Err(format!("call {}: both refuse operation {op} with {} bytes of input", p.calls, input.len()));
+    }
+    Ok(ok)
+}
+
 /// Returns the stream.
 pub fn compare(case: &EncCase) -> Result<Vec<u8>, String> {
     let mut p = Pair::new(case)?;
     if case.schedule == 0 {
-        run_op(&mut p, &mut Rng(0), 2, &case.data, true)?;
+        run_valid_op(case, &mut p, &mut Rng(0), 2, &case.data, true)?;
         return Ok(p.out);
     }
     let mut rng = Rng(case.schedule);
@@ -190,7 +199,7 @@ pub fn compare(case: &EncCase) -> Result<Vec<u8>, String> {
             0 | 1 => 1,
             _ => 0,
         };
-        if !run_op(&mut p, &mut rng, op, chunk, false)? {
+        if !run_valid_op(case, &mut p, &mut rng, op, chunk, false)? {
             return Ok(p.out);
         }
         rest = tail;
@@ -202,13 +211,13 @@ pub fn compare(case: &EncCase) -> Result<Vec<u8>, String> {
                 _ => rng.range(1, 70000),
             };
             let meta: Vec<u8> = (0..n).map(|_| rng.next() as u8).collect();
-            if !run_op(&mut p, &mut rng, 3, &meta, false)? {
+            if !run_valid_op(case, &mut p, &mut rng, 3, &meta, false)? {
                 return Ok(p.out);
             }
         }
         if rng.chance(1, 60) {
             // A flush without input.
-            if !run_op(&mut p, &mut rng, 1, &[], false)? {
+            if !run_valid_op(case, &mut p, &mut rng, 1, &[], false)? {
                 return Ok(p.out);
             }
         }
@@ -223,7 +232,7 @@ pub fn compare(case: &EncCase) -> Result<Vec<u8>, String> {
             }
         }
     }
-    run_op(&mut p, &mut rng, 2, &[], false)?;
+    run_valid_op(case, &mut p, &mut rng, 2, &[], false)?;
     if case.misuse {
         for _ in 0..3 {
             let op = rng.below(4) as i32;
@@ -283,12 +292,12 @@ pub fn compare_steps(case: &EncCase, steps: &[Step]) -> Result<Vec<u8>, String> 
     let mut rest: &[u8] = &case.data;
     for s in steps {
         let (chunk, tail) = rest.split_at(s.n.min(rest.len()));
-        if !run_op(&mut p, &mut rng, s.op, chunk, big)? {
+        if !run_valid_op(case, &mut p, &mut rng, s.op, chunk, big)? {
             return Ok(p.out);
         }
         rest = tail;
     }
-    run_op(&mut p, &mut rng, 2, rest, big)?;
+    run_valid_op(case, &mut p, &mut rng, 2, rest, big)?;
     Ok(p.out)
 }
 

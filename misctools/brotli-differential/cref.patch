@@ -29,7 +29,7 @@
              (size_t)last_copy_len;
          size_t br_index = 0;
          size_t br_offset;
-@@ -1499,6 +1499,11 @@
+@@ -1500,6 +1508,11 @@
          *next_out += out_bytes;
          *available_out -= out_bytes;
          s->total_out_ += out_bytes;
@@ -41,6 +41,28 @@
          SetTotalOut(s, total_out);
        } else {
          size_t out_bytes = storage_ix >> 3;
+@@ -1675,14 +1688,17 @@
+             (*available_in == 0) && op == BROTLI_OPERATION_FINISH);
+         BROTLI_BOOL force_flush = TO_BROTLI_BOOL(
+             (*available_in == 0) && op == BROTLI_OPERATION_FLUSH);
++        BROTLI_BOOL is_flint = BROTLI_FALSE;
+         BROTLI_BOOL result;
+-        /* Force emitting (uncompressed) piece containing flint. */
++        /* Force emitting (uncompressed) piece containing flint. Upstream makes
++           that a flush, which the caller did not ask for but has to complete:
++           if its 5 bytes find no room, the next call with input fails. */
+         if (!is_last && s->flint_ == 0) {
+-          s->flint_ = BROTLI_FLINT_WAITING_FOR_FLUSHING;
+-          force_flush = BROTLI_TRUE;
++          s->flint_ = BROTLI_FLINT_DONE;
++          is_flint = BROTLI_TRUE;
+         }
+         UpdateSizeHint(s, *available_in);
+-        result = EncodeData(s, is_last, force_flush,
++        result = EncodeData(s, is_last, TO_BROTLI_BOOL(force_flush || is_flint),
+             &s->available_out_, &s->next_out_);
+         if (!result) return BROTLI_FALSE;
+         if (force_flush) s->stream_state_ = BROTLI_STREAM_FLUSH_REQUESTED;
 --- a/c/enc/hash_longest_match_quickly_inc.h
 +++ b/c/enc/hash_longest_match_quickly_inc.h
 @@ -168,7 +168,10 @@

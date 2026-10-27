@@ -186,6 +186,39 @@ fn first_calls(text: &[u8]) -> Result<usize, String> {
     Ok(n)
 }
 
+/// With a stream offset, the first two bytes get a block of their own. However little room that finds, no call after it
+/// is refused. Blocks of 64 KiB, so that input is left after the first call at every quality.
+fn flint(text: &[u8]) -> Result<usize, String> {
+    let data = text.repeat(20);
+    let mut n = 0;
+    for quality in 0..12u32 {
+        // What the offset stands for, from another encoder.
+        let mut first = pair(&[(1, quality), (3, 16)], &[])?;
+        run_op(&mut first, &mut Rng(1), 1, &data[..1], true)?;
+        for room in 0..7usize {
+            for length in [2, 10, 70_000] {
+                for op in 0..4 {
+                    for big in [false, true] {
+                        let at = |e: String| format!("quality {quality}, {length} bytes with room for {room}, then operation {op}, big {big}: {e}");
+                        let mut p = pair(&[(1, quality), (3, 16), (9, 1)], &[]).map_err(at)?;
+                        let mut rng = Rng((room * 8 + op as usize) as u64);
+                        let (ok, used) = p.step(0, &data[1..1 + length], room).map_err(at)?;
+                        let mut rest = &data[1 + used..1 + length];
+                        let next = if op == 3 { &b"metadata"[..] } else { std::mem::take(&mut rest) };
+                        if !ok || !run_op(&mut p, &mut rng, op, next, big).map_err(at)? || !run_op(&mut p, &mut rng, 2, rest, big).map_err(at)? {
+                            return Err(at("refused".into()));
+                        }
+                        let stream = [&first.out[..], &p.out].concat();
+                        crate::enc::round_trip(&stream, &data[..1 + length], &[], false, room as u64).map_err(at)?;
+                        n += 1;
+                    }
+                }
+            }
+        }
+    }
+    Ok(n)
+}
+
 /// More than 1 GiB in one call.
 fn long_call(corpus: &r#gen::Corpus) -> Result<usize, String> {
     let mut rng = Rng(11);
@@ -378,6 +411,7 @@ pub fn run(seed: u64, iters: u64, corpus: &r#gen::Corpus) {
     check("decoder setters", decoder(&text));
     check("error names", error_names());
     check("first calls", first_calls(&text));
+    check("flint", flint(&text));
     check("one shot", one_shot(&text));
     check("parameters", parameters(&text));
     check("metadata", metadata(&text));

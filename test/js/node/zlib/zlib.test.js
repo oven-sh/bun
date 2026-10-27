@@ -704,11 +704,34 @@ describe("zlib.brotli", () => {
     expect(zlib.brotliDecompressSync(compressed, options).equals(input)).toBe(true);
   });
 
+  // node:zlib has no constant for it.
+  const BROTLI_PARAM_STREAM_OFFSET = 9;
+
+  // The encoder makes a block of 5 bytes of the first 2 bytes of such a stream, by itself.
+  it.each([4, 1])(
+    "takes more input when the first block of a stream that starts at an offset found room for %i bytes",
+    async room => {
+      const c = zlib.constants;
+      const params = { [c.BROTLI_PARAM_QUALITY]: 5 };
+      const [first, second] = [Buffer.alloc(1000, "a"), Buffer.alloc(70_000, "b")];
+      const head = zlib.brotliCompressSync(first, { params, finishFlush: c.BROTLI_OPERATION_FLUSH });
+      const stream = zlib.createBrotliCompress({
+        chunkSize: 64,
+        params: { ...params, [BROTLI_PARAM_STREAM_OFFSET]: first.length },
+      });
+      // Each empty block of metadata takes 1 of the 64 bytes.
+      for (let i = room; i < 64; i++) stream.flush(c.BROTLI_OPERATION_EMIT_METADATA);
+      stream.end(second);
+      const chunks = await stream.toArray();
+      expect(chunks.slice(0, 65 - room).map(chunk => chunk.length)).toEqual([...Array(64 - room).fill(1), room]);
+      const whole = Buffer.concat([head, ...chunks]);
+      expect(zlib.brotliDecompressSync(whole).equals(Buffer.concat([first, second]))).toBe(true);
+    },
+  );
+
   it("continues a copy from the dictionary in a stream that starts at an offset", () => {
     const c = zlib.constants;
     const dictionary = pbkdf2Sync("dictionary", "", 1, 75_000, "sha256");
-    // node:zlib has no constant for it.
-    const BROTLI_PARAM_STREAM_OFFSET = 9;
     const params = { [c.BROTLI_PARAM_QUALITY]: 5, [c.BROTLI_PARAM_LGWIN]: 22 };
     const first = pbkdf2Sync("first", "", 1, 1000, "sha256");
     // A copy from the dictionary that goes on past the 64 KiB that the encoder takes at a time. After those comes what

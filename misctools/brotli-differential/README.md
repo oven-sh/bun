@@ -12,8 +12,8 @@ target/debug/harness enc-fuzz 1 1000 4194304 4095
 ```
 
 The reference is built with `-ffp-contract=off`, and with `cref.patch`, which fixes an out of bounds write in the encoder
-(memory corruption is not something safe Rust can imitate) and two bugs that make streams which do not decode to the input
-(`enc-far-dict`, fixed on upstream's master, and `enc-offset-dict`).
+(memory corruption is not something safe Rust can imitate), two bugs that make streams which do not decode to the input
+(`enc-far-dict`, fixed on upstream's master, and `enc-offset-dict`), and a call that is refused for no reason (`api`).
 
 Every iteration is derived from its seed, so `<subcommand> <seed> 1 ...` reproduces a failure, as long as the files that some
 of the data is taken from are the same: brotli's test data and sources, `src/js/node` and `docs/runtime` of this repository.

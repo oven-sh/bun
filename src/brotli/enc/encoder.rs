@@ -64,18 +64,6 @@ enum StreamState {
     },
 }
 
-/// The "flint" is a tiny uncompressed block at the start of a stream that continues another one
-/// ([`EncoderParameter::StreamOffset`]), so that the context of the first literals does not depend on the bytes before.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Flint {
-    /// How many bytes of input it still needs. With all of them, it waits to be written.
-    Needs(usize),
-    /// It was written, and the flush after it is not complete.
-    Flushing,
-    /// It is in the output, or the stream has none.
-    Done,
-}
-
 /// What qualities 0 and 1 work with. They have no use for the ring buffer, the hasher and the commands.
 enum FastCompressor {
     OnePass(Box<OnePassScratch>),
@@ -117,7 +105,10 @@ pub struct Encoder {
     /// The `last_bytes_bits` bits of output that do not fill a byte yet. Before the first block, the stream header.
     last_bytes: u16,
     last_bytes_bits: u8,
-    flint: Flint,
+    /// The "flint" is a tiny uncompressed block at the start of a stream that continues another one
+    /// ([`EncoderParameter::StreamOffset`]), so that the context of the first literals does not depend on the bytes
+    /// before. How many bytes of input it still needs, until it is written.
+    flint_needs: Option<usize>,
     /// The last two bytes before `last_flush_pos`.
     prev_byte: u8,
     prev_byte2: u8,
@@ -699,7 +690,7 @@ impl Encoder {
             saved_dist_cache,
             last_bytes: 0,
             last_bytes_bits: 0,
-            flint: Flint::Done,
+            flint_needs: None,
             prev_byte: 0,
             prev_byte2: 0,
             storage: Vec::new(),
@@ -795,7 +786,7 @@ impl Encoder {
         choose_distance_params(&mut self.params);
 
         if self.params.stream_offset != 0 {
-            self.flint = Flint::Needs(2);
+            self.flint_needs = Some(2);
             // No distance derived from these is valid: -16 ± 3 is below 0.
             self.saved_dist_cache = [-16; 4];
             self.dist_cache.write_at(0, &self.saved_dist_cache)?;
@@ -1329,7 +1320,7 @@ impl Encoder {
         }
         loop {
             let mut remaining_block_size = self.remaining_input_block_size();
-            if let Flint::Needs(missing) = self.flint {
+            if let Some(missing) = self.flint_needs {
                 remaining_block_size = remaining_block_size.min(missing);
             }
 
@@ -1338,19 +1329,13 @@ impl Encoder {
                 let (block, rest) = input.split_at_checked(copy_input_size).ok_or(Bug)?;
                 self.copy_input_to_ring_buffer(block)?;
                 *input = rest;
-                if let Flint::Needs(missing) = &mut self.flint {
+                if let Some(missing) = &mut self.flint_needs {
                     *missing -= copy_input_size;
                 }
                 continue;
             }
 
             if self.inject_flush_or_push_output(output)? {
-                if self.flint == Flint::Flushing {
-                    self.check_flush_complete();
-                    if self.stream_state == StreamState::Processing {
-                        self.flint = Flint::Done;
-                    }
-                }
                 continue;
             }
 
@@ -1360,14 +1345,15 @@ impl Encoder {
                 && (remaining_block_size == 0 || op != EncoderOperation::Process)
             {
                 let is_last = input.is_empty() && op == EncoderOperation::Finish;
-                let mut force_flush = input.is_empty() && op == EncoderOperation::Flush;
-                // The flint gets a block of its own.
-                if !is_last && self.flint == Flint::Needs(0) {
-                    self.flint = Flint::Flushing;
-                    force_flush = true;
+                let force_flush = input.is_empty() && op == EncoderOperation::Flush;
+                // It gets a block of its own. That is not a flush: 2 bytes are stored as they are, so the block ends with
+                // a byte, and the caller, who did not ask for one, does not have to complete one.
+                let is_flint = !is_last && self.flint_needs == Some(0);
+                if is_flint {
+                    self.flint_needs = None;
                 }
                 self.update_size_hint(input.len());
-                self.encode_data(is_last, force_flush)?;
+                self.encode_data(is_last, force_flush || is_flint)?;
                 if force_flush {
                     self.stream_state = StreamState::FlushRequested;
                 }

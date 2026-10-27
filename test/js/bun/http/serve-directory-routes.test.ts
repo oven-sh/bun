@@ -434,6 +434,7 @@ describe("Bun.serve() directory routes", () => {
         "alias-back": "../public/inside.txt",
         "alias-root": "../public",
         "alias-slash": "/sub/../../inside.txt",
+        "sub/alias-slash": "/inside.txt",
         "escape-rel": "../secret.txt",
         "escape-abs": join(String(dir), "secret.txt"),
         "escape-down": "sub/../../secret.txt",
@@ -455,15 +456,15 @@ describe("Bun.serve() directory routes", () => {
         console.log(JSON.stringify(out));
       `;
       const inside = { "alias": "200 inside", "alias-dir/": "200 index", "alias-up": "200 inside" };
-      // Linux takes the root for `/` and for its own parent. The others take a target for what it is.
-      const insideViaDetour = isLinux
-        ? { "alias-abs": "404 ", "alias-back": "404 ", "alias-root/": "404 ", "alias-slash": "200 inside" }
-        : {
-            "alias-abs": "200 inside",
-            "alias-back": "200 inside",
-            "alias-root/": "200 root index",
-            "alias-slash": "404 ",
-          };
+      // The root is `/` and its own parent.
+      const rootIsSlash = {
+        "alias-slash": "200 inside",
+        "sub/alias-slash": "200 inside",
+        "escape-dir/": "200 root index",
+        "alias-abs": "404 ",
+        "alias-back": "404 ",
+        "alias-root/": "404 ",
+      };
       const outside = Object.fromEntries(
         [
           "escape-rel",
@@ -475,7 +476,7 @@ describe("Bun.serve() directory routes", () => {
           "loop",
         ].map(path => [path, "404 "]),
       );
-      const expected = { ...inside, ...insideViaDetour, ...outside };
+      const expected = { ...inside, ...rootIsSlash, ...outside };
       await using proc = Bun.spawn({
         cmd: [bunExe(), "-e", script, JSON.stringify(Object.keys(expected))],
         env: { ...bunEnv, ...env },

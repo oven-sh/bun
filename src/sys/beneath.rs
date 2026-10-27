@@ -45,6 +45,8 @@ pub fn openat(dir: Fd, path: &ZStr, flags: i32, mode: Mode, symlinks: Symlinks) 
     refuse_absolute_and_dot_dot(path.as_bytes(), Tag::open)?;
     match openat_by_kernel(dir, path, flags, mode, symlinks) {
         Some(Err(err)) if err.get_errno() == E::EAGAIN => {}
+        // `O_RESOLVE_BENEATH` opens what `RESOLVE_IN_ROOT` would, except where it refuses to leave `dir`.
+        Some(Err(err)) if symlinks == Symlinks::FollowAsRoot && err.get_errno() == E::EXDEV => {}
         Some(result) => return result,
         None => {}
     }
@@ -85,10 +87,6 @@ fn openat_by_kernel(
             };
         let result = crate::openat2_if_available(dir, path, flags, mode, resolve)?;
         Some(result.map_err(|e| Error::from_code_int(e, Tag::open).with_path(path.as_bytes())))
-    }
-    #[cfg(not(any(target_os = "linux", target_os = "android")))]
-    if symlinks == Symlinks::FollowAsRoot {
-        return None;
     }
     #[cfg(target_os = "macos")]
     {

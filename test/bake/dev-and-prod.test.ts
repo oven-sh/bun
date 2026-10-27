@@ -435,7 +435,7 @@ const importerOfCommonJS = `
     "typeof ns.hasOwnProperty": "function",
     "a member module.exports inherits": "function",
     "import() is the namespace of import *": true,
-    "import() of a module.exports that inherits then": "TypeError",
+    "import() of a module.exports that inherits then": "resolved",
     "Object.keys(require())": ["__esModule", "default", "x"],
   };
   const defaultImports = (value: "exports.default" | "module.exports") => ({
@@ -537,14 +537,23 @@ const importerOfCommonJS = `
     async test(dev) {
       await using c = await dev.client("/");
       await c.expectMessage("done");
+      // After `bun build` that `import()` rejects with a TypeError until `__toESM` hides an inherited `then` too:
+      // https://github.com/oven-sh/bun/pull/46803. The two PRs can land in either order, so production takes both.
+      const importer = (value: "exports.default" | "module.exports") =>
+        dev.nodeEnv === "development"
+          ? defaultImports(value)
+          : {
+              ...defaultImports(value),
+              "import() of a module.exports that inherits then": expect.stringMatching(/^(resolved|TypeError)$/),
+            };
       expect(await c.js`globalThis.result`).toEqual({
-        'no "type"': defaultImports("exports.default"),
-        '"type": "commonjs"': defaultImports("exports.default"),
-        '"type": "module"': defaultImports("module.exports"),
-        ".mjs": defaultImports("module.exports"),
-        ".mts": defaultImports("module.exports"),
-        'in node_modules, no "type"': defaultImports("exports.default"),
-        'in node_modules, "type": "module"': defaultImports("module.exports"),
+        'no "type"': importer("exports.default"),
+        '"type": "commonjs"': importer("exports.default"),
+        '"type": "module"': importer("module.exports"),
+        ".mjs": importer("module.exports"),
+        ".mts": importer("module.exports"),
+        'in node_modules, no "type"': importer("exports.default"),
+        'in node_modules, "type": "module"': importer("module.exports"),
       });
       // A known difference: development lowers `export *` to a spread, which forwards `default` too.
       // https://github.com/oven-sh/bun/pull/40259 removes it.

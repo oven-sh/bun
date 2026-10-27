@@ -949,7 +949,11 @@ function toCommonJS(from: any) {
 
 /** See `runtime.js`'s `__toESM`. This omits the cache. Getters are closures: each read of a bound getter costs more. */
 function toESM(mod: any, isNodeMode: boolean, to?: object) {
-  to ??= mod != null ? Object.create(Object.getPrototypeOf(mod)) : {};
+  if (!to) {
+    const target: object = mod != null ? Object.create(Object.getPrototypeOf(mod)) : {};
+    // `import()` and `await ns` must not call a `then` that `module.exports` inherits. Own names stay the same.
+    to = "then" in target ? Object.create(Object.defineProperty(target, "then", {})) : target;
+  }
   if (isNodeMode || !mod || !mod.__esModule || !Object.prototype.hasOwnProperty.call(mod, "default"))
     Object.defineProperty(to, "default", { value: mod, enumerable: true });
   if ((mod && typeof mod === "object") || typeof mod === "function")

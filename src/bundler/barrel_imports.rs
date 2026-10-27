@@ -92,18 +92,18 @@ fn resolve_barrel_export(
 /// 3. It is not an export star target of another barrel.
 ///
 /// Export * records are never deferred (always resolved) to avoid circular races.
-pub(crate) fn apply_barrel_optimization(
-    this: &mut BundleV2,
-    parse_result: &mut parse_task::Result,
+pub(crate) fn apply_barrel_optimization<'a>(
+    this: &mut BundleV2<'a>,
+    parse_result: &mut parse_task::Result<'a>,
 ) {
     // bun.handleOom: Rust aborts on OOM via the global arena; unwrap is for
     // bun_collections ops that still surface AllocError.
     apply_barrel_optimization_impl(this, parse_result).expect("OOM");
 }
 
-fn apply_barrel_optimization_impl(
-    this: &mut BundleV2,
-    parse_result: &mut parse_task::Result,
+fn apply_barrel_optimization_impl<'a>(
+    this: &mut BundleV2<'a>,
+    parse_result: &mut parse_task::Result<'a>,
 ) -> Result<(), AllocError> {
     let parse_task::ResultValue::Success(result) = &mut parse_result.value else {
         return Ok(());
@@ -329,10 +329,10 @@ fn record_target(
 /// The surviving record of an HMR duplicate import (`dedup_fallback`), else `ir` itself.
 #[inline]
 fn surviving_record<'a>(
-    records: &'a [bun_ast::ImportRecord],
+    records: &'a [bun_ast::ImportRecord<'a>],
     dedup_fallback: &StringArrayHashMap<u32>,
-    ir: &'a bun_ast::ImportRecord,
-) -> &'a bun_ast::ImportRecord {
+    ir: &'a bun_ast::ImportRecord<'a>,
+) -> &'a bun_ast::ImportRecord<'a> {
     if ir.flags.contains(import_record::Flags::IS_UNUSED) {
         if let Some(&survivor) = dedup_fallback.get(ir.path.text) {
             return &records[survivor as usize];
@@ -392,7 +392,7 @@ fn resolve_barrel_records(this: &mut BundleV2, barrel_idx: u32, un_deferred: &[u
         bun_alloc::ArenaVec::new_in(heap),
     );
     let source = core::mem::take(&mut this.graph.input_files.items_source_mut()[idx]);
-    let source_path: &'static [u8] = source.path.text;
+    let source_path = source.path.text;
 
     let resolve_result = this.resolve_import_records(&mut ResolveImportRecordCtx {
         import_records: &mut barrel_ir,

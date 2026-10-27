@@ -285,6 +285,17 @@ for (const { body, fn } of bodyTypes) {
         expect([blob.type, await blob.text()]).toEqual(["text/x-bun", "bye"]);
       });
 
+      test("Content-Type is the type of the Blob behind the stream", () => {
+        const subject = () => fn(new Blob(["bye"], { type: "text/x-bun" }).stream());
+        expect({
+          own: subject().headers.get("content-type"),
+          "clone()": subject().clone().headers.get("content-type"),
+        }).toEqual({
+          own: body === Request ? "text/x-bun" : null,
+          "clone()": "text/x-bun",
+        });
+      });
+
       test("blob() after the body getter returns the original Blob's type and bytes", async () => {
         const subject = fn(new Blob(["bye"], { type: "text/x-bun" }));
         expect(subject.body).toBeInstanceOf(ReadableStream);
@@ -2297,7 +2308,7 @@ describe("the body's Content-Type stays in the headers after the body is read", 
     "new Response('x', p)": body => new Response("x", response(body)),
     "new Response(null, p)": body => new Response(null, response(body)),
   };
-  test.each(bodies)("a Response copied from one with a %s body has it", async (_, body, type) => {
+  test.each(bodies)("a Response copied from one with a %s body has it", async (name, body, type) => {
     using server = Bun.serve({
       port: 0,
       fetch: req => copies[decodeURIComponent(new URL(req.url).pathname.slice(1))](body()),
@@ -2311,7 +2322,8 @@ describe("the body's Content-Type stays in the headers after the body is read", 
     expect({ headers, wire }).toEqual({ headers: all(copies, type), wire: all(copies, type) });
     // A stream has no type: https://fetch.spec.whatwg.org/#concept-bodyinit-extract
     expect(new Response(response(body()).body).headers.get("content-type")).toBeNull();
-    expect(request(response(body()).body!).headers.get("content-type")).toBeNull();
+    // A Request takes the type of the in-memory body that an unread stream came from.
+    expect(request(response(body()).body!).headers.get("content-type")).toEqual(name === "Bun.file" ? null : type);
   });
 
   test.each(bodies)("fetch(request) leaves it in request.headers (%s)", async (_, body, type) => {

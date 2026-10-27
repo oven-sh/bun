@@ -235,8 +235,23 @@ impl Request {
         } else {
             // we don't have a request context, so we need to create an empty headers object
             let headers = self.headers_mut().insert(HeadersRef::create_empty());
-            self.body_value()
-                .put_content_type_default(headers, global_this)?;
+            let body = self.body_value();
+            body.put_content_type_default(headers, global_this)?;
+            // Only this header list takes the type of a Blob whose unread stream() is the body.
+            if let BodyValue::Locked(locked) = body
+                && let Some(readable) = locked.readable.get()
+                && let crate::webcore::readable_stream::Source::Blob(loader) = readable.ptr
+            {
+                // SAFETY: `locked.readable` holds the stream, which keeps its `ByteBlobLoader` alive.
+                let content_type = unsafe { (*loader).content_type.get() };
+                if !content_type.is_empty() {
+                    headers.put_default(
+                        HTTPHeaderName::ContentType,
+                        &StringView::ascii(content_type.as_slice()),
+                        global_this,
+                    )?;
+                }
+            }
         }
 
         Ok(self.headers_mut().as_mut().unwrap())

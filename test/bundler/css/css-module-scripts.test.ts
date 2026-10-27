@@ -1,5 +1,6 @@
 import { describe, expect } from "bun:test";
 import { existsSync, readdirSync } from "node:fs";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { itBundled } from "../expectBundled";
 
@@ -20,6 +21,8 @@ const cssStyleSheetShim = /* js */ `
 `;
 
 const outputFiles = (outdir: string, ext: string) => readdirSync(outdir).filter(f => f.endsWith(ext));
+
+const mixedUseError = 'A build cannot use "widget.css" both with and without { type: "css" }.';
 
 describe("bundler", () => {
   itBundled("css-module-script/DefaultImportIsConstructedStyleSheet", {
@@ -77,137 +80,27 @@ describe("bundler", () => {
       api.expectFile("/out/index.html").not.toContain("stylesheet");
       const [js] = outputFiles(api.outdir, ".js");
       api.expectFile("/out/" + js).toContain("border-top: 7px solid");
-      api.expectFile("/out/" + js).toContain("CSSStyleSheet");
+      api.expectFile("/out/" + js).toContain("new CSSStyleSheet");
     },
   });
 
-  // `@import`ed files are inlined. A copied asset in `url()` is emitted relative
-  // to the JS chunk and, in ESM output, resolved against `import.meta.url` at
-  // runtime, so it loads no matter where the page that runs the chunk lives.
-  itBundled("css-module-script/InlinesAtImportAndResolvesUrl", {
+  // The other ways to write the import give the same kind of module.
+  itBundled("css-module-script/ImportForms", {
     files: {
       "/entry.js": /* js */ `
-        import sheet from "./widget.css" with { type: "css" };
-        console.log(sheet.cssText);
+        import * as ns from "./a.css" with { type: "css" };
+        import b from "./b.css" assert { type: "css" };
+        import { sheet as c } from "./reexport.js";
+        import * as star from "./star.js";
+        console.log(JSON.stringify([ns.default, b, c, star.default].map(s => s instanceof CSSStyleSheet && s.cssText)));
       `,
-      "/widget.css": /* css */ `
-        @import "./base.css";
-        p.w { background: url("./image.png") }
-      `,
-      "/base.css": /* css */ `p.base { color: green }`,
-      // Large enough to be emitted as a file instead of a data: URL.
-      "/image.png": Buffer.alloc(256 * 1024, 7),
-      "/test.js": /* js */ `
-        ${cssStyleSheetShim}
-        await import("./out/chunks/entry.js");
-      `,
-    },
-    entryPoints: ["/entry.js"],
-    entryNaming: "chunks/[name].[ext]",
-    assetNaming: "assets/[name]-[hash].[ext]",
-    outdir: "/out",
-    target: "browser",
-    onAfterBundle(api) {
-      // A page stylesheet for this entry would be emitted next to it, in chunks/.
-      expect(outputFiles(api.outdir + "/chunks", ".css")).toEqual([]);
-      expect(outputFiles(api.outdir + "/assets", ".png")).toHaveLength(1);
-    },
-    run: {
-      file: "/test.js",
-      validate({ stdout }) {
-        // base.css is inlined before the importing file's own rules.
-        expect(stdout.indexOf("p.base")).toBeGreaterThanOrEqual(0);
-        expect(stdout.indexOf("p.base")).toBeLessThan(stdout.indexOf("p.w"));
-        expect(stdout).not.toContain("@import");
-        // The chunk is out/chunks/entry.js and the asset out/assets/image-*.png:
-        // the URL in the sheet is absolute and points at the emitted file.
-        const url = stdout.match(/url\("([^"]+)"\)/)?.[1];
-        expect(url).toStartWith("file://");
-        expect(url).toMatch(/\/out\/assets\/image-[a-z0-9]+\.png$/);
-        expect(existsSync(fileURLToPath(url!))).toBe(true);
-      },
-    },
-  });
-
-  // IIFE and CommonJS output have no `import.meta`: the base is the URL of the
-  // <script> that runs the chunk.
-  const scriptUrlCases = [
-    {
-      name: "IIFEScriptUrl",
-      format: "iife",
-      scriptUrl: "https://example.com/static/js/entry.js",
-      expected: /url\("https:\/\/example\.com\/static\/js\/image-[a-z0-9]+\.png"\)/,
-    },
-    {
-      name: "CJSScriptUrl",
-      format: "cjs",
-      scriptUrl: "https://example.com/static/js/entry.js",
-      expected: /url\("https:\/\/example\.com\/static\/js\/image-[a-z0-9]+\.png"\)/,
-    },
-    // Minified CSS has no quotes around the URL, so `(`, `)` and `'` are escaped.
-    {
-      name: "IIFEScriptUrlNeedsEscapes",
-      format: "iife",
-      minifyWhitespace: true,
-      scriptUrl: "https://example.com/a (b)/it's/entry.js",
-      expected: /url\(https:\/\/example\.com\/a%20\\\(b\\\)\/it\\'s\/image-[a-z0-9]+\.png\)/,
-    },
-    // A `blob:` URL cannot be a base URL: the path stays relative and nothing throws.
-    {
-      name: "IIFEBlobScriptUrl",
-      format: "iife",
-      scriptUrl: "blob:https://example.com/0b0e2c4e",
-      expected: /url\("\.\/image-[a-z0-9]+\.png"\)/,
-    },
-    {
-      name: "IIFENoScriptUrl",
-      format: "iife",
-      scriptUrl: undefined,
-      expected: /url\("\.\/image-[a-z0-9]+\.png"\)/,
-    },
-  ] as const;
-  for (const { name, format, scriptUrl, expected, ...options } of scriptUrlCases) {
-    itBundled(`css-module-script/Url${name}`, {
-      files: {
-        "/entry.js": /* js */ `
-          import sheet from "./widget.css" with { type: "css" };
-          console.log(sheet.cssText);
-        `,
-        "/widget.css": /* css */ `p.w { background: url("./image.png") }`,
-        "/image.png": Buffer.alloc(256 * 1024, 7),
-        "/test.js": /* js */ `
-          ${cssStyleSheetShim}
-          ${scriptUrl ? `globalThis.document = { currentScript: { src: ${JSON.stringify(scriptUrl)} } };` : ""}
-          require("./out/entry.js");
-        `,
-      },
-      entryPoints: ["/entry.js"],
-      format,
-      outdir: "/out",
-      target: "browser",
-      ...options,
-      onAfterBundle(api) {
-        api.expectFile("/out/entry.js").not.toContain("import.meta");
-      },
-      run: {
-        file: "/test.js",
-        validate({ stdout }) {
-          expect(stdout).toMatch(expected);
-        },
-      },
-    });
-  }
-
-  itBundled("css-module-script/ReExport", {
-    files: {
-      "/entry.js": /* js */ `
-        import { sheet } from "./styles.js";
-        console.log(sheet instanceof CSSStyleSheet, JSON.stringify(sheet.cssText));
-      `,
-      "/styles.js": /* js */ `
-        export { default as sheet } from "./widget.css" with { type: "css" };
-      `,
-      "/widget.css": /* css */ `p.w { color: red }`,
+      "/reexport.js": /* js */ `export { default as sheet } from "./c.css" with { type: "css" };`,
+      // `export *` does not re-export "default".
+      "/star.js": /* js */ `export * from "./d.css" with { type: "css" };`,
+      "/a.css": /* css */ `.a { color: red }`,
+      "/b.css": /* css */ `.b { color: red }`,
+      "/c.css": /* css */ `.c { color: red }`,
+      "/d.css": /* css */ `.d { color: red }`,
       "/test.js": /* js */ `
         ${cssStyleSheetShim}
         await import("./out/entry.js");
@@ -221,18 +114,21 @@ describe("bundler", () => {
     },
     run: {
       file: "/test.js",
-      stdout: `true "p.w {\\n  color: red;\\n}"`,
+      stdout: JSON.stringify([".a {\n  color: red;\n}", ".b {\n  color: red;\n}", ".c {\n  color: red;\n}", false]),
     },
   });
 
-  itBundled("css-module-script/SameFileBothWays", {
+  // The attribute decides the loader, the file extension does not. An empty file is an empty sheet.
+  itBundled("css-module-script/NonCssPathAndEmptyFileAndDataUrl", {
     files: {
       "/entry.js": /* js */ `
-        import "./widget.css";
-        import sheet from "./widget.css" with { type: "css" };
-        console.log(sheet instanceof CSSStyleSheet, sheet.cssText.includes("p.w"));
+        import a from "./styles.txt" with { type: "css" };
+        import b from "./empty.css" with { type: "css" };
+        import c from "data:text/css,p.d%7Bcolor%3Ared%7D" with { type: "css" };
+        console.log(JSON.stringify([a, b, c].map(s => s instanceof CSSStyleSheet && s.cssText)));
       `,
-      "/widget.css": /* css */ `p.w { color: red }`,
+      "/styles.txt": /* css */ `p.t { color: red }`,
+      "/empty.css": "",
       "/test.js": /* js */ `
         ${cssStyleSheetShim}
         await import("./out/entry.js");
@@ -242,12 +138,293 @@ describe("bundler", () => {
     outdir: "/out",
     target: "browser",
     onAfterBundle(api) {
-      // The plain import keeps applying the file to the page.
-      api.expectFile("/out/entry.css").toContain("p.w");
+      expect(outputFiles(api.outdir, ".css")).toEqual([]);
     },
     run: {
       file: "/test.js",
-      stdout: "true true",
+      stdout: JSON.stringify(["p.t {\n  color: red;\n}", "", "p.d {\n  color: red;\n}"]),
+    },
+  });
+
+  // A `url()` to a file becomes an import of the copied asset. Its path is
+  // relative to the chunk, so the module makes it absolute: a constructed sheet
+  // resolves a relative URL against the document.
+  for (const splitting of [false, true]) {
+    itBundled(`css-module-script/UrlResolvesAgainstTheChunk${splitting ? "Splitting" : ""}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import sheet from "./styles/widget.css" with { type: "css" };
+          console.log(sheet.cssText);
+        `,
+        "/other.js": /* js */ `
+          import sheet from "./styles/widget.css" with { type: "css" };
+          console.log(sheet.cssText.length);
+        `,
+        "/styles/widget.css": /* css */ `
+          p.a { background: url("./image.png") }
+          p.b { background: url(image.png) }
+          p.c { mask: url(icons.svg#star) }
+          p.d { background: url(https://example.com/a.png) }
+          p.e { background: url(data:image/png;base64,AAAA); mask: url(#m) }
+        `,
+        // Large enough to be emitted as a file instead of a data: URL in a page stylesheet.
+        "/styles/image.png": Buffer.alloc(256 * 1024, 7),
+        "/styles/icons.svg": `<svg xmlns="http://www.w3.org/2000/svg"><path id="star"/></svg>`,
+        "/test.js": /* js */ `
+          ${cssStyleSheetShim}
+          await import("./out/chunks/entry.js");
+        `,
+      },
+      entryPoints: ["/entry.js", "/other.js"],
+      entryNaming: "chunks/[name].[ext]",
+      assetNaming: "assets/[name]-[hash].[ext]",
+      splitting,
+      outdir: "/out",
+      target: "browser",
+      onAfterBundle(api) {
+        // A page stylesheet for this entry would be emitted next to it, in chunks/.
+        expect(outputFiles(api.outdir + "/chunks", ".css")).toEqual([]);
+        expect(outputFiles(api.outdir + "/assets", ".png")).toHaveLength(1);
+        expect(outputFiles(api.outdir + "/assets", ".svg")).toHaveLength(1);
+      },
+      run: {
+        file: "/test.js",
+        validate({ stdout }) {
+          const urls = [...stdout.matchAll(/url\("([^"]+)"\)/g)].map(match => match[1]);
+          expect(urls).toHaveLength(6);
+          const [a, b, c, ...rest] = urls;
+          // The sheet is in out/chunks/ or in a shared chunk, and the asset in out/assets/.
+          expect(a).toMatch(/^file:.*\/out\/assets\/image-[a-z0-9]+\.png$/);
+          expect(existsSync(fileURLToPath(a))).toBe(true);
+          // `url(image.png)` is the same file: CSS resolves it against the stylesheet.
+          expect(b).toBe(a);
+          // The fragment stays on the URL.
+          expect(c).toMatch(/^file:.*\/out\/assets\/icons-[a-z0-9]+\.svg#star$/);
+          expect(existsSync(fileURLToPath(c.slice(0, -"#star".length)))).toBe(true);
+          // A URL that is not a file stays as written.
+          expect(rest.sort()).toEqual(["#m", "data:image/png;base64,AAAA", "https://example.com/a.png"]);
+        },
+      },
+    });
+  }
+
+  // Minified CSS writes `url(x)` without quotes. The module always quotes the
+  // URL it computes, and it must not throw when the chunk has no base URL.
+  itBundled("css-module-script/UrlMinifiedAndWithoutBaseUrl", {
+    files: {
+      "/entry.js": /* js */ `
+        import sheet from "./widget.css" with { type: "css" };
+        console.log(sheet.cssText);
+      `,
+      "/widget.css": /* css */ `p.w { background: url("./image.png") }`,
+      "/image.png": Buffer.alloc(256 * 1024, 7),
+      "/test.js": /* js */ `
+        ${cssStyleSheetShim}
+        await import("./out/entry.js");
+        await import("./out/entry.blob.js");
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    target: "browser",
+    minifyWhitespace: true,
+    onAfterBundle(api) {
+      // A module that a page loads from a `blob:` URL: `new URL(path, base)` throws for that base.
+      const js = api.readFile("/out/entry.js");
+      expect(js).toContain("import.meta.url");
+      api.writeFile("/out/entry.blob.js", js.replaceAll("import.meta.url", `"blob:https://example.com/0b0e2c4e"`));
+    },
+    run: {
+      file: "/test.js",
+      validate({ stdout }) {
+        const [first, second] = stdout.split("\n");
+        expect(first).toMatch(/^p\.w\{background:url\("file:[^"]+\/out\/image-[a-z0-9]+\.png"\)\}$/);
+        expect(second).toMatch(/^p\.w\{background:url\("\.\/image-[a-z0-9]+\.png"\)\}$/);
+      },
+    },
+  });
+
+  // IIFE and CommonJS output have no `import.meta.url`. The URL of an asset is
+  // then only right with a public path.
+  for (const format of ["iife", "cjs"] as const) {
+    itBundled(`css-module-script/Url${format.toUpperCase()}NeedsAPublicPath`, {
+      files: {
+        "/entry.js": /* js */ `
+          import sheet from "./widget.css" with { type: "css" };
+          console.log(sheet.cssText);
+        `,
+        "/widget.css": /* css */ `p.w { background: url("./image.png") }`,
+        "/image.png": Buffer.alloc(256 * 1024, 7),
+      },
+      entryPoints: ["/entry.js"],
+      format,
+      outdir: "/out",
+      target: "browser",
+      bundleErrors: {
+        "/widget.css": ['resolves this "url()" against the location of the bundle'],
+      },
+    });
+
+    itBundled(`css-module-script/Url${format.toUpperCase()}WithPublicPath`, {
+      files: {
+        "/entry.js": /* js */ `
+          import sheet from "./widget.css" with { type: "css" };
+          console.log(sheet.cssText);
+        `,
+        "/widget.css": /* css */ `p.w { background: url("./image.png") }`,
+        "/image.png": Buffer.alloc(256 * 1024, 7),
+        "/test.js": /* js */ `
+          ${cssStyleSheetShim}
+          require("./out/entry.js");
+        `,
+      },
+      entryPoints: ["/entry.js"],
+      format,
+      publicPath: "https://cdn.example.com/static/",
+      outdir: "/out",
+      target: "browser",
+      onAfterBundle(api) {
+        api.expectFile("/out/entry.js").not.toContain("import.meta");
+      },
+      run: {
+        file: "/test.js",
+        validate({ stdout }) {
+          expect(stdout).toMatch(/url\("https:\/\/cdn\.example\.com\/static\/image-[a-z0-9]+\.png"\)/);
+        },
+      },
+    });
+  }
+
+  // A browser ignores `@import` in a CSS module script. The bundle does the same, and says so.
+  itBundled("css-module-script/AtImportIsIgnoredWithAWarning", {
+    files: {
+      "/entry.js": /* js */ `
+        import sheet from "./widget.css" with { type: "css" };
+        console.log(JSON.stringify(sheet.cssText));
+      `,
+      "/widget.css": /* css */ `
+        @import "./base.css";
+        p.w { color: red }
+      `,
+      "/base.css": /* css */ `p.base { color: green }`,
+      "/test.js": /* js */ `
+        ${cssStyleSheetShim}
+        await import("./out/entry.js");
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    target: "browser",
+    bundleWarnings: {
+      "/widget.css": ['This "@import" is ignored.'],
+    },
+    onAfterBundle(api) {
+      expect(outputFiles(api.outdir, ".css")).toEqual([]);
+      api.expectFile("/out/entry.js").not.toContain("p.base");
+    },
+    run: {
+      file: "/test.js",
+      stdout: JSON.stringify("p.w {\n  color: red;\n}"),
+    },
+  });
+
+  // The bundler has one module for each file. A file cannot be a CSS module
+  // script for one import and a stylesheet of the page for another: the build
+  // fails, and the error does not depend on which import the bundler sees first.
+  itBundled("css-module-script/MixedUsePlainThenTyped", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./widget.css";
+        import sheet from "./widget.css" with { type: "css" };
+        console.log(sheet);
+      `,
+      "/widget.css": /* css */ `p.w { color: red }`,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    target: "browser",
+    bundleErrors: {
+      "/entry.js": [mixedUseError],
+    },
+  });
+
+  itBundled("css-module-script/MixedUseTypedThenPlainInAnotherFile", {
+    files: {
+      "/entry.js": /* js */ `
+        import sheet from "./widget.css" with { type: "css" };
+        import "./other.js";
+        console.log(sheet);
+      `,
+      "/other.js": /* js */ `
+        import styles from "./widget.css";
+        console.log(styles);
+      `,
+      "/widget.css": /* css */ `p.w { color: red }`,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    target: "browser",
+    bundleErrors: {
+      "/entry.js": [mixedUseError],
+    },
+  });
+
+  itBundled("css-module-script/MixedUseDynamicImport", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./widget.css";
+        const { default: sheet } = await import("./widget.css", { with: { type: "css" } });
+        console.log(sheet);
+      `,
+      "/widget.css": /* css */ `p.w { color: red }`,
+    },
+    entryPoints: ["/entry.js"],
+    splitting: true,
+    outdir: "/out",
+    target: "browser",
+    bundleErrors: {
+      "/entry.js": [mixedUseError],
+    },
+  });
+
+  itBundled("css-module-script/MixedUseAtImport", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./page.css";
+        import sheet from "./widget.css" with { type: "css" };
+        console.log(sheet);
+      `,
+      "/page.css": /* css */ `@import "./widget.css";`,
+      "/widget.css": /* css */ `p.w { color: red }`,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    target: "browser",
+    bundleErrors: {
+      "/entry.js": [mixedUseError],
+    },
+  });
+
+  itBundled("css-module-script/MixedUseHtmlLink", {
+    files: {
+      "/index.html": /* html */ `
+        <!doctype html>
+        <html>
+          <head><link rel="stylesheet" href="./widget.css" /></head>
+          <body><script type="module" src="./component.js"></script></body>
+        </html>
+      `,
+      "/component.js": /* js */ `
+        import sheet from "./widget.css" with { type: "css" };
+        document.adoptedStyleSheets = [sheet];
+      `,
+      "/widget.css": /* css */ `p.w { color: red }`,
+    },
+    entryPoints: ["/index.html"],
+    outdir: "/out",
+    target: "browser",
+    bundleErrors: {
+      "/component.js": [mixedUseError],
     },
   });
 
@@ -280,7 +457,7 @@ describe("bundler", () => {
     target: "browser",
     onAfterBundle(api) {
       expect(outputFiles(api.outdir, ".css")).toEqual([]);
-      // One module, one stylesheet: the stub is emitted once, in the shared chunk.
+      // One module, one stylesheet: it is emitted once, in the shared chunk.
       const withSheet = outputFiles(api.outdir, ".js").filter(f => api.readFile("/out/" + f).includes("color: red"));
       expect(withSheet).toHaveLength(1);
       expect(withSheet[0]).not.toBe("a.js");
@@ -319,34 +496,29 @@ describe("bundler", () => {
     });
   }
 
-  // The bundler has one module per file, so a plain import and an attributed
-  // `import()` of the same file share it: the plain import still applies the
-  // file to the page, and the `import()` resolves to the stylesheet module.
-  itBundled("css-module-script/PlainImportAndAttributedDynamicImport", {
-    files: {
-      "/entry.js": /* js */ `
-        import "./widget.css";
-        const { default: sheet } = await import("./widget.css", { with: { type: "css" } });
-        console.log(sheet instanceof CSSStyleSheet, JSON.stringify(sheet.cssText));
-      `,
-      "/widget.css": /* css */ `p.w { color: red }`,
-      "/test.js": /* js */ `
-        ${cssStyleSheetShim}
-        await import("./out/entry.js");
-      `,
-    },
-    entryPoints: ["/entry.js"],
-    splitting: true,
-    outdir: "/out",
-    target: "browser",
-    onAfterBundle(api) {
-      api.expectFile("/out/entry.css").toContain("p.w");
-    },
-    run: {
-      file: "/test.js",
-      stdout: `true "p.w {\\n  color: red;\\n}"`,
-    },
-  });
+  for (const format of ["iife", "cjs"] as const) {
+    itBundled(`css-module-script/Format${format.toUpperCase()}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import sheet from "./widget.css" with { type: "css" };
+          console.log(sheet instanceof CSSStyleSheet, JSON.stringify(sheet.cssText));
+        `,
+        "/widget.css": /* css */ `p.w { color: red }`,
+        "/test.js": /* js */ `
+          ${cssStyleSheetShim}
+          require("./out/entry.js");
+        `,
+      },
+      entryPoints: ["/entry.js"],
+      format,
+      outdir: "/out",
+      target: "browser",
+      run: {
+        file: "/test.js",
+        stdout: `true "p.w {\\n  color: red;\\n}"`,
+      },
+    });
+  }
 
   itBundled("css-module-script/Minified", {
     files: {
@@ -372,6 +544,29 @@ describe("bundler", () => {
     },
   });
 
+  // The module holds the text in a template literal: these characters need an escape there.
+  itBundled("css-module-script/TextWithTemplateLiteralSyntax", {
+    files: {
+      "/entry.js": /* js */ `
+        import sheet from "./widget.css" with { type: "css" };
+        console.log(sheet.cssText);
+      `,
+      "/widget.css": 'p.w::before { content: "`${a}\\\\$" }',
+      "/test.js": /* js */ `
+        ${cssStyleSheetShim}
+        await import("./out/entry.js");
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    target: "browser",
+    minifyWhitespace: true,
+    run: {
+      file: "/test.js",
+      stdout: 'p.w:before{content:"`${a}\\\\$"}',
+    },
+  });
+
   itBundled("css-module-script/UnusedImportEmitsNothing", {
     files: {
       "/entry.js": /* js */ `
@@ -393,6 +588,135 @@ describe("bundler", () => {
     },
   });
 
+  // An import that binds nothing makes a sheet that no code can adopt. On a
+  // build before this feature, that import added the file to the page.
+  itBundled("css-module-script/BareImportWarns", {
+    files: {
+      "/entry.js": /* js */ `
+        import "./widget.css" with { type: "css" };
+        console.log("hi");
+      `,
+      "/widget.css": /* css */ `p.w { color: red }`,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    target: "browser",
+    bundleWarnings: {
+      "/entry.js": ["This import does nothing: it makes a CSSStyleSheet that no code can adopt."],
+    },
+    onAfterBundle(api) {
+      expect(outputFiles(api.outdir, ".css")).toEqual([]);
+      api.expectFile("/out/entry.js").not.toContain("color");
+    },
+    run: {
+      stdout: "hi",
+    },
+  });
+
+  // Barrel optimization defers the re-export and resolves it when an importer asks for it.
+  itBundled("css-module-script/BarrelDeferredReExport", {
+    files: {
+      "/entry.js": /* js */ `
+        import { sheet } from "lib";
+        console.log(sheet instanceof CSSStyleSheet, JSON.stringify(sheet.cssText));
+      `,
+      "/node_modules/lib/package.json": JSON.stringify({ name: "lib", main: "./index.js", sideEffects: false }),
+      "/node_modules/lib/index.js": /* js */ `
+        export { default as sheet } from "./widget.css" with { type: "css" };
+        export { unused } from "./unused.js";
+      `,
+      "/node_modules/lib/unused.js": /* js */ `export const unused = "unused";`,
+      "/node_modules/lib/widget.css": /* css */ `p.w { color: red }`,
+      "/test.js": /* js */ `
+        ${cssStyleSheetShim}
+        await import("./out/entry.js");
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    target: "browser",
+    onAfterBundle(api) {
+      expect(outputFiles(api.outdir, ".css")).toEqual([]);
+    },
+    run: {
+      file: "/test.js",
+      stdout: `true "p.w {\\n  color: red;\\n}"`,
+    },
+  });
+
+  // A plugin sees the loader of the file as "css". The import still gets a
+  // sheet, unless the plugin loads JavaScript for it.
+  itBundled("css-module-script/Plugins", {
+    files: {
+      "/entry.js": /* js */ `
+        import resolved from "virtual:widget" with { type: "css" };
+        import fallback from "./fallback.css" with { type: "css" };
+        import loaded from "./loaded.css" with { type: "css" };
+        import script from "./script.css" with { type: "css" };
+        console.log(JSON.stringify([resolved, fallback, loaded].map(s => s instanceof CSSStyleSheet && s.cssText)), script);
+      `,
+      "/widget.css": /* css */ `.resolved { color: red }`,
+      "/fallback.css": /* css */ `.fallback { color: red }`,
+      "/loaded.css": /* css */ `.not-this { color: red }`,
+      "/script.css": /* css */ `.not-this { color: red }`,
+      "/test.js": /* js */ `
+        ${cssStyleSheetShim}
+        await import("./out/entry.js");
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    target: "browser",
+    plugins(builder) {
+      builder.onResolve({ filter: /^virtual:widget$/ }, args => ({
+        path: resolve(dirname(args.importer), "widget.css"),
+      }));
+      // A plugin that matches and gives no answer: the bundler resolves the import.
+      builder.onResolve({ filter: /fallback\.css$/ }, () => undefined);
+      builder.onLoad({ filter: /loaded\.css$/ }, () => ({ contents: ".loaded { color: red }", loader: "css" }));
+      builder.onLoad({ filter: /script\.css$/ }, () => ({ contents: "export default 'script'", loader: "js" }));
+    },
+    onAfterBundle(api) {
+      expect(outputFiles(api.outdir, ".css")).toEqual([]);
+    },
+    run: {
+      file: "/test.js",
+      stdout:
+        JSON.stringify([
+          ".resolved {\n  color: red;\n}",
+          ".fallback {\n  color: red;\n}",
+          ".loaded {\n  color: red;\n}",
+        ]) + " script",
+    },
+  });
+
+  // An import that stays in the output keeps the attribute, so a browser loads
+  // the file as a CSS module script. Without it a browser rejects the import:
+  // the file is not JavaScript.
+  itBundled("css-module-script/ExternalImportKeepsTheAttribute", {
+    files: {
+      "/entry.js": /* js */ `
+        import sheet from "./widget.css" with { type: "css" };
+        export { default as other } from "./other.css" with { type: "css" };
+        import text from "./notes.txt" with { type: "text" };
+        import "./page.css";
+        console.log(sheet, text);
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    external: ["./widget.css", "./other.css", "./notes.txt", "./page.css"],
+    outdir: "/out",
+    target: "browser",
+    onAfterBundle(api) {
+      const js = api.readFile("/out/entry.js");
+      expect(js).toContain(`import sheet from "./widget.css" with { type: "css" };`);
+      expect(js).toContain(`from "./other.css" with { type: "css" };`);
+      // Unchanged: the other types are for Bun only, and a plain import has no attribute.
+      expect(js).toContain(`import text from "./notes.txt";`);
+      expect(js).toContain(`import"./page.css";`);
+    },
+  });
+
   itBundled("css-module-script/CSSModulesFileIsAnError", {
     files: {
       "/entry.js": /* js */ `
@@ -405,7 +729,7 @@ describe("bundler", () => {
     outdir: "/out",
     target: "browser",
     bundleErrors: {
-      "/entry.js": ['A CSS module ("styles.module.css") cannot be imported with { type: "css" }.'],
+      "/entry.js": ['A CSS module ("./styles.module.css") cannot be imported with { type: "css" }.'],
     },
   });
 
@@ -421,7 +745,7 @@ describe("bundler", () => {
     outdir: "/out",
     target: "browser",
     bundleErrors: {
-      "/entry.js": ['This loader type only supports the "default" import'],
+      "/entry.js": ['No matching export in "widget.css" for import "rules"'],
     },
   });
 
@@ -432,9 +756,11 @@ describe("bundler", () => {
       files: {
         "/entry.js": /* js */ `
           import sheet from "./widget.css" with { type: "css" };
-          console.log(JSON.stringify(sheet));
+          import { box } from "./styles.module.css" with { type: "css" };
+          console.log(JSON.stringify(sheet), typeof box);
         `,
         "/widget.css": /* css */ `p.w { color: red }`,
+        "/styles.module.css": /* css */ `.box { color: red }`,
       },
       entryPoints: ["/entry.js"],
       outdir: "/out",
@@ -444,7 +770,7 @@ describe("bundler", () => {
         api.expectFile("/out/entry.js").not.toContain("CSSStyleSheet");
       },
       run: {
-        stdout: "{}",
+        stdout: "{} string",
       },
     });
   }

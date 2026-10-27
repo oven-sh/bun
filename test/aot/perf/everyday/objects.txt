@@ -538,3 +538,73 @@ function turn(i: number): number {
   const res = { sent: false, names: "a", code: 404, size: i & 1 };
   return (globalThis as any)["handle" + suffix](application.create(request, res));
 }
+//// a-key-in-front-of-a-field-created-late-is-deleted
+class Row {
+  id = 1;
+  label = "a";
+  note?: string;
+}
+const names: string[] = JSON.parse('["extra", "more"]');
+const rows: any[] = [];
+function turn(i: number): number {
+  const row: any = new Row();
+  rows[i & 7] = row;
+  row[names[0]!] = i;
+  row[names[1]!] = i & 3;
+  row.note = "late";
+  delete row[names[0]!];
+  return row[names[1]!] + row.note.length;
+}
+//// keys-around-a-field-created-late-are-listed
+class Row {
+  id = 1;
+  label = "a";
+  note?: string;
+}
+const names: string[] = JSON.parse('["extra", "more", "last"]');
+const row: any = new Row();
+row[names[0]!] = 1;
+row[names[1]!] = 2;
+row.note = "late";
+row[names[2]!] = 3;
+function turn(i: number): number {
+  let sum = i & 1;
+  for (const key of Object.keys(row)) sum += key.length;
+  for (const key of Reflect.ownKeys(row)) sum += (key as string).length;
+  return sum;
+}
+//// many-keys-in-front-of-a-field-created-late-go-one-by-one-and-come-again
+class Row {
+  id = 1;
+  label = "a";
+  note?: string;
+}
+const table: any = new Row();
+for (let k = 0; k < 2000; k++) table["k" + k] = k;
+function turn(i: number): number {
+  const at = i % 4000;
+  if (at === 0) {
+    delete table.note;
+    table.note = "late";
+  }
+  if (at < 2000) delete table["k" + at];
+  else table["k" + (at - 2000)] = i;
+  return table.note.length + (i & 1);
+}
+//// many-keys-around-a-field-created-late-are-listed-behind-a-change
+class Row {
+  id = 1;
+  label = "a";
+  note?: string;
+}
+const table: any = new Row();
+for (let k = 0; k < 300; k++) table["k" + k] = k;
+for (let k = 0; k < 100; k++) delete table["k" + k];
+table.note = "late";
+for (let k = 300; k < 320; k++) table["k" + k] = k;
+function turn(i: number): number {
+  const key = "k" + (300 + (i % 20));
+  delete table[key];
+  table[key] = i;
+  return Object.keys(table).length + Reflect.ownKeys(table).length;
+}

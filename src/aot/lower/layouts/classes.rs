@@ -19,6 +19,7 @@ use crate::ir::{
     ClassSlot, DeclaredType, FunctionId, FunctionKey, LayoutId, LayoutKey, Mapped, OpaqueKind,
     PositionFlags, PropertyKey, PropertyKeyId, StringId, Type, VariableKey,
 };
+use crate::lower::class::ClassElement;
 use crate::lower::module::LibraryFunctionForm;
 use crate::lower::positions::SiteOrigin;
 use crate::lower::{CheckerTypeId, FileLowering, SourceKind, class, module};
@@ -467,6 +468,11 @@ impl FileLowering<'_, '_, '_, '_> {
     fn compute_static_fields(&mut self, layout: LayoutId, class: ClassRef) -> Vec<StaticField> {
         let hir = self.hir;
         let shape = self.queries.class_shape(class);
+        let plan = self.class_plan(class.class);
+        let is_defined = |node: MemberId| {
+            let mut elements = plan.static_elements.iter();
+            elements.any(|it| matches!(*it, ClassElement::Field { member, .. } if member == node))
+        };
         let mut static_fields = Vec::new();
         let mut keys = FxHashSet::default();
         // A static method or accessor is a property of the class object, and a field of the same name redefines that property.
@@ -482,7 +488,7 @@ impl FileLowering<'_, '_, '_, '_> {
                 _ => continue,
             }
             let node = match entry.source {
-                ClassMemberSource::Member(node) if !class::is_declaration_only(hir[node]) => node,
+                ClassMemberSource::Member(node) if is_defined(node) => node,
                 _ => continue,
             };
             if class::has_private_static_storage(hir, node) {

@@ -255,7 +255,7 @@ mod tests {
             refused_entry_points: None,
             is_one_program: false,
             brought_bun_types: false,
-            has_only_early_errors: false,
+            has_early_errors: false,
         }
     }
 

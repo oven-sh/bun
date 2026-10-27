@@ -4,7 +4,7 @@
 //! the higher-tier crate that implements it.
 
 pub use crate::compiled_program::{
-    CompiledEntryPoint, CompiledProgram, ExtensionSearch, ImageFile, ModuleLookup,
+    CompiledEntryPoint, CompiledProgram, ExtensionSearch, ImageFile, ModuleLookup, PackageLookup,
     compare_source_paths,
 };
 use crate::resolver::Resolver;
@@ -131,7 +131,14 @@ pub trait StandaloneModuleGraph: Send + Sync {
         let is_left_to_program =
             self.compiled_program().is_some() && Resolver::import_path_names_directory(specifier);
         let file = match is_embedded && !is_left_to_program {
-            true => self.resolve(source_dir, specifier),
+            true => self.resolve(source_dir, specifier).or_else(|| {
+                // An entry point above the root directory of the build is a file of the graph under `_.._`.
+                self.compiled_program()?;
+                let public_root = self.base_public_path_with_default_suffix();
+                let path =
+                    crate::compiled_program::join_public_path(public_root, source_dir, specifier)?;
+                self.resolve(source_dir, &path)
+            }),
             false => None,
         };
         let module = file.map(|name| match self.compiled_entry_point(name) {
@@ -151,15 +158,12 @@ pub trait StandaloneModuleGraph: Send + Sync {
         specifier: &[u8],
         is_require: bool,
         search: &ExtensionSearch<'_>,
-    ) -> Option<&'static [u8]> {
+    ) -> PackageLookup {
+        let Some(program) = self.compiled_program() else {
+            return PackageLookup::Unknown;
+        };
         let public_root = self.base_public_path_with_default_suffix();
-        self.compiled_program()?.resolve_package(
-            public_root,
-            source_dir,
-            specifier,
-            is_require,
-            search,
-        )
+        program.resolve_package(public_root, source_dir, specifier, is_require, search)
     }
     /// `compiled_program::directories_of_importer`.
     fn directories_of_importer(&self, source_dir: &[u8], base: &[u8]) -> Vec<Vec<u8>> {

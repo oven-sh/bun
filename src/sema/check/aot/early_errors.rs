@@ -25,6 +25,7 @@ impl Checker<'_, '_> {
             FileKind::Ts | FileKind::Tsx => {}
         }
         self.check_redeclaration_early_errors(file);
+        self.check_import_redeclaration_early_errors(file);
         self.check_constant_assignment_early_errors(file);
         self.check_namespace_member_assignment_early_errors(file);
         self.check_export_early_errors(file);

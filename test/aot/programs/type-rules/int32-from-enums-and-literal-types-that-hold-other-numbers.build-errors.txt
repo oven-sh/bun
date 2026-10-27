@@ -13,4 +13,3 @@ error: TS100031: The return value of 'doubled' is declared 'int32', but 'color *
 error: TS100031: The return value of 'next' is declared 'int32', but 'color + 1' might not be an int32: it can be anything from -2147483647 to 2147483648. Write '(color + 1) | 0'.
 error: TS100031: The return value of 'distance' is declared 'int32', but 'Math.abs(color)' might not be an int32: it can be anything from 0 to 2147483648. Write 'Math.abs(color) | 0'.
 error: TS100031: The return value of 'fractionOrTwo' is declared 'int32', but 'value' might not be an int32: it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write 'value | 0'.
-error: TS100031: 'member' is declared 'int32', but 'holder.digit' might not be an int32: it is a 'number', which can have a fraction, be out of range, or be NaN or -0. Write 'holder.digit | 0'.

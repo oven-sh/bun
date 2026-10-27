@@ -134,21 +134,12 @@ export const watchers = {
 
 export type Case = [keyof typeof loaders, keyof typeof places, keyof typeof asked, keyof typeof watchers];
 
-// Where the file has the waiting jobs run while an import loads the graph, two orders are not those of `bun run` yet:
-// a file one level further down runs ahead of a job that the file has queued, and of two import() calls for one root the inner one settles first.
-const departs = ([loader, place, what, watcher]: Case) =>
-  watcher.endsWith("has the waiting jobs run") &&
-  ((!loader.includes("requires") &&
-    place === "a module and its file stand behind the file" &&
-    watcher.startsWith("a job")) ||
-    (loader === "an import call loads the graph" && what === "the root of the graph"));
-
 export const cases: Case[] = [];
 for (const loader of Object.keys(loaders) as Case[0][])
   for (const place of Object.keys(places) as Case[1][])
     for (const what of Object.keys(asked) as Case[2][])
       for (const watcher of Object.keys(watchers) as Case[3][])
-        if (!departs([loader, place, what, watcher])) cases.push([loader, place, what, watcher]);
+        cases.push([loader, place, what, watcher]);
 
 export const nameOf = (given: Case) => given.join(", ");
 

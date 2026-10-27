@@ -110,12 +110,12 @@ pub(super) struct StoredSite {
     pub is_bare: bool,
 }
 
-/// The imports that lead from the ES modules of the program to its CommonJS files.
+/// The imports that lead from the ES modules of the program to its files of one other kind.
 struct LinkedFiles {
     /// By ES module, in the order of its requests.
     by_importer: Vec<Vec<FileId>>,
     /// By ES module.
-    commonjs_files_below: ReachedTargets,
+    targets_below: ReachedTargets,
 }
 
 pub(super) struct Plan {
@@ -581,22 +581,23 @@ impl ModuleGraph {
         for (holder, needs_object) in holders.zip(needs_object) {
             holder.is_needed_as_value |= needs_object;
         }
-        let linked_files = self.find_linked_files();
+        let linked_files = self.find_linked_files(ModuleKind::CommonJs);
+        let data_files = self.find_linked_files(ModuleKind::Data);
         (self.plan.final_requests, self.plan.final_ranges) =
-            self.settle_requests(&linked_files, in_parallel);
+            self.settle_requests(&linked_files, &data_files, in_parallel);
         // Nothing of the program runs before the loader has come to the first CommonJS file that the imports below an entry point lead to.
         let mut first_requests = self.plan.order.first_requests_of_host.iter();
         self.plan.is_first_require_seen = self.plan.names_way_to_module_objects.contains(&true)
             && first_requests.any(|&file| {
                 self.kind(file) == ModuleKind::SourceText
-                    && !linked_files.commonjs_files_below.leads_to_target(file)
+                    && !linked_files.targets_below.leads_to_target(file)
             });
         self.plan.is_finished = true;
     }
 
-    // The CommonJS files, or their faces, that imports between ES modules reach from `root`, in the order in which `bun run` loads them: what a module imports comes behind everything that was asked for before.
+    // The files of that kind, or their faces, that imports between ES modules reach from `root`, in the order in which `bun run` loads them: what a module imports comes behind everything that was asked for before.
     fn collect_prefix(&self, root: FileId, linked: &LinkedFiles) -> Vec<ModuleRef> {
-        let below = &linked.commonjs_files_below;
+        let below = &linked.targets_below;
         let mut prefix = Vec::new();
         let mut remaining = below.start_walk(root);
         if remaining.is_empty() {
@@ -634,15 +635,16 @@ impl ModuleGraph {
         };
         let is_followed = request.kind == ModuleRequestKind::Import
             && request.phase == ImportPhase::Evaluation
-            && self.is_code_of_program(request.target)
+            && (self.is_code_of_program(request.target)
+                || self.plan.order.makes_values_at_load[target.idx()])
             && (!self.is_left_out(request.target) || self.is_placeholder(target));
         is_followed.then_some(target)
     }
 
-    fn find_linked_files(&self) -> LinkedFiles {
+    fn find_linked_files(&self, kind_of_targets: ModuleKind) -> LinkedFiles {
         let mut successors = Vec::new();
         successors.resize_with(self.row_by_file.len(), Vec::new);
-        let mut commonjs_files = Vec::new();
+        let mut targets = Vec::new();
         for &file in self.record_files() {
             if !self.is_code_of_program(ModuleRef::File(file))
                 || self.kind(file) != ModuleKind::SourceText
@@ -654,20 +656,46 @@ impl ModuleGraph {
             for target in linked {
                 match self.kind(target) {
                     ModuleKind::SourceText => {}
-                    ModuleKind::CommonJs => commonjs_files.push(target),
+                    kind if kind == kind_of_targets => targets.push(target),
                     _ => continue,
                 }
                 successors[file.idx()].push(target);
             }
         }
-        let commonjs_files_below = ReachedTargets::compute(commonjs_files.into_iter(), &successors);
+        let targets_below = ReachedTargets::compute(targets.into_iter(), &successors);
         for targets in &mut successors {
-            targets.retain(|&target| commonjs_files_below.leads_to_target(target));
+            targets.retain(|&target| targets_below.leads_to_target(target));
         }
         LinkedFiles {
             by_importer: successors,
-            commonjs_files_below,
+            targets_below,
         }
+    }
+
+    // The ES modules at which an evaluation may come to a cycle of requests that leads to one of the files: something other than an import starts them, or a module outside the cycle imports them.
+    fn find_entries_of_cycles(&self, linked: &LinkedFiles) -> Vec<FileId> {
+        let component_of = &self.plan.order.component_of;
+        let mut sizes = vec![0u32; component_of.len()];
+        for &component in component_of {
+            sizes[component as usize] += 1;
+        }
+        let mut is_entered = vec![false; linked.by_importer.len()];
+        for &root in &self.plan.order.prefix_roots {
+            is_entered[root.idx()] = true;
+        }
+        for (importer, imported) in linked.by_importer.iter().enumerate() {
+            for &target in imported {
+                is_entered[target.idx()] |= component_of[importer] != component_of[target.idx()];
+            }
+        }
+        let files = self.record_files().iter().copied();
+        files
+            .filter(|&file| {
+                is_entered[file.idx()]
+                    && sizes[component_of[file.idx()] as usize] > 1
+                    && !linked.by_importer[file.idx()].is_empty()
+            })
+            .collect()
     }
 
     /// The ES modules at which a graph of imports is linked: entry points, and what `import()` or a `require` names.
@@ -693,6 +721,7 @@ impl ModuleGraph {
     fn settle_requests(
         &self,
         linked_files: &LinkedFiles,
+        data_files: &LinkedFiles,
         in_parallel: InParallel<'_>,
     ) -> (Vec<ModuleRequest>, FxHashMap<ModuleRef, Range<u32>>) {
         let mut requests: Vec<ModuleRequest> = Vec::new();
@@ -715,6 +744,16 @@ impl ModuleGraph {
             }
         });
         let mut prefixes = prefixes.into_iter();
+        // `bun run` has made what a data file exports when the graph is loaded. Only a function that is called across a cycle, ahead of the body of its module, can tell.
+        let mut data_prefixes: Vec<(FileId, Vec<ModuleRef>)> = self
+            .find_entries_of_cycles(data_files)
+            .into_iter()
+            .map(|entry| (entry, Vec::new()))
+            .collect();
+        for_each_mut(&mut data_prefixes, in_parallel, &|(entry, prefix)| {
+            *prefix = self.collect_prefix(*entry, data_files);
+        });
+        let mut data_prefixes = data_prefixes.into_iter().peekable();
         for &file in self.record_files() {
             let module = ModuleRef::File(file);
             if !is_es_module(file) {
@@ -728,6 +767,9 @@ impl ModuleGraph {
                 if !self.commonjs().checked_copies(file).is_empty() {
                     requests.push(ModuleRequest::hoisted_import(ModuleRef::Check(file)));
                 }
+            }
+            if let Some((_, prefix)) = data_prefixes.next_if(|(entry, _)| *entry == file) {
+                requests.extend(prefix.into_iter().map(ModuleRequest::hoisted_import));
             }
             // The loader of the run time goes by what the module writes, in the order in which it is written.
             requests.extend(

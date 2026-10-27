@@ -51,6 +51,7 @@ unsafe extern "Rust" {
     ) -> Option<Dependency::Version>;
 }
 use crate::cache::Set as CacheSet;
+use crate::compiled_program::PackageLookup;
 use ::bun_resolve_builtins::{Alias as HardcodedAlias, Cfg as HardcodedAliasCfg};
 
 /// `Dependency` namespace as the body spells it (`Dependency::Version` /
@@ -1143,12 +1144,12 @@ impl<'a> Resolver<'a> {
     }
 
     /// The module of the executable that a bare `specifier` names from `source_dir`: an entry point, by the name of its package.
-    fn resolve_embedded_package(
+    pub fn resolve_embedded_package(
         &self,
         source_dir: &[u8],
         specifier: &[u8],
         kind: ast::ImportKind,
-    ) -> Option<&'static [u8]> {
+    ) -> PackageLookup {
         let search = crate::compiled_program::ExtensionSearch {
             extensions: self.opts.ext_order_slice(self.extension_order),
             extra_extensions: &self.opts.extra_cjs_extensions,
@@ -1158,12 +1159,10 @@ impl<'a> Resolver<'a> {
                 })
             },
         };
-        self.standalone_module_graph?.resolve_package(
-            source_dir,
-            specifier,
-            is_require(kind),
-            &search,
-        )
+        let Some(graph) = self.standalone_module_graph else {
+            return PackageLookup::Unknown;
+        };
+        graph.resolve_package(source_dir, specifier, is_require(kind), &search)
     }
 
     /// What an executable compiled in place holds under the path that `specifier` names from `source_dir`: a compiled module, then a file that `--asset` gave it.
@@ -1471,10 +1470,15 @@ impl<'a> Resolver<'a> {
             if let Some(graph) = self.standalone_module_graph {
                 let specifier_is_embedded_path =
                     ::bun_options_types::standalone_path::is_bun_standalone_file_path(import_path);
-                let embedded = self.resolve_embedded_module(source_dir, import_path, kind);
-                if let Some(file_name) = embedded
-                    .or_else(|| self.resolve_embedded_package(source_dir, import_path, kind))
-                {
+                let embedded = match self.resolve_embedded_module(source_dir, import_path, kind) {
+                    Some(file_name) => PackageLookup::Found(file_name),
+                    None => self.resolve_embedded_package(source_dir, import_path, kind),
+                };
+                if embedded == PackageLookup::Hidden {
+                    self.extension_order = original_order;
+                    return ResultUnion::NotFound;
+                }
+                if let PackageLookup::Found(file_name) = embedded {
                     self.extension_order = original_order;
                     return ResultUnion::Success(Result {
                         import_kind: kind,

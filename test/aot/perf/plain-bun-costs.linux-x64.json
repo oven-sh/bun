@@ -1,11 +1,12 @@
 {
+  "entriesAboveThePrograms": 49,
   "start hello.js": {
-    "thousandInstructions": 3388,
+    "thousandInstructions": 3242,
     "pageFaults": 687,
     "peakKilobytes": 16948
   },
   "start hello.ts": {
-    "thousandInstructions": 3501,
+    "thousandInstructions": 3352,
     "pageFaults": 706,
     "peakKilobytes": 17668
   },
@@ -20,12 +21,12 @@
     "peakKilobytes": 23188
   },
   "start http.js": {
-    "thousandInstructions": 38848,
+    "thousandInstructions": 36085,
     "pageFaults": 1328,
     "peakKilobytes": 27124
   },
   "start thirty-modules.js": {
-    "thousandInstructions": 114296,
+    "thousandInstructions": 111290,
     "pageFaults": 2409,
     "peakKilobytes": 34780
   },
@@ -34,7 +35,7 @@
     "pageFaults": 1822
   },
   "start bun-serve.js": {
-    "thousandInstructions": 4826,
+    "thousandInstructions": 4687,
     "pageFaults": 769
   },
   "interpreter arrays.js": {

@@ -133,7 +133,19 @@ function twoArraysFilledWithSumsOfEachOthersElements(pushes: number) {
   return `const left = [];\nconst right = [];\nleft.push("a");\nright.push("b");\n${indexes.map(index => `left.push(right[${index}] + "x");\nright.push(left[${index}] + "y");\n`).join("")}console.log(left.length + right.length);\n`;
 }
 
+function arrowsInTheDefaultsOfEachOthersParameters(levels: number) {
+  return `function f(x: any): any { return ${"(a = ".repeat(levels)}x${") => a".repeat(levels)}; }\nconsole.log(typeof f);\n`;
+}
+
 export const shapes: Shape[] = [
+  {
+    name: "arrow functions in the defaults of each other's parameters",
+    counted: "levels",
+    sizes: [500, 1000, 2000],
+    instructionsPerItem: 2_500_000,
+    bytesPerItem: 32 * 1024,
+    write: count => ({ "main.ts": arrowsInTheDefaultsOfEachOthersParameters(count) }),
+  },
   {
     name: "array filled with sums of its own elements",
     counted: "pushes",

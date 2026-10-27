@@ -189,6 +189,11 @@ impl<'a> PluginModules<'a> {
         virtual_path
     }
 
+    pub(crate) fn name_of_entry_text(&self, path: &[u8]) -> Option<&[u8]> {
+        let (namespace, name) = self.virtual_module(path)?;
+        (namespace == ENTRY_TEXT_NAMESPACE).then_some(name)
+    }
+
     pub(crate) fn loader_of_entry_text(&self, path: &[u8]) -> Option<Loader> {
         let (namespace, _) = self.virtual_module(path)?;
         match namespace == ENTRY_TEXT_NAMESPACE {

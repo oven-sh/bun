@@ -2719,7 +2719,7 @@ const late = 1;
 const early = typeof late;
 const late = 1;
 //// unused-declarations-that-only-name-something-in-its-dead-zone/main.js
-// Each file declares something that nothing uses and that could be left out, but for one thing: it names a constant, a let or a class that is declared further down. `bun run` evaluates the declaration, which throws a ReferenceError (all but `extends`). `bun build --compile` leaves the declaration out, as the bundler does not count the dead zone of a name as an effect, and every file loads.
+// Each file declares something that nothing uses, and the declaration names a const, a let or a class that is declared further down, so evaluating it throws a ReferenceError. In `extends` the class further down is hoisted, and the file loads. `bun build --compile` without --aot removes these declarations.
 const loads = {
   "plain-name": () => import("./cases/plain-name.js"),
   "call": () => import("./cases/call.js"),

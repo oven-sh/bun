@@ -50,6 +50,11 @@ pub trait CodeHost: Host {
         Cow::Borrowed(dirname::<Posix>(path))
     }
 
+    /// The directory that what the file hands to `import()` is resolved from.
+    fn directory_of_dynamic_imports<'p>(&self, path: &'p [u8]) -> Cow<'p, [u8]> {
+        self.directory_of(path)
+    }
+
     fn find_runtime_modules(&self, _prefix: &[u8], _suffix: &[u8]) -> Vec<HostResolution> {
         Vec::new()
     }

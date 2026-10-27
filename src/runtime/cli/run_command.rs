@@ -1177,17 +1177,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             crate::run_main::fail_with_build_error(vm);
         }
 
-        // Allow setting a custom timezone. Without `$TZ`, JSC/ICU lazily
-        // auto-detects the host zone the first time a `Date` is constructed —
-        // matching upstream Bun. `.env` files are loaded by
-        // `configure_defines` above, so `$TZ` set in one is honored.
-        if let Some(tz) = vm.env_loader().get(b"TZ") {
-            if !tz.is_empty() {
-                let _ = vm
-                    .global()
-                    .set_time_zone(&bun_core::EncodedSlice::from_bytes(tz));
-            }
-        }
+        Self::set_time_zone_from_env(vm);
 
         // SAFETY: `vm.log` set in `init`; `b.env` is the long-lived
         // `DotEnv::Loader` allocated/retained for the VM (never null after
@@ -1238,6 +1228,20 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         .start()
     }
 
+    /// Allow setting a custom timezone. Without `$TZ`, JSC/ICU lazily
+    /// auto-detects the host zone the first time a `Date` is constructed —
+    /// matching upstream Bun. `.env` files are loaded by
+    /// `configure_defines`, so `$TZ` set in one is honored.
+    fn set_time_zone_from_env(vm: &VirtualMachine) {
+        if let Some(tz) = vm.env_loader().get(b"TZ") {
+            if !tz.is_empty() {
+                let _ = vm
+                    .global()
+                    .set_time_zone(&bun_core::EncodedSlice::from_bytes(tz));
+            }
+        }
+    }
+
     /// Entry point for
     /// `bun build --compile` executables. Mirrors [`boot`] but routes through
     /// `VirtualMachine::init_with_module_graph` and applies the standalone
@@ -1250,10 +1254,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         use bun_standalone_graph::StandaloneModuleGraph::Flags as GraphFlags;
 
         crate::cli::startup_options::refuse_code_the_compiler_did_not_see();
+        let runs_compiled_code =
+            bun_resolver::StandaloneModuleGraph::compiled_program(&*graph).is_some();
         // argv belongs to the compiled program, so a `-e` or `-p` in it is not ours.
         bun_jsc::initialize(bun_jsc::InitializeOptions {
-            runs_compiled_code: bun_resolver::StandaloneModuleGraph::compiled_program(&*graph)
-                .is_some(),
+            runs_compiled_code,
             ..Default::default()
         });
         bun_analytics::features::standalone_executable.fetch_add(1, Ordering::Relaxed);
@@ -1335,6 +1340,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         };
         if !defines_ok {
             crate::run_main::fail_with_build_error(vm);
+        }
+
+        if runs_compiled_code {
+            Self::set_time_zone_from_env(vm);
         }
 
         // SAFETY: `vm.log` set in `init`; `b.env` is the long-lived

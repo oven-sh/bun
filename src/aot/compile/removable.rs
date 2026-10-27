@@ -340,6 +340,7 @@ impl<'a, 's> Removable<'a, 's> {
                 let is_marked = call.is_pure && !self.options.ignores_pure_annotations;
                 (is_marked || (is_construction && self.constructs_without_effects(call)))
                     && self.analysis.import_site_of_call(expression).is_none()
+                    && self.reads_only_initialized_names(call.callee)
                     && hir.ids(call.args).all(|argument| self.expression(argument))
             }
             ExprKind::Unary { op, operand } => self.unary(op, operand),

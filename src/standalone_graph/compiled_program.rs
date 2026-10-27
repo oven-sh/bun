@@ -964,20 +964,21 @@ pub(crate) mod tests {
                 &search,
             )
         };
+        use bun_resolver::compiled_program::PackageLookup::{Found, Unknown};
         assert_eq!(
             find(b"both", true),
-            Some(&b"/$bunfs/root/node_modules/both/common.cjs"[..])
+            Found(b"/$bunfs/root/node_modules/both/common.cjs")
         );
         assert_eq!(
             find(b"both", false),
-            Some(&b"/$bunfs/root/node_modules/both/es.mjs"[..])
+            Found(b"/$bunfs/root/node_modules/both/es.mjs")
         );
         assert_eq!(
             find(b"both/feature", false),
-            Some(&b"/$bunfs/root/node_modules/both/es.mjs"[..])
+            Found(b"/$bunfs/root/node_modules/both/es.mjs")
         );
-        assert_eq!(find(b"both/feature", true), None);
-        assert_eq!(find(b"other", true), None);
+        assert_eq!(find(b"both/feature", true), Unknown);
+        assert_eq!(find(b"other", true), Unknown);
 
         let names_at = bytes.len()
             - names

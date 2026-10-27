@@ -35,6 +35,15 @@ impl Lexer<'_> {
         self.is_script || self.compiles()
     }
 
+    /// `tsc` takes U+0085 and U+200B for white space too. The language does not, and neither does `bun run`.
+    #[inline]
+    pub(super) fn is_white_space_between_tokens(&self, c: i32) -> bool {
+        match self.decodes_ill_formed_text {
+            true => is_whitespace(c),
+            false => is_white_space_single_line(c),
+        }
+    }
+
     #[cold]
     #[inline(never)]
     pub(super) fn html_open_error(&mut self, pos: usize) -> bool {

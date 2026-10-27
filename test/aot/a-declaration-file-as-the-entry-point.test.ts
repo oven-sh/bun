@@ -53,3 +53,20 @@ test.skipIf(unsupported).each(projects)(
   },
   240_000,
 );
+
+test.skipIf(unsupported).each(["holds-code.d.ts", "holds-code.d.mts", "holds-code.d.cts"])(
+  "statements in a declaration file that is the entry point run, as in plain Bun: %s",
+  async name => {
+    using dir = tempDir("aot-declaration-file", {
+      [name]: `declare const nothing: number;\nconst words: string[] = ["it", "ran"];\nconsole.log(words.join(" "), typeof nothing);\n`,
+    });
+    const ran = { stdout: "it ran undefined\n", stderr: "", exitCode: 0 };
+    expect(await run([bunExe(), "run", name], String(dir))).toEqual(ran);
+    const executable = join(String(dir), "holds-code" + (isWindows ? ".exe" : ""));
+    expect(
+      await run([bunExe(), "build", "--compile", "--aot", name, "--outfile", executable], String(dir)),
+    ).toMatchObject({ exitCode: 0 });
+    expect(await run([executable], String(dir))).toEqual(ran);
+  },
+  240_000,
+);

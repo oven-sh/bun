@@ -163,7 +163,7 @@ fn resolve_site<'r>(
                 prefix: b"",
                 suffix: b"",
                 importer: key.path,
-                directory: &context.host.directory_of(key.path),
+                directory: &directory_of_request(context, key, kind.1),
                 kind: kind.0,
                 form: kind.1,
             };
@@ -237,6 +237,19 @@ fn builtin_module_or_erased(resolution: CodeResolution<'_>) -> CodeResolution<'_
     }
 }
 
+fn directory_of_request<'r>(
+    context: &CodeLoadContext<'_, '_, 'r>,
+    key: LoadKey<'r>,
+    form: CodeImportForm,
+) -> Cow<'r, [u8]> {
+    match form {
+        CodeImportForm::Dynamic => context.host.directory_of_dynamic_imports(key.path),
+        CodeImportForm::Static | CodeImportForm::ResolveOnly | CodeImportForm::Macro => {
+            context.host.directory_of(key.path)
+        }
+    }
+}
+
 fn resolve_specifier<'r>(
     context: &CodeLoadContext<'_, '_, 'r>,
     key: LoadKey<'r>,
@@ -246,7 +259,7 @@ fn resolve_specifier<'r>(
     context.resolver.resolve_code(&CodeRequest {
         specifier,
         importer: key.path,
-        directory: &context.host.directory_of(key.path),
+        directory: &directory_of_request(context, key, form),
         kind,
         form,
     })
@@ -265,7 +278,7 @@ fn resolve_pattern<'r>(
             prefix,
             suffix,
             importer: key.path,
-            directory: &context.host.directory_of(key.path),
+            directory: &directory_of_request(context, key, form),
             kind,
             form,
         })

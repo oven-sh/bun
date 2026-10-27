@@ -456,6 +456,83 @@ fn the_commonjs_files_of_a_graph_run_first() {
     });
 }
 
+// `bun run` makes what a data file exports when it loads the graph, so a function that is called across a cycle finds it.
+#[test]
+fn the_data_files_below_a_cycle_come_first_where_the_cycle_is_entered() {
+    let files = [
+        ("main.mjs", "import './hub.mjs';"),
+        (
+            "hub.mjs",
+            "import './caller.mjs'; export { read } from './reader.mjs';",
+        ),
+        ("caller.mjs", "import { read } from './hub.mjs'; read();"),
+        (
+            "reader.mjs",
+            "import data from './data.json'; import text from './text.txt'; export function read() { return [data, text]; }",
+        ),
+        ("data.json", "{ \"x\": 1 }\n"),
+        ("text.txt", "text"),
+    ];
+    with_plan(&files, |plan| {
+        let expected = [
+            "request data.json hoisted",
+            "request caller.mjs",
+            "request reader.mjs",
+        ];
+        assert_eq!(plan.requests("hub.mjs"), expected);
+        assert_eq!(plan.requests("main.mjs"), ["request hub.mjs"]);
+        assert_eq!(plan.requests("caller.mjs"), ["request hub.mjs"]);
+        let expected = ["request data.json", "request text.txt"];
+        assert_eq!(plan.requests("reader.mjs"), expected);
+    });
+}
+
+#[test]
+fn every_module_at_which_a_cycle_may_be_entered_asks_for_the_data_files_below_it() {
+    let files = [
+        ("main.cjs", "require('./a.mjs'); import('./b.mjs');"),
+        (
+            "a.mjs",
+            "import './b.mjs'; import data from './data.json'; export const read = () => data;",
+        ),
+        ("b.mjs", "import './c.mjs';"),
+        ("c.mjs", "import { read } from './a.mjs'; read();"),
+        ("data.json", "{ \"x\": 1 }\n"),
+    ];
+    with_plan(&files, |plan| {
+        let expected = [
+            "request data.json hoisted",
+            "request b.mjs",
+            "request data.json",
+        ];
+        assert_eq!(plan.requests("a.mjs"), expected);
+        let expected = ["request data.json hoisted", "request c.mjs"];
+        assert_eq!(plan.requests("b.mjs"), expected);
+        assert_eq!(plan.requests("c.mjs"), ["request a.mjs"]);
+    });
+}
+
+#[test]
+fn a_data_file_below_no_cycle_keeps_its_place() {
+    let files = [
+        ("main.mjs", "import './a.mjs'; import './reader.mjs';"),
+        ("a.mjs", "import './b.mjs';"),
+        ("b.mjs", "import './a.mjs';"),
+        (
+            "reader.mjs",
+            "import './a.mjs'; import data from './data.json'; console.log(data);",
+        ),
+        ("data.json", "{ \"x\": 1 }\n"),
+    ];
+    with_plan(&files, |plan| {
+        let expected = ["request a.mjs", "request reader.mjs"];
+        assert_eq!(plan.requests("main.mjs"), expected);
+        assert_eq!(plan.requests("a.mjs"), ["request b.mjs"]);
+        let expected = ["request a.mjs", "request data.json"];
+        assert_eq!(plan.requests("reader.mjs"), expected);
+    });
+}
+
 #[test]
 fn an_es_module_that_is_required_links_a_graph_of_its_own() {
     let files = [

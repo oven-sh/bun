@@ -196,10 +196,9 @@ for (const name of process.argv.slice(2)) {
 );
 
 test.skipIf(isDebug)(
-  "a constant name of a module that only a flag of Bun turns on fails as under bun run",
+  "a constant name of a module that only a flag of Bun turns on is not found, whether or not the run has the flag",
   async () => {
-    // Bun's transpiler prints the one that is left out under another name, which the resolver does not know in an import().
-    const names = modulesBehindAFlag.filter(name => name !== "internal/cluster/round_robin_handle");
+    const names = modulesBehindAFlag;
     const asksFor = (name: string) => `try {
   console.log("${name}", "require", typeof require("${name}"));
 } catch (error) {
@@ -210,25 +209,25 @@ await import("${name}").then(
   error => console.log("${name}", "import", describe(error)),
 );
 `;
-    const asks = `const describe = error =>
-  [error.constructor.name, error.name, error.message, error.code, error.level, Reflect.ownKeys(error).join()].join(" | ");
+    const asks = `const describe = error => [error.name, error.code, error.message.replace(/ from '[^']*'$/, "")].join(" | ");
 ${names.map(asksFor).join("")}`;
     using dir = tempDir("aot-constant-names-of-modules-behind-a-flag", { "asks.js": asks });
     const directory = String(dir);
     const executable = join(directory, isWindows ? "asks.exe" : "asks");
-    // With the flag the build takes the program for one of Bun's own tests and compiles the modules in.
+    // The environment of the build decides: with the flag it takes the program for one of Bun's own tests and compiles the modules in.
     const { BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: _, ...withoutTheFlag } = bunEnv;
     const command = [bunExe(), "build", "--compile", "--aot", "asks.js", "--outfile", executable];
     const built = await runCommand(command, directory, withoutTheFlag);
     expect(built.exitCode).toBe(0);
-    const underBunRun = await runCommand([bunExe(), "asks.js"], directory, withoutTheFlag);
-    expect(underBunRun.stdout).toContain(
-      `bun:internal-for-testing import BuildMessage | BuildMessage | ENOENT reading`,
-    );
-    const compiled = await runCommand([executable], directory, withoutTheFlag);
-    expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({
-      stdout: underBunRun.stdout,
-      exitCode: underBunRun.exitCode,
-    });
+    const notFound = names
+      .flatMap(name => [
+        `${name} require Error | MODULE_NOT_FOUND | Cannot find module '${name}'\n`,
+        `${name} import Error | ERR_MODULE_NOT_FOUND | Cannot find module '${name}'\n`,
+      ])
+      .join("");
+    for (const env of [withoutTheFlag, { ...withoutTheFlag, BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1" }]) {
+      const compiled = await runCommand([executable], directory, env);
+      expect({ stdout: compiled.stdout, exitCode: compiled.exitCode }).toEqual({ stdout: notFound, exitCode: 0 });
+    }
   },
 );

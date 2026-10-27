@@ -4030,8 +4030,7 @@ impl<'p, 's> Checker<'p, 's> {
         }
         // `links.flags |= NodeCheckFlagsContextChecked`, before anything else is read. The entry has
         // `getContextualSignature` until the signature for `assignContextualParameterTypes` exists.
-        let checking = self.context_checking.len();
-        (self.context_checking).push(((file, func), (contextual_signature, false), 0));
+        let checking = (self.context_checking).push(file, func, (contextual_signature, false));
         let (hir, bound) = (self.hir(file), self.bound(file));
         let f = &hir[func];
         // `getSignaturesOfType(getTypeOfSymbol(..))`. `resolveAnonymousTypeMembers` starts with
@@ -4082,7 +4081,7 @@ impl<'p, 's> Checker<'p, 's> {
                 self.infer_from_annotated_parameters_and_return(file, func, contextual, level);
             }
         }
-        self.context_checking[checking].1 = assigned;
+        self.context_checking.checks[checking].assigned = assigned;
         // tsgo sets `NodeCheckFlagsContextChecked` no matter what's in progress. When a call is
         // resolved again and its callee is in a cycle, the callee is `any`, while the resolution it
         // interrupted continues with the type it computes itself
@@ -4114,14 +4113,14 @@ impl<'p, 's> Checker<'p, 's> {
                 self.assigned_parameters.push(self.stack.len());
                 self.type_of_param(file, p);
                 self.assigned_parameters.pop();
-                self.context_checking[checking].2 = i + 1;
+                self.context_checking.checks[checking].assigned_parameter_count = i + 1;
                 // `assignContextualParameterTypes` skips an annotated parameter.
                 if contextual_signature.is_none() || hir[p].ty.is_none() {
                     self.assign_binding_element_types(file, hir[p].pat);
                 }
             }
         }
-        self.context_checking[checking].2 = f.params.len();
+        self.context_checking.checks[checking].assigned_parameter_count = f.params.len();
         if contextual_signature.is_some()
             && f.ret.is_none()
             && (self.p.fn_return_types.get(&self.task, &(file, func))).is_none()
@@ -4229,7 +4228,7 @@ impl<'p, 's> Checker<'p, 's> {
     /// inference context of this checker covers `e`.
     fn is_context_checked(&mut self, file: FileId, e: ExprId, func: FnId) -> bool {
         // `context_checked_here` is a subset of `Program::context_checked`.
-        self.context_checking.iter().any(|c| c.0 == (file, func))
+        self.context_checking.contains(file, func)
             || self.context_checked_under_taint(file, func).is_some()
             || (self.p.context_checked.get(&self.task, &(file, func))).is_some()
                 && (self.inference_contexts.is_empty()
@@ -4248,9 +4247,8 @@ impl<'p, 's> Checker<'p, 's> {
         func: FnId,
         index: usize,
     ) -> bool {
-        let mut checking = self.context_checking.iter();
-        match checking.rposition(|c| c.0 == (file, func)) {
-            Some(checking) => index >= self.context_checking[checking].2,
+        match self.context_checking.get(file, func) {
+            Some(checking) => index >= checking.assigned_parameter_count,
             None => {
                 self.context_checked_under_taint(file, func).is_none()
                     && (self.p.context_checked.get(&self.task, &(file, func))).is_none()
@@ -4283,13 +4281,8 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     fn assigned_signature(&mut self, file: FileId, func: FnId) -> Option<AssignedSignature> {
-        match self
-            .context_checking
-            .iter()
-            .rev()
-            .find(|c| c.0 == (file, func))
-        {
-            Some(in_progress) => Some(in_progress.1),
+        match self.context_checking.get(file, func) {
+            Some(in_progress) => Some(in_progress.assigned),
             None => match self.context_checked_under_taint(file, func) {
                 Some(assigned) => Some(assigned),
                 None => self.p.context_checked.get(&self.task, &(file, func)),

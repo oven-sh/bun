@@ -170,6 +170,12 @@ function nameOf(index: number): FeatureName {
   return name;
 }
 
+// Which features keep the bytes at an address of this Bun in an executable without `removed`. Undefined: nothing takes them along.
+export function featuresThatKeep(address: number, removed: readonly FeatureName[]): FeatureName[] | undefined {
+  const range = table?.ranges.find(({ start, end }) => start <= address && address < end);
+  return range && table!.sets[range.set]!.map(nameOf).filter(name => !removed.includes(name));
+}
+
 // Where the bytes that go with `feature` are in this Bun, given the features that were removed from an executable.
 export function describeBytesRemovedWith(feature: FeatureName, removedIndexes: readonly number[]): string {
   if (table === undefined) return "this Bun has no trim table";

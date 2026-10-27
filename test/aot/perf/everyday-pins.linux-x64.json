@@ -735,10 +735,6 @@
     "typed": 35.1,
     "untyped": 33.1
   },
-  "everyday-downleveled/derived.object-create-prototype": {
-    "typed": 7.1,
-    "untyped": 7.1
-  },
   "everyday-downleveled/field.define-property": {
     "typed": 2664.5,
     "untyped": 2664.6
@@ -807,29 +803,9 @@
     "typed": 125.4,
     "untyped": 116.9
   },
-  "everyday-downleveled/two-classes.prototype-literal": {
-    "typed": 10,
-    "untyped": 10
-  },
-  "everyday-downleveled/variant.direct-create-with-descriptor": {
-    "typed": 7.1,
-    "untyped": 7.1
-  },
   "everyday-downleveled/variant.direct-plain-create-two-levels": {
     "typed": 75.8,
     "untyped": 73.2
-  },
-  "everyday-downleveled/variant.helper-create-with-descriptor-one-class": {
-    "typed": 7.1,
-    "untyped": 7.1
-  },
-  "everyday-downleveled/variant.helper-create-with-descriptor-two-classes": {
-    "typed": 10,
-    "untyped": 10
-  },
-  "everyday-downleveled/variant.helper-plain-create-two-classes": {
-    "typed": 10,
-    "untyped": 10
   },
   "everyday-downleveled/variant.helper-plain-create-two-levels": {
     "typed": 76.0,
@@ -1587,6 +1563,10 @@
     "typed": 37,
     "untyped": 13
   },
+  "everyday-objects/a-key-in-front-of-a-field-created-late-is-deleted": {
+    "typed": 374.2,
+    "untyped": 382.5
+  },
   "everyday-objects/assign-into-a-new-object": {
     "typed": 7,
     "untyped": 7
@@ -1651,6 +1631,10 @@
     "typed": 7,
     "untyped": 7
   },
+  "everyday-objects/keys-around-a-field-created-late-are-listed": {
+    "typed": 862.2,
+    "untyped": 878
+  },
   "everyday-objects/literal-made-and-read": {
     "typed": 8,
     "untyped": 8
@@ -1658,6 +1642,14 @@
   "everyday-objects/literal-returned": {
     "typed": 5,
     "untyped": 5
+  },
+  "everyday-objects/many-keys-around-a-field-created-late-are-listed-behind-a-change": {
+    "typed": 68559.8,
+    "untyped": 68746
+  },
+  "everyday-objects/many-keys-in-front-of-a-field-created-late-go-one-by-one-and-come-again": {
+    "typed": 1122,
+    "untyped": 1062.2
   },
   "everyday-objects/nested-literal": {
     "typed": 7,
@@ -2258,5 +2250,29 @@
   "everyday-texts-that-every-match-holds/trim-by-a-written-out-class": {
     "typed": 756.6,
     "untyped": 756.5
+  },
+  "everyday-downleveled/derived.object-create-prototype": {
+    "typed": 7.1,
+    "untyped": 7.1
+  },
+  "everyday-downleveled/two-classes.prototype-literal": {
+    "typed": 10,
+    "untyped": 10
+  },
+  "everyday-downleveled/variant.direct-create-with-descriptor": {
+    "typed": 7.1,
+    "untyped": 7.1
+  },
+  "everyday-downleveled/variant.helper-create-with-descriptor-one-class": {
+    "typed": 7.1,
+    "untyped": 7.1
+  },
+  "everyday-downleveled/variant.helper-create-with-descriptor-two-classes": {
+    "typed": 10,
+    "untyped": 10
+  },
+  "everyday-downleveled/variant.helper-plain-create-two-classes": {
+    "typed": 10,
+    "untyped": 10
   }
 }

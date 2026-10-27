@@ -7,10 +7,22 @@ type Task = { program: string; cwd: string; env?: Record<string, string> };
 const tasks: Task[] = JSON.parse(readFileSync(process.env.AOT_TASKS!, "utf8"));
 const mark = process.env.AOT_MARK!;
 
+// The streams are sockets, which do not block once a Worker has printed. Where the reader is behind and a Worker has filled one, there is room a little later.
+function write(stream: number, text: string) {
+  for (let left: Uint8Array = Buffer.from(text); left.length > 0; ) {
+    try {
+      left = left.subarray(writeSync(stream, left));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EAGAIN") throw error;
+      Bun.sleepSync(1);
+    }
+  }
+}
+
 for (const { program, cwd, env } of tasks) {
   process.chdir(cwd);
   const worker = new Worker(new URL(program, import.meta.url), { env: { ...process.env, ...env } as Record<string, string> });
-  worker.addEventListener("error", event => writeSync(2, `error: ${event.message}\n`));
+  worker.addEventListener("error", event => write(2, `error: ${event.message}\n`));
   const exitCode = await new Promise<number>(resolve => worker.addEventListener("close", event => resolve((event as Event & { code: number }).code)));
-  for (const stream of [1, 2]) writeSync(stream, `\n${mark} ${exitCode}\n`);
+  for (const stream of [1, 2]) write(stream, `\n${mark} ${exitCode}\n`);
 }

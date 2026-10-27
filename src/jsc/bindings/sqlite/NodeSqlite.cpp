@@ -131,7 +131,7 @@ extern "C" const char* Bun__sqlite3_version()
     if (sqlite3_handle && lazy_sqlite3_libversion)
         return lazy_sqlite3_libversion();
 #if !OS(WINDOWS)
-    static const char* probed = probeSqliteVersion();
+    static const char* probed = JSC::callRemovable<Bun::Feature::ProcessInformation, JSC::RemovedFeatureStub::ReturnDefault, probeSqliteVersion>();
     if (probed) return probed;
 #endif
 #endif

@@ -22,6 +22,8 @@ function Reader(owner) {
   this[kOwner] = owner;
 }
 Reader.prototype.show = function () { return [this[kState], this[kBuffer].length, this[kEnded], this[kOwner], Reflect.ownKeys(this).map(String).join()].join(" "); };
+// Reflect.ownKeys is made when it is first read, once in a run: it is read here, in front of what is counted.
+console.log(Reflect.ownKeys(Reader.prototype).join());
 const said = new Set();
 const before = countsSoFar();
 for (let i = 0; i < 2000; i++) said.add(new Reader(i & 1).show());

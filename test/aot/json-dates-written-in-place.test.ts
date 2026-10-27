@@ -8,7 +8,11 @@ import { test } from "./supported";
 
 const files = {
   "tsconfig.json": JSON.stringify({
-    compilerOptions: { typeRoots: [join(import.meta.dir, "../../packages")], types: ["bun-types"] },
+    compilerOptions: {
+      moduleDetection: "force",
+      typeRoots: [join(import.meta.dir, "../../packages")],
+      types: ["bun-types"],
+    },
   }),
   "main.ts": `
     interface Comment { id: number; at: Date; replies: Comment[] }

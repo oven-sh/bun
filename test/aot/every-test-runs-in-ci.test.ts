@@ -5,15 +5,19 @@
 // until scripts/aot-tests.ts says where it runs, and this file checks that what it says holds.
 import { expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "fs";
+import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 import {
   aotLanes,
+  getAotSample,
   getAotStepArguments,
   getAotTestsOfLane,
   getHardenedStepArguments,
   mustRunSomething,
+  parseSample,
   parseStepArguments,
   pickTestsOfStep,
+  spellSample,
   testsOfEngineSources,
   testsOutsideCi,
   testsThatComeInParts,
@@ -64,13 +68,36 @@ test("every test runs in a step that fails if the test runs nothing", () => {
   expect(tests.filter(path => !sure.has(path) && !inBothSteps(path) && !isListed(listedElsewhere, path))).toEqual([]);
 });
 
-test("every file runs on a lane besides the two that run every file", () => {
-  const drawn = new Set(
-    steps
-      .filter(step => step.oneIn > 1 && step.oneIn <= 8)
-      .flatMap(step => pickTestsOfStep({ ...step, exclude: [] }, tests, kind)),
-  );
-  expect(tests.filter(path => !drawn.has(path))).toEqual([]);
+test.each(["", "0123456789abcdef0123456789abcdef01234567", "fedcba9876543210fedcba9876543210fedcba98"])(
+  "every file runs on a lane besides the two that run every file, whatever the commit %s",
+  commit => {
+    const drawn = new Set(
+      steps
+        .filter(step => step.oneIn > 1 && step.oneIn <= 8)
+        .map(step => (commit ? { ...step, sample: spellSample(commit, parseSample(step.sample).share) } : step))
+        .flatMap(step => pickTestsOfStep({ ...step, exclude: [] }, tests, kind)),
+    );
+    expect(tests.filter(path => !drawn.has(path))).toEqual([]);
+  },
+);
+
+test("the sample is the commit under test, or what AOT_SAMPLE says", () => {
+  const script = join(root, "..", "scripts", "aot-tests.ts");
+  const sampleWith = (env: Record<string, string>) =>
+    Bun.spawnSync({
+      cmd: [bunExe(), "-e", `console.log((await import(${JSON.stringify(script)})).getAotSample())`],
+      env: { ...bunEnv, AOT_SAMPLE: undefined, BUILDKITE: "true", ...env },
+    })
+      .stdout.toString()
+      .trim();
+  const commit = "0123456789abcdef0123456789abcdef01234567";
+  expect(sampleWith({ BUILDKITE_COMMIT: commit })).toBe(commit);
+  expect(sampleWith({ BUILDKITE_COMMIT: commit, AOT_SAMPLE: "89abcdef" })).toBe("89abcdef");
+  // A build that is started by hand may name a branch.
+  expect(sampleWith({ BUILDKITE_COMMIT: "HEAD" })).toMatch(/^[0-9a-f]{40}$/);
+  expect([...new Set(steps.filter(step => step.sample).map(step => parseSample(step.sample).sample))]).toEqual([
+    getAotSample(),
+  ]);
 });
 
 test("no two lanes take the same tenth of a folder of programs", () => {

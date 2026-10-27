@@ -102,6 +102,8 @@ pub(crate) struct WorkerSearch<'a> {
     pub provider: &'a dyn SourceProvider,
     /// The file that the build takes for an entry point which is written so, in the format of the checker.
     pub resolve_entry_point: &'a dyn Fn(&[u8]) -> Option<Vec<u8>>,
+    /// The file that a name without `./` in front leads to from the root directory: that of a package, else one in the directory.
+    pub resolve_bare_name: &'a dyn Fn(&[u8]) -> Option<Vec<u8>>,
 }
 
 fn is_absolute(path: &[u8]) -> bool {
@@ -198,6 +200,22 @@ fn join_paths(parts: &[Vec<u8>], resolves: bool) -> Option<Vec<u8>> {
     let mut joined = parts[first][..root_length].to_vec();
     joined.extend_from_slice(&segments.join(&b"/"[..]));
     Some(joined)
+}
+
+// The path that an executable looks under for a relative one. Each `..` that leads out of its root stays, as `_.._`.
+fn join_below_root(root: &[u8], relative: &[u8]) -> Vec<u8> {
+    let mut kept: Vec<&[u8]> = Vec::new();
+    for segment in strings::split(relative, b"/") {
+        match (segment, kept.last()) {
+            (b"" | b".", _) => {}
+            (b"..", Some(&last)) if last != b"_.._" => {
+                kept.pop();
+            }
+            (b"..", _) => kept.push(b"_.._"),
+            _ => kept.push(segment),
+        }
+    }
+    [root, &kept.join(&b"/"[..])].concat()
 }
 
 struct Walk<'a, 's> {
@@ -990,10 +1008,10 @@ impl Walk<'_, '_> {
     /// False: the text is no path under which the executable would hold a file of code that the build finds. An executable looks in its own root for what a relative path names.
     fn add_path(&mut self, text: &[u8]) -> bool {
         let &WorkerSearch {
-            loaders,
             paths,
             runs_in_place,
             resolve_entry_point,
+            resolve_bare_name,
             ..
         } = self.search;
         let root = match runs_in_place {
@@ -1008,13 +1026,24 @@ impl Walk<'_, '_> {
         let is_relative = text.starts_with(b"./") || text.starts_with(b"../");
         let named = match text.starts_with(b"file:") {
             true => read_file_url(text),
+            false if is_relative && !runs_in_place => Some(join_below_root(&root, text)),
             false if is_relative || is_absolute(text) => {
                 join_paths(&[root.clone(), text.to_vec()], true)
             }
             false => None,
         };
         let Some(named) = named else {
-            return false;
+            // The executable finds it by the name of the package, or in its root.
+            return resolve_bare_name(text).is_some_and(|path| self.add_file(&path, None));
+        };
+        // What `..` makes of a path in the root lies beside the root. The executable holds what lies beside the root directory under `_.._`.
+        let above_root = dirname::<Posix>(root.strip_suffix(b"/").unwrap_or(&root));
+        let beside_root = (named.strip_prefix(above_root)).filter(|rest| rest.starts_with(b"/"));
+        let named = match beside_root {
+            Some(rest) if !runs_in_place && !named.starts_with(&root) => {
+                [&root[..], b"_.._", rest].concat()
+            }
+            Some(_) | None => named,
         };
         let written = match runs_in_place {
             true => Some(named.clone()),
@@ -1025,12 +1054,21 @@ impl Walk<'_, '_> {
                 join_paths(&[paths.root_directory.clone(), name], true)
             }),
         };
-        let Some(path) = written.and_then(|written| resolve_entry_point(&written)) else {
-            return false;
-        };
-        let is_code = loader_named_by_path(loaders, &path)
+        let found = written.and_then(|written| resolve_entry_point(&written));
+        found.is_some_and(|path| self.add_file(&path, Some(&named)))
+    }
+
+    /// `named`: the path that the program names when it runs.
+    fn add_file(&mut self, path: &[u8], named: Option<&[u8]>) -> bool {
+        let &WorkerSearch {
+            loaders,
+            paths,
+            runs_in_place,
+            ..
+        } = self.search;
+        let is_code = loader_named_by_path(loaders, path)
             .is_some_and(|loader| script_kind_of(loader).is_some());
-        let native_path = to_native(&path);
+        let native_path = to_native(path);
         let Some(name) = compute_relative_path(&paths.root_directory, native_path) else {
             return false;
         };
@@ -1043,11 +1081,12 @@ impl Walk<'_, '_> {
             true => native_path.to_vec(),
             false => with_forward_slashes(compute_module_path(paths, &name)),
         };
-        if !is_code || is_host_path(&path) || !held_as.starts_with(&named) {
+        let is_found_again = named.is_none_or(|named| held_as.starts_with(named));
+        if !is_code || is_host_path(path) || !is_found_again {
             return false;
         }
         self.texts.push(WorkerFile {
-            source_path: source_path_of(&path),
+            source_path: source_path_of(path),
             embedded_path,
             is_guess: false,
             has_options: self.has_options,
@@ -1232,6 +1271,17 @@ mod tests {
         assert_eq!(join(&["/a/b", "../w.js"], true), is("/a/w.js"));
         assert_eq!(join(&["a", "w.js"], true), None);
         assert_eq!(join(&["/a", "b\\w.js"], false), None);
+    }
+
+    #[test]
+    fn a_relative_path_that_leads_out_of_the_root_keeps_its_steps() {
+        let join = |relative: &str| join_below_root(b"/$bunfs/root/", relative.as_bytes());
+        assert_eq!(join("./a/../w.js"), b"/$bunfs/root/w.js");
+        assert_eq!(join("../w.js"), b"/$bunfs/root/_.._/w.js");
+        assert_eq!(
+            join("./a/../../../b/./w.js"),
+            b"/$bunfs/root/_.._/_.._/b/w.js"
+        );
     }
 
     #[test]

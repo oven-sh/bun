@@ -1,4 +1,4 @@
-// A constant is an `int32` by its declaration only if it is written `0`. `-0`, a constant whose type is written, and a variable that can change are not.
+// A variable that can change is no `int32` by what it is given first. A constant that is written `-0` has the type `0` for TypeScript, with or without the type written: narrowing/negative-zero-under-the-literal-type-zero-goes-into-an-int32 runs those.
 import type { int32 } from "bun";
 
 const negative = -0;

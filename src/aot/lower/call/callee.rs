@@ -307,6 +307,9 @@ impl FileLowering<'_, '_, '_, '_> {
                     }
                     None => return hir[last].pos,
                 },
+                ExprKind::Dot { .. } if self.is_require_main_node(last) => {
+                    return hir[last].pos;
+                }
                 ExprKind::Dot { .. } => return hir.name_pos(last),
                 ExprKind::Call(_) if self.is_require_of_literal(last) => {
                     return self.first_position(last);
@@ -320,6 +323,13 @@ impl FileLowering<'_, '_, '_, '_> {
             is_callee &= matches!(hir[last].kind, ExprKind::Ident(_));
             last = self.skip_type_syntax(next);
         }
+    }
+
+    // The transpiler prints `require.main` as one node, with one source map entry at its start.
+    fn is_require_main_node(&self, member: ExprId) -> bool {
+        let start = self.hir[member].pos;
+        let transpiled = self.transpiled.as_ref();
+        transpiled.is_some_and(|it| it.has_require_main_at(start))
     }
 
     // JSC reports a call at the end of the last token in front of the arguments, which is the `?.` of `f?.()`.

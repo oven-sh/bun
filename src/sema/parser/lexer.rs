@@ -9,9 +9,7 @@
 use crate::Rejection;
 use crate::names::{Names, Text};
 use crate::token::T;
-use bun_core::lexer::{
-    is_identifier_part, is_identifier_start, is_white_space_like, is_white_space_single_line,
-};
+use bun_core::lexer::{is_identifier_part, is_identifier_start, is_white_space_like};
 use bun_core::strings::{
     self, CodepointIterator, Cursor, is_js_line_terminator, push_codepoint_wtf8_joined, push_wtf8,
 };
@@ -875,7 +873,7 @@ impl<'a> Lexer<'a> {
         if c == 0x2028 || c == 0x2029 {
             self.newline_before = true;
             self.newline_since_comment = true;
-        } else if !is_white_space_single_line(c as i32) {
+        } else if !self.is_white_space_between_tokens(c as i32) {
             self.name_slow(pos, pos);
             return None;
         }
@@ -2194,9 +2192,9 @@ impl<'a> Lexer<'a> {
                         pos += 1;
                     }
                 }
-                // TypeScript 7's scanner reads bytes here, so only "\n" and "\r" end a line.
+                // TypeScript 7's scanner reads bytes here, so only "\n" and "\r" end a line. In the language U+2028 and U+2029 do too.
                 Some(0xE2)
-                    if self.is_typescript_5
+                    if (self.is_typescript_5 || self.decodes_ill_formed_text)
                         && matches!(src.get(pos..pos + 3), Some([_, 0x80, 0xA8 | 0xA9])) =>
                 {
                     return self.unterminated_regex(pos);

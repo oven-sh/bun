@@ -3110,7 +3110,16 @@ class Scenes {
       ],
       ["Old", `export function Old(this: any) { this.x = 1; }\nOld.prototype.y = 2;`],
     ];
-    const chosen = [...new Map(this.several(1, 4, () => this.pick(declared))).entries()];
+    // The names are the scene's own: a program that it is written into can declare a `Texts` itself.
+    const own = (text: string) =>
+      text.replace(
+        /\b(?:Flags|Keyed|Seed|Other|Ns|Via|Texts|Quick|Mixed|Held|Kind|Shape|Left|Right|Alias|Base|ambient|Ambient|Old)\b/g,
+        name => name + number,
+      );
+    const isCode = (name: string) => /^(?:Held|Old|Ambient)\d/.test(name);
+    const chosen = [...new Map(this.several(1, 4, () => this.pick(declared))).entries()].map(
+      ([name, text]): [string, string] => [own(name), own(text)],
+    );
     const names = chosen.map(([name]) => name);
     const isDeclarationFile = this.chance(25);
     const file = `./${tag}.${isDeclarationFile ? "js" : "ts"}`;
@@ -3121,13 +3130,13 @@ class Scenes {
         [
           `export declare const made${number}: number;`,
           ...chosen
-            .filter(([name]) => !["Held", "Old", "Ambient"].includes(name))
+            .filter(([name]) => !isCode(name))
             .map(([, text]) => text.replace(/^export (?=enum|const enum|namespace)/gm, "export declare ")),
           "",
         ].join("\n"),
       ]);
     } else this.files.push([file, chosen.map(([, text]) => text).join("\n") + "\n"]);
-    const usable = isDeclarationFile ? names.filter(name => !["Held", "Old", "Ambient"].includes(name)) : names;
+    const usable = isDeclarationFile ? names.filter(name => !isCode(name)) : names;
     const space = `space${number}`;
     const byNamespace = this.chance(25);
     const ignore = "// @ts-ignore\n";
@@ -3147,8 +3156,7 @@ class Scenes {
     this.lines.push("{");
     this.emit(1, `let out = "";`, `function note(value: any): void { out += String(value) + ";"; }`);
     usable.forEach((name, at) => {
-      const type =
-        name === "Old" ? `typeof ${byNamespace ? space + "." : ""}Old` : (byNamespace ? space + "." : "") + name;
+      const type = (name.startsWith("Old") ? "typeof " : "") + (byNamespace ? space + "." : "") + name;
       this.emit(
         1,
         this.pick([

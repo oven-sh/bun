@@ -210,6 +210,53 @@ pub(crate) use file_local_fields;
 /// true if `instantiateSignature` created it for the call.
 pub(crate) type AssignedSignature = (Option<SigId>, bool);
 
+struct ContextCheck {
+    function: (FileId, FnId),
+    assigned: AssignedSignature,
+    /// The number of parameters for which `assignParameterType` has returned.
+    assigned_parameter_count: usize,
+}
+
+/// A stack in which no function is twice.
+#[derive(Default)]
+struct ContextChecks {
+    checks: Vec<ContextCheck>,
+    positions: FxHashMap<(FileId, FnId), usize>,
+}
+
+impl ContextChecks {
+    fn is_empty(&self) -> bool {
+        self.checks.is_empty()
+    }
+
+    fn get(&self, file: FileId, func: FnId) -> Option<&ContextCheck> {
+        let position = *self.positions.get(&(file, func))?;
+        Some(&self.checks[position])
+    }
+
+    fn contains(&self, file: FileId, func: FnId) -> bool {
+        self.positions.contains_key(&(file, func))
+    }
+
+    fn push(&mut self, file: FileId, func: FnId, assigned: AssignedSignature) -> usize {
+        let position = self.checks.len();
+        let earlier = self.positions.insert((file, func), position);
+        debug_assert!(earlier.is_none());
+        self.checks.push(ContextCheck {
+            function: (file, func),
+            assigned,
+            assigned_parameter_count: 0,
+        });
+        position
+    }
+
+    fn pop(&mut self) {
+        if let Some(check) = self.checks.pop() {
+            self.positions.remove(&check.function);
+        }
+    }
+}
+
 pub struct Program<'s> {
     /// Owns the arenas for the program and everything computed from it.
     pub session: &'s Session,
@@ -1035,7 +1082,7 @@ impl<'s> Program<'s> {
             untyped_call_resolved_again: None,
             assigned_parameters: Vec::new(),
             assigned_unknown: Vec::new(),
-            context_checking: Vec::new(),
+            context_checking: ContextChecks::default(),
             context_checked_here: Default::default(),
             in_check_identifier: Vec::new(),
             resolved_meanwhile: Vec::new(),
@@ -2019,9 +2066,8 @@ pub struct Checker<'p, 's> {
     assigned_unknown: Vec<(FileId, PatId)>,
     /// The functions whose first check is in progress, see `context_checked`. They're published to
     /// `Program::context_checked`, for every thread, only together with the results of the first check.
-    /// A thread that found one without the other would continue without doing its own first check. The
-    /// third field is the number of parameters for which `assignParameterType` has returned.
-    context_checking: Vec<((FileId, crate::hir::FnId), AssignedSignature, usize)>,
+    /// A thread that found one without the other would continue without doing its own first check.
+    context_checking: ContextChecks,
     /// The functions whose entry in `Program::context_checked` this checker wrote or tried to
     /// write. See `is_context_checked`.
     context_checked_here: crate::util::FxHashSet<(FileId, crate::hir::FnId)>,
@@ -2908,7 +2954,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn is_function_in_context_check(&self, q: Query) -> bool {
         matches!(q, Query::Expr(file, e)
             if matches!(self.hir(file)[e].kind, ExprKind::Fn(func)
-                if self.context_checking.iter().any(|c| c.0 == (file, func))))
+                if self.context_checking.contains(file, func)))
     }
 
     /// True if repeating the path from `stack[i]` ends before it reaches a resolution, at such a

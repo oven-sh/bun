@@ -576,9 +576,17 @@ function keepMore(kind: string) {
     case "buffers":
       keep.push(Buffer.alloc(48000), Buffer.from(json), new TextEncoder().encode(json));
       break;
-    case "copies of what a text holds":
-      keep.push(structuredClone(JSON.parse(json)));
+    case "copies of what a text holds": {
+      const value = JSON.parse(json);
+      try {
+        keep.push(structuredClone(value));
+      } catch (error) {
+        // Where the bytes of the value find no room, structuredClone() throws a TypeError without words of its own, under \`bun run\` too.
+        if (String(error) !== "TypeError: Type error") throw error;
+        throw new RangeError("Out of memory");
+      }
       break;
+    }
     case "lists of arguments and of keys":
       keep.push(
         (function (..._: number[]) {

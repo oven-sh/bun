@@ -168,6 +168,7 @@ impl RuntimeTranspiler {
             accessed_constructions: walker.accessed_constructions,
             moved_return_values: walker.moved_return_values,
             regexp_literals: walker.regexp_literals,
+            require_main_positions: walker.require_main_positions,
             joined_declarators: walker.joined_declarators,
             rewrites: rewrites.unwrap_or_default(),
         })
@@ -214,6 +215,7 @@ pub(super) struct TranspiledFile {
     // The values of `return` statements that were moved there from an earlier statement, each with its `return`.
     moved_return_values: Vec<(u32, u32)>,
     regexp_literals: Vec<u32>,
+    require_main_positions: Vec<u32>,
     // `a = o.x, b = o.y` is printed `{ x: a, y: b } = o`: the `o` of each declarator of such a run.
     joined_declarators: Vec<JoinedDeclarator>,
     rewrites: FxHashMap<ExprId, Rewrite>,
@@ -244,6 +246,10 @@ impl TranspiledFile {
         self.regexp_literals.binary_search(&position).is_ok()
     }
 
+    pub(super) fn has_require_main_at(&self, position: u32) -> bool {
+        self.require_main_positions.binary_search(&position).is_ok()
+    }
+
     /// For the object of one of several declarators that are printed as one pattern.
     pub(super) fn find_joined_declarator_at(&self, object: u32) -> Option<JoinedDeclarator> {
         let joined = &self.joined_declarators;
@@ -265,6 +271,7 @@ struct Walker<'a> {
     accessed_constructions: Vec<u32>,
     moved_return_values: Vec<(u32, u32)>,
     regexp_literals: Vec<u32>,
+    require_main_positions: Vec<u32>,
     joined_declarators: Vec<JoinedDeclarator>,
     statements: Vec<(u32, Stmt)>,
     initializers: Vec<(u32, Expr)>,
@@ -305,6 +312,7 @@ impl<'a> Walker<'a> {
             accessed_constructions: Vec::new(),
             moved_return_values: Vec::new(),
             regexp_literals: Vec::new(),
+            require_main_positions: Vec::new(),
             joined_declarators: Vec::new(),
             statements: Vec::new(),
             initializers: Vec::new(),
@@ -331,6 +339,7 @@ impl<'a> Walker<'a> {
         self.accessed_constructions.sort_unstable();
         self.moved_return_values.sort_unstable();
         self.regexp_literals.sort_unstable();
+        self.require_main_positions.sort_unstable();
         self.joined_declarators.sort_unstable();
         self.statements.sort_unstable_by_key(|entry| entry.0);
         self.initializers.sort_unstable_by_key(|entry| entry.0);
@@ -546,6 +555,9 @@ impl<'a> Walker<'a> {
                 .extend([import.expr, import.options]),
             ExprData::EInlinedEnum(member) => self.pending_expressions.push(member.value),
             ExprData::ERegExp(_) => push_position(&mut self.regexp_literals, expression.loc),
+            ExprData::ERequireMain => {
+                push_position(&mut self.require_main_positions, expression.loc)
+            }
             ExprData::EJsxElement(_)
             | ExprData::EObjectJSON(_)
             | ExprData::EArrayJSON(_)
@@ -567,7 +579,6 @@ impl<'a> Walker<'a> {
             | ExprData::ENewTarget(_)
             | ExprData::EImportMeta(_)
             | ExprData::EImportMetaMain(_)
-            | ExprData::ERequireMain
             | ExprData::ESpecial(_)
             | ExprData::ENameOfSymbol(_) => {}
         }

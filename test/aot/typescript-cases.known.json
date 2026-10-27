@@ -9,6 +9,7 @@
   "compiler/nameCollisionWithBlockScopedVariable1.ts": "does not throw TypeError | plain Bun prints another output: a local variable named as the namespace around it",
   "compiler/noCollisionThisExpressionAndLocalVarInLambda.ts": "different output | plain Bun prints another output: the text of a function",
   "compiler/strictModeEnumMemberNameReserved.ts": "does not throw  | plain Bun prints another output: an enum member named by a reserved word of strict code",
+  "conformance/classes/propertyMemberDeclarations/staticPropertyNameConflictsInAmbientContext.ts": "does not throw  | plain Bun prints another output: a static member named `prototype` in a class that is only declared",
   "conformance/constEnums/constEnum4.ts": "does not throw  | plain Bun prints another output: an enum as the one statement of an `if` or a loop",
   "conformance/decorators/class/method/decoratorOnClassMethod19.ts": "throws ReferenceError instead of SyntaxError | plain Bun prints another output: a private name in the operand of a decorator, under experimentalDecorators",
   "conformance/decorators/class/property/decoratorOnClassProperty13.ts": "throws ReferenceError instead of  | plain Bun prints another output: an `accessor` field under experimentalDecorators",

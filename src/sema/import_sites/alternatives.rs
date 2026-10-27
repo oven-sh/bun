@@ -5,7 +5,9 @@
 use super::call_sites::{expr_kind, is_free_common_js, is_free_name, is_process};
 use super::made_requires::{find_imported_export, may_be_modified};
 use super::parameters::{find_values_passed_for, is_exported};
-use super::{ImportSiteKind, ImportSpecifier, ScanInputs, call_site_arguments, call_site_kind};
+use super::{
+    ImportSiteKind, ImportSpecifier, ResolvedForm, ScanInputs, call_site_arguments, call_site_kind,
+};
 use crate::atom::{Atom, known};
 use crate::bind::{
     Binding, BindingInitializer, BindingKind, BindingStability, CommonJsVariable, Decl, FnOwner,
@@ -79,6 +81,8 @@ impl Text {
 #[derive(Clone, PartialEq, Debug)]
 enum Held {
     Text(Text),
+    /// What a resolver answers for the name.
+    Resolved(Text, ResolvedForm),
     /// No text.
     Primitive(Constant),
     /// For each place of a list, what it may hold.
@@ -149,6 +153,8 @@ pub(super) struct Found {
     pub(super) alternatives: Vec<ImportSpecifier>,
     /// Each is written from the folder of the file, `./lib/a.js`, where the program makes the whole path.
     pub(super) start_at_own_directory: bool,
+    /// Each is the name that a resolver is asked for, where the program hands on what it answers.
+    pub(super) resolved_form: Option<ResolvedForm>,
 }
 
 pub(super) fn find_alternatives(
@@ -173,14 +179,26 @@ pub(super) fn find_alternatives(
         }
     }
     let mut texts: Vec<Text> = Vec::with_capacity(values.len());
+    let mut forms: Vec<Option<ResolvedForm>> = Vec::with_capacity(values.len());
     for value in values {
-        match value {
-            Held::Text(text) => texts.push(text),
-            Held::Primitive(_) | Held::Other => {}
+        let (text, form) = match value {
+            Held::Text(text) => (text, None),
+            Held::Resolved(text, form) => (text, Some(form)),
+            Held::Primitive(_) | Held::Other => continue,
             _ => return None,
-        }
+        };
+        texts.push(text);
+        forms.push(form);
     }
-    let start_at_own_directory = texts.first()?.starts_at_own_directory;
+    let resolved_form = *forms.first()?;
+    if forms.iter().any(|&form| form != resolved_form) {
+        return None;
+    }
+    // A resolver answers the same for `./lib/a.js` and for the whole path of that file.
+    let start_at_own_directory = match resolved_form {
+        Some(_) => false,
+        None => texts.first()?.starts_at_own_directory,
+    };
     if inputs.decisions.is_path_from_own_directory(argument) && !start_at_own_directory {
         return None;
     }
@@ -188,8 +206,8 @@ pub(super) fn find_alternatives(
     for mut text in texts {
         let is_below_folder =
             text.start.starts_with(b"./") || text.end.is_none() && text.start == b".";
-        if text.starts_at_own_directory != start_at_own_directory
-            || start_at_own_directory && !is_below_folder
+        if resolved_form.is_none() && text.starts_at_own_directory != start_at_own_directory
+            || text.starts_at_own_directory && !is_below_folder
         {
             return None;
         }
@@ -215,6 +233,7 @@ pub(super) fn find_alternatives(
     Some(Found {
         alternatives: alternatives.collect(),
         start_at_own_directory,
+        resolved_form,
     })
 }
 
@@ -1143,6 +1162,9 @@ impl Follower<'_, '_, '_> {
                 false => self.is_os_module(module).then(|| vec![Held::Os]),
             };
         }
+        if let Some((name, form)) = self.find_name_asked_of_resolver(e) {
+            return self.values_answered_by_resolver(name, form);
+        }
         if let Some((table, lists_keys)) = self.find_listing_of_object(call) {
             return self.values_of_listing(table, lists_keys);
         }
@@ -1168,6 +1190,29 @@ impl Follower<'_, '_, '_> {
             };
             for value in returned {
                 add(&mut values, value);
+            }
+        }
+        Some(values)
+    }
+
+    /// `require.resolve(name)` and `import.meta.resolve(name)`.
+    fn find_name_asked_of_resolver(&self, call: ExprId) -> Option<(ExprId, ResolvedForm)> {
+        let &ScanInputs { hir, bound, .. } = self.inputs;
+        let form = match call_site_kind(hir, bound, call)? {
+            ImportSiteKind::RequireResolve(_) => ResolvedForm::Path,
+            ImportSiteKind::ImportMetaResolve(_) => ResolvedForm::Url,
+            _ => return None,
+        };
+        let arguments = call_site_arguments(hir, bound, call)?;
+        (arguments.len() == 1).then(|| (hir.id_at(arguments, 0), form))
+    }
+
+    /// A resolver throws for what is no text. For what a resolver has answered for a name it answers as for the name.
+    fn values_answered_by_resolver(&mut self, name: ExprId, form: ResolvedForm) -> Option<Values> {
+        let mut values = Values::new();
+        for name in self.values_of(name)? {
+            if let Held::Text(name) | Held::Resolved(name, _) = name {
+                add(&mut values, Held::Resolved(name, form));
             }
         }
         Some(values)

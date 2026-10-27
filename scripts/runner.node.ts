@@ -52,7 +52,7 @@ import {
   tmpdir,
   which,
 } from "./agent.ts";
-import { mustRunSomething, pickDrawnTests, pickTestsWithSomethingFor } from "./aot-tests.ts";
+import { mustRunSomething, parseSample, pickDrawnTests, pickTestsWithSomethingFor } from "./aot-tests.ts";
 import {
   escapeCodeBlock,
   escapeHtml,
@@ -2807,10 +2807,17 @@ function getRelevantTests(cwd: string, testModifiers: string[], testExpectations
     availableTests.splice(0, availableTests.length, ...taken);
   }
 
+  const aotSample = options["aot-sample"];
+  if (aotSample && !isQuiet) {
+    console.log(
+      `Sample: ${aotSample}. AOT_SAMPLE=${parseSample(aotSample).sample} writes the steps of this commit again, AOT_SHARE=${aotSample} takes the programs of this step`,
+    );
+  }
+
   const oneIn = parseInt(options["one-in"] ?? "1");
   if (oneIn > 1) {
     // Every shard draws the same files, because it draws by the path and the sample.
-    const commit = options["aot-sample"] ?? process.env.BUILDKITE_COMMIT ?? "";
+    const commit = aotSample ?? process.env.BUILDKITE_COMMIT ?? "";
     const drawnTests = pickDrawnTests(
       { oneIn, sample: commit, alwaysDraw: options["always-draw"] ?? [] },
       availableTests,

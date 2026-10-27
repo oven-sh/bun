@@ -11,6 +11,8 @@
 // Collections come by bytes allocated and run on that thread. The same binary repeats a row within 0.3%. A row that is over is measured again, four times at most.
 // Of a program that runs to its end, the peak resident memory too, in a run of its own. It is started by a small Bun, whose own peak
 // of about 17 MB is the least that can be read.
+// Bun reads the listing of every folder above the file that it runs, about a thousand instructions an entry, so the programs are written below
+// the temporary folder that has the fewest entries above it, and the file says how many those were.
 //
 // A row fails when it costs over 3% more instructions, 30% more page faults, or 15% more memory at its peak, than the file has for it.
 // A start row may cost 6% more instructions, because the loader and libc are part of it. A change that is meant to cost that much says
@@ -25,11 +27,23 @@
 //
 // What the top tier compiles a second time, it compiled for nothing the first time. That needs no counter, so it is judged wherever the programs run.
 import { expect, test } from "bun:test";
-import { existsSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "fs";
-import { bunExe, isASAN, isCI, isDebug, isGlibc, runCommandMaxRSS, tempDir } from "harness";
-import { basename, join } from "path";
+import {
+  accessSync,
+  constants,
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "fs";
+import { bunExe, isASAN, isCI, isDebug, isGlibc, makeTreeSync, runCommandMaxRSS } from "harness";
+import { tmpdir } from "os";
+import { basename, dirname, join } from "path";
 import { measureUntilWithinBounds } from "../harness/measure-again";
-import { measureStart, startEnvironment, type Until } from "./start/measure-start";
+import { measureStart, startEnvironment, steppedStart, type Until } from "./start/measure-start";
 
 type Cost = { thousandInstructions: number; pageFaults: number; peakKilobytes?: number };
 const mostInstructions = (name: string) => (name.startsWith("start ") ? 1.06 : 1.03);
@@ -38,7 +52,12 @@ const mostPeakMemory = 1.15;
 
 const mode = process.env.PLAIN_BUN_COSTS;
 const budgetsPath = join(import.meta.dir, "plain-bun-costs.linux-x64.json");
-const budgets: Record<string, Cost> = existsSync(budgetsPath) ? JSON.parse(readFileSync(budgetsPath, "utf8")) : {};
+const {
+  entriesAboveThePrograms: entriesAboveWhenWritten = Infinity,
+  ...budgets
+}: Record<string, Cost> & {
+  entriesAboveThePrograms?: number;
+} = existsSync(budgetsPath) ? JSON.parse(readFileSync(budgetsPath, "utf8")) : {};
 const programs = join(import.meta.dir, "plain-bun-costs");
 const measurable = isGlibc && process.arch === "x64" && !isDebug && !isASAN;
 const judged = isCI || mode === "hold";
@@ -104,11 +123,40 @@ const environment: Record<string, string | undefined> = startEnvironment;
 if (!measurable)
   console.error("SKIPPED: test/aot/perf/plain-bun-costs.test.ts: its numbers are of a release build for Linux x64");
 
+function entriesAbove(folder: string) {
+  let entries = 0;
+  for (let above = folder; ; above = dirname(above)) {
+    try {
+      entries += readdirSync(above).length;
+    } catch {}
+    if (above === dirname(above)) return entries;
+  }
+}
+
+function isWritable(folder: string) {
+  try {
+    accessSync(folder, constants.W_OK | constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function folderWithTheFewestEntriesAbove() {
+  const [quietest] = [tmpdir(), "/var/tmp", "/dev/shm"]
+    .filter(isWritable)
+    .map(folder => realpathSync(folder))
+    .map(folder => ({ folder, entries: entriesAbove(folder) }))
+    .sort((a, b) => a.entries - b.entries);
+  return quietest;
+}
+
 const failures: string[] = [];
 const table: string[] = [];
 let countersWork = true;
 
 async function row(name: string, command: string[], until: Until) {
+  if (!countersWork) return;
   const budget = budgets[name];
   const { thousandInstructions, pageFaults } = await measureUntilWithinBounds(
     name,
@@ -164,7 +212,10 @@ async function row(name: string, command: string[], until: Until) {
 test.skipIf(!measurable)(
   "a program that never asks for the compiler costs what it did",
   async () => {
-    using dir = tempDir("plain-bun-costs", { ...startFiles, ...toolFiles });
+    const { folder, entries: entriesAboveThePrograms } = folderWithTheFewestEntriesAbove();
+    const dir = mkdtempSync(join(folder, "plain-bun-costs_"));
+    using removed = { [Symbol.dispose]: () => rmSync(dir, { recursive: true, force: true }) };
+    makeTreeSync(dir, { ...startFiles, ...toolFiles });
     const bun = join(String(dir), "bun");
     symlinkSync(bunExe(), bun);
     for (const [file, until] of startRows) await row(`start ${file}`, [bun, join(String(dir), file)], until);
@@ -202,10 +253,41 @@ test.skipIf(!measurable)(
       }
     }
     console.error(table.join("\n"));
-    if (!countersWork)
-      return console.error("SKIPPED: test/aot/perf/plain-bun-costs.test.ts: perf_event_open may not be used here");
+    console.error(
+      `${entriesAboveThePrograms} entries in the folders above ${dir}; the file was written below ${entriesAboveWhenWritten}`,
+    );
+    if (!countersWork) {
+      console.error("SKIPPED: test/aot/perf/plain-bun-costs.test.ts: perf_event_open may not be used here");
+      const deadline = performance.now() + 120_000;
+      for (const [file, until] of startRows.slice(0, 2)) {
+        if (!("prints" in until)) continue;
+        const stepped = await steppedStart([bun, join(dir, file)], until.prints, 2, deadline);
+        if ("notCounted" in stepped)
+          return console.error(`SKIPPED: test/aot/perf/plain-bun-costs.test.ts: ${stepped.notCounted}`);
+        const written = budgets[`start ${file}`]?.thousandInstructions;
+        console.error(
+          `start ${file}: ${stepped.thousandSteps} K single steps; the file has ${written} K instructions. Not judged.`,
+        );
+      }
+      return;
+    }
     if (mode === "accept" || mode === "lower" || mode === "add")
-      writeFileSync(budgetsPath, JSON.stringify(budgets, null, 2) + "\n");
+      writeFileSync(
+        budgetsPath,
+        JSON.stringify(
+          {
+            entriesAboveThePrograms:
+              mode === "accept" ? entriesAboveThePrograms : Math.min(entriesAboveThePrograms, entriesAboveWhenWritten),
+            ...budgets,
+          },
+          null,
+          2,
+        ) + "\n",
+      );
+    if (failures.some(failure => failure.startsWith("start ")) && entriesAboveThePrograms > entriesAboveWhenWritten)
+      failures.push(
+        `${entriesAboveThePrograms} entries in the folders above ${folder}; the file was written below ${entriesAboveWhenWritten}`,
+      );
     if (judged) expect(failures).toEqual([]);
   },
   600_000,

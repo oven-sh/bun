@@ -120,6 +120,72 @@ async function countedStart(libc: Libc, command: string[], until: Until): Promis
   }
 }
 
+export type Stepped = { thousandSteps: number } | { notCounted: string };
+
+/** `thousandInstructions` without the processor's counters: the first thread runs one instruction at a time from exec to exit. */
+export async function steppedStart(command: string[], prints: string, runs: number, deadline: number): Promise<Stepped> {
+  const { ptrace, waitpid } = dlopen("libc.so.6", {
+    ptrace: { args: [FFIType.i64, FFIType.i32, FFIType.u64, FFIType.u64], returns: FFIType.i64 },
+    waitpid: { args: [FFIType.i32, FFIType.ptr, FFIType.i32], returns: FFIType.i32 },
+  }).symbols;
+  const PTRACE_CONT = 7,
+    PTRACE_SINGLESTEP = 9,
+    PTRACE_DETACH = 17,
+    PTRACE_SEIZE = 0x4206,
+    PTRACE_O_TRACEEXEC = 1 << 4,
+    PTRACE_O_TRACEEXIT = 1 << 6,
+    PTRACE_O_EXITKILL = 1 << 20,
+    PTRACE_EVENT_EXEC = 4,
+    PTRACE_EVENT_EXIT = 6,
+    SIGTRAP = 5,
+    __WALL = 0x40000000;
+  const status = new Int32Array(1);
+  const statusPointer = ptr(status);
+  let least = Infinity;
+  for (let run = 0; run < runs; run++) {
+    const child = Bun.spawn({
+      cmd: ["/bin/sh", "-c", 'read line; exec "$0" "$@"', ...command],
+      cwd: "/",
+      env: startEnvironment,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    try {
+      if (Number(ptrace(PTRACE_SEIZE, child.pid, 0, PTRACE_O_TRACEEXEC | PTRACE_O_TRACEEXIT | PTRACE_O_EXITKILL)) < 0)
+        return { notCounted: "ptrace may not be used here" };
+      child.stdin.write("\n");
+      await child.stdin.end();
+      let steps = 0;
+      for (let request = PTRACE_CONT, signalToDeliver = 0; ; ) {
+        if (waitpid(child.pid, statusPointer, __WALL) < 0 || (status[0] & 0xff) !== 0x7f) break;
+        const signal = (status[0] >> 8) & 0xff;
+        const event = status[0] >> 16;
+        signalToDeliver = 0;
+        if (event === PTRACE_EVENT_EXEC) request = PTRACE_SINGLESTEP;
+        else if (event === PTRACE_EVENT_EXIT) break;
+        else if (event === 0 && signal === SIGTRAP) steps++;
+        else if (event === 0) signalToDeliver = signal;
+        if ((steps & 0xffff) === 0xffff && performance.now() > deadline) {
+          if (least < Infinity) return { thousandSteps: least };
+          return { notCounted: `${steps} single steps, and the time for them is over` };
+        }
+        if (Number(ptrace(request, child.pid, 0, signalToDeliver)) < 0) break;
+      }
+      ptrace(PTRACE_DETACH, child.pid, 0, 0);
+      const [output, exitCode] = [await child.stdout.text(), await child.exited];
+      if (exitCode !== 0 || output !== prints)
+        return { notCounted: `stepped, it ended with exit code ${exitCode}, signal ${child.signalCode}: ${output}` };
+      least = Math.min(Math.round(steps / 1000), least);
+    } finally {
+      ptrace(PTRACE_DETACH, child.pid, 0, 0);
+      child.kill("SIGKILL");
+      await child.exited;
+    }
+  }
+  return { thousandSteps: least };
+}
+
 function killTracedProcess(log: string) {
   const pid = existsSync(log) ? /^\d+/.exec(readFileSync(log, "utf8"))?.[0] : undefined;
   if (!pid) return;

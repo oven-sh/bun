@@ -13,11 +13,11 @@ import { output, run } from "../scripts/agent.ts";
 import {
   type AotTakes,
   type AotTests,
-  aotSample,
   getAotAlwaysDrawn,
   getAotAlwaysInDrawnStep,
   getAotExcludes,
   getAotFileDraw,
+  getAotSample,
   getAotShare,
   getAotStepArguments,
   getAotTestsOfLane,
@@ -1013,7 +1013,7 @@ function getAotParallelism(platform: Platform, options: PipelineOptions, aot: Ao
   const excludes = getAotExcludes(platform, aot);
   const alwaysDrawn = getAotAlwaysDrawn(platform, hasLibraryChangesWithoutAotChanges(options));
   const draw = getAotFileDraw(platform, aot);
-  const sample = spellSample(aotSample, getAotShare(platform));
+  const sample = spellSample(getAotSample(), getAotShare(platform));
   const alwaysInDrawnStep = getAotAlwaysInDrawnStep(platform, aot);
   let milliseconds = 0;
   for (const [path, durations] of Object.entries(getExpectedDurations())) {

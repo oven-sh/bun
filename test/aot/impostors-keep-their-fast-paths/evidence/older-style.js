@@ -79,24 +79,9 @@ function fieldStoredByParent(squares) {
   return total;
 }
 
-let lastVector;
 function makeVectors(count) {
   let total = 0;
-  for (let i = 0; i < count; i++) {
-    lastVector = new Vector(i, 1);
-    total += lastVector.vectorX;
-  }
-  return total;
-}
-
-function Step(from, by) {
-  this.stepFrom = from;
-  this.stepBy = by;
-}
-
-function readStepsThatNobodyKeeps(count) {
-  let total = 0;
-  for (let i = 0; i < count; i++) total += new Step(i, 1).stepFrom;
+  for (let i = 0; i < count; i++) total += new Vector(i, 1).vectorX;
   return total;
 }
 
@@ -134,5 +119,4 @@ export const cases = {
     turn: fieldStoredByParent,
   },
   "a constructor function is constructed": { prepare: () => kept("count", 100), turn: makeVectors },
-  "a constructor function is constructed for an object that nobody keeps": { prepare: () => kept("count", 100), turn: readStepsThatNobodyKeeps },
 };

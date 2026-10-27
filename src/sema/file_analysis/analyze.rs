@@ -114,6 +114,7 @@ fn create_analysis<'s>(
         import_sites: scan.sites,
         alternatives: scan.alternatives,
         paths_from_own_directory: scan.paths_from_own_directory,
+        answers_of_resolvers: scan.answers_of_resolvers,
         jsx_imports: scan.jsx_imports,
         unused_import_symbols: scan.unused_import_symbols,
         imports_used_only_in_dead_code: scan.imports_used_only_in_dead_code,

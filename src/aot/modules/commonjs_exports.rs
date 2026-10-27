@@ -671,14 +671,14 @@ impl CommonJsExports {
             .map_or(&[], |number| &self.name_sources[number][..])
     }
 
-    /// The names that an import is bound past, to a name of another module or to a binding: each with the module that has the name.
+    /// The names that a read is bound past, to a name of another module or to a binding: each with the module that has the name.
     pub fn names_bound_elsewhere(&self) -> impl Iterator<Item = (ModuleRef, Member)> + '_ {
         let names = self.modules.iter().flat_map(|text| {
             let aliases = text.aliases.iter();
             aliases.map(|alias| (text.module(), alias.name))
         });
         names.filter_map(|(module, name)| {
-            let member = match self.imported_target(module, name) {
+            let member = match *self.targets.get(&(module, name))? {
                 Target::Name(owner, _) if owner == module => return None,
                 Target::Name(owner, owner_name) => {
                     Member::Variable(*self.ids.get(&(owner, owner_name))?)

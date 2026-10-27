@@ -40,7 +40,7 @@ impl CodeImportKind {
     }
 }
 
-/// How an import is written. It changes nothing about what is found: a host tells its plugins.
+/// How an import is written. A host tells its plugins, and says which directory each form looks from.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum CodeImportForm {
     Static,

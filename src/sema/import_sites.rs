@@ -77,6 +77,13 @@ pub enum ImportSpecifier {
     Unknown,
 }
 
+/// What a resolver answers for a name: `require.resolve` a path, `import.meta.resolve` a URL.
+#[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug)]
+pub enum ResolvedForm {
+    Path,
+    Url,
+}
+
 /// A range of `FileAnalysis::alternatives`.
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub struct Alternatives {
@@ -107,6 +114,7 @@ pub(crate) struct ImportScan<'s> {
     pub sites: &'s [ImportSite],
     pub alternatives: &'s [ImportSpecifier],
     pub paths_from_own_directory: &'s [ExprId],
+    pub answers_of_resolvers: &'s [(ExprId, ResolvedForm)],
     pub first_call_site: u32,
     pub sites_by_kind: &'s [u32],
     pub jsx_imports: JsxImportSet,

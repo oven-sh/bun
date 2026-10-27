@@ -59,6 +59,12 @@
 -	-	+	-	-	ts	const MARK = new Map([[later, 1]]); const later = 1;
 -	+	+	missed	-	ts	const MARK = { a: [{ b: [later] }] }; const later = 1;
 -	+	+	missed	-	ts	function f(...a: any[]): any {} const MARK = /* @__PURE__ */ f(later); const later = 1;
+-	+	+	missed	-	ts	const MARK = /* @__PURE__ */ later(); const later = () => 1;
+-	+	+	missed	-	ts	const MARK = /* @__PURE__ */ later.a(); const later: any = {};
+-	+	+	missed	-	ts	const MARK = /* @__PURE__ */ new Later(); class Later extends Object {}
++	+	+	-	-	ts	const earlier = () => 1; const MARK = /* @__PURE__ */ earlier();
++	+	+	-	-	ts	const MARK = /* @__PURE__ */ new Later(); class Later {}
++	+	+	-	-	ts	const MARK = /* @__PURE__ */ (() => later)(); const later = 1;
 -	+	+	missed	-	ts	const MARK = [later], later = 1;
 -	+	+	missed	-	ts	const [MARK = later, later] = [] as any[];
 -	+	+	missed	-	ts	var MARK = [later]; let later = 1;

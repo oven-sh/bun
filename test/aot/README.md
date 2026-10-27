@@ -75,10 +75,12 @@ so that `bun test test/aot` never needs more than a Bun. The top of each test fi
   `parts.mts`; a test file draws if it calls a helper that does). On the other lanes the first step is what `getAotAlwaysDrawn()` lists. A program that the drawn step found red gets a
   line in `programs-in-every-run.txt` with its cure.
 - **Every lane but Debian's two draws its files**: `getAotFileDraw()` in `scripts/aot-tests.ts` gives the runner `--one-in=<n>`: one file in
-  two on macOS, one in eight on Alpine, Windows and the ASAN build. The draw follows from the sample (`aotSample`, the same on every commit), the path and the number of the lane
+  two on macOS, one in eight on Alpine, Windows and the ASAN build. The draw follows from the sample (`getAotSample()`: the commit under test), the path and the number of the lane
   (`aotLanes`): of what is dealt out one in n, the lane with the number k takes the share k % n. The lanes' numbers are chosen so that every file runs on a lane besides Debian's.
   The runner gets both as `--aot-sample=<sample>+<k>` and hands them on as `AOT_SHARE`, so the lanes also take different shares of the programs. A share that comes out empty takes one.
-  `scripts/runner.node.ts --include=aot/ --one-in=<n> --aot-sample=<sample>+<k>` makes the draw again.
+  Each commit draws other files and programs, so in time every lane has run all of them. A step is written with its sample, so a retry of a job makes the same draw, and the runner
+  prints it first (`Sample: ..`). `scripts/runner.node.ts --include=aot/ --one-in=<n> --aot-sample=<sample>+<k>` makes the draw again, and with `AOT_SAMPLE=<sample>` in the environment
+  `getAotStepArguments()` gives the steps of that commit.
 - **A test file that runs no test is red on Debian x64** (`--must-run`), which is told to run every file. A file whose tests all skip themselves there goes into one of the lists of
   `scripts/aot-tests.ts`: what needs a sanitizer or a hardened Bun is always run by the step that has one and left out by the others, what comes as units of `parts.mts` or reads the
   engine's sources is run elsewhere, and `testsOutsideCi` has what no step can run, each with the reason. `every-test-runs-in-ci.test.ts` checks the lists against the steps.

@@ -85,6 +85,17 @@ const noticedBy: Record<string, Row | Row[]> = {
     "--aot-check=MovedLoads",
     "an-element-is-tested-stored-on-a-way-seldom-taken-and-read-again.js",
   ),
+  SlotsOfSitesStayAsTheyAre: [
+    toldTheBackEnd(
+      "--aot-check=MovedLoads",
+      "one-place-in-a-loop-reads-a-method-of-objects-of-two-classes-one-after-the-other.js",
+    ),
+    {
+      folder: "claims-to-the-back-end",
+      flags: [],
+      programs: ["one-place-in-a-loop-reads-a-method-of-objects-of-two-classes-one-after-the-other.js"],
+    },
+  ],
   FieldsNeverChange: toldTheBackEnd(
     "--aot-check=ClaimsToBackEnd",
     "a-field-is-read-and-stored-on-every-turn-of-a-loop.ts",
@@ -274,6 +285,11 @@ const noticedBy: Record<string, Row | Row[]> = {
   WhatIsGivenTakesThePlaceOfWhatComes: {
     ...conditionOfAPass("a-read-finds-what-was-stored.ts"),
     flags: ["--aot-flow=widened", "--aot-layout-seed=0"],
+  },
+  StridedIndexesStayInRange: {
+    folder: "arrays",
+    flags: [],
+    programs: ["strided-indexes-into-typed-arrays-and-lists.ts"],
   },
 };
 /** What no program can show, and the test of the engine that shows it (./engine-tests.test.ts runs those). */

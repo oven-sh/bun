@@ -2037,6 +2037,24 @@ impl<'a, 's> Walk<'a, 's> {
         !self.input.graph.ignores_this(module, name)
     }
 
+    // The files through which the module has what a name of it stands for.
+    fn reach_files_behind(&mut self, module: ModuleRef, member: Member) {
+        let (ModuleRef::File(file) | ModuleRef::Face(file) | ModuleRef::Inner { file, .. }) =
+            module
+        else {
+            return;
+        };
+        match member {
+            Member::Variable(export) | Member::Copy(export) => {
+                self.reach_files_between(file, HandedOn::Name(export));
+            }
+            Member::Binding(defined) => {
+                self.reach_files_between(file, HandedOn::Variable(defined));
+            }
+            Member::Undefined | Member::Marker(_) | Member::OnObject => {}
+        }
+    }
+
     fn reach_name(&mut self, export: SyntheticExportId) -> bool {
         let graph = self.input.graph;
         let export = *graph.synthetic_export(export);
@@ -2047,7 +2065,11 @@ impl<'a, 's> Walk<'a, 's> {
         let can_read_this = self.reach_stored_name(export.module, export.name);
         // The copy is taken of what the getter returns.
         let commonjs = graph.commonjs();
-        match commonjs.member_behind_getter(export.module, export.name) {
+        let returned = commonjs.member_behind_getter(export.module, export.name);
+        if let Some(returned) = returned {
+            self.reach_files_behind(export.module, returned);
+        }
+        match returned {
             Some(Member::Variable(returned)) => self.reach_name(returned),
             Some(Member::Binding(returned)) => self.reach_binding(returned),
             _ => can_read_this,
@@ -2060,7 +2082,11 @@ impl<'a, 's> Walk<'a, 's> {
         let graph = self.input.graph;
         // A name that stands for another name or for a binding has no variable of its own.
         let member = graph.member_named(module, name);
-        match member.or_else(|| graph.commonjs().member_named(module, name)) {
+        let member = member.or_else(|| graph.commonjs().member_named(module, name));
+        if let Some(member) = member {
+            self.reach_files_behind(module, member);
+        }
+        match member {
             Some(Member::Variable(export) | Member::Copy(export)) => self.reach_name(export),
             Some(Member::Binding(defined)) => self.reach_binding(defined),
             Some(Member::OnObject) => {

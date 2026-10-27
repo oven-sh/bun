@@ -374,3 +374,73 @@ fn name_that_is_read_on_what_require_gives_of_an_es_module_that_hands_it_on_stay
         ]
     );
 }
+
+const QUIET_PACKAGE: (&str, &str) = (
+    "node_modules/lib/package.json",
+    r#"{ "name": "lib", "version": "1.0.0", "sideEffects": false }"#,
+);
+const GETTER_OVER_ES_MODULE: &str = "var dep_1 = require('./h2.mjs');\n\
+    Object.defineProperty(exports, 'x', { enumerable: true, get: function () { return dep_1.x; } });";
+const GETTER_OVER_OWNER: &str = "var dep_1 = require('./owner.cjs');\n\
+    Object.defineProperty(exports, 'x', { enumerable: true, get: function () { return dep_1.x; } });";
+
+// The files of the package that do not run.
+fn find_files_left_out(main: (&str, &str), owner: &str) -> Vec<String> {
+    let files = [
+        main,
+        QUIET_PACKAGE,
+        ("node_modules/lib/h3.cjs", GETTER_OVER_ES_MODULE),
+        ("node_modules/lib/h2.mjs", "export { x } from './h1.cjs';"),
+        ("node_modules/lib/h1.cjs", GETTER_OVER_OWNER),
+        ("node_modules/lib/owner.cjs", owner),
+    ];
+    let lines = describe(&files).into_iter();
+    lines.filter(|line| line.ends_with(": left out")).collect()
+}
+
+#[test]
+fn files_that_hand_a_name_on_run_for_a_pattern_that_takes_it_from_a_package_without_side_effects() {
+    let nothing: [&str; 0] = [];
+    let owner = "exports.x = 'five';";
+    for main in [
+        "var { x } = require('lib/h3.cjs'); console.log(x);",
+        "var { x: y = 1 } = require('lib/h3.cjs'); console.log(y);",
+        "console.log(require('lib/h3.cjs').x);",
+        "var h = require('lib/h3.cjs'); console.log(h.x);",
+    ] {
+        assert_eq!(
+            find_files_left_out(("main.cjs", main), owner),
+            nothing,
+            "{main}"
+        );
+    }
+    for main in [
+        "const { x } = await import('lib/h3.cjs'); console.log(x);",
+        "console.log((await import('lib/h3.cjs')).x);",
+        "import * as h from 'lib/h3.cjs'; console.log(h.x);",
+        "import { x } from 'lib/h3.cjs'; console.log(x);",
+    ] {
+        assert_eq!(
+            find_files_left_out(("main.mjs", main), owner),
+            nothing,
+            "{main}"
+        );
+    }
+}
+
+#[test]
+fn files_that_hand_a_name_on_run_for_the_copy_that_an_importer_has_of_it() {
+    let nothing: [&str; 0] = [];
+    let owner = "exports.x = 'five'; exports.change = function () { exports.x = 'six'; };";
+    for main in [
+        "import { x } from 'lib/h3.cjs'; console.log(x);",
+        "import * as h from 'lib/h3.cjs'; console.log(h.x);",
+        "export { x } from 'lib/h3.cjs';",
+    ] {
+        assert_eq!(
+            find_files_left_out(("main.mjs", main), owner),
+            nothing,
+            "{main}"
+        );
+    }
+}

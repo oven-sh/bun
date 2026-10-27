@@ -213,6 +213,8 @@ pub(super) struct OrderParts {
     pub is_loaded_by_loader: Vec<bool>,
     pub is_required_during_load: Vec<bool>,
     pub may_be_imported_while_it_runs: Vec<bool>,
+    /// By file: a data file whose values `bun run` makes when it loads the file.
+    pub makes_values_at_load: Vec<bool>,
     pub prefix_roots: Vec<FileId>,
     /// The files of the program that the host may ask for first.
     pub first_requests_of_host: Vec<FileId>,
@@ -231,6 +233,7 @@ impl OrderParts {
             is_loaded_by_loader: vec![false; file_count],
             is_required_during_load: vec![false; file_count],
             may_be_imported_while_it_runs: vec![false; file_count],
+            makes_values_at_load: vec![false; file_count],
             prefix_roots: Vec::new(),
             first_requests_of_host: Vec::new(),
         }
@@ -740,7 +743,8 @@ struct LoadsSeenByProgram {
 }
 
 // `bun run` loads a graph in steps, and an imported CommonJS file runs in one of them. What such a file reaches runs while the graph is loaded, in the file or in a job that it queues.
-// A `require` of an ES module there asks the run time. Where the ES module leads back to the file that requires it, the loader of the run time loads the program from its start.
+// A `require` of an ES module there asks the run time. Where the ES module leads back to the file that requires it, the loader of the run time loads every graph that comes to that cycle:
+// whatever imports or requires, directly or not, a module of the cycle. What no such way leads from is loaded as if the cycle were not in the executable.
 // An ES module on such a way back imports its CommonJS file while the file runs. If the file then throws, nobody gets the error and a later `require` of the file is answered with the names of that import: it asks the run time too.
 fn find_loads_seen_by_program(
     scans: &Scans,
@@ -782,7 +786,7 @@ fn find_loads_seen_by_program(
     let imported = imports.iter().map(|(_, file)| file.0).collect();
     let runs_during_load = find_reached(edges, imported);
     let mut component_of = None;
-    let mut leads_back = false;
+    let mut components_that_lead_back = Vec::new();
     for (file, file_sites) in planned {
         let sites = file_sites.sites.iter();
         let sites = sites.map(|site| (site.referrer, site.target));
@@ -802,17 +806,43 @@ fn find_loads_seen_by_program(
             }
             let component_of =
                 component_of.get_or_insert_with(|| strongly_connected_components(edges).0);
-            leads_back |= component_of[referrer] == component_of[target.idx()];
+            if component_of[referrer] == component_of[target.idx()] {
+                components_that_lead_back.push(component_of[referrer]);
+            }
         }
     }
-    if let (true, Some(component_of)) = (leads_back, component_of) {
-        for (file, _) in files_of_program {
-            seen.is_loaded_by_loader[file.idx()] = true;
+    let Some(component_of) = component_of.filter(|_| !components_that_lead_back.is_empty()) else {
+        return seen;
+    };
+    let leads_back = |module: usize| components_that_lead_back.contains(&component_of[module]);
+    let mut askers = vec![Vec::new(); count];
+    let mut asks = |referrer: ModuleRef, target: ModuleRef| {
+        if let (Some(referrer), Some(target)) =
+            (numbers.number_of(referrer), numbers.number_of(target))
+        {
+            askers[target].push(referrer as u32);
         }
-        for (importer, file) in imports {
-            seen.may_be_imported_while_it_runs[file.idx()] |=
-                component_of[importer.idx()] == component_of[file.idx()];
+    };
+    for &file in &modules.compiled_files {
+        for request in &scans.of(file).requests {
+            asks(ModuleRef::File(file), request.target);
         }
+    }
+    for (_, file_sites) in planned {
+        let sites = file_sites.sites.iter();
+        let sites = sites.map(|site| (site.referrer, site.target));
+        for (referrer, target) in sites.chain(file_sites.required_candidates.iter().copied()) {
+            asks(referrer, target);
+        }
+    }
+    let cycles = (0..count).filter(|&module| leads_back(module));
+    let comes_to_cycle = find_reached(&askers, cycles.map(|module| module as u32).collect());
+    for (file, _) in files_of_program {
+        seen.is_loaded_by_loader[file.idx()] = comes_to_cycle[file.idx()];
+    }
+    for (importer, file) in imports {
+        seen.may_be_imported_while_it_runs[file.idx()] |=
+            leads_back(file.idx()) && component_of[importer.idx()] == component_of[file.idx()];
     }
     seen
 }
@@ -938,6 +968,11 @@ pub(super) fn compute_order(
         &is_code_of_program,
         &planned,
     );
+    let mut makes_values_at_load = vec![false; file_count];
+    for &file in &modules.compiled_files {
+        makes_values_at_load[file.idx()] = scans.of(file).interop.kind == ModuleKind::Data
+            && crate::module_keys::makes_values_at_load(input.sources.loader(file));
+    }
     let parts = OrderParts {
         numbers,
         is_code_of_program,
@@ -948,6 +983,7 @@ pub(super) fn compute_order(
         is_loaded_by_loader: loads.is_loaded_by_loader,
         is_required_during_load: loads.is_required_during_load,
         may_be_imported_while_it_runs: loads.may_be_imported_while_it_runs,
+        makes_values_at_load,
         prefix_roots,
         first_requests_of_host: (input.sources.entry_points().iter())
             .filter(|entry| entry.kind != EntryPointKind::Library)

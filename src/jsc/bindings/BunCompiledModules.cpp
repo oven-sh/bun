@@ -594,24 +594,17 @@ static JSObject* createEmptyJSONBodyError(JSGlobalObject* realm)
 
 static thread_local bool isAskingWhyFileFailsToLoad = false;
 
-// A program that runs in place of its files: the file is read and parsed as `require` reads it, and nothing of it runs.
-// An executable: nothing is read. Where the name is that of no file that can be read, the loader says so as it does for a name that is made at run time.
-static JSValue createLoadError(JSGlobalObject* realm, const String& path, bool isForRequire)
+// The file is read and parsed as `require` reads it, and nothing of it runs.
+static JSValue createLoadError(JSGlobalObject* realm, const String& path)
 {
-    bool runsInPlace = Bun__compiledProgramRunsInPlace();
+    if (!Bun__compiledProgramRunsInPlace())
+        return {};
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(realm);
     BunString specifier = Bun::toString(path);
     ErrorableResolvedSource source;
-    SetForScope isAsking(isAskingWhyFileFailsToLoad, runsInPlace);
-    Bun__transpileFile(globalObject->bunVM(), globalObject, &specifier, &specifier, nullptr, &source, false, runsInPlace || isForRequire, BunLoaderTypeNone);
-    if (source.success)
-        return {};
-    JSValue error = JSValue::decode(source.result.err);
-    // A file that is there is no part of the program: the build did not find it.
-    JSObject* object = error.getObject();
-    if (!runsInPlace && (!object || object->classInfo()->className != "BuildMessage"_s))
-        return {};
-    return error;
+    SetForScope isAsking(isAskingWhyFileFailsToLoad, true);
+    Bun__transpileFile(globalObject->bunVM(), globalObject, &specifier, &specifier, nullptr, &source, false, true, BunLoaderTypeNone);
+    return source.success ? JSValue() : JSValue::decode(source.result.err);
 }
 
 const AOT::ModuleHost compiledModuleHost = {

@@ -19,7 +19,7 @@ use bun_sema::resolve::{
     HostResolution, LoaderRequest, MacroRequest, ModuleDetection, ParsedCode, ScriptKind,
     TransformRequest, TreeChange, is_declaration_file_name, to_path, to_path_in,
 };
-use bun_sema::session::Arena;
+use bun_sema::session::{Arena, Session};
 use bun_sema::util::SharedSort;
 use bun_sema_driver::Libs;
 use bun_sema_driver::host::{AlreadyRead, Disk, from_argument, from_native, is_bundled, to_native};
@@ -52,6 +52,7 @@ use crate::load::runtime_types;
 use crate::load::source_provider::{SourceFile, SourceProvider};
 use crate::load::sources::{ParsedSource, PluginModuleName, SourceKind, parsed_source_mut};
 use crate::load::test_runner_names;
+use crate::module_keys::is_url_with_text;
 use crate::options::Options;
 use crate::statistics::LimitValues;
 
@@ -124,6 +125,8 @@ pub(crate) struct LoadHost<'a> {
     entry_point_paths: Vec<Vec<u8>>,
     /// Sorted. The entry points whose names say nothing about them and that aren't text.
     binary_entry_point_paths: Vec<Vec<u8>>,
+    /// Entry points that are named as declaration files and hold statements that run. `bun run` runs them.
+    entry_points_that_run_despite_their_names: Vec<Vec<u8>>,
     extra_extensions: Vec<(Vec<u8>, ScriptKind)>,
     unreadable: Guarded<Vec<Vec<u8>>>,
     /// Sorted.
@@ -157,6 +160,21 @@ fn collect_entry_point_paths(disk: &Disk, options: &Options<'_>) -> Vec<Vec<u8>>
     paths
 }
 
+fn holds_statements_that_run(path: &[u8], text: &[u8]) -> bool {
+    let session = Session::new();
+    let atoms = Interner::new_in(&session);
+    let parse_options = CompileParseOptions {
+        path,
+        script_kind: Some(ScriptKind::Ts),
+        experimental_decorators: false,
+        every_file_is_a_module: false,
+        reads_jsdoc: false,
+        keeps_function_directives: false,
+    };
+    let hir = parse_for_compile(session.arena(), &parse_options, text, &atoms);
+    hir.ids(hir.body).len() != 0 && !hir.only_declares()
+}
+
 impl<'a> LoadHost<'a> {
     pub(crate) fn new(input: LoadHostInput<'a>) -> LoadHost<'a> {
         let (disk, provider, messages) = (input.disk, input.provider, input.messages);
@@ -168,6 +186,15 @@ impl<'a> LoadHost<'a> {
                 && (disk.read(path)).is_some_and(|contents| appears_to_be_binary(&contents, true))
         };
         let binary_entry_point_paths = entry_point_paths.iter().filter(is_binary).cloned();
+        let runs_despite_its_name = |path: &&Vec<u8>| {
+            is_declaration_file_name(path)
+                && (disk.read(path)).is_some_and(|text| holds_statements_that_run(path, &text))
+        };
+        let entry_points_that_run_despite_their_names = (entry_point_paths
+            .iter()
+            .filter(runs_despite_its_name)
+            .cloned())
+        .collect();
         let extra_extensions = load.loaders.iter().filter_map(|(extension, loader)| {
             let kind = script_kind_of(*loader)?;
             let file_name = [b"x", extension.as_slice()].concat();
@@ -180,6 +207,7 @@ impl<'a> LoadHost<'a> {
             evaluated_texts: EvaluatedTexts::new(),
             react_compiler: ReactCompiler::new(load.react_compiler, messages),
             binary_entry_point_paths: binary_entry_point_paths.collect(),
+            entry_points_that_run_despite_their_names,
             entry_point_paths,
             extra_extensions: extra_extensions.collect(),
             unreadable: Guarded::new(Vec::new()),
@@ -253,6 +281,11 @@ impl<'a> LoadHost<'a> {
 
     fn is_entry_point(&self, path: &[u8]) -> bool {
         self.is_among(&self.entry_point_paths, path)
+    }
+
+    fn runs_despite_its_name(&self, path: &[u8]) -> bool {
+        is_declaration_file_name(path)
+            && self.is_among(&self.entry_points_that_run_despite_their_names, path)
     }
 
     fn is_among(&self, sorted_paths: &[Vec<u8>], path: &[u8]) -> bool {
@@ -449,8 +482,11 @@ impl Host for LoadHost<'_> {
             }
             ServedBy::PluginModule | ServedBy::Disk => {}
         }
-        if is_bundled(path) || is_declaration_file_name(path) {
+        if is_bundled(path) {
             return None;
+        }
+        if is_declaration_file_name(path) {
+            return self.runs_despite_its_name(path).then_some(ScriptKind::Ts);
         }
         let loader = match self.plugin_loader(path) {
             Some(loader) if self.loader_in_place_of_typed_file(path).is_none() => loader,
@@ -550,6 +586,16 @@ impl CodeHost for LoadHost<'_> {
         match (self.plugins).directory_of_virtual_module(path, working_directory) {
             Some(directory) => Cow::Owned(directory),
             None => Cow::Borrowed(dirname::<Posix>(path)),
+        }
+    }
+
+    // The run time looks from the directory in the name of the module, and the name of a `data:` URL holds none that exists.
+    fn directory_of_dynamic_imports<'p>(&self, path: &'p [u8]) -> Cow<'p, [u8]> {
+        match self.plugins.name_of_entry_text(path) {
+            Some(name) if is_url_with_text(name) => {
+                Cow::Owned(dirname::<Posix>(&[b"/", name].concat()).to_vec())
+            }
+            Some(_) | None => self.directory_of(path),
         }
     }
 
@@ -748,7 +794,8 @@ impl CodeHost for LoadHost<'_> {
         };
         let compile_options = CompileParseOptions {
             path,
-            script_kind: Some(script_kind).filter(|kind| kind.differs_from_name(path)),
+            script_kind: Some(script_kind)
+                .filter(|kind| kind.differs_from_name(path) || self.runs_despite_its_name(path)),
             experimental_decorators: request.options.experimental_decorators
                 && !script_kind.is_javascript(),
             every_file_is_a_module: request.options.module_detection == ModuleDetection::Force,
@@ -786,6 +833,10 @@ impl CodeHost for LoadHost<'_> {
             if is_javascript {
                 hir.check_directive = Some(false);
             }
+        }
+        // `tsc` has other rules for a declaration file than for the same text as a program.
+        if self.runs_despite_its_name(path) {
+            hir.check_directive = Some(false);
         }
         ParsedCode {
             hir,

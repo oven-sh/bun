@@ -1,5 +1,5 @@
 // `export { name } from` where only the run knows the names of the other module: the error of the link quotes the statement, has no stack, and comes ahead of the error of an import.
-const withoutFolders = text => String(text).replace(/'[^']*\/([^\/']+)'/g, "'$1'");
+const withoutFolders = text => String(text).replace(/'[^']*[\\/]([^\\/']+)'/g, "'$1'");
 async function load(label, importModule) {
   try {
     console.log(label, "loaded", Object.keys(await importModule()).join());

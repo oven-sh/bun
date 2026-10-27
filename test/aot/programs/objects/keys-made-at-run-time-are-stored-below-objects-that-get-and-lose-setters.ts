@@ -7,6 +7,7 @@ class Plain { a = 1; }
 let seed = 1;
 function random(limit: number): number { seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff; return (seed >>> 8) % limit; }
 const names = ["k1", "k7", "viaBase", "onlyGetter", "method", "added", "frozen", "toString", "constructor", "__proto__", "hasOwnProperty", "k" + 3, "valueOf", "low", "leaf", "12", "length"];
+for (let i = 0; i < 6; i++) names.push("r" + i);
 function run(theSeed: number): string {
   seed = theSeed * 7919 + 3; log = [];
   const kind = random(5);

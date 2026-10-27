@@ -16,8 +16,12 @@
 //
 // None of the three is larger as written. And all three executables print what `bun run` prints for the files as written.
 //
+// The IR of a program is the same for every target. The first two numbers are read behind the back end, from the map of the image, so they are the target's: an operation counts
+// if an instruction is its own. x64 stores a constant with one instruction, which is the store's, and arm64 loads it into a register first, which is the constant's. What is
+// allowed in bytes stands by target in `bytesOnThisTarget`, and nothing else here knows the target.
+//
 // In every form a file of one line imports the entry point and starts the program. A program of several files has a function that runs them in their order, and a program of one file
-// has none: so every form has that function, and it is not what is compared. Nor is the call of each further file.
+// has none: so every form has that function, and it is not what is compared. Nor is the call of each further file that has something to run.
 //
 // The cases of a group are the entry points of one executable, behind ./minifying-first-saves-no-code/run-in-a-worker.mjs. An entry point begins a program
 // of its own, so each case is compiled as it is alone, and an executable is written once for all of them. Not quite alone: files that are scripts share their globals, and what is
@@ -64,6 +68,8 @@ type Form = (typeof forms)[number];
 export type Measured = {
   codeBytes: number;
   operations: number;
+  /** The files whose own code has an operation. */
+  filesThatRun: number;
   runtimeOperations: number | undefined;
   byOperation: Record<string, number>;
 };
@@ -73,11 +79,16 @@ const casesInOneExecutable = 48;
 const countedRunsAtOnce = 4;
 const runner = "run-in-a-worker.mjs";
 const starter = "start-the-case.mjs";
-// The n-th text of a program is named by the number n, and the instruction for 0 is three bytes shorter than that for 1. An offset takes one byte or four.
+// otherNumbers: the n-th text of a program is named by the number n, and on x64 the instruction for 0 is three bytes shorter than that for 1, and an offset takes one byte or four. On
+// arm64 a number takes one instruction or two.
+// callOfAFile: the call, and what the function that is called has around its operations: on x64 a return; on arm64 also a frame record that is pushed and popped, and the addresses that one function loads once and each of two loads for itself.
+const bytesOnThisTarget = { x64: { otherNumbers: 16, callOfAFile: 8 }, arm64: { otherNumbers: 16, callOfAFile: 32 } }[
+  process.arch as "x64" | "arm64"
+];
 // An ASAN build emits four times the bytes for the same functions.
-const mostCodeBytesForOtherNumbers = isASAN ? 64 : 16;
+const mostCodeBytesForOtherNumbers = bytesOnThisTarget.otherNumbers * (isASAN ? 4 : 1);
 // The files of a program stay files: each that has something to run is a function, and the function that runs them in their order calls it. The bundler has one file.
-const callOfAFile = { operations: 1, codeBytes: isASAN ? 32 : 8 };
+const callOfAFile = { operations: 1, codeBytes: bytesOnThisTarget.callOfAFile * (isASAN ? 4 : 1) };
 // A debug or ASAN build of Bun is many times slower.
 const oneExecutableIn = (isASAN || isDebug) && !process.env.AOT_MINIFYING_FIRST ? 8 : 1;
 const mark = "=== the program above has ended with";
@@ -142,18 +153,27 @@ async function writeForm(form: Form, it: Case, written: string, folder: string):
 }
 
 /**
- * What the map of an image says of its functions. Rows `F` (a function) and `A` (one that shares the code of another): .., size (3), ... The row `S` behind a function
- * has five columns for each instruction: the operation it was generated for, the number of that operation, where it was inlined from, offset, size.
+ * What the map of an image says of its functions. Row `F` (a function): its number, offset, size, .., what it is (8), .., its file (10), ... Row `A` (a function that shares the code
+ * of another): the same without the number. The row `S` behind a function has five columns for each instruction: the operation it was generated for, the number of that operation, where
+ * it was inlined from, offset, size.
  */
 function readMap(path: string): Omit<Measured, "runtimeOperations"> {
   let codeBytes = 0;
   const byOperation: Record<string, number> = {};
   let operations = 0;
+  const files: { path: string; offset: string }[] = [];
+  const offsetsOfCodeWithOperations = new Set<string>();
+  let offset = "";
   for (const line of readFileSync(path, "latin1").split("\n")) {
     const fields = line.split("\t");
-    if (fields[0] === "F") codeBytes += Number(fields[3]);
-    else if (fields[0] === "A") codeBytes += Number(fields[2]);
-    else if (fields[0] === "S") {
+    if (fields[0] === "F") {
+      codeBytes += Number(fields[3]);
+      offset = fields[2];
+      if (fields[8] === "module") files.push({ path: fields[10], offset });
+    } else if (fields[0] === "A") {
+      codeBytes += Number(fields[2]);
+      if (fields[7] === "module") files.push({ path: fields[9], offset: fields[1] });
+    } else if (fields[0] === "S") {
       const seen = new Set<string>();
       for (let at = 1; at + 4 < fields.length + 1; at += 5) {
         if (fields[at] === "-" || fields[at] === undefined) continue;
@@ -164,9 +184,11 @@ function readMap(path: string): Omit<Measured, "runtimeOperations"> {
         const name = fields[at].replace(/[./].*$/, "");
         byOperation[name] = (byOperation[name] ?? 0) + 1;
       }
+      if (seen.size) offsetsOfCodeWithOperations.add(offset);
     }
   }
-  return { codeBytes, operations, byOperation };
+  const filesThatRun = new Set(files.filter(file => offsetsOfCodeWithOperations.has(file.offset)).map(file => file.path)).size;
+  return { codeBytes, operations, filesThatRun, byOperation };
 }
 
 function runtimeOperationsIn(path: string) {
@@ -285,7 +307,7 @@ async function measureForm(
   return cases.map((_, index) => measured.get(index) ?? { failure: failures[index]! });
 }
 
-type Compared = { plain: string | undefined; furtherFiles: number } & Record<Form, Outcome>;
+type Compared = { plain: string | undefined } & Record<Form, Outcome>;
 
 async function measureGroup(cases: Case[]): Promise<Compared[]> {
   using dir = tempDir("aot-minifying-first", {});
@@ -318,7 +340,6 @@ async function measureGroup(cases: Case[]): Promise<Compared[]> {
   ]);
   return cases.map((_, index) => ({
     plain: running.includes(index) ? plain[running.indexOf(index)] : undefined,
-    furtherFiles: Object.keys(cases[index].files).filter(isCode).length - 1,
     ...(Object.fromEntries(forms.map((form, at) => [form, measured[at][index]])) as Record<Form, Outcome>),
   }));
 }
@@ -326,7 +347,7 @@ async function measureGroup(cases: Case[]): Promise<Compared[]> {
 const moved = (what: string, from: number, to: number) => `${what} ${from} -> ${to}`;
 
 /** What the bundler saves: nothing, if all is well. Each line says by which form, and from how much as written to how much. */
-export function savedByMinifyingFirst({ plain, furtherFiles, written, ...minified }: Compared) {
+export function savedByMinifyingFirst({ plain, written, ...minified }: Compared) {
   if ("failure" in written) return ["written: " + written.failure];
   const found: string[] = [];
   if (written.output !== plain)
@@ -340,7 +361,7 @@ export function savedByMinifyingFirst({ plain, furtherFiles, written, ...minifie
     if (other.output !== plain)
       found.push(`${form} prints ${JSON.stringify(other.output)}, bun run ${JSON.stringify(plain)}`);
     const lines: string[] = [];
-    const calls = form === "bundled" ? furtherFiles : 0;
+    const calls = form === "bundled" ? Math.max(0, written.filesThatRun - other.filesThatRun) : 0;
     if (written.codeBytes > other.codeBytes + mostCodeBytesForOtherNumbers + calls * callOfAFile.codeBytes)
       lines.push(moved("code bytes", written.codeBytes, other.codeBytes));
     if (written.operations > other.operations + calls * callOfAFile.operations)

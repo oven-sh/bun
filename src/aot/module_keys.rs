@@ -90,6 +90,23 @@ pub fn parses_text_as_data(loader: Loader) -> bool {
     )
 }
 
+/// True if `bun run` makes what the module exports when it loads the file. No code runs at the turn of such a module, and none of its names has a dead zone.
+pub fn makes_values_at_load(loader: Loader) -> bool {
+    matches!(
+        loader,
+        Loader::Json
+            | Loader::Jsonc
+            | Loader::Json5
+            | Loader::Toml
+            | Loader::Yaml
+            | Loader::Xml
+            | Loader::File
+            | Loader::Wasm
+            | Loader::Css
+            | Loader::Html
+    )
+}
+
 /// Where the module stands that an import of `path` with `{ type: type_attribute }` gets.
 #[derive(PartialEq, Eq, Debug)]
 pub struct PlacesOfForm {

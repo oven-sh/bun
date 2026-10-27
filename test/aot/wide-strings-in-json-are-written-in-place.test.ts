@@ -10,7 +10,11 @@ const rounds = 50;
 
 const files = {
   "tsconfig.json": JSON.stringify({
-    compilerOptions: { typeRoots: [join(import.meta.dir, "../../packages")], types: ["bun-types"] },
+    compilerOptions: {
+      moduleDetection: "force",
+      typeRoots: [join(import.meta.dir, "../../packages")],
+      types: ["bun-types"],
+    },
   }),
   "main.ts": `
     interface Comment { id: number; body: string; at: Date }

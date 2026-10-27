@@ -32,7 +32,6 @@ export const knownToday: Record<string, string> = {
     'each file: the build: 1 | import"./other.ts"; |     ^ | error: TS100150: Could not resolve: "./other.ts"; bundled: code bytes 2970 -> 233, operations 169 -> 19',
   "bundler_minify: minify/Infinity":
     "each file: code bytes 386 -> 321, operations 34 -> 31; bundled: code bytes 386 -> 321, operations 34 -> 31",
-  "bundler_minify: minify/NoBundleExportNameNotReusedAtTopLevel": "bundled: code bytes 378 -> 353, operations 24 -> 22",
   "bundler_minify: minify/NumericPropertyKeysPrintedAsComputed":
     "bundled: code bytes 614 -> 493, operations 36 -> 26, run-time operations 256 -> 249",
   "bundler_minify: minify/RequireBunAfterKeyword":
@@ -43,7 +42,6 @@ export const knownToday: Record<string, string> = {
     "each file: the build: it may load any file of the executable, so nothing beside it is compiled as it ; bundled: code bytes 176809 -> 176292, run-time operations 323 -> 319",
   "bundler_minify: minify/RequireMainToImportMetaMain":
     "each file: code bytes 315 -> 235, operations 27 -> 23; bundled: code bytes 315 -> 212, operations 27 -> 21",
-  "bundler_minify: minify/SameTargetDestructuringSkipsUnstableTarget": "bundled: operations 9600 -> 9562",
   "bundler_minify: minify/SingleUseSubstitutionIntoEachChild":
     "written: the build: it may load any file of the executable, so nothing beside it is compiled as it ",
   "bundler_minify: minify/StringAdditionFolding":
@@ -102,11 +100,16 @@ export const knownToday: Record<string, string> = {
   "enums: members are computed [ts]":
     "each file: code bytes 447 -> 375, run-time operations 251 -> 244; bundled: code bytes 447 -> 149, operations 24 -> 7, run-time operations 251 -> 238",
   "enums: the name of a member [ts, two files]": "bundled: code bytes 268 -> 240, operations 16 -> 14",
+  "esbuild/dce: dce/ConstValueInliningBundle #5":
+    "bundled: code bytes 169 -> 100, operations 9 -> 4; another program: the files throw for a read in the dead zone, the bundle prints 1 1",
   "esbuild/dce: dce/ConstValueInliningBundle #7": "each file: code bytes 153 -> 102, operations 8 -> 5",
+  "esbuild/dce: dce/ConstValueInliningBundle #8":
+    "bundled: operations 10 -> 7; another program: the files throw for a read in the dead zone, the bundle prints undefined",
   "esbuild/dce: dce/ConstValueInliningBundle #9": "each file: code bytes 153 -> 102, operations 8 -> 5",
   "esbuild/dce: dce/ConstValueInliningDirectEval #6": "each file: operations 9287 -> 9286",
+  "esbuild/dce: dce/ConstValueInliningNoBundle #11":
+    "bundled: code bytes 141 -> 118, operations 7 -> 6; another program: the files throw for a read in the dead zone, the bundle prints undefined",
   "esbuild/dce: dce/CrossModuleConstantFolding": "bundled: code bytes 1601 -> 1069, operations 66 -> 34",
-  "esbuild/dce: dce/CrossModuleConstantFolding #3": "bundled: code bytes 321 -> 120, operations 21 -> 5",
   "esbuild/dce: dce/DCEOfDestructuringOfUnwrappedRequire":
     "each file: the build: it may load any file of the executable, so nothing beside it is compiled as it ",
   "esbuild/dce: dce/DCETypeOfCompareStringGuardCondition": "bundled: code bytes 836 -> 640, operations 102 -> 70",
@@ -118,8 +121,7 @@ export const knownToday: Record<string, string> = {
   "esbuild/dce: dce/DestructuringOfImportNamespaceDirectEval": "bundled: code bytes 193669 -> 190533",
   "esbuild/dce: dce/DestructuringOfReboundUnwrappedRequire":
     "each file: the build: it may load any file of the executable, so nothing beside it is compiled as it ",
-  "esbuild/dce: dce/JSONLoaderRemoveUnused":
-    "bundled: code bytes 157 -> 105, operations 9 -> 5, run-time operations 241 -> 239",
+  "esbuild/dce: dce/NestedFunctionInliningWithSpread #2": "bundled: code bytes 4348 -> 4320 on arm64",
   "esbuild/dce: dce/PackageJsonSideEffectsArrayGlob":
     'bundled: "this should be kept\\n\\nexit 0", bun run "this should be kept\\nTEST FAILED\\n\\nexit 0"; bundled: code bytes 144 -> 105, operations 8 -> 5, run-time operations 240 -> 239',
   "esbuild/dce: dce/PackageJsonSideEffectsArrayKeepMainImplicitModule":
@@ -177,7 +179,6 @@ export const knownToday: Record<string, string> = {
     "written: the build: 1 | import keep_a from 'a' |     ^ | error: TS100151: Could not resolve: \"a\". M",
   "esbuild/dce: dce/TextLoaderRemoveUnused": "bundled: code bytes 130 -> 105, operations 7 -> 5",
   "esbuild/dce: dce/TreeShakingClassEnumKey": "bundled: operations 15 -> 13",
-  "esbuild/dce: dce/TreeShakingImportIdentifier": "bundled: code bytes 201 -> 129, operations 8 -> 5",
   "esbuild/dce: dce/TreeShakingInESMWrapper":
     "each file: the build: it may load any file of the executable, so nothing beside it is compiled as it ",
   "esbuild/dce: dce/TreeShakingUnaryOperators":
@@ -206,8 +207,6 @@ export const knownToday: Record<string, string> = {
     "written: the build: it may load any file of the executable, so nothing beside it is compiled as it ",
   "esbuild/default: default/DirectEvalTaintingNoBundle":
     "written: the build: it may load any file of the executable, so nothing beside it is compiled as it ",
-  "esbuild/default: default/DotImport":
-    "bundled: code bytes 197 -> 102, operations 10 -> 5, run-time operations 239 -> 238",
   "esbuild/default: default/DynamicImportWithExpressionCJS":
     "written: the build: it may load any file of the executable, so nothing beside it is compiled as it ",
   "esbuild/default: default/ExportFSNodeInCommonJSModule":
@@ -226,6 +225,7 @@ export const knownToday: Record<string, string> = {
     "written: \"error: SyntaxError: Export named 'y' not found in module '/$bunfs/root/c000/foo.js'.\\n   ; each file: \"error: SyntaxError: Export named 'y' not found in module '/$bunfs/root/c000/foo.js'.\\n   ; bundled: \"123 123 undefined\\n\\nexit 0\", bun run \"error: SyntaxError: Export named 'y' not found in ; bundled: code bytes 354 -> 110, operations 22 -> 5, run-time operations 241 -> 238",
   "esbuild/default: default/ImportMissingNeitherES6NorCommonJS":
     "written: the build: 1 | import fn, {x as a, y as b} from './foo' |            ^ | error: TS100200: ",
+  "esbuild/default: default/ImportMissingNeitherES6NorCommonJS #2": "bundled: operations 8 -> 6",
   "esbuild/default: default/ImportThenCatch":
     "written: the build: it may load any file of the executable, so nothing beside it is compiled as it ",
   "esbuild/default: default/ImportWithHashInPath": "bundled: code bytes 165 -> 115, operations 10 -> 6",
@@ -245,7 +245,6 @@ export const knownToday: Record<string, string> = {
     "written: the build: it may load any file of the executable, so nothing beside it is compiled as it ",
   "esbuild/default: default/RequireBadArgumentCount":
     "written: the build: it may load any file of the executable, so nothing beside it is compiled as it ",
-  "esbuild/default: default/RequireFSBrowser": "bundled: code bytes 1848858 -> 1847330",
   "esbuild/default: default/RequirePropertyAccessCommonJS":
     "written: the build: it may load any file of the executable, so nothing beside it is compiled as it ",
   "esbuild/default: default/RequireTxt":
@@ -274,18 +273,6 @@ export const knownToday: Record<string, string> = {
     "written: the build: 1 | return |     ^ | error: TS1108: A 'return' statement can only be used withi",
   "esbuild/default: default/WithStatementTaintingNoBundle":
     "bundled: the build: 6 |   with ({ outer: 100, local: 150, hoisted: 200, extra: 500 }) { |       ^ |",
-  "esbuild/extra: extra/ArbitraryModuleNamespaceIdentifiers1":
-    "bundled: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 234",
-  "esbuild/extra: extra/ArbitraryModuleNamespaceIdentifiers2":
-    "bundled: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 234",
-  "esbuild/extra: extra/ArbitraryModuleNamespaceIdentifiers3":
-    "bundled: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 234",
-  "esbuild/extra: extra/ArbitraryModuleNamespaceIdentifiers4":
-    "bundled: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 234",
-  "esbuild/extra: extra/ArbitraryModuleNamespaceIdentifiers5":
-    "bundled: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 234",
-  "esbuild/extra: extra/ArbitraryModuleNamespaceIdentifiers6":
-    "bundled: code bytes 94 -> 12, operations 5 -> 0, run-time operations 236 -> 234",
   "esbuild/extra: extra/BracketAccess1":
     "each file: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 234; bundled: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 234",
   "esbuild/extra: extra/BracketAccess2":
@@ -312,8 +299,6 @@ export const knownToday: Record<string, string> = {
     "each file: the build: it may load any file of the executable, so nothing beside it is compiled as it ",
   "esbuild/extra: extra/CJSSelfExport8":
     "each file: the build: it may load any file of the executable, so nothing beside it is compiled as it ",
-  "esbuild/extra: extra/CaseSensitiveImport": "bundled: code bytes 67 -> 12, run-time operations 236 -> 234",
-  "esbuild/extra: extra/CaseSensitiveImport4": "bundled: code bytes 67 -> 12, run-time operations 236 -> 234",
   "esbuild/extra: extra/CommonJSSymbol1":
     "written: the build: it may load any file of the executable, so nothing beside it is compiled as it ",
   "esbuild/extra: extra/CommonJSSymbol4": "each file: code bytes 258 -> 210, operations 16 -> 10",
@@ -351,10 +336,9 @@ export const knownToday: Record<string, string> = {
     "each file: the build: it may load any file of the executable, so nothing beside it is compiled as it ",
   "esbuild/extra: extra/DoubleExportStar3":
     "each file: the build: it may load any file of the executable, so nothing beside it is compiled as it ",
+  "esbuild/extra: extra/ESBuildIssue758": "bundled: operations 10 -> 7",
   "esbuild/extra: extra/FunctionHoisting1":
     'bundled: "\\nexit 0", bun run "error: fail\\n\\nexit 1"; bundled: run-time operations 238 -> 237',
-  "esbuild/extra: extra/FunctionHoisting11":
-    "bundled: code bytes 153 -> 12, operations 7 -> 0, run-time operations 237 -> 234",
   "esbuild/extra: extra/FunctionHoisting13":
     'written: "error: ReferenceError: f is not defined\\n      at /$bunfs/root/c000/in.js:2:5\\n\\n\\nexit 1; each file: "error: ReferenceError: f is not defined\\n      at /$bunfs/root/c000/in.js:6:5\\n\\n\\nexit 1; bundled: "\\nexit 0", bun run "error: 1 | x: function f() { return 1 }\\n2 | if (f() !== 1) throw \'fa; bundled: code bytes 126 -> 65, operations 8 -> 2, run-time operations 240 -> 236',
   "esbuild/extra: extra/FunctionHoisting14":
@@ -403,8 +387,6 @@ export const knownToday: Record<string, string> = {
     "each file: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 234; bundled: code bytes 66 -> 12, operations 2 -> 0, run-time operations 236 -> 234",
   "esbuild/extra: extra/NoMinifyCatchScope4": "bundled: operations 15 -> 14",
   "esbuild/extra: extra/NoMinifyCatchScope5": "bundled: operations 105 -> 104",
-  "esbuild/extra: extra/ObjectRestPattern1":
-    "each file: code bytes 2720 -> 2658, operations 116 -> 115; bundled: code bytes 2720 -> 2658, operations 116 -> 115",
   "esbuild/extra: extra/ObjectRestPattern2": "each file: run-time operations 242 -> 241",
   "esbuild/extra: extra/PathWithQuestionMark":
     'written: the build: 1 | import foo from "./file.js?ignore-me"; |     ^ | error: TS100159: bun compile does not support a query string in an imp',
@@ -417,7 +399,6 @@ export const knownToday: Record<string, string> = {
     'written: "error: fail\\n\\nexit 1", bun run "\\nexit 0"; each file: run-time operations 241 -> 239',
   "esbuild/extra: extra/ToplevelSymbolHoisting":
     "each file: code bytes 902 -> 313, operations 33 -> 18; bundled: code bytes 902 -> 313, operations 33 -> 18",
-  "esbuild/extra: extra/TreeShaking1": "bundled: operations 10 -> 8",
   "esbuild/extra: extra/TreeShaking2":
     'bundled: "\\nexit 0", bun run "error: fail\\n\\nexit 1"; bundled: code bytes 145 -> 12, operations 8 -> 0, run-time operations 240 -> 234',
   "esbuild/extra: extra/TreeShaking4":
@@ -445,7 +426,6 @@ export const knownToday: Record<string, string> = {
   "esbuild/importstar: importstar/ExportOtherNestedCommonJS": "bundled: code bytes 249 -> 12, operations 14 -> 0",
   "esbuild/importstar: importstar/ExportSelfAndRequireSelfCommonJS":
     "each file: the build: it may load any file of the executable, so nothing beside it is compiled as it ",
-  "esbuild/importstar: importstar/ImportExportStarAmbiguous": "bundled: operations 9 -> 5",
   "esbuild/importstar: importstar/ImportNamespaceUndefinedPropertyEmptyFile": "bundled: code bytes 222 -> 107",
   "esbuild/importstar: importstar/ImportNamespaceUndefinedPropertyEmptyFile #2":
     "bundled: code bytes 303 -> 128, operations 16 -> 6",
@@ -455,11 +435,8 @@ export const knownToday: Record<string, string> = {
     "each file: the build: it may load any file of the executable, so nothing beside it is compiled as it ; bundled: operations 7 -> 5",
   "esbuild/importstar: importstar/ImportStarCommonJSCapture":
     'bundled: "{\\"foo\\":123} 123 234\\n\\nexit 0", bun run "{\\"default\\":{\\"foo\\":123},\\"foo\\":123} 123 23',
-  "esbuild/importstar: importstar/ImportStarCommonJSNoCapture":
-    "bundled: code bytes 204 -> 109, operations 11 -> 6, run-time operations 239 -> 238",
   "esbuild/importstar: importstar/ImportStarNoBundleUnused":
     "written: the build: 1 | import * as ns from './foo' |     ^ | error: TS100150: Could not resolve: \"",
-  "esbuild/importstar: importstar/ImportStarNoCapture": "bundled: operations 8 -> 6",
   "esbuild/importstar: importstar/MemberOfExportDefaultImportChain":
     "bundled: code bytes 206 -> 118, operations 13 -> 6, run-time operations 240 -> 239",
   "esbuild/importstar: importstar/MemberOfExportDefaultImportCycleTDZ":
@@ -475,10 +452,9 @@ export const knownToday: Record<string, string> = {
     "bundled: code bytes 200 -> 97, operations 8 -> 4, run-time operations 239 -> 238",
   "esbuild/importstar: importstar/NamespaceOwnKeysSorted":
     'written: "$dollar,Alpha,_under,beta,default,zed\\nerror: TypeError: Cannot convert a symbol to a str; each file: "$dollar,Alpha,_under,beta,default,zed\\nerror: TypeError: Cannot convert a symbol to a str; bundled: "$dollar,Alpha,_under,beta,default,zed\\n$dollar,Alpha,_under,beta,default,zed\\n$dollar,Alp',
+  "esbuild/importstar: importstar/ReExportStarNameCollisionNotAmbiguousExport": "bundled: code bytes 30 -> 12",
   "esbuild/importstar_ts: importstar_ts/CommonJSCapture":
     'bundled: "{\\"foo\\":123} 123 234\\n\\nexit 0", bun run "{\\"default\\":{\\"foo\\":123},\\"foo\\":123} 123 23',
-  "esbuild/importstar_ts: importstar_ts/CommonJSNoCapture":
-    "bundled: code bytes 204 -> 109, operations 11 -> 6, run-time operations 239 -> 238",
   "esbuild/importstar_ts: importstar_ts/MangleNoBundleCapture":
     "written: the build: 2 | import * as ns from './foo' |     ^ | error: TS100150: Could not resolve: \"",
   "esbuild/importstar_ts: importstar_ts/MangleNoBundleNoCapture":
@@ -491,21 +467,16 @@ export const knownToday: Record<string, string> = {
     'each file: the build: 1 | import { Foo } from "./type"; |              ^ | error: TS100200: No matching export in "c000/type.js" for imp; |              ^; bundled: operations 16 -> 9',
   "esbuild/importstar_ts: importstar_ts/TSAndCommonJS":
     "each file: the build: it may load any file of the executable, so nothing beside it is compiled as it ; bundled: operations 7 -> 5",
-  "esbuild/ts: ts/ConstEnumComments":
-    "bundled: code bytes 346 -> 166, operations 19 -> 8, run-time operations 249 -> 243",
-  "esbuild/ts: ts/EnumCrossModuleInliningAccess": "bundled: operations 28 -> 20",
   "esbuild/ts: ts/EnumCrossModuleInliningDefinitions": "bundled: code bytes 194085 -> 193979, operations 9315 -> 9310",
-  "esbuild/ts: ts/EnumCrossModuleInliningReExport": "bundled: code bytes 944 -> 898",
   "esbuild/ts: ts/EnumCrossModuleTreeShaking": "bundled: code bytes 1592 -> 1396, operations 83 -> 68",
   "esbuild/ts: ts/EnumDefine":
     'written: "error: ReferenceError: b is not defined\\n      at /$bunfs/root/c000/entry.ts:2:23\\n\\n\\nex; each file: "error: ReferenceError: b is not defined\\n      at <anonymous> (/$bunfs/root/c000/entry.js; bundled: "error: ReferenceError: b is not defined\\n      at <anonymous> (/$bunfs/root/c000/entry.js',
-  "esbuild/ts: ts/EnumExportClause": "bundled: code bytes 1215 -> 925, operations 58 -> 39",
   "esbuild/ts: ts/EnumRulesFrom_TypeScript_5_0":
     "each file: code bytes 1836 -> 1274, operations 80 -> 79; bundled: code bytes 1836 -> 126, operations 80 -> 6",
   "esbuild/ts: ts/EnumRulesFrom_TypeScript_5_0 #2":
     "written: the build: it may load any file of the executable, so nothing beside it is compiled as it ",
-  "esbuild/ts: ts/EnumSameModuleInliningAccess": "bundled: run-time operations 250 -> 246",
   "esbuild/ts: ts/EnumTreeShaking #3": "bundled: code bytes 193 -> 106",
+  "esbuild/ts: ts/ExportDefaultTypeESBuildIssue316": "bundled: code bytes 300 -> 205, operations 20 -> 13",
   "esbuild/ts: ts/ExportEquals":
     'each file: the build: 1 | import b from "./b.ts"; |     ^ | error: TS100150: Could not resolve: "./b.ts"',
   "esbuild/ts: ts/ExportMissingES6":
@@ -522,11 +493,7 @@ export const knownToday: Record<string, string> = {
     "each file: code bytes 16993 -> 3093, operations 984 -> 178; bundled: code bytes 16993 -> 2857, operations 984 -> 131",
   "files are linked: a constant read before its file has run [js]": "bundled: code bytes 162 -> 129, operations 9 -> 5",
   "files are linked: a constant read before its file has run [ts]": "bundled: code bytes 162 -> 129, operations 9 -> 5",
-  "files are linked: a namespace exported again [js]": "bundled: operations 8 -> 5",
-  "files are linked: a namespace exported again [ts]": "bundled: operations 8 -> 5",
   "files are linked: a namespace of another file [ts]": "bundled: operations 15 -> 11",
-  "files are linked: a namespace read by constant names [js]": "bundled: operations 8 -> 5",
-  "files are linked: a namespace read by constant names [ts]": "bundled: operations 8 -> 5",
   "files are linked: a namespace read for a name that is not there [js]":
     "bundled: operations 7 -> 5, run-time operations 239 -> 238",
   "namespaces: a constant of a namespace [ts, two files]":
@@ -536,10 +503,6 @@ export const knownToday: Record<string, string> = {
   "namespaces: a namespace in a namespace [ts, two files]": "bundled: operations 17 -> 15",
   "namespaces: a namespace nobody reads [ts, two files]":
     "bundled: code bytes 199 -> 103, operations 10 -> 5, run-time operations 239 -> 238",
-  "namespaces: a namespace of types alone [ts, two files]":
-    "each file: code bytes 190 -> 128, operations 9 -> 6, run-time operations 241 -> 240; bundled: code bytes 190 -> 128, operations 9 -> 6, run-time operations 241 -> 240",
-  "namespaces: a namespace of types alone [ts]":
-    "each file: code bytes 190 -> 128, operations 9 -> 6, run-time operations 241 -> 240; bundled: code bytes 190 -> 128, operations 9 -> 6, run-time operations 241 -> 240",
   "namespaces: an alias of a member [ts, two files]":
     "bundled: code bytes 224 -> 102, operations 11 -> 5, run-time operations 239 -> 238",
   "process.env, NODE_ENV and what the build knows of the target: process.env.NODE_ENV in brackets [js]":
@@ -572,6 +535,4 @@ export const knownToday: Record<string, string> = {
     "each file: code bytes 219 -> 147, operations 15 -> 7; bundled: code bytes 219 -> 147, operations 15 -> 7",
   "what only the checker reads: declared fields [ts]":
     "each file: code bytes 490 -> 468, operations 13 -> 9; bundled: code bytes 490 -> 468, operations 13 -> 9",
-  "what only the checker reads: parameter properties [ts]":
-    "each file: code bytes 492 -> 207, operations 19 -> 7, run-time operations 241 -> 240; bundled: code bytes 492 -> 207, operations 19 -> 7, run-time operations 241 -> 240",
 };

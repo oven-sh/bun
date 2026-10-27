@@ -1137,6 +1137,94 @@ fn name_out_of_what_may_change_is_not_followed() {
     }
 }
 
+const NAMES_THAT_A_RESOLVER_ANSWERED_FOR: &[(&str, ResolvedForm, &[&str])] = &[
+    (
+        "require(require.resolve('./a'));",
+        ResolvedForm::Path,
+        &["./a"],
+    ),
+    (
+        "const found = require.resolve(c ? './a' : './b'); require(found);",
+        ResolvedForm::Path,
+        &["./a", "./b"],
+    ),
+    (
+        "let found; try { found = require.resolve('a/b'); } catch { found = null; } if (found) require(found);",
+        ResolvedForm::Path,
+        &["a/b"],
+    ),
+    (
+        "require(require.resolve(`./a/${x}.js`));",
+        ResolvedForm::Path,
+        &["./a/*.js"],
+    ),
+    (
+        "require(require.resolve(require('path').join(__dirname, 'a.js')));",
+        ResolvedForm::Path,
+        &["./a.js"],
+    ),
+    (
+        "const load = file => require(file); load(require.resolve('./a')); load(require.resolve('fs'));",
+        ResolvedForm::Path,
+        &["./a", "fs"],
+    ),
+    (
+        "require(require.resolve(require.resolve('./a')));",
+        ResolvedForm::Path,
+        &["./a"],
+    ),
+    (
+        "import(require.resolve('./a'));",
+        ResolvedForm::Path,
+        &["./a"],
+    ),
+    (
+        "export {}; await import(import.meta.resolve(c ? './a' : './b'));",
+        ResolvedForm::Url,
+        &["./a", "./b"],
+    ),
+];
+
+const ANSWERS_OF_RESOLVERS_THAT_ARE_NOT_FOLLOWED: &[&str] = &[
+    "require(require.resolve('./a') + '.map');",
+    "require(require.resolve('./a').replace('a', 'b'));",
+    "require(c ? require.resolve('./a') : './b');",
+    "require(require.resolve('./a', { paths: [x] }));",
+    "require(require.resolve(x));",
+    "export {}; await import(c ? import.meta.resolve('./a') : require.resolve('./b'));",
+];
+
+fn find_site_given_answer_of_resolver<'a>(
+    s: &'a Analyzed<'_>,
+) -> Option<(&'a ImportSite, ResolvedForm)> {
+    let mut sites = s.analysis.import_sites.iter();
+    sites.find_map(|site| {
+        let form = s.analysis.find_resolved_form(site.specifier_node)?;
+        Some((site, form))
+    })
+}
+
+#[test]
+fn name_is_what_a_resolver_was_asked_for() {
+    for &(text, form, names) in NAMES_THAT_A_RESOLVER_ANSWERED_FOR {
+        with_last_site(text, |s, _| {
+            let found = find_site_given_answer_of_resolver(s);
+            let (site, found_form) = found.unwrap_or_else(|| panic!("{text}: not followed"));
+            assert_eq!(found_form, form, "{text}");
+            assert_eq!(describe_alternatives(s, site), names, "{text}");
+        });
+    }
+}
+
+#[test]
+fn answer_of_a_resolver_that_is_changed_or_mixed_is_not_followed() {
+    for &text in ANSWERS_OF_RESOLVERS_THAT_ARE_NOT_FOLLOWED {
+        with_last_site(text, |s, _| {
+            assert!(find_site_given_answer_of_resolver(s).is_none(), "{text}");
+        });
+    }
+}
+
 #[test]
 fn name_that_a_loop_takes_out_of_an_object_is_known_by_its_start_and_end() {
     let text = "for (const name in table) require(`./lib/${name}.js`);";

@@ -82,6 +82,9 @@ const modules = [
   ["left-of-nullish", () => import("./left-of-nullish.js")],
   ["compared", () => import("./compared.js")],
   ["argument-of-annotated-call", () => import("./argument-of-annotated-call.js")],
+  ["callee-of-annotated-call", () => import("./callee-of-annotated-call.js")],
+  ["receiver-of-annotated-call", () => import("./receiver-of-annotated-call.js")],
+  ["annotated-new-of-later-subclass", () => import("./annotated-new-of-later-subclass.js")],
   ["closure-called-in-initializer", () => import("./closure-called-in-initializer.js")],
   ["array-pattern-default", () => import("./array-pattern-default.js")],
   ["object-pattern-default", () => import("./object-pattern-default.js")],
@@ -198,6 +201,15 @@ const v = 1;
 function f() {}
 const w = /* @__PURE__ */ f(v);
 const v = 1;
+//// unused-top-level-declarations-read-uninitialized-bindings/callee-of-annotated-call.js
+const w = /* @__PURE__ */ f();
+const f = () => 1;
+//// unused-top-level-declarations-read-uninitialized-bindings/receiver-of-annotated-call.js
+const w = /* @__PURE__ */ v.a();
+const v = { a() {} };
+//// unused-top-level-declarations-read-uninitialized-bindings/annotated-new-of-later-subclass.js
+const w = /* @__PURE__ */ new C();
+class C extends Object {}
 //// unused-top-level-declarations-read-uninitialized-bindings/closure-called-in-initializer.js
 const v = (() => v)();
 //// unused-top-level-declarations-read-uninitialized-bindings/array-pattern-default.js

@@ -176,8 +176,8 @@ pub struct BuildFailed {
     pub is_one_program: bool,
     /// No failure yet: see `compile`.
     pub brought_bun_types: bool,
-    /// `Diagnostics::has_only_early_errors`
-    pub has_only_early_errors: bool,
+    /// `Diagnostics::has_early_errors`
+    pub has_early_errors: bool,
 }
 
 impl fmt::Debug for BuildFailed {
@@ -644,7 +644,7 @@ fn compile_with_options(
 /// The file, or one that it imports, is no program or is not found. What else is wrong with the code that a Worker starts from stops the build, as it does in any entry point.
 fn fails_to_load(failure: &BuildFailed) -> bool {
     let is_found = !matches!(failure.stage, Stage::Load | Stage::BindModules);
-    !failure.is_internal_error && (!is_found || failure.has_only_early_errors)
+    !failure.is_internal_error && (!is_found || failure.has_early_errors)
 }
 
 /// The texts and the files named by paths that Workers start from and that are no programs. `bun run` says what is wrong with one where the Worker starts, so the build goes on without it.
@@ -1260,7 +1260,7 @@ fn compile_programs<'a>(
             refused_entry_points,
             is_one_program: false,
             brought_bun_types,
-            has_only_early_errors: false,
+            has_early_errors: false,
         }),
     }
 }
@@ -1273,12 +1273,12 @@ fn fail(
     log: &mut Log,
 ) -> BuildFailed {
     let is_internal_error = diagnostics.has_internal_errors();
-    let has_only_early_errors = diagnostics.has_only_early_errors();
+    let has_early_errors = diagnostics.has_early_errors();
     diagnostics.write_to(log);
     BuildFailed {
         stage,
         is_internal_error,
-        has_only_early_errors,
+        has_early_errors,
         statistics,
         compilation: None,
         refused_entry_points,

@@ -10,6 +10,7 @@ use bun_sema::check::aot::{BuiltinTypeSymbols, FunctionRef, NamedValues, Queries
 use bun_sema::erasure::{TypeRanges, find_type_ranges};
 use bun_sema::fold::Decisions;
 use bun_sema::hir::{self, ExprId, ExprKind, NodeData};
+use bun_sema::import_sites::ResolvedForm;
 use bun_sema::program::{CompiledModule, FileId, FileRole};
 use rustc_hash::FxHashMap;
 
@@ -389,6 +390,10 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
 
     pub(crate) fn is_path_from_own_directory(&self, argument: ExprId) -> bool {
         self.compiled.analysis.is_path_from_own_directory(argument)
+    }
+
+    pub(crate) fn find_resolved_form(&self, argument: ExprId) -> Option<ResolvedForm> {
+        self.compiled.analysis.find_resolved_form(argument)
     }
 
     pub(crate) fn decisions(&self) -> &'p Decisions<'s> {

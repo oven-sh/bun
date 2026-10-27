@@ -3971,6 +3971,9 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     if (referrer && referrer.isString()) {
         referrerString = referrer.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
+        // Compiled code asks with the name of its module. A text that a Worker starts from and that is interpreted asks with the path that import.meta has there.
+        if (Bun::hasCompiledModules() && (referrerString.startsWith("data:"_s) || referrerString.startsWith("blob:"_s))) [[unlikely]]
+            referrerString = makeString('/', referrerString);
     }
 
     if (globalObject->onLoadPlugins.hasVirtualModules()) {
@@ -4140,7 +4143,9 @@ JSC::JSPromise* GlobalObject::moduleLoaderFetch(JSGlobalObject* globalObject,
     }
 
     if (Bun::hasCompiledModules() && !Bun::moduleGraphOfLoader(globalObject, loader)) [[unlikely]] {
-        JSC::JSPromise* compiled = Bun::compiledModuleSource(static_cast<Zig::GlobalObject*>(globalObject), moduleKey, !!parameters);
+        // The loader keeps parameters of the type alone for an import() without attributes, and fetches with them where a require() takes over a load in flight.
+        bool hasImportAttributes = parameters && (parameters->type() != ScriptFetchParameters::Type::JavaScript || !parameters->attributes().isEmpty());
+        JSC::JSPromise* compiled = Bun::compiledModuleSource(static_cast<Zig::GlobalObject*>(globalObject), moduleKey, hasImportAttributes);
         if (scope.exception()) [[unlikely]] {
             JSPromise* rejected = JSPromise::create(vm, globalObject->promiseStructure());
             rejected->markAsHandled();

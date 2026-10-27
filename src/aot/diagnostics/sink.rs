@@ -57,8 +57,8 @@ impl Diagnostics {
         !self.internal_errors.is_empty()
     }
 
-    pub(crate) fn has_only_early_errors(&self) -> bool {
-        !self.has_internal_errors() && self.error_count == self.early_error_count
+    pub(crate) fn has_early_errors(&self) -> bool {
+        !self.has_internal_errors() && self.early_error_count > 0
     }
 
     pub(crate) fn paths_of_errors(&self) -> Option<Vec<&[u8]>> {
@@ -191,8 +191,32 @@ impl Diagnostics {
             .retain(|entry| entry.key.4 != named.number() || !texts.contains(&entry.key.5));
     }
 
+    /// Beside another error, what the transpiler says of the file and what the engine says of a pattern on the line name one mistake twice.
+    fn drop_what_another_error_says(&mut self) {
+        let (of_file, of_line) = (Code::RefusedByTranspiler, Code::InvalidRegExp);
+        let is_asked = |entry: &Entry| [of_file.number(), of_line.number()].contains(&entry.key.4);
+        if !self.entries.iter().any(is_asked) {
+            return;
+        }
+        let others = (self.entries.iter())
+            .filter(|entry| entry.message.kind == Kind::Err && !is_asked(entry));
+        let lines: FxHashSet<(Vec<u8>, i64)> = others
+            .map(|entry| (entry.key.1.clone(), entry.key.2))
+            .collect();
+        let files: FxHashSet<&[u8]> = lines.iter().map(|(file, _)| file.as_slice()).collect();
+        self.entries.retain(|entry| {
+            let (_, file, line, _, code, _) = &entry.key;
+            match *code {
+                code if code == of_file.number() => !files.contains(file.as_slice()),
+                code if code == of_line.number() => !lines.contains(&(file.clone(), *line)),
+                _ => true,
+            }
+        });
+    }
+
     pub(crate) fn write_to(mut self, log: &mut Log) {
         self.drop_files_whose_nesting_is_shown();
+        self.drop_what_another_error_says();
         self.entries.shared_sort_by(|a, b| a.key.cmp(&b.key));
         self.entries
             .dedup_by(|next, previous| next.key == previous.key);

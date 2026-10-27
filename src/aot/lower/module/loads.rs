@@ -7,9 +7,10 @@ use bun_sema::hir::{
     self, Branches, CallId, Chain, ExprFlags, ExprId, ExprKind, IdList, ImportEqualsId, MemberKey,
 };
 use bun_sema::import_sites::{
-    ImportSite, ImportSiteKind, ImportSpecifier, OwnRequire, RequireCallForm, find_own_require,
-    find_require_call, holds_import_meta_require, is_create_require_behind_get_builtin_module,
-    is_made_require, is_require_made_for_own_file, may_require_get_members, may_still_be_undefined,
+    ImportSite, ImportSiteKind, ImportSpecifier, OwnRequire, RequireCallForm, ResolvedForm,
+    find_own_require, find_require_call, holds_import_meta_require,
+    is_create_require_behind_get_builtin_module, is_made_require, is_require_made_for_own_file,
+    may_require_get_members, may_still_be_undefined,
 };
 use bun_sema::program::FileId;
 use smallvec::smallvec;
@@ -42,6 +43,12 @@ enum ComputedLoad {
     Require,
     Import,
     Resolve,
+}
+
+#[derive(Copy, Clone)]
+struct AnswersOfResolver<'a> {
+    form: ResolvedForm,
+    spelled_modules: &'a [SpelledModule],
 }
 
 #[derive(Copy, Clone)]
@@ -856,6 +863,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             Candidates::All => &[][..],
             Candidates::Modules(spelled_modules) => spelled_modules,
         };
+        if let Some(form) = self.file.find_resolved_form(node) {
+            let candidates = AnswersOfResolver {
+                form,
+                spelled_modules,
+            };
+            return self.emit_load_by_answer_of_resolver(load, referrer, specifier, candidates);
+        }
         let modules_of_every_value = self.file.find_modules_of_every_value(node, spelled_modules);
         let spelled_modules = modules_of_every_value.as_deref().unwrap_or(spelled_modules);
         if spelled_modules.is_empty() {
@@ -878,15 +892,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.builder
             .switch_string(spelled, &strings, &edges, Edge::to(otherwise));
 
-        for ((spelled, &spelling), &arm) in spelled_modules.iter().zip(&strings).zip(&arms) {
+        for (spelled, &arm) in spelled_modules.iter().zip(&arms) {
             self.continue_in(arm);
-            let loaded = match load {
-                ComputedLoad::Require => self.emit_require_of_candidate(spelled.module, spelling),
-                ComputedLoad::Import => self.emit_import_through_face(spelled.module, None),
-                ComputedLoad::Resolve => {
-                    self.emit_resolve_of_name(spelled.spelling, spelled.module, false)
-                }
-            };
+            let loaded = self.emit_load_of_candidate(load, spelled);
             self.builder.write_variable(result, loaded);
             self.jump(done);
         }
@@ -899,6 +907,54 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             self.builder.write_variable(result, loaded);
             self.jump(done);
         }
+
+        self.continue_in(done);
+        self.builder.read_variable(result)
+    }
+
+    fn emit_load_of_candidate(&mut self, load: ComputedLoad, spelled: &SpelledModule) -> ValueId {
+        match load {
+            ComputedLoad::Require => {
+                let spelling = self.file.intern_atom(spelled.spelling);
+                self.emit_require_of_candidate(spelled.module, spelling)
+            }
+            ComputedLoad::Import => self.emit_import_through_face(spelled.module, None),
+            ComputedLoad::Resolve => {
+                self.emit_resolve_of_name(spelled.spelling, spelled.module, false)
+            }
+        }
+    }
+
+    // The text is held against what the resolver answers for each candidate.
+    fn emit_load_by_answer_of_resolver(
+        &mut self,
+        load: ComputedLoad,
+        referrer: ModuleId,
+        answer: ValueId,
+        candidates: AnswersOfResolver<'_>,
+    ) -> ValueId {
+        let is_url = candidates.form == ResolvedForm::Url;
+        let result = self.builder.create_variable(None);
+        let done = self.create_block();
+        for spelled in candidates.spelled_modules {
+            let answer_for_candidate =
+                self.emit_resolve_of_name(spelled.spelling, spelled.module, is_url);
+            let is_candidate = self.builder.strict_eq(answer, answer_for_candidate);
+            let candidate = self.create_block();
+            let other = self.create_block();
+            self.builder
+                .branch(is_candidate, Edge::to(candidate), Edge::to(other));
+
+            self.continue_in(candidate);
+            let loaded = self.emit_load_of_candidate(load, spelled);
+            self.builder.write_variable(result, loaded);
+            self.jump(done);
+
+            self.continue_in(other);
+        }
+        let loaded = self.emit_load_by_name(load, referrer, answer);
+        self.builder.write_variable(result, loaded);
+        self.jump(done);
 
         self.continue_in(done);
         self.builder.read_variable(result)

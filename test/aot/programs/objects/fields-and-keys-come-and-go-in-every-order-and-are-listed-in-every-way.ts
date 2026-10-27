@@ -106,6 +106,12 @@ function run(theSeed: number, steps: number): string {
       else if (choice < 84) { const form = random(40); note("integrity " + form); if (form === 0) Object.preventExtensions(o); else if (form === 1) Object.seal(o); else if (form === 2) Object.freeze(o); }
       else if (choice < 86) { note("absent"); delete o["absent" + step]; }
       else if (choice < 88) { if (alive.length) { const name = "k" + alive[random(alive.length)]; note("store " + name); o[name] = step; } }
+      else if (choice < 90) {
+        const source: any = {};
+        for (let i = random(4); i >= 0; i--) { if (random(2)) { source["k" + next] = next; alive.push(next++); } else source[fields.length ? fields[random(fields.length)] : "none"] = step + i; }
+        note("assign " + Object.keys(source).join());
+        if (random(2)) Object.assign(o, source); else Object.defineProperties(o, Object.getOwnPropertyDescriptors(source));
+      }
       else lines.push(step + " " + listings(o, 1 << random(10) | 1 << random(10)));
     } catch (e) { lines.push(step + " threw " + (e as Error).constructor.name); }
     if (verbose && log.length) { lines.push("  " + log.join(" . ")); log.length = 0; }

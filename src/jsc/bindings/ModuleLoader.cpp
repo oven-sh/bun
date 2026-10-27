@@ -541,7 +541,7 @@ extern "C" void Bun__onFulfillAsyncModule(
     } else {
         auto provider = Zig::SourceProvider::create(globalObject, res->result.value);
         if (Bun::IsolatedModuleCache::canUse(vm, globalObject->bunVM())) {
-            Bun::IsolatedModuleCache::insert(vm, specifier->toWTFString(BunString::ZeroCopy), provider.get());
+            Bun::IsolatedModuleCache::insertIfAbsent(vm, specifier->toWTFString(BunString::ZeroCopy), provider.get());
         }
         promise->resolve(globalObject, vm, JSC::JSSourceCode::create(vm, JSC::SourceCode(WTF::move(provider))));
         scope.assertNoExceptionExceptTermination();
@@ -941,7 +941,7 @@ JSValue fetchCommonJSModuleNonBuiltin(
 
     auto&& provider = Zig::SourceProvider::create(globalObject, res->result.value);
     if (Bun::IsolatedModuleCache::canUse(vm, bunVM, typeAttribute))
-        Bun::IsolatedModuleCache::insert(vm, specifierWtfString, provider.get());
+        Bun::IsolatedModuleCache::insertIfAbsent(vm, specifierWtfString, provider.get());
     // provideFetch() now drives the C++ loader pipeline (parse -> module record)
     // via internal microtasks. We're about to hand this entry to require(esm)'s
     // synchronous load path, so run those reactions through the loader's

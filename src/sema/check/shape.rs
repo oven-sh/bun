@@ -6485,6 +6485,15 @@ impl<'p, 's> Checker<'p, 's> {
             .any(|&(f, m)| matches!(self.hir(f)[m].kind, MemberKind::Getter | MemberKind::Setter))
     }
 
+    /// `widenTypeForVariableLikeDeclaration`, for what `getFlowTypeInConstructor` or `getFlowTypeInStaticBlocks` returns.
+    fn widen_flow_type_of_property(&mut self, ty: TypeId) -> TypeId {
+        let ty = match self.data(ty) {
+            TypeData::UniqueSymbol { .. } => TypeId::SYMBOL,
+            _ => ty,
+        };
+        self.get_widened_type(ty)
+    }
+
     pub(super) fn type_of_members_uncached(&mut self, members: &[(FileId, MemberId)]) -> TypeId {
         let (file, first) = members[0];
         let hir = self.hir(file);
@@ -6631,7 +6640,7 @@ impl<'p, 's> Checker<'p, 's> {
                                 initial,
                                 value_declaration,
                             ) {
-                                return ty;
+                                return self.widen_flow_type_of_property(ty);
                             }
                         }
                     } else {
@@ -6648,7 +6657,7 @@ impl<'p, 's> Checker<'p, 's> {
                                 initial,
                                 value_declaration,
                             ) {
-                                return ty;
+                                return self.widen_flow_type_of_property(ty);
                             }
                         }
                     }

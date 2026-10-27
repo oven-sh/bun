@@ -380,6 +380,12 @@ impl<'a> Build<'a> {
             self.started_workers.copies = find_embedded_code_files(files, &options.load.loaders);
         }
         if !options.aot.checks_only && mentions_worker_constructor(files) {
+            let code_from_root = CodeOptions {
+                working_directory: bun_sema_driver::host::from_native(
+                    &options.paths.root_directory,
+                ),
+                ..request.code.clone()
+            };
             let search = WorkerSearch {
                 limits: &self.limits,
                 loaders: &options.load.loaders,
@@ -387,6 +393,7 @@ impl<'a> Build<'a> {
                 runs_in_place: options.aot.runs_in_place,
                 provider: self.provider,
                 resolve_entry_point: &|written| resolve_entry_point(host, request.code, written),
+                resolve_bare_name: &|name| resolve_entry_point(host, &code_from_root, name),
             };
             (self.started_workers.files, self.started_workers.code) =
                 find_code_that_starts_workers(files, &search);

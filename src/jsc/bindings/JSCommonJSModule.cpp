@@ -1580,7 +1580,7 @@ void JSCommonJSModule::evaluate(
     auto sourceProvider = Zig::SourceProvider::create(globalObject, source, JSC::SourceProviderSourceType::Program, isBuiltIn);
     this->ignoreESModuleAnnotation = source.tag == ResolvedSourceTagPackageJSONTypeModule;
     if (!isBuiltIn && !globalObject->hasOverriddenModuleWrapper && Bun::IsolatedModuleCache::canUse(vm, globalObject->bunVM())) {
-        Bun::IsolatedModuleCache::insert(vm, key, sourceProvider.get());
+        Bun::IsolatedModuleCache::insertIfAbsent(vm, key, sourceProvider.get());
     }
     if (this->hasEvaluated)
         return;
@@ -1692,7 +1692,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
 
         auto sourceProvider = Zig::SourceProvider::create(globalObject, source, JSC::SourceProviderSourceType::Program, isBuiltIn);
         if (!isBuiltIn && !globalObject->hasOverriddenModuleWrapper && Bun::IsolatedModuleCache::canUse(vm, globalObject->bunVM())) {
-            Bun::IsolatedModuleCache::insert(vm, sourceURL, sourceProvider.get());
+            Bun::IsolatedModuleCache::insertIfAbsent(vm, sourceURL, sourceProvider.get());
         }
         sourceOrigin = sourceProvider->sourceOrigin();
         moduleObject = JSCommonJSModule::create(

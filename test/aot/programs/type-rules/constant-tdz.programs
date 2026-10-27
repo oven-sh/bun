@@ -1726,10 +1726,8 @@ function doubled(color: Color): int32 { return color * 2; }
 function next(color: Color): int32 { return color + 1; }
 function distance(color: Color): int32 { return Math.abs(color); }
 function fractionOrTwo(value: 1.5 | 2): int32 { return value; }
-const holder: { digit: 0 | 1 | 2 } = { digit: 1 };
-const member: int32 = holder.digit;
 
-console.log(withAFraction(1), withAHugeMember(1), computed(given[0]), withNegativeZero(1), oneComputedMember(given[0]), theComputedMember(), theLength(), theFraction(), theNegativeZero(), onlyDeclared(given[0]), negated(1), doubled(1), next(1), distance(1), fractionOrTwo(2), member);
+console.log(withAFraction(1), withAHugeMember(1), computed(given[0]), withNegativeZero(1), oneComputedMember(given[0]), theComputedMember(), theLength(), theFraction(), theNegativeZero(), onlyDeclared(given[0]), negated(1), doubled(1), next(1), distance(1), fractionOrTwo(2));
 //// int32-functions-used-as-values.ts
 // A function with an `int32` parameter can be used as a value: stored, bound, passed as a callback. The build accepts that, although it does not see every call of such a value, and nothing tests the argument when the program runs. Every argument here is an int32, and `boundToFraction` is never called. type-rules/int32-checked-at-run-time has the calls with other numbers.
 import type { int32 } from "bun";
@@ -1865,7 +1863,7 @@ function eitherOne(a: int32, n: number): int32 { return a || n; }
 
 console.log(indexInList([]), newLength([]), unsignedElement(new Uint32Array(1)), lengthOfFloats(new Float64Array(1)), bytes(new ArrayBuffer(1)), day(new Date(0)), parameters(() => {}), howMany(1), plus(true), converted(true), eitherOne(1, [1.5][0]));
 //// int32-results-that-could-be-negative-zero-or-out-of-range.ts
-// What could be -0, a fraction, NaN or out of range is no `int32` by proof, however small its range: a product of what can be 0 and what can be negative, a rounded quotient of a negative dividend, Math.max and Math.min with -0, a remainder or a negation of what can be 0, a shift by a count that can be 32, a `number` behind a test that -0 or a fraction passes. type-rules/int32-unproven-stores has the plain forms, typed-objects/int32-math-results what is proven.
+// What could be -0, a fraction, NaN or out of range is no `int32` by proof, however small its range: a product of what can be 0 and what can be negative, a rounded quotient of a negative dividend, Math.max and Math.min with -0, a remainder or a negation of what can be 0, a shift by a count that can be 32, a `number` behind a test that -0 or a fraction passes and that leaves it a `number` for TypeScript. type-rules/int32-unproven-stores has the plain forms, typed-objects/int32-math-results what is proven.
 import type { int32 } from "bun";
 
 function timesNegative(a: int32): int32 { return ((a & 255) - 128) * -3; }
@@ -1890,14 +1888,12 @@ function negated(a: int32): int32 { return -(a & 255); }
 function negatedUnlessZero(a: int32): int32 { return a !== 0 ? -a : 0; }
 function squared(a: int32): int32 { return (a & 3) ** 2; }
 function shiftedByAny(a: int32, b: int32): int32 { return b > 0 ? a >>> b : 0; }
-function equalToZero(n: number): int32 { return n === 0 ? n : 1; }
 function sameAfterOr(n: number): int32 { return (n | 0) === n ? n : 0; }
 function between(n: number): int32 { return n >= 0 && n <= 10 ? n : 0; }
 function wholeAndBetween(n: number): int32 { return Number.isInteger(n) && n >= 0 && n <= 10 ? n : 0; }
-function inACase(n: number): int32 { switch (n) { case 0: return n; case 5: return n; } return 1; }
 
 console.log(timesNegative(1), timesZero(1), zeroTimesNegative(1, 1), timesMinusOne(1), signTimesZero(1), smallProduct(1, 1), signedProduct(1, 1), truncated(1), roundedUp(1), rounded(1), roundedNegative(1), flooredNegativeZero(1), atLeastNegativeZero(1), atMostNegativeZero(1), leastOfNothing(), distance(1));
-console.log(remainderOfNegative(1), remainderByAny(1, 1), negated(1), negatedUnlessZero(1), squared(1), shiftedByAny(1, 1), equalToZero(1), sameAfterOr(1), between(1), wholeAndBetween(1), inACase(1));
+console.log(remainderOfNegative(1), remainderByAny(1, 1), negated(1), negatedUnlessZero(1), squared(1), shiftedByAny(1, 1), sameAfterOr(1), between(1), wholeAndBetween(1));
 //// int32-through-generics-unions-generators-and-accessors.ts
 // A `number` is held to the promise wherever the position it goes to is written `int32` after the types are worked out: a type argument that is inferred as `number`, a parameter that is a union or optional, a member of a mapped type, `typeof` of an int32, what `yield` gives and takes, a setter, a field that is only declared, `satisfies`. structural-types/an-int32-comes-out-of-generic-functions-and-classes and its neighbors have the ways that the build accepts.
 import type { int32 } from "bun";

@@ -192,6 +192,58 @@ describe.concurrent("compile/aot/workers from texts that the build knows", () =>
   );
 
   test(
+    "a name without ./ in front, the name of a package, and a file above the folder of the entry point",
+    () =>
+      slot(async () => {
+        using dir = tempDir("aot-workers-from-texts", {
+          "elsewhere/empty.txt": "",
+          "project/src/app/main.ts": `
+            import path from "node:path";
+            import { Worker as NodeWorker } from "node:worker_threads";
+            import { start } from "./lib/starts.ts";
+            ${report.replace("(how, worker)", "(how: string, worker: any)").replaceAll(/(done|text|error|event) =>/g, "($1: any) =>")}
+            await report("worker.ts", new Worker("worker.ts"));
+            await report("worker", new Worker("worker"));
+            await report("lib/inner.ts", new Worker("lib/inner.ts"));
+            await report("pool", new Worker("pool"));
+            await report("pool/lib/job.js", new Worker("pool/lib/job.js"));
+            await report("pool/lib/job", new Worker("pool/lib/job"));
+            await report("@scope/tool", new Worker("@scope/tool"));
+            await report("no-such-name", new Worker("no-such-name"));
+            await report("../beside.ts", new Worker("../beside.ts"));
+            await report("../../workers/job.ts", new Worker("../../workers/job.ts"));
+            await report("a URL one folder above", new Worker(new URL("../beside.ts", import.meta.url)));
+            await report("its href", new Worker(new URL("../beside.ts", import.meta.url).href));
+            await report("a joined path one folder above", new Worker(path.join(import.meta.dir, "../beside.ts")));
+            await report("the Worker of node", new NodeWorker(new URL("../beside.ts", import.meta.url)));
+            await report("a URL from a folder below", start());
+          `,
+          "project/src/app/worker.ts": `postMessage("worker.ts" as string);`,
+          "project/src/app/lib/inner.ts": `postMessage("lib/inner.ts" as string);`,
+          "project/src/app/lib/starts.ts": `export const start = () => new Worker(new URL("../../beside.ts", import.meta.url));`,
+          "project/src/beside.ts": `import { name } from "./name.ts"; postMessage("beside.ts " + name);`,
+          "project/src/name.ts": `export const name: string = "and what it imports";`,
+          "project/workers/job.ts": `postMessage("workers/job.ts" as string);`,
+          "project/node_modules/pool/package.json": `{ "name": "pool", "main": "lib/index.js" }`,
+          "project/node_modules/pool/lib/index.js": `postMessage("pool/lib/index.js");`,
+          "project/node_modules/pool/lib/job.js": `postMessage("pool/lib/job.js");`,
+          "project/node_modules/@scope/tool/package.json": `{ "name": "@scope/tool", "exports": "./main.js" }`,
+          "project/node_modules/@scope/tool/main.js": `postMessage("@scope/tool/main.js");`,
+        });
+        const sources = join(String(dir), "project", "src", "app");
+        const plain = await spawned([bunExe(), "run", "main.ts"], sources, bunEnv);
+        expect(plain.stdout.split("\n").filter(line => line.endsWith(": error"))).toEqual(["no-such-name: error"]);
+        const compiled = await build(sources, "main.ts");
+        built(compiled);
+        for (const folder of [sources, join(String(dir), "elsewhere")]) {
+          const ran = await spawned([compiled.executable], folder, compiledOnly);
+          expect({ stdout: ran.stdout, exitCode: ran.exitCode }).toEqual({ stdout: plain.stdout, exitCode: 0 });
+        }
+      }),
+    timeout,
+  );
+
+  test(
     "a file that is named by a path and does not compile is left out, and the build says so",
     () =>
       slot(async () => {
@@ -220,6 +272,7 @@ describe.concurrent("compile/aot/workers from texts that the build knows", () =>
 
   test.each([
     ["a syntax error", "postMessage((", "TS1109", "SyntaxError: Unexpected end of file"],
+    ["words that are no program", "this is no program", "TS1005", "undefined"],
     ["an import that is not found", `import "./no-such-file.js"; postMessage(1)`, "TS100150", "Cannot find module"],
   ])(
     "a text with %s is left out, and the build says so",

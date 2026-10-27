@@ -3,7 +3,9 @@ use std::sync::OnceLock;
 
 use bun_options_types::standalone_path::is_bun_standalone_file_path;
 use bun_paths::is_sep_native;
+use bun_paths::resolve_path::Platform;
 
+use crate::package_json::Package;
 use crate::resolver::Resolver;
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -72,6 +74,15 @@ pub struct HowNamed {
     pub is_require: bool,
 }
 
+/// What an executable answers for a bare specifier.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub enum PackageLookup {
+    Found(&'static [u8]),
+    /// The package has `exports`, which do not list the name. `bun run` looks no further.
+    Hidden,
+    Unknown,
+}
+
 /// In a public path, a `..` that leaves the root directory of the build.
 const PARENT_OF_ROOT: &[u8] = b"_.._";
 
@@ -80,6 +91,18 @@ fn is_relative_specifier(specifier: &[u8]) -> bool {
         .strip_prefix(b"..")
         .or_else(|| specifier.strip_prefix(b"."));
     after_dots.is_some_and(|rest| rest.first().is_none_or(|&byte| is_sep_native(byte)))
+}
+
+/// Whether the path that `bun run` joins below `node_modules` ends in a separator: of those at the end of a specifier the join keeps the host's own.
+fn names_directory_below_node_modules(specifier: &[u8], host: Platform) -> bool {
+    specifier.last() == Some(&host.separator())
+}
+
+/// The name of the package whose `exports` `bun run` reads for the specifier.
+fn find_name_of_package_with_exports(specifier: &[u8]) -> Option<&[u8]> {
+    let name = Package::parse_name(specifier)?;
+    let is_name = !name.starts_with(b".") && !name.iter().any(|byte| matches!(byte, b'\\' | b'%'));
+    is_name.then_some(name)
 }
 
 fn split_path(path: &[u8]) -> impl Iterator<Item = &[u8]> {
@@ -109,20 +132,30 @@ fn segments_below_public_root<'p>(
     base: &'p [u8],
     written: &'p [u8],
 ) -> Option<Vec<&'p [u8]>> {
-    let mut segments = split_path(base);
-    let root_segments = bun_core::strings::split(root.strip_suffix(b"/").unwrap_or(root), b"/");
-    for root_segment in root_segments {
-        if segments.next() != Some(root_segment) {
+    let mut segments = split_path(base).peekable();
+    let root = root.strip_suffix(b"/").unwrap_or(root);
+    let (above_root, name_of_root) =
+        root.split_at(root.iter().rposition(|&byte| byte == b'/')? + 1);
+    for segment in bun_core::strings::split(above_root.strip_suffix(b"/")?, b"/") {
+        if segments.next() != Some(segment) {
             return None;
         }
     }
     let mut kept = Vec::new();
+    // A program that goes up from a path in the root, with `..` in a URL or in `path.join()`, names what lies beside the root.
+    if segments.next_if_eq(&name_of_root).is_none() {
+        kept.push(PARENT_OF_ROOT);
+    }
     push_segments(&mut kept, segments.chain(split_path(written)));
     Some(kept)
 }
 
 /// The public path a file would have, without a trailing `/`.
-fn join_public_path(public_root: &[u8], source_dir: &[u8], specifier: &[u8]) -> Option<Vec<u8>> {
+pub(crate) fn join_public_path(
+    public_root: &[u8],
+    source_dir: &[u8],
+    specifier: &[u8],
+) -> Option<Vec<u8>> {
     let (base, written): (&[u8], &[u8]) = if is_relative_specifier(specifier) {
         (source_dir, specifier)
     } else {
@@ -379,58 +412,77 @@ impl CompiledProgram {
         specifier: &[u8],
         is_require: bool,
         search: &ExtensionSearch<'_>,
-    ) -> Option<&'static [u8]> {
+    ) -> PackageLookup {
+        use PackageLookup::{Found, Hidden, Unknown};
         if self.preserves_source_paths
             || specifier.is_empty()
             || !bun_paths::is_package_path(specifier)
             || !is_bun_standalone_file_path(source_dir)
         {
-            return None;
+            return Unknown;
         }
-        let lookup = *self.module_lookup.get()?;
-        // Below `node_modules`, `bun run` reads `pkg/lib/.` as `pkg/lib`.
+        let Some(&lookup) = self.module_lookup.get() else {
+            return Unknown;
+        };
         let how = HowNamed {
-            names_directory: specifier.last().is_some_and(|&byte| is_sep_native(byte)),
+            names_directory: names_directory_below_node_modules(specifier, Platform::AUTO),
             is_require,
         };
-        let mut folders = segments_below_public_root(public_root, source_dir, b"")?;
+        let package = find_name_of_package_with_exports(specifier);
+        let Some(mut folders) = segments_below_public_root(public_root, source_dir, b"") else {
+            return Unknown;
+        };
+        let count_levels = |entry: &CompiledEntryPoint| {
+            let segments = segments_below_public_root(public_root, entry.module_path, b"");
+            let is_above = |segment: &&&[u8]| **segment == PARENT_OF_ROOT;
+            segments.map_or(0, |segments| segments.iter().take_while(is_above).count())
+        };
+        let levels_above_root = self
+            .entry_points
+            .iter()
+            .map(count_levels)
+            .max()
+            .unwrap_or(0);
         loop {
             if folders.last() != Some(&&b"node_modules"[..]) {
                 let mut segments = folders.clone();
-                push_segments(
-                    &mut segments,
-                    [&b"node_modules"[..]]
-                        .into_iter()
-                        .chain(split_path(specifier)),
-                );
-                let path = [public_root, &segments.join(&b"/"[..])].concat();
-                let name_length = if specifier.starts_with(b"@") { 2 } else { 1 };
-                let package = segments
-                    .get(..folders.len() + 1 + name_length)?
-                    .join(&b"/"[..]);
-                let hides_other_paths =
-                    self.hides_other_paths(&[public_root, &package[..]].concat());
-                // A key of `exports` is written down without a separator at its end.
-                if hides_other_paths && how.names_directory {
-                    return None;
+                segments.push(b"node_modules");
+                let node_modules = [public_root, &segments.join(&b"/"[..]), b"/"].concat();
+                if let Some(package) = package
+                    && self.hides_other_paths(&[&node_modules[..], package].concat())
+                {
+                    // A key of `exports` is compared as it is written, and none is written down with a separator at its end.
+                    let listed = match specifier.ends_with(b"/") {
+                        true => None,
+                        false => self.find_package_name(
+                            &[&node_modules[..], specifier].concat(),
+                            is_require,
+                        ),
+                    };
+                    return match listed {
+                        Some(Some(found)) => Found(found),
+                        Some(None) => Unknown,
+                        None if &specifier[package.len()..] == b"/package.json" => Unknown,
+                        None => Hidden,
+                    };
                 }
+                push_segments(&mut segments, split_path(specifier));
+                let path = [public_root, &segments.join(&b"/"[..])].concat();
                 let folder = match how.names_directory {
                     true => self.find_package_name(&[&path[..], b"/"].concat(), is_require),
                     false => None,
                 };
                 if let Some(listed) = folder.or_else(|| self.find_package_name(&path, is_require)) {
-                    return listed;
-                }
-                if hides_other_paths {
-                    return None;
+                    return listed.map_or(Unknown, Found);
                 }
                 if let Some(found) = self.find_file_or_directory(&path, how, search, lookup) {
-                    return Some(found);
+                    return Found(found);
                 }
             }
-            // The folder above the root directory of the build is no folder of the root directory.
-            if folders.pop().is_none_or(|folder| folder == PARENT_OF_ROOT) {
-                return None;
+            // Above the root directory of the build there are as many folders as an entry point lies above it.
+            push_segments(&mut folders, core::iter::once(&b".."[..]));
+            if folders.len() > levels_above_root && folders.last() == Some(&PARENT_OF_ROOT) {
+                return Unknown;
             }
         }
     }
@@ -760,6 +812,7 @@ mod tests {
 
         mod package_names {
             use super::*;
+            use PackageLookup::{Found, Hidden, Unknown};
 
             const FILES: [&[u8]; 9] = [
                 b"/$bunfs/root/main.js",
@@ -829,7 +882,7 @@ mod tests {
                 source_dir: &[u8],
                 specifier: &[u8],
                 is_require: bool,
-            ) -> Option<&'static [u8]> {
+            ) -> PackageLookup {
                 let extensions = [&b".js"[..], b".cjs"].map(Box::<[u8]>::from);
                 let search = ExtensionSearch {
                     extensions: &extensions,
@@ -839,20 +892,20 @@ mod tests {
                 program.resolve_package(ROOT, source_dir, specifier, is_require, &search)
             }
 
-            fn require(source_dir: &[u8], specifier: &[u8]) -> Option<&'static [u8]> {
+            fn require(source_dir: &[u8], specifier: &[u8]) -> PackageLookup {
                 find_in(&program(false), source_dir, specifier, true)
             }
 
             #[test]
             fn name_of_package_leads_to_its_main_file() {
-                assert_eq!(require(ROOT, b"driver"), Some(FILES[1]));
+                assert_eq!(require(ROOT, b"driver"), Found(FILES[1]));
                 assert_eq!(
                     require(b"/$bunfs/root/lib/deep/", b"driver"),
-                    Some(FILES[1])
+                    Found(FILES[1])
                 );
                 assert_eq!(
                     require(b"/$bunfs/root/node_modules/both/", b"driver"),
-                    Some(FILES[1])
+                    Found(FILES[1])
                 );
             }
 
@@ -860,7 +913,7 @@ mod tests {
             fn nearest_folder_wins() {
                 assert_eq!(
                     require(b"/$bunfs/root/node_modules/orm/lib/", b"driver"),
-                    Some(FILES[5])
+                    Found(FILES[5])
                 );
                 let program = program(false);
                 let imported = find_in(
@@ -869,24 +922,29 @@ mod tests {
                     b"driver",
                     false,
                 );
-                assert_eq!(imported, None);
+                assert_eq!(imported, Unknown);
             }
 
             #[test]
             fn kind_of_load_chooses() {
                 let program = program(false);
-                assert_eq!(find_in(&program, ROOT, b"both", true), Some(FILES[4]));
-                assert_eq!(find_in(&program, ROOT, b"both", false), Some(FILES[3]));
+                assert_eq!(find_in(&program, ROOT, b"both", true), Found(FILES[4]));
+                assert_eq!(find_in(&program, ROOT, b"both", false), Found(FILES[3]));
             }
 
             #[test]
             fn path_below_package_is_a_path() {
-                assert_eq!(require(ROOT, b"driver/lib/extra"), Some(FILES[2]));
-                assert_eq!(require(ROOT, b"driver/lib/extra.js"), Some(FILES[2]));
-                assert_eq!(require(ROOT, b"driver/lib/../lib/extra"), Some(FILES[2]));
-                assert_eq!(require(ROOT, b"driver/lib/extra/."), Some(FILES[2]));
-                assert_eq!(require(ROOT, b"driver/lib/extra.js/"), Some(FILES[2]));
-                assert_eq!(require(ROOT, b"driver/lib/extra/"), None);
+                assert_eq!(require(ROOT, b"driver/lib/extra"), Found(FILES[2]));
+                assert_eq!(require(ROOT, b"driver/lib/extra.js"), Found(FILES[2]));
+                assert_eq!(require(ROOT, b"driver/lib/../lib/extra"), Found(FILES[2]));
+                assert_eq!(require(ROOT, b"driver/lib/extra/."), Found(FILES[2]));
+                assert_eq!(require(ROOT, b"driver/lib/extra.js/"), Found(FILES[2]));
+                let directory = [&b"driver/lib/extra"[..], &[bun_paths::SEP]].concat();
+                assert_eq!(require(ROOT, &directory), Unknown);
+                assert_eq!(
+                    require(ROOT, b"driver/../@scope/closed/lib/inner"),
+                    Found(FILES[7])
+                );
             }
 
             #[test]
@@ -906,32 +964,92 @@ mod tests {
                 assert_eq!(load(b"./node_modules/driver", false), None);
                 assert_eq!(load(b"./node_modules/orm", true), None);
                 assert_eq!(load(b"./node_modules/orm/index", true), Some(FILES[8]));
-                assert_eq!(require(ROOT, b"driver/"), Some(FILES[2]));
-                assert_eq!(require(ROOT, b"driver"), Some(FILES[1]));
+                let directory = [&b"driver"[..], &[bun_paths::SEP]].concat();
+                assert_eq!(require(ROOT, &directory), Found(FILES[2]));
+                assert_eq!(require(ROOT, b"driver"), Found(FILES[1]));
             }
 
             #[test]
             fn package_with_exports_has_only_its_written_names() {
-                assert_eq!(require(ROOT, b"@scope/closed/feature"), Some(FILES[6]));
-                assert_eq!(require(ROOT, b"@scope/closed/feature/"), None);
-                assert_eq!(require(ROOT, b"both/"), None);
-                assert_eq!(require(ROOT, b"@scope/closed"), None);
-                assert_eq!(require(ROOT, b"@scope/closed/lib/inner.js"), None);
-                assert_eq!(require(ROOT, b"@scope/closed/lib/feature"), None);
-                assert_eq!(require(ROOT, b"both/common.cjs"), None);
-                assert_eq!(require(ROOT, b"@scope"), None);
+                assert_eq!(require(ROOT, b"@scope/closed/feature"), Found(FILES[6]));
+                assert_eq!(require(ROOT, b"@scope/closed"), Unknown);
+                assert_eq!(require(ROOT, b"@scope/closed/package.json"), Unknown);
+                assert_eq!(require(ROOT, b"@scope"), Unknown);
+                for hidden in [
+                    &b"@scope/closed/feature/"[..],
+                    b"@scope/closed/feature\\",
+                    b"@scope/closed/feature/.",
+                    b"@scope/closed//feature",
+                    b"@scope/closed/./feature",
+                    b"@scope/closed/lib/../feature",
+                    b"@scope/closed/lib/inner.js",
+                    b"@scope/closed/lib/feature",
+                    b"@scope/closed/",
+                    b"both/",
+                    b"both/common.cjs",
+                ] {
+                    assert_eq!(
+                        require(ROOT, hidden),
+                        Hidden,
+                        "{}",
+                        String::from_utf8_lossy(hidden)
+                    );
+                }
+            }
+
+            #[test]
+            fn name_with_a_backslash_is_a_path() {
+                assert_eq!(require(ROOT, b"both\\common.cjs"), Found(FILES[4]));
+                assert_eq!(require(ROOT, b"@scope\\closed/lib/inner"), Found(FILES[7]));
+            }
+
+            #[test]
+            fn directory_is_named_where_the_join_keeps_the_separator() {
+                use bun_paths::resolve_path::{join_abs_string_buf, platform};
+                let mut buffer = [0u8; 256];
+                for specifier in [
+                    &b"driver/lib"[..],
+                    b"driver/lib/",
+                    b"driver/lib\\",
+                    b"driver/lib//",
+                    b"driver/lib/\\",
+                    b"driver/lib\\/",
+                    b"driver/lib/.",
+                    b"driver/lib/./",
+                    b"driver/",
+                    b"driver\\",
+                ] {
+                    let parts = [&b"node_modules"[..], specifier];
+                    let on_windows =
+                        join_abs_string_buf::<platform::Windows>(b"C:\\app", &mut buffer, &parts)
+                            .ends_with(b"\\");
+                    assert_eq!(
+                        names_directory_below_node_modules(specifier, Platform::Windows),
+                        on_windows,
+                        "{}",
+                        String::from_utf8_lossy(specifier)
+                    );
+                    #[cfg(not(windows))]
+                    assert_eq!(
+                        names_directory_below_node_modules(specifier, Platform::Posix),
+                        join_abs_string_buf::<platform::Loose>(b"/app", &mut buffer, &parts)
+                            .ends_with(b"/"),
+                        "{}",
+                        String::from_utf8_lossy(specifier)
+                    );
+                }
             }
 
             #[test]
             fn misses() {
-                assert_eq!(require(ROOT, b"absent"), None);
-                assert_eq!(require(ROOT, b"driver/absent"), None);
-                assert_eq!(require(ROOT, b"./driver"), None);
-                assert_eq!(require(ROOT, b"/$bunfs/root/node_modules/driver"), None);
-                assert_eq!(require(ROOT, b""), None);
-                assert_eq!(require(b"/project/app/", b"driver"), None);
-                assert_eq!(require(b"/$bunfs/root/_.._/shared/", b"driver"), None);
-                assert_eq!(find_in(&program(true), ROOT, b"driver", true), None);
+                assert_eq!(require(ROOT, b"absent"), Unknown);
+                assert_eq!(require(ROOT, b"driver/absent"), Unknown);
+                assert_eq!(require(ROOT, b"./driver"), Unknown);
+                assert_eq!(require(ROOT, b"/$bunfs/root/node_modules/driver"), Unknown);
+                assert_eq!(require(ROOT, b""), Unknown);
+                assert_eq!(require(b"/project/app/", b"driver"), Unknown);
+                assert_eq!(require(b"/$bunfs/root/_.._/shared/", b"driver"), Unknown);
+                assert_eq!(find_in(&program(true), ROOT, b"driver", true), Unknown);
             }
         }
 

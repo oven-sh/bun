@@ -2219,7 +2219,7 @@ function callsIn(counts, ...besides) {
   return sum;
 }
 // These make the text that is printed, list the names for it and keep it in a set; a cell where the allocator has none at hand is the work of the run time.
-const owed = ["operationAOTArrayJoin", "operationAOTConcat", "operationAOTOwnPropertyKeys", "operationAOTSetAdd", "operationAOTStringOfAnyValue", "operationAOTAllocateSlow"];
+const owed = ["operationAOTArrayJoin", "operationAOTConcat", "operationAOTOwnPropertyKeys", "operationAOTSetAdd", "operationAOTStackStringBuilderAppend", "operationAOTStackStringBuilderFinish", "operationAOTStringOfAnyValue", "operationAOTAllocateSlow"];
 const kState = Symbol("kState");
 const kBytes = Symbol("kBytes");
 const kSocket = Symbol("kSocket");

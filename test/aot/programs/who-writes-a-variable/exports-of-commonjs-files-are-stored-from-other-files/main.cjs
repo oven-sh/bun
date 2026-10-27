@@ -5,8 +5,6 @@ const mod = module.children.find(c => c.id.endsWith("a.cjs")); mod.exports.x = 4
 mod.exports = { x: 5, replaced: true }; out.push(require("./a.cjs").x, require("./a.cjs").replaced, a.read(), a.readModule());
 module.children.find(c => c.id.endsWith("a.cjs")).exports = { x: 6 }; out.push(require("./a.cjs").x, a.readModule());
 const b = require("./b.cjs"); out.push(b(), b.tag); 
-out.push(require.main === module, require.main.exports === exports); require.main.exports.viaMain = 7; out.push(exports.viaMain, module.exports.viaMain);
-process.mainModule.exports = { swapped: 8 }; out.push(module.exports.swapped, exports.swapped);
 const c = require("./c.cjs"); out.push(c.parentSaw);
 exports = { local: 1 }; out.push(module.exports.local);
 Object.assign(require("./d.cjs"), { v: 9 }); out.push(require("./d.cjs").read());

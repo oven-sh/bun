@@ -93,11 +93,7 @@ function writeCase(folder: string, source: string): string | undefined {
   if (pieces.length > 1) {
     files = [];
     for (let i = 1; i < pieces.length; i += 2) files.push([pieces[i].trim().replace(/^\/+/, ""), pieces[i + 1]]);
-    if (
-      files.some(([name]) => name.includes("..") || !/\.(ts|mts|cts)$/.test(name)) ||
-      files.at(-1)![0].endsWith(".d.ts")
-    )
-      return;
+    if (files.some(([name]) => name.includes("..") || !/\.(ts|mts|cts)$/.test(name))) return;
   }
   for (const [name, text] of files) {
     mkdirSync(dirname(join(folder, name)), { recursive: true });

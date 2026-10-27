@@ -11,7 +11,9 @@ use crate::bind::{BindOptions, Binding, Bound, Decl, SymbolId};
 use crate::fold::{Decisions, FoldError, FoldInputs};
 use crate::hir::{ExprId, File, ImportEqualsId, ImportedName, NodeData};
 use crate::hir_from_data::HostValue;
-use crate::import_sites::{ImportSite, ImportSiteKind, ImportSpecifier, JsxImportSet, JsxMode};
+use crate::import_sites::{
+    ImportSite, ImportSiteKind, ImportSpecifier, JsxImportSet, JsxMode, ResolvedForm,
+};
 use crate::module_format::{DeclaredModuleType, ModuleFormat};
 use crate::session::Arena;
 
@@ -32,6 +34,7 @@ pub struct FileAnalysis<'s> {
     pub import_sites: &'s [ImportSite],
     alternatives: &'s [ImportSpecifier],
     paths_from_own_directory: &'s [ExprId],
+    answers_of_resolvers: &'s [(ExprId, ResolvedForm)],
     pub jsx_imports: JsxImportSet,
     pub unused_import_symbols: &'s [SymbolId],
     pub imports_used_only_in_dead_code: &'s [SymbolId],
@@ -72,6 +75,13 @@ impl FileAnalysis<'_> {
                 .paths_from_own_directory
                 .binary_search(&argument)
                 .is_ok()
+    }
+
+    /// The specifier of the site is the name that a resolver was asked for, where `argument` is what it answered: `require(require.resolve("./a.js"))`.
+    pub fn find_resolved_form(&self, argument: ExprId) -> Option<ResolvedForm> {
+        let answers = self.answers_of_resolvers;
+        let index = answers.binary_search_by_key(&argument, |&(argument, _)| argument);
+        index.ok().map(|index| answers[index].1)
     }
 
     /// What a name that is no constant may be hangs on more of a folding than the specifiers that it finds.

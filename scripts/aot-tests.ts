@@ -4,7 +4,7 @@
  * test/aot/README.md, "What CI has to know".
  */
 import { createHash } from "node:crypto";
-import { aotTests } from "./buildkite.ts";
+import { aotTests, getCommit } from "./buildkite.ts";
 
 export interface AotLane {
   os: string;
@@ -21,13 +21,17 @@ export type AotTests = "all" | "a tenth";
 // nothing.
 export type AotTakes = "fixed" | "drawn";
 
-// What the sample goes by. The next commit takes the same files and programs, so it shows whether what failed is fixed. Change it to take others.
-export const aotSample = "58b3677a4d38b2500927f51f945beb4c1a01886a";
+// What the sample goes by: the commit under test. Each commit takes other files and programs, so in time every lane has run all of them. A step is written with its sample, so a retry
+// of a job makes the same draw. AOT_SAMPLE is a sample by hand: with the one that a step printed, the steps are those of that commit.
+const sampleWithoutCommit = "58b3677a4d38b2500927f51f945beb4c1a01886a";
+const isRevision = (text: string | undefined): text is string => /^[0-9a-f]{7,40}$/.test(text ?? "");
+let aotSample: string | undefined;
+export const getAotSample = (): string =>
+  (aotSample ??= [process.env.AOT_SAMPLE, getCommit()].find(isRevision) ?? sampleWithoutCommit);
 
 // Each lane takes another share of the sample: of what is dealt out one in n, the lane with the number k takes the share k % n.
-// macOS on ARM64 runs the even half of the files, the lighter one, because its jobs are the fullest. The four lanes that run one file in eight run the odd eighths, so every file runs on
-// one of the five, and the lane with a sanitizer, the slowest, runs the lightest eighth. macOS on x64 runs an odd tenth and Windows on ARM64 an even one: what the other lane of that
-// system does not run. No two lanes take the same tenth of a folder of programs.
+// macOS on ARM64 runs the even half of the files. The four lanes that run one file in eight run the odd eighths, so every file runs on one of the five. macOS on x64 runs an odd tenth and
+// Windows on ARM64 an even one: what the other lane of that system does not run. No two lanes take the same tenth of a folder of programs.
 export const aotLanes: (AotLane & { share: number })[] = [
   { os: "linux", arch: "x64", distro: "debian", share: 0 },
   { os: "windows", arch: "x64", share: 1 },
@@ -199,6 +203,9 @@ export function getAotAlwaysInDrawnStep({ os, profile }: AotLane, aot: AotTests)
   return [
     // A mark for this lane alone can only be found stale on this lane.
     ...(aot === "all" ? ["aot/programs-marked-as-failing"] : []),
+    // Each system has its own way to tell a process its time zone, and its own folders above a temporary one. They go to the other step once they have been green here.
+    "aot/time-zone-at-start",
+    "aot/plain-bun-installs-no-packages",
     // They go to the other step once they have been green here.
     ...(profile === "asan" ? testsWithSanitizer : []),
     // One test of the first is for this system, and the file system ignores the case of letters. They go to the other step once they have been green here.
@@ -226,7 +233,7 @@ export function getAotStepArguments(
     );
     args.push(...getAotAlwaysInDrawnStep(lane, aot).map(group => `--always-draw=${group}`));
   }
-  if (takes === "drawn") args.push(`--aot-sample=${spellSample(aotSample, getAotShare(lane))}`);
+  if (takes === "drawn") args.push(`--aot-sample=${spellSample(getAotSample(), getAotShare(lane))}`);
   args.push(...getAotExcludes(lane, aot).map(group => `--exclude=${group}`));
   if (draw === 1 && lane.arch === "x64") args.push(...aotTests.map(group => `--must-run=${group}`));
   else if (lane.profile === "asan" && takes === "drawn")

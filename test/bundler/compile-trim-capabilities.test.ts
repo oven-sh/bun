@@ -6,6 +6,7 @@ import { spawned, unsupported } from "../aot/run-programs";
 import {
   featureNamed,
   featureOf,
+  featuresThatKeep,
   tempDirForAotBuilds,
   trimFeatureNamed,
   withoutFeatures,
@@ -140,7 +141,12 @@ describe.skipIf(isWindows || isASAN)("an executable without what loads native co
     const cut = await build(folder, "cut", loadsNativeCode.features);
     if (cut.stderr.includes("this build of Bun doesn't support --trim")) return;
     expect(cut).toMatchObject({ exitCode: 0 });
-    expect(placesThatCall(cut.file, loadsNativeCode.functions)).toEqual([]);
+    expect(
+      placesThatCall(cut.file, loadsNativeCode.functions).map(place => ({
+        ...place,
+        keptBy: featuresThatKeep(place.address, loadsNativeCode.features),
+      })),
+    ).toEqual([]);
     expect(await spawned([join(folder, "cut")], folder, bunEnv)).toMatchObject({
       stdout: "hello world\n",
       stderr: "",

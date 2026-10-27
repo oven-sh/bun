@@ -41,7 +41,7 @@ const pairs: [baseline: string, other: string, allowance: number, todo?: string]
   ["comparisons of a string out of a list", "comparisons of one of a union of texts out of a list", 4],
   ["comparisons of a string out of a list", "comparisons of a string taken for one of a union of texts", 4],
   ["comparisons of a string cut out of another", "comparisons of one of a union of texts cut out of another", 4],
-  ["comparisons of a string out of parsed text", "comparisons of one of a union of texts out of parsed text", 4],
+  ["comparisons of a string out of parsed text", "comparisons of one of a union of texts out of parsed text", 1],
 ];
 
 const skipped =

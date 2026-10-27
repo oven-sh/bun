@@ -4,7 +4,7 @@ use super::made_requires::{
     follow_to_own_require, holds_import_meta_require, may_be_modified, may_require_get_members,
     settled_symbol,
 };
-use super::{Alternatives, ImportSite, ImportSiteKind, ImportSpecifier, ScanInputs};
+use super::{Alternatives, ImportSite, ImportSiteKind, ImportSpecifier, ResolvedForm, ScanInputs};
 use crate::atom::{Atom, Interner, known};
 use crate::bind::{Binding, Bound, CommonJsVariable, Parent, ScopeKind};
 use crate::fold::Decisions;
@@ -321,6 +321,7 @@ fn find_path_to_resolve_from(inputs: &ScanInputs<'_, '_>, call: ExprId) -> Optio
 pub(super) struct ScannedCalls {
     pub(super) alternatives: Vec<ImportSpecifier>,
     pub(super) paths_from_own_directory: Vec<ExprId>,
+    pub(super) answers_of_resolvers: Vec<(ExprId, ResolvedForm)>,
     pub(super) module_require_objects: Vec<ExprId>,
     pub(super) requires_of_other_files: Vec<(u32, Atom)>,
 }
@@ -366,9 +367,11 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
     }
     module_require_objects.shared_sort_unstable();
     alternatives.paths_from_own_directory.shared_sort_unstable();
+    alternatives.answers_of_resolvers.shared_sort_unstable();
     ScannedCalls {
         alternatives: alternatives.found,
         paths_from_own_directory: alternatives.paths_from_own_directory,
+        answers_of_resolvers: alternatives.answers_of_resolvers,
         module_require_objects,
         requires_of_other_files,
     }
@@ -434,6 +437,7 @@ fn consults_resolver(
 struct FoundAlternatives {
     found: Vec<ImportSpecifier>,
     paths_from_own_directory: Vec<ExprId>,
+    answers_of_resolvers: Vec<(ExprId, ResolvedForm)>,
     written_names: WrittenNames,
 }
 
@@ -461,6 +465,9 @@ fn call_specifier(
     }
     if found.start_at_own_directory {
         alternatives.paths_from_own_directory.push(argument);
+    }
+    if let Some(form) = found.resolved_form {
+        alternatives.answers_of_resolvers.push((argument, form));
     }
     only_pattern.unwrap_or_else(|| {
         let first = alternatives.found.len() as u32;

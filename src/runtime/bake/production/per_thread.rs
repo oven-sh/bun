@@ -1,6 +1,7 @@
 //! `PerThread`: what each rendering thread needs from the bundle.
 
 use super::*;
+use bun_bundler::output_file::Value as OutputFileValue;
 
 /// Data used on each rendering thread. Contains all information in the bundle needed to render.
 /// This is referred to as `pt` in variable/field naming, and Bake::ProductionPerThread in C++
@@ -13,7 +14,8 @@ pub(crate) struct PerThread {
     pub(crate) entry_points: EntryPointMap,
     pub(crate) bundled_outputs: Vec<OutputFile>,
     /// Unordered
-    pub(crate) module_map: StringArrayHashMap<OutputFileIndex>,
+    /// Each source owns its chunk's bytes, moved out of `bundled_outputs`: JavaScriptCore keeps it longer than `PerThread` lives.
+    pub(crate) module_map: StringArrayHashMap<BunString>,
     pub(crate) source_maps: StringArrayHashMap<OutputFileIndex>,
 
     // Thread-local
@@ -74,8 +76,8 @@ impl PerThread {
     pub(crate) fn init(
         vm: *mut VirtualMachine,
         entry_points: EntryPointMap,
-        bundled_outputs: Vec<OutputFile>,
-        module_map: StringArrayHashMap<OutputFileIndex>,
+        mut bundled_outputs: Vec<OutputFile>,
+        module_indexes: &StringArrayHashMap<OutputFileIndex>,
         source_maps: StringArrayHashMap<OutputFileIndex>,
     ) -> crate::Result<PerThread> {
         let n = entry_points.files.count();
@@ -90,6 +92,18 @@ impl PerThread {
             JSValue::create_empty_array(global, n).map_err(js_err)?,
             global,
         ));
+
+        let mut module_map = StringArrayHashMap::with_capacity(module_indexes.count());
+        for (key, index) in module_indexes.keys().iter().zip(module_indexes.values()) {
+            let value = &mut bundled_outputs[index.get() as usize].value;
+            let source = match core::mem::replace(value, OutputFileValue::Noop) {
+                OutputFileValue::Buffer { bytes } => {
+                    BunString::create_external_globally_allocated_latin1(bytes.into_vec())
+                }
+                _ => BunString::EMPTY,
+            };
+            module_map.put_assume_capacity(key, source);
+        }
 
         Ok(PerThread {
             entry_points,

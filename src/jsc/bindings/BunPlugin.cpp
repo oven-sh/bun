@@ -3405,9 +3405,13 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) void JSMock__undoMod
         }
     }
     Vector<JSModuleMock*> lastPatchFirst;
-    for (size_t i = 0; i < mocks.size(); ++i)
-        lastPatchFirst.append(uncheckedDowncast<JSModuleMock>(mocks.at(i)));
-    std::ranges::sort(lastPatchFirst, [](auto* a, auto* b) { return a->patchOrder > b->patchOrder; });
+    for (size_t i = 0; i < mocks.size(); ++i) {
+        auto* mock = uncheckedDowncast<JSModuleMock>(mocks.at(i));
+        size_t index = lastPatchFirst.size();
+        while (index && lastPatchFirst[index - 1]->patchOrder < mock->patchOrder)
+            --index;
+        lastPatchFirst.insert(index, mock);
+    }
     for (auto* mock : lastPatchFirst) {
         unmockModule(globalObject, mock, mock->specifier->tryGetValue().data, evict);
         if (scope.exception()) [[unlikely]]

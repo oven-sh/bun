@@ -865,8 +865,13 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) BunString Bun__evict
         auto* cyclic = dynamicDowncast<JSC::CyclicModuleRecord>(entry->record());
         if (!entry->record())
             fetching.append(key.string());
-        else if (cyclic && cyclic->status() == JSC::CyclicModuleRecord::Status::EvaluatingAsync && cyclic->hasTLA() && !cyclic->pendingAsyncDependencies().value_or(0))
-            awaiting.append({ loader->asyncEvaluationOrderForKey(key), key.string() });
+        else if (cyclic && cyclic->status() == JSC::CyclicModuleRecord::Status::EvaluatingAsync && cyclic->hasTLA() && !cyclic->pendingAsyncDependencies().value_or(0)) {
+            int64_t order = loader->asyncEvaluationOrderForKey(key);
+            size_t index = awaiting.size();
+            while (index && awaiting[index - 1].first > order)
+                --index;
+            awaiting.insert(index, std::pair { order, key.string() });
+        }
         unfinished.append(WTF::move(key));
     });
     for (auto& key : unfinished)
@@ -878,7 +883,6 @@ extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((minsize)) BunString Bun__evict
     if (scope.exception()) [[unlikely]]
         (void)scope.tryClearException();
 
-    std::sort(awaiting.begin(), awaiting.end(), [](auto& a, auto& b) { return a.first < b.first; });
     std::sort(fetching.begin(), fetching.end(), WTF::codePointCompareLessThan);
 
     constexpr size_t maxNotes = 5;

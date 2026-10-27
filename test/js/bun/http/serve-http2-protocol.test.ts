@@ -122,10 +122,48 @@ const barrier = async (raw: RawH2, tag: string) => {
   );
 };
 
-/** Collects an HTTP/1 WebSocket's text messages. `waitFor` rejects if the socket closes first. */
+/** Text messages the server sent on a tunnel stream, parsed from all of its DATA bytes. HTTP/2
+ * doesn't keep WebSocket frame boundaries, so a frame may span DATA frames. A trailing partial
+ * frame is ignored. */
+const wsTexts = (raw: RawH2, streamId: number) => {
+  const bytes = Buffer.concat(raw.frames.filter(f => f.type === T.DATA && f.streamId === streamId).map(f => f.payload));
+  const texts: string[] = [];
+  let at = 0;
+  while (bytes.length - at >= 2) {
+    let length = bytes[at + 1] & 0x7f;
+    let header = 2;
+    if (length === 126) {
+      if (bytes.length - at < 4) break;
+      length = bytes.readUInt16BE(at + 2);
+      header = 4;
+    } else if (length === 127) {
+      if (bytes.length - at < 10) break;
+      length = Number(bytes.readBigUInt64BE(at + 2));
+      header = 10;
+    }
+    if (bytes.length - at < header + length) break;
+    if ((bytes[at] & 0x0f) === 1) texts.push(bytes.toString("utf8", at + header, at + header + length));
+    at += header + length;
+  }
+  return texts;
+};
+
+/** Waits for a text message on a tunnel stream that `match` accepts, and returns it. */
+const waitForWsText = async (raw: RawH2, streamId: number, match: (text: string) => boolean) => {
+  let found: string | undefined;
+  await raw.waitFor(f => {
+    if (f.type !== T.DATA || f.streamId !== streamId) return false;
+    found = wsTexts(raw, streamId).find(match);
+    return found !== undefined;
+  });
+  return found!;
+};
+
+/** Collects an HTTP/1 WebSocket's text messages. `waitFor` rejects if the socket errors or closes first. */
 const h1Inbox = (ws: WebSocket) => {
   const messages: string[] = [];
   let closed = false;
+  let failure: unknown;
   let wake: (() => void) | undefined;
   const notify = () => {
     wake?.();
@@ -133,6 +171,10 @@ const h1Inbox = (ws: WebSocket) => {
   };
   ws.addEventListener("message", event => {
     messages.push(String(event.data));
+    notify();
+  });
+  ws.addEventListener("error", event => {
+    failure = event;
     notify();
   });
   ws.addEventListener("close", () => {
@@ -143,6 +185,7 @@ const h1Inbox = (ws: WebSocket) => {
     messages,
     async waitFor(expected: string) {
       while (!messages.includes(expected)) {
+        if (failure) throw new Error(`socket errored before ${expected}; got ${JSON.stringify(messages)}`);
         if (closed) throw new Error(`socket closed before ${expected}; got ${JSON.stringify(messages)}`);
         await new Promise<void>(resolve => (wake = resolve));
       }
@@ -2643,13 +2686,7 @@ test("RFC 8441 ws.remoteAddress reports the peer's IP like HTTP/1", async () => 
   raw.headers(1, websocketHeaders(), F.END_HEADERS);
   expect(decodeStatus((await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1)).payload)).toBe(200);
   raw.write(frame(T.DATA, 0, 1, wsClientFrame(1, "remote-address")));
-  const reply = await raw.waitFor(
-    f =>
-      f.type === T.DATA &&
-      f.streamId === 1 &&
-      f.payload[0] === 0x81 &&
-      wsServerFrame(f.payload).payload.toString().startsWith("remote-address:"),
-  );
+  const reply = await waitForWsText(raw, 1, text => text.startsWith("remote-address:"));
   raw.close();
 
   const h1 = new WebSocket(`ws://127.0.0.1:${fx.port}/ws`);
@@ -2662,21 +2699,14 @@ test("RFC 8441 ws.remoteAddress reports the peer's IP like HTTP/1", async () => 
   const fromH1 = await h1Reply;
   h1.close();
   expect(fromH1).toMatch(/^remote-address:(::ffff:)?127\.0\.0\.1$/);
-  expect(wsServerFrame(reply.payload).payload.toString()).toBe(fromH1);
+  expect(reply).toBe(fromH1);
 });
 
 test("RFC 8441 pause() withholds stream flow-control credit until resume()", async () => {
   const raw = await RawH2.connect(fx.port, secure);
   raw.headers(1, websocketHeaders("/ws-pause"), F.END_HEADERS);
   expect(decodeStatus((await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1)).payload)).toBe(200);
-  const waitForText = (expected: string) =>
-    raw.waitFor(
-      f =>
-        f.type === T.DATA &&
-        f.streamId === 1 &&
-        f.payload[0] === 0x81 &&
-        wsServerFrame(f.payload).payload.toString() === expected,
-    );
+  const waitForText = (expected: string) => waitForWsText(raw, 1, text => text === expected);
 
   const pause = wsClientFrame(1, "pause");
   raw.write(frame(T.DATA, 0, 1, pause));

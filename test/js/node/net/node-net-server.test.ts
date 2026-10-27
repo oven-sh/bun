@@ -57,19 +57,22 @@ int main(int argc, char **argv) {
   });
   const result = ((): typeof denySocket => {
     const bin = join(String(dir), "deny-socket");
-    let compile;
     try {
-      compile = Bun.spawnSync({ cmd: ["cc", "-O0", "-o", bin, join(String(dir), "deny-socket.c")], stderr: "pipe" });
+      const compile = Bun.spawnSync({
+        cmd: ["cc", "-O0", "-o", bin, join(String(dir), "deny-socket.c")],
+        stderr: "pipe",
+      });
+      if (compile.exitCode !== 0) {
+        const stderr = compile.stderr.toString();
+        // A missing header or libc means this host cannot build C. Anything else is a bug in the helper.
+        return stderr.includes("No such file or directory") ? { skip: true } : { error: stderr };
+      }
+      const probe = Bun.spawnSync({ cmd: [bin, String(AF_INET6), String(EAFNOSUPPORT), "--probe"] });
+      return probe.exitCode === 0 ? { bin } : { skip: true };
     } catch {
-      return { skip: true }; // no cc
+      // spawnSync throws when there is no cc, or when the host cannot run the binary it built.
+      return { skip: true };
     }
-    if (compile.exitCode !== 0) {
-      const stderr = compile.stderr.toString();
-      // A missing header or libc means this host cannot build C. Anything else is a bug in the helper.
-      return stderr.includes("No such file or directory") ? { skip: true } : { error: stderr };
-    }
-    const probe = Bun.spawnSync({ cmd: [bin, String(AF_INET6), String(EAFNOSUPPORT), "--probe"] });
-    return probe.exitCode === 0 ? { bin } : { skip: true };
   })();
   // The tests need the binary until the file ends. Every other outcome is done with the directory now.
   if ("bin" in result) afterAll(() => dir[Symbol.dispose]());
@@ -149,8 +152,8 @@ describe("net.createServer listen", () => {
   // Prints how a listen() call ends: the error fields, or the address it listens on.
   // once("listening") rejects with the "error" event, so this settles either way.
   const listenOutcome = `
-    const { createServer } = require("node:net");
-    const { once } = require("node:events");
+    import { once } from "node:events";
+    import { createServer } from "node:net";
     async function listenOutcome(...args) {
       const server = createServer().listen(...args);
       try {

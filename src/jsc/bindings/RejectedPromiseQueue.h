@@ -25,6 +25,10 @@ public:
     void markReported(JSC::JSGlobalObject* owner, JSC::JSPromise*);
     template<typename Visitor> void visit(JSC::JSCell* owner, Visitor&);
     bool isEmpty() const { return m_entries.isEmpty(); }
+    // The size, after room is made for one append: an append to a full queue can drop handled entries.
+    size_t sizeBeforeRead(JSC::JSCell* owner);
+    // Entries enter at the end and never move up: if the queue is longer than `sizeBefore`, its newest entry entered since. Marks that promise as handled if it is `returned`.
+    void handleRejectionOfRead(size_t sizeBefore, JSC::JSValue returned);
 
 private:
     struct Entry {
@@ -34,8 +38,9 @@ private:
     static bool isHandled(const Entry& entry) { return static_cast<JSC::JSPromise*>(entry.promise.get().asCell())->isHandled(); }
     bool wasReported(JSC::JSPromise*);
     void makeRoom();
+    void makeRoomBeforeRead(JSC::JSCell* owner);
 
-    // In rejection order. A handled promise stays until it is at the end, makeRoom() runs, or the drain.
+    // In rejection order. A handled promise stays until makeRoom() runs or the drain. One that got its handler through didHandle() also leaves at the end.
     WTF::Vector<Entry> m_entries;
     // Promises reported as unhandled. Weak: a reported promise that dies leaves it.
     JSC::WriteBarrier<JSC::JSWeakSet> m_reported;
@@ -62,6 +67,19 @@ ALWAYS_INLINE bool RejectedPromiseQueue::didHandle(JSC::JSCell* owner, JSC::JSPr
         return false;
     }
     return m_reported && wasReported(promise);
+}
+
+ALWAYS_INLINE size_t RejectedPromiseQueue::sizeBeforeRead(JSC::JSCell* owner)
+{
+    if (m_entries.size() == m_entries.capacity() && !m_entries.isEmpty()) [[unlikely]]
+        makeRoomBeforeRead(owner);
+    return m_entries.size();
+}
+
+ALWAYS_INLINE void RejectedPromiseQueue::handleRejectionOfRead(size_t sizeBefore, JSC::JSValue returned)
+{
+    if (m_entries.size() > sizeBefore && m_entries.last().promise.get() == returned) [[unlikely]]
+        static_cast<JSC::JSPromise*>(returned.asCell())->markAsHandled();
 }
 
 } // namespace Bun

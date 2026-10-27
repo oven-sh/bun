@@ -7,6 +7,9 @@ const StringPrototypeCharCodeAt = String.prototype.charCodeAt;
 const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeToUpperCase = String.prototype.toUpperCase;
 const NumberPrototypeToString = Number.prototype.toString;
+const parseQueryStringNative = $newCppFunction("NodeQueryString.cpp", "jsFunctionParseQueryString", 2);
+// decodeURIComponent that returns undefined instead of throwing (Node uses the primordial).
+const decodeQueryStringComponent = $newCppFunction("NodeQueryString.cpp", "jsFunctionDecodeQueryStringComponent", 1);
 
 var __commonJS =
   (cb, mod: { exports: any } | undefined = undefined) =>
@@ -189,11 +192,9 @@ var require_src = __commonJS((exports, module) => {
    * @returns {string}
    */
   function qsUnescape(s, decodeSpaces) {
-    try {
-      return decodeURIComponent(s);
-    } catch {
-      return QueryString.unescapeBuffer(s, decodeSpaces).toString();
-    }
+    const decoded = decodeQueryStringComponent(s);
+    if (decoded !== undefined) return decoded;
+    return QueryString.unescapeBuffer(s, decodeSpaces).toString();
   }
 
   // These characters do not need escaping when generating query strings:
@@ -360,10 +361,8 @@ var require_src = __commonJS((exports, module) => {
    * @returns {Record<string, string | string[]>}
    */
   function parse(qs, sep, eq, options) {
-    const obj = Object.create(null);
-
     if (typeof qs !== "string" || qs.length === 0) {
-      return obj;
+      return Object.create(null);
     }
 
     const sepCodes = !sep ? defSepCodes : charCodes(String(sep));
@@ -390,6 +389,13 @@ var require_src = __commonJS((exports, module) => {
     }
     const customDecode = decode !== qsUnescape;
 
+    if (!sep && !eq && !customDecode) {
+      // Undefined for a malformed %XX escape; the loop below then handles it.
+      const parsed = parseQueryStringNative(qs, pairs);
+      if (parsed !== undefined) return parsed;
+    }
+
+    const obj = Object.create(null);
     let lastPos = 0;
     let sepIdx = 0;
     let eqIdx = 0;
@@ -467,8 +473,9 @@ var require_src = __commonJS((exports, module) => {
             if (lastPos < i) key += StringPrototypeSlice.$call(qs, lastPos, i);
             key += plusChar;
             lastPos = i + 1;
-            continue;
           }
+          // Don't let key characters affect value encoding.
+          continue;
         }
         if (code === 43 /* + */) {
           if (lastPos < i) value += StringPrototypeSlice.$call(qs, lastPos, i);

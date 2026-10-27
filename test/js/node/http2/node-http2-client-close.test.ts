@@ -12,6 +12,7 @@
 import assert from "node:assert";
 import http2 from "node:http2";
 import net from "node:net";
+import { Duplex, duplexPair } from "node:stream";
 import { describe, test } from "node:test";
 
 const { NGHTTP2_NO_ERROR, NGHTTP2_CANCEL, NGHTTP2_INTERNAL_ERROR, NGHTTP2_ENHANCE_YOUR_CALM } = http2.constants;
@@ -351,6 +352,195 @@ describe("closing a request before its invalid headers are rejected keeps rstCod
         }
       });
     }
+  }
+});
+
+// The session can parse a frame of the peer while close(code) is still running: inside a listener
+// that close() runs, or inside the write of its END_STREAM. That needs a transport in the same
+// process. close(0) and close(8) give the readable its EOF first: the DATA frame must not follow it.
+const FRAME = { DATA: 0, HEADERS: 1, SETTINGS: 4, END_HEADERS: 0x4 };
+
+function frame(type: number, flags: number, id: number, payload: Buffer = Buffer.alloc(0)): Buffer {
+  const head = Buffer.alloc(9);
+  head.writeUIntBE(payload.length, 0, 3);
+  head[3] = type;
+  head[4] = flags;
+  head.writeUInt32BE(id, 5);
+  return Buffer.concat([head, payload]);
+}
+
+// HPACK: each field is a literal that is never indexed.
+function headerBlock(fields: [string, string][]): Buffer {
+  return Buffer.concat(
+    fields.flatMap(([name, value]) => [
+      Buffer.from([0x10, name.length]),
+      Buffer.from(name),
+      Buffer.from([value.length]),
+      Buffer.from(value),
+    ]),
+  );
+}
+
+// One open stream (id 1) on a session whose transport is a Duplex that the test owns. The session
+// parses what `receive` hands it before `receive` returns. What the session writes is dropped.
+async function openOnOwnedTransport(role: "client" | "server") {
+  const transport = new Duplex({
+    read() {},
+    write(_chunk, _encoding, callback) {
+      callback();
+    },
+  });
+  const receive = (type: number, flags: number, payload: Buffer) => {
+    transport.push(frame(type, flags, 1, payload));
+  };
+  let session: http2.ClientHttp2Session | http2.ServerHttp2Session;
+  let stream: http2.ClientHttp2Stream | http2.ServerHttp2Stream;
+  if (role === "client") {
+    transport.push(frame(FRAME.SETTINGS, 0, 0));
+    const client = (session = http2.connect("http://localhost", { createConnection: () => transport }));
+    stream = client.request({ ":method": "POST", ":path": "/" });
+  } else {
+    const server = (session = http2.performServerHandshake(transport));
+    const opened = new Promise<http2.ServerHttp2Stream>(resolve => server.once("stream", resolve));
+    transport.push(Buffer.concat([Buffer.from("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"), frame(FRAME.SETTINGS, 0, 0)]));
+    const request: [string, string][] = [
+      [":method", "POST"],
+      [":scheme", "http"],
+      [":path", "/"],
+      [":authority", "localhost"],
+    ];
+    receive(FRAME.HEADERS, FRAME.END_HEADERS, headerBlock(request));
+    const serverStream = (stream = await opened);
+    serverStream.respond({ ":status": 200 });
+  }
+  // node holds the frames of the peer back while a write of the session is in flight.
+  await new Promise(written => stream.write("body", written));
+  if (role === "client") {
+    const response = new Promise(resolve => stream.once("response", resolve));
+    receive(FRAME.HEADERS, FRAME.END_HEADERS, headerBlock([[":status", "200"]]));
+    await response;
+  }
+  return { session, stream, receive };
+}
+
+for (const role of ["client", "server"] as const) {
+  // close() runs 'aborted' and, through end(), 'prefinish'. The EOF of the readable runs 'readable'.
+  for (const listener of ["aborted", "prefinish", "readable"] as const) {
+    describe(`close(code) of a ${role} stream: a DATA frame that arrives inside '${listener}'`, () => {
+      for (const [code, expected] of [
+        [NGHTTP2_NO_ERROR, ["close:0"]],
+        [NGHTTP2_CANCEL, ["close:8"]],
+        [NGHTTP2_INTERNAL_ERROR, ["error:ERR_HTTP2_STREAM_ERROR", "close:2"]],
+        [NGHTTP2_ENHANCE_YOUR_CALM, ["error:ERR_HTTP2_STREAM_ERROR", "close:11"]],
+      ] as const) {
+        test(`close(${code})`, async () => {
+          const { session, stream, receive } = await openOnOwnedTransport(role);
+          try {
+            const events: string[] = [];
+            const { promise: settled, resolve } = Promise.withResolvers<void>();
+            let closing = false;
+            const feedOnce = () => {
+              if (!closing) return;
+              closing = false;
+              receive(FRAME.DATA, 0, Buffer.from("late"));
+            };
+            if (listener === "readable") {
+              stream.on("readable", () => {
+                while (stream.read() !== null);
+                feedOnce();
+              });
+              stream.read();
+            } else {
+              stream.on(listener, feedOnce);
+              stream.resume();
+            }
+            stream.on("error", err => {
+              const { code } = err as NodeJS.ErrnoException;
+              events.push("error:" + code);
+              // This error can leave the stream open, with no 'close'.
+              if (code === "ERR_STREAM_PUSH_AFTER_EOF") resolve();
+            });
+            stream.on("close", () => {
+              events.push("close:" + stream.rstCode);
+              resolve();
+            });
+            closing = true;
+            stream.close(code);
+            await settled;
+            assert.deepStrictEqual(events, expected);
+          } finally {
+            session.destroy();
+          }
+        });
+      }
+    });
+  }
+
+  // The throw leaves close() after the EOF of the readable and before the closed state.
+  test(`close(0) of a ${role} stream with an 'aborted' listener that throws: a later DATA frame raises no 'error'`, async () => {
+    const { session, stream, receive } = await openOnOwnedTransport(role);
+    try {
+      const errors: unknown[] = [];
+      stream.on("error", err => errors.push((err as NodeJS.ErrnoException).code));
+      stream.on("aborted", () => {
+        throw new Error("listener");
+      });
+      stream.resume();
+      assert.throws(() => stream.close(NGHTTP2_NO_ERROR), { message: "listener" });
+      receive(FRAME.DATA, 0, Buffer.from("late"));
+      // An 'error' of the readable is emitted on the next tick.
+      await new Promise(resolve => setImmediate(resolve));
+      assert.deepStrictEqual(errors, []);
+    } finally {
+      session.destroy();
+    }
+  });
+}
+
+// Both sessions run in this process. The server answers the END_STREAM of close() inside the write
+// of that frame, so the client parses the response before close() returns.
+describe("close(code) of a request on a duplexPair(): the server answers the END_STREAM at once", () => {
+  for (const code of [NGHTTP2_NO_ERROR, NGHTTP2_CANCEL]) {
+    test(`close(${code})`, async () => {
+      const [clientSide, serverSide] = duplexPair();
+      const server = http2.createServer();
+      server.on("stream", (stream: http2.ServerHttp2Stream) => {
+        stream.on("error", () => {});
+        // The request has no DATA, so the first 'readable' is its EOF.
+        stream.on("readable", () => {
+          while (stream.read() !== null);
+          if (stream.headersSent) return;
+          stream.respond({ ":status": 200 });
+          stream.end("ok");
+        });
+      });
+      server.emit("connection", serverSide);
+      const client = http2.connect("http://localhost", { createConnection: () => clientSide });
+      try {
+        const events: string[] = [];
+        const { promise: settled, resolve, reject } = Promise.withResolvers<void>();
+        client.on("error", reject);
+        const opened = new Promise(resolve => server.once("stream", resolve));
+        const req = client.request({ ":method": "POST", ":path": "/" });
+        await opened;
+        req.on("error", err => {
+          const { code } = err as NodeJS.ErrnoException;
+          events.push("error:" + code);
+          if (code === "ERR_STREAM_PUSH_AFTER_EOF") resolve();
+        });
+        req.on("close", () => {
+          events.push("close:" + req.rstCode);
+          resolve();
+        });
+        req.resume();
+        req.close(code);
+        await settled;
+        assert.deepStrictEqual(events, ["close:" + code]);
+      } finally {
+        client.destroy();
+        server.close();
+      }
+    });
   }
 });
 

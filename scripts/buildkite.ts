@@ -715,27 +715,29 @@ const unfitAgentPauseMinutes = 24 * 60;
  * @returns why a retry runs somewhere else, or undefined when none is left or it could run here again
  */
 export function quarantineBuildkiteAgent(reason: string): string | undefined {
-  // The step retries a job once. A job that fails again fails as it did before: it is red with either
-  // status, and a build that two machines could not download is a likelier cause than the second machine.
-  if (!isBuildkite || Number(process.env.BUILDKITE_RETRY_COUNT || 0) >= unfitAgentRetry.limit) {
-    return undefined;
-  }
   const {
+    BUILDKITE_RETRY_COUNT: retries,
     BUILDKITE_AGENT_META_DATA_EPHEMERAL: ephemeral,
     BUILDKITE_AGENT_META_DATA_TART: tart,
     BUILDKITE_AGENT_META_DATA_RELEASE_TIER: tier,
     BUILDKITE_AGENT_META_DATA_RELEASE: release,
     BUN_RUNNER_PAUSE_UNFIT_AGENT: pause,
   } = process.env;
+  // No retry follows. The step retries a job once, and a job that fails again fails as it did before: it is
+  // red with either status, and a build that two machines could not download is a likelier cause than the
+  // second machine. The step of the beta tier retries nothing (getTestBunStep in .buildkite/ci.ts): its queue
+  // is one box, and darwinBetaQueueIdle() there would still add a step for that box while it is paused.
+  if (!isBuildkite || Number(retries || 0) >= unfitAgentRetry.limit || tier === "beta") {
+    return undefined;
+  }
   if (ephemeral === "true") {
     return "its machine runs no other job";
   }
   if (tart === "true") {
     return "its guest runs no other job";
   }
-  // `ephemeral=false` is a bare-metal agent of scripts/agent.ts. The beta tier is one box, and
-  // darwinBetaQueueIdle() in .buildkite/ci.ts would still add a step for it while it is paused.
-  if (ephemeral !== "false" || tier === "beta" || !(Number(release) >= 26) || pause !== "1") {
+  // `ephemeral=false` is a bare-metal agent of scripts/agent.ts.
+  if (ephemeral !== "false" || !(Number(release) >= 26) || pause !== "1") {
     return undefined;
   }
   const note = `${reason} (${getBuildUrl()}). Resume the agent if its host is healthy.`;

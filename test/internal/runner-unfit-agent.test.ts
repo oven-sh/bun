@@ -190,6 +190,11 @@ describe.skipIf(isWindows || !node)("a job whose build download times out", () =
     ["fails as before on a bare-metal mac on an older macOS", { ...bareMetal("15", "previous"), ...pauseOn }, fails()],
     ["fails as before on the one box of the beta tier", { ...bareMetal("27", "beta"), ...pauseOn }, fails()],
     [
+      "fails as before on a tart agent of the beta tier, whose step retries nothing",
+      { ...tart, BUILDKITE_AGENT_META_DATA_RELEASE_TIER: "beta" },
+      fails(),
+    ],
+    [
       "fails as before on a mac that scripts/agent.ts did not tag",
       { BUILDKITE_AGENT_META_DATA_RELEASE: "26", ...pauseOn },
       fails(),

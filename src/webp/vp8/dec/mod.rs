@@ -74,10 +74,18 @@ impl SegmentHeader {
             if br.get() {
                 hdr.absolute_delta = br.get();
                 for quantizer in &mut hdr.quantizer {
-                    *quantizer = if br.get() { br.get_signed_value(7) as i8 } else { 0 };
+                    *quantizer = if br.get() {
+                        br.get_signed_value(7) as i8
+                    } else {
+                        0
+                    };
                 }
                 for strength in &mut hdr.filter_strength {
-                    *strength = if br.get() { br.get_signed_value(6) as i8 } else { 0 };
+                    *strength = if br.get() {
+                        br.get_signed_value(6) as i8
+                    } else {
+                        0
+                    };
                 }
             }
             if hdr.update_map {
@@ -137,35 +145,48 @@ impl FilterHeader {
     }
 }
 
-/// Paragraph 9.5: the readers of the token partitions, 1, 2, 4 or 8 of them. `buf` is what follows the first partition.
-fn parse_partitions<'a>(
-    br: &mut BitReader<'_>,
-    buf: &'a [u8],
-) -> Result<Vec<BitReader<'a>>, DecodeError> {
-    let last_part = (1usize << br.get_value(2)) - 1;
-    let Some((sizes, mut rest)) = buf.split_at_checked(3 * last_part) else {
-        return Err(DecodeError::NotEnoughData);
-    };
-    let mut parts = Vec::with_capacity(MAX_NUM_PARTITIONS);
-    for p in 0..last_part {
-        let size = (le24(sizes, 3 * p)? as usize).min(rest.len());
-        let (part, after) = rest.split_at_checked(size).ok_or(Bug)?;
-        parts.push(BitReader::new(part));
-        rest = after;
+/// The readers of the token partitions.
+struct Partitions<'a> {
+    parts: [BitReader<'a>; MAX_NUM_PARTITIONS],
+    /// There are 1, 2, 4 or 8.
+    num_parts_minus_one: usize,
+}
+
+impl<'a> Partitions<'a> {
+    /// Paragraph 9.5. `buf` is what follows the first partition.
+    fn parse(br: &mut BitReader<'_>, buf: &'a [u8]) -> Result<Self, DecodeError> {
+        let last_part = (1usize << br.get_value(2)) - 1;
+        let Some((sizes, mut rest)) = buf.split_at_checked(3 * last_part) else {
+            return Err(DecodeError::NotEnoughData);
+        };
+        let mut parts = [BitReader::new(&[]); MAX_NUM_PARTITIONS];
+        for (p, part) in parts.iter_mut().enumerate().take(last_part) {
+            let size = (le24(sizes, 3 * p)? as usize).min(rest.len());
+            let (data, after) = rest.split_at_checked(size).ok_or(Bug)?;
+            *part = BitReader::new(data);
+            rest = after;
+        }
+        if rest.is_empty() {
+            return Err(DecodeError::NotEnoughData);
+        }
+        parts.put(last_part, BitReader::new(rest))?;
+        Ok(Self {
+            parts,
+            num_parts_minus_one: last_part,
+        })
     }
-    parts.push(BitReader::new(rest));
-    if rest.is_empty() {
-        return Err(DecodeError::NotEnoughData);
+
+    /// The partition of a row of macroblocks.
+    fn of_row(&mut self, mb_y: usize) -> Checked<&mut BitReader<'a>> {
+        self.parts.at_mut(mb_y & self.num_parts_minus_one)
     }
-    Ok(parts)
 }
 
 /// What the headers say, and the readers at the first macroblock.
 struct Decoder<'a> {
     /// Of the first partition.
     br: BitReader<'a>,
-    /// Row `y` of macroblocks is in partition `y % parts.len()`.
-    parts: Vec<BitReader<'a>>,
+    parts: Partitions<'a>,
     width: usize,
     height: usize,
     /// The size in macroblocks.
@@ -201,7 +222,7 @@ impl<'a> Decoder<'a> {
         if br.eof() {
             return Err(DecodeError::BitstreamError);
         }
-        let parts = parse_partitions(&mut br, buf)?;
+        let parts = Partitions::parse(&mut br, buf)?;
         let dqm = quant::parse_quant(&mut br, &segment_hdr)?;
         // Whether the probabilities are kept for the next frame.
         br.get();
@@ -283,32 +304,52 @@ fn get_large_value(br: &mut BitReader<'_>, p: &[u8; 11]) -> i32 {
         }
     } else {
         let (cat, tab) = if !br.get_bit(p[8]) {
-            if !br.get_bit(p[9]) { (0, CAT3) } else { (1, CAT4) }
+            if !br.get_bit(p[9]) {
+                (0, CAT3)
+            } else {
+                (1, CAT4)
+            }
         } else if !br.get_bit(p[10]) {
             (2, CAT5)
         } else {
             (3, CAT6)
         };
-        let v = tab.iter().fold(0, |v, &prob| 2 * v + i32::from(br.get_bit(prob)));
+        let v = tab
+            .iter()
+            .fold(0, |v, &prob| 2 * v + i32::from(br.get_bit(prob)));
         v + 3 + (8 << cat)
     }
 }
 
 /// Reads the coefficients of a block from the `n`th on. Returns the position of the last one that is not zero, plus one.
-#[inline]
+#[inline(always)]
 fn get_coeffs(
     br: &mut BitReader<'_>,
     prob: &TypeProbas,
     ctx: usize,
     dq: Quant,
+    n: usize,
+    out: &mut [i16; 16],
+) -> Checked<usize> {
+    let p = prob.at_ref(n)?.at_ref(ctx)?;
+    // Most blocks are empty.
+    if !br.get_bit(p[0]) {
+        return Ok(n);
+    }
+    get_more_coeffs(br, prob, p, dq, n, out)
+}
+
+/// The rest of `get_coeffs` once it is known that there is a coefficient.
+#[inline(never)]
+fn get_more_coeffs<'a>(
+    br: &mut BitReader<'_>,
+    prob: &'a TypeProbas,
+    mut p: &'a [u8; 11],
+    dq: Quant,
     mut n: usize,
     out: &mut [i16; 16],
 ) -> Checked<usize> {
-    let mut p = prob.at_ref(n)?.at_ref(ctx)?;
-    while n < 16 {
-        if !br.get_bit(p[0]) {
-            return Ok(n);
-        }
+    loop {
         while !br.get_bit(p[1]) {
             n += 1;
             p = &prob.at_ref(n)?[0];
@@ -329,8 +370,10 @@ fn get_coeffs(
         // Too large a product is cut off.
         out.put(usize::from(ZIGZAG.at(n)?), (br.get_signed(v) * dq) as i16)?;
         n += 1;
+        if n == 16 || !br.get_bit(p[0]) {
+            return Ok(n);
+        }
     }
-    Ok(16)
 }
 
 #[inline]
@@ -378,7 +421,7 @@ fn parse_residuals(
     let mut non_zero_y = 0;
     let mut tnz = u32::from(mb.nz & 0x0f);
     let mut lnz = u32::from(left_mb.nz & 0x0f);
-    for row in luma_coeffs.chunks_exact_mut(4) {
+    for row in luma_coeffs.as_chunks_mut::<4>().0 {
         let mut l = lnz & 1;
         let mut nz_coeffs = 0;
         for dst in row {
@@ -396,11 +439,11 @@ fn parse_residuals(
     let mut out_l_nz = lnz >> 4;
 
     let mut non_zero_uv = 0;
-    for (plane, ch) in chroma_coeffs.chunks_exact_mut(4).zip([0, 2]) {
+    for (plane, ch) in chroma_coeffs.as_chunks_mut::<4>().0.iter_mut().zip([0, 2]) {
         let mut nz_coeffs = 0;
         let mut tnz = u32::from(mb.nz) >> (4 + ch);
         let mut lnz = u32::from(left_mb.nz) >> (4 + ch);
-        for row in plane.chunks_exact_mut(2) {
+        for row in plane.as_chunks_mut::<2>().0 {
             let mut l = lnz & 1;
             for dst in row {
                 let ctx = (l + (tnz & 1)) as usize;
@@ -424,48 +467,47 @@ fn parse_residuals(
     Ok(non_zero_y | non_zero_uv == 0)
 }
 
-impl Decoder<'_> {
-    /// `VP8DecodeMB`: the coefficients of macroblock `mb_x` of the current row.
-    fn decode_mb(
-        &self,
-        frame: &mut Frame<'_>,
-        mb_x: usize,
-        token_br: &mut BitReader<'_>,
-    ) -> Checked {
-        let left = &mut frame.left_info;
-        let mb = frame.mb_info.at_mut(mb_x)?;
-        let block = frame.mb_data.at_mut(mb_x)?;
-        let skip = if self.proba.skip_p.is_some() && block.skip {
-            left.nz = 0;
-            mb.nz = 0;
-            if !block.is_i4x4 {
-                left.nz_dc = false;
-                mb.nz_dc = false;
-            }
-            block.non_zero_y = 0;
-            block.non_zero_uv = 0;
-            true
-        } else {
-            let q = self.dqm.at_ref(usize::from(block.segment))?;
-            parse_residuals(&self.proba, q, mb, left, block, token_br)?
-        };
-        if frame.filter_type != FilterType::Off {
-            let strengths = frame.fstrengths.at_ref(usize::from(block.segment))?;
-            let finfo = frame.f_info.at_mut(mb_x)?;
-            *finfo = strengths.at(usize::from(block.is_i4x4))?;
-            finfo.f_inner |= !skip;
+/// `VP8DecodeMB`: the coefficients of macroblock `mb_x` of the current row.
+fn decode_mb(
+    proba: &Proba,
+    dqm: &[QuantMatrix; NUM_MB_SEGMENTS],
+    frame: &mut Frame<'_>,
+    mb_x: usize,
+    token_br: &mut BitReader<'_>,
+) -> Checked {
+    let left = &mut frame.left_info;
+    let mb = frame.mb_info.at_mut(mb_x)?;
+    let block = frame.mb_data.at_mut(mb_x)?;
+    let skip = if proba.skip_p.is_some() && block.skip {
+        left.nz = 0;
+        mb.nz = 0;
+        if !block.is_i4x4 {
+            left.nz_dc = false;
+            mb.nz_dc = false;
         }
-        Ok(())
+        block.non_zero_y = 0;
+        block.non_zero_uv = 0;
+        true
+    } else {
+        let q = dqm.at_ref(usize::from(block.segment))?;
+        parse_residuals(proba, q, mb, left, block, token_br)?
+    };
+    if frame.filter_type != FilterType::Off {
+        let strengths = frame.fstrengths.at_ref(usize::from(block.segment))?;
+        let finfo = frame.f_info.at_mut(mb_x)?;
+        *finfo = strengths.at(usize::from(block.is_i4x4))?;
+        finfo.f_inner |= !skip;
     }
+    Ok(())
+}
 
+impl Decoder<'_> {
     /// `ParseFrame`: each row of macroblocks is parsed, then reconstructed, filtered and written.
     fn parse_frame(
         mut self,
         frame: &mut Frame<'_>,
         output: &mut Output<'_>,
     ) -> Result<(), DecodeError> {
-        let mut parts = core::mem::take(&mut self.parts);
-        let num_parts_minus_one = parts.len() - 1;
         for mb_y in 0..self.mb_h {
             let update_map = self.segment_hdr.update_map;
             for (top, block) in frame.intra_t.iter_mut().zip(&mut frame.mb_data) {
@@ -475,9 +517,9 @@ impl Decoder<'_> {
             if self.br.eof() {
                 return Err(DecodeError::NotEnoughData);
             }
-            let token_br = parts.at_mut(mb_y & num_parts_minus_one)?;
+            let token_br = self.parts.of_row(mb_y)?;
             for mb_x in 0..self.mb_w {
-                self.decode_mb(frame, mb_x, token_br)?;
+                decode_mb(&self.proba, &self.dqm, frame, mb_x, token_br)?;
                 if token_br.eof() {
                     return Err(DecodeError::NotEnoughData);
                 }

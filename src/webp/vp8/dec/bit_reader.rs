@@ -3,6 +3,27 @@
 /// How many bits are loaded at a time. With the 8 bits in use they fill `value`.
 const BITS: i32 = 56;
 
+/// `kVP8Log2Range` and `kVP8NewRange`, for every range: by a range minus 1, how many bits to shift the range by for it to
+/// be 128 or more, and the result minus 1.
+// One load is a shorter wait for the next bit than counting the leading zeros and shifting.
+const NORMALIZED: [[u8; 2]; 256] = {
+    let mut table = [[0; 2]; 256];
+    let mut rest: &mut [[u8; 2]] = &mut table;
+    let mut range = 1u32;
+    while let [entry, tail @ ..] = rest {
+        let shift = if range < 128 {
+            (range as u8).leading_zeros()
+        } else {
+            0
+        };
+        *entry = [shift as u8, ((range << shift) - 1) as u8];
+        range += 1;
+        rest = tail;
+    }
+    table
+};
+
+#[derive(Clone, Copy)]
 pub(super) struct BitReader<'a> {
     value: u64,
     /// The range minus 1: 127 to 254, or 255 after `get_signed`.
@@ -40,13 +61,14 @@ impl<'a> BitReader<'a> {
             self.value = (u64::from_be_bytes(bytes) >> 8) | (self.value << BITS);
             self.bits += BITS;
         } else {
-            self.load_final_bytes();
+            *self = self.load_final_bytes();
         }
     }
 
+    // By value, so that this call does not keep the caller's reader out of registers.
     #[cold]
     #[inline(never)]
-    fn load_final_bytes(&mut self) {
+    fn load_final_bytes(mut self) -> Self {
         if let Some((&byte, rest)) = self.buf.split_first() {
             self.buf = rest;
             self.bits += 8;
@@ -58,6 +80,7 @@ impl<'a> BitReader<'a> {
         } else {
             self.bits = 0;
         }
+        self
     }
 
     /// A bit that is 0 with the probability `prob / 256`.
@@ -72,15 +95,15 @@ impl<'a> BitReader<'a> {
         let value = (self.value >> pos) as u32;
         let bit = value > split;
         if bit {
-            range -= split;
+            range -= split + 1;
             self.value -= u64::from(split + 1) << pos;
         } else {
-            range = split + 1;
+            range = split;
         }
-        // `range` is 1 to 255 here.
-        let shift = (range as u8 | 1).leading_zeros();
-        self.range = (range << shift) - 1;
-        self.bits -= shift as i32;
+        if let Some(&[shift, new_range]) = NORMALIZED.get(usize::from(range as u8)) {
+            self.range = u32::from(new_range);
+            self.bits -= i32::from(shift);
+        }
         bit
     }
 

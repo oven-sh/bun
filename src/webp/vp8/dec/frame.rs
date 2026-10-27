@@ -1,6 +1,6 @@
 //! `frame_dec.c`: reconstructs a row of macroblocks, filters it and hands over the rows that are final.
 
-use super::dsp::{self, BPS, Thresholds, U_OFF, V_OFF, Y_OFF, YUV_SIZE, YuvB};
+use super::dsp::{self, BPS, Edges, Thresholds, U_OFF, V_OFF, Y_OFF, YUV_SIZE, YuvB};
 use super::io::{Emitter, Rows};
 use super::{Decoder, FilterType, MbContext, MbData};
 use crate::util::{Checked, SliceExt, try_vec};
@@ -48,25 +48,24 @@ pub(super) struct Frame<'a> {
     yuv_t: Vec<TopSamples>,
     yuv_b: YuvB,
     /// A row of macroblocks, below the last `extra_y_rows` rows of the one above, which its filtering still changes.
-    cache_y: Vec<u8>,
+    /// Each element is a row of one macroblock, and `mb_w` of them are a row of the image.
+    cache_y: Vec<[u8; 16]>,
     /// The same with half as many rows.
-    cache_u: Vec<u8>,
-    cache_v: Vec<u8>,
+    cache_u: Vec<[u8; 8]>,
+    cache_v: Vec<[u8; 8]>,
 
     alpha_data: Option<&'a [u8]>,
     emitter: Emitter,
 }
 
 /// Where the 4x4 blocks are in the work buffer.
-const SCAN: [usize; 16] = {
-    let mut scan = [0; 16];
-    let mut n = 0;
-    while n < 16 {
-        scan[n] = (n % 4) * 4 + (n / 4) * 4 * BPS;
-        n += 1;
-    }
-    scan
-};
+#[rustfmt::skip]
+const SCAN: [usize; 16] = [
+    0,            4,            8,            12,
+    4 * BPS,      4 + 4 * BPS,  8 + 4 * BPS,  12 + 4 * BPS,
+    8 * BPS,      4 + 8 * BPS,  8 + 8 * BPS,  12 + 8 * BPS,
+    12 * BPS,     4 + 12 * BPS, 8 + 12 * BPS, 12 + 12 * BPS,
+];
 
 #[inline]
 fn do_transform(bits: u32, src: &[i16; 16], dst: &mut dsp::Block4) {
@@ -145,7 +144,10 @@ fn precompute_filter_strengths(dec: &Decoder<'_>) -> [[FInfo; 2]; NUM_MB_SEGMENT
 
 impl<'a> Frame<'a> {
     /// `VP8EnterCritical` and `VP8InitFrame`
-    pub(super) fn new(dec: &Decoder<'_>, alpha_data: Option<&'a [u8]>) -> Result<Self, DecodeError> {
+    pub(super) fn new(
+        dec: &Decoder<'_>,
+        alpha_data: Option<&'a [u8]>,
+    ) -> Result<Self, DecodeError> {
         let emitter = Emitter::new(dec.width, dec.height)?;
         let mb_w = dec.mb_w;
         let filter_type = dec.filter_hdr.filter_type;
@@ -172,9 +174,9 @@ impl<'a> Frame<'a> {
             mb_data: try_vec(MbData::EMPTY, mb_w)?,
             yuv_t: try_vec(top, mb_w)?,
             yuv_b: [0; YUV_SIZE],
-            cache_y: try_vec(0, (16 + extra_rows) * 16 * mb_w)?,
-            cache_u: try_vec(0, (8 + extra_rows / 2) * 8 * mb_w)?,
-            cache_v: try_vec(0, (8 + extra_rows / 2) * 8 * mb_w)?,
+            cache_y: try_vec([0; 16], (16 + extra_rows) * mb_w)?,
+            cache_u: try_vec([0; 8], (8 + extra_rows / 2) * mb_w)?,
+            cache_v: try_vec([0; 8], (8 + extra_rows / 2) * mb_w)?,
             alpha_data,
             emitter,
         })
@@ -187,8 +189,6 @@ impl<'a> Frame<'a> {
     }
 
     fn reconstruct_row(&mut self, mb_y: usize) -> Checked {
-        let y_stride = 16 * self.mb_w;
-        let uv_stride = 8 * self.mb_w;
         let extra_rows = filter_extra_rows(self.filter_type);
         let yuv_b = &mut self.yuv_b;
 
@@ -206,9 +206,18 @@ impl<'a> Frame<'a> {
             yuv_b[V_OFF - 1 - BPS] = 129;
         } else {
             // Nor above the first row. It stays as it is for the whole row.
-            yuv_b.sub_mut(Y_OFF - BPS - 1..)?.sub_mut(..16 + 4 + 1)?.fill(127);
-            yuv_b.sub_mut(U_OFF - BPS - 1..)?.sub_mut(..8 + 1)?.fill(127);
-            yuv_b.sub_mut(V_OFF - BPS - 1..)?.sub_mut(..8 + 1)?.fill(127);
+            yuv_b
+                .sub_mut(Y_OFF - BPS - 1..)?
+                .sub_mut(..16 + 4 + 1)?
+                .fill(127);
+            yuv_b
+                .sub_mut(U_OFF - BPS - 1..)?
+                .sub_mut(..8 + 1)?
+                .fill(127);
+            yuv_b
+                .sub_mut(V_OFF - BPS - 1..)?
+                .sub_mut(..8 + 1)?
+                .fill(127);
         }
 
         for (mb_x, block) in self.mb_data.iter().enumerate() {
@@ -271,74 +280,55 @@ impl<'a> Frame<'a> {
                 top_yuv.v = *yuv_b.array_at(V_OFF + 7 * BPS)?;
             }
 
-            let y_out = self.cache_y.sub_mut(extra_rows * y_stride + mb_x * 16..)?;
-            for (out, row) in y_out.chunks_mut(y_stride).zip(yuv_b.sub(Y_OFF..)?.chunks(BPS)) {
-                *out.array_at_mut::<16>(0)? = *row.array_at(0)?;
+            let mut at = extra_rows * self.mb_w + mb_x;
+            for j in 0..16 {
+                self.cache_y.put(at, *yuv_b.array_at(Y_OFF + j * BPS)?)?;
+                at += self.mb_w;
             }
-            let uv_offset = extra_rows / 2 * uv_stride + mb_x * 8;
-            let u_out = self.cache_u.sub_mut(uv_offset..)?;
-            for (out, row) in u_out.chunks_mut(uv_stride).zip(yuv_b.sub(U_OFF..)?.chunks(BPS)) {
-                *out.array_at_mut::<8>(0)? = *row.array_at(0)?;
-            }
-            let v_out = self.cache_v.sub_mut(uv_offset..)?;
-            for (out, row) in v_out.chunks_mut(uv_stride).zip(yuv_b.sub(V_OFF..)?.chunks(BPS)) {
-                *out.array_at_mut::<8>(0)? = *row.array_at(0)?;
+            let mut at = extra_rows / 2 * self.mb_w + mb_x;
+            for j in 0..8 {
+                self.cache_u.put(at, *yuv_b.array_at(U_OFF + j * BPS)?)?;
+                self.cache_v.put(at, *yuv_b.array_at(V_OFF + j * BPS)?)?;
+                at += self.mb_w;
             }
         }
         Ok(())
     }
 
     fn do_filter(&mut self, mb_x: usize, mb_y: usize) -> Checked {
-        let y_bps = 16 * self.mb_w;
+        let stride = self.mb_w;
         let extra_rows = filter_extra_rows(self.filter_type);
         let f_info = self.f_info.at(mb_x)?;
         let y_dst = &mut self.cache_y;
-        let y_off = extra_rows * y_bps + mb_x * 16;
+        let y_at = extra_rows * stride + mb_x;
         let ilevel = f_info.f_ilevel;
         let limit = f_info.f_limit;
         if limit == 0 {
             return Ok(());
         }
+        // The vertical edges first, and in each direction the edge of the macroblock before those inside it.
         if self.filter_type == FilterType::Simple {
-            if mb_x > 0 {
-                dsp::simple_h_filter16(y_dst, y_off, y_bps, limit + 4)?;
-            }
-            if f_info.f_inner {
-                dsp::simple_h_filter16i(y_dst, y_off, y_bps, limit)?;
-            }
-            if mb_y > 0 {
-                dsp::simple_v_filter16(y_dst, y_off, y_bps, limit + 4)?;
-            }
-            if f_info.f_inner {
-                dsp::simple_v_filter16i(y_dst, y_off, y_bps, limit)?;
-            }
+            let inner = f_info.f_inner.then_some(limit);
+            let outer = (mb_x > 0).then_some(limit + 4);
+            dsp::simple_h_filter16(y_dst, y_at, stride, Edges { outer, inner })?;
+            let outer = (mb_y > 0).then_some(limit + 4);
+            dsp::simple_v_filter16(y_dst, y_at, stride, Edges { outer, inner })?;
         } else {
-            let uv_bps = 8 * self.mb_w;
             let u_dst = &mut self.cache_u;
             let v_dst = &mut self.cache_v;
-            let uv_off = extra_rows / 2 * uv_bps + mb_x * 8;
-            let edge = Thresholds::new(limit + 4, ilevel, f_info.hev_thresh);
-            let inner = Thresholds::new(limit, ilevel, f_info.hev_thresh);
-            if mb_x > 0 {
-                dsp::h_filter16(y_dst, y_off, y_bps, edge)?;
-                dsp::h_filter8(u_dst, uv_off, uv_bps, edge)?;
-                dsp::h_filter8(v_dst, uv_off, uv_bps, edge)?;
-            }
-            if f_info.f_inner {
-                dsp::h_filter16i(y_dst, y_off, y_bps, inner)?;
-                dsp::h_filter8i(u_dst, uv_off, uv_bps, inner)?;
-                dsp::h_filter8i(v_dst, uv_off, uv_bps, inner)?;
-            }
-            if mb_y > 0 {
-                dsp::v_filter16(y_dst, y_off, y_bps, edge)?;
-                dsp::v_filter8(u_dst, uv_off, uv_bps, edge)?;
-                dsp::v_filter8(v_dst, uv_off, uv_bps, edge)?;
-            }
-            if f_info.f_inner {
-                dsp::v_filter16i(y_dst, y_off, y_bps, inner)?;
-                dsp::v_filter8i(u_dst, uv_off, uv_bps, inner)?;
-                dsp::v_filter8i(v_dst, uv_off, uv_bps, inner)?;
-            }
+            let uv_at = extra_rows / 2 * stride + mb_x;
+            let thresholds = |thresh| Thresholds {
+                thresh,
+                ithresh: ilevel,
+                hev_thresh: f_info.hev_thresh,
+            };
+            let inner = f_info.f_inner.then(|| thresholds(limit));
+            let outer = (mb_x > 0).then(|| thresholds(limit + 4));
+            dsp::h_filter16(y_dst, y_at, stride, Edges { outer, inner })?;
+            dsp::h_filter8(u_dst, v_dst, uv_at, stride, Edges { outer, inner })?;
+            let outer = (mb_y > 0).then(|| thresholds(limit + 4));
+            dsp::v_filter16(y_dst, y_at, stride, Edges { outer, inner })?;
+            dsp::v_filter8(u_dst, v_dst, uv_at, stride, Edges { outer, inner })?;
         }
         Ok(())
     }
@@ -370,28 +360,30 @@ impl<'a> Frame<'a> {
             y_end -= extra_y_rows;
         }
         let y_end = y_end.min(self.height);
-        // libwebp decodes the alpha rows as the rows of the image get here, so a frame whose first row of macroblocks
-        // is broken fails as such whatever the alpha data is like.
+        // libwebp decodes the alpha of the rows that it is about to write, and gives up on the image if it cannot. In the
+        // end it has asked for every row, so decoding all of them before the first are written fails the same images.
         if let Some(alpha_data) = self.alpha_data.take() {
             let plane = alpha::dec::decode(alpha_data, self.emitter.width(), self.height)?;
             self.emitter.set_alpha(plane);
         }
-        if y_start < y_end {
-            let rows = Rows {
-                y: self.cache_y.sub(y_offset..)?,
-                u: self.cache_u.sub(uv_offset..)?,
-                v: self.cache_v.sub(uv_offset..)?,
-                y_stride,
-                uv_stride,
-                mb_y: y_start,
-                mb_h: y_end - y_start,
-            };
-            self.emitter.put(&rows, output)?;
-        }
+        let rows = Rows {
+            y: self.cache_y.as_flattened().sub(y_offset..)?,
+            u: self.cache_u.as_flattened().sub(uv_offset..)?,
+            v: self.cache_v.as_flattened().sub(uv_offset..)?,
+            y_stride,
+            uv_stride,
+            mb_y: y_start,
+            mb_h: y_end - y_start,
+        };
+        self.emitter.put(&rows, output)?;
         if !is_last_row {
-            self.cache_y.move_within(16 * y_stride, 0, ysize)?;
-            self.cache_u.move_within(8 * uv_stride, 0, uvsize)?;
-            self.cache_v.move_within(8 * uv_stride, 0, uvsize)?;
+            let (mb_w, extra_uv_rows) = (self.mb_w, extra_y_rows / 2);
+            self.cache_y
+                .move_within(16 * mb_w, 0, extra_y_rows * mb_w)?;
+            self.cache_u
+                .move_within(8 * mb_w, 0, extra_uv_rows * mb_w)?;
+            self.cache_v
+                .move_within(8 * mb_w, 0, extra_uv_rows * mb_w)?;
         }
         Ok(())
     }

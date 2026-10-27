@@ -147,7 +147,7 @@ The Rust side is a Cargo workspace of ~200 crates rooted at `Cargo.toml`. The ke
 
 #### Vendored Dependencies (`vendor/`)
 
-Third-party native libraries are vendored locally and can be read from disk (not git submodules): boringssl (TLS/crypto), brotli, cares (async DNS), hdrhistogram, highway (SIMD), libarchive (tar/zip), libdeflate, libuv (Windows event loop), lolhtml (HTML rewriter), lshpack (HTTP/2 HPACK), lsqpack + lsquic (HTTP/3), mimalloc (allocator), nodejs (headers), picohttpparser, rust-argon2 (argon2 for `Bun.password`, Rust), tinycc (FFI JIT, fork: oven-sh/tinycc), WebKit (JavaScriptCore), zlib (zlib-ng), zstd. Build configuration for these is in `scripts/build/deps/*.ts`.
+Third-party native libraries are vendored locally and can be read from disk (not git submodules): boringssl (TLS/crypto), brotli, cares (async DNS), highway (SIMD), libarchive (tar/zip), libdeflate, libuv (Windows event loop), lolhtml (HTML rewriter), lshpack (HTTP/2 HPACK), lsqpack + lsquic (HTTP/3), mimalloc (allocator), nodejs (headers), picohttpparser, rust-argon2 (argon2 for `Bun.password`, Rust), tinycc (FFI JIT, fork: oven-sh/tinycc), WebKit (JavaScriptCore), zlib (zlib-ng), zstd. Build configuration for these is in `scripts/build/deps/*.ts`.
 
 ### JavaScript Class Implementation (C++)
 
@@ -166,7 +166,6 @@ When implementing JavaScript classes in C++:
 Code generation happens automatically as part of the build process. The main scripts are:
 
 - `src/codegen/bindgen.ts` - Generates Rust, C++ & TypeScript bindings from `*.bind.ts` files (`docs/project/bindgen.mdx`)
-- `src/codegen/generate-jssink.ts` - Generates stream-related classes
 - `src/codegen/bundle-modules.ts` - Bundles built-in modules like `node:fs`
 - `src/codegen/bundle-functions.ts` - Bundles global functions like `ReadableStream`
 

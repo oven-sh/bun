@@ -361,6 +361,8 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "SecureContext.bind.ts": null,
   "SemverObject.bind.ts": "typeof Bun.semver",
   "SemverObjectInternals.bind.ts": null,
+  "Sink.bind.ts":
+    "typeof Bun & { FileSink: Class<Bun.FileSink>; NetworkSink: Class<Bun.NetworkSink>; ReadableSinkController: Class<ReadableStreamDirectController> }",
   "SocketAddress.bind.ts": null,
   "SocketConfig.bind.ts": null,
   "Stat.bind.ts": null,
@@ -395,6 +397,7 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "fmt_jsc.bind.ts": null,
   "h2_frame_parser.bind.ts": null,
   "headers_jsc.bind.ts": null,
+  "histogram.bind.ts": null,
   "hosted_git_info_jsc.bind.ts": null,
   "html_rewriter.bind.ts": "{ HTMLRewriter: typeof HTMLRewriter }",
   "html_rewriter_internals.bind.ts": null,
@@ -618,6 +621,23 @@ describe("@types/bun integration test", () => {
           ).map(promise => `${file}: ${promise}`),
         ),
     ).toEqual([
+      // bun.d.ts and s3.d.ts do not declare these.
+      "Sink.bind.ts: ArrayBufferSink is not published as a function",
+      "Sink.bind.ts: new ArrayBufferSink().close is not published",
+      "Sink.bind.ts: new ArrayBufferSink().ref is not published",
+      "Sink.bind.ts: new ArrayBufferSink().unref is not published",
+      "Sink.bind.ts: new ArrayBufferSink()._getFd is not published",
+      "Sink.bind.ts: new ArrayBufferSink().sinkId is not published",
+      "Sink.bind.ts: new FileSink().close is not published",
+      // Published, and a `FileSink` does not read it.
+      "Sink.bind.ts: new FileSink().start(options?: { highWaterMark?: number | undefined; } | undefined): void: options takes FileSinkStartOptions | null | undefined, not { highWaterMark?: number | undefined; } | undefined",
+      "Sink.bind.ts: new FileSink()._getFd is not published",
+      "Sink.bind.ts: new FileSink().sinkId is not published",
+      // Published, and no sink has ever had it.
+      "Sink.bind.ts: new NetworkSink() has no stat",
+      "Sink.bind.ts: new NetworkSink().close is not published",
+      "Sink.bind.ts: new NetworkSink()._getFd is not published",
+      "Sink.bind.ts: new NetworkSink().sinkId is not published",
       // Published, and nothing has ever read it.
       "Transpiler.bind.ts: new Transpiler(options?: TranspilerOptions | undefined): Transpiler: options has no jsxOptimizationInline",
       // `keepalive` and `duplex` are declared on Request but not implemented.

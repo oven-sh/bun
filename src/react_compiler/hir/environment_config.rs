@@ -82,9 +82,6 @@ pub struct EnvironmentConfig {
     /// phi or in an object, stays the ref value that it was. It is then reported where `.current`
     /// is read. Upstream forgets where that was, and reports it at each use.
     pub joined_ref_values_keep_their_place: bool,
-    /// For `validate_ref_access_during_render`: a function expression knows which of the variables
-    /// that it captures are refs and values of refs. Upstream does not look at them.
-    pub captured_refs_are_known_in_functions: bool,
     /// For `validate_ref_access_during_render`: types in a nested function that do not converge end the validation,
     /// with that as its one error. The TypeScript original throws there. Upstream's Rust crate takes the function for
     /// one that reads a ref and goes on, and each function around it then runs all of its rounds again.
@@ -163,7 +160,6 @@ impl Default for EnvironmentConfig {
             validate_hooks_usage: true,
             validate_ref_access_during_render: true,
             joined_ref_values_keep_their_place: false,
-            captured_refs_are_known_in_functions: true,
             unconverged_ref_types_end_the_validation: true,
             effects_keep_their_place: false,
             jsx_can_be_reordered: true,

@@ -26,8 +26,9 @@ use super::params::{EncoderParams, HasherType};
 use super::{EncoderError, Fallible};
 use crate::common::dictionary::{DATA, OFFSETS_BY_LENGTH, SIZE_BITS_BY_LENGTH};
 use crate::common::transform::CUT_OFF_TRANSFORMS;
-use crate::util::{Bug, Checked, SliceExt, load_u32_le, load_u64_le};
+use crate::util::{Bug, Checked, Loads, SliceExt, load_u32_le, load_u64_le};
 use bun_core::AllocError;
+use core::ops::ControlFlow;
 
 /// Odd, so that the highest bit is not lost, without long runs of ones or zeros, and tuned against benchmarks.
 pub(crate) const HASH_MUL_32: u32 = 0x1E35_A7BD;
@@ -299,6 +300,99 @@ fn find_longest_match_at_last_distances(
         }
     }
     Ok(())
+}
+
+/// A search among the positions of a bucket, from the newest to the oldest, for a match of 4 bytes or more.
+struct BucketSearch<'a> {
+    data: &'a [u8],
+    current: &'a [u8],
+    window: Loads<'a>,
+    mask: usize,
+    cur_ix: usize,
+    max_length: usize,
+    max_backward: usize,
+    best_len: usize,
+    best_score: usize,
+    /// The 4 bytes up to the one that a longer match has to include.
+    wanted: u32,
+}
+
+impl<'a> BucketSearch<'a> {
+    /// `best_len` is the length to beat. Nothing if a longer match would not end inside the window.
+    #[inline(always)]
+    fn new(
+        data: &'a [u8],
+        mask: usize,
+        cur_ix: usize,
+        max_length: usize,
+        max_backward: usize,
+        best_len: usize,
+        best_score: usize,
+    ) -> Checked<Option<Self>> {
+        // Only matches of 4 bytes and more count, so 4 bytes can be compared each time.
+        let best_len = best_len.max(3);
+        let window = Loads::new(window(data, mask))?;
+        let Some(wanted) = window.u32_le((cur_ix & mask) + best_len - 3) else {
+            return Ok(None);
+        };
+        Ok(Some(Self {
+            data,
+            current: data.sub(cur_ix & mask..)?,
+            window,
+            mask,
+            cur_ix,
+            max_length,
+            max_backward,
+            best_len,
+            best_score,
+            wanted,
+        }))
+    }
+
+    /// Tells whether to go on with the next position. If `LONG`, the first 4 bytes of most candidates are those at
+    /// `cur_ix`.
+    #[inline(always)]
+    fn try_position<const LONG: bool>(
+        &mut self,
+        mut prev_ix: usize,
+        out: &mut HasherSearchResult,
+    ) -> Checked<ControlFlow<()>> {
+        let backward = self.cur_ix.wrapping_sub(prev_ix);
+        if backward > self.max_backward {
+            return Ok(ControlFlow::Break(()));
+        }
+        prev_ix &= self.mask;
+        if self.window.u32_le(prev_ix + self.best_len - 3) != Some(self.wanted) {
+            return Ok(ControlFlow::Continue(()));
+        }
+        let len = if LONG {
+            if load_u32_le(self.current, 0)? != load_u32_le(self.data, prev_ix)? {
+                return Ok(ControlFlow::Continue(()));
+            }
+            find_match_length_with_limit(
+                self.data.sub(prev_ix + 4..)?,
+                self.current.sub(4..)?,
+                self.max_length.wrapping_sub(4),
+            ) + 4
+        } else {
+            find_match_length_with_limit(self.data.sub(prev_ix..)?, self.current, self.max_length)
+        };
+        if len >= 4 {
+            let score = backward_reference_score(len, backward);
+            if self.best_score < score {
+                self.best_score = score;
+                self.best_len = len;
+                out.len = len;
+                out.distance = backward;
+                out.score = score;
+                let Some(wanted) = self.window.u32_le((self.cur_ix & self.mask) + len - 3) else {
+                    return Ok(ControlFlow::Break(()));
+                };
+                self.wanted = wanted;
+            }
+        }
+        Ok(ControlFlow::Continue(()))
+    }
 }
 
 /// A match found by [`H10`].

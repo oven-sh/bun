@@ -2,10 +2,10 @@
 //! the oldest one once the bank is full, so chains can end up sharing a tail.
 
 use super::{
-    DictionaryCandidates, HasherImpl, HasherSearchResult, LongestMatchHasher,
+    BucketSearch, DictionaryCandidates, HasherImpl, HasherSearchResult, LongestMatchHasher,
     StaticDictionarySearch, backward_reference_penalty_using_last_distance,
-    backward_reference_score, backward_reference_score_using_last_distance, hash_u32,
-    prepare_distance_cache, search_in_static_dictionary,
+    backward_reference_score_using_last_distance, hash_u32, prepare_distance_cache,
+    search_in_static_dictionary,
 };
 use crate::enc::Fallible;
 use crate::enc::find_match_length::find_match_length_with_limit;
@@ -185,40 +185,31 @@ impl<
                 }
             }
         }
-        // Only matches of 4 bytes and more count from here on, so 4 bytes can be compared each time.
-        if best_len < 3 {
-            best_len = 3;
-        }
-        let bank = key & (NUM_BANKS - 1);
-        let mut backward = 0usize;
-        let mut delta = cur_ix.wrapping_sub(self.addr.at(key)? as usize);
-        let mut slot = usize::from(self.head.at(key)?);
-        for _ in 0..self.max_hops {
-            let last = slot;
-            backward = backward.wrapping_add(delta);
-            if backward > max_backward {
-                break;
-            }
-            let prev_ix = cur_ix.wrapping_sub(backward) & mask;
-            let [node_delta, node_next] = self.banks.at((bank << BANK_BITS) + last)?;
-            slot = usize::from(node_next);
-            delta = usize::from(node_delta);
-            // The 4 bytes up to the one that a longer match has to include.
-            if cur_ix_masked + best_len > mask
-                || prev_ix + best_len > mask
-                || load_u32_le(current, best_len - 3)? != load_u32_le(data, prev_ix + best_len - 3)?
-            {
-                continue;
-            }
-            let len = find_match_length_with_limit(data.sub(prev_ix..)?, current, max_length);
-            if len >= 4 {
-                let score = backward_reference_score(len, backward);
-                if best_score < score {
-                    best_score = score;
-                    best_len = len;
-                    out.len = best_len;
-                    out.distance = backward;
-                    out.score = best_score;
+        let search = BucketSearch::new(
+            data,
+            mask,
+            cur_ix,
+            max_length,
+            max_backward,
+            best_len,
+            best_score,
+        )?;
+        if let Some(mut search) = search {
+            let bank = key & (NUM_BANKS - 1);
+            let mut backward = 0usize;
+            let mut delta = cur_ix.wrapping_sub(self.addr.at(key)? as usize);
+            let mut slot = usize::from(self.head.at(key)?);
+            for _ in 0..self.max_hops {
+                backward = backward.wrapping_add(delta);
+                if backward > max_backward {
+                    break;
+                }
+                let [node_delta, node_next] = self.banks.at((bank << BANK_BITS) + slot)?;
+                slot = usize::from(node_next);
+                delta = usize::from(node_delta);
+                let prev_ix = cur_ix.wrapping_sub(backward);
+                if search.try_position::<false>(prev_ix, out)?.is_break() {
+                    break;
                 }
             }
         }

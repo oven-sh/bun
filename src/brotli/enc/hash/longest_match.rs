@@ -2,14 +2,13 @@
 
 use super::bucket_table::BucketTable;
 use super::{
-    DictionaryCandidates, HasherImpl, HasherSearchResult, LongestMatchHasher,
-    StaticDictionarySearch, backward_reference_score, find_longest_match_at_last_distances,
-    hash_low_bytes, hash_u32, prepare_distance_cache, search_in_static_dictionary, window,
+    BucketSearch, DictionaryCandidates, HasherImpl, HasherSearchResult, LongestMatchHasher,
+    StaticDictionarySearch, find_longest_match_at_last_distances, hash_low_bytes, hash_u32,
+    prepare_distance_cache, search_in_static_dictionary,
 };
 use crate::enc::Fallible;
-use crate::enc::find_match_length::find_match_length_with_limit;
 use crate::enc::params::HasherParams;
-use crate::util::{Bug, Checked, Loads, SliceExt, load_u32_le, load_u64_le};
+use crate::util::{Bug, Checked, SliceExt, load_u32_le, load_u64_le};
 use bun_core::AllocError;
 use core::hint::{Locality, prefetch_read};
 
@@ -125,7 +124,6 @@ impl<const LONG: bool> LongestMatchHasher for HashLongestMatch<LONG> {
         if block_size > 16 {
             prefetch_read(bucket.as_ptr().wrapping_add(16), Locality::L1);
         }
-        let window = Loads::new(window(data, mask))?;
         out.len = 0;
         out.len_code_delta = 0;
 
@@ -140,52 +138,21 @@ impl<const LONG: bool> LongestMatchHasher for HashLongestMatch<LONG> {
             &mut best_len,
             out,
         )?;
-        let mut best_score = out.score;
-        // Only matches of 4 bytes and more count from here on, so 4 bytes can be compared each time.
-        if best_len < 3 {
-            best_len = 3;
-        }
         let down = added.saturating_sub(block_size);
-        'search: {
-            // The 4 bytes up to the one that a longer match has to include. They have to be inside the window.
-            let Some(mut wanted) = window.u32_le(cur_ix_masked + best_len - 3) else {
-                break 'search;
-            };
+        let search = BucketSearch::new(
+            data,
+            mask,
+            cur_ix,
+            max_length,
+            max_backward,
+            best_len,
+            out.score,
+        )?;
+        if let Some(mut search) = search {
             for i in (down..added).rev() {
-                let mut prev_ix = bucket.at(i & block_mask)? as usize;
-                let backward = cur_ix.wrapping_sub(prev_ix);
-                if backward > max_backward {
+                let prev_ix = bucket.at(i & block_mask)? as usize;
+                if search.try_position::<LONG>(prev_ix, out)?.is_break() {
                     break;
-                }
-                prev_ix &= mask;
-                if window.u32_le(prev_ix + best_len - 3) != Some(wanted) {
-                    continue;
-                }
-                let len = if LONG {
-                    if load_u32_le(current, 0)? != load_u32_le(data, prev_ix)? {
-                        continue;
-                    }
-                    find_match_length_with_limit(
-                        data.sub(prev_ix + 4..)?,
-                        current.sub(4..)?,
-                        max_length.wrapping_sub(4),
-                    ) + 4
-                } else {
-                    find_match_length_with_limit(data.sub(prev_ix..)?, current, max_length)
-                };
-                if len >= 4 {
-                    let score = backward_reference_score(len, backward);
-                    if best_score < score {
-                        best_score = score;
-                        best_len = len;
-                        out.len = best_len;
-                        out.distance = backward;
-                        out.score = best_score;
-                        let Some(next) = window.u32_le(cur_ix_masked + best_len - 3) else {
-                            break 'search;
-                        };
-                        wanted = next;
-                    }
                 }
             }
         }

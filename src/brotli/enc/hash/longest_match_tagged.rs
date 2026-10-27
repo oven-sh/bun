@@ -2,13 +2,12 @@
 //! most of the positions that do not match are skipped without looking at the input.
 
 use super::{
-    DictionaryCandidates, HasherImpl, HasherSearchResult, LongestMatchHasher,
-    StaticDictionarySearch, backward_reference_score, find_longest_match_at_last_distances,
-    for_each_position, hash_low_bytes, hash_u32, search_in_static_dictionary, window,
+    BucketSearch, DictionaryCandidates, HasherImpl, HasherSearchResult, LongestMatchHasher,
+    StaticDictionarySearch, find_longest_match_at_last_distances, for_each_position,
+    hash_low_bytes, hash_u32, search_in_static_dictionary,
 };
-use crate::enc::find_match_length::find_match_length_with_limit;
 use crate::util::{
-    Bug, Checked, Loads, SliceExt, load_u32_le, load_u64_le, try_reserve_up_to, try_vec, try_zeroed,
+    Bug, Checked, SliceExt, load_u32_le, load_u64_le, try_reserve_up_to, try_vec, try_zeroed,
 };
 use bun_core::AllocError;
 
@@ -294,7 +293,6 @@ impl<const LONG: bool, const N: usize, B: TaggedBuckets<N>> LongestMatchHasher
     ) -> Checked {
         let cur_ix_masked = cur_ix & mask;
         let current = data.sub(cur_ix_masked..)?;
-        let window = Loads::new(window(data, mask))?;
         // A short copy from far away is not accepted.
         let min_score = out.score;
         let mut best_len = out.len;
@@ -325,53 +323,22 @@ impl<const LONG: bool, const N: usize, B: TaggedBuckets<N>> LongestMatchHasher
             &mut best_len,
             out,
         )?;
-        let mut best_score = out.score;
-        // Only matches of 4 bytes and more count from here on, so 4 bytes can be compared each time.
-        if best_len < 3 {
-            best_len = 3;
-        }
-        'search: {
-            // The 4 bytes up to the one that a longer match has to include. They have to be inside the window.
-            let Some(mut wanted) = window.u32_le(cur_ix_masked + best_len - 3) else {
-                break 'search;
-            };
+        let search = BucketSearch::new(
+            data,
+            mask,
+            cur_ix,
+            max_length,
+            max_backward,
+            best_len,
+            out.score,
+        )?;
+        if let Some(mut search) = search {
             while matches > 0 {
                 let rb_index = (head + matches.trailing_zeros() as usize) & (N - 1);
                 matches &= matches - 1;
-                let mut prev_ix = block.positions.at(rb_index)? as usize;
-                let backward = cur_ix.wrapping_sub(prev_ix);
-                if backward > max_backward {
+                let prev_ix = block.positions.at(rb_index)? as usize;
+                if search.try_position::<LONG>(prev_ix, out)?.is_break() {
                     break;
-                }
-                prev_ix &= mask;
-                if window.u32_le(prev_ix + best_len - 3) != Some(wanted) {
-                    continue;
-                }
-                let len = if LONG {
-                    if load_u32_le(current, 0)? != load_u32_le(data, prev_ix)? {
-                        continue;
-                    }
-                    find_match_length_with_limit(
-                        data.sub(prev_ix + 4..)?,
-                        current.sub(4..)?,
-                        max_length.wrapping_sub(4),
-                    ) + 4
-                } else {
-                    find_match_length_with_limit(data.sub(prev_ix..)?, current, max_length)
-                };
-                if len >= 4 {
-                    let score = backward_reference_score(len, backward);
-                    if best_score < score {
-                        best_score = score;
-                        best_len = len;
-                        out.len = best_len;
-                        out.distance = backward;
-                        out.score = best_score;
-                        let Some(next) = window.u32_le(cur_ix_masked + best_len - 3) else {
-                            break 'search;
-                        };
-                        wanted = next;
-                    }
                 }
             }
         }

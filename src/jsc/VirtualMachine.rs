@@ -8172,7 +8172,9 @@ fn run_on_resolve(
     let asks_file_namespace = in_file_namespace
         && !specifier.is_empty()
         && ((namespace.is_empty() && ModuleLoader::has_extension_or_namespace(&specifier))
-            || !(vm.is_in_on_resolve.get() || ModuleLoader::bun_aliases_get(&specifier).is_some()));
+            || !(vm.is_in_on_resolve.get() || ModuleLoader::bun_aliases_get(&specifier).is_some()))
+        // If an `onLoad` in namespace "virtual" matches "thing", "virtual:thing" is already a module key.
+        && !(namespace.len() > 1 && global.has_on_load(&specifier)?);
     if !asks_namespace && !asks_file_namespace {
         return Ok(None);
     }

@@ -2640,6 +2640,24 @@ describe.concurrent("onResolve is called for a specifier with no extension and n
     });
   });
 
+  it("but not with a prefix that's the namespace of a matching onLoad", async () => {
+    const source = `
+      Bun.plugin({
+        name: "virtual",
+        setup({ onResolve, onLoad }) {
+          onResolve({ filter: /^virtual:/ }, ({ path }) => (console.log("onResolve", path), { path, namespace: "virtual" }));
+          onLoad({ filter: /.*/, namespace: "virtual" }, ({ path }) => ({ exports: { path }, loader: "object" }));
+        },
+      });
+      console.log((await import("virtual:thing")).path, require("virtual:other.js").path, require.resolve("virtual:thing"));
+    `;
+    expect(await run({ "entry.ts": source }, ["entry.ts"])).toEqual({
+      stdout: ["thing other.js virtual:thing"],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   it("that names a package or one of its subpaths", async () => {
     const source = `
       Bun.plugin({

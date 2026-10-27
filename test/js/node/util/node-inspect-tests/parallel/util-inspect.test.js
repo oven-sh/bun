@@ -61,10 +61,6 @@ test("no assertion failures", () => {
       fn,
       Object.getPrototypeOf(async () => {}),
     );
-    //! Note:
-    // The following tests are relying on the JS-based is(Async|Generator)Function polyfills,
-    // when switching them out back for the native implementation make sure they are fixed!
-    // Due to the bug with the native impl. being flaky make sure its tested multiple times.
     assert.strictEqual(util.inspect(fn), "[GeneratorFunction (anonymous)] AsyncFunction");
     Object.defineProperty(fn, "name", { value: 5, configurable: true });
     assert.strictEqual(util.inspect(fn), "[GeneratorFunction: 5] AsyncFunction");

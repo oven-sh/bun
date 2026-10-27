@@ -661,23 +661,6 @@ impl<'a> Decoder<'a> {
             transforms,
         })
     }
-
-    /// Decodes the pixels. Calls `emit` for a few rows at a time, with the number of the first one and their pixels.
-    fn decode_rows(
-        &mut self,
-        xsize: usize,
-        ysize: usize,
-        mut emit: impl FnMut(usize, &[Pixel]) -> Checked,
-    ) -> Result<()> {
-        let mut argb_cache = ArgbCache::new(&self.transforms, self.width, xsize)?;
-        let mut process_rows = |data: &[u32], y_end| {
-            let (y_start, rows) = argb_cache.apply_inverse_transforms(data, y_end)?;
-            emit(y_start, rows)
-        };
-        let metadata = &self.metadata;
-        decode_image_data(&mut self.br, metadata, self.width, ysize, &mut process_rows)?;
-        Ok(())
-    }
 }
 
 /// `VP8LDecodeHeader` and `VP8LDecodeImage`. `data` starts at the signature byte and goes on to the end of the file.
@@ -687,12 +670,22 @@ pub(crate) fn decode(data: &[u8], output: &mut Output<'_>) -> Result<()> {
     let (width, height) = (info.width as usize, info.height as usize);
     let mut dec = Decoder::new(br, width, height)?;
     output.check(width, height)?;
-    dec.decode_rows(width, height, |y_start, rows| {
+    let mut argb_cache = ArgbCache::new(&dec.transforms, dec.width, width)?;
+    let mut emit_rows = |data: &[u32], y_end| {
+        let (y_start, rows) = argb_cache.apply_inverse_transforms(data, y_end)?;
         for (y, argb) in (y_start..).zip(rows.chunks_exact(width)) {
             convert_bgra_to_rgba(argb, output.row_mut(y, width)?);
         }
         Ok(())
-    })
+    };
+    decode_image_data(
+        &mut dec.br,
+        &dec.metadata,
+        dec.width,
+        height,
+        &mut emit_rows,
+    )?;
+    Ok(())
 }
 
 /// `DecodeAlphaData`: `decode_image_data` for an image whose green channel alone is entropy-coded, and alone is returned.
@@ -771,10 +764,20 @@ pub(crate) fn decode_alpha(
         return Ok(());
     }
 
-    dec.decode_rows(width, height, |y_start, rows| {
+    let mut argb_cache = ArgbCache::new(&dec.transforms, dec.width, width)?;
+    let mut extract_alpha_rows = |data: &[u32], y_end| {
+        let (y_start, rows) = argb_cache.apply_inverse_transforms(data, y_end)?;
         for (alpha, &pixel) in output.sub_mut(y_start * width..)?.iter_mut().zip(rows) {
             *alpha = green_of(pixel);
         }
         Ok(())
-    })
+    };
+    decode_image_data(
+        &mut dec.br,
+        &dec.metadata,
+        dec.width,
+        height,
+        &mut extract_alpha_rows,
+    )?;
+    Ok(())
 }

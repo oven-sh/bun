@@ -123,6 +123,7 @@ napi_value asNapiValue;
 
   void* asPtr;
   double asDouble;
+  float asFloat;
 
   ZIG_REPR_TYPE asZigRepr;
 } EncodedJSValue;
@@ -155,8 +156,27 @@ static int64_t* Bun_FFI_padArguments(int64_t* passed, int32_t passedCount, int64
 
 
 
-// True for the bits of an int32. A macro, because TinyCC does not inline a call.
+// Tests of the bits of a JSValue. Macros, because TinyCC does not inline a call.
 #define JSVALUE_BITS_ARE_INT32(bits) ((uint64_t)(bits) >= (uint64_t)NumberTag)
+// An int32 or a double.
+#define JSVALUE_BITS_ARE_NUMBER(bits) ((uint64_t)(bits) >= (uint64_t)DoubleEncodeOffset)
+
+// The wrapper converts an argument of these types in place, in an EncodedJSValue. Each macro is true for a JSValue
+// that needs no call, and `val` then holds the C value. JSVALUE_TO_SLOT_SLOW converts every other JSValue.
+
+// The low 32 bits of an int32 are the integer.
+#define JSVALUE_INT32_IN_PLACE(val) JSVALUE_BITS_ARE_INT32((val).asInt64)
+// `true` and `false` differ in the lowest bit only.
+#define JSVALUE_BOOL_IN_PLACE(val) (((val).asInt64 & ~1ll) == TagValueFalse)
+// A number that fits in an int32 is stored as an int32, not as a double.
+#define JSVALUE_DOUBLE_IN_PLACE(val) \
+  (JSVALUE_BITS_ARE_INT32((val).asInt64) ? ((val).asDouble = (int32_t)(val).asInt64, true) \
+   : JSVALUE_BITS_ARE_NUMBER((val).asInt64) ? ((val).asInt64 -= DoubleEncodeOffset, true) \
+   : false)
+#define JSVALUE_FLOAT_IN_PLACE(val) \
+  (JSVALUE_BITS_ARE_INT32((val).asInt64) ? ((val).asFloat = (int32_t)(val).asInt64, true) \
+   : JSVALUE_BITS_ARE_NUMBER((val).asInt64) ? ((val).asInt64 -= DoubleEncodeOffset, (val).asFloat = (val).asDouble, true) \
+   : false)
 
 static bool JSVALUE_IS_CELL(EncodedJSValue val) __attribute__((__always_inline__));
 static bool JSVALUE_IS_INT32(EncodedJSValue val) __attribute__((__always_inline__)); 
@@ -183,9 +203,6 @@ static EncodedJSValue BOOLEAN_TO_JSVALUE(bool val) __attribute__((__always_inlin
 static void* JSVALUE_TO_PTR(void* jsGlobalObject, int32_t abiType, bool* threw, EncodedJSValue val) __attribute__((__always_inline__));
 static void* JSVALUE_TO_BUFFER(void* jsGlobalObject, int32_t abiType, bool* threw, EncodedJSValue val) __attribute__((__always_inline__));
 static int32_t JSVALUE_TO_INT32(EncodedJSValue val) __attribute__((__always_inline__));
-static float JSVALUE_TO_FLOAT(EncodedJSValue val) __attribute__((__always_inline__));
-static double JSVALUE_TO_DOUBLE(EncodedJSValue val) __attribute__((__always_inline__));
-static bool JSVALUE_TO_BOOL(EncodedJSValue val) __attribute__((__always_inline__));
 static uint8_t GET_JSTYPE(EncodedJSValue val) __attribute__((__always_inline__));
 static bool JSTYPE_IS_TYPED_ARRAY(uint8_t type) __attribute__((__always_inline__));
 static bool JSCELL_IS_TYPED_ARRAY(EncodedJSValue val) __attribute__((__always_inline__));
@@ -307,34 +324,14 @@ static EncodedJSValue BOOLEAN_TO_JSVALUE(bool val) {
 }
 
 
-static double JSVALUE_TO_DOUBLE(EncodedJSValue val) {
-  // Numbers that fit in an int32 are int32-tagged, not double-encoded
-  // (see JSVALUE_TO_INT64). Subtracting DoubleEncodeOffset from an
-  // int32-tagged value yields an impure NaN, not the number.
-  if (JSVALUE_IS_INT32(val)) {
-    return (double)JSVALUE_TO_INT32(val);
-  }
-
-  val.asInt64 -= DoubleEncodeOffset;
-  return val.asDouble;
-}
-
-static float JSVALUE_TO_FLOAT(EncodedJSValue val) {
-  return (float)JSVALUE_TO_DOUBLE(val);
-}
-
-static bool JSVALUE_TO_BOOL(EncodedJSValue val) {
-  return val.asInt64 == TagValueTrue;
-}
-
-
 static uint64_t JSVALUE_TO_UINT64(void* jsGlobalObject, int32_t abiType, bool* threw, EncodedJSValue value) {
   if (JSVALUE_IS_INT32(value)) {
     return (uint64_t)JSVALUE_TO_INT32(value);
   }
 
   if (JSVALUE_IS_NUMBER(value)) {
-    return (uint64_t)JSVALUE_TO_DOUBLE(value);
+    value.asInt64 -= DoubleEncodeOffset;
+    return (uint64_t)value.asDouble;
   }
 
   if (JSCELL_IS_TYPED_ARRAY(value)) {
@@ -350,7 +347,8 @@ static int64_t JSVALUE_TO_INT64(void* jsGlobalObject, int32_t abiType, bool* thr
   }
 
   if (JSVALUE_IS_NUMBER(value)) {
-    return (int64_t)JSVALUE_TO_DOUBLE(value);
+    value.asInt64 -= DoubleEncodeOffset;
+    return (int64_t)value.asDouble;
   }
 
   return (int64_t)JSVALUE_TO_SLOT_SLOW(jsGlobalObject, abiType, threw, value.asInt64);
@@ -392,7 +390,12 @@ ZIG_REPR_TYPE JSFunctionCall(void* JS_GLOBAL_OBJECT, void* callFrame) {
   LOAD_ARGUMENTS_FROM_CALL_FRAME(1);
   EncodedJSValue arg0;
   arg0.asInt64 = *argsPtr;
-    float return_value = not_a_callback(    JSVALUE_TO_FLOAT(arg0));
+  if (!JSVALUE_FLOAT_IN_PLACE(arg0)) {
+    bool threw = false;
+    arg0.asInt64 = JSVALUE_TO_SLOT_SLOW(JS_GLOBAL_OBJECT, 10, &threw, arg0.asInt64);
+    if (threw) return 0;
+  }
+    float return_value = not_a_callback(    arg0.asFloat);
 
     return FLOAT_TO_JSVALUE(return_value).asZigRepr;
 }

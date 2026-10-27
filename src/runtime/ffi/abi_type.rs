@@ -106,16 +106,19 @@ bun_core::comptime_string_map! {
 // ToCFormatter / ToJSFormatter. Indexed by `self as usize`.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Selects the `FFI.h` function a generated wrapper calls to convert an argument.
+/// Selects how a generated wrapper converts an argument.
 enum ToC {
     /// Either [`ToCFormatter`] writes the conversion inline or this isn't an argument type.
     Special,
-    /// `f(arg)`
-    Infallible(&'static str),
-    /// `f(JS_GLOBAL_OBJECT, <ABIType>, &threw, arg)`. Can throw from `JSVALUE_TO_SLOT_SLOW`.
+    /// `f(JS_GLOBAL_OBJECT, <ABIType>, &threw, arg)`, an `FFI.h` function. Can throw from `JSVALUE_TO_SLOT_SLOW`.
     Fallible(&'static str),
-    /// The bits of an int32 reach C as they are. `JSVALUE_TO_SLOT_SLOW` converts any other value, and can throw.
-    Int32,
+    /// The wrapper converts the argument in place, in an `EncodedJSValue`. The `FFI.h` macro `convert` does it for a
+    /// JSValue that needs no call. `JSVALUE_TO_SLOT_SLOW` does it for every other JSValue, and can throw.
+    /// `{arg}{c_value}` is then the C value.
+    InPlace {
+        convert: &'static str,
+        c_value: &'static str,
+    },
 }
 
 /// Selects the `FFI.h` function a generated wrapper calls to box the return value.
@@ -145,20 +148,25 @@ static ABI_TABLE: [AbiRow; 22] = {
     ) -> AbiRow {
         AbiRow { c_type, to_c, to_js }
     }
+    // C truncates the `int64_t` to the type of the parameter.
+    const INT32: ToC = InPlace { convert: "JSVALUE_INT32_IN_PLACE", c_value: ".asInt64" };
+    const BOOL: ToC = InPlace { convert: "JSVALUE_BOOL_IN_PLACE", c_value: ".asInt64 & 1" };
+    const DOUBLE: ToC = InPlace { convert: "JSVALUE_DOUBLE_IN_PLACE", c_value: ".asDouble" };
+    const FLOAT: ToC = InPlace { convert: "JSVALUE_FLOAT_IN_PLACE", c_value: ".asFloat" };
     [
     // TinyCC's `char` is unsigned on linux-aarch64. dlopen() returns an int8 on every target.
-    /* Char      */ r(b"char",       Int32,                            Helper("INT32_TO_JSVALUE((int32_t)(int8_t)", ")")),
-    /* Int8T     */ r(b"int8_t",     Int32,                            Helper("INT32_TO_JSVALUE((int32_t)", ")")),
-    /* Uint8T    */ r(b"uint8_t",    Int32,                            Helper("INT32_TO_JSVALUE((int32_t)", ")")),
-    /* Int16T    */ r(b"int16_t",    Int32,                            Helper("INT32_TO_JSVALUE((int32_t)", ")")),
-    /* Uint16T   */ r(b"uint16_t",   Int32,                            Helper("INT32_TO_JSVALUE((int32_t)", ")")),
-    /* Int32T    */ r(b"int32_t",    Int32,                            Helper("INT32_TO_JSVALUE((int32_t)", ")")),
-    /* Uint32T   */ r(b"uint32_t",   Int32,                            Helper("UINT32_TO_JSVALUE(", ")")),
+    /* Char      */ r(b"char",       INT32,                            Helper("INT32_TO_JSVALUE((int32_t)(int8_t)", ")")),
+    /* Int8T     */ r(b"int8_t",     INT32,                            Helper("INT32_TO_JSVALUE((int32_t)", ")")),
+    /* Uint8T    */ r(b"uint8_t",    INT32,                            Helper("INT32_TO_JSVALUE((int32_t)", ")")),
+    /* Int16T    */ r(b"int16_t",    INT32,                            Helper("INT32_TO_JSVALUE((int32_t)", ")")),
+    /* Uint16T   */ r(b"uint16_t",   INT32,                            Helper("INT32_TO_JSVALUE((int32_t)", ")")),
+    /* Int32T    */ r(b"int32_t",    INT32,                            Helper("INT32_TO_JSVALUE((int32_t)", ")")),
+    /* Uint32T   */ r(b"uint32_t",   INT32,                            Helper("UINT32_TO_JSVALUE(", ")")),
     /* Int64T    */ r(b"int64_t",    Fallible("JSVALUE_TO_INT64"),     Helper("INT64_TO_JSVALUE_SLOW(JS_GLOBAL_OBJECT, ", ")")),
     /* Uint64T   */ r(b"uint64_t",   Fallible("JSVALUE_TO_UINT64"),    Helper("UINT64_TO_JSVALUE_SLOW(JS_GLOBAL_OBJECT, ", ")")),
-    /* Double    */ r(b"double",     Infallible("JSVALUE_TO_DOUBLE"),  Helper("DOUBLE_TO_JSVALUE(", ")")),
-    /* Float     */ r(b"float",      Infallible("JSVALUE_TO_FLOAT"),   Helper("FLOAT_TO_JSVALUE(", ")")),
-    /* Bool      */ r(b"bool",       Infallible("JSVALUE_TO_BOOL"),    Helper("BOOLEAN_TO_JSVALUE(", ")")),
+    /* Double    */ r(b"double",     DOUBLE,                           Helper("DOUBLE_TO_JSVALUE(", ")")),
+    /* Float     */ r(b"float",      FLOAT,                            Helper("FLOAT_TO_JSVALUE(", ")")),
+    /* Bool      */ r(b"bool",       BOOL,                             Helper("BOOLEAN_TO_JSVALUE(", ")")),
     /* Ptr       */ r(b"void*",      Fallible("JSVALUE_TO_PTR"),       Engine("PTR_TO_JSVALUE")),
     /* Void      */ r(b"void",       Special,                          ToJs::Special),
     /* CString   */ r(b"void*",      Fallible("JSVALUE_TO_PTR"),       Engine("PTR_TO_JSVALUE")),
@@ -215,18 +223,21 @@ impl ABIType {
         })
     }
 
-    /// Types that we can directly pass through as an `int64_t`
-    pub(crate) fn needs_a_cast_in_c(self) -> bool {
-        !matches!(self.row().to_c, ToC::Int32)
+    /// The `convert` and the `c_value` of [`ToC::InPlace`], if the wrapper converts an argument of this type in place.
+    pub(crate) fn in_place(self) -> Option<(&'static str, &'static str)> {
+        match self.row().to_c {
+            ToC::InPlace { convert, c_value } => Some((convert, c_value)),
+            _ => None,
+        }
     }
 
     pub(crate) fn is_floating_point(self) -> bool {
         matches!(self, ABIType::Double | ABIType::Float)
     }
 
-    /// True if converting an argument of this type can throw. See [`ToC::Fallible`] and [`ToC::Int32`].
+    /// True if converting an argument of this type can throw. See [`ToC::Fallible`] and [`ToC::InPlace`].
     pub(crate) fn arg_conversion_can_throw(self) -> bool {
-        matches!(self.row().to_c, ToC::Fallible(_) | ToC::Int32)
+        matches!(self.row().to_c, ToC::Fallible(_) | ToC::InPlace { .. })
     }
 
     pub(crate) fn to_c(self, symbol: &[u8]) -> ToCFormatter<'_> {
@@ -256,15 +267,14 @@ impl fmt::Display for ToCFormatter<'_> {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {
         let symbol = BStr::new(self.symbol);
         match self.tag.row().to_c {
-            ToC::Infallible(function) => write!(writer, "{function}({symbol})"),
             ToC::Fallible(function) => write!(
                 writer,
                 "{function}(JS_GLOBAL_OBJECT, {}, &threw, {symbol})",
                 self.tag as i32
             ),
-            ToC::Int32 => write!(
+            ToC::InPlace { .. } => write!(
                 writer,
-                "JSVALUE_TO_SLOT_SLOW(JS_GLOBAL_OBJECT, {}, &threw, {symbol})",
+                "JSVALUE_TO_SLOT_SLOW(JS_GLOBAL_OBJECT, {}, &threw, {symbol}.asInt64)",
                 self.tag as i32
             ),
             ToC::Special => match self.tag {

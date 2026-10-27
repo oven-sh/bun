@@ -2130,26 +2130,14 @@ impl Function {
                         "  EncodedJSValue arg{} = {{ .asInt64 = *argsPtr++ }};",
                         i
                     )?;
-                } else if arg.needs_a_cast_in_c() {
-                    if i < self.arg_types.len() - 1 {
-                        writeln!(
-                            writer,
-                            "  EncodedJSValue arg{} = {{ .asInt64 = *argsPtr++ }};",
-                            i
-                        )?;
-                    } else {
-                        write!(
-                            writer,
-                            "  EncodedJSValue arg{};\n  arg{}.asInt64 = *argsPtr;\n",
-                            i, i
-                        )?;
-                    }
                 } else {
-                    if i < self.arg_types.len() - 1 {
-                        writeln!(writer, "  int64_t arg{} = *argsPtr++;", i)?;
-                    } else {
-                        writeln!(writer, "  int64_t arg{} = *argsPtr;", i)?;
-                    }
+                    // Not an initializer: for that, TinyCC calls memset first.
+                    let is_last = i == self.arg_types.len() - 1;
+                    write!(
+                        writer,
+                        "  EncodedJSValue arg{i};\n  arg{i}.asInt64 = *argsPtr{};\n",
+                        if is_last { "" } else { "++" }
+                    )?;
                 }
             }
         }
@@ -2163,19 +2151,25 @@ impl Function {
             if !arg.arg_conversion_can_throw() {
                 continue;
             }
-            if !declared_threw {
-                declared_threw = true;
-                writer.write_all(b"  bool threw = false;\n")?;
-            }
             let length_buf = bun_core::fmt::print_int(&mut arg_buf[3..], i);
             let arg_name = &arg_buf[0..3 + length_buf];
-            if !arg.needs_a_cast_in_c() {
+            if let Some((convert, _)) = arg.in_place() {
+                // A JSValue that needs no call does not pay for `threw`.
+                let declare_threw = if declared_threw {
+                    ""
+                } else {
+                    "    bool threw = false;\n"
+                };
                 write!(
                     writer,
-                    "  if (!JSVALUE_BITS_ARE_INT32(arg{i})) {{\n    arg{i} = {};\n    if (threw) return 0;\n  }}\n",
+                    "  if (!{convert}(arg{i})) {{\n{declare_threw}    arg{i}.asInt64 = {};\n    if (threw) return 0;\n  }}\n",
                     arg.to_c(arg_name)
                 )?;
                 continue;
+            }
+            if !declared_threw {
+                declared_threw = true;
+                writer.write_all(b"  bool threw = false;\n")?;
             }
             writer.write_all(b"  ")?;
             arg.typename(writer)?;
@@ -2209,8 +2203,9 @@ impl Function {
 
             let length_buf = bun_core::fmt::print_int(&mut arg_buf[3..], i);
             let arg_name = &arg_buf[0..3 + length_buf];
-            if !arg.needs_a_cast_in_c() {
+            if let Some((_, c_value)) = arg.in_place() {
                 writer.write_all(arg_name)?;
+                writer.write_all(c_value.as_bytes())?;
             } else if arg.arg_conversion_can_throw() {
                 write!(writer, "converted{}", i)?;
             } else {

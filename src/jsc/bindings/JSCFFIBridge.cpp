@@ -22,6 +22,9 @@ static_assert(static_cast<uint8_t>(JSC::FFI::Type::Char) == 0, "FFI::Type tag dr
 static_assert(static_cast<uint8_t>(JSC::FFI::Type::Uint32) == 6, "FFI::Type tag drift");
 static_assert(static_cast<uint8_t>(JSC::FFI::Type::Int64) == 7, "FFI::Type tag drift");
 static_assert(static_cast<uint8_t>(JSC::FFI::Type::Uint64) == 8, "FFI::Type tag drift");
+static_assert(static_cast<uint8_t>(JSC::FFI::Type::Double) == 9, "FFI::Type tag drift");
+static_assert(static_cast<uint8_t>(JSC::FFI::Type::Float) == 10, "FFI::Type tag drift");
+static_assert(static_cast<uint8_t>(JSC::FFI::Type::Bool) == 11, "FFI::Type tag drift");
 static_assert(static_cast<uint8_t>(JSC::FFI::Type::Pointer) == 12, "FFI::Type tag drift");
 static_assert(static_cast<uint8_t>(JSC::FFI::Type::CString) == 14, "FFI::Type tag drift");
 static_assert(static_cast<uint8_t>(JSC::FFI::Type::Int64Fast) == 15, "FFI::Type tag drift");
@@ -139,13 +142,13 @@ extern "C" uint64_t Bun__FFI__jsValueToSlotSlow(JSC::JSGlobalObject* globalObjec
     JSC::JSValue value = JSC::JSValue::decode(encodedValue);
 
     // The wrapper already holds raw pointers into the buffers of earlier arguments, and JS could free those buffers.
-    // writeSlotFromJSValue runs JS for an object: to get its `ptr`, or to convert it to an integer of 32 bits or fewer.
-    // So read `ptr` here without running a getter, and reject an object for those integers.
+    // writeSlotFromJSValue runs JS for an object: to get its `ptr`, or to convert it to a float or to an integer of 32 bits or fewer.
+    // So read `ptr` here without running a getter, and reject an object for those numbers.
     bool isPointer = type == JSC::FFI::Type::Pointer || type == JSC::FFI::Type::CString || type == JSC::FFI::Type::Function;
-    bool isSmallInteger = type <= JSC::FFI::Type::Uint32;
+    bool usesToNumber = type <= JSC::FFI::Type::Uint32 || type == JSC::FFI::Type::Double || type == JSC::FFI::Type::Float;
     bool cannotConvert = false;
     if (auto* object = value.getObject()) {
-        if (isSmallInteger)
+        if (usesToNumber)
             cannotConvert = true;
         else if (isPointer && !object->inherits<JSC::JSArrayBuffer>() && !object->inherits<JSC::JSFFICallback>()) {
             value = object->getDirect(vm, JSC::Identifier::fromString(vm, "ptr"_s));

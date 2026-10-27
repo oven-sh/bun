@@ -263,7 +263,7 @@ it("pointer and 64-bit integer arguments accept what dlopen() accepts and throw 
 
 // Each C function is called through its cc() symbol and through CFunction, which is the path dlopen() and linkSymbols() use.
 // Runs in a subprocess because a double that is boxed wrongly can be read as a pointer.
-it("a symbol returns what dlopen() returns for the same C function", async () => {
+it.concurrent("a symbol returns what dlopen() returns for the same C function", async () => {
   using dir = tempDir("bun-ffi-cc-returns", {
     "returns.c": /* c */ `
       typedef unsigned long long bits64;
@@ -408,11 +408,12 @@ it("a symbol returns what dlopen() returns for the same C function", async () =>
 });
 
 // Each C function is called through its cc() symbol and through CFunction, which is the path dlopen() and linkSymbols() use.
-it("an integer argument of 32 bits or fewer reaches C as it does through dlopen()", async () => {
-  using dir = tempDir("bun-ffi-cc-int-args", {
+it.concurrent("a bool, float or small integer argument reaches C as it does through dlopen()", async () => {
+  using dir = tempDir("bun-ffi-cc-scalar-args", {
     "args.c": /* c */ `
       static int native_calls = 0;
       int get_native_calls(void) { return native_calls; }
+      union caster { long long bits; double d; float f; };
       // Each a_ function returns the value that C received.
       long long a_char(char x) { native_calls++; return x; }
       long long a_i8(signed char x) { native_calls++; return x; }
@@ -421,27 +422,39 @@ it("an integer argument of 32 bits or fewer reaches C as it does through dlopen(
       long long a_u16(unsigned short x) { native_calls++; return x; }
       long long a_i32(int x) { native_calls++; return x; }
       long long a_u32(unsigned int x) { native_calls++; return x; }
+      long long a_bool(_Bool x) { native_calls++; return x; }
+      // These two return the bits of the float or double.
+      long long a_f32(float x) { native_calls++; union caster c; c.bits = 0; c.f = x; return c.bits; }
+      long long a_f64(double x) { native_calls++; union caster c; c.d = x; return c.bits; }
       unsigned int r_u32(unsigned long long v) { return (unsigned int)v; }
+      // One digit per argument.
+      double mixed(_Bool a, void* b, float c, long long d, int e, double f) {
+        native_calls++;
+        return a * 100000 + (long long)b * 10000 + c * 1000 + d * 100 + e * 10 + f;
+      }
     `,
     "fixture.js": /* js */ `
       import { cc, CFunction } from "bun:ffi";
       import { jscDescribe } from "bun:jsc";
       import path from "path";
 
-      const types = ["char", "i8", "u8", "i16", "u16", "i32", "u32"];
+      const types = ["char", "i8", "u8", "i16", "u16", "i32", "u32", "bool", "f32", "f64"];
       const symbols = { get_native_calls: { args: [], returns: "i32" }, r_u32: { args: ["u64"], returns: "u32" } };
       for (const type of types) symbols["a_" + type] = { args: [type], returns: "i64" };
+      const mixed = { args: ["bool", "ptr", "f32", "i64", "i32", "f64"], returns: "f64" };
+      symbols.mixed = mixed;
       const compiled = cc({ source: path.join(import.meta.dir, "args.c"), symbols }).symbols;
 
       // https://github.com/oven-sh/bun/issues/44906: an element of a Float64Array is a double, also when its value is an integer.
       const fromFloat64Array = [...new Float64Array([7, 3, 0, -5, 1e6])];
       const values = [
-        0, 1, -1, 127, 128, 255, 256, 32767, 32768, 65535, 65536, 2 ** 31 - 1, -(2 ** 31),
-        0.5, -0.5, 5.7, -5.7, -0, 2 ** 31, 2 ** 32 - 1, 2 ** 32 + 5, -(2 ** 31) - 1, 2 ** 53, 1e19, -1e19, NaN, Infinity, -Infinity,
+        0, 1, -1, 127, 128, 255, 256, 32767, 32768, 65535, 65536, 2 ** 24 + 1, 2 ** 31 - 1, -(2 ** 31),
+        0.5, -0.5, 5.7, -5.7, -0, 2 ** 31, 2 ** 32 - 1, 2 ** 32 + 5, -(2 ** 31) - 1, 2 ** 53, 1e19, -1e19, 1e300,
+        NaN, Infinity, -Infinity,
         ...fromFloat64Array,
         undefined, null, true, false,
-        5n, -5n, 2n ** 31n, 2n ** 64n - 1n, 2n ** 64n + 7n,
-        "5", Symbol("s"),
+        0n, 5n, -5n, 2n ** 31n, 2n ** 64n - 1n, 2n ** 64n + 7n, 2n ** 1024n,
+        "", "5", Symbol("s"),
       ];
       const objects = [{}, [5], new Number(5), { valueOf: () => 5 }];
       const outcome = (fn, value) => {
@@ -460,7 +473,9 @@ it("an integer argument of 32 bits or fewer reaches C as it does through dlopen(
       for (const type of types) {
         const viaCompiled = compiled["a_" + type];
         const viaEngine = new CFunction({ ptr: viaCompiled.ptr, args: [type], returns: "i64" });
-        for (const value of values) {
+        // dlopen() converts an object to a number with valueOf(). A cc() wrapper holds pointers into earlier arguments,
+        // so it cannot run JS. No JS runs to convert an object to a bool.
+        for (const value of type === "bool" ? [...values, ...objects] : values) {
           calls++;
           const fromCompiled = outcome(viaCompiled, value);
           const fromEngine = outcome(viaEngine, value);
@@ -468,8 +483,30 @@ it("an integer argument of 32 bits or fewer reaches C as it does through dlopen(
             differences.push(type + " " + show(value) + ": cc() " + fromCompiled + ", dlopen() " + fromEngine);
           }
         }
-        for (const object of objects) objectOutcomes.add(outcome(viaCompiled, object));
+        if (type !== "bool") for (const object of objects) objectOutcomes.add(outcome(viaCompiled, object));
       }
+
+      // The wrapper converts every argument before the call, each in its own way.
+      const mixedViaEngine = new CFunction({ ptr: compiled.mixed.ptr, ...mixed });
+      const mixedArguments = [
+        [true, 2, 3, 4, 5, 6],
+        [1, 2n, 3n, 4n, fromFloat64Array[0], null],
+        ["x", 2, 3, 4, 5, 6],
+        [true, "2", 3, 4, 5, 6],
+        [true, 2, "3", 4, 5, 6],
+        [true, 2, 3, "4", 5, 6],
+        [true, 2, 3, 4, "5", 6],
+        [true, 2, 3, 4, 5, "6"],
+      ];
+      const mixedOutcomes = mixedArguments.map(args => {
+        calls++;
+        const fromCompiled = outcome(value => compiled.mixed(...value), args);
+        const fromEngine = outcome(value => mixedViaEngine(...value), args);
+        if (fromCompiled !== fromEngine) {
+          differences.push("mixed " + args.map(show) + ": cc() " + fromCompiled + ", dlopen() " + fromEngine);
+        }
+        return fromCompiled;
+      });
 
       console.log(JSON.stringify({
         calls,
@@ -483,6 +520,11 @@ it("an integer argument of 32 bits or fewer reaches C as it does through dlopen(
         },
         // A u32 return of 2 ** 31 is a double.
         returnedU32: Number(compiled.a_u32(compiled.r_u32(2n ** 31n))),
+        bool: [true, false, 1, 0, -1, 0.5, NaN, "x", "", null, undefined, 5n, 0n, {}].map(value =>
+          Number(compiled.a_bool(value)),
+        ),
+        f64: [5, 1.5, 5n, true, null].map(value => compiled.a_f64(value).toString(16)),
+        mixed: mixedOutcomes,
       }));
     `,
   });
@@ -495,9 +537,8 @@ it("an integer argument of 32 bits or fewer reaches C as it does through dlopen(
   });
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   expect(JSON.parse(stdout)).toEqual({
-    calls: 7 * 44,
+    calls: 10 * 49 + 4 + 8,
     differences: [],
-    // dlopen() converts an object with valueOf(). A cc() wrapper holds pointers into earlier arguments, so it cannot run JS.
     objects: ["TypeError"],
     fromFloat64Array: {
       kinds: ["Double", "Double", "Double", "Double", "Double"],
@@ -506,6 +547,11 @@ it("an integer argument of 32 bits or fewer reaches C as it does through dlopen(
       i16: [7, 3, 0, -5, 16960],
     },
     returnedU32: 2147483648,
+    bool: [1, 0, 1, 0, 1, 1, 0, 1, 0, 0, 0, 1, 0, 1],
+    // The bits of 5, 1.5, 5, 1 and 0 as a double.
+    f64: ["4014000000000000", "3ff8000000000000", "4014000000000000", "3ff0000000000000", "0"],
+    // A string is true as a bool. It throws for every other type, before the call.
+    mixed: ["123456", "123470", "123456", "TypeError", "TypeError", "TypeError", "TypeError", "TypeError"],
   });
   expect(exitCode).toBe(0);
 });

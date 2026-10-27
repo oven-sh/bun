@@ -142,8 +142,7 @@ extern "C" uint64_t Bun__FFI__jsValueToSlotSlow(JSC::JSGlobalObject* globalObjec
     JSC::JSValue value = JSC::JSValue::decode(encodedValue);
 
     // The wrapper already holds raw pointers into the buffers of earlier arguments, and JS could free those buffers.
-    // writeSlotFromJSValue runs JS for an object: to get its `ptr`, or to convert it to a float or to an integer of 32 bits or fewer.
-    // So read `ptr` here without running a getter, and reject an object for those numbers.
+    // writeSlotFromJSValue runs JS for an object: a `ptr` getter, or ToNumber. So read `ptr` without a getter, and reject the object where ToNumber would run.
     bool isPointer = type == JSC::FFI::Type::Pointer || type == JSC::FFI::Type::CString || type == JSC::FFI::Type::Function;
     bool usesToNumber = type <= JSC::FFI::Type::Uint32 || type == JSC::FFI::Type::Double || type == JSC::FFI::Type::Float;
     bool cannotConvert = false;

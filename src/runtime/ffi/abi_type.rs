@@ -112,9 +112,7 @@ enum ToC {
     Special,
     /// `f(JS_GLOBAL_OBJECT, <ABIType>, &threw, arg)`, an `FFI.h` function. Can throw from `JSVALUE_TO_SLOT_SLOW`.
     Fallible(&'static str),
-    /// The wrapper converts the argument in place, in an `EncodedJSValue`. The `FFI.h` macro `convert` does it for a
-    /// JSValue that needs no call. `JSVALUE_TO_SLOT_SLOW` does it for every other JSValue, and can throw.
-    /// `{arg}{c_value}` is then the C value.
+    /// `if (!{convert}(arg)) arg.asInt64 = JSVALUE_TO_SLOT_SLOW(..);`, which can throw. Then `{arg}{c_value}` is the C value.
     InPlace {
         convert: &'static str,
         c_value: &'static str,

@@ -159,15 +159,11 @@ static int64_t* Bun_FFI_padArguments(int64_t* passed, int32_t passedCount, int64
 // An int32 or a double.
 #define JSVALUE_BITS_ARE_NUMBER(bits) ((uint64_t)(bits) >= (uint64_t)DoubleEncodeOffset)
 
-// Tests of the bits of a JSValue after DoubleEncodeOffset is subtracted. For a double, those are the bits of the
-// double. Each test is false for a JSValue that is not a double.
-// Above -2^63 and below 2^63. For these, (int64_t) gives what the engine gives.
-#define DOUBLE_BITS_FIT_INT64(bits) (((uint64_t)(bits) << 1) < 0x87c0000000000000ull)
-// From +0 to +Infinity.
-#define DOUBLE_BITS_ARE_ZERO_TO_INFINITY(bits) ((uint64_t)(bits) <= 0x7ff0000000000000ull)
+// Tests of the bits of a double, which are the bits of its JSValue minus DoubleEncodeOffset. False for every other JSValue.
+#define DOUBLE_BITS_FIT_INT64(bits) (((uint64_t)(bits) << 1) < 0x87c0000000000000ull) // above -2^63 and below 2^63
+#define DOUBLE_BITS_ARE_ZERO_TO_INFINITY(bits) ((uint64_t)(bits) <= 0x7ff0000000000000ull) // from +0 to +Infinity
 
-// The wrapper converts an argument of these types in place, in an EncodedJSValue. Each macro is true for a JSValue
-// that needs no call, and `val` then holds the C value. JSVALUE_TO_SLOT_SLOW converts every other JSValue.
+// Each converts the JSValue in `val` to the C value in place and is true, or is false where JSVALUE_TO_SLOT_SLOW must convert it.
 
 // The low 32 bits of an int32 are the integer.
 #define JSVALUE_INT32_IN_PLACE(val) JSVALUE_BITS_ARE_INT32((val).asInt64)
@@ -259,8 +255,7 @@ static void* JSVALUE_TO_PTR(void* jsGlobalObject, int32_t abiType, bool* threw, 
     return (void*)(uintptr_t)JSVALUE_TO_INT32(val);
   }
 
-  // A number that an int64_t can hold takes the conversion that the engine uses. A cast to an unsigned type gives
-  // a negative number its magnitude on x64 and 0 on arm64, and is a call on x64.
+  // (int64_t) is the conversion the engine uses. A cast to an unsigned type makes a negative number its magnitude on x64 and 0 on arm64.
   EncodedJSValue number;
   number.asInt64 = val.asInt64 - DoubleEncodeOffset;
   if (DOUBLE_BITS_FIT_INT64(number.asInt64)) {
@@ -360,8 +355,7 @@ static int64_t JSVALUE_TO_INT64(void* jsGlobalObject, int32_t abiType, bool* thr
     return (int64_t)JSVALUE_TO_INT32(value);
   }
 
-  // The engine converts NaN and a number that an int64_t cannot hold. The result of the cast for those depends on
-  // the CPU.
+  // The engine converts NaN and a number that an int64_t cannot hold. The result of the cast for those depends on the CPU.
   EncodedJSValue number;
   number.asInt64 = value.asInt64 - DoubleEncodeOffset;
   if (DOUBLE_BITS_FIT_INT64(number.asInt64)) {

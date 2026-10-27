@@ -3565,6 +3565,9 @@ console.log("abc");
     },
     target: "bun",
     backend: "cli",
+    // The CLI prints the resolve error with no location line, followed by
+    // `"MacroLoadError" error in macro` at the call site in entry.ts. The
+    // harness joins the two into one entry at that location.
     bundleErrors: {
       "/entry.ts": ["Cannot find module './missing.ts'"],
     },

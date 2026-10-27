@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { chmodSync, mkdirSync, realpathSync, symlinkSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isDebug, isWindows, tempDir } from "harness";
-import { join } from "path";
+import { join, sep } from "path";
 
 // The resolver caches a listing of every directory it visits. An ancestor of
 // the cwd (or of the entry point) is only visited to find package.json,
@@ -23,8 +23,16 @@ async function run(cmd: string[], cwd: string, env: Record<string, string> = {})
 
 describe.concurrent("resolver ancestor directory listing", () => {
   // Each listing the resolver reads is logged under the `Fs` debug scope,
-  // which is compiled out of release builds.
-  test.skipIf(!isDebug)("startup does not list the parent of the cwd", async () => {
+  // which is compiled out of release builds: `readdir(fd, dir) = n` for a
+  // full listing and `probe(fd, dir) = n` for a probe-only one.
+  function listings(stdout: string, kind: "readdir" | "probe", dir: string) {
+    return stdout.split("\n").filter(line => line.includes(`${kind}(`) && line.includes(`, ${dir}${sep}) =`));
+  }
+
+  test.skipIf(!isDebug).each([
+    ["a file", (cwd: string) => [bunExe(), "index.js"]],
+    ["-e", (cwd: string) => [bunExe(), "-e", "console.log('ran')"]],
+  ])("startup does not list the parent of the cwd (%s)", async (_, cmd) => {
     using dir = tempDir("ancestor-listing", {
       "parent/child/index.js": `console.log("ran");`,
     });
@@ -32,14 +40,35 @@ describe.concurrent("resolver ancestor directory listing", () => {
     for (let i = 0; i < 200; i++) {
       writeFileSync(join(parent, `noise-${i}.txt`), "");
     }
+    const cwd = join(parent, "child");
 
-    const { stdout, stderr, exitCode } = await run([bunExe(), "index.js"], join(parent, "child"), {
-      BUN_DEBUG_Fs: "1",
-    });
-    const listed = stdout.split("\n").filter(line => line.includes("readdir("));
-    expect(listed.some(line => line.includes(`${parent}/)`) || line.includes(`${parent}\\)`))).toBe(false);
+    const { stdout, stderr, exitCode } = await run(cmd(cwd), cwd, { BUN_DEBUG_Fs: "1" });
+    expect(listings(stdout, "readdir", parent)).toEqual([]);
+    expect(listings(stdout, "probe", parent)).toHaveLength(1);
+    expect(listings(stdout, "readdir", cwd)).toHaveLength(1);
     expect(stdout).toContain("ran");
     expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  // A directory at or below the cwd is read in full once, never probed
+  // first: the bundler resolves files in every one of them.
+  test.skipIf(!isDebug)("a directory below the cwd is read in full exactly once", async () => {
+    using dir = tempDir("below-cwd-listing", {
+      "package.json": JSON.stringify({ name: "proj" }),
+      "src/pages/utils.ts": `export const u = 1;`,
+      "src/pages/a/index.ts": `import { u } from "../utils"; export const a = u;`,
+      "src/pages/b/index.ts": `import { u } from "../utils"; export const b = u;`,
+      "src/index.ts": `export * from "./pages/a"; export * from "./pages/b";`,
+    });
+    const pages = join(String(dir), "src", "pages");
+
+    const { stdout, stderr, exitCode } = await run([bunExe(), "build", "src/index.ts"], String(dir), {
+      BUN_DEBUG_Fs: "1",
+    });
+    expect(stderr).toBe("");
+    expect(listings(stdout, "probe", pages)).toEqual([]);
+    expect(listings(stdout, "readdir", pages)).toHaveLength(1);
     expect(exitCode).toBe(0);
   });
 
@@ -75,10 +104,35 @@ describe.concurrent("resolver ancestor directory listing", () => {
         console.log(require("../helper"), require("../Other.js"));
       `,
     });
+    const proj = join(String(dir), "proj");
 
-    const { stdout, stderr, exitCode } = await run([bunExe(), "index.js"], join(String(dir), "proj/src"));
+    const { stdout, stderr, exitCode } = await run([bunExe(), "index.js"], join(proj, "src"), {
+      BUN_DEBUG_Fs: "1",
+    });
     expect(stderr).toBe("");
-    expect(stdout).toBe("from helper from Other\n");
+    expect(stdout).toEndWith("from helper from Other\n");
+    if (isDebug) {
+      // Probed once as an ancestor, then read in full once for `../helper`.
+      expect(listings(stdout, "probe", proj)).toHaveLength(1);
+      expect(listings(stdout, "readdir", proj)).toHaveLength(1);
+    }
+    expect(exitCode).toBe(0);
+  });
+
+  test("jsconfig.json in an ancestor is found", async () => {
+    using dir = tempDir("ancestor-jsconfig", {
+      "proj/package.json": JSON.stringify({ name: "proj" }),
+      "proj/jsconfig.json": JSON.stringify({ compilerOptions: { paths: { "@/*": ["./src/*"] } } }),
+      "proj/src/util.js": `export const util = "from util";`,
+      "proj/src/deep/sub/index.js": `
+        import { util } from "@/util";
+        console.log(util);
+      `,
+    });
+
+    const { stdout, stderr, exitCode } = await run([bunExe(), "index.js"], join(String(dir), "proj/src/deep/sub"));
+    expect(stderr).toBe("");
+    expect(stdout).toBe("from util\n");
     expect(exitCode).toBe(0);
   });
 

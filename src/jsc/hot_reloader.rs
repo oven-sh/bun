@@ -774,7 +774,7 @@ where
     ) -> Option<*mut Fs::DirEntry> {
         let _entries_lock = rfs.entries_mutex.lock_guard();
         match rfs.entries.get(key) {
-            Some(Fs::EntriesOption::Entries(existing)) => {
+            Some(Fs::EntriesOption::Entries(existing)) if existing.is_complete() => {
                 Some(std::ptr::from_mut::<Fs::DirEntry>(*existing))
             }
             _ => None,

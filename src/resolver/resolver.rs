@@ -3493,7 +3493,9 @@ impl<'a> Resolver<'a> {
                 new_entry
                     .add_entry_with_store(
                         // SAFETY: see block-wide note above.
-                        in_place.map(|existing| unsafe { &mut (*existing).data }),
+                        in_place
+                            .filter(|existing| unsafe { (**existing).complete })
+                            .map(|existing| unsafe { &mut (*existing).data }),
                         &_value,
                         &mut filename_store,
                         (),
@@ -4659,13 +4661,26 @@ impl<'a> Resolver<'a> {
             let mut needs_iter = true;
             let mut in_place: Option<*mut Fs::file_system::DirEntry> = None;
             // Queue index 0 is the directory that was asked for. Everything
-            // above it is only visited to build its `DirInfo`, which needs
-            // the few names in `DIR_INFO_PROBE_NAMES` and nothing else.
+            // above it is only visited to build its `DirInfo`, which needs a
+            // few fixed names and nothing else. A directory at or below the
+            // working directory is read in full anyway: files are resolved
+            // in it later, and a listing answers every extension probe at
+            // once. So is a `node_modules` directory, which `load_as_file`
+            // reads in full on the first bare import. What is left are the
+            // ancestors of the working directory (`/`, `$HOME`, `/tmp`),
+            // whose size has nothing to do with the program.
             let is_ancestor = queue_slice_len > 0;
+            let probe_only = is_ancestor
+                && bun_paths::resolve_path::is_parent_or_equal(
+                    self.fs_ref().top_level_dir(),
+                    dir_path,
+                ) == bun_paths::resolve_path::ParentEqual::Unrelated
+                && bun_paths::basename(strings::without_trailing_slash_windows_path(dir_path))
+                    != b"node_modules";
 
             if let Some(cached_entry) = rfs!().entries.at_index(cached_dir_entry_result.index) {
                 if let Fs::file_system::real_fs::EntriesOption::Entries(entries) = cached_entry {
-                    if entries.generation >= self.generation && (entries.complete || is_ancestor) {
+                    if entries.generation >= self.generation && (entries.complete || probe_only) {
                         dir_entries_option = cached_entry;
                         needs_iter = false;
                     } else {
@@ -4690,12 +4705,10 @@ impl<'a> Resolver<'a> {
                     self.generation,
                 );
 
-                // An ancestor gets a probe-only listing: one `lstat` per name
-                // `dir_info_uncached` asks about, instead of every entry of
-                // `/`, `$HOME` or `/tmp`. A re-read of an existing listing
-                // (`in_place`) is always a full one, so a complete listing
-                // never turns into a probe-only one.
-                let probe_only = is_ancestor && in_place.is_none();
+                // A re-read of an existing listing (`in_place`) is always a
+                // full one, so a complete listing never turns into a
+                // probe-only one.
+                let probe_only = probe_only && in_place.is_none();
                 if !probe_only {
                     // Pre-size `data` so the per-entry inserts below skip the
                     // 1→2→4→…→N hashbrown rehash cascade from an empty table. 64
@@ -4707,27 +4720,13 @@ impl<'a> Resolver<'a> {
                 // A permission-denied ancestor has no fd to enumerate; its
                 // entry set stays empty.
                 if probe_only && open_dir.is_valid() {
-                    new_entry.complete = false;
-                    let mut filename_store = FilenameStoreAppender::new();
-                    for name in crate::fs_full::DIR_INFO_PROBE_NAMES {
-                        new_entry
-                            .add_probed_entry(open_dir, name, &mut filename_store)
-                            .expect("unreachable");
-                    }
-                    // `dir_info_uncached` looks for `.bin` in a directory
-                    // that is itself `node_modules`.
-                    if bun_paths::basename(strings::without_trailing_slash_windows_path(dir_path))
-                        == b"node_modules"
-                    {
-                        new_entry
-                            .add_probed_entry(
-                                open_dir,
-                                bun_core::zstr!(".bin"),
-                                &mut filename_store,
-                            )
-                            .expect("unreachable");
-                    }
+                    new_entry.probe_dir_info_names(open_dir)?;
                 } else if open_dir.is_valid() {
+                    // The entries of a probe-only listing are named after
+                    // the lookup that probed them, not after the directory.
+                    // Do not carry them into the full listing.
+                    // SAFETY: see block-wide note above.
+                    let prev_map = in_place.filter(|existing| unsafe { (**existing).complete });
                     let mut dir_iterator = bun_sys::iterate_dir(open_dir);
                     // NOTE: `WrappedIterator::next` returns
                     // `Result<Option<IteratorResult>>`, so use `?`-style break-on-error.
@@ -4743,7 +4742,7 @@ impl<'a> Resolver<'a> {
                         new_entry
                             .add_entry_with_store(
                                 // SAFETY: see block-wide note above.
-                                in_place.map(|existing| unsafe { &mut (*existing).data }),
+                                prev_map.map(|existing| unsafe { &mut (*existing).data }),
                                 &_value,
                                 &mut filename_store,
                                 (),
@@ -6185,35 +6184,6 @@ impl<'a> Resolver<'a> {
         None
     }
 
-    /// Adds `base` to a probe-only listing of its parent directory, from an
-    /// `lstat` of the joined absolute path. A name that does not exist adds
-    /// nothing. Caller holds `entries_mutex`.
-    #[cold]
-    fn probe_parent_entry(
-        parent_entries: &mut Fs::file_system::DirEntry,
-        base: &[u8],
-    ) -> crate::CrateResult<()> {
-        let dir = parent_entries.dir;
-        let needs_sep = !dir.is_empty() && dir[dir.len() - 1] != SEP;
-        let len = dir.len() + usize::from(needs_sep) + base.len();
-        let mut buf = bun_paths::path_buffer_pool::get();
-        if len >= buf.len() {
-            return Ok(());
-        }
-        buf[..dir.len()].copy_from_slice(dir);
-        let mut i = dir.len();
-        if needs_sep {
-            buf[i] = SEP;
-            i += 1;
-        }
-        buf[i..len].copy_from_slice(base);
-        buf[len] = 0;
-        let path = bun_core::ZStr::from_buf(&buf[..], len);
-        let mut filename_store = FilenameStoreAppender::new();
-        parent_entries.add_probed_entry(FD::INVALID, path, &mut filename_store)?;
-        Ok(())
-    }
-
     fn dir_info_uncached(
         &mut self,
         info: *mut DirInfo::DirInfo,
@@ -6414,15 +6384,10 @@ impl<'a> Resolver<'a> {
                 if let Some(parent_entries) =
                     parent_.get_entries_mut_locked_allow_partial(self.generation)
                 {
-                    // A probe-only parent listing (an ancestor directory, or
-                    // `node_modules` itself) does not know its children.
-                    // Probe this one name instead of reading the parent in
-                    // full: that is one `lstat`, where `node_modules` can
-                    // hold thousands of packages.
-                    if !parent_entries.complete && parent_entries.get(base).is_none() {
-                        Self::probe_parent_entry(parent_entries, base)?;
-                    }
-                    if let Some(lookup) = parent_entries.get(base) {
+                    // A probe-only parent listing does not know its children.
+                    // `get_or_probe` adds this one name with one `lstat`
+                    // instead of reading the parent in full.
+                    if let Some(lookup) = parent_entries.get_or_probe(base)? {
                         let entries_fd = entries!().fd;
                         if entries_fd.is_valid()
                             && !lookup.entry().cache().fd.is_valid()

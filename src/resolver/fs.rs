@@ -387,8 +387,9 @@ impl<T: DirEntryIterator + ?Sized> DirEntryIterator for &T {
 /// The names `Resolver::dir_info_uncached` looks up in a directory's own
 /// listing. A listing built from probes of these names (`complete == false`)
 /// is enough to build the `DirInfo` of an ancestor directory without reading
-/// every entry of it.
-pub(crate) const DIR_INFO_PROBE_NAMES: [&bun_core::ZStr; 4] = [
+/// every entry of it. `get_comptime_query` and `has_comptime_query` assert
+/// that a probe-only listing is only ever asked about one of these names.
+const DIR_INFO_PROBE_NAMES: [&bun_core::ZStr; 4] = [
     bun_core::zstr!("package.json"),
     bun_core::zstr!("tsconfig.json"),
     bun_core::zstr!("jsconfig.json"),
@@ -411,6 +412,13 @@ pub struct DirEntry {
 }
 
 impl DirEntry {
+    /// `false` for a probe-only listing of an ancestor directory; see the
+    /// field.
+    #[inline]
+    pub fn is_complete(&self) -> bool {
+        self.complete
+    }
+
     pub(crate) fn init(dir: &'static [u8], generation: Generation) -> DirEntry {
         DirEntry {
             dir,
@@ -447,27 +455,77 @@ impl DirEntry {
         }
     }
 
-    /// Adds one name to a listing that is not `complete`, from an `lstat` of
+    /// Fills a fresh listing with the names `Resolver::dir_info_uncached`
+    /// asks about, one `lstat` each, and marks it probe-only. `dir_fd` is an
+    /// open handle on `self.dir`.
+    pub(crate) fn probe_dir_info_names(&mut self, dir_fd: Fd) -> crate::CrateResult<()> {
+        debug_assert!(self.data.count() == 0);
+        self.complete = false;
+        let mut filename_store = FilenameStoreAppender::new();
+        for name in DIR_INFO_PROBE_NAMES {
+            self.add_probed_entry(dir_fd, name, &mut filename_store)?;
+        }
+        Ok(())
+    }
+
+    /// Looks up `base` in this listing. In a probe-only listing a miss is
+    /// answered with one `lstat` of `self.dir/base`, which adds the entry
+    /// when it exists. This is how a child directory finds itself in a
+    /// probe-only parent listing to resolve its real path.
+    pub(crate) fn get_or_probe(&mut self, base: &[u8]) -> crate::CrateResult<Option<EntryLookup<'_>>> {
+        if self.complete || self.lookup(base).is_some() {
+            return Ok(self.lookup(base));
+        }
+        let dir = self.dir;
+        let needs_sep = !dir.is_empty() && dir[dir.len() - 1] != bun_paths::SEP;
+        let len = dir.len() + usize::from(needs_sep) + base.len();
+        let mut buf = bun_paths::path_buffer_pool::get();
+        if len >= buf.len() {
+            return Ok(None);
+        }
+        buf[..dir.len()].copy_from_slice(dir);
+        let mut i = dir.len();
+        if needs_sep {
+            buf[i] = bun_paths::SEP;
+            i += 1;
+        }
+        buf[i..len].copy_from_slice(base);
+        buf[len] = 0;
+        let path = bun_core::ZStr::from_buf(&buf[..], len);
+        let mut filename_store = FilenameStoreAppender::new();
+        self.add_probed_entry(Fd::INVALID, path, &mut filename_store)?;
+        Ok(self.lookup(base))
+    }
+
+    /// Adds one name to a probe-only listing, from an `lstat` of
     /// `dir_fd/name` (`Fd::INVALID` makes `name` relative to the process cwd,
     /// so an absolute path works too). A name that does not exist, or that
-    /// `readdir` would not list either, adds nothing. Returns whether the
-    /// name was added.
-    pub(crate) fn add_probed_entry(
+    /// `readdir` would not list either, adds nothing.
+    fn add_probed_entry(
         &mut self,
         dir_fd: Fd,
         name: &bun_core::ZStr,
         filename_store: &mut FilenameStoreAppender,
-    ) -> crate::CrateResult<bool> {
+    ) -> crate::CrateResult<()> {
         debug_assert!(!self.complete);
         let Ok(kind) = bun_sys::entry_kind_at(dir_fd, name) else {
-            return Ok(false);
+            return Ok(());
         };
         let Some(found_kind) = Self::entry_kind_to_store(kind) else {
-            return Ok(false);
+            return Ok(());
         };
         let base = bun_paths::basename(name.as_bytes());
         self.add_entry_inner(None, base, found_kind, filename_store)?;
-        Ok(true)
+        Ok(())
+    }
+
+    #[inline]
+    fn debug_assert_probed_name(&self, query_lower: &[u8]) {
+        debug_assert!(
+            self.complete || DIR_INFO_PROBE_NAMES.iter().any(|n| n.as_bytes() == query_lower),
+            "probe-only listing asked about \"{}\", which is not a probed name",
+            bstr::BStr::new(query_lower)
+        );
     }
 
     // Compatibility wrapper for callers outside the `readdir` hot loop —
@@ -665,6 +723,11 @@ impl DirEntry {
     // lookup key is the lowercased basename; a case-mismatched query still
     // returns the stored entry.
     pub fn get<'a>(&'a self, query_: &[u8]) -> Option<EntryLookup<'a>> {
+        debug_assert!(self.complete, "general lookup in a probe-only listing");
+        self.lookup(query_)
+    }
+
+    fn lookup<'a>(&'a self, query_: &[u8]) -> Option<EntryLookup<'a>> {
         Self::debug_assert_entries_mutex_held();
         if query_.is_empty() || query_.len() > MAX_PATH_BYTES {
             return None;
@@ -686,6 +749,7 @@ impl DirEntry {
         query_lower: &'static [u8],
     ) -> Option<EntryLookup<'a>> {
         Self::debug_assert_entries_mutex_held();
+        self.debug_assert_probed_name(query_lower);
         let &result_ptr = self.data.get(query_lower)?;
         Some(EntryLookup {
             entry: result_ptr,
@@ -696,6 +760,7 @@ impl DirEntry {
     /// True if a cached entry exists for the given already-lowercase name.
     pub fn has_comptime_query(&self, query_lower: &'static [u8]) -> bool {
         Self::debug_assert_entries_mutex_held();
+        self.debug_assert_probed_name(query_lower);
         self.data.contains_key(query_lower)
     }
 }

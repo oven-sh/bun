@@ -1020,7 +1020,13 @@ pub mod fs {
                 )?;
             }
 
-            // debug("readdir({}, {}) = {}", handle, dir_, dir.data.count());
+            bun_core::scoped_log!(
+                crate::fs_full::Fs,
+                "readdir({}, {}) = {}",
+                handle,
+                bstr::BStr::new(dir_),
+                dir.data.count()
+            );
 
             Ok(dir)
         }
@@ -1151,8 +1157,10 @@ pub mod fs {
                 DirnameStore::instance().append_slice(dir)?
             };
 
-            // Cache miss: read the directory entries
-            let prev = in_place.map(|p| {
+            // Cache miss: read the directory entries. The entries of a
+            // probe-only listing are named after the lookups that probed
+            // them, not after the directory, so they are not carried over.
+            let prev = in_place.filter(|p| unsafe { (**p).complete }).map(|p| {
                 // SAFETY: BSSMap-owned, no aliasing here (entries_mutex held).
                 unsafe { &mut (*p).data }
             });
@@ -1514,7 +1522,9 @@ pub mod fs {
                         let _ = bun_sys::close(h);
                     });
                     // SAFETY: see above — exclusive `&mut` on the prev map for the duration of `readdir`.
-                    let prev = Some(unsafe { &mut (*e_ptr).data });
+                    // A probe-only listing's entries are not carried over (see
+                    // `read_directory_with_iterator`).
+                    let prev = unsafe { (*e_ptr).complete }.then(|| unsafe { &mut (*e_ptr).data });
                     match self.readdir(false, prev, dir, generation, handle, ()) {
                         Ok(mut new_entry) => {
                             // SAFETY: see above.

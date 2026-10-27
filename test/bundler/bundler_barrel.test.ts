@@ -2707,7 +2707,10 @@ describe("bundler", () => {
 
   // Here the reader is the file with `export * from <CommonJS>`. It reads a
   // lazily loaded ES module through a barrel of ES modules only, and the
-  // barrel still calls `init_lazy()` before that read.
+  // barrel still calls `init_lazy()` before that read. The barrel stays live
+  // because step 6 of `scan_imports_and_exports` makes each import statement
+  // of a file with `export * from <CommonJS>` depend on the exports object of
+  // the imported file.
   itBundled("barrel/ExportStarOfCommonJSInReaderOfLazyModule", {
     files: {
       "/entry.js": /* js */ `import './reader.js';`,

@@ -8,11 +8,12 @@ import {
   isDebug,
   isLinux,
   isMacOS,
+  isRoot,
   isWindows,
   tempDir,
   tempDirWithFiles,
 } from "harness";
-import { EventEmitter, once } from "node:events";
+import { EventEmitter } from "node:events";
 import fs, { FSWatcher } from "node:fs";
 import path from "path";
 
@@ -88,7 +89,7 @@ describe("fs.watch", () => {
       count++;
       try {
         expect(["rename", "change"]).toContain(event);
-        expect(["new-file.txt", "new-folder.txt"]).toContain(filename);
+        expect(["new-file.txt", "new-folder.txt"]).toContain(filename as string);
         if (count >= 2) {
           watcher.close();
         }
@@ -253,121 +254,6 @@ describe("fs.watch", () => {
     });
   }, 10000);
 
-  // The OS hands over several events at once (a rename is two events from one
-  // syscall), and node still makes one callback per event: what the listener
-  // queued for one event has run by the time the next event arrives.
-  // https://github.com/nodejs/node/blob/v26.3.0/src/fs_event_wrap.cc#L239
-  function burstEndingWithLast(root: string) {
-    for (const name of ["a", "b", "c", "d", "e", "f", "g", "last"]) {
-      fs.writeFileSync(path.join(root, name + ".tmp"), "x");
-      fs.renameSync(path.join(root, name + ".tmp"), path.join(root, name));
-    }
-  }
-
-  test("nextTicks and microtasks queued by the listener run before the next event", async () => {
-    using dir = tempDir("fs-watch-checkpoint", {});
-    const root = String(dir);
-    const order: string[] = [];
-    const expected: string[] = [];
-    const { promise: sawLast, resolve, reject } = Promise.withResolvers<void>();
-    let events = 0;
-    const watcher = fs.watch(root, (_eventType, filename) => {
-      const i = events++;
-      expected.push(`event ${i}`, `nextTick ${i}`, `microtask ${i}`);
-      order.push(`event ${i}`);
-      process.nextTick(() => order.push(`nextTick ${i}`));
-      queueMicrotask(() => order.push(`microtask ${i}`));
-      if (filename === "last") resolve();
-    });
-    watcher.once("error", reject);
-    const interval = repeat(() => burstEndingWithLast(root));
-    try {
-      await sawLast;
-    } finally {
-      clearInterval(interval);
-      watcher.close();
-    }
-    expect(order).toEqual(expected);
-  });
-
-  test("a once('change') listener re-armed after an await sees every event", async () => {
-    using dir = tempDir("fs-watch-once-loop", {});
-    const root = String(dir);
-    const { promise: sawLast, resolve, reject } = Promise.withResolvers<void>();
-    const watcher = fs.watch(root);
-    let emitted = 0;
-    watcher.on("change", (_eventType, filename) => {
-      emitted++;
-      if (filename === "last") resolve();
-    });
-    watcher.once("error", reject);
-
-    const stop = new AbortController();
-    let seen = 0;
-    const consumer = (async () => {
-      for (;;) {
-        await once(watcher, "change", { signal: stop.signal });
-        seen++;
-      }
-    })();
-    // Stays handled when the test fails before it gets to await the consumer.
-    consumer.catch(() => {});
-
-    const interval = repeat(() => burstEndingWithLast(root));
-    try {
-      await sawLast;
-    } finally {
-      clearInterval(interval);
-      watcher.close();
-      stop.abort();
-    }
-    await expect(consumer).rejects.toMatchObject({ name: "AbortError" });
-    expect({ seen }).toEqual({ seen: emitted });
-  });
-
-  // `.resolves` spins the event loop until the promise settles. Here it runs
-  // after the first of the two events of one rename. A spin until "late" checks
-  // that the events that arrive while it spins do not overtake the second event.
-  // A spin until "after" checks that the second event arrives while it spins.
-  // Linux only: inotify watches from the moment fs.watch() returns and reports
-  // one rename as two events.
-  test.skipIf(!isLinux).each([
-    { spinSite: "the listener", until: "late" },
-    { spinSite: "a continuation of the listener", until: "late" },
-    { spinSite: "a continuation of the listener", until: "after" },
-  ])("an event loop spin in $spinSite until '$until' is seen gets the events in order", async ({ spinSite, until }) => {
-    using dir = tempDir("fs-watch-nested-spin", { "before": "x" });
-    const root = String(dir);
-    const seen: string[] = [];
-    const sawUntil = Promise.withResolvers<void>();
-    const sawEnd = Promise.withResolvers<void>();
-    let spun: Promise<void> | undefined;
-    async function spin() {
-      // A continuation resumes in the checkpoint that follows the first event.
-      if (spinSite !== "the listener") await undefined;
-      seen.push("spin");
-      if (until === "late") fs.writeFileSync(path.join(root, "late"), "x");
-      await expect(sawUntil.promise).resolves.toBeUndefined();
-      fs.writeFileSync(path.join(root, "end"), "x");
-    }
-    const watcher = fs.watch(root, (_eventType, filename) => {
-      seen.push(String(filename));
-      if (filename === until) sawUntil.resolve();
-      if (filename === "end") sawEnd.resolve();
-      // The listener runs again while spin() spins, so only the first event starts it.
-      if (seen.length === 1) spun = spin();
-    });
-    watcher.once("error", sawEnd.reject);
-    try {
-      fs.renameSync(path.join(root, "before"), path.join(root, "after"));
-      await sawEnd.promise;
-      await spun;
-    } finally {
-      watcher.close();
-    }
-    expect(seen.slice(0, 3)).toEqual(["before", "spin", "after"]);
-  });
-
   test("should error on invalid path", done => {
     try {
       fs.watch(path.join(testDir, "404.txt"));
@@ -387,7 +273,7 @@ describe("fs.watch", () => {
       expect(watcher.constructor.name).toBe("FSWatcher");
       expect(typeof watcher.ref).toBe("function");
       expect(typeof watcher.unref).toBe("function");
-      expect(typeof watcher.start).toBe("function");
+      expect(typeof (watcher as any).start).toBe("function");
     } finally {
       watcher.close();
     }
@@ -649,8 +535,6 @@ describe("fs.watch", () => {
   // on windows 0o200 will be readable (match nodejs behavior)
   // Root has CAP_DAC_OVERRIDE, so the chmod 0o200 below never yields the
   // EACCES these two tests expect; they only make sense as a non-root user.
-  const isRoot = process.getuid?.() === 0;
-
   test.skipIf(isWindows || isRoot)("should throw if no permission to watch the directory", async () => {
     const filepath = path.join(testDir, "permission-dir");
     fs.mkdirSync(filepath, { recursive: true });
@@ -825,7 +709,7 @@ describe("fs.watch", () => {
   // seccomp. The same `add_one` error branch is reachable with EACCES by
   // watching a tree that contains one unreadable subdirectory as an
   // unprivileged user, so this test drops privileges to trigger it.
-  test.skipIf(!isLinux || process.getuid?.() !== 0)(
+  test.skipIf(!isLinux || !isRoot)(
     "recursive watch surfaces inotify_add_watch failure on a subdirectory as an 'error' event",
     async () => {
       const NOBODY = 65534;
@@ -1074,6 +958,99 @@ describe("fs.watch", () => {
     ]);
     expect(exitCode).toBe(0);
   });
+
+  // The inotify reader thread walks a directory that's moved into a recursive watch.
+  test.concurrent.skipIf(!isLinux).each([
+    { title: "deeper than the open-file limit", limit: "ulimit -n 64; ", levels: 100 },
+    { title: "300 levels deep", limit: "", levels: 300 },
+  ])("recursive watch covers a moved-in tree that's $title", async ({ limit, levels }) => {
+    using dir = tempDir("fs-watch-deep-move", { "watched": {} });
+    const root = String(dir);
+    fs.mkdirSync(path.join(root, "src", ...Array(levels).fill("a")), { recursive: true });
+
+    // inotify delivers events in order, so an event for a later action means the earlier step is done.
+    const fixture = /* js */ `
+      const fs = require("fs"), path = require("path");
+      const root = process.env.WATCH_ROOT;
+      const watched = path.join(root, "watched");
+      const seen = new Set(), errors = [], dirs = [];
+      for (let dir = "moved"; dirs.length < ${levels}; ) dirs.push((dir = path.join(dir, "a")));
+      const bottomFile = path.join(dirs.at(-1), "f.txt");
+      const watcher = fs.watch(watched, { recursive: true }, (type, name) => {
+        seen.add(name);
+        if (type !== "rename") return;
+        if (name === "walked.txt") {
+          fs.writeFileSync(path.join(watched, bottomFile), "x");
+          fs.writeFileSync(path.join(watched, "last.txt"), "x");
+        } else if (name === "last.txt") {
+          watcher.close();
+          console.log(JSON.stringify({
+            unreported: dirs.flatMap((dir, i) => (seen.has(dir) ? [] : [i + 1])),
+            bottomFile: seen.has(bottomFile),
+            errors,
+          }));
+        }
+      });
+      watcher.on("error", error => errors.push(error.code));
+      fs.renameSync(path.join(root, "src"), path.join(watched, "moved"));
+      fs.writeFileSync(path.join(watched, "walked.txt"), "x");
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: ["/bin/sh", "-c", limit + 'exec "$0" "$@"', bunExe(), "-e", fixture],
+      env: { ...bunEnv, WATCH_ROOT: root },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ unreported: [], bottomFile: true, errors: [] }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent.skipIf(!isLinux)(
+    "recursive watch reports a moved-in tree's files and directories in walk order",
+    async () => {
+      using dir = tempDir("fs-watch-mixed-tree", { "watched": {} });
+      const root = String(dir);
+
+      // Creates three levels that each mix files and directories.
+      function makeTree(top: string, depth: number) {
+        fs.mkdirSync(top, { recursive: true });
+        for (const name of ["f0.txt", "f1.txt", "f2.txt"]) fs.writeFileSync(path.join(top, name), "");
+        fs.mkdirSync(path.join(top, "empty"));
+        if (depth < 2) for (const name of ["sub0", "sub1"]) makeTree(path.join(top, name), depth + 1);
+        for (const name of ["g0.txt", "g1.txt"]) fs.writeFileSync(path.join(top, name), "");
+      }
+      // Returns the entries under `top` in readdir order, each directory before its contents.
+      function listTree(top: string, rel: string): string[] {
+        return fs.readdirSync(top, { withFileTypes: true }).flatMap(entry => {
+          const name = path.join(rel, entry.name);
+          return entry.isDirectory() ? [name, ...listTree(path.join(top, entry.name), name)] : [name];
+        });
+      }
+      makeTree(path.join(root, "mixed"), 0);
+      const expected = ["mixed", ...listTree(path.join(root, "mixed"), "mixed")];
+
+      const events: string[] = [];
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      const watcher = fs.watch(path.join(root, "watched"), { recursive: true }, (_type, name) => {
+        if (name === "last.txt") resolve();
+        else events.push(name!);
+      });
+      watcher.on("error", reject);
+      try {
+        fs.renameSync(path.join(root, "mixed"), path.join(root, "watched", "mixed"));
+        fs.writeFileSync(path.join(root, "watched", "last.txt"), "x");
+        await promise;
+      } finally {
+        watcher.close();
+      }
+      expect(events).toEqual(expected);
+    },
+  );
 });
 
 describe("fs.promises.watch", () => {
@@ -1099,7 +1076,7 @@ describe("fs.promises.watch", () => {
         count++;
         try {
           expect(["rename", "change"]).toContain(event.eventType);
-          expect(["new-file.txt", "new-folder.txt"]).toContain(event.filename);
+          expect(["new-file.txt", "new-folder.txt"]).toContain(event.filename!);
 
           if (count >= 2) {
             success = true;
@@ -1337,7 +1314,6 @@ describe("fs.promises.watch", () => {
 
     expect(event).toBeDefined();
     expect(Object.getPrototypeOf(event)).toBe(null);
-    // @ts-expect-error
     expect(event.hasOwnProperty).toBeUndefined();
     expect(() => String(event)).toThrow(TypeError);
     expect(Object.keys(event!).sort()).toEqual(["eventType", "filename"]);

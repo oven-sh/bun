@@ -17,7 +17,7 @@
 //   to refer to the private slot.
 // - Some magic macros (see replacements.ts) such as `$assert()` (which forcibly
 //   deletes the argument in a release build, unlike a define macro), and the
-//   magical `$cpp` and `$bindgenFn` bindgen stuff -- a story for another day.
+//   magical `$cpp` and `$bindgen` bindgen stuff -- a story for another day.
 //
 // Part of the transpilation process involves removing type annotations. And
 // that is done with Bun's bundler. But we need to construct an IIFE, and the
@@ -453,11 +453,11 @@ export async function bundleBuiltinFunctions({ requireTransformer, typesDir }: B
     for (const fn of functions) {
       const name = `${basename}${cap(fn.name)}`;
       bundledCPP += `
-JSC::FunctionExecutable* ${lowerBasename}${cap(fn.name)}CodeGenerator(JSC::VM& vm)
+JSC::BuiltinCode ${lowerBasename}${cap(fn.name)}CodeGenerator(JSC::VM& vm)
 {
     auto &builtins = static_cast<JSVMClientData*>(vm.clientData)->builtinFunctions().${lowerBasename}Builtins();
     auto *executable = builtins.${lowerBasename}${cap(fn.name)}CodeExecutable();
-    return executable->link(vm, nullptr, builtins.${lowerBasename}${cap(fn.name)}CodeSource(), std::nullopt, JSC::NoIntrinsic);
+    return { executable->link(vm, nullptr, builtins.${lowerBasename}${cap(fn.name)}CodeSource(), std::nullopt, JSC::NoIntrinsic), 0 };
 }
 `;
     }
@@ -465,7 +465,7 @@ JSC::FunctionExecutable* ${lowerBasename}${cap(fn.name)}CodeGenerator(JSC::VM& v
 
   const initializeSourceCodeFn = (fn: BundledBuiltin, basename: string) => {
     const name = `${low(basename)}${cap(fn.name)}CodeSource`;
-    return `m_${name}(SourceCode(sourceProvider.copyRef(), ${fn.sourceOffset}, ${fn.source.length + fn.sourceOffset}, 1, 1))`;
+    return `m_${name}(SourceCode(sourceProvider.copyRef(), ${fn.sourceOffset}, ${fn.source.length + fn.sourceOffset}))`;
   };
   for (const { basename, internal, functions } of files) {
     bundledCPP += `
@@ -482,8 +482,11 @@ ${basename}BuiltinsWrapper::${basename}BuiltinsWrapper(JSC::VM& vm, RefPtr<JSC::
   }
 
   bundledCPP += `
+static constexpr unsigned internalCombinedSourceStarts[] = { ${files.flatMap(({ functions }) => functions.map(fn => fn.sourceOffset)).join(", ")} };
+
 RefPtr<JSC::SourceProvider> createBuiltinsSourceProvider() {
-    return JSC::StringSourceProvider::create(StringImpl::createWithoutCopying(internalCombinedSource), SourceOrigin(), String(), SourceTaintedOrigin());
+    // JavaScriptCore numbers its own built-in functions from 0.
+    return JSC::BuiltinsSourceProvider::create(StringImpl::createWithoutCopying(internalCombinedSource), internalCombinedSourceStarts, 0x10000);
 }
 `;
 
@@ -634,7 +637,7 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
     }
     bundledHeader += `
     #define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \\
-        JSC::FunctionExecutable* codeName##Generator(JSC::VM&);
+        JSC::BuiltinCode codeName##Generator(JSC::VM&);
 
     WEBCORE_FOREACH_${basename.toUpperCase()}_BUILTIN_CODE(DECLARE_BUILTIN_GENERATOR)
     #undef DECLARE_BUILTIN_GENERATOR
@@ -784,6 +787,7 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
     } // namespace WebCore
     `;
   // Handle builtin names
+  let privateNames: string[];
   {
     const BunBuiltinNamesHeader = require("fs").readFileSync(
       path.join(import.meta.dir, "../js/builtins/BunBuiltinNames.h"),
@@ -829,6 +833,7 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
 `;
 
     writeIfNotChanged(path.join(CODEGEN_DIR, "BunBuiltinNames+extras.h"), additionalPrivateNamesHeader);
+    privateNames = [...definedBuiltinNames, ...(additionalPrivateNames as Set<string>)];
   }
   writeIfNotChanged(path.join(CODEGEN_DIR, "WebCoreJSBuiltins.h"), bundledHeader);
   writeIfNotChanged(path.join(CODEGEN_DIR, "WebCoreJSBuiltins.cpp"), bundledCPP);
@@ -870,6 +875,6 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
 
   // bundle-modules.ts prepends this to InternalModuleRegistryConstants.bin so the
   // same linked blob carries both the builtin function sources and the internal
-  // module sources.
-  return { combinedSourceCode };
+  // module sources. `privateNames` lists every private name registered by BunBuiltinNames.
+  return { combinedSourceCode, privateNames };
 }

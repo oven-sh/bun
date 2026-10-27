@@ -80,6 +80,7 @@ impl ReplCommand {
             transform_options: core::mem::take(&mut ctx.args),
             debugger: core::mem::take(&mut ctx.runtime_options.debugger),
             log: core::ptr::NonNull::new(ctx.log),
+            global_cache: ctx.debug.global_cache,
             smol: ctx.runtime_options.smol,
             eval_mode: true,
             is_main_thread: true,
@@ -105,13 +106,11 @@ impl ReplCommand {
         let install_ptr = ctx.install.as_deref().map(core::ptr::NonNull::from);
         b.options.install = install_ptr;
         b.resolver.opts.install = install_ptr;
-        b.resolver.opts.global_cache = ctx.debug.global_cache;
         let offline = ctx
             .debug
             .offline_mode_setting
             .unwrap_or(OfflineMode::Online);
         b.resolver.opts.install_preference = offline;
-        b.options.global_cache = b.resolver.opts.global_cache;
         b.options.install_preference = offline;
         b.resolver.env_loader = NonNull::new(b.env);
         b.options.env.behavior = EnvBehavior::LoadAllWithoutInlining;

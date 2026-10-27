@@ -2,7 +2,7 @@
 #![feature(adt_const_params)]
 #![feature(thread_local)] // bare `__thread` slot for `thread_id::current()` cache
 #![feature(freeze)] // `impl_field_parent!`'s `shared` arm rejects `Freeze` children at compile time
-#![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
+#![allow(non_snake_case)]
 // bun_core is the T0 foundation crate that bun_threading, bun_sys, and
 // bun_collections depend on; importing any of them to satisfy the disallowed-*
 // lints would create a dependency cycle. `output`/`Progress`/`Global` here ARE
@@ -16,6 +16,7 @@
 
 pub mod Global;
 pub mod atomic_cell;
+pub mod ci_info;
 pub mod comptime_string_map;
 pub mod error;
 pub mod hint;
@@ -55,7 +56,8 @@ pub use ::bstr::{BStr, BString, ByteSlice};
 pub use string::string_joiner::StringJoiner;
 pub use string::{
     EncodedSlice, HashedString, MutableString, NodeEncoding, SmolStr, String, StringBuilder,
-    StringView, Utf8Bytes, Utf8WithString, WTFStringImpl, WTFStringImplExt, WTFStringImplStruct,
+    StringOrView, StringView, Utf8Bytes, Utf8WithString, WTFStringImpl, WTFStringImplExt,
+    WTFStringImplStruct,
 };
 pub use string::{
     STRING_ALLOCATION_LIMIT, cheap_prefix_normalizer, escape_reg_exp, identifier, lexer,
@@ -240,9 +242,13 @@ pub mod os {
     }
 }
 
-pub mod deprecated;
+pub mod code_generation;
 pub mod env_var;
 pub mod feature_flags;
+pub use code_generation::{
+    CODE_GENERATION_FROM_STRINGS_DISALLOWED_BY_BUILD, CodeGenerationFromStrings,
+    code_generation_from_strings, disallow_code_generation_from_strings,
+};
 
 /// Tier-0 path-separator predicates. Sunk from `bun_paths` so `bun_core::util`
 /// (dirname, which) can use them without an upward dep. `bun_paths` re-exports
@@ -695,7 +701,7 @@ pub const unsafe fn container_of<P, F>(field: *const F, offset: usize) -> *mut P
 /// Recover a typed `&mut T` from a C-callback's opaque user-data pointer.
 ///
 /// This is the canonical spelling for the ubiquitous trampoline pattern where
-/// a C library (libarchive, c-ares, uWS, libuv, lol-html, BoringSSL, …) round-
+/// a C library (c-ares, uWS, libuv, lol-html, BoringSSL, …) round-
 /// trips a Rust object through a `void *user_data` slot and hands it back to
 /// an `extern "C" fn` thunk. Earlier ports open-coded this as
 /// `unsafe { &mut *ctx.cast::<T>() }` at every site; centralising it here
@@ -1739,10 +1745,13 @@ pub(crate) mod strings_impl {
     }
 
     /// Result of an encode-into-fixed-buffer operation. Port of `EncodeIntoResult`.
+    /// `written` can be exactly 2^32, JSC's max ArrayBuffer size.
+    /// The C++ mirror is `TextEncoderEncodeIntoResult` in `headers-handwritten.h`.
+    #[repr(C)]
     #[derive(Clone, Copy, Default, Debug)]
     pub struct EncodeIntoResult {
-        pub read: u32,
-        pub written: u32,
+        pub read: usize,
+        pub written: usize,
     }
 
     /// Port of `elementLengthUTF16IntoUTF8`: the exact UTF-8 byte length of a
@@ -1798,8 +1807,8 @@ pub(crate) mod strings_impl {
             };
             if r.status == simdutf::Status::SUCCESS {
                 return EncodeIntoResult {
-                    read: utf16.len() as u32,
-                    written: r.count as u32,
+                    read: utf16.len(),
+                    written: r.count,
                 };
             }
         }
@@ -1817,10 +1826,7 @@ pub(crate) mod strings_impl {
             written += n;
             read += adv as usize;
         }
-        EncodeIntoResult {
-            read: read as u32,
-            written: written as u32,
-        }
+        EncodeIntoResult { read, written }
     }
 
     /// Port of `copyLatin1IntoUTF8` — encode Latin-1 into a fixed-size UTF-8 buffer.
@@ -1884,8 +1890,8 @@ pub(crate) mod strings_impl {
             debug_assert!(latin1_[read] >= 0x80);
             if STOP {
                 return EncodeIntoResult {
-                    written: u32::MAX,
-                    read: u32::MAX,
+                    written: usize::MAX,
+                    read: usize::MAX,
                 };
             }
             if buf_.len() - written < 2 {
@@ -1897,10 +1903,7 @@ pub(crate) mod strings_impl {
             read += 1;
         }
 
-        EncodeIntoResult {
-            written: written as u32,
-            read: read as u32,
-        }
+        EncodeIntoResult { written, read }
     }
 
     /// Null-terminated variant of `to_utf8_from_latin1`. Returns `ZBox` so
@@ -2120,41 +2123,66 @@ pub(crate) mod strings_impl {
             return Some((0, npm_secret_len));
         }
 
-        if let Some(r) = find_url_password(str) {
+        if let Some(r) = find_url_userinfo(str) {
             return Some(r);
         }
 
         None
     }
 
-    /// Port of `bun.fmt.URLFormatter.findUrlPassword` — returns
-    /// `(offset, len)` of the password segment, or None.
-    /// Only matches http:// and https:// schemes and rejects empty pw.
-    pub(crate) fn find_url_password(s: &[u8]) -> Option<(usize, usize)> {
-        // Case-sensitive prefix match; the search region is truncated at the
-        // first '\n' and at the end of the authority before scanning for '@'/':'.
-        let scheme_end = if s.starts_with(b"http://") {
-            7
-        } else if s.starts_with(b"https://") {
-            8
-        } else {
+    /// Returns the `(offset, len)` of the URL's userinfo (`user:password`) that must be redacted
+    /// before printing, or None. `s` must start with a URL (`https://`, `git+ssh://`, ...).
+    pub(crate) fn find_url_userinfo(s: &[u8]) -> Option<(usize, usize)> {
+        // RFC 3986 scheme (`git+https` is one scheme) followed by `://`.
+        if !s.first().is_some_and(u8::is_ascii_alphabetic) {
             return None;
-        };
-        let mut rest = &s[scheme_end..];
-        if let Some(nl) = crate::strings::index_of_char_usize(rest, b'\n') {
-            rest = &rest[..nl];
         }
-        if let Some(end) = crate::strings::index_of_any(rest, b"/?#") {
+        let scheme_len = s.iter().take_while(|&&b| is_url_scheme_byte(b)).count();
+        if !s[scheme_len..].starts_with(b"://") {
+            return None;
+        }
+        let scheme_end = scheme_len + b"://".len();
+        let (offset, len) = find_authority_userinfo(&s[scheme_end..])?;
+        Some((scheme_end + offset, len))
+    }
+
+    fn is_url_scheme_byte(b: u8) -> bool {
+        b.is_ascii_alphanumeric() || matches!(b, b'+' | b'-' | b'.')
+    }
+
+    /// Same as [`find_url_userinfo`], but `rest` starts right after `scheme://`. The userinfo ends
+    /// at the last '@'. All of it is redacted, user name included, unless it is the ssh user `git`.
+    pub(crate) fn find_authority_userinfo(mut rest: &[u8]) -> Option<(usize, usize)> {
+        // The URL ends at whitespace, so a `name@version` later in the message is not part of it.
+        if let Some(end) = crate::strings::index_of_any(rest, b"/?# \t\r\n") {
             rest = &rest[..end];
         }
-        let at = crate::strings::index_of_char_usize(rest, b'@')?;
-        let userinfo = &rest[..at];
-        let colon = crate::strings::index_of_char_usize(userinfo, b':')?;
-        // Reject empty password (`user:@host`).
-        if colon == at - 1 {
-            return None;
+        let at = crate::strings::last_index_of_char(rest, b'@')?;
+        (at > 0 && &rest[..at] != b"git").then_some((0, at))
+    }
+
+    /// Runs [`find_url_userinfo`] on each URL at or after `from` and returns the first match. The
+    /// returned offset is relative to the start of `s`.
+    pub(crate) fn next_url_userinfo(s: &[u8], mut from: usize) -> Option<(usize, usize)> {
+        while let Some(separator) = crate::strings::index_of(&s[from..], b"://") {
+            let separator = from + separator;
+            let scheme_len = s[from..separator]
+                .iter()
+                .rev()
+                .take_while(|&&b| is_url_scheme_byte(b))
+                .count();
+            // A scheme starts with a letter.
+            let not_letters = s[separator - scheme_len..separator]
+                .iter()
+                .take_while(|b| !b.is_ascii_alphabetic())
+                .count();
+            let start = separator - scheme_len + not_letters;
+            if let Some((offset, len)) = find_url_userinfo(&s[start..]) {
+                return Some((start + offset, len));
+            }
+            from = separator + b"://".len();
         }
-        Some((scheme_end + colon + 1, at - colon - 1))
+        None
     }
 
     /// Returns the UTF-8/WTF-8 sequence length implied by a *leading* byte,
@@ -2326,14 +2354,6 @@ pub use crate::string::immutable as strings;
 // `true` when mimalloc is the `#[global_allocator]`; `false` under ASAN where
 // `std::alloc::System` is installed instead. Mirrors `bun_alloc::USE_MIMALLOC`.
 pub const USE_MIMALLOC: bool = cfg!(not(bun_asan));
-pub(crate) mod debug_allocator_data {
-    /// Only referenced from `debug_assert!` — dead in release builds.
-    #[allow(dead_code)]
-    #[inline]
-    pub(crate) fn deinit_ok() -> bool {
-        true
-    }
-}
 
 pub use env_var::feature_flag;
 /// `bun.linuxKernelVersion()`. Lives in T1 because `bun_sys` calls it from feature probes (copy_file_range,
@@ -2741,7 +2761,7 @@ pub mod ffi {
     ///
     /// Replaces the `// SAFETY: H is a ZST → mem::zeroed()` comment repeated
     /// at every callback trampoline that smuggles a generic `H: Fn*` through C
-    /// (`uws_sys::thunk`, `sql_jsc::IntoJSHostFn`, `server_body::route_thunk`).
+    /// (`uws_sys::thunk`, `server_body::route_thunk`).
     #[inline(always)]
     pub fn conjure_zst<H>() -> H {
         const {
@@ -2847,6 +2867,7 @@ pub mod asan {
         safe fn __lsan_register_root_region(ptr: *const c_void, size: usize);
         safe fn __lsan_unregister_root_region(ptr: *const c_void, size: usize);
         safe fn __lsan_ignore_object(ptr: *const c_void);
+        safe fn __lsan_disable();
     }
 
     #[inline]
@@ -2899,6 +2920,13 @@ pub mod asan {
         __lsan_ignore_object(ptr);
         #[cfg(not(bun_asan))]
         let _ = ptr;
+    }
+    /// Exclude all future allocations on the calling thread from leak reports.
+    /// For threads that are never joined and never free their state.
+    #[inline]
+    pub fn disable_leak_checks_on_current_thread() {
+        #[cfg(bun_asan)]
+        __lsan_disable();
     }
 }
 

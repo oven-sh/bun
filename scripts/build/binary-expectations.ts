@@ -134,8 +134,8 @@ export interface BinaryExpectations {
   /**
    * The profile executable keeps a symbol table and debug sections (ELF; on
    * Mach-O debug info lives in the dSYM, on PE in the PDB). `compressed`:
-   * the DWARF sections carry SHF_COMPRESSED (at link, or post-link with
-   * rust-lld — flags.ts --compress-debug-sections).
+   * the DWARF sections carry SHF_COMPRESSED (flags.ts
+   * --compress-debug-sections).
    */
   debugInfo?: { symtab: boolean; debugSections: boolean; compressed: boolean };
 }
@@ -254,6 +254,17 @@ function runtimeInitializers(cfg: Config): string[] {
     // prebuilt WebKit's call the __aarch64_* helpers that bring these in.
     initializers.push("init_have_lse_atomics", "__init_cpu_features");
   }
+  if (cfg.fuzzilli && gnu) {
+    // -fsanitize-coverage: the constructor that hands the guards to
+    // FuzzilliREPRL.cpp (one for the binary, bun's objects and the -coverage
+    // WebKit's share it), and the two of clang's runtime, which the flag
+    // links (flags.ts).
+    initializers.push(
+      "sancov.module_ctor_trace_pc_guard",
+      "_GLOBAL__sub_I_sanitizer_common_libcdep.cpp",
+      "_GLOBAL__sub_I_ubsan_init_standalone.cpp",
+    );
+  }
   return initializers;
 }
 
@@ -370,7 +381,14 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
     cfg.webkit === "local" && cfg.linux && cfg.abi !== "android"
       ? ["libicudata.so.*", "libicui18n.so.*", "libicuuc.so.*"]
       : [];
-  const allowedLibs = [...sanitizerLibs, ...localWebKitLibs, ...(cfg.abi === "android" ? ["liblog.so"] : [])];
+  // --fuzzilli=on: clang's coverage runtime needs it.
+  const coverageLibs = cfg.fuzzilli && cfg.linux && cfg.abi === "gnu" ? ["libresolv.so.2"] : [];
+  const allowedLibs = [
+    ...sanitizerLibs,
+    ...coverageLibs,
+    ...localWebKitLibs,
+    ...(cfg.abi === "android" ? ["liblog.so"] : []),
+  ];
   const staticInitializers = cfg.asan ? undefined : runtimeInitializers(cfg);
 
   switch (format) {
@@ -513,11 +531,7 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
             "ole32.dll",
           ],
           exact: true,
-          // bcrypt.dll: libarchive's archive_random.c / archive_digest.c call
-          // BCryptOpenAlgorithmProvider and BCryptGenRandom. A release link
-          // drops them as unreferenced (/OPT:REF); a debug link keeps every
-          // section, and the import with them. Never in a shipped binary.
-          allowed: [...sanitizerLibs, ...(cfg.debug ? ["bcrypt.dll"] : [])],
+          allowed: sanitizerLibs,
         },
         minOSVersion: "6.0",
         forbiddenImports: forbiddenImports(cfg),

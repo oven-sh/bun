@@ -1889,12 +1889,14 @@ fn compress_block_lazy_generic<'a, F: Finder<'a>, const DEPTH: u32, const DICT_M
                 }
                 ip += 1;
                 let rep_len = rep_length::<DICT_MODE>(block, ip, offset_1)?;
-                let weight = 2 + since_best;
-                let gain2 = (rep_len * weight) as i32;
-                let gain1 = (best.len * weight) as i32 - best.cost() + 1;
-                if rep_len >= 4 && gain2 > gain1 {
-                    best = Found::repeat(rep_len);
-                    start = ip;
+                if rep_len >= 4 {
+                    let weight = 2 + since_best;
+                    let gain2 = (rep_len * weight) as i32;
+                    let gain1 = (best.len * weight) as i32 - best.cost() + 1;
+                    if gain2 > gain1 {
+                        best = Found::repeat(rep_len);
+                        start = ip;
+                    }
                 }
                 wanted = Wanted {
                     longer_than: 3,

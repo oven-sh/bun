@@ -1,6 +1,6 @@
 use crate as css;
 use crate::css_rules::{CssRuleList, Location};
-use crate::css_values::ident::CustomIdent;
+use crate::css_values::ident::{CustomIdent, CustomIdentFns};
 use crate::media_query::{self, MediaFeatureType, Operator, QueryCondition, QueryFeature, ToCss};
 use crate::properties::{Property, PropertyId};
 use crate::{PrintErr, Printer};
@@ -12,7 +12,13 @@ pub struct ContainerName {
 
 impl ContainerName {
     pub fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
-        super::custom_ident_to_css(&self.v, dest)
+        // Container names are shared by declarations and queries across CSS
+        // modules. The `container` and `container-name` declarations are
+        // currently emitted as written, so hashing only the `@container`
+        // prelude makes the query refer to a name no declaration defines.
+        // Keep container names global until declarations can participate in
+        // CSS-module scoping as well.
+        CustomIdentFns::to_css_with_options(&self.v, dest, false)
     }
 }
 

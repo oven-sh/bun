@@ -1,9 +1,9 @@
 use bstr::BStr;
 
-use crate::Error;
 use crate::bun_fs::FileSystem;
-use crate::lockfile_real::package::value_loc_of;
-use crate::lockfile_real::package::workspace_map::{MissingWorkspace, NamesArray, WorkspaceMap};
+use crate::lockfile::package::PackageColumns as _;
+use crate::lockfile_real::package::workspace_map::{MissingWorkspace, WorkspaceMap};
+use crate::{Error, ResolutionTag};
 use bun_collections::{StringArrayHashMap, index_sort};
 use bun_core::time::nano_timestamp;
 use bun_core::{Global, Output, strings};
@@ -15,12 +15,12 @@ use bun_sys::{Fd, File};
 
 use super::add_catalog;
 use super::install_with_manager::install_with_manager;
-use super::options::{Do, LogLevel};
+use super::options::LogLevel;
 use super::package_json_editor::EditOptions;
 use super::package_json_write_back;
 use super::update_package_json_and_install::{
-    print_package_json_into_cache_entry, remove_dependencies_from_package_json,
-    remove_leftover_node_modules,
+    package_json_entry_or_crash, remove_dependencies_from_package_json,
+    remove_leftover_node_modules, save_entry,
 };
 use super::workspace_package_json_cache::{GetJSONOptions, GetResult, MapEntry};
 use super::workspace_selection::{self, Candidate, LinkTargets, RootSelection, WorkspaceGraph};
@@ -36,24 +36,49 @@ pub(crate) struct WorkspaceTarget {
     pub(crate) package_json_path: Box<[u8]>,
 }
 
+impl WorkspaceTarget {
+    pub(crate) fn root() -> WorkspaceTarget {
+        WorkspaceTarget {
+            name: Box::default(),
+            name_hash: None,
+            package_json_path: root_package_json_path(),
+        }
+    }
+
+    /// `None` unless `pkg_id` is the root or a workspace member.
+    pub(crate) fn of_lockfile_package(
+        lockfile: &Lockfile,
+        pkg_id: PackageID,
+    ) -> Option<WorkspaceTarget> {
+        let res = lockfile.packages.items_resolution()[pkg_id as usize];
+        match res.tag {
+            ResolutionTag::Root => Some(WorkspaceTarget::root()),
+            ResolutionTag::Workspace => {
+                let buf = lockfile.buffers.string_bytes.as_slice();
+                let top_level = FileSystem::instance().top_level_dir();
+                let mut path_buf = path_buffer_pool::get();
+                Some(WorkspaceTarget {
+                    name: Box::from(lockfile.packages.items_name()[pkg_id as usize].slice(buf)),
+                    name_hash: Some(lockfile.packages.items_name_hash()[pkg_id as usize]),
+                    package_json_path: resolve_path::join_abs_string_buf_checked::<platform::Auto>(
+                        top_level,
+                        &mut path_buf.0,
+                        &[res.workspace().slice(buf), b"package.json"],
+                    )?
+                    .into(),
+                })
+            }
+            _ => None,
+        }
+    }
+}
+
 pub(crate) fn root_package_json_path() -> Box<[u8]> {
-    let top_level = strings::without_trailing_slash(FileSystem::instance().top_level_dir());
+    let top_level = FileSystem::instance().top_level_dir();
     let mut buf = path_buffer_pool::get();
     let path: Box<[u8]> =
         join_abs_string_buf::<platform::Auto>(top_level, &mut buf.0, &[b"package.json"]).into();
     path
-}
-
-fn print_log_and_crash(
-    manager: &PackageManager,
-    fmt: &str,
-    args: impl bun_core::output::FmtTuple,
-) -> ! {
-    let _ = manager
-        .log_mut()
-        .print(std::ptr::from_mut(Output::error_writer()));
-    Output::err_generic(fmt, args);
-    Global::crash();
 }
 
 pub(crate) struct WorkspaceMembers {
@@ -65,80 +90,33 @@ pub(crate) struct WorkspaceMembers {
 pub(crate) fn load_workspace_members(manager: &mut PackageManager) -> WorkspaceMembers {
     let root_path = root_package_json_path();
 
-    let (root_expr, root_source, root_name): (bun_ast::Expr, bun_ast::Source, Box<[u8]>) = {
-        let log = manager.log_mut();
-        match manager.workspace_package_json_cache.get_with_path(
-            log,
-            &root_path,
-            GetJSONOptions {
-                guess_indentation: true,
-                ..Default::default()
-            },
-        ) {
-            GetResult::Entry(entry) => {
-                let name_expr = entry.root.get(b"name");
-                let name: Box<[u8]> = name_expr
-                    .as_ref()
-                    .and_then(|e| e.as_utf8_string_literal())
-                    .unwrap_or(b"")
-                    .into();
-                (entry.root, entry.source.clone(), name)
-            }
-            GetResult::ParseErr(err) => print_log_and_crash(
-                manager,
-                "failed to parse package.json \"{}\": {}",
-                (BStr::new(&root_path), err.name()),
-            ),
-            GetResult::ReadErr(err) => {
-                Output::err_generic(
-                    "failed to read package.json \"{}\": {}",
-                    (BStr::new(&root_path), err.name()),
-                );
-                Global::crash();
-            }
-        }
-    };
+    let entry = package_json_entry_or_crash(manager, &root_path);
+    let (root_expr, root_source) = (entry.root, entry.source.clone());
+    let name_expr = root_expr.get(b"name");
+    let root_name: Box<[u8]> = name_expr
+        .as_ref()
+        .and_then(|e| e.as_utf8_string_literal())
+        .unwrap_or(b"")
+        .into();
 
     let mut members = WorkspaceMap::init();
-    let workspaces = root_expr.as_property(b"workspaces");
-    let packages = workspaces
-        .as_ref()
-        .filter(|q| !q.expr.is_array())
-        .and_then(|q| q.expr.as_property(b"packages"));
-    let names: Option<(NamesArray<'_>, bun_ast::Loc)> = match (&workspaces, &packages) {
-        (Some(q), _) if q.expr.is_array() => Some((
-            NamesArray::from_expr(&q.expr, value_loc_of(&root_source, q.loc))
-                .expect("is_array was checked above"),
-            q.loc,
-        )),
-        (Some(_), Some(p)) if p.expr.is_array() => Some((
-            NamesArray::from_expr(&p.expr, value_loc_of(&root_source, p.loc))
-                .expect("is_array was checked above"),
-            p.loc,
-        )),
-        _ => None,
-    };
-    if let Some((arr, loc)) = names {
-        let log = manager.log_mut();
-        if let Err(err) = members.process_names_array(
-            &mut manager.workspace_package_json_cache,
-            log,
-            arr,
-            &root_source,
-            loc,
-            None,
-            MissingWorkspace::Error,
-        ) {
-            if log.has_errors() {
-                let _ = log.print(std::ptr::from_mut(Output::error_writer()));
-            } else {
-                Output::err_generic(
-                    "failed to load workspaces from package.json \"{}\": {}",
-                    (BStr::new(&root_path), err.name()),
-                );
-            }
-            Global::crash();
+    let log = manager.log_mut();
+    if let Err(err) = members.process_manifest(
+        &mut manager.workspace_package_json_cache,
+        log,
+        &root_expr,
+        &root_source,
+        MissingWorkspace::Error,
+    ) {
+        if log.has_errors() {
+            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+        } else {
+            Output::err_generic(
+                "failed to load workspaces from package.json \"{}\": {}",
+                (BStr::new(&root_path), err.name()),
+            );
         }
+        Global::crash();
     }
 
     WorkspaceMembers {
@@ -152,7 +130,7 @@ pub(crate) fn select_targets(
     manager: &mut PackageManager,
     original_cwd: &[u8],
 ) -> Result<Vec<WorkspaceTarget>, Error> {
-    let top_level = strings::without_trailing_slash(FileSystem::instance().top_level_dir());
+    let top_level = FileSystem::instance().top_level_dir();
     let WorkspaceMembers {
         root_path,
         root_name,
@@ -283,12 +261,7 @@ pub(crate) fn store_entry(
     root: bun_ast::Expr,
 ) {
     let log = manager.log_mut();
-    let entry = fetch_entry(manager, target);
-    print_package_json_into_cache_entry(entry, root);
-    if let Err(err) = entry.reparse_root(log) {
-        bun_core::pretty_errorln!("package.json failed to parse due to error {}", err.name());
-        Global::crash();
-    }
+    save_entry(fetch_entry(manager, target), root, log);
 }
 
 pub(crate) fn write_target(manager: &mut PackageManager, target: &WorkspaceTarget) -> bool {
@@ -298,10 +271,14 @@ pub(crate) fn write_target(manager: &mut PackageManager, target: &WorkspaceTarge
     match File::write_file(Fd::cwd(), path, &entry.source.contents) {
         Ok(()) => true,
         Err(err) => {
-            Output::err_generic(
-                "failed to write package.json for workspace '{}': {}",
-                (BStr::new(&target.name), BStr::new(err.name())),
-            );
+            if target.name.is_empty() {
+                Output::err_generic("failed to write package.json: {}", (BStr::new(err.name()),));
+            } else {
+                Output::err_generic(
+                    "failed to write package.json for workspace '{}': {}",
+                    (BStr::new(&target.name), BStr::new(err.name())),
+                );
+            }
             false
         }
     }
@@ -337,34 +314,78 @@ fn restore_order(updates: &mut [UpdateRequest], before: &[PackageNameHash]) {
 
 /// The `(prefix, path)` of a positional naming a local path, which is relative to the invoking cwd.
 pub(crate) fn local_relative_path(request: &UpdateRequest) -> Option<(&'static [u8], &[u8])> {
-    let literal = request.version.literal.slice(request.version_buf());
+    let buf = request.version_buf();
+    let literal = request.version.literal.slice(buf);
+    let file_prefix: &'static [u8] = if literal.starts_with(b"file:") {
+        b"file:"
+    } else {
+        b""
+    };
+    // Use the parsed path, not the literal: `file:/../lib` and `file://../lib` both mean `../lib`.
     let (prefix, path): (&'static [u8], &[u8]) = match request.version.tag {
-        dependency::Tag::Folder | dependency::Tag::Tarball => {
-            match literal.strip_prefix(b"file:") {
-                Some(path) => (b"file:", path),
-                None => (b"", literal),
-            }
-        }
+        dependency::Tag::Folder => (file_prefix, request.version.folder().slice(buf)),
+        dependency::Tag::Tarball => match &request.version.tarball().uri {
+            dependency::URI::Local(path) => (file_prefix, path.slice(buf)),
+            dependency::URI::Remote(_) => return None,
+        },
         dependency::Tag::Symlink => (b"link:", literal.strip_prefix(b"link:")?),
         _ => return None,
     };
-    let is_path = path.starts_with(b".")
-        || (prefix != b"link:" && !path.is_empty() && !strings::contains(path, b"://"));
+    let is_path = if prefix == b"link:" {
+        dependency::is_link_path(path)
+    } else {
+        path.starts_with(b".") || (!path.is_empty() && !strings::contains(path, b"://"))
+    };
     (is_path && !path.starts_with(b"//") && !Platform::AUTO.is_absolute(path))
         .then_some((prefix, path))
 }
 
+#[cold]
+fn local_path_too_long(request: &UpdateRequest) -> ! {
+    Output::err_generic(
+        "Dependency \"{}\" has an unsafe folder path",
+        (BStr::new(
+            request.version.literal.slice(request.version_buf()),
+        ),),
+    );
+    Global::crash();
+}
+
+fn resolve_from_cwd<'a>(
+    cwd: &'a [u8],
+    buf: &'a mut bun_paths::PathBuffer,
+    request: &UpdateRequest,
+    path: &[u8],
+) -> &'a [u8] {
+    resolve_path::join_abs_string_buf_checked::<platform::Auto>(cwd, &mut buf.0, &[path])
+        .unwrap_or_else(|| local_path_too_long(request))
+}
+
+/// `None` means the global package.json, which stores `abs` itself, like `-g /abs/path` does.
 fn spell_relative_to(
-    target: &WorkspaceTarget,
+    package_json_path: Option<&[u8]>,
     request: &UpdateRequest,
     prefix: &[u8],
     abs: &[u8],
 ) -> Vec<u8> {
     let mut buf = path_buffer_pool::get();
-    let target_dir = resolve_path::dirname::<platform::Auto>(&target.package_json_path);
-    let rel =
-        resolve_path::relative_platform_buf::<platform::Auto, true>(&mut buf.0, target_dir, abs);
-    let mut positional = Vec::with_capacity(request.name.len() + prefix.len() + rel.len() + 3);
+    let rel: &[u8] = match package_json_path {
+        Some(package_json_path) => {
+            let target_dir = resolve_path::dirname::<platform::Auto>(package_json_path);
+            // `rel` is at most one `../` for each component of `target_dir`, then `abs`.
+            let components = target_dir
+                .iter()
+                .filter(|&&c| Platform::AUTO.is_separator(c))
+                .count()
+                + 1;
+            if abs.len() + components * b"../".len() >= buf.0.len() {
+                local_path_too_long(request);
+            }
+            resolve_path::relative_platform_buf::<platform::Auto, true>(&mut buf.0, target_dir, abs)
+        }
+        None => abs,
+    };
+    let mut positional = Vec::with_capacity(request.name.len() + prefix.len() + rel.len() + 4);
     if request.is_aliased {
         positional.extend_from_slice(request.name);
         positional.push(b'@');
@@ -373,12 +394,58 @@ fn spell_relative_to(
     let path_start = positional.len();
     let escapes =
         rel.starts_with(b"..") && rel.get(2).is_none_or(|&c| Platform::AUTO.is_separator(c));
-    if !escapes {
+    if !escapes && package_json_path.is_some() {
         positional.extend_from_slice(b"./");
     }
     positional.extend_from_slice(rel);
     resolve_path::platform_to_posix_in_place(&mut positional[path_start..]);
+    // The trailing separator is what tells a directory named `lib.tgz/` from a tarball.
+    let typed = request.version.literal.slice(request.version_buf());
+    if typed.ends_with(b"/") && !positional.ends_with(b"/") {
+        positional.push(b'/');
+    }
     positional
+}
+
+/// Without `--filter`: a local path that was typed in a different directory is rewritten relative
+/// to the one target.
+pub(super) fn respell_local_paths(
+    manager: &mut PackageManager,
+    original_cwd: &[u8],
+    updates: Vec<UpdateRequest>,
+) -> Vec<UpdateRequest> {
+    let package_json_path: Box<[u8]> = manager.original_package_json_path.as_bytes().into();
+    let (cwd, target): (&[u8], Option<&[u8]>) = if manager.options.global {
+        // `original_cwd` is the global directory here, because `init` changes to it first.
+        (
+            bun_paths::fs::FileSystem::instance().initial_top_level_dir(),
+            None,
+        )
+    } else if resolve_path::dirname::<platform::Auto>(&package_json_path) == original_cwd {
+        return updates;
+    } else {
+        (original_cwd, Some(&*package_json_path))
+    };
+    let mut buf = path_buffer_pool::get();
+    let mut requests: Vec<UpdateRequest> = Vec::with_capacity(updates.len());
+    for request in updates {
+        let Some((prefix, path)) = local_relative_path(&request) else {
+            requests.push(request);
+            continue;
+        };
+        let abs = resolve_from_cwd(cwd, &mut buf, &request, path);
+        let positional = spell_relative_to(target, &request, prefix, abs);
+        let log = manager.log_mut();
+        let subcommand = manager.subcommand;
+        UpdateRequest::parse(
+            Some(&mut *manager),
+            log,
+            &[positional.as_slice()],
+            &mut requests,
+            subcommand,
+        );
+    }
+    requests
 }
 
 /// The requests to install and, per target, the ones it receives; a local path becomes one request per distinct spelling.
@@ -401,12 +468,13 @@ fn assign_requests(
             requests.push(request);
             continue;
         };
-        let abs: Box<[u8]> =
-            join_abs_string_buf::<platform::Auto>(original_cwd, &mut buf.0, &[path]).into();
+        let abs: Box<[u8]> = resolve_from_cwd(original_cwd, &mut buf, &request, path).into();
         slots.push(Slot::PerTarget(
             targets
                 .iter()
-                .map(|target| spell_relative_to(target, &request, prefix, &abs))
+                .map(|target| {
+                    spell_relative_to(Some(&*target.package_json_path), &request, prefix, &abs)
+                })
                 .collect(),
         ));
     }
@@ -500,7 +568,6 @@ struct PendingTarget {
 pub(crate) struct PendingWrite {
     targets: Vec<PendingTarget>,
     catalog_mode: bool,
-    root_target: WorkspaceTarget,
 }
 
 impl PendingWrite {
@@ -563,9 +630,10 @@ impl PendingWrite {
         restore_order(updates, &summary_order);
 
         if self.catalog_mode {
-            let root = fetch_entry_root(manager, &self.root_target);
+            let root_target = WorkspaceTarget::root();
+            let root = fetch_entry_root(manager, &root_target);
             if add_catalog::edit_root_after_install(manager, &root)? {
-                store_entry(manager, &self.root_target, root);
+                store_entry(manager, &root_target, root);
             }
         }
         Ok(())
@@ -613,12 +681,7 @@ pub(super) fn update_filtered_workspaces_and_install(
     let catalog_mode = subcommand == Subcommand::Add && manager.options.add_catalog.is_some();
     debug_assert!(manager.root_package_id.id.is_none());
 
-    let root_package_json_path = root_package_json_path();
-    let root_target = WorkspaceTarget {
-        name: Box::default(),
-        name_hash: None,
-        package_json_path: root_package_json_path.clone(),
-    };
+    let root_target = WorkspaceTarget::root();
 
     let (mut updates, assigned) = if subcommand == Subcommand::Remove {
         (updates, vec![Vec::new(); targets.len()])
@@ -727,21 +790,16 @@ pub(super) fn update_filtered_workspaces_and_install(
         manager.pending_filtered_write = Some(Box::new(PendingWrite {
             targets: changed,
             catalog_mode,
-            root_target,
         }));
     }
 
     {
         let mut zbuf = path_buffer_pool::get();
-        let root_package_json_path = resolve_path::z(&root_package_json_path, &mut zbuf);
+        let root_package_json_path = resolve_path::z(&root_target.package_json_path, &mut zbuf);
         install_with_manager(manager, ctx, root_package_json_path, original_cwd)?;
     }
     package_json_write_back::flush(manager)?;
-
-    if subcommand == Subcommand::Remove && manager.options.do_.contains(Do::WRITE_PACKAGE_JSON) {
-        let updates: Box<[UpdateRequest]> = core::mem::take(&mut manager.update_requests);
-        remove_leftover_node_modules(manager, &updates);
-    }
+    remove_leftover_node_modules(manager);
 
     Ok(())
 }

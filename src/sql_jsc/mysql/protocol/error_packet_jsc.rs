@@ -1,4 +1,6 @@
-use crate::jsc::{JSGlobalObject, JSValue, JsResult, bun_string_jsc};
+use crate::jsc::{
+    JSGlobalObject, JSValue, JsResult, SQLErrorClass, bun_string_jsc, create_sql_error,
+};
 
 use bun_sql::mysql::protocol::error_packet::{ErrorPacket, MySQLErrorOptions};
 
@@ -7,26 +9,21 @@ pub(crate) fn create_mysql_error(
     message: &[u8],
     options: &MySQLErrorOptions,
 ) -> JsResult<JSValue> {
-    let opts_obj = JSValue::create_empty_object(global, 0);
-    opts_obj.ensure_still_alive();
-    opts_obj.put(
+    // The fields and their order are those of the `MySQLError` constructor (src/js/internal/sql/errors.ts).
+    let error = create_sql_error(global, SQLErrorClass::MySQL, message)?;
+    error.put(
         global,
         b"code",
         bun_string_jsc::create_utf8_for_js(global, options.code)?,
     );
-    opts_obj.put_optional(global, b"errno", options.errno.map(f64::from));
-    opts_obj.put_optional_utf8(
+    error.put_optional(global, b"errno", options.errno.map(f64::from));
+    error.put_optional_utf8(
         global,
         b"sqlState",
         options.sql_state.as_ref().map(|s| &s[..]),
     )?;
-    opts_obj.put(
-        global,
-        b"message",
-        bun_string_jsc::create_utf8_for_js(global, message)?,
-    );
 
-    Ok(opts_obj)
+    Ok(error)
 }
 
 pub(crate) trait ErrorPacketJsc {

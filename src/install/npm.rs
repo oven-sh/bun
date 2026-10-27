@@ -377,7 +377,7 @@ pub mod registry {
 
         /// Stores the WHATWG serialization (the base `bun_url::join` resolves against) so same-origin checks, concatenated tarball URLs and `url_hash` agree with the requests; credentials must already be split off.
         pub fn set_url(&mut self, href: Box<[u8]>) {
-            self.url = URL::from_string(&bun_core::String::borrow_utf8(&href))
+            self.url = URL::from_string(&bun_core::StringView::borrow_utf8(&href))
                 .unwrap_or_else(|_| OwnedURL::from_href(href));
             self.url_hash = Self::hash(strings::without_trailing_slash(self.url.href()));
         }
@@ -635,7 +635,7 @@ pub mod registry {
         if raw.iter().any(|&b| b <= 0x20 || b == 0x7f) || !strings::is_valid_utf8(raw) {
             return None;
         }
-        let href = URL::from_string(&bun_core::String::borrow_utf8(raw))
+        let href = URL::from_string(&bun_core::StringView::borrow_utf8(raw))
             .ok()?
             .into_href();
         if hides_dot_segment(query_free_path(&URL::parse(&href))) {
@@ -2439,10 +2439,6 @@ impl PackageManifest {
         public_max_age: u32,
         is_extended_manifest: bool,
     ) -> Result<Option<PackageManifest>, Error> {
-        // `bun_ast::Source::init_path_string` accepts borrowed `&[u8]` via
-        // `IntoStr`; the Source only lives for the duration of this function,
-        // so pass the caller's buffers through directly without manufacturing
-        // `'static` references here (PORTING.md §Forbidden lifetime extension).
         let source = bun_ast::Source::init_path_string(expected_name, json_buffer);
         initialize_store();
         // `initialize_mini_store` deliberately keeps the allocator pushed
@@ -2452,9 +2448,8 @@ impl PackageManifest {
         let parsed = match JSON::ParsedJson::parse_npm_manifest(&source, log) {
             Ok(j) => j,
             Err(_) => {
-                let mut cloned_log = bun_ast::Log::init();
-                log.clone_to_with_recycled(&mut cloned_log, true);
-                *log = cloned_log;
+                // It knows a source by its address, and `json_buffer` is about to be freed.
+                log.line_column_tracker = None;
                 return Ok(None);
             }
         };

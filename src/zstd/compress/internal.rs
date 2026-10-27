@@ -1158,6 +1158,7 @@ pub(crate) const fn compare_packed_tags(packed_tag1: usize, packed_tag2: usize) 
 
 /// `ZSTD_match_t`
 #[derive(Clone, Copy, Default)]
+#[repr(C)]
 pub(crate) struct Match {
     /// As [`SeqDef::off_base`].
     pub(crate) off: u32,
@@ -1166,6 +1167,7 @@ pub(crate) struct Match {
 
 /// `rawSeq`: a sequence found by long distance matching.
 #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+#[repr(C)]
 pub(crate) struct RawSeq {
     pub(crate) offset: u32,
     pub(crate) lit_length: u32,
@@ -1187,6 +1189,7 @@ pub(crate) struct RawSeqStore {
 
 /// `ZSTD_optimal_t`
 #[derive(Clone, Copy, Default)]
+#[repr(C)]
 pub(crate) struct Optimal {
     /// The cost of getting to this position.
     pub(crate) price: i32,
@@ -1462,6 +1465,7 @@ impl DictMatchState<'_> {
 
 /// `ldmEntry_t`
 #[derive(Clone, Copy, Default)]
+#[repr(C)]
 pub(crate) struct LdmEntry {
     pub(crate) offset: u32,
     pub(crate) checksum: u32,
@@ -1497,3 +1501,5 @@ impl LdmState {
         }
     }
 }
+
+bun_pod::impl_zeroable!(Match, RawSeq, Optimal, LdmEntry);

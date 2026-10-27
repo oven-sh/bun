@@ -155,23 +155,7 @@ pub(crate) fn reset_table<T: bun_pod::Zeroable + Copy + Default>(
     Ok(())
 }
 
-/// The same for a table of structures.
-pub(crate) fn reset_struct_table<T: Clone + Default>(
-    table: &mut Vec<T>,
-    len: usize,
-    clean: bool,
-) -> Result<()> {
-    if table.len() != len {
-        *table = Vec::new();
-        table
-            .try_reserve_exact(len)
-            .map_err(|_| ErrorCode::MemoryAllocation)?;
-        table.resize(len, T::default());
-    } else if clean {
-        table.fill(T::default());
-    }
-    Ok(())
-}
+pub(crate) use reset_table as reset_struct_table;
 
 /// `ZSTD_reset_matchState`
 fn reset_match_state(
@@ -217,8 +201,8 @@ fn reset_match_state(
         reset_table(&mut ms.opt.lit_length_freq, MAX_LL as usize + 1, false)?;
         reset_table(&mut ms.opt.match_length_freq, MAX_ML as usize + 1, false)?;
         reset_table(&mut ms.opt.off_code_freq, MAX_OFF as usize + 1, false)?;
-        reset_struct_table(&mut ms.opt.match_table, ZSTD_OPT_SIZE, false)?;
-        reset_struct_table(&mut ms.opt.price_table, ZSTD_OPT_SIZE, false)?;
+        reset_table(&mut ms.opt.match_table, ZSTD_OPT_SIZE, false)?;
+        reset_table(&mut ms.opt.price_table, ZSTD_OPT_SIZE, false)?;
     } else {
         ms.opt.match_table = Vec::new();
         ms.opt.price_table = Vec::new();
@@ -946,8 +930,8 @@ impl FrameCompressor {
 
         if params.ldm_params.enable_ldm == ParamSwitch::Enable {
             let ldm_h_size = 1usize << params.ldm_params.hash_log;
-            reset_struct_table(&mut self.ldm_state.hash_table, ldm_h_size, true)?;
-            reset_struct_table(&mut self.ldm_sequences.seq, max_nb_ldm_seq, false)?;
+            reset_table(&mut self.ldm_state.hash_table, ldm_h_size, true)?;
+            reset_table(&mut self.ldm_sequences.seq, max_nb_ldm_seq, false)?;
             self.ldm_sequences.capacity = max_nb_ldm_seq;
             self.ldm_state.window = Window::new();
             self.ldm_state.loaded_dict_end = 0;

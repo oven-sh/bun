@@ -1580,7 +1580,7 @@ pub(crate) const fn hash3_of(bytes: u32, h: u32) -> usize {
     hash3(bytes, h, 0) as usize
 }
 
-/// [`hash_of`], when `mls` is not a constant.
+/// [`hash_ptr`], out of the 8 bytes at the position.
 #[derive(Clone, Copy)]
 pub(crate) struct Hasher {
     /// Takes the bytes that do not count out, on the left.
@@ -1612,18 +1612,6 @@ impl Hasher {
     #[inline(always)]
     pub(crate) const fn hash(self, bytes: u64) -> usize {
         (bytes.wrapping_mul(self.factor) >> self.shift) as usize
-    }
-}
-
-/// [`hash_ptr`] of the position that the 8 bytes `bytes` were read at.
-#[inline(always)]
-pub(crate) const fn hash_of<const MLS: u32>(bytes: u64, h_bits: u32) -> usize {
-    match MLS {
-        5 => hash5(bytes, h_bits, 0),
-        6 => hash6(bytes, h_bits, 0),
-        7 => hash7(bytes, h_bits, 0),
-        8 => hash8(bytes, h_bits, 0),
-        _ => hash4(bytes as u32, h_bits, 0) as usize,
     }
 }
 

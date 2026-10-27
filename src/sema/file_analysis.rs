@@ -7,9 +7,9 @@ pub use top_level_await::has_live_await;
 pub(crate) use top_level_await::has_live_top_level_await;
 
 use crate::atom::{Atom, Interner};
-use crate::bind::{BindOptions, Bound, SymbolId};
+use crate::bind::{BindOptions, Binding, Bound, Decl, SymbolId};
 use crate::fold::{Decisions, FoldError, FoldInputs};
-use crate::hir::{ExprId, File, ImportedName};
+use crate::hir::{ExprId, File, ImportEqualsId, ImportedName, NodeData};
 use crate::hir_from_data::HostValue;
 use crate::import_sites::{ImportSite, ImportSiteKind, JsxImportSet, JsxMode};
 use crate::module_format::{DeclaredModuleType, ModuleFormat};
@@ -75,6 +75,25 @@ impl FileAnalysis<'_> {
             .binary_search_by_key(&Some(call), |site| site.kind.call())
             .ok()?;
         Some(first_call_site + found)
+    }
+
+    /// What code that runs reads where no expression spells the name: the root of `import a = b.c`, the factory of a JSX element, a class that the metadata of a decorator names.
+    pub fn bindings_read_without_expression(
+        &self,
+        hir: &File<'_>,
+        bound: &Bound<'_>,
+    ) -> impl Iterator<Item = Binding> {
+        let aliases = (0..hir.import_equals.len() as u32).map(ImportEqualsId);
+        let roots = aliases.filter_map(|alias| {
+            let name = bound.declared_symbol(Decl::ImportEquals(alias));
+            let is_evaluated = self.unused_import_symbols.binary_search(&name).is_err();
+            is_evaluated.then(|| bound.entity_root_binding(alias))
+        });
+        let implicit = bound.runtime.implicit_references().iter();
+        let implicit = implicit.filter(|reference| {
+            !matches!(reference.node, NodeData::Expr(element) if self.decisions.is_dead_expr(element))
+        });
+        roots.chain(implicit.map(|reference| reference.binding))
     }
 }
 

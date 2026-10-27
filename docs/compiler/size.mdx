@@ -70,6 +70,8 @@ The JavaScript parser and the interpreter run the code that `eval` and `new Func
 
 If a dependency calls `new Function` and your program can do without it, [turn off code from strings](#turn-off-code-from-strings).
 
+A `ShadowRealm` has its own copy of every built-in module and runs it from source code. If your code names `ShadowRealm`, the executable also holds the source code of Bun's built-in modules (3 MB), with or without `--trim`, and `--trim` keeps the transpiler (2 MB). In a trimmed executable, the realm can import the built-in modules whose features your program uses.
+
 ## See what the compiler found
 
 `--explain=trim` lists the APIs your program uses, and why `--trim` kept or removed each feature. It works with `bun compile`, and with `bun check --aot`, which writes no executable. It doesn't need `--trim`: without it, the report shows what `--trim` would do. In `Bun.build`, `compile: { aotExplain: "trim" }` adds the lines to `result.logs`.

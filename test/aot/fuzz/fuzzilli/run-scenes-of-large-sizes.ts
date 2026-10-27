@@ -70,6 +70,9 @@ async function spawn(cmd: string[], cwd: string, bound: number) {
   };
 }
 
+/** The largest value of each counter of the compiler in the builds so far, as run-batch.ts keeps it. */
+const largestSeen = new Map<string, number>();
+
 function keep(what: string, name: string, extension: string, text: string, report: string) {
   const folder = join(finds, `${what}-${name}`);
   mkdirSync(folder, { recursive: true });
@@ -93,7 +96,14 @@ for (let round = 0; rounds === 0 || round < rounds; round++) {
         writeFileSync(join(folder, others[other]), others[other + 1], "latin1");
       }
       const command = [bun, "build", "--compile", "--aot", ...flags, "./program." + extension, "--outfile", "program"];
-      const built = await spawn(command, folder, seconds);
+      const built = await spawn([...command, "--aot-report", "report.json"], folder, seconds);
+      try {
+        const { statistics } = JSON.parse(readFileSync(join(folder, "report.json"), "utf8"));
+        for (const [counter, value] of Object.entries<number>(statistics))
+          if (value > (largestSeen.get(counter) ?? 0)) largestSeen.set(counter, value);
+        mkdirSync(finds, { recursive: true });
+        writeFileSync(join(finds, `counters-${process.pid}.json`), JSON.stringify(Object.fromEntries(largestSeen)));
+      } catch {}
       const name = `${kind}-${extension}-${size}`;
       const head = `${kind} .${extension} size ${size}, seed ${seed}, ${text.length} bytes\n${command.join(" ")}\n`;
       const grew = before ? built.took / before.took : 0;
@@ -102,7 +112,8 @@ for (let round = 0; rounds === 0 || round < rounds; round++) {
       const stop = /internal compiler error.*$|Stopped while compiling.*$/m.exec(built.stderr)?.[0];
       let climbs = built.end === "0";
       if (built.end === "not ended") keep("not-ended", name, extension, text, `${head}${said}\n`);
-      else if (built.end === "no processor") said += "";
+      // Whoever stops the processes of a lane ends the build too.
+      else if (built.end === "no processor" || built.end === "SIGTERM") said += "";
       else if (stop !== undefined || !/^\d+$/.test(built.end))
         keep("build-stopped", name, extension, text, `${head}${said}\n${stop ?? ""}\n${built.stderr.slice(-4000)}`);
       else if (built.end !== "0") said += ` | ${/^error.*$/m.exec(built.stderr)?.[0].slice(0, 120) ?? ""}`;
@@ -118,7 +129,11 @@ for (let round = 0; rounds === 0 || round < rounds; round++) {
           /RangeError: (?:Out of memory|Maximum call stack)/.test(plain.stderr);
         const isSame = givesUp || (compiled.end === plain.end && compiled.stdout === plain.stdout);
         said += ` | run ${compiled.took.toFixed(1)} s ends with ${compiled.end}, bun run ${plain.took.toFixed(1)} s ends with ${plain.end}: ${givesUp ? "bun run gives up" : isSame ? "same" : "DIFFERS"}`;
-        if (!isSame && ![plain.end, compiled.end].some(end => end === "no processor") && plain.end !== "not ended")
+        if (
+          !isSame &&
+          ![plain.end, compiled.end].some(end => end === "no processor" || end === "SIGTERM") &&
+          plain.end !== "not ended"
+        )
           keep(
             "differs",
             name,

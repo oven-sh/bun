@@ -884,7 +884,7 @@ class Scenes {
         file,
         [
           `${ignore}import * as space from "${file}";`,
-          ...declarations,
+          ...declarations.map(each => ignore + each),
           ignore + taken,
           // The keys of its own namespace cannot be listed yet: this export is one of them.
           `${ignore}export const shown${number}${any} = ${shown.replace(' + " " + Object.keys(space).join()', "")};`,
@@ -898,7 +898,8 @@ class Scenes {
       this.lines.push("}");
       return;
     }
-    this.files.push([file, [...declarations, ""].join("\n")]);
+    // The value of one can name another that stands below it, or itself.
+    this.files.push([file, [...declarations.map(each => ignore + each), ""].join("\n")]);
     this.imports.push(`${ignore}import * as space${number} from "${file}";`);
     this.lines.push("{");
     this.emit(
@@ -1024,6 +1025,169 @@ class Scenes {
     this.emit(1, `printValue("idioms ${number}", out);`);
     this.lines.push("}");
   }
+
+  /** Reads and stores under a key that a variable holds, where the key is a name that the receiver really has, and the result goes into a list, a typed place or an operator. */
+  sceneOfKeysInVariables() {
+    const number = ++this.count;
+    const any = this.typed("any");
+    const asAny = this.isTypeScript ? " as any" : "";
+    this.lines.push("{");
+    this.emit(
+      1,
+      `let out = "";`,
+      `function show(value${any})${this.typed("string")} { return typeof value === "function" ? "function " + value.name : Array.isArray(value) ? "[" + value.map(show).join() + "]" : typeof value === "object" && value !== null ? Object.prototype.toString.call(value) : typeof value + " " + String(value); }`,
+      `function note(value${any})${this.typed("void")} { out += show(value) + ";"; }`,
+    );
+    const kinds: [receivers: string[], names: string[], type: string][] = [
+      [
+        [
+          "[5]",
+          "[1, 2, 3]",
+          "[1.5, 2.5]",
+          `["a", "b"]`,
+          "[]",
+          "[[1], [2, 3]]",
+          "new Array(3)",
+          "Array.of(7, 8)",
+          "[, 1]",
+        ],
+        ["length", "length", "length", "0", "1", "-1", "at", "constructor", "push", "concat"],
+        "any[]",
+      ],
+      [
+        [`"text"`, `""`, `"é1"`, "String(12)", "`a${1}`"],
+        ["length", "length", "0", "-1", "at", "constructor", "charAt"],
+        "string",
+      ],
+      [
+        ["new Map([[1, 2]])", "new Set([1, 2, 3])", "new Map()"],
+        ["size", "size", "has", "constructor", "length"],
+        "any",
+      ],
+      [
+        [
+          "function (a, b) {}",
+          "(a) => a",
+          "class Named { static size = 2; }",
+          "Math.max",
+          "Array",
+          "function named() {}.bind(null)",
+        ],
+        ["name", "length", "prototype", "constructor", "size"],
+        "Function",
+      ],
+      [
+        [
+          "new Uint8Array([1, 2])",
+          "new Float64Array(3)",
+          "new Int32Array([-1])",
+          "new Uint8Array(new ArrayBuffer(8), 2, 4)",
+        ],
+        ["length", "length", "byteLength", "byteOffset", "0", "-1", "at", "buffer", "constructor"],
+        "any",
+      ],
+      [["/a+/gi", `new RegExp("b", "y")`], ["source", "flags", "lastIndex", "global", "constructor"], "RegExp"],
+      [[`new Error("m")`, `new RangeError("r", { cause: 1 })`], ["message", "name", "cause", "constructor"], "Error"],
+      [
+        [
+          `{ length: 2, size: 3, name: "n", 0: "zero" }`,
+          `{ get length() { return 4; }, at: 1 }`,
+          `new (class { size = 1; get length() { return this.size + 1; } at() { return 9; } })()`,
+          `Object.create({ length: 6 })`,
+        ],
+        ["length", "size", "name", "0", "at", "constructor"],
+        "any",
+      ],
+      [
+        ["new ArrayBuffer(8)", "new DataView(new ArrayBuffer(4), 1)"],
+        ["byteLength", "byteOffset", "constructor"],
+        "any",
+      ],
+      [[`Symbol("d")`, "12", "1.5", "true", "10n"], ["description", "constructor", "toString", "length"], "any"],
+    ];
+    const namesOfFunctions = [
+      "at",
+      "constructor",
+      "push",
+      "concat",
+      "charAt",
+      "has",
+      "prototype",
+      "toString",
+      "buffer",
+    ];
+    for (let index = this.pick([2, 3, 4, 6, 8]); index > 0; index--) {
+      const [receivers, names, type] = this.pick(kinds);
+      const id = `${number}_${index}`;
+      const name = this.pick(names);
+      const written = JSON.stringify(name);
+      const key = `key${id}`;
+      this.emit(
+        1,
+        this.pick([
+          `const ${key} = ${written};`,
+          `const ${key} = ${written};`,
+          `const ${key} = ${written};`,
+          `let ${key} = ${written};`,
+          `var ${key} = ${written};`,
+          `const ${key}${this.typed("string")} = ${written};`,
+          `const ${key} = ${written}${this.isTypeScript ? " as const" : ""};`,
+          `const ${key} = [${written}, "other"][0];`,
+          `const ${key} = ${JSON.stringify(name.slice(0, 1))} + ${JSON.stringify(name.slice(1))};`,
+          `const { ${key} } = { ${key}: ${written} };`,
+          ...(/^-?\d+$/.test(name) ? [`const ${key} = ${name};`, `let ${key}${this.typed("number")} = ${name};`] : []),
+        ]),
+      );
+      // Written in place, held in a variable, or what a call returns.
+      const literal = this.pick(receivers);
+      const declared = this.chance(50) ? this.typed(type) : "";
+      const receiver = this.pick([
+        () => `(${literal})`,
+        () => `(${literal})`,
+        () => (this.emit(1, `const held${id}${declared} = ${literal};`), `held${id}`),
+        () => (this.emit(1, `function make${id}()${declared} { return ${literal}; }`), `make${id}()`),
+        () => (this.emit(1, `const make${id} = () => (${literal});`), `make${id}()`),
+      ])();
+      const read = `${receiver}[${key}]`;
+      const place = this.typed(this.pick(["number", "string", "any", "unknown", "number | undefined"]));
+      const stored = this.pick(["0", "1", "2", "-1", "1.5", `"text"`, "undefined", "4294967296"]);
+      const statement = this.pick([
+        `note([${read}]);`,
+        `note([${read}]);`,
+        `note([${read}]);`,
+        `note([${read}, ${read}]);`,
+        `note([0, ${read}, "end"]);`,
+        `note([...[${read}]]);`,
+        `note({ held: ${read} }.held);`,
+        `{ const placed${place} = ${read}; note(placed); }`,
+        `{ const placed${this.typed("number[]")} = [${read}]; note(placed); note(placed.length); }`,
+        `{ const [placed] = [${read}]; note(placed); }`,
+        `note(${read});`,
+        `note(typeof ${read});`,
+        `note(${read} + 1);`,
+        `note(${read} ? "yes" : "no");`,
+        `note(${key} in Object(${receiver}));`,
+        `note((function ()${any} { return [${read}]; })());`,
+        `note([1, 2].map(() => ${read}));`,
+        `for (let turn = 0; turn < 3; turn++) note([${read}]);`,
+        `note([${read}?.(0)]);`,
+        ...(namesOfFunctions.includes(name) ? [] : [`printValue([${read}]);`, `printValue([${read}]);`]),
+        // A store to a built-in is refused in an executable.
+        ...(/^(?:Math\.max|Array)$/.test(literal)
+          ? []
+          : [
+              `{ const target${any} = ${receiver}; target[${key}] = ${stored}; note([target[${key}]]); note(target); }`,
+              `{ const target${any} = ${receiver}; target[${key}] = ${stored}; note([target[${key}]]); note(target); }`,
+              `{ const target${any} = ${receiver}; target[${key}]++; note([target[${key}]]); }`,
+              `{ const target${any} = ${receiver}; target[${key}] += 1; note([target[${key}]]); note(target); }`,
+              `{ const target${any} = ${receiver}; note(delete target[${key}]); note([target[${key}]]); }`,
+            ]),
+      ]);
+      this.emit(1, `try { ${statement} } catch (error) { note("threw " + (error${asAny})?.constructor?.name); }`);
+    }
+    this.emit(1, `printValue("keys ${number}", out);`);
+    this.lines.push("}");
+  }
 }
 
 /**
@@ -1043,6 +1207,8 @@ export function writeOrdinaryScenes(text: string, isTypeScript: boolean) {
       () => scenes.sceneOfWalks(),
       () => scenes.sceneOfWalks(),
       () => scenes.sceneOfIdioms(),
+      () => scenes.sceneOfKeysInVariables(),
+      () => scenes.sceneOfKeysInVariables(),
       () => scenes.sceneOfChangesInTheMiddle(),
       () => scenes.sceneOfChangesInTheMiddle(),
       () => scenes.sceneOfNamespaces(Bun.hash.crc32(text).toString(36)),

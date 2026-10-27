@@ -4,6 +4,7 @@
 use super::*;
 use crate::bind::{Binding, BindingInitializer, BindingKind};
 use crate::fold::{Constant, FoldedValue};
+use crate::hir::ExprFlags;
 use crate::module_format::ModuleFormat;
 use crate::resolve::{CodeResolution, SiteResolution};
 use std::cell::RefCell;
@@ -42,11 +43,25 @@ impl Export {
     }
 }
 
+/// What one look at the names leaves for the next, which asks only where an answer can have changed.
+#[derive(Default)]
+pub(super) struct NamesLookedUp {
+    /// The files that were parsed or folded since.
+    pub(super) parsed_since: Vec<u32>,
+    /// For a file, the files that read a variable of it under a name.
+    readers: FxHashMap<u32, Vec<u32>>,
+    is_reader: FxHashSet<(u32, u32)>,
+    replacements: FxHashMap<u32, u32>,
+    file_count_of_replacements: usize,
+}
+
 struct Exports<'w, 's, 'r> {
     files: &'w [WalkedFile<'s, 'r>],
-    replacements: FxHashMap<u32, u32>,
+    replacements: &'w FxHashMap<u32, u32>,
     resolved: FxHashMap<(u32, Atom), Option<Export>>,
     first_targets_of_sites: RefCell<FxHashMap<u32, Vec<u32>>>,
+    /// The files whose variables the names of the file in hand lead to.
+    files_read: Vec<u32>,
 }
 
 impl<'s> Exports<'_, 's, '_> {
@@ -251,6 +266,9 @@ impl<'s> Exports<'_, 's, '_> {
             (_, true) => return None,
             (holder, false) => holder,
         };
+        if let Export::Variable { file: read, .. } = read {
+            self.files_read.push(read);
+        }
         let value = match read {
             Export::Variable {
                 value: Some(value), ..
@@ -276,8 +294,12 @@ fn is_type_declaration(declaration: Decl) -> bool {
 }
 
 fn value_of(parsed: &ParsedCodeFile<'_, '_>, e: ExprId) -> Option<Constant> {
+    let hir = &parsed.parse.hir;
+    if hir.expr_flags(e).contains(ExprFlags::RESOLVED_AT_RUNTIME) {
+        return None;
+    }
     let decisions = &parsed.code.analyzed.analysis.decisions;
-    match decisions.constant(&parsed.parse.hir, e) {
+    match decisions.constant(hir, e) {
         FoldedValue::Constant(value) | FoldedValue::ConstantOutsideDeadZone(value) => Some(value),
         FoldedValue::Unknown => None,
     }
@@ -312,26 +334,52 @@ pub(super) fn fold_files_that_import_constants_again<'r>(
     context: &CodeLoadContext<'_, '_, 'r>,
     state: &mut WalkState<'_, 'r>,
 ) -> bool {
-    if state.files.iter().all(|it| imported_names(it).is_empty()) {
-        return false;
+    let mut looked_up = std::mem::take(&mut state.names_looked_up);
+    let parsed = std::mem::take(&mut looked_up.parsed_since);
+    // Which file runs in place of which hangs on the files that are there.
+    let mut asks_every_file = false;
+    if looked_up.file_count_of_replacements != state.files.len() {
+        let replacements = find_files_required_in_place_of_others(context, state);
+        asks_every_file = replacements != looked_up.replacements;
+        looked_up.replacements = replacements;
+        looked_up.file_count_of_replacements = state.files.len();
     }
+    let mut asked: Vec<u32> = match asks_every_file {
+        true => (0..state.files.len() as u32).collect(),
+        false => {
+            let readers = parsed.iter().filter_map(|file| looked_up.readers.get(file));
+            readers.flatten().chain(&parsed).copied().collect()
+        }
+    };
+    asked.shared_sort_unstable();
+    asked.dedup();
     let mut exports = Exports {
         files: &state.files,
-        replacements: find_files_required_in_place_of_others(context, state),
+        replacements: &looked_up.replacements,
         resolved: FxHashMap::default(),
         first_targets_of_sites: RefCell::default(),
+        files_read: Vec::new(),
     };
     let mut importers: Vec<(u32, Vec<ImportedConstant>)> = Vec::new();
-    for (index, file) in (0..).zip(&state.files) {
+    let mut reads: Vec<(u32, u32)> = Vec::new();
+    for index in asked {
+        let file = &state.files[index as usize];
         let names = imported_names(file).iter();
         let names = names.filter(|_| file.foldings_with_constants < MOST_FOLDINGS_OF_ONE_FILE);
         let found: Vec<ImportedConstant> = names
             .filter_map(|&name| exports.find_constant(index, name))
             .collect();
+        reads.extend(exports.files_read.drain(..).map(|read| (read, index)));
         if !are_same(&found, &file.imported_constants) {
             importers.push((index, found));
         }
     }
+    for (read, reader) in reads {
+        if looked_up.is_reader.insert((read, reader)) {
+            looked_up.readers.entry(read).or_default().push(reader);
+        }
+    }
+    state.names_looked_up = looked_up;
     let has_importers = !importers.is_empty();
     for (index, found) in importers {
         let file = &mut state.files[index as usize];

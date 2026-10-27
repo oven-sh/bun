@@ -39,6 +39,8 @@ const needNoCompiler = [
   "aot/what-states-that-nothing-was-thrown-puts-the-end-of-a-worker-off.test.ts",
   "aot/host-object-accessors.test.ts",
   "aot/only-errors-replacements-and-positions-ask-how-a-member-name-is-written.test.ts",
+  "aot/one-text-reads-what-a-descriptor-literal-says.test.ts",
+  "aot/one-text-of-the-engine-reads-what-a-descriptor-literal-says.test.ts",
   "aot/mockable-function-arguments.test.ts",
   "aot/many-modules-in-place.test.ts",
   "aot/mocked-barrels.test.ts",

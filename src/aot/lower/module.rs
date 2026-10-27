@@ -20,7 +20,7 @@ use super::{FileLowering, FunctionLowering};
 use crate::builtins::id::{BuiltinId, RuntimeFunction};
 use crate::ir::{DataId, FunctionId, StringId, ValueId};
 use crate::load::Sources;
-use crate::modules::ImportBinding;
+use crate::modules::{ImportBinding, KnownMemberValues};
 
 pub(in crate::lower) use self::body::finish_body;
 pub(crate) use self::loads::lower_import_call;
@@ -32,6 +32,7 @@ pub(in crate::lower) use library::{LibraryFunctionForm, library_function_form};
 pub(crate) struct ModuleState {
     pub(in crate::lower) data: DataState,
     pub(in crate::lower) commonjs: CommonJsState,
+    pub(in crate::lower) known_member_values: KnownMemberValues,
 }
 
 #[derive(Default, Clone)]

@@ -3,6 +3,16 @@
 //
 // Candidates are tested many at a time, because one build of the product can hold many programs: `fails` answers for a list. Those
 // of a list that still fail are then applied together if that fails too, else as many of them as do.
+//
+// A program of several files loses files first (reduceFiles): a file goes with the statements that name it, or its text goes into a file that imports it. Then each file that is left is made small as above,
+// and files are tried again, because a file that nobody imports any more can go.
+//
+//   bun test/aot/fuzz/reduce.ts <folder of a program> <folder for the result> [--entry main.ts] [--jobs 8] [--seconds 1500] -- <command> [words]
+//
+// The command is run as `<command> [words] <the candidate's first file>` in the candidate's folder, and exits with 0 if the candidate still shows what the program showed.
+import { cpSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { tmpdir } from "os";
+import { dirname, join, relative } from "path";
 import { tokenize } from "./tokens";
 
 export interface Reduction {
@@ -157,6 +167,103 @@ export async function reduce(text: string, { parses, fails, width, seconds }: Re
   return { text: text.replace(/\n\s*\n/g, "\n").trim() + "\n", tests, rounds };
 }
 
+/** What runs first, and the other files by their paths from its folder. */
+export interface Whole {
+  text: string;
+  files?: Record<string, string>;
+}
+
+export interface ReduceFilesOptions {
+  /** `path` is that of a file of `files`; none for the text that runs first. */
+  parses(candidate: string, path?: string): boolean;
+  fails(candidates: Whole[]): Promise<boolean[]>;
+  width: number;
+  seconds: number;
+  /** The path of the text that runs first, as the other files name it. */
+  entry: string;
+}
+
+const quoted = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** The import and export statements of a file at `from` that name the file at `to`, with or without its extension. */
+function statementsNaming(from: string, to: string): RegExp {
+  const path = relative(dirname(from), to).replaceAll("\\", "/");
+  const specifier = quoted(path.startsWith(".") ? path : "./" + path).replace(/\\\.\w+$/, "(?:$&|\\.[cm]?js)?");
+  return new RegExp(`^[ \\t]*(?:import|export)\\b[\\w$*\\s,]*(?:\\{[^{}]*\\})?[\\w$*\\s,]*(["'])${specifier}\\1[^;\\n]*;?[ \\t]*\\n?`, "gm");
+}
+
+// `import { a, b } from ".."` twice in one file: each name stays where it stands first.
+function withoutRepeatedImports(text: string): string {
+  const seen = new Set<string>();
+  return text.replace(/^([ \t]*import (?:type )?\{)([^}]*)(\} from [^;\n]*;?[ \t]*\n?)/gm, (_, head: string, names: string, tail: string) => {
+    const kept = names.split(",").map(name => name.trim()).filter(name => name && !seen.has(name.split(/\s+as\s+/).pop()!)); // prettier-ignore
+    for (const name of kept) seen.add(name.split(/\s+as\s+/).pop()!);
+    return kept.length ? `${head} ${kept.join(", ")} ${tail}` : "";
+  });
+}
+
+export async function reduceFiles(whole: Whole, { parses, fails, width, seconds, entry }: ReduceFilesOptions): Promise<Reduction & Whole> {
+  const deadline = Date.now() + seconds * 1000;
+  let tests = 0;
+  let rounds = 0;
+  // By path; the text that runs first is the first.
+  let files = new Map([[entry, whole.text], ...Object.entries(whole.files ?? {})]);
+  const asWhole = (all: Map<string, string>): Whole => ({ text: all.get(entry)!, ...(all.size > 1 ? { files: Object.fromEntries([...all].filter(([path]) => path !== entry)) } : {}) });
+  const isWellFormed = (all: Map<string, string>) => [...all].every(([path, text]) => text === files.get(path) || parses(text, path === entry ? undefined : path));
+
+  const without = (gone: string) => new Map([...files].filter(([path]) => path !== gone).map(([path, text]) => [path, text.replace(statementsNaming(path, gone), "")]));
+  const importers = (of: string) => [...files].filter(([path, text]) => path !== of && statementsNaming(path, of).test(text)).map(([path]) => path);
+  // The text of `gone` stands where `into` first named it. Whoever else named `gone` names `into`.
+  const folded = (gone: string, into: string) => {
+    let isLaid = false;
+    const laid = files.get(gone)!.replace(statementsNaming(gone, into), "");
+    const joined = files.get(into)!.replace(statementsNaming(into, gone), () => (isLaid ? "" : ((isLaid = true), laid.endsWith("\n") ? laid : laid + "\n")));
+    const name = (from: string) => "./" + relative(dirname(from), into).replaceAll("\\", "/").replace(/\.ts$/, "");
+    return new Map(
+      [...files]
+        .filter(([path]) => path !== gone)
+        .map(([path, text]) => [path, path === into ? withoutRepeatedImports(joined) : text.replace(statementsNaming(path, gone), statement => statement.replace(/(["'])[^"']*\1(?=[^"']*$)/, `"${name(path)}"`))]),
+    );
+  };
+
+  // The first candidate that still fails is taken, and the rest is made anew from what is left.
+  const takeWhileItFails = async (candidates: () => Map<string, string>[]) => {
+    for (let hasChanged = true; hasChanged && Date.now() < deadline; ) {
+      hasChanged = false;
+      const wellFormed = candidates().filter(isWellFormed);
+      for (let at = 0; at < wellFormed.length && !hasChanged && Date.now() < deadline; at += width) {
+        const group = wellFormed.slice(at, at + width);
+        tests += group.length;
+        rounds++;
+        const taken = group[(await fails(group.map(asWhole))).indexOf(true)];
+        if (taken) [files, hasChanged] = [taken, true];
+      }
+    }
+  };
+  const others = () => [...files.keys()].filter(path => path !== entry);
+
+  for (let round = 0; round < 4 && Date.now() < deadline; round++) {
+    const before = [...files.values()].join("").length;
+    await takeWhileItFails(() => others().map(without));
+    await takeWhileItFails(() => others().flatMap(gone => importers(gone).filter(into => dirname(into) === dirname(gone)).map(into => folded(gone, into))));
+    const paths = [...files.keys()];
+    for (const [index, path] of paths.entries()) {
+      const reduced = await reduce(files.get(path)!, {
+        parses: candidate => parses(candidate, path === entry ? undefined : path),
+        fails: candidates => fails(candidates.map(candidate => asWhole(new Map(files).set(path, candidate)))),
+        width,
+        seconds: Math.max(0, deadline - Date.now()) / 1000 / (paths.length - index),
+      });
+      tests += reduced.tests;
+      rounds += reduced.rounds;
+      // What reduce() does to blank lines at its end is not tested.
+      if (reduced.tests) files.set(path, reduced.text);
+    }
+    if (files.size === 1 || [...files.values()].join("").length === before) break;
+  }
+  return { ...asWhole(files), tests, rounds };
+}
+
 /** The shape of a program: names numbered in order of appearance, literals by kind. Two programs of one shape are one finding. */
 export function shape(text: string): string {
   const names = new Map<string, string>();
@@ -170,4 +277,50 @@ export function shape(text: string): string {
       return names.get(token.text)!;
     })
     .join(" ");
+}
+
+if (import.meta.main) {
+  const at = process.argv.indexOf("--");
+  const [words, command] = [process.argv.slice(2, at), process.argv.slice(at + 1)];
+  const option = (name: string, otherwise: string) => (words.includes(name) ? words.splice(words.indexOf(name), 2)[1] : otherwise);
+  const [entry, jobs, seconds] = [option("--entry", ""), Number(option("--jobs", "8")), Number(option("--seconds", "1500"))];
+  const [source, result] = words;
+  const paths = (readdirSync(source, { recursive: true, withFileTypes: true }) as import("fs").Dirent[]).filter(each => each.isFile()).map(each => relative(source, join(each.parentPath, each.name)));
+  const isCode = (path: string) => /\.[cm]?[jt]sx?$/.test(path) && !path.split("/").includes("node_modules");
+  const first = entry || paths.find(path => /^main\.\w+$/.test(path))!;
+  const work = mkdtempSync(join(process.env.REDUCE_TMP ?? tmpdir(), "reduce-"));
+  const write = (folder: string, { text, files }: Whole) => {
+    // What is no code is there for every candidate.
+    cpSync(source, folder, { recursive: true, filter: path => !isCode(relative(source, path)) });
+    for (const [path, each] of Object.entries({ ...files, [first]: text })) (mkdirSync(dirname(join(folder, path)), { recursive: true }), writeFileSync(join(folder, path), each));
+  };
+  let made = 0;
+  const fails = (candidates: Whole[]) =>
+    Promise.all(
+      candidates.map(async candidate => {
+        const folder = join(work, String(made++));
+        write(folder, candidate);
+        const child = Bun.spawn({ cmd: [...command, join(folder, first)], cwd: folder, stdio: ["ignore", "ignore", "ignore"], timeout: 600_000, killSignal: "SIGKILL" });
+        const code = await child.exited;
+        rmSync(folder, { recursive: true, force: true });
+        return code === 0;
+      }),
+    );
+  const parsers = new Map<string, Bun.Transpiler>();
+  const parses = (candidate: string, path = first) => {
+    const loader = path.endsWith(".tsx") ? "tsx" : path.endsWith("ts") ? "ts" : "jsx";
+    try {
+      (parsers.get(loader) ?? parsers.set(loader, new Bun.Transpiler({ loader })).get(loader)!).transformSync(candidate);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const whole: Whole = { text: readFileSync(join(source, first), "utf8"), files: Object.fromEntries(paths.filter(path => isCode(path) && path !== first).map(path => [path, readFileSync(join(source, path), "utf8")])) };
+  if (!(await fails([whole]))[0]) throw new Error("the program as it is does not show it");
+  const reduced = await reduceFiles(whole, { parses, fails, width: jobs, seconds, entry: first });
+  rmSync(result, { recursive: true, force: true });
+  write(result, reduced);
+  rmSync(work, { recursive: true, force: true });
+  console.log(`${Object.keys(reduced.files ?? {}).length + 1} files, ${[reduced.text, ...Object.values(reduced.files ?? {})].join("").split("\n").length - 1} lines, ${reduced.tests} tests`);
 }

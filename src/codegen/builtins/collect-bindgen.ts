@@ -30,6 +30,8 @@ import {
   RestType,
   Signature,
   Type,
+  memberIdentifier,
+  symbolDescription,
   type Builtin,
   type ClassMember,
   type NamespaceDefinition,
@@ -777,7 +779,7 @@ function collectConstant(type: ClassType, constant: Constant, path: BuiltinPath)
 }
 
 function collectBuiltin(type: ClassType, builtin: Builtin, path: BuiltinPath): Declaration[] {
-  const implementation = b.compiled(`builtins/${type.name}`, builtin.name);
+  const implementation = b.compiled(`builtins/${type.name}`, memberIdentifier(builtin.name));
   return setMemberParts(b.method(path, b.otherwiseBy(implementation)), { length: builtin.length });
 }
 
@@ -812,7 +814,7 @@ function collectClassMember(type: ClassType, member: ClassMember, path: BuiltinP
 }
 
 const pathOfMember = (classPath: BuiltinPath, side: "static" | "proto", name: string): BuiltinPath =>
-  pathOfClassMember(classPath, side, name);
+  pathOfClassMember(classPath, side, name === "@@inspectCustom" ? `@@@${symbolDescription(name)}` : name);
 
 function prototypeBaseOf(type: ClassType): BuiltinPath | null {
   if (type.forBind) return "Function.prototype";
@@ -855,6 +857,7 @@ function collectClass(type: ClassType, joins: Joins): Declaration[] {
     types: [...(constructorPath === undefined ? [] : [b.exactType(constructorPath)]), b.exactType(`$Bindgen.${name}`)],
     stateHeap: externalStateHeap,
     ...type.columns,
+    extends: type.base?.name,
     instanceCppClass: ofInstances ? b.cppClass(cpp, headerOf(type)) : undefined,
     prototypeCppExpression: ofInstances ? `Bun::Bindgen::prototypeForClass<${cpp}>(globalObject)` : undefined,
     instanceStructureCppExpression: ofInstances

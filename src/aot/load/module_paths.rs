@@ -1,16 +1,20 @@
+use bun_ast::Loader;
 use bun_builtin_sources::Manifest;
 use bun_core::strings;
 use bun_paths::resolve_path::{buf_or_spill, relative_platform_buf};
 use bun_paths::{MAX_PATH_BYTES, is_absolute, path_buffer_pool, platform};
 use bun_sema::program::{FileId, FileRole, Files, HostLoader};
+use bun_sema::resolve::CodeImportKind;
 use bun_sema::util::{FxHashMap, FxHashSet, SharedSort};
 use bun_sema_driver::host::to_native;
 
 use crate::diagnostics::InternalError;
 use crate::load::loaders::{
-    BY_NAME, HostLoaderKind, host_loader_kind, loader_by_name, loader_name,
+    BY_NAME, HostLoaderKind, host_loader_kind, loader_by_name, loader_by_path, to_host_loader,
 };
+use crate::load::plugin_modules::DATA_URL_NAMESPACE;
 use crate::load::sources::{ModulePaths, PluginModuleName, SourceKind};
+use crate::module_keys::path_of_form;
 use crate::options::PathOptions;
 use crate::statistics::Stage;
 
@@ -92,6 +96,7 @@ pub(super) fn collect_entry_point_paths(
 pub(super) struct PathContext<'a> {
     pub runs_in_place: bool,
     pub paths: &'a PathOptions,
+    pub loaders: &'a [(Vec<u8>, Loader)],
     pub manifest: &'a Manifest,
     pub maps: &'a FileMaps<'a>,
 }
@@ -109,7 +114,12 @@ pub(super) struct PathInput<'a> {
 
 pub(super) fn compute_public_path(context: &PathContext<'_>, input: &PathInput<'_>) -> Box<[u8]> {
     let maps = context.maps;
-    let mut path = match input.plugin_module {
+    let path = match input.plugin_module {
+        // The run time knows the module by the URL.
+        Some(module) if *module.namespace == *DATA_URL_NAMESPACE => {
+            let loader = requested_loader(input.host_loader, input.file_name);
+            return path_of_form(&module.path, loader).into();
+        }
         Some(module) => plugin_public_path(&module.namespace, &module.path),
         None => match input.kind {
             SourceKind::RuntimeModule(runtime_module) => {
@@ -153,18 +163,39 @@ pub(super) fn compute_public_path(context: &PathContext<'_>, input: &PathInput<'
             ),
         },
     };
-    if input.is_linkable && maps.needs_suffix(input.file, input.canonical_path, &path) {
-        path.push(b'?');
-        path.extend_from_slice(suffix_name(input.host_loader, input.file_name).as_bytes());
+    let needs_suffix = maps.needs_suffix(input.file, input.canonical_path, &path)
+        || is_data_that_only_an_attribute_asks_for(context, input);
+    match input.is_linkable && needs_suffix {
+        true => path_of_form(&path, requested_loader(input.host_loader, input.file_name)).into(),
+        false => path.into(),
     }
-    path.into()
 }
 
-fn suffix_name(host_loader: HostLoader, file_name: &[u8]) -> &'static str {
+fn requested_loader(host_loader: HostLoader, file_name: &[u8]) -> Loader {
     match host_loader_kind(host_loader) {
-        Some(HostLoaderKind::Loader(loader)) => loader_name(loader),
-        Some(HostLoaderKind::ByName) | None => loader_name(loader_by_name(file_name)),
+        Some(HostLoaderKind::Loader(loader)) => loader,
+        Some(HostLoaderKind::ByName) | None => loader_by_name(file_name),
     }
+}
+
+// Whoever names the file at run time without an attribute asks for another module than this one.
+fn is_data_that_only_an_attribute_asks_for(
+    context: &PathContext<'_>,
+    input: &PathInput<'_>,
+) -> bool {
+    let is_file_with_data = input.kind == SourceKind::Data && input.plugin_module.is_none();
+    if !is_file_with_data || context.maps.entry_point_indexes.contains_key(&input.file) {
+        return false;
+    }
+    let kinds = [
+        CodeImportKind::Import,
+        CodeImportKind::Require,
+        CodeImportKind::EntryPoint,
+    ];
+    !kinds.into_iter().any(|kind| {
+        let loader = loader_by_path(context.loaders, input.file_name, kind);
+        to_host_loader(loader, input.file_name) == input.host_loader
+    })
 }
 
 fn plugin_public_path(namespace: &[u8], path: &[u8]) -> Vec<u8> {
@@ -294,7 +325,7 @@ mod tests {
 
     use super::*;
     use crate::builtins::RuntimeModule;
-    use crate::load::loaders::to_host_loader;
+    use crate::options::default_loaders;
 
     fn as_text() -> HostLoader {
         to_host_loader(Loader::Text, b"a.ts")
@@ -348,6 +379,7 @@ mod tests {
         let context = PathContext {
             runs_in_place: false,
             paths: &path_options(),
+            loaders: &default_loaders(),
             manifest,
             maps,
         };
@@ -552,6 +584,7 @@ mod tests {
         let context = PathContext {
             runs_in_place: false,
             paths: &paths,
+            loaders: &default_loaders(),
             manifest: &Manifest::default(),
             maps: &maps,
         };
@@ -651,10 +684,55 @@ mod tests {
     #[test]
     fn suffix_names_requested_loader() {
         let path = b"/p/a.data";
-        assert_eq!(suffix_name(as_text(), path), "text");
-        assert_eq!(suffix_name(as_ts(), path), "ts");
-        assert_eq!(suffix_name(BY_NAME, path), "file");
-        assert_eq!(suffix_name(HostLoader(200), path), "file");
+        assert_eq!(requested_loader(as_text(), path), Loader::Text);
+        assert_eq!(requested_loader(as_ts(), path), Loader::Ts);
+        assert_eq!(requested_loader(BY_NAME, path), Loader::File);
+        assert_eq!(requested_loader(HostLoader(200), path), Loader::File);
+    }
+
+    #[test]
+    fn data_that_only_an_attribute_asks_for_has_suffix() {
+        let path = |file_name: &[u8], loader| {
+            let host_loader = to_host_loader(loader, file_name);
+            let mut maps = FileMaps::default();
+            maps.add_linkable_file(file_name, FileId(1), host_loader);
+            let input = PathInput {
+                kind: SourceKind::Data,
+                ..program_file(1, file_name, host_loader)
+            };
+            public_path(&maps, input)
+        };
+        assert_eq!(
+            path(b"/project/a.json", Loader::Json),
+            b"/$bunfs/root/a.json"
+        );
+        assert_eq!(
+            path(b"/project/a.json", Loader::Text),
+            b"/$bunfs/root/a.json?text"
+        );
+        assert_eq!(
+            path(b"/project/a.ts", Loader::File),
+            b"/$bunfs/root/a.ts?file"
+        );
+        assert_eq!(path(b"/project/a.sql", Loader::File), b"/$bunfs/root/a.sql");
+        assert_eq!(
+            path(b"/project/a.sql", Loader::Text),
+            b"/$bunfs/root/a.sql?text"
+        );
+    }
+
+    #[test]
+    fn data_of_a_url_stands_under_the_url_and_the_loader() {
+        let virtual_path = b"/$bun/plugin/dataurl/data%3a,1";
+        let plugin_module = plugin_module_name(DATA_URL_NAMESPACE, b"data:,1");
+        let mut maps = FileMaps::default();
+        maps.add_linkable_file(virtual_path, FileId(1), as_text());
+        let input = PathInput {
+            kind: SourceKind::Data,
+            plugin_module: Some(&plugin_module),
+            ..program_file(1, virtual_path, as_text())
+        };
+        assert_eq!(public_path(&maps, input), b"data:,1?text");
     }
 
     #[test]

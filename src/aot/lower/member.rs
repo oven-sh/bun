@@ -8,7 +8,6 @@ use bun_sema::fold::Constant;
 use bun_sema::hir::{
     Chain, ExprId, ExprKind, Flags, Member, MemberKey, NameKind, NodeData, Prop, PropKey,
 };
-use bun_sema::types::EnumValue;
 
 use super::{FileLowering, FunctionLowering};
 use crate::builtins::id::BuiltinId;
@@ -185,13 +184,15 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         if let Some(value) = self.lower_export_member(access) {
             return Some(value);
         }
+        if let Some(constant) = self.file.find_data_member_read(access) {
+            return Some(self.emit_constant(constant));
+        }
         if !self.file.hir.has_typescript_semantics() {
             return None;
         }
-        let value = match self.file.queries.constant_enum_access(access) {
-            Ok(Some(EnumValue::Number(bits))) => self.emit_number(f64::from_bits(bits)),
-            Ok(Some(EnumValue::String(text))) => self.emit_constant(Constant::String(text)),
-            Ok(None) | Err(_) => return None,
+        let value = match self.file.find_enum_member_read(access)? {
+            Constant::Number(number) => self.emit_number(number),
+            constant => self.emit_constant(constant),
         };
         self.enum_constants.insert(value);
         Some(value)

@@ -1,6 +1,4 @@
 // Hardcoded module "node:path"
-const { validateString } = require("internal/validators");
-
 declare global {
   namespace $Node {
     interface ParsedPath {
@@ -53,6 +51,7 @@ const posix = {
   win32: undefined! as $Node.Path,
   posix: undefined! as $Node.Path,
   _makeLong: toNamespacedPathPosix,
+  matchesGlob: undefined! as $Node.Path["matchesGlob"],
 } as $Node.Path;
 const win32 = {
   resolve: $bindgen("node_path.bind.ts", "resolveWin32"),
@@ -71,6 +70,7 @@ const win32 = {
   win32: undefined! as $Node.Path,
   posix,
   _makeLong: toNamespacedPathWin32,
+  matchesGlob: undefined! as $Node.Path["matchesGlob"],
 } as $Node.Path;
 posix.win32 = win32.win32 = win32;
 posix.posix = posix;
@@ -82,6 +82,7 @@ type Glob = import("bun").Glob;
 let prevGlob: Glob | undefined;
 let prevPattern: string | undefined;
 function matchesGlob(isWindows: boolean, path: string, pattern: string) {
+  const { validateString } = require("internal/validators");
   let glob: Glob;
 
   validateString(path, "path");

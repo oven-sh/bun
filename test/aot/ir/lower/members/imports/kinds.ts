@@ -11,3 +11,7 @@ export const enum Name {
 export enum Plain {
   One = 1,
 }
+
+export enum Shared {
+  One = 1,
+}

@@ -704,6 +704,7 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         parse_param!("--aot-disable-in <STR>"),
         parse_param!("--aot-limit <STR>"),
         parse_param!("--aot-heat <STR>"),
+        parse_param!("--aot-flow <STR>"),
         parse_param!("--aot-testing <STR>..."),
         parse_param!("--aot-sabotage <STR>"),
         parse_param!("--aot-count-branches"),

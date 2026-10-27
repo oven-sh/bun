@@ -119,6 +119,7 @@ impl Build<'_> {
                     sources: view.sources,
                     graph: &graph,
                     removable: self.options.removable,
+                    limits: &self.limits,
                 };
                 let (left_out, reached) = find_left_out_code(&input, &in_parallel);
                 finish_modules(&mut graph, &reached);

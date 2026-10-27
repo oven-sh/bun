@@ -43,6 +43,7 @@ import {
   isToldWhatToTake,
   mayHoldWhatIsWanted,
   measuresTimeOrMemory,
+  referenceEnv,
   slot,
   spawned,
   taken,
@@ -415,12 +416,13 @@ export function programsAsSeparateEntryPoints(part = 1, parts = 1) {
     const buildAll = () => (beginNext(), Promise.all(line.map(group => group.built)));
 
     type Ran = { stdout: string; stderr: string; exitCode: number; signal: number | NodeJS.Signals | null };
+    const envOf = (command: string[]) => (command[0] === plainBun ? referenceEnv : bunEnv);
     let lists = 0;
     /** Starts `command`, which is the runner, for the program, in a Worker. What a Worker prints late would be taken for the next program's, so a process runs one. */
     async function runInWorker(command: string[], path: string, spelled: string, hold: typeof slot = slot): Promise<Ran> {
       const list = join(folder, `tasks-${lists++}.json`);
       writeFileSync(list, JSON.stringify([{ program: spelled, cwd: dirname(path), env: optionsOf(path).env }]));
-      const ran = await hold(() => spawned(withoutCoreDump(command), dirname(path), { ...bunEnv, ...processEnvOf(path), BUN_AOT_VERBOSE: "1", AOT_TASKS: list, AOT_MARK: mark }));
+      const ran = await hold(() => spawned(withoutCoreDump(command), dirname(path), { ...envOf(command), ...processEnvOf(path), BUN_AOT_VERBOSE: "1", AOT_TASKS: list, AOT_MARK: mark }));
       rmSync(list, { force: true });
       const parts = (text: string) => text.split(new RegExp(`\\r?\\n${mark} (-?[0-9]+)\\r?\\n`));
       const [stdout, stderr] = [parts(ran.stdout), parts(ran.stderr)];
@@ -430,7 +432,7 @@ export function programsAsSeparateEntryPoints(part = 1, parts = 1) {
     // See measuresTimeOrMemory().
     const whileNothingElseRuns: typeof slot = work => withEverySlot(0, work);
     const runOnMainThread = (command: string[], path: string, hold: typeof slot = slot): Promise<Ran> =>
-      hold(() => spawned(withoutCoreDump(command), dirname(path), { ...bunEnv, ...optionsOf(path).env, BUN_AOT_VERBOSE: "1" }));
+      hold(() => spawned(withoutCoreDump(command), dirname(path), { ...envOf(command), ...optionsOf(path).env, BUN_AOT_VERBOSE: "1" }));
     const runPlain = (path: string, inWorker: boolean, hold?: typeof slot) =>
       inWorker ? runInWorker([plainBun, "run", join(import.meta.dir, "programs", runner)], path, path, hold) : runOnMainThread([plainBun, "run", path], path, hold);
     const runCompiled = (way: Way, path: string, hold?: typeof slot) =>

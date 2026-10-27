@@ -12,6 +12,9 @@
 #include "ModuleLoader.h"
 #include "WebCoreJSBuiltins.h"
 #include "ZigGlobalObject.h"
+#if ENABLE(AOT)
+#include <JavaScriptCore/AOTPropertyWalk.h>
+#endif
 #include <JavaScriptCore/AOTSchemaEnums.h>
 #include <JavaScriptCore/AbstractModuleRecord.h>
 #include <JavaScriptCore/CallData.h>
@@ -21,6 +24,8 @@
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/RegExp.h>
+#include <JavaScriptCore/ScriptFetchParameters.h>
+#include <JavaScriptCore/Symbol.h>
 #include <wtf/SetForScope.h>
 
 namespace Bun {
@@ -119,6 +124,19 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDefineOwnPropertiesLeftOut, (JSC::JSGlobalObj
     return JSValue::encode(jsUndefined());
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunctionPrepareHoldersBeforeLookupsUnder, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    using namespace JSC;
+    VM& vm = getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue symbol = callFrame->argument(0);
+    JSValue prepare = callFrame->argument(1);
+    if (!symbol.isSymbol() || !prepare.isCallable())
+        return throwVMTypeError(globalObject, scope, "The key must be a symbol, and what prepares its holders a function"_s);
+    AOT::PropertyWalk::prepareHoldersBeforeLookupsUnder(globalObject, asSymbol(symbol), asObject(prepare));
+    return JSValue::encode(jsUndefined());
+}
+
 }
 
 #if ENABLE(AOT)
@@ -126,6 +144,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDefineOwnPropertiesLeftOut, (JSC::JSGlobalObj
 extern "C" BunLoaderType Bun__getDefaultLoader(JSC::JSGlobalObject*, const BunString* specifier);
 extern "C" JSC::EncodedJSValue Blob__createEmptyJSONBodyError(JSC::JSGlobalObject*);
 extern "C" bool Bun__compiledProgramRunsInPlace();
+extern "C" BunString Bun__AOT__pathOfForm(const BunString* path, const BunString* typeAttribute, bool* isFormWithoutAttributes);
 
 namespace Bun {
 using namespace JSC;
@@ -161,6 +180,40 @@ static std::optional<AOT::ModuleID> compiledModuleForRequest(Zig::GlobalObject* 
     return module;
 }
 
+static String typeAttributeOf(const ScriptFetchParameters& attributes)
+{
+    // What another attribute chooses, the path of a module does not say.
+    if (attributes.attributes().size() != 1)
+        return {};
+    switch (attributes.type()) {
+    case ScriptFetchParameters::Type::JSON:
+        return "json"_s;
+    case ScriptFetchParameters::Type::HostDefined:
+        return attributes.hostDefinedImportType();
+    default:
+        return {};
+    }
+}
+
+static std::optional<AOT::ModuleID> findModuleWithAttributes(JSGlobalObject* globalObject, const String& path, const ScriptFetchParameters& attributes)
+{
+    String type = typeAttributeOf(attributes);
+    if (type.isNull())
+        return std::nullopt;
+    BunString pathArgument = Bun::toString(path);
+    BunString typeArgument = Bun::toString(type);
+    bool isFormWithoutAttributes = false;
+    BunString pathOfForm = Bun__AOT__pathOfForm(&pathArgument, &typeArgument, &isFormWithoutAttributes);
+    if (pathOfForm.isDead())
+        return std::nullopt;
+    std::optional<AOT::ModuleID> module = compiledModuleForPath(pathOfForm.transferToWTFString());
+    if (!module && isFormWithoutAttributes)
+        module = compiledModuleForPath(path);
+    if (module && AOT::leavesModuleToHost(globalObject, *module))
+        return std::nullopt;
+    return module;
+}
+
 JSPromise* compiledModuleSource(Zig::GlobalObject* globalObject, const String& key, bool hasImportAttributes)
 {
     auto module = compiledModuleForRequest(globalObject, key, hasImportAttributes);
@@ -175,9 +228,9 @@ JSPromise* compiledModuleSource(Zig::GlobalObject* globalObject, const String& k
     return source;
 }
 
-JSPromise* importCompiledModule(Zig::GlobalObject* globalObject, const String& key, bool hasImportAttributes, int64_t referrerAsyncOrder)
+JSPromise* importCompiledModule(Zig::GlobalObject* globalObject, const String& key, const ScriptFetchParameters* attributes, int64_t referrerAsyncOrder)
 {
-    auto module = compiledModuleForRequest(globalObject, key, hasImportAttributes);
+    auto module = attributes ? findModuleWithAttributes(globalObject, key, *attributes) : compiledModuleForRequest(globalObject, key, false);
     if (!module)
         return nullptr;
     return AOT::importModule(globalObject, *module, referrerAsyncOrder < 0 ? std::nullopt : std::optional(referrerAsyncOrder));
@@ -538,6 +591,7 @@ const AOT::ModuleHost compiledModuleHost = {
     &createEmptyJSONBodyError,
     &createLoadError,
     &showChildren,
+    &findModuleWithAttributes,
 };
 
 JSValue createNotInExecutableError(JSGlobalObject* globalObject, ErrorCode code, const String& path, NotInExecutable what)
@@ -650,6 +704,12 @@ extern "C" bool Bun__isCompiledProgramFile(const BunString* path)
     return Bun::isCompiledModule(path->toWTFString(BunString::ZeroCopy));
 }
 
+extern "C" bool Bun__isCompiledProgramFileInSomeForm(const BunString* path)
+{
+    String file = path->toWTFString(BunString::ZeroCopy);
+    return Bun::isCompiledModule(file) || (Bun::hasCompiledModules() && JSC::AOT::holdsFormThatAttributeAsksFor(file));
+}
+
 // Start-up reads its options before the image is in use.
 extern "C" bool Bun__AOT__omitsFunctionSource(BunAOTBytes image)
 {
@@ -695,7 +755,7 @@ const AOT::ModuleHost compiledModuleHost {};
 
 std::optional<AOT::ModuleID> compiledModuleForPath(const String&) { return std::nullopt; }
 JSPromise* compiledModuleSource(Zig::GlobalObject*, const String&, bool) { return nullptr; }
-JSPromise* importCompiledModule(Zig::GlobalObject*, const String&, bool, int64_t) { return nullptr; }
+JSPromise* importCompiledModule(Zig::GlobalObject*, const String&, const ScriptFetchParameters*, int64_t) { return nullptr; }
 bool requireCompiledModule(Zig::GlobalObject*, JSCommonJSModule*, const String&, bool) { return false; }
 JSObject* loaderOfCompiledESModule(Zig::GlobalObject*, const String&, bool) { return nullptr; }
 JSValue loadCompiledModuleNamespace(Zig::GlobalObject*, const String&) { return {}; }
@@ -721,6 +781,7 @@ void willSetRequireCacheEntry(Zig::GlobalObject*, const String&, JSValue) {}
 
 extern "C" bool Bun__refusesCodeOutsideExecutable(JSC::JSGlobalObject*) { return false; }
 extern "C" bool Bun__isCompiledProgramFile(const BunString*) { return false; }
+extern "C" bool Bun__isCompiledProgramFileInSomeForm(const BunString*) { return false; }
 extern "C" bool Bun__AOT__omitsFunctionSource(BunAOTBytes) { return false; }
 extern "C" bool Bun__AOT__tryReservePagesForNewThread(void** pages)
 {

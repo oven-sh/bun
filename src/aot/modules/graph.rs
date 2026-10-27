@@ -88,6 +88,8 @@ pub(super) struct FileRow {
     pub holders: Vec<Holder>,
     pub exports: Vec<ModuleExport>,
     pub unread_exports: Vec<SymbolId>,
+    /// A module of data: whatever names it in the files of the program is an import or export statement that links names to its variables.
+    pub is_data_linked_by_names_alone: bool,
     pub required_names: Vec<RequiredName>,
 }
 
@@ -464,6 +466,10 @@ impl ModuleGraph {
 
     pub fn unread_exports(&self, file: FileId) -> &[SymbolId] {
         &self.row(file).unread_exports
+    }
+
+    pub fn is_data_linked_by_names_alone(&self, file: FileId) -> bool {
+        self.row(file).is_data_linked_by_names_alone
     }
 
     pub fn find_export(&self, module: ModuleRef, name: Atom, atoms: &Interner<'_>) -> ExportLookup {

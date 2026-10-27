@@ -10,8 +10,8 @@ sayWhenSkipped("test/aot/flow-results-name-the-list-they-read.test.ts");
 
 const filesThatPredict = [
   "valueflow/AOTFlowLiteralOrderResults.cpp",
+  "valueflow/AOTLedgerOfClassesAndClosures.cpp",
   "valueflow/AOTValueFlowResultsCalls.cpp",
-  "valueflow/AOTValueFlowResultsClasses.cpp",
   "valueflow/AOTValueFlowResultsFunctions.cpp",
   "valueflow/AOTValueFlowResultsHeap.cpp",
   "valueflow/AOTValueFlowResultsInternal.h",

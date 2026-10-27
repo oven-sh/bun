@@ -12,6 +12,9 @@ use crate::modules::{ImportBinding, ModuleRef, Shape, SyntheticExportId, View};
 
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(crate) fn get_import(&mut self, symbol: SymbolId) -> ValueId {
+        if let Some(constant) = self.file.find_data_variable_read(symbol) {
+            return self.emit_constant(constant);
+        }
         let file = &mut *self.file;
         let binding = file.inputs.modules.import_binding(file.file, symbol);
         let local_name = file.bound.symbol(symbol).name;

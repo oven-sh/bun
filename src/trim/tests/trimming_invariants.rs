@@ -636,6 +636,9 @@ fn check_plan(
     if used.has_cause(UnseenCodeCause::ProgramNotCompiled) {
         seed.insert(Feature::Jit);
     }
+    if used.names(Feature::ShadowRealm) {
+        seed.insert(Feature::RuntimeTranspiler);
+    }
     let is_compiled = !used.has_cause(UnseenCodeCause::ProgramNotCompiled);
     if !request.removes_unused {
         if seed.contains(Feature::Bundler) {

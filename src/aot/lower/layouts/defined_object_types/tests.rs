@@ -31,6 +31,18 @@ fn only_an_earlier_file_counts() {
 }
 
 #[test]
+fn earlier_means_earlier_in_the_link() {
+    let defined = DefinedObjectTypes::with_link_positions(vec![30, 20, 10]);
+    defined.add_definition(ty(0), NAMES_THE_SAME_IN_EVERY_FILE, FileId(1));
+    assert!(defined.is_defined_by_earlier_file(&ty(0), FileId(0)));
+    assert!(!defined.is_defined_by_earlier_file(&ty(0), FileId(2)));
+    assert!(defined.is_layout_defined_by_earlier_file(layout(0), FileId(0), false));
+    assert!(!defined.is_layout_defined_by_earlier_file(layout(0), FileId(2), false));
+    assert!(defined.has_earlier_file_gone_on_for_all(&ty(0), FileId(0)));
+    assert!(!defined.has_earlier_file_gone_on_for_all(&ty(0), FileId(2)));
+}
+
+#[test]
 fn any_type_of_an_earlier_file_defines_the_layout() {
     let defined = DefinedObjectTypes::default();
     assert!(!defined.is_layout_defined_by_earlier_file(layout(0), FileId(9), false));

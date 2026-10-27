@@ -148,20 +148,6 @@ export const bindingsChangingNothing: Readonly<Record<string, Binding>> = {
     taken: [],
     refused: [0],
   },
-  "native:NewCppFunction:JSNodePerformanceHooksHistogram.cpp:jsFunction_createHistogram": {
-    functions: 1,
-    sets: 830,
-    returned: 638,
-    taken: [],
-    refused: [],
-  },
-  "native:NewCppFunction:JSNodePerformanceHooksHistogramPrototype.cpp:jsFunction_monitorEventLoopDelay": {
-    functions: 1,
-    sets: 324,
-    returned: 75,
-    taken: [0],
-    refused: [],
-  },
   "native:NewCppFunction:NodeModuleModule.cpp:jsFunctionIsModuleResolveFilenameSlowPathEnabled": {
     functions: 1,
     sets: 192,

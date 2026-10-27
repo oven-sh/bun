@@ -117,9 +117,7 @@ pub(super) struct FunctionSummary {
     pub(super) captures: Range<u32>,
     pub(super) has_too_many_captures: bool,
     pub(super) has_fields_for_handlers: bool,
-    pub(super) created_at: u32,
-    // The time behind which each name that the function copies keeps its value.
-    pub(super) copies_settle_at: u32,
+    pub(super) half_to_stand_behind: Option<FnId>,
 }
 
 pub(super) struct LoopStores {
@@ -258,16 +256,9 @@ impl ScopeAnalysis {
         function.is_some_and(|function| function.has_fields_for_handlers)
     }
 
-    /// One function makes both closures. Made where `earlier` is made, `function` copies the values that it copies where it is written.
-    pub(in crate::lower) fn copies_same_values_beside(
-        &self,
-        function: FunctionKey,
-        earlier: FunctionKey,
-    ) -> bool {
-        match (self.find_function(function), self.find_function(earlier)) {
-            (Some(function), Some(earlier)) => function.copies_settle_at < earlier.created_at,
-            _ => false,
-        }
+    /// The half of the same accessor of the same object literal right behind which the getter or setter is made: nothing between the two may give the name a value, and there it copies the values that it copies where it is written.
+    pub(in crate::lower) fn half_to_stand_behind(&self, function: FunctionKey) -> Option<FnId> {
+        self.find_function(function)?.half_to_stand_behind
     }
 
     /// The name holds a required module that is only read by members, so it holds no value, and every run of the function comes behind its initialization.

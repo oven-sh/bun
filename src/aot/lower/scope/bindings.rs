@@ -107,6 +107,19 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
     }
 
+    /// For a read that `FileAnalysis::bindings_read_without_expression` lists.
+    pub(crate) fn get_binding_without_expression(
+        &mut self,
+        binding: Binding,
+        name: Atom,
+    ) -> ValueId {
+        debug_assert!(
+            !matches!(binding, Binding::Symbol(symbol) if self.file.inputs.modules.holder(self.file.file, symbol).is_some()),
+            "a name that only stands for a module is read for its object"
+        );
+        self.get_binding(binding, name)
+    }
+
     pub(crate) fn initialize_converted_symbol(
         &mut self,
         symbol: SymbolId,

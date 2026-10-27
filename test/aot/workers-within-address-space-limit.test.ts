@@ -158,6 +158,57 @@ const startsWorkerRightAfterTerminating = `if (Bun.isMainThread) {
 }
 `;
 
+// Four Workers start and wait. A fifth keeps objects until it catches a RangeError, and goes on holding them. Then the four keep a few objects every millisecond, and more as time goes by:
+// a Worker that has ended leaves room to the others.
+const workersWithFewObjectsRunOutOfRoom = `declare var self: Worker;
+type Link = { next: Link | null; a: number; b: number };
+let head: Link | null = null;
+if (Bun.isMainThread) {
+  const megabytesKeptFirst = Number(process.argv[2]);
+  for (let i = 0; i < megabytesKeptFirst * 1024 * 32; i++) head = { next: head, a: i, b: i };
+  const start = () => {
+    const worker = new Worker(new URL(import.meta.url));
+    return new Promise<Worker>(resolve => (worker.onmessage = () => resolve(worker)));
+  };
+  const ends: string[] = [];
+  const workers: Worker[] = [];
+  for (let i = 0; i < 4; i++) {
+    const worker = await start();
+    let message = "no error";
+    worker.addEventListener("error", event => (message = String((event as ErrorEvent).message).slice(0, 25)));
+    worker.addEventListener("close", event => {
+      ends.push(message + ", code " + (event as unknown as { code: number }).code);
+      if (ends.length < 4) return;
+      console.log(ends.join("\\n"));
+      process.exit(0);
+    });
+    workers.push(worker);
+  }
+  const filler = await start();
+  filler.postMessage("fill");
+  await new Promise(resolve => (filler.onmessage = resolve));
+  for (const worker of workers) worker.postMessage("keep a few");
+} else {
+  self.onmessage = event => {
+    if (event.data === "fill") {
+      try {
+        for (let i = 0; ; i++) head = { next: head, a: i, b: i };
+      } catch (error) {
+        postMessage(error instanceof RangeError);
+      }
+      return;
+    }
+    let i = 0;
+    let turns = 0;
+    setInterval(() => {
+      for (const end = i + (64 << Math.min(turns++ >> 4, 10)); i < end; i++) head = { next: head, a: i, b: i };
+    }, 1);
+  };
+  setInterval(() => {}, 1000);
+  postMessage("ready");
+}
+`;
+
 // More shapes of objects than the table that finds properties by name has rows for at first.
 const readsManyShapesByName = `const objects: any[] = [];
 for (let i = 0; i < 120_000; i++) {
@@ -177,7 +228,9 @@ for (const object of objects) object.value = 1;
 console.log(sum(objects));
 `;
 
-async function runWithinEach(limitsInKB: (number | undefined)[], program: string, ...args: string[]) {
+type Run = { limitInKB?: number; env?: Record<string, string> };
+
+async function runEach(runs: Run[], program: string, ...args: string[]) {
   using folder = tempDir("aot-workers-limit", { "program.ts": program });
   const env = { ...bunEnv, BUN_CRASH_REPORT_URL: "" };
   const built = await runCommand(
@@ -190,12 +243,23 @@ async function runWithinEach(limitsInKB: (number | undefined)[], program: string
     exitCode: 0,
   });
   const results: { stdout: string; stderr: string; exitCode: number | null }[] = [];
-  for (const limitInKB of limitsInKB) {
-    const command = limitInKB ? `ulimit -v ${limitInKB} && exec ./program "$@"` : `exec ./program "$@"`;
-    const { stdout, stderr, exitCode } = await runCommand(["sh", "-c", command, "sh", ...args], String(folder), env);
+  for (const run of runs) {
+    const command = run.limitInKB ? `ulimit -v ${run.limitInKB} && exec ./program "$@"` : `exec ./program "$@"`;
+    const { stdout, stderr, exitCode } = await runCommand(["sh", "-c", command, "sh", ...args], String(folder), {
+      ...env,
+      ...run.env,
+    });
     results.push({ stdout, stderr, exitCode });
   }
   return results;
+}
+
+function runWithinEach(limitsInKB: (number | undefined)[], program: string, ...args: string[]) {
+  return runEach(
+    limitsInKB.map(limitInKB => ({ limitInKB })),
+    program,
+    ...args,
+  );
 }
 
 async function runWithin(limitInKB: number | undefined, program: string, ...args: string[]) {
@@ -298,6 +362,38 @@ describe.concurrent("Workers of a compiled program within a limit on the address
       const results = await runWithinEach(limits, startsWorkerRightAfterTerminating);
       expect(results.map((result, i) => ({ limit: limits[i], ...result }))).toEqual(
         limits.map(limit => ({ limit, stdout: "at least 8 run: true\n", stderr: "", exitCode: 0 })),
+      );
+    },
+    240_000,
+  );
+
+  test.skipIf(!isLinux || isASAN)(
+    "a Worker starts in the room of Workers that were just terminated at each of the 128 places where the cells begin",
+    async () => {
+      const places = Array.from({ length: 128 }, (_, i) => String(i + 1));
+      const results = await runEach(
+        places.map(place => ({ limitInKB: 1104 * 1024, env: { BUN_JSC_seedOfVMRandomForFuzzer: place } })),
+        startsWorkerRightAfterTerminating,
+      );
+      expect(results.map((result, i) => ({ place: places[i], ...result }))).toEqual(
+        places.map(place => ({ place, stdout: "at least 8 run: true\n", stderr: "", exitCode: 0 })),
+      );
+    },
+    240_000,
+  );
+
+  test.skipIf(!isLinux || isASAN).each([0, 48])(
+    "Workers with few objects end one by one where another Worker has taken all the room, and the program goes on (the main thread keeps %d MB first)",
+    async megabytesKeptFirst => {
+      const places = Array.from({ length: 8 }, (_, i) => String(16 * i + 1));
+      const results = await runEach(
+        places.map(place => ({ limitInKB: 768 * 1024, env: { BUN_JSC_seedOfVMRandomForFuzzer: place } })),
+        workersWithFewObjectsRunOutOfRoom,
+        String(megabytesKeptFirst),
+      );
+      const stdout = "RangeError: Out of memory, code 1\n".repeat(4);
+      expect(results.map((result, i) => ({ place: places[i], ...result }))).toEqual(
+        places.map(place => ({ place, stdout, stderr: "", exitCode: 0 })),
       );
     },
     240_000,

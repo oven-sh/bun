@@ -55,6 +55,8 @@ pub struct DefinedObjectTypes {
     first_placed_definers_of_layouts: ShardedMap<TypeIdentity, AtomicU32>,
     names_of_types: ShardedMap<TypeId, NamesOfObjectType>,
     names_of_files: Guarded<FxHashMap<FileId, Vec<(TypeId, NamesOfObjectType)>>>,
+    // By file. Empty: the link orders the files by their own numbers.
+    link_positions: Vec<u32>,
     #[cfg(test)]
     late_answers: late_answers::Choice,
 }
@@ -74,6 +76,20 @@ struct FirstDefiners {
 }
 
 impl DefinedObjectTypes {
+    pub fn with_link_positions(link_positions: Vec<u32>) -> DefinedObjectTypes {
+        DefinedObjectTypes {
+            link_positions,
+            ..DefinedObjectTypes::default()
+        }
+    }
+
+    pub fn link_position(&self, file: FileId) -> u32 {
+        match self.link_positions.is_empty() {
+            true => file.0,
+            false => self.link_positions[file.idx()],
+        }
+    }
+
     pub(super) fn find_names(&self, ty: TypeId) -> Option<NamesOfObjectType> {
         self.names_of_types.get_ref(&ty).copied()
     }
@@ -93,12 +109,13 @@ impl DefinedObjectTypes {
     }
 
     pub fn add_definition(&self, ty: DefinedObjectType, level: u8, definer: FileId) {
+        let definer = self.link_position(definer);
         let add_definer_of_layout = |first_definers: &ShardedMap<TypeIdentity, AtomicU32>| {
             let first_definer = match first_definers.get_ref(&ty.names) {
                 Some(first_definer) => first_definer,
                 None => first_definers.insert_ref(ty.names, AtomicU32::new(u32::MAX)),
             };
-            first_definer.fetch_min(definer.0, Ordering::Relaxed);
+            first_definer.fetch_min(definer, Ordering::Relaxed);
         };
         add_definer_of_layout(&self.first_definers_of_layouts);
         if level & HAS_PLACE != 0 {
@@ -116,11 +133,11 @@ impl DefinedObjectTypes {
         };
         let names_the_same = level & NAMES_THE_SAME_IN_EVERY_FILE != 0;
         let level = level & !(NAMES_THE_SAME_IN_EVERY_FILE | HAS_PLACE);
-        first_definers.by_level[level as usize].fetch_min(definer.0, Ordering::Relaxed);
+        first_definers.by_level[level as usize].fetch_min(definer, Ordering::Relaxed);
         if names_the_same && level < LAST_DEFINITION_LEVEL {
             first_definers
                 .gone_on_for_all
-                .fetch_min(definer.0, Ordering::Relaxed);
+                .fetch_min(definer, Ordering::Relaxed);
         }
     }
 
@@ -136,8 +153,9 @@ impl DefinedObjectTypes {
         let Some(first_definers) = self.first_definers.get_ref(ty) else {
             return false;
         };
+        let position = self.link_position(file);
         let mut first_definers = first_definers.by_level.iter();
-        first_definers.any(|first_definer| first_definer.load(Ordering::Relaxed) < file.0)
+        first_definers.any(|first_definer| first_definer.load(Ordering::Relaxed) < position)
     }
 
     pub(in crate::lower) fn is_layout_defined_by_earlier_file(
@@ -157,8 +175,9 @@ impl DefinedObjectTypes {
             true => &self.first_placed_definers_of_layouts,
             false => &self.first_definers_of_layouts,
         };
+        let position = self.link_position(file);
         let first_definer = first_definers.get_ref(&instantiation);
-        first_definer.is_some_and(|first| first.load(Ordering::Relaxed) < file.0)
+        first_definer.is_some_and(|first| first.load(Ordering::Relaxed) < position)
     }
 
     pub(in crate::lower) fn has_earlier_file_gone_on_for_all(
@@ -170,8 +189,9 @@ impl DefinedObjectTypes {
         if self.late_answers.is_late(ty, file) {
             return false;
         }
+        let position = self.link_position(file);
         let first_definers = self.first_definers.get_ref(ty);
-        first_definers.is_some_and(|first| first.gone_on_for_all.load(Ordering::Relaxed) < file.0)
+        first_definers.is_some_and(|first| first.gone_on_for_all.load(Ordering::Relaxed) < position)
     }
 }
 

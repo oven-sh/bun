@@ -2879,6 +2879,11 @@
     "asan": 9431,
     "windows": 907
   },
+  "aot/files-that-a-project-names-for-their-types-alone.test.ts": {
+    "default": 100000,
+    "asan": 600000,
+    "windows": 200000
+  },
   "aot/first-awaits-avoid-runtime.test.ts": {
     "default": 1720,
     "asan": 9248,
@@ -3010,12 +3015,6 @@
     "asan": 9125,
     "musl": 4081,
     "windows": 6441
-  },
-  "aot/functions-get-past-entry.test.ts": {
-    "default": 2474,
-    "asan": 5979,
-    "musl": 2488,
-    "windows": 4111
   },
   "aot/fuzzer-fixed-seeds.test.ts": {
     "default": 193887,
@@ -3946,6 +3945,9 @@
     "asan": 3002,
     "musl": 36,
     "windows": 61
+  },
+  "aot/generated-typed-arrays-of-every-kind-below-any-class.test.ts": {
+    "default": 30000
   },
   "aot/generated-typed-instances-changed-through-built-ins.test.ts": {
     "default": 300

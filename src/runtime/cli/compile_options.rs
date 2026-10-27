@@ -70,6 +70,7 @@ const DEVELOPER_FLAGS: &[(&str, &str, Form)] = &[
     developer_flag!("disable-in", Form::One),
     developer_flag!("limit", Form::One),
     developer_flag!("heat", Form::One),
+    developer_flag!("flow", Form::One),
     developer_flag!("testing", Form::Many),
     developer_flag!("sabotage", Form::One),
     developer_flag!("count-branches", Form::Flag),

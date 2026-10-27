@@ -114,7 +114,7 @@ impl<'x, 's> Walker<'x, 's> {
             last_users: vec![None; bound.symbols.len()],
             unprinted_uses: Vec::new(),
             pending_stores: Vec::new(),
-            first_halves: Vec::new(),
+            halves_in_front: Vec::new(),
             unconditional_statements: Vec::new(),
             clock: 0,
             walk: ScopeWalk {

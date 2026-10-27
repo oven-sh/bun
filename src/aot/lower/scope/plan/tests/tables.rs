@@ -4,6 +4,7 @@ use bun_sema::hir::{ClassId, Flags, FnId, FnKind, MemberId, StmtKind};
 use super::{analyze_source, is_field};
 use crate::ir::FunctionKey;
 use crate::ir::generated::FunctionFlags;
+use crate::lower::captures::Capture;
 use crate::lower::scope::analysis::{GroupedList, find_by_key};
 use crate::lower::scope::lexical_owners::compute_lexical_owners;
 use crate::lower::scope::testing::{source_key, with_scope_input};
@@ -361,4 +362,84 @@ fn find_by_key_misses_absent_key() {
     let list = [(1, 'a'), (3, 'b')];
     assert_eq!(find_by_key(&list, 3), Some('b'));
     assert_eq!(find_by_key(&list, 2), None);
+}
+
+// The halves of the accessors of the only object literal with some, in the order of the text, each with the position in that list of the half that it is made behind.
+fn halves_to_stand_behind(members: &str) -> Vec<Option<usize>> {
+    let source = format!(
+        "export function make(v, more, key) {{ let c = 0; const k = v; return {{ {members} }}; }}"
+    );
+    analyze_source("main.js", &source, |probe| {
+        let mut halves = probe.functions(FnKind::Getter);
+        halves.extend(probe.functions(FnKind::Setter));
+        halves.sort_unstable();
+        let position_of = |half: FnId| halves.iter().position(|&other| other == half);
+        let in_front = |&half: &FnId| probe.half_to_stand_behind(probe.key(half));
+        let positions = halves.iter().map(in_front);
+        positions
+            .map(|half| half.map(|half| position_of(half).expect("a half of the literal")))
+            .collect()
+    })
+}
+
+#[test]
+fn half_of_accessor_stands_behind_the_half_in_front() {
+    let rows: [(&str, &[Option<usize>]); 15] = [
+        ("get p() { return 1; }", &[None]),
+        ("get p() { return 1; }, set p(x) {}", &[None, Some(0)]),
+        ("set p(x) {}, q: 1, get p() { return k; }", &[None, Some(0)]),
+        (
+            "set p(x) {}, q: (c = v), get p() { return c; }",
+            &[None, Some(0)],
+        ),
+        (
+            "get p() { return 1; }, q: 1, set p(x) {}, r: 2, get p() { return 2; }",
+            &[None, Some(0), Some(1)],
+        ),
+        (
+            "get p() { return 1; }, q: (c = v), set p(x) { super.p = x; }, r: (c = k), get p() { return c; }",
+            &[None, Some(0), Some(1)],
+        ),
+        (
+            "get p() { return 1; }, get r() { return 2; }, set p(x) {}, set r(x) {}",
+            &[None, None, Some(0), Some(1)],
+        ),
+        (
+            "get p() { return 1; }, __proto__: more, set p(x) {}",
+            &[None, Some(0)],
+        ),
+        (
+            "get p() { return 1; }, q() {}, set ['p'](x) {}",
+            &[None, Some(0)],
+        ),
+        ("get p() { return 1; }, p: 1, set p(x) {}", &[None, None]),
+        ("get p() { return 1; }, p() {}, set p(x) {}", &[None, None]),
+        (
+            "get p() { return 1; }, ['p']: 1, set p(x) {}",
+            &[None, None],
+        ),
+        ("get p() { return 1; }, ...more, set p(x) {}", &[None, None]),
+        (
+            "get p() { return 1; }, [key]: 1, set p(x) {}",
+            &[None, None],
+        ),
+        (
+            "get p() { return 1; }, get [key]() { return 2; }, set p(x) {}",
+            &[None, None, None],
+        ),
+    ];
+    for (members, expected) in rows {
+        assert_eq!(halves_to_stand_behind(members), expected, "{members}");
+    }
+}
+
+#[test]
+fn half_made_behind_another_reads_what_a_member_between_stores_from_the_environment() {
+    let source = "export function make(v) { let c = 0; \
+        return { set p(x) {}, q: (c = v), get p() { return c; } }; }";
+    analyze_source("main.js", source, |probe| {
+        let top = probe.top_of("make");
+        let getter = probe.only_function(FnKind::Getter);
+        assert_eq!(probe.captures(getter), [Capture::Environment(top)]);
+    });
 }

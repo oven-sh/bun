@@ -242,6 +242,8 @@ pub(in crate::lower) struct PrintedOperators {
     kinds: RefCell<FxHashMap<ExprId, Option<LiteralKind>>>,
     // By the only use of a variable whose initializer is printed there: the initializer, if it is a literal.
     literals_visited_again: RefCell<FxHashMap<ExprId, Option<ExprId>>>,
+    // By a name in whose place an initializer or a value is printed: where that begins.
+    first_positions: RefCell<FxHashMap<ExprId, u32>>,
     // Whether a variable that is used once is being asked about. What that question asks of other such variables is answered without them.
     is_asking_about_variable_used_once: Cell<bool>,
 }
@@ -643,7 +645,8 @@ impl FileLowering<'_, '_, '_, '_> {
         }
         // The result of an operator that the transpiler computes stands where the operator's expression is written.
         let mut is_computed = false;
-        loop {
+        let mut replaced: SmallVec<[ExprId; 4]> = SmallVec::new();
+        let position = loop {
             let next = match hir.written_kind(first) {
                 ExprKind::Binary {
                     op: BinOp::Comma,
@@ -703,19 +706,32 @@ impl FileLowering<'_, '_, '_, '_> {
                     op: UnOp::PostInc | UnOp::PostDec,
                     operand,
                 } => operand,
-                ExprKind::Ident(_) if is_computed => return hir[first].pos,
-                ExprKind::Ident(_) => match self.find_printed_in_place(first) {
-                    Some(Printed::Initializer(initializer)) => initializer,
-                    Some(Printed::Function(function)) => return hir[function].start,
-                    None => match self.find_printed_value(first) {
-                        Some(value) if !is_computed => value,
-                        Some(_) | None => return hir[first].pos,
-                    },
-                },
-                _ => return hir[first].pos,
+                ExprKind::Ident(_) if is_computed => break hir[first].pos,
+                ExprKind::Ident(_)
+                    if let Some(&position) =
+                        self.printed_operators.first_positions.borrow().get(&first) =>
+                {
+                    break position;
+                }
+                ExprKind::Ident(_) => {
+                    let printed = match self.find_printed_in_place(first) {
+                        Some(Printed::Initializer(initializer)) => initializer,
+                        Some(Printed::Function(function)) => break hir[function].start,
+                        None => match self.find_printed_value(first) {
+                            Some(value) => value,
+                            None => break hir[first].pos,
+                        },
+                    };
+                    replaced.push(first);
+                    printed
+                }
+                _ => break hir[first].pos,
             };
             first = self.skip_type_syntax(next);
-        }
+        };
+        let mut first_positions = self.printed_operators.first_positions.borrow_mut();
+        first_positions.extend(replaced.into_iter().map(|name| (name, position)));
+        position
     }
 
     // Whether the text that Bun's transpiler prints for the operand of a `...` begins with a parenthesis, which its source map does not know.

@@ -19,8 +19,6 @@ import { ucrtServicingLibDir } from "./winsysroot.ts";
 
 export const safeStackDependencies = [
   "brotli",
-  "hdrhistogram",
-  "libarchive",
   "libdeflate",
   "libjpeg-turbo",
   "libspng",
@@ -831,8 +829,9 @@ export const bunOnlyFlags: Flag[] = [
     desc: "Treat most warnings as errors; suppress known-noisy ones",
   },
   {
-    // Debug adds -Werror=unused; release omits it (vars used only in ASSERT)
-    flag: ["-Werror=unused", "-Wno-unused-function"],
+    // Debug adds -Werror=unused; release omits it (vars used only in ASSERT).
+    // unused-lambda-capture: JavaScriptCore's AssemblyHelpers.h captures `this` in generic lambdas.
+    flag: ["-Werror=unused", "-Wno-unused-function", "-Wno-unused-lambda-capture"],
     when: c => c.unix && c.debug,
     desc: "Warn on unused vars in debug (catches dead code)",
   },

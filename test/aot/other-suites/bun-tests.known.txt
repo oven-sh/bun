@@ -547,6 +547,8 @@ DIFFERS test/js/node/inspector/inspector.test.ts > a tampered Set.prototype[Symb
 DIFFERS test/js/node/module/module-resolve-filename-paths.test.js > Module._resolveFilename with overridden function receives options.paths: the lock of the built-ins
 DIFFERS test/js/node/module/node-module-module.test.js > node-module-module > builtin resolution: open: a written require.resolve("fs") answers "node:fs"; require.cache
 DIFFERS test/js/node/module/node-module-module.test.js > node-module-module > require cache node builtins specifier: open: a written require.resolve("fs") answers "node:fs"; require.cache
+DIFFERS test/js/node/perf_hooks/perf_hooks.test.ts > histograms that another thread sends empty, and again once it has filled them, are collected without an explicit GC: text at run time (eval, the Function constructor, a Worker or an import of text)
+DIFFERS test/js/node/perf_hooks/perf_hooks.test.ts > histograms that another thread sends full are collected without an explicit GC: text at run time (eval, the Function constructor, a Worker or an import of text)
 DIFFERS test/js/node/process/stdin/stdin-fixtures.test.ts > stdin > works with readable listener: the clock
 DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require _http_agent: a file by a path that is computed or made at run time
 DIFFERS test/js/node/stubs.test.js > stubbed CJS import.meta.require _http_client: a file by a path that is computed or made at run time
@@ -1002,6 +1004,7 @@ NOT-BUILT test/js/bun/http/request-smuggling.test.ts: the check refuses the test
 NOT-BUILT test/js/bun/jsc/webkit-upgrade-23b0720b40.test.ts: the check refuses the test's own text (a type error)
 NOT-BUILT test/js/bun/jsc/webkit-upgrade-dbdca7545d.test.ts: the check refuses the test's own text (a type error)
 NOT-BUILT test/js/bun/module-graph/module-graph-isolation.test.ts: a file by a path that is computed or made at run time
+NOT-BUILT test/js/bun/perf_hooks/histogram.test.ts: the check refuses the test's own text (a type error)
 NOT-BUILT test/js/bun/plugin/plugins.test.ts: the check refuses the test's own text (a type error)
 NOT-BUILT test/js/bun/resolve/build-error.test.ts: the check refuses the test's own text (a type error)
 NOT-BUILT test/js/bun/resolve/toml/toml.test.js: the compiler's own refusal at the build (TS100xxx)

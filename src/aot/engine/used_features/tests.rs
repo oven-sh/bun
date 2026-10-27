@@ -85,6 +85,14 @@ fn used(feature: Feature, index: u32) -> UsedFeature {
     UsedFeature {
         feature,
         witness: at(index),
+        is_named: true,
+    }
+}
+
+fn used_without_name(feature: Feature, index: u32) -> UsedFeature {
+    UsedFeature {
+        is_named: false,
+        ..used(feature, index)
     }
 }
 
@@ -142,8 +150,31 @@ fn unnamed_use_keeps_only_what_needs_no_name() {
     ];
     assert_eq!(
         features_of(&records).features,
-        [used(Feature::RegExp, 0), used(Feature::IntlSegmenter, 4)]
+        [
+            used_without_name(Feature::RegExp, 0),
+            used(Feature::IntlSegmenter, 4)
+        ]
     );
+}
+
+#[test]
+fn one_named_use_names_the_feature() {
+    let records = [
+        unnamed_use_of(Feature::ShadowRealm),
+        unnamed_use_of(Feature::RegExp),
+        use_of(Feature::ShadowRealm),
+    ];
+    let found = features_of(&records);
+    assert_eq!(
+        found.features,
+        [
+            used(Feature::ShadowRealm, 0),
+            used_without_name(Feature::RegExp, 1)
+        ]
+    );
+    assert!(found.names(Feature::ShadowRealm));
+    assert!(!found.names(Feature::RegExp));
+    assert!(!found.names(Feature::Fetch));
 }
 
 #[test]

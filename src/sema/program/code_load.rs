@@ -30,6 +30,8 @@ pub struct CompileInputs<'a, 's> {
 pub(super) struct CompileLoad<'a, 's> {
     pub(super) host: &'a dyn CodeHost,
     pub(super) inputs: &'a CompileInputs<'a, 's>,
+    /// Loads that share parsed files may run in parallel.
+    pub(super) shares_parsed_files: bool,
 }
 
 impl<'s> Files<'s> {
@@ -42,7 +44,11 @@ impl<'s> Files<'s> {
         roots: RootFileNames<'_>,
         inputs: &CompileInputs<'_, 's>,
     ) -> Files<'s> {
-        let compile = CompileLoad { host, inputs };
+        let compile = CompileLoad {
+            host,
+            inputs,
+            shares_parsed_files: parsed.is_some(),
+        };
         Self::load_with(
             session,
             parsed,
@@ -66,6 +72,7 @@ pub(super) struct CodeLoadContext<'a, 's: 'r, 'r> {
     pub(super) project_resolvers: ProjectResolvers<'r>,
     pub(super) entry_points: Vec<CodeTarget<'r>>,
     pub(super) is_case_sensitive: bool,
+    shares_parsed_files: bool,
 }
 
 const _: fn() = || {
@@ -96,6 +103,15 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
             project_resolvers: ProjectResolvers::new(),
             entry_points: entry_points.collect(),
             is_case_sensitive: compile.host.is_case_sensitive(),
+            shares_parsed_files: compile.shares_parsed_files,
+        }
+    }
+
+    /// The I/O threads serve one load at a time.
+    pub(super) fn io_pool(&self) -> Option<&'a bun_threading::ThreadPool> {
+        match self.shares_parsed_files {
+            true => None,
+            false => self.host.io_pool(),
         }
     }
 

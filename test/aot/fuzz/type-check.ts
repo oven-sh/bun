@@ -8,8 +8,8 @@ import { existsSync, readdirSync, readFileSync } from "fs";
 import { createRequire } from "module";
 import { basename, dirname, join } from "path";
 
-/** The errors of each program. */
-export type Checker = (texts: string[]) => string[][];
+/** The errors of each program. One of several files is checked from `text` on, which lies beside them as `main.ts`. */
+export type Checker = (programs: (string | { text: string; files?: Record<string, string> })[]) => string[][];
 
 /** The folder of Bun's typings, if they and those of Node that they rest on are there. */
 export function typingsOfBun(): string | undefined {
@@ -63,12 +63,11 @@ export function typeChecker({ typings, options: written }: { typings?: string; o
   };
   const libraries = dirname(ts.getDefaultLibFilePath(options));
   const parsed = new Map<string, import("typescript").SourceFile | undefined>();
-  const nameOf = (index: number) => `/program${index}.ts`;
-  const indexOf = (file: string) => Number(/^\/program(\d+)\.ts$/.exec(file)?.[1] ?? -1);
-  let texts: string[] = [];
+  const indexOf = (file: string) => Number(/^\/program(\d+)(?:\.ts$|\/)/.exec(file)?.[1] ?? -1);
+  let texts = new Map<string, string>();
   const host: import("typescript").CompilerHost = {
     getSourceFile(file, languageVersion) {
-      if (indexOf(file) >= 0) return ts.createSourceFile(file, texts[indexOf(file)], languageVersion, true);
+      if (indexOf(file) >= 0) return texts.has(file) ? ts.createSourceFile(file, texts.get(file)!, languageVersion, true) : undefined;
       if (!parsed.has(file)) parsed.set(file, ts.sys.fileExists(file) ? ts.createSourceFile(file, ts.sys.readFile(file)!, languageVersion, true) : undefined);
       return parsed.get(file);
     },
@@ -79,16 +78,23 @@ export function typeChecker({ typings, options: written }: { typings?: string; o
     getCanonicalFileName: file => file,
     useCaseSensitiveFileNames: () => true,
     getNewLine: () => "\n",
-    fileExists: file => indexOf(file) >= 0 || ts.sys.fileExists(file),
-    readFile: file => (indexOf(file) >= 0 ? texts[indexOf(file)] : ts.sys.readFile(file)),
-    directoryExists: ts.sys.directoryExists,
+    fileExists: file => (indexOf(file) >= 0 ? texts.has(file) : ts.sys.fileExists(file)),
+    readFile: file => (indexOf(file) >= 0 ? texts.get(file) : ts.sys.readFile(file)),
+    directoryExists: folder => (indexOf(folder + "/") >= 0 ? texts.keys().some(file => file.startsWith(folder + "/")) : ts.sys.directoryExists(folder)),
     getDirectories: ts.sys.getDirectories,
     realpath: ts.sys.realpath,
   };
   return programs => {
-    texts = programs;
+    texts = new Map();
+    const rootNames = programs.map((program, index) => {
+      const files = typeof program === "string" ? undefined : program.files;
+      const root = files ? `/program${index}/main.ts` : `/program${index}.ts`;
+      texts.set(root, typeof program === "string" ? program : program.text);
+      for (const [path, text] of Object.entries(files ?? {})) texts.set(join(`/program${index}`, path), text);
+      return root;
+    });
     const errors: string[][] = programs.map(() => []);
-    for (const { file, start, code, messageText } of ts.getPreEmitDiagnostics(ts.createProgram({ rootNames: programs.map((_, index) => nameOf(index)), options, host })))
+    for (const { file, start, code, messageText } of ts.getPreEmitDiagnostics(ts.createProgram({ rootNames, options, host })))
       errors[Math.max(0, indexOf(file?.fileName ?? ""))].push(`${file && start !== undefined ? file.getLineAndCharacterOfPosition(start).line + 1 : 0}: TS${code}: ${ts.flattenDiagnosticMessageText(messageText, " ")}`);
     return errors;
   };

@@ -210,6 +210,7 @@ export const generators: Record<string, () => Generator> = {
   "copies-born-in-their-holders": () => require("./programs/generate-copies-born-in-their-holders"),
   "copies-of-heirs": () => require("./generate/copies-of-heirs"),
   "data-from-outside": () => require("./generate/data-from-outside"),
+  "definitions-by-descriptor": () => require("./generate/definitions-by-descriptor"),
   "effects": () => require("./generate/effects"),
   "escape-analysis": () => require("./generate/escape-analysis"),
   "every-member-of-a-host-object": () => require("./generate/every-member-of-a-host-object"),

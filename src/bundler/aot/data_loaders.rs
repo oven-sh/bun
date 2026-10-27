@@ -71,7 +71,13 @@ pub(crate) fn parse_data<'s>(
         }),
         Loader::File | Loader::Wasm => {
             let path = embedded.embed_file(context, file, log)?;
-            Ok(create_string_module(&path, arena, atoms))
+            let runs_in_place = context.module_prefix.is_empty();
+            match runs_in_place {
+                true => Ok(create_string_module(&path, arena, atoms)),
+                false => Ok(DataModule::EmbeddedFile {
+                    path: atoms.intern(&path),
+                }),
+            }
         }
         Loader::Napi => {
             let path = atoms.intern(&embedded.embed_file(context, file, log)?);
@@ -449,10 +455,8 @@ mod tests {
             load(loader, b"contents", |outcome| {
                 let path = outcome.embedded_path_of(b"contents", loader);
                 assert!(path.starts_with(&outcome.context.module_prefix));
-                let text = DataValue::String(outcome.atoms.intern(&path));
-                let module = DataModule::Value {
-                    default: &text,
-                    exports_keys: false,
+                let module = DataModule::EmbeddedFile {
+                    path: outcome.atoms.intern(&path),
                 };
                 assert_eq!(outcome.result.unwrap(), module);
                 assert_eq!(outcome.embedded.into_output_files().len(), 1);

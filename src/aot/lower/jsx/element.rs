@@ -158,7 +158,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             .file
             .intern_binding_name(reference.binding, reference.name);
         let mut callee = Callee {
-            function: self.get_binding(reference.binding, reference.name),
+            function: self.get_binding_without_expression(reference.binding, reference.name),
             this: None,
             key: None,
             name: Some(root_name),

@@ -713,6 +713,9 @@ fn roles() {
             DataModule::NativeAddon {
                 path: w.atom("/x.node"),
             },
+            DataModule::EmbeddedFile {
+                path: w.atom("/x.bin"),
+            },
             DataModule::Page,
         ];
         for data in &modules {
@@ -722,8 +725,11 @@ fn roles() {
             assert!(hir.has_module_syntax, "{data:?}");
             assert!(hir.is_strict && hir.is_strict_by_syntax, "{data:?}");
             let flagged = exprs_resolved_at_runtime(&hir);
-            let is_require = matches!(data, DataModule::RuntimeRequire { .. });
-            assert_eq!(flagged.len(), usize::from(is_require), "{data:?}");
+            let is_flagged = matches!(
+                data,
+                DataModule::RuntimeRequire { .. } | DataModule::EmbeddedFile { .. }
+            );
+            assert_eq!(flagged.len(), usize::from(is_flagged), "{data:?}");
         }
     });
 }

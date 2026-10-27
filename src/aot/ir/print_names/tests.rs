@@ -308,9 +308,7 @@ fn parts_print_in_order() {
             | Primitives::SYMBOL
             | Primitives::BIG_INT
             | Primitives::ABSENT,
-        flags: TypeFlags::HAS_INTEGERS
-            | TypeFlags::ANY_FUNCTION
-            | TypeFlags::HAS_MEMBERS_WITHOUT_LAYOUT,
+        flags: TypeFlags::HAS_INTEGERS | TypeFlags::ANY_FUNCTION,
         strings: vec![b, a],
         layouts: vec![layout(3), layout(1)],
         classes: classes.concat(),
@@ -318,7 +316,7 @@ fn parts_print_in_order() {
         ..Type::integers(0, 5)
     };
     let expected = "undefined|null|true|int[0, 5]|symbol|bigint|function|absent|\"a\"|\"b\"|L1|L3\
-        |nolayout|builtin(GlobalThis)|Array<number>|Map<string, L2>";
+        |builtin(GlobalThis)|Array<number>|Map<string, L2>";
     assert_eq!(interned_type_text(&mut program, ty), expected);
 }
 

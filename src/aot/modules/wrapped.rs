@@ -554,6 +554,14 @@ impl Finder<'_, '_> {
                 }
             }
         }
+        let analysis = self.files.analysis(self.file);
+        for binding in analysis.bindings_read_without_expression(hir, bound) {
+            if let Binding::Symbol(symbol) = binding
+                && let Some((_, _, index)) = find_by_key(&self.by_symbol, symbol, |entry| entry.0)
+            {
+                self.candidates[index as usize].is_refused = true;
+            }
+        }
     }
 
     fn find_starts(&self) -> Vec<u32> {

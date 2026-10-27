@@ -96,9 +96,6 @@ export const knownToday: Record<string, string> = {
     "each file: code bytes 2389 -> 2297, operations 86 -> 74; bundled: code bytes 2389 -> 2296, operations 86 -> 74",
   "constants are put where their names stand: inside an arrow in a loop [ts]":
     "each file: code bytes 2388 -> 2296, operations 86 -> 74; bundled: code bytes 2388 -> 2296, operations 86 -> 74",
-  "enums: a const enum [ts, two files]":
-    "bundled: code bytes 381 -> 207, operations 20 -> 10, run-time operations 245 -> 240",
-  "enums: a const enum [ts]": "bundled: code bytes 400 -> 207, operations 18 -> 10, run-time operations 245 -> 240",
   "enums: a declared const enum [ts]":
     'written: "error: ReferenceError: Outside is not defined\\n      at /$bunfs/root/c000/entry.ts:2:13\\n; each file: "error: ReferenceError: Outside is not defined\\n      at /$bunfs/root/c000/entry.js:1:13\\n; bundled: "error: ReferenceError: Outside is not defined\\n      at /$bunfs/root/c000/entry.js:3:20\\n',
   "enums: a member as a case label [ts, two files]":
@@ -109,43 +106,11 @@ export const knownToday: Record<string, string> = {
     "bundled: code bytes 213 -> 134, operations 10 -> 6, run-time operations 241 -> 240",
   "enums: a member as a key [ts]":
     "each file: code bytes 212 -> 134, operations 10 -> 6, run-time operations 241 -> 240; bundled: code bytes 212 -> 134, operations 10 -> 6, run-time operations 241 -> 240",
-  "enums: a member decides a branch [ts, two files]":
-    "each file: code bytes 284 -> 267; bundled: code bytes 284 -> 105, operations 18 -> 5, run-time operations 241 -> 238",
-  "enums: a member decides a branch [ts]":
-    "bundled: code bytes 194 -> 105, operations 10 -> 5, run-time operations 241 -> 238",
-  "enums: a member in brackets [ts, two files]":
-    "bundled: code bytes 243 -> 100, operations 14 -> 4, run-time operations 241 -> 238",
-  "enums: a member in brackets [ts]":
-    "bundled: code bytes 189 -> 100, operations 9 -> 4, run-time operations 241 -> 238",
-  "enums: a switch on a member [ts, two files]":
-    "bundled: code bytes 280 -> 103, operations 19 -> 5, run-time operations 241 -> 238",
-  "enums: a switch on a member [ts]":
-    "bundled: code bytes 185 -> 103, operations 10 -> 5, run-time operations 241 -> 238",
   "enums: an enum handed out whole [ts, two files]": "bundled: operations 15 -> 13",
-  "enums: an enum in two parts [ts, two files]":
-    "bundled: code bytes 365 -> 102, operations 19 -> 5, run-time operations 241 -> 238",
-  "enums: an enum in two parts [ts]":
-    "bundled: code bytes 185 -> 102, operations 11 -> 5, run-time operations 241 -> 238",
-  "enums: an enum nobody reads [ts, two files]":
-    "bundled: code bytes 182 -> 102, operations 10 -> 5, run-time operations 240 -> 238",
-  "enums: an enum nobody reads [ts]":
-    "bundled: code bytes 146 -> 102, operations 7 -> 5, run-time operations 240 -> 238",
-  "enums: an enum read only by members [ts, two files]":
-    "bundled: code bytes 736 -> 367, operations 35 -> 17, run-time operations 246 -> 242",
-  "enums: an enum read only by members [ts]":
-    "bundled: code bytes 500 -> 370, operations 24 -> 17, run-time operations 246 -> 242",
   "enums: members are computed [ts, two files]":
-    "each file: run-time operations 252 -> 244; bundled: code bytes 566 -> 149, operations 34 -> 7, run-time operations 252 -> 238",
+    "each file: run-time operations 252 -> 244; bundled: code bytes 497 -> 149, operations 31 -> 7, run-time operations 252 -> 238",
   "enums: members are computed [ts]":
     "each file: code bytes 447 -> 375, run-time operations 251 -> 244; bundled: code bytes 447 -> 149, operations 24 -> 7, run-time operations 251 -> 238",
-  "enums: members are numbers [ts, two files]":
-    "bundled: code bytes 375 -> 119, operations 22 -> 6, run-time operations 242 -> 239",
-  "enums: members are numbers [ts]":
-    "bundled: code bytes 242 -> 119, operations 13 -> 6, run-time operations 243 -> 239",
-  "enums: members name other enums [ts, two files]":
-    "bundled: code bytes 222 -> 102, operations 13 -> 5, run-time operations 242 -> 238",
-  "enums: members name other enums [ts]":
-    "bundled: code bytes 182 -> 102, operations 10 -> 5, run-time operations 242 -> 238",
   "enums: the name of a member [ts, two files]": "bundled: code bytes 268 -> 240, operations 16 -> 14",
   "esbuild/dce: dce/ConstValueInliningBundle #7": "each file: code bytes 153 -> 102, operations 8 -> 5",
   "esbuild/dce: dce/ConstValueInliningBundle #9": "each file: code bytes 153 -> 102, operations 8 -> 5",
@@ -565,18 +530,8 @@ export const knownToday: Record<string, string> = {
     "written: the build: 3 |         @new y?.[_ + 'x']() |                   ^ | error: TS1209: Invalid ",
   "esbuild/ts: ts/TypeScriptDecoratorsKeepNames":
     "each file: code bytes 16993 -> 3093, operations 984 -> 178; bundled: code bytes 16993 -> 2857, operations 984 -> 131",
-  "files are linked: a const enum of another file [ts]":
-    "bundled: code bytes 242 -> 105, operations 13 -> 5, run-time operations 242 -> 238",
   "files are linked: a constant read before its file has run [js]": "bundled: code bytes 162 -> 129, operations 9 -> 5",
   "files are linked: a constant read before its file has run [ts]": "bundled: code bytes 162 -> 129, operations 9 -> 5",
-  "files are linked: a member of a JSON file [js]":
-    "bundled: code bytes 292 -> 115, operations 17 -> 6, run-time operations 243 -> 239",
-  "files are linked: a member of a JSON file [ts]":
-    "bundled: code bytes 292 -> 115, operations 17 -> 6, run-time operations 243 -> 239",
-  "files are linked: a named member of a JSON file [js]":
-    "bundled: code bytes 228 -> 105, operations 14 -> 5, run-time operations 243 -> 239",
-  "files are linked: a named member of a JSON file [ts]":
-    "bundled: code bytes 228 -> 105, operations 14 -> 5, run-time operations 243 -> 239",
   "files are linked: a namespace exported again [js]": "bundled: operations 8 -> 5",
   "files are linked: a namespace exported again [ts]": "bundled: operations 8 -> 5",
   "files are linked: a namespace of another file [ts]": "bundled: operations 15 -> 11",
@@ -584,16 +539,8 @@ export const knownToday: Record<string, string> = {
   "files are linked: a namespace read by constant names [ts]": "bundled: operations 8 -> 5",
   "files are linked: a namespace read for a name that is not there [js]":
     "bundled: operations 7 -> 5, run-time operations 239 -> 238",
-  "files are linked: an enum of another file [ts]":
-    "bundled: code bytes 292 -> 106, operations 17 -> 5, run-time operations 242 -> 238",
-  "files are linked: an enum of another file decides [ts]":
-    "bundled: code bytes 277 -> 105, operations 18 -> 5, run-time operations 241 -> 238",
-  "files are linked: an enum through a barrel [ts]":
-    "bundled: code bytes 236 -> 96, operations 14 -> 4, run-time operations 241 -> 238",
-  "files are linked: an enum through a namespace [ts]":
-    "bundled: code bytes 230 -> 100, operations 12 -> 4, run-time operations 241 -> 238",
   "files are linked: an enum whose members name an enum of another file [ts]":
-    "each file: run-time operations 245 -> 242; bundled: code bytes 328 -> 208, operations 21 -> 9, run-time operations 245 -> 240",
+    "each file: run-time operations 243 -> 242; bundled: operations 14 -> 9, run-time operations 243 -> 240",
   "names in brackets, keys and shorthand: a computed key that is a text [ts]":
     "each file: code bytes 215 -> 142, operations 9 -> 7, run-time operations 241 -> 240; bundled: code bytes 215 -> 142, operations 9 -> 7, run-time operations 241 -> 240",
   "names in brackets, keys and shorthand: a quoted key [ts]":

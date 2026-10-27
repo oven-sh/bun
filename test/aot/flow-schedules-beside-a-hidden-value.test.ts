@@ -35,6 +35,9 @@ for (const program of [
   "evaluators-and-a-loader-arrive-late-beside-a-hidden-value-and-are-called",
   "members-of-process-are-stored-where-process-arrives-late-beside-a-hidden-value",
   "members-of-string-prototype-are-replaced-where-it-arrives-late-beside-a-hidden-value",
+  "members-of-event-target-prototype-are-replaced-where-it-arrives-late-beside-a-hidden-value",
+  "members-of-event-target-prototype-are-replaced-beside-a-hidden-value-by-functions-that-hand-nothing-on",
+  "members-of-date-prototype-are-replaced-beside-a-hidden-value-by-functions-that-hand-nothing-on",
   "util-extend-replaces-members-of-string-prototype-that-arrives-late-beside-a-hidden-value",
   // Of another kind: a bound function is handed to the host, and which other functions are handed out at the same time is the schedule's.
   "a-listener-object-holds-object-assign-bound-to-an-object-that-is-read-behind-the-event",

@@ -80,8 +80,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         builtin: BuiltinId,
         tail: Tail<'_>,
     ) -> ValueId {
-        let (is_annotated_pure, is_never_inlined, is_reflect_construct_syntax) =
-            (false, true, false);
+        let (is_annotated_pure, is_never_inlined, is_done_in_place) = (false, true, false);
         let called = self.builder.call(
             compiled,
             None,
@@ -93,7 +92,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             None,
             is_annotated_pure,
             is_never_inlined,
-            is_reflect_construct_syntax,
+            is_done_in_place,
         );
         self.return_call_in_tail_position(called, tail)
     }

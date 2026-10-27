@@ -162,7 +162,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             Binding::Symbol(symbol) if is_for_typeof && self.is_unresolvable(symbol) => {
                 self.builder.undefined()
             }
-            Binding::Symbol(_) | Binding::Arguments(_) => self.get_binding(root.binding, root.name),
+            Binding::Symbol(_) | Binding::Arguments(_) => {
+                self.get_binding_without_expression(root.binding, root.name)
+            }
         }
     }
 

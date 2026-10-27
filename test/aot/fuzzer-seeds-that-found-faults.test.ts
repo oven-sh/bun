@@ -9,6 +9,7 @@ const seeds = [
   "grammar:1792621378449",
   "grammar:1792650538967",
   "grammar:1792651298168",
+  "many-live-values:5501704",
   "new-objects-kept-through-built-ins:611792807813520",
   "new-targets:1792623820412",
   "new-targets:1792629296563",

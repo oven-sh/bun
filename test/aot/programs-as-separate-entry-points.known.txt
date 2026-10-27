@@ -1,7 +1,2 @@
 every-member-of-a-host-object/a-member-that-was-left-out-reads-as-a-function-and-only-a-call-throws	the executable holds console.Console, and both uses print "object"
-impostors/array-methods-hand-over-the-value	the call of the bound function throws that the function was not compiled into the executable
-impostors/eval-reassigns-a-function-declaration-and-its-callers-get-something-else	the call of the bound function throws that the function was not compiled into the executable
-impostors/functions-made-by-eval-are-called-with-honest-values-and-impostors	the call of the bound function throws that the function was not compiled into the executable
-native-callbacks/a-getter-read-by-a-protocol-throws-bound-that-answers	the read of Symbol.species by then() throws that the getter was not compiled into the executable
-native-callbacks/a-getter-read-by-a-protocol-throws-bound-twice	the reads by then() and finally() throw that the getter was not compiled into the executable
 untyped-speed/a-listener-added-counted-and-removed-is-not-three-times-as-slow-as-on-a-class-written-by-hand	it prints "over three times the time"

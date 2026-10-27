@@ -110,4 +110,7 @@ function look(where) {
 }
 look("function");
 Promise.resolve().then(() => look("job"));
-setTimeout(() => look("timer"), 0);
+setTimeout(() => {
+  look("timer");
+  globalThis.timerHasLooked();
+}, 0);

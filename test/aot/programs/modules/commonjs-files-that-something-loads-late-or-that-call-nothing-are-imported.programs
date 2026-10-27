@@ -21,7 +21,7 @@ import "./first.cjs";
 const who = "main";
 import * as ns from "./a.cjs"; console.log(who, ns.x);
 //// a-name-that-stands-for-a-name-of-a-file-whose-body-requires-a-module-that-reads-it.json
-{ "skipInShell": "it needs Bun's CommonJS modules and require()" }
+{ "env": { "BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER": "1" }, "skipInShell": "it needs Bun's CommonJS modules and require()" }
 //// a-name-that-stands-for-a-name-of-a-file-whose-body-requires-the-file-that-hands-it-on/a.cjs
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
@@ -40,7 +40,7 @@ import "./first.cjs";
 const who = "main";
 import * as ns from "./a.cjs"; console.log(who, ns.x);
 //// a-name-that-stands-for-a-name-of-a-file-whose-body-requires-the-file-that-hands-it-on.json
-{ "skipInShell": "it needs Bun's CommonJS modules and require()" }
+{ "env": { "BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER": "1" }, "skipInShell": "it needs Bun's CommonJS modules and require()" }
 //// a-pattern-takes-names-behind-getters-from-an-awaited-import-of-a-file-that-calls-nothing/main.mjs
 const { a, b } = await import("./q.cjs"); console.log(a, typeof b === "function" ? b() : b);
 //// a-pattern-takes-names-behind-getters-from-an-awaited-import-of-a-file-that-calls-nothing/q.cjs
@@ -103,7 +103,7 @@ console.log(who, "keys", Object.keys(ns).join(), String(ns.default));
 import { lazy } from "./lazy.cjs";
 console.log("main lazy", String(lazy()));
 //// keys-of-the-namespace-of-a-file-that-marks-itself-behind-a-call-out-of-its-body.json
-{ "skipInShell": "it needs Bun's CommonJS modules and require()" }
+{ "env": { "BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER": "1" }, "skipInShell": "it needs Bun's CommonJS modules and require()" }
 //// members-of-the-namespace-of-a-file-with-a-getter-that-an-earlier-file-starts/first.cjs
 console.log("first begins");
 globalThis.called = function () { globalThis.called = function () {}; console.log("hook lazy", String(require("./lazy.cjs").lazy())); };
@@ -127,7 +127,7 @@ console.log(who, "ns", String(ns.default), ns.x, ns.early);
 import { lazy } from "./lazy.cjs";
 console.log("main lazy", String(lazy()));
 //// members-of-the-namespace-of-a-file-with-a-getter-that-an-earlier-file-starts.json
-{ "skipInShell": "it needs Bun's CommonJS modules and require()" }
+{ "env": { "BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER": "1" }, "skipInShell": "it needs Bun's CommonJS modules and require()" }
 //// names-stored-in-a-chain-by-a-file-that-calls-nothing-and-is-imported-again-late/main.mjs
 import d, { a, b } from "./q.cjs"; console.log(typeof d === "object" ? JSON.stringify(d) : d, a, typeof b); globalThis.again = () => import("./q.cjs");
 //// names-stored-in-a-chain-by-a-file-that-calls-nothing-and-is-imported-again-late/q.cjs
@@ -160,7 +160,7 @@ console.log(who, "d x", String(d), x);
 import { lazy } from "./lazy.cjs";
 console.log("main lazy", String(lazy()));
 //// the-default-and-a-name-of-a-file-without-the-marker-that-an-earlier-file-starts.json
-{ "skipInShell": "it needs Bun's CommonJS modules and require()" }
+{ "env": { "BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER": "1" }, "skipInShell": "it needs Bun's CommonJS modules and require()" }
 //// the-default-of-a-file-that-an-earlier-file-starts-and-that-is-required-again-from-its-own-body/first.cjs
 console.log("first begins");
 globalThis.called = function () { globalThis.called = function () {}; console.log("hook lazy", String(require("./lazy.cjs").lazy())); };
@@ -183,7 +183,7 @@ console.log(who, "d", typeof d, d && d.default, String(d));
 import { lazy } from "./lazy.cjs";
 console.log("main lazy", String(lazy()));
 //// the-default-of-a-file-that-an-earlier-file-starts-and-that-is-required-again-from-its-own-body.json
-{ "skipInShell": "it needs Bun's CommonJS modules and require()" }
+{ "env": { "BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER": "1" }, "skipInShell": "it needs Bun's CommonJS modules and require()" }
 //// the-default-of-a-file-that-is-required-again-from-its-own-body/first.cjs
 console.log("first begins");
 globalThis.called = function () { globalThis.called = function () {}; const k = require("./k.cjs"); console.log("hook", k.__esModule, String(k.default), k.x, k.early); };
@@ -206,7 +206,7 @@ console.log(who, "d", typeof d, d && d.default, String(d));
 import { lazy } from "./lazy.cjs";
 console.log("main lazy", String(lazy()));
 //// the-default-of-a-file-that-is-required-again-from-its-own-body.json
-{ "skipInShell": "it needs Bun's CommonJS modules and require()" }
+{ "env": { "BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER": "1" }, "skipInShell": "it needs Bun's CommonJS modules and require()" }
 //// the-default-of-a-file-whose-body-requires-a-module-that-imports-the-file/first.cjs
 console.log("first begins");
 globalThis.called = function () { globalThis.called = function () {}; require("./late.mjs"); };
@@ -233,7 +233,7 @@ console.log(who, "d", typeof d, d && d.default, String(d));
 import { lazy } from "./lazy.cjs";
 console.log("main lazy", String(lazy()));
 //// the-default-of-a-file-whose-body-requires-a-module-that-imports-the-file.json
-{ "skipInShell": "it needs Bun's CommonJS modules and require()" }
+{ "env": { "BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER": "1" }, "skipInShell": "it needs Bun's CommonJS modules and require()" }
 //// the-namespace-of-an-awaited-import-of-a-file-that-calls-nothing-and-requires-late/back.cjs
 const q = require("./q.cjs");
 exports.seen = [q.a, typeof q.b, q.default].join();

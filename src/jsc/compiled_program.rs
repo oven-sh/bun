@@ -47,6 +47,7 @@ unsafe extern "C" {
     safe fn Bun__AOT__imageCode() -> Bytes;
     safe fn Bun__AOT__takePagesForTablesOfFirstThread();
     safe fn Bun__isCompiledProgramFile(path: &bun_core::String) -> bool;
+    safe fn Bun__isCompiledProgramFileInSomeForm(path: &bun_core::String) -> bool;
     safe fn Bun__AOT__entryPointIsCommonJS(global: &JSGlobalObject) -> bool;
     safe fn Bun__AOT__errorIfCodeOutsideImageIsRefused(
         global: &JSGlobalObject,
@@ -80,6 +81,23 @@ pub fn runs_in_place() -> bool {
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__compiledProgramRunsInPlace() -> bool {
     runs_in_place()
+}
+
+/// BunCompiledModules.cpp. `Dead`: the image is not asked.
+#[unsafe(no_mangle)]
+pub extern "C" fn Bun__AOT__pathOfForm(
+    path: &bun_core::String,
+    type_attribute: &bun_core::String,
+    is_form_without_attributes: &mut bool,
+) -> bun_core::String {
+    let (path, type_attribute) = (path.to_utf8(), type_attribute.to_utf8());
+    match bun_aot::module_keys::places_of_form(path.slice(), type_attribute.slice()) {
+        Some(places) => {
+            *is_form_without_attributes = places.is_form_without_attributes;
+            bun_core::String::clone_utf8(&places.path_of_form)
+        }
+        None => bun_core::String::DEAD,
+    }
 }
 
 fn bytes_of(image: &[u8]) -> Bytes {
@@ -192,7 +210,8 @@ fn find_module_path(path: &[u8]) -> Option<&'static [u8]> {
     } else {
         path
     };
-    if !Bun__isCompiledProgramFile(&bun_core::StringView::from_bytes(path)) {
+    // The attributes of the import say which form of the file is asked for, and the resolver does not see them.
+    if !Bun__isCompiledProgramFileInSomeForm(&bun_core::StringView::from_bytes(path)) {
         return None;
     }
     let mut paths = PATHS.lock();

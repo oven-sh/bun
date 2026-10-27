@@ -1,4 +1,4 @@
-// proxy[index] hands the get trap the index as a string, and proxy[index] = value the set trap. Compiled code takes the strings of small indexes from where they are kept and calls the trap itself. It asks the run time the first time, behind a collection, and for an index that is large, negative or no integer.
+// proxy[index] hands the get trap the index as a string, proxy[index] = value the set trap, and index in proxy the has trap. Compiled code takes the strings of small indexes from where they are kept and calls the trap itself. It asks the run time the first time, behind a collection, and for an index that is large, negative or no integer.
 const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
 const asked = () => count("operationAOTGetByVal") + count("operationAOTGetByValAndCache") + count("operationAOTGetWithProxyTrap") + count("operationAOTPutByVal") + count("operationAOTPutByValAndCache") + count("operationAOTPutByValAndCacheSloppy") + count("operationAOTSetWithProxyTrap") + count("operationAOTFinishSetThroughProxy");
 const collect = typeof gc === "function" ? gc : () => Bun.gc(true);
@@ -80,3 +80,34 @@ attempt("a set trap that throws", () => { let caught = 0; const thrower = new Pr
 attempt("a proxy above the receiver", () => { const seenAbove = []; const heir = Object.create(new Proxy({}, { set(target, key, value, receiver) { seenAbove.push(key + (receiver === heir)); return true; } })); for (let i = 0; i < 40; i++) storeAt(heir, i & 3, i); return seenAbove.length + " " + seenAbove[39] + " " + Object.keys(heir).length; });
 attempt("stores behind collections", () => { for (let round = 0; round < 5; round++) { collect(); for (let i = 0; i < 300; i++) storeAt(storing, i & 7, i); } return written.join(); });
 attempt("the same site stores to other things", () => { const list = [0, 0], bytes = new Uint8Array(2), record = {}; for (const each of [list, bytes, record, storing]) storeAt(each, 1, 9); return [list[1], bytes[1], record[1], written[1]].join(); });
+
+// Presence.
+const hasAt = (object, index) => index in object;
+const askedAboutPresence = () => count("operationAOTInByValAndCache") + count("operationAOTHasWithProxyTrap");
+function measurePresence(label, ask, bound) {
+  for (let i = 0; i < 40; i++) ask(i);
+  const before = askedAboutPresence();
+  let text = "";
+  for (let i = 0; i < 1000; i++) text = String(ask(i));
+  console.log(label + ": " + text + " | " + (askedAboutPresence() - before <= bound));
+}
+const askedUnder = new Set;
+const answering = new Proxy([1, 2, 3, 4], { has(target, key) { askedUnder.add(typeof key + " " + key); return Number(key) < target.length; } });
+measurePresence("the has trap answers", i => hasAt(answering, i & 3) + " " + hasAt(answering, 4 + (i & 3)), 20);
+console.log([...askedUnder].sort().join());
+const answeringOn = new Proxy([1, 2, 3, 4], { has(target, key) { return Reflect.has(target, key); } });
+measurePresence("the has trap hands on", i => hasAt(answeringOn, i & 7), 20);
+const keysAsked = [];
+const listingPresence = new Proxy({}, { has(target, key) { keysAsked.push(typeof key + " " + String(key)); return true; } });
+for (const index of [0, 10, 1023, 1024, 4294967294, 4294967295, -1, -0, 0.5, NaN, "7", 7n])
+  attempt("asked under " + (Object.is(index, -0) ? "-0" : typeof index + " " + String(index)), () => { keysAsked.length = 0; let yes = 0; for (let i = 0; i < 40; i++) yes += hasAt(listingPresence, index); return yes + " " + keysAsked.length + " " + keysAsked[39]; });
+attempt("no has trap", () => { const bare = new Proxy([1, , 3], {}); let said = ""; for (let i = 0; i < 40; i++) said = [hasAt(bare, 0), hasAt(bare, 1), hasAt(bare, 2), hasAt(bare, 3)].join(); return said; });
+for (const answer of [0, 1, "", "yes", null, undefined, {}, NaN]) attempt("the has trap says " + String(answer), () => { const p = new Proxy([], { has() { return answer; } }); let said; for (let i = 0; i < 20; i++) said = hasAt(p, 1); return said; });
+for (let round = 0; round < 3; round++) {
+  attempt("a target that binds the answer", () => [Object.freeze([1]), Object.preventExtensions([1]), Object.defineProperty([], 0, { value: 1, configurable: false })].map(target => { const p = new Proxy(target, { has() { return false; } }); try { return hasAt(p, 0) + " " + hasAt(p, 1); } catch (error) { return error.constructor.name; } }).join());
+  attempt("a has trap that throws", () => { let caught = 0; const p = new Proxy([], { has(target, key) { throw new RangeError("no " + key); } }); for (let i = 0; i < 40; i++) try { hasAt(p, i & 3); } catch (error) { if (error.message === "no " + (i & 3)) caught++; } return caught; });
+  attempt("revoked, asked", () => { const pair = Proxy.revocable([1], { has() { return true; } }); const before = hasAt(pair.proxy, 0); pair.revoke(); try { return hasAt(pair.proxy, 0); } catch (error) { return before + " " + error.constructor.name; } });
+  attempt("a proxy above the object that is asked", () => { const asked = []; const heir = Object.create(new Proxy({}, { has(target, key) { asked.push(typeof key + key); return key === "2"; } })); heir[0] = 1; return [hasAt(heir, 0), hasAt(heir, 1), hasAt(heir, 2), asked.join()].join(" "); });
+}
+attempt("presence behind collections", () => { let yes = 0; for (let round = 0; round < 5; round++) { collect(); for (let i = 0; i < 300; i++) yes += hasAt(answering, i & 7); } return yes; });
+attempt("the same site asks other things", () => [hasAt(answering, 1), hasAt([1, 2], 1), hasAt({ 1: "own" }, 1), hasAt(new Uint8Array(2), 1), hasAt(new Uint8Array(1), 1), hasAt(new String("ab"), 1), hasAt(new Map, 1)].join());

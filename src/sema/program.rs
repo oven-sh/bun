@@ -896,6 +896,8 @@ struct ParseKey {
     origin: usize,
 }
 
+type ParsesOfPath<'u> = Vec<(ParseKey, &'u Parse<'u>, bool), &'u Session>;
+
 /// State shared by the programs of one request: the names, and each file parsed and bound once. Two
 /// programs share a file if its path and its `ParseKey` are equal. It's read once, since a file
 /// doesn't change during a request. The programs may run concurrently.
@@ -904,7 +906,8 @@ pub struct Run<'u> {
     /// `Interner::in_common`
     atoms: Interner<'u>,
     /// By path. The last element is true if the file couldn't be read: see `Host::read_source`.
-    parsed: ShardedMap<Vec<u8>, Guarded<Vec<(ParseKey, &'u Parse<'u>, bool)>>>,
+    /// Allocated in `session`, because nothing drops the run of a compile build.
+    parsed: ShardedMap<Vec<u8, &'u Session>, Guarded<ParsesOfPath<'u>>, &'u Session>,
     /// The paths (`tspath.Path`) whose text differs from what's on disk. They're parsed separately for each program.
     provided: FxHashSet<Vec<u8>>,
     /// Only declaration files are shared. Every other file is parsed for each program and freed with it.
@@ -920,7 +923,7 @@ impl<'u> Run<'u> {
         Run {
             session,
             atoms: Interner::in_common(session),
-            parsed: ShardedMap::default(),
+            parsed: ShardedMap::new_in(session),
             provided,
             only_declaration_files: false,
             parses: AtomicUsize::new(0),
@@ -934,7 +937,7 @@ impl<'u> Run<'u> {
         Run {
             session,
             atoms,
-            parsed: ShardedMap::default(),
+            parsed: ShardedMap::new_in(session),
             provided: FxHashSet::default(),
             only_declaration_files: true,
             parses: AtomicUsize::new(0),
@@ -989,9 +992,10 @@ impl<'u> Run<'u> {
     ) -> &'u Parse<'u> {
         let path_parses = match self.parsed.get_ref(path) {
             Some(path_parses) => path_parses,
-            None => self
-                .parsed
-                .insert_ref(path.to_vec(), Guarded::new(Vec::new())),
+            None => self.parsed.insert_ref(
+                path.to_vec_in(self.session),
+                Guarded::new(Vec::new_in(self.session)),
+            ),
         };
         // Held until the file is parsed, so a program that reaches it at the same time waits.
         let mut path_parses = path_parses.lock();
@@ -6797,7 +6801,11 @@ impl<'s> Files<'s> {
         if prefetch.is_done() {
             return meanwhile(&mut || ());
         }
-        let (threads, io) = (host.threads(), host.io_pool());
+        let io = match build {
+            Some(build) => build.io_pool(),
+            None => host.io_pool(),
+        };
+        let threads = host.threads();
         let mut pools_lock = io.map(|_| WAITS_ACROSS_POOLS.lock());
         let mut meanwhile = || meanwhile(&mut || drop(pools_lock.take()));
         let mut on_all_threads = |steps: LoadSteps| {

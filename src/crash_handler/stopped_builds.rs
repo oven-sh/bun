@@ -21,12 +21,6 @@ pub struct BuildDescribers {
 
 static DESCRIBERS: OnceLock<BuildDescribers> = OnceLock::new();
 static BUILDS_UNDER_WAY: AtomicUsize = AtomicUsize::new(0);
-static ENDS_BY_SIGNAL: AtomicBool = AtomicBool::new(false);
-
-/// For a process whose parent tells a build that the compiler could not finish from one that it refused by how the process ends.
-pub fn end_stopped_builds_by_signal() {
-    ENDS_BY_SIGNAL.store(true, Ordering::Relaxed);
-}
 
 /// What the engine says. Where it says nothing, what the front end says, which also checks programs that nobody compiles.
 fn describe(
@@ -74,7 +68,7 @@ pub(crate) fn write_where_this_thread_stopped(writer: &mut impl Write) {
 
 /// None for a thread that is not at work for a build.
 pub(crate) fn place_of_this_thread() -> Option<PlaceInBuild> {
-    if BUILDS_UNDER_WAY.load(Ordering::SeqCst) == 0 || ENDS_BY_SIGNAL.load(Ordering::Relaxed) {
+    if BUILDS_UNDER_WAY.load(Ordering::SeqCst) == 0 {
         return None;
     }
     let place = PlaceInBuild::of_this_thread();

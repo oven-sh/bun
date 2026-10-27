@@ -13,7 +13,13 @@ import { spread } from "./case-files";
 type Kind = { name: string; list: string; zero: string; one: string; type: string };
 
 const numbers = (name: string, list: string): Kind => ({ name, list, zero: "0", one: "1", type: name });
-const bigInts = (name: string): Kind => ({ name, list: "[1n, 2n, 3n, 250n, 5n, 6n, 7n, 8n, 9n, 10n, 11n, 12n]", zero: "0n", one: "1n", type: name });
+const bigInts = (name: string): Kind => ({
+  name,
+  list: "[1n, 2n, 3n, 250n, 5n, 6n, 7n, 8n, 9n, 10n, 11n, 12n]",
+  zero: "0n",
+  one: "1n",
+  type: name,
+});
 const integers = "[1, 2, 3, 250, -5, 300, 70000, 8, 9, 10, 11, 12]";
 const fractions = "[1.5, 2.25, -3, 250, 5, 6.5, 7, 8, 9, -10, 11, 12.75]";
 
@@ -186,13 +192,26 @@ export const declarations: Record<string, string> = {
 };
 
 export const everyCase = Object.keys(kinds).flatMap(kind =>
-  others[kind].flatMap(other => Object.keys(ways).flatMap(made => Object.keys(declarations).map(declared => `${kind} ${other} ${made} ${declared}`))),
+  others[kind].flatMap(other =>
+    Object.keys(ways).flatMap(made =>
+      Object.keys(declarations).map(declared => `${kind} ${other} ${made} ${declared}`),
+    ),
+  ),
 );
 export const sample = (count: number) => spread(everyCase, count);
 
 const options = () =>
   JSON.stringify({
-    compilerOptions: { target: "esnext", module: "preserve", moduleResolution: "bundler", strict: false, noEmit: true, skipLibCheck: true, typeRoots: [join(import.meta.dir, "..", "..", "..", "packages")], types: ["bun-types"] },
+    compilerOptions: {
+      target: "esnext",
+      module: "preserve",
+      moduleResolution: "bundler",
+      strict: false,
+      noEmit: true,
+      skipLibCheck: true,
+      typeRoots: [join(import.meta.dir, "..", "..", "..", "packages")],
+      types: ["bun-types"],
+    },
   });
 
 export function program(name: string, turns = 3): { file: string; text: string; files: Record<string, string> } {

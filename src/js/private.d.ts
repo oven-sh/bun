@@ -1481,9 +1481,6 @@ interface $BunModules {
   "internal/net/isIP": $ModuleValue<typeof import("./internal/net/isIP")>;
   "internal/net/server_abort_signal": $ModuleValue<typeof import("./internal/net/server_abort_signal")>;
   "internal/net/symbols": $ModuleValue<typeof import("./internal/net/symbols")>;
-  "internal/perf_hooks/monitorEventLoopDelay": $ModuleValue<
-    typeof import("./internal/perf_hooks/monitorEventLoopDelay")
-  >;
   "internal/primordials": $ModuleValue<typeof import("./internal/primordials")>;
   "internal/process/next_tick_queue": $ModuleValue<typeof import("./internal/process/next_tick_queue")>;
   "internal/process/tick_ring": $ModuleValue<typeof import("./internal/process/tick_ring")>;

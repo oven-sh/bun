@@ -139,6 +139,20 @@ await box.handle.close();
   });
 });
 
+test("a symbol that the program writes is found where the key may also be something that nobody knows", async () => {
+  using dir = tempDir("aot-method-under-a-written-symbol-or-another-key", {
+    "lines.txt": "one\ntwo\nthree\n",
+    "written-beside-another-key.mjs": `import { open } from "node:fs/promises";
+globalThis.kept = await open("lines.txt");
+const handle = Reflect.get(globalThis, "kept");
+const named = key => Reflect.get(globalThis, "a key that nobody has set") ?? key;
+await handle[named(Symbol.asyncDispose)]();
+console.log(handle.fd);
+`,
+  });
+  await expectSameAsBunRun(String(dir), "written-beside-another-key.mjs");
+});
+
 test("an accessor of a library class runs where the program or the library reads or stores by its name", async () => {
   using dir = tempDir("aot-accessors-of-library-classes", {
     "stored-by-the-library.mjs": `import { SQL } from "bun";

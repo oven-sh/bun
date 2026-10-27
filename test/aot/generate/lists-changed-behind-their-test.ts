@@ -392,6 +392,9 @@ console.log(total);
 `;
 }
 
+/** What does not get through every build today, and how. Whoever mends it takes the line out. */
+const stopsToday: Record<string, string> = {};
+
 function files() {
   const written: Record<string, string> = { ...shapedForOneWayToMove };
   const kindNames = Object.keys(kinds);
@@ -417,6 +420,7 @@ function files() {
         if (text) written[`${kindName}-${changeName}-${placeName}.ts`] = text;
       }
     }
+  for (const name in stopsToday) written[`${name}.todo.txt`] = stopsToday[name] + "\n";
   return written;
 }
 

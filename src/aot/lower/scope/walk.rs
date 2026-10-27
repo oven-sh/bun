@@ -100,6 +100,8 @@ pub(super) struct ScopeWalk {
     pub(super) is_initialized_conditionally: Vec<bool>,
     pub(super) slot_initializations: Vec<((ScopeId, ScopeSlot), u32)>,
     pub(super) hoisted_functions: Vec<(ScopeId, SymbolId, FnId)>,
+    // Each getter or setter of an object literal with the half of its accessor in front of it, where nothing between the two may give the name a value.
+    pub(super) halves_in_front: Vec<(WalkedFunctionId, WalkedFunctionId)>,
     pub(super) loops: Vec<WalkedLoop>,
     pub(super) tries: Vec<WalkedTry>,
     // Each identifier that a symbol is stored through, with the function that it stands in.
@@ -187,8 +189,8 @@ struct Walker<'x, 's> {
     last_users: Vec<Option<WalkedFunctionId>>,
     unprinted_uses: Vec<(WalkedFunctionId, SymbolId)>,
     pending_stores: Vec<SymbolId>,
-    // By function: the half of an accessor behind which lowering may make this getter or setter of the same literal. Empty until there is one.
-    first_halves: Vec<FnId>,
+    // `ScopeWalk::halves_in_front` by function, from where the literal is met until its functions are. Empty until there is one.
+    halves_in_front: Vec<FnId>,
     // The expressions of the expression statements that stand under no branch, loop, `try`, `switch`, label or `with` of their function.
     unconditional_statements: Vec<ExprId>,
     clock: u32,

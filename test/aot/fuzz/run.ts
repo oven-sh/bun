@@ -12,6 +12,8 @@
 //   --batch <n>           the largest number of programs in one build of the product (default 32)
 //   --seed <n>            the first seed (default: from the clock). Program number i has seed + i
 //   --sources a,b:8       of mutation, grammar, protocols, new-targets, object-mutations, typed-object-mutations, unsound-types (default: all). A number is a weight: b is drawn eight times as often as a
+//   --one-file-only       without it every second program of each source is drawn in several files: the declarations at its top lie in up to four further files that import from each other, and its source is called <source>-in-several-files,
+//                         which --sources and --replay take too. A finding in such a program is tried in one file first; if it takes the files, files are cut first, then lines
 //   --flags "<flags>"     added to every build on the product bed; --engine-flags the same for the engine bed
 //   --validate            also builds each program in validate mode
 //   --modes a,b           only these modes of the product bed: default, validate, proofs-checked, erased, every-function-hot, and those that run only when named here:
@@ -42,7 +44,7 @@
 // of the kind "build refused".
 //
 // In --out: status.txt (one line, rewritten every 20 s), groups.tsv (for the sources that name what a program is about: programs, runs and failures of each group), failures.tsv (every failure, known and repeated ones too), findings.tsv (one line per distinct finding) and findings/<name>/ with
-// reduced.*, original.*, plain.txt, compiled.txt and finding.json (seed, source, bed, mode, flags, binary, what is guilty).
+// reduced.*, original.*, plain.txt, compiled.txt and finding.json (seed, source, bed, mode, flags, binary, what is guilty). A program of several files is a folder reduced/ or original/ that begins at main.*.
 import { existsSync, mkdirSync, readdirSync, rmSync } from "fs";
 import { availableParallelism } from "os";
 import { join } from "path";
@@ -77,9 +79,10 @@ for (const { bed } of beds) if (bed instanceof EngineBed) console.log("the engin
 if (replay) {
   const [source, seed] = replay.split(":");
   const { bed } = beds[0];
-  const generated = (await allSources(programsRoot, new Set()))[source](Number(seed), bed);
+  const generated = (await allSources(programsRoot, new Set(), true))[source](Number(seed), bed);
   if (!generated) throw new Error("the source gives no program for this seed");
   console.log(`// ${generated.source}:${generated.seed} ${generated.notes}\n${generated.text}`);
+  for (const [path, text] of Object.entries(generated.files ?? {})) console.log(`// ${path}\n${text}`);
   if (!has("print-only")) {
     mkdirSync(work, { recursive: true });
     for (const mode of bed.modes(generated)) console.log(`// ${bed.name} ${mode.name}:`, (await bed.judge(work, [generated], mode.flags))[0].verdict);
@@ -101,6 +104,7 @@ if (replay) {
       sources: option("sources")?.split(",").flatMap(word => Array<string>(Number(word.split(":")[1] ?? 1)).fill(word.split(":")[0])),
       attribute: !has("no-attribution"),
       isCountOnly: has("count-only"),
+      alsoInSeveralFiles: !has("one-file-only"),
       known: [join(import.meta.dir, "accepted-differences.tsv"), ...options("known")],
       minFreeBytes: Number(option("min-free-gb") ?? 4) * 2 ** 30,
       reduceSeconds: Number(option("reduce-seconds") ?? 600),

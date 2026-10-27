@@ -27,7 +27,6 @@ const known: string[] = [
   "FlowFunctionTables::functionsWhoseClosuresAreNeverCompared: never written",
   "FlowFunctionTables::functionsWithOneClosure: never written",
   "FlowFunctionTables::storedFramePointerUses: never written",
-  "FlowModuleLoad::isSynchronous: never written",
   "FlowModuleOrder::componentsCompletedBefore: never read",
   "FlowProgramTables::loadsOfMachineCode: never written",
   "FlowReport::builtinsUsed: never read",

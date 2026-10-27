@@ -1027,8 +1027,8 @@ class Exchange {
   ) {
     this.flags = 0;
     this.headerState = 0;
-    this.headerBits = 0;
-    this.shape = noHeadersShape;
+    this.headerBits = IS_COMPILED_AHEAD_OF_TIME ? 0 : HEADER_SPILLED;
+    this.shape = IS_COMPILED_AHEAD_OF_TIME ? noHeadersShape : spilledHeadersShape;
     this.value0 = 0;
     this.value1 = 0;
     this.value2 = 0;
@@ -1250,18 +1250,19 @@ function removeShapedHeader(exchange: Exchange, name: string, key: string): void
   if (last === 0) exchange.wasEmptied = true;
 }
 
-function headerEntriesOf(exchange: Exchange, message: $Node.OutgoingMessage): unknown[] {
+function headerEntriesOf(exchange: Exchange | undefined, message: $Node.OutgoingMessage): unknown[] | undefined {
   const entries: unknown[] = [];
-  const shape = exchange.shape;
+  const shape = exchange === undefined ? spilledHeadersShape : exchange.shape;
   if (shape !== spilledHeadersShape) {
     const names = namesOf(shape);
     const keys = shape.keys!;
     for (let index = 0; index < names.length; index++)
-      entries.push(keys[index], names[index], shapedValue(exchange, index));
+      entries.push(keys[index], names[index], shapedValue(exchange!, index));
     return entries;
   }
   const headers = message[kOutHeaders];
-  if (headers !== null && headers !== undefined) {
+  if (headers === undefined) return undefined;
+  if (headers !== null) {
     for (const key in headers) {
       const entry = headers[key];
       entries.push(key, entry[0], entry[1]);
@@ -1315,6 +1316,27 @@ function spillHeadersReachedThrough(receiver: $Node.OutgoingMessage): void {
     spillHeaders(exchange);
     outgoingIsLenientHeaderValidation.$call(response);
   }
+}
+
+// The headers of a response lie in its exchange, and nobody has asked about leniency. Whoever looks under the symbol of the map of headers or of that answer, with a key that is a value, finds what setHeader() would have left there.
+function showHeadersInMap(this: $Node.OutgoingMessage): void {
+  const exchange = this.$exchange;
+  if (exchange === undefined) return;
+  const response = exchange.response;
+  if (response !== this) return;
+  const hasSetHeader = exchange.shape.count !== 0 || exchange.wasEmptied;
+  spillHeaders(exchange);
+  if (hasSetHeader) outgoingIsLenientHeaderValidation.$call(response);
+}
+
+if (IS_COMPILED_AHEAD_OF_TIME) {
+  const prepareHoldersBeforeLookupsUnder = $newCppFunction(
+    "BunCompiledModules.cpp",
+    "jsFunctionPrepareHoldersBeforeLookupsUnder",
+    2,
+  );
+  prepareHoldersBeforeLookupsUnder(kOutHeaders, showHeadersInMap);
+  prepareHoldersBeforeLookupsUnder(kLenientValidation, showHeadersInMap);
 }
 
 function hasHeaderUnderKey(exchange: Exchange, message: $Node.OutgoingMessage, key: string, bit: number): boolean {
@@ -2217,10 +2239,11 @@ ObjectDefineProperty(OutgoingMessage.prototype, "_headers", {
   ),
   set: deprecate(
     function (this: $Node.OutgoingMessage, val: Record<string, $Node.HttpHeaderValue> | null | undefined) {
-      spillHeadersOf(this);
       if (val == null) {
+        spillHeadersOf(this);
         this[kOutHeaders] = null;
       } else if (typeof val === "object") {
+        spillHeadersOf(this);
         const headers = (this[kOutHeaders] = { __proto__: null } as $Node.OutgoingHttpHeaders);
         const keys = ObjectKeys(val);
         // Retain for(;;) loop for performance reasons

@@ -1,11 +1,11 @@
 // A build that does not reach its end says on stderr what it was compiling: the function, the file and line where that function starts, and the step of the compiler.
 // That holds however it stops: an assertion of the compiler fails, the compiler reads a bad address, or somebody ends a build that takes too long.
-// A build that the compiler itself cannot finish ends as one with any other error does: with a line that starts with "error", exit code 1, and no executable.
+// A compiler that crashes ends as Bun does at any other crash: that line stands in the crash report, behind the reason, and the process ends by the signal.
 //
 // `--aot-sabotage=<name>` (hidden) makes a build stop at a known place: in a function named stopsTheCompiler, or at a step that every build has.
 import { afterAll, expect } from "bun:test";
 import { existsSync, rmSync } from "fs";
-import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { spawned, withoutCoreDump, withoutCrashReport, withoutDebugInformation } from "./run-programs";
 import { describe, test } from "./supported";
@@ -58,36 +58,45 @@ describe("compile/aot/a build that stops says where", () => {
       executableOf(file, ...flags),
     ]);
   const environment = { ...bunEnv, ...withoutCrashReport };
-  // A sanitizer ends the process in its own way.
+  // A sanitizer ends the process in its own way, and Windows has exit codes alone.
+  const endsBySignal = !isASAN && !isWindows;
   const endOf = (build: { exitCode: number; signal: string | null }) =>
-    isASAN ? { hasEndedWell: build.exitCode === 0 } : { exitCode: build.exitCode, signal: build.signal };
-  const endWithAnError = isASAN ? { hasEndedWell: false } : { exitCode: 1, signal: null };
-  const errorOfTheCompiler = isASAN ? "" : "error: internal compiler error: .*\\n";
+    endsBySignal ? { signal: build.signal } : { hasEndedWell: build.exitCode === 0 };
+  const endBy = (signal: RegExp) =>
+    endsBySignal ? { signal: expect.stringMatching(signal) } : { hasEndedWell: false };
+  // macOS has a trap where the others call abort().
+  const failedAssertion = /^SIG(ABRT|TRAP)$/;
+  const reasonOfTheCrash = isASAN ? "" : "={60}\\n(?:.*\\n)*?panic.*: .+\\n";
+  // A build for debugging prints the frames by name in its place.
+  const linkOfTheCrash = isASAN || isDebug ? "" : "(?:.*\\n)*? \\S*/\\d+\\.\\d+\\.\\d+/\\S+\\n";
 
   test.concurrent.each([
     [
       "FunctionPassFailsAssertion",
+      failedAssertion,
       `${inTheFunction} in EliminateDeadCode\\.\nTo build without that step, add --aot-disable=pass:EliminateDeadCode\\.\n`,
     ],
     [
       "FunctionPassReadsBadAddress",
+      /^SIGSEGV$/,
       `${inTheFunction} in EliminateDeadCode\\.\nTo build without that step, add --aot-disable=pass:EliminateDeadCode\\.\n`,
     ],
-    ["CodeGenerationFailsAssertion", `${inTheFunction} in GenerateCode\\.\n`],
-    ["ProgramPassFailsAssertion", "Stopped while compiling in BuildCallGraph\\.\n"],
-    ["FlowAnalysisFailsAssertion", "Stopped while compiling in AnalyzeFlow[ .]"],
-    ["ImageBuildingFailsAssertion", "Stopped while compiling in BuildImage[ .]"],
-    ["LoweringPanics", "Stopped while compiling .*program\\.ts in Lower\\.\n"],
-  ])(
+    ["CodeGenerationFailsAssertion", failedAssertion, `${inTheFunction} in GenerateCode\\.\n`],
+    ["ProgramPassFailsAssertion", failedAssertion, "Stopped while compiling in BuildCallGraph\\.\n"],
+    ["FlowAnalysisFailsAssertion", failedAssertion, "Stopped while compiling in AnalyzeFlow[ .].*\n"],
+    ["ImageBuildingFailsAssertion", failedAssertion, "Stopped while compiling in BuildImage[ .].*\n"],
+    ["LoweringPanics", /^SIGABRT$/, "Stopped while compiling .*program\\.ts in Lower\\.\n"],
+  ] as const)(
     "%s",
-    async (sabotage, said) => {
+    async (sabotage, signal, said) => {
       const build = await spawned(command(`--aot-sabotage=${sabotage}`), folder, environment);
       expect({ stderr: build.stderr, ...endOf(build) }).toEqual({
-        stderr: expect.stringMatching(new RegExp(errorOfTheCompiler + said)),
-        ...endWithAnError,
+        stderr: expect.stringMatching(new RegExp(reasonOfTheCrash + said + linkOfTheCrash)),
+        ...endBy(signal),
       });
       // Only threads that stopped are named. Versions of one function are compiled on several threads, which may stop together.
       expect(build.stderr).not.toContain("isCompiledToo");
+      expect(build.stderr).not.toMatch(/^error\b/m);
       expect(existsSync(executableOf("program.ts", `--aot-sabotage=${sabotage}`))).toBe(false);
     },
     300_000,
@@ -99,14 +108,14 @@ describe("compile/aot/a build that stops says where", () => {
     async () => {
       const build = await spawned(command("--aot-sabotage=FunctionPassRunsOutOfStack"), folder, environment);
       expect({ stderr: build.stderr, ...endOf(build) }).toEqual({
-        stderr: expect.stringMatching(new RegExp(`${errorOfTheCompiler}${inTheFunction} in EliminateDeadCode\\.\n`)),
-        ...endWithAnError,
+        stderr: expect.stringMatching(new RegExp(`${reasonOfTheCrash}${inTheFunction} in EliminateDeadCode\\.\n`)),
+        ...endBy(/^SIG(SEGV|BUS)$/),
       });
     },
     300_000,
   );
 
-  // The first thread to stop says all it has to say, and the others say nothing.
+  // The second thread to stop must not end the process in the middle of what the first one says.
   test.concurrent.each([1, 2, 3, 4])(
     "threads that stop at the same moment, %d",
     async round => {
@@ -117,14 +126,10 @@ describe("compile/aot/a build that stops says where", () => {
       );
       expect({ stderr: build.stderr, ...endOf(build) }).toEqual({
         stderr: expect.stringMatching(
-          /Stopped while compiling stopsTheCompiler \(.*many-at-once\.ts:\d+\) in EliminateDeadCode\.\nTo build without that step, add --aot-disable=pass:EliminateDeadCode\.\n/,
+          /Stopped while compiling stopsTheCompiler \(.*many-at-once\.ts:\d+\) in EliminateDeadCode\.\n/,
         ),
-        ...endWithAnError,
+        ...endBy(failedAssertion),
       });
-      if (!isASAN) {
-        expect(build.stderr.match(/Stopped while compiling/g)).toHaveLength(1);
-        expect(build.stderr).toMatch(/\nnote: This is a bug in Bun\. .*\n .+\n$/);
-      }
     },
     300_000,
   );

@@ -14,6 +14,7 @@ use std::time::{Duration, Instant};
 
 pub(super) const TEXT_LOADER: HostLoader = HostLoader(1);
 pub(super) const NATIVE_ADDON_LOADER: HostLoader = HostLoader(2);
+pub(super) const EMBEDDED_FILE_LOADER: HostLoader = HostLoader(3);
 
 const MAX_STRING_BYTES: usize = 1 << 16;
 const EXPRESSION_EXPECTED: u32 = 1109;
@@ -399,6 +400,9 @@ impl CodeHost for StatementsHost {
                 specifier: atoms.intern(request.path),
                 loader_type: None,
                 member: None,
+            }),
+            EMBEDDED_FILE_LOADER => Some(DataModule::EmbeddedFile {
+                path: atoms.intern(text),
             }),
             _ => None,
         };
@@ -924,6 +928,7 @@ pub(super) fn with_compile_context<R>(
         let compile = CompileLoad {
             host: build.host,
             inputs,
+            shares_parsed_files: false,
         };
         let context = CodeLoadContext::new(session, &resolver, options, compile);
         test(&context)

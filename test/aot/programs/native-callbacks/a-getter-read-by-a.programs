@@ -1687,6 +1687,8 @@ await new Promise<void>(resolve => late.addEventListener("abort", () => resolve(
 total += weigh(late.reason);
 total += weigh(AbortSignal.any([AbortSignal.abort(9)]).reason);
 console.log(total);
+//// callbacks-abort-listeners-and-reasons.json
+{ "mainThread": "nothing but AbortSignal.timeout() keeps its last await waiting, and that does not hold a Worker" }
 //// callbacks-apply-and-construct-read-array-likes.ts
 // Callbacks handed over: apply, Reflect.apply, Reflect.construct and bind pass what they read out of an array-like, through its getters, so a function whose direct calls pass two numbers gets a string and undefined.
 let total = 0;

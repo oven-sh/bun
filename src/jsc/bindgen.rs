@@ -56,6 +56,14 @@ impl<'a> JsHeap<'a> {
         self.global_object().as_mut_ptr()
     }
 
+    /// For code that has the global object and no capability.
+    #[doc(hidden)]
+    #[inline(always)]
+    pub fn from_global(global: &JSGlobalObject) -> &JsHeap<'_> {
+        // SAFETY: a `JsHeap` is the global object.
+        unsafe { &*core::ptr::from_ref(global).cast() }
+    }
+
     /// Debug check: an empty result means an exception is pending. Any other means none is, except a termination.
     fn exception_presence_matches(&self, should_have_exception: bool) -> bool {
         // SAFETY: the global object is live.
@@ -65,6 +73,15 @@ impl<'a> JsHeap<'a> {
                 should_have_exception,
             )
         }
+    }
+
+    /// `owner` has come to own `size` more bytes since it was created. From `estimated_size` alone the GC learns that
+    /// only when it next marks `owner`, which it has no reason to do soon. This can collect.
+    #[inline]
+    pub fn report_extra_memory<T>(&self, owner: JsLocal<'a, T>, size: usize) {
+        self.global_object()
+            .vm()
+            .report_extra_memory_allocated(owner.0, size);
     }
 
     /// An array of what `convert`, a function of [`to_js`], makes of each item.
@@ -921,8 +938,7 @@ pub unsafe trait JsPayload: Sized + 'static {
     /// As [`into_js`](Self::into_js), for code that has the global object and no capability.
     #[inline]
     fn into_js_wrapper(self, global: &JSGlobalObject) -> JsWrapper<'_, Self> {
-        // SAFETY: a `JsHeap` is the global object.
-        self.into_js(unsafe { &*core::ptr::from_ref(global).cast::<JsHeap<'_>>() })
+        self.into_js(JsHeap::from_global(global))
     }
 
     /// The JS object that owns `self`. In `Drop` the cell is dead: compare it by identity only.
@@ -1061,9 +1077,22 @@ impl<'a, T: JsPayload> JsWrapper<'a, T> {
         structure: *mut c_void,
         payload: T,
     ) -> Self {
+        // SAFETY: forwarded.
+        unsafe { Self::create_with(heap, |global| T::create_cell(global, structure), payload) }
+    }
+
+    /// # Safety
+    /// `create_cell` only allocates a cell of `T`'s cell class or of a subclass of it.
+    #[doc(hidden)]
+    #[inline]
+    pub unsafe fn create_with(
+        heap: &JsHeap<'a>,
+        create_cell: impl FnOnce(*mut JSGlobalObject) -> NonNull<c_void>,
+        payload: T,
+    ) -> Self {
         // SAFETY: nothing runs between the allocation and the write, which cannot panic.
         unsafe {
-            let this = Self::from_extern(T::create_cell(heap.global_ptr(), structure), heap);
+            let this = Self::from_extern(create_cell(heap.global_ptr()), heap);
             this.payload().write(payload);
             // Marking threads read such a payload, so a fence follows the write.
             if let Some(size) = (*this.payload()).extra_memory_size() {

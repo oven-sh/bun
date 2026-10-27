@@ -141,7 +141,12 @@ export function handOverBuiltIns(text: string, isTypeScript: boolean) {
   const [program, ...otherFiles] = text.split(/^(?=\/\/ @filename: )/m);
   const random = randomFrom("built-ins" + text);
   const pick = <T>(from: readonly T[]) => from[Math.floor(random() * from.length)];
-  const places = [...program.matchAll(handedOver)].filter(found => !found[1] === !found[2]);
+  // A name in the braces of an import, an export or a pattern is declared or listed there, not handed over.
+  const isListed = (index: number) =>
+    /^\s*(?:import|export)\b|\b(?:const|let|var) \{[^}=]*$/.test(
+      program.slice(program.lastIndexOf("\n", index) + 1, index),
+    );
+  const places = [...program.matchAll(handedOver)].filter(found => !found[1] === !found[2] && !isListed(found.index));
   if (places.length === 0) return text;
   const share = pick([0, 0.3, 0.7]);
   const theOne = pick(places).index;
@@ -150,7 +155,7 @@ export function handOverBuiltIns(text: string, isTypeScript: boolean) {
     pick(pick([predicates, predicates, conversions, conversions, combinations, others])),
   );
   const rewritten = program.replace(handedOver, (whole, open, close, index) => {
-    if (!open !== !close || (share === 0 ? index !== theOne : random() > share)) return whole;
+    if (!open !== !close || isListed(index) || (share === 0 ? index !== theOne : random() > share)) return whole;
     const builtIn = pick(few);
     return isTypeScript ? `(${builtIn} as any)` : /[ (]/.test(builtIn) ? `(${builtIn})` : builtIn;
   });

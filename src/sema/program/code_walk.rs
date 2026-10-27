@@ -1,6 +1,6 @@
 mod imported_constants;
 
-use self::imported_constants::fold_files_that_import_constants_again;
+use self::imported_constants::{NamesLookedUp, fold_files_that_import_constants_again};
 use super::code_barrels::{BarrelRequests, NOT_LOADED, erase_waiting_sites};
 use super::code_file::{fold_code_file_again, load_code_file};
 use super::code_imports::files_of;
@@ -63,6 +63,7 @@ struct WalkState<'s, 'r> {
     in_progress: usize,
     barrels: BarrelRequests,
     has_exported_requires: bool,
+    names_looked_up: NamesLookedUp,
 }
 
 impl WalkState<'_, '_> {
@@ -237,6 +238,7 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
     ) {
         let requests = std::mem::take(&mut parsed.code.requests);
         state.has_exported_requires |= !parsed.code.exported_requires.is_empty();
+        state.names_looked_up.parsed_since.push(index);
         let file = &mut state.files[index as usize];
         file.targets = vec![NOT_LOADED; parsed.code.targets.len()];
         file.parsed = Some(parsed);
@@ -326,7 +328,7 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                 meanwhile();
                 self.allow_early_load(&mut self.state.lock(), start.early_loader);
             };
-            match host.io_pool() {
+            match self.context.io_pool() {
                 Some(io) => {
                     let _alone = WAITS_ACROSS_POOLS.lock();
                     io.each_while(
@@ -510,9 +512,9 @@ impl<'s: 'r, 'r> CodeWalk<'_, '_, 's, 'r> {
                     continue;
                 }
                 if state.deferred.is_empty()
-                    && (forget_files_called_before_they_run(&mut state)
-                        || forget_files_that_import_requires(&context.atoms, &mut state)
-                        || fold_files_that_import_constants_again(context, &mut state))
+                    && (fold_files_that_import_constants_again(context, &mut state)
+                        || forget_files_called_before_they_run(&mut state)
+                        || forget_files_that_import_requires(&context.atoms, &mut state))
                 {
                     state.in_progress += 1;
                     drop(state);
@@ -674,7 +676,7 @@ fn fold_parsed_file_again(state: &mut WalkState<'_, '_>, index: u32) {
     let file = &mut state.files[index as usize];
     file.folded_before = file.parsed.take();
     file.targets.clear();
-    state.barrels.forget_parsed_file(index);
+    state.barrels.forget_folded_file(index);
     state.ready.push((index, Cow::Borrowed(&[])));
     state.in_progress += 1;
 }

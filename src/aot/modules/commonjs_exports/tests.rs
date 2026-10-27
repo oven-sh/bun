@@ -252,6 +252,8 @@ fn the_module_looks_at_its_own_object() {
         "exports.a = 1; var b = exports || 1;",
         "exports.a = 1; Object.defineProperty(exports, 'b', { get() { return Math.random(); } });",
         "exports.a = 1; Object.defineProperty(exports, 'b', { value: 1 }); exports.b = 2;",
+        "const b = 1; exports.a = 1; Object.defineProperty(exports, 'b', { get() { return b; }, writable: false });",
+        "const b = 1; exports.a = 1; Object.defineProperty(exports, 'b', { get() { return b; }, writable: undefined });",
         "exports.a = 1; if (Math.random()) Object.defineProperty(exports, 'b', { value: 1 });",
         "module.exports = Math.random();",
     ] {

@@ -4,6 +4,7 @@
 // A part is TypeScript, JavaScript (the same text with its types erased) or a package in node_modules. It imports the names of main that it uses, so the two files import each other.
 // What main is told about a part in JavaScript is drawn: a declaration file that is right, one that is wrong, one that isn't valid, none and `allowJs`, none and no `allowJs`.
 // A part in TypeScript can have annotations that its own code doesn't fit, below `// @ts-nocheck`. The folder can have a tsconfig.json whose options are drawn.
+// A package of TypeScript can ship its sources as a project does: several files below src, a tsconfig.json of its own with other options than main's, and a file that only `import type` reaches.
 // A part in JavaScript can also call functions of main with arguments of other types and in other numbers, by their names and as callbacks that main hands over.
 import { randomFrom } from "./print-members-of-objects.ts";
 
@@ -560,6 +561,8 @@ export function splitIntoFiles(text: string, extension: string) {
             "package",
             "package",
             "package of TypeScript",
+            "package of TypeScript",
+            "package of TypeScript",
             "package with typed source",
           ] as const)
         : (["js", "js", "mjs", "cjs", "ts", "ts", "package"] as const),
@@ -905,13 +908,87 @@ export function splitIntoFiles(text: string, extension: string) {
           }),
         };
         if (part.form === "package of TypeScript") {
-          manifest.main = "./index.ts";
-          lay(
-            `${root}/index.ts`,
+          const text =
             part.types === "wrong"
               ? typedText.replace(/\): (?:number|string|boolean|void) \{/, `): ${pick(primitives.slice(0, 3))} {`)
-              : typedText,
-          );
+              : typedText;
+          if (chance(65)) {
+            const [module, moduleResolution] = pick([
+              ["NodeNext", "NodeNext"],
+              ["ESNext", "Bundler"],
+              ["Preserve", "Bundler"],
+            ]);
+            // The files name each other by the ".js" that a compiler would make of them.
+            const ending = pick([".js", ".js", ".ts", ...(module === "NodeNext" ? [] : [""])]);
+            const [shape, mode, table, wanted] = ["Shape", "Mode", "table", "isWanted"].map(
+              name => `${name}Of${number}`,
+            );
+            lay(
+              `${root}/src/shapes.ts`,
+              `export interface ${shape} { id: number; names: string[] }\nexport type ${mode} = "a" | "b";\nexport const ${table}: Record<${mode}, number> = { a: 1, b: 2 };\n`,
+            );
+            lay(`${root}/src/keys.ts`, "export function double(n: number): number { return n * 2; }\n");
+            lay(
+              `${root}/src/policy.ts`,
+              `import type { ${shape} } from "./shapes${ending}";\nimport { double } from "./keys${ending}";\nconst seven = 7;\nexport function ${wanted}(shape: ${shape}): boolean { return shape.id === seven || shape.names.length === double(2); }\n`,
+            );
+            lay(`${root}/src/part.ts`, text);
+            lay(
+              `${root}/src/index.ts`,
+              [
+                `export type { ${shape}, ${mode} } from "./shapes${ending}";`,
+                ...(chance(50) ? [`export { ${table} } from "./shapes${ending}";`] : []),
+                `export { ${wanted} } from "./policy${ending}";`,
+                chance(50)
+                  ? `export * from "./part${ending}";`
+                  : `export { ${exportsOfPart.join(", ")} } from "./part${ending}";`,
+                "",
+              ].join("\n"),
+            );
+            Object.assign(
+              manifest,
+              pick([
+                { main: "./src/index.ts" },
+                { main: "./src/index.ts", types: "./src/index.ts", exports: { ".": "./src/index.ts" } },
+                { exports: { ".": { types: "./src/index.ts", default: "./src/index.ts" } } },
+              ]),
+            );
+            const target = pick(["ES2020", "ES2022", "ESNext"]);
+            lay(
+              `${root}/tsconfig.json`,
+              JSON.stringify(
+                {
+                  compilerOptions: {
+                    target,
+                    module,
+                    moduleResolution,
+                    ...(chance(40) && { lib: [target] }),
+                    ...(chance(80) && { strict: chance(60) }),
+                    ...(chance(20) && { strictNullChecks: chance(50) }),
+                    ...(chance(15) && { exactOptionalPropertyTypes: true }),
+                    ...(chance(15) && { noUncheckedIndexedAccess: true }),
+                    // In a package that is CommonJS, that option refuses every `export`.
+                    ...(isModule && chance(15) && { verbatimModuleSyntax: true }),
+                    ...(chance(15) && { isolatedModules: true }),
+                    ...(chance(15) && { useDefineForClassFields: chance(50) }),
+                    ...(chance(10) && { experimentalDecorators: true }),
+                    ...(ending === ".ts" && { allowImportingTsExtensions: true, noEmit: true }),
+                    ...(chance(50) && { types: [] }),
+                  },
+                  ...(chance(60) && { include: ["src/**/*"] }),
+                },
+                null,
+                2,
+              ) + "\n",
+            );
+            importsOfMain.push(`import { ${wanted} } from "${part.specifier}";`);
+            endOfMain.push(
+              `printValue("asked of package ${number}", ${wanted}({ id: 7, names: [] }), ${wanted}({ id: 1, names: ["x"] }));`,
+            );
+          } else {
+            manifest.main = "./index.ts";
+            lay(`${root}/index.ts`, text);
+          }
         } else {
           if (!isModule && calledByName.length === 0 && chance(60)) {
             lay(`${root}/lib/inner.js`, asCommonJs(javaScript()));

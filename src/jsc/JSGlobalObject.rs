@@ -1004,6 +1004,16 @@ impl JSGlobalObject {
         JSC__JSGlobalObject__bunVM(self)
     }
 
+    /// What [`Self::bun_vm`] and [`Self::bun_vm_ptr`] assert: this global object
+    /// names `vm`, the calling thread's VM. Not asked once teardown has gone on
+    /// to destroy the JSC VM: finalizers still come here, and the global object
+    /// goes in no particular order with them.
+    fn names_bun_vm(&self, vm: *mut VirtualMachine) -> bool {
+        // SAFETY: the calling thread's VM, which outlives its JSC VM.
+        let global_is_going = unsafe { (*vm).regular_event_loop.global_is_going() };
+        global_is_going || self.bun_vm_unsafe() == vm.cast::<c_void>()
+    }
+
     /// Raw-pointer variant of [`Self::bun_vm`]. Returns the per-thread
     /// `*mut VirtualMachine` so callers that need to mutate VM fields don't
     /// launder provenance through `&VirtualMachine -> *mut` (UB under Stacked
@@ -1019,7 +1029,7 @@ impl JSGlobalObject {
     #[inline]
     pub fn bun_vm_ptr(&self) -> *mut VirtualMachine {
         debug_assert!(
-            self.bun_vm_unsafe() == VirtualMachine::get_mut_ptr().cast::<c_void>(),
+            self.names_bun_vm(VirtualMachine::get_mut_ptr()),
             "bun_vm_ptr called off the JS thread",
         );
         VirtualMachine::get_mut_ptr()
@@ -1053,8 +1063,7 @@ impl JSGlobalObject {
             //   make clean-jsc-bindings
             //   make bindings -j10
             if let Some(vm_) = VirtualMachine::get_or_null() {
-                // SAFETY: address-equality only — neither pointer is dereferenced.
-                debug_assert!(self.bun_vm_unsafe() == vm_.cast::<c_void>());
+                debug_assert!(self.names_bun_vm(vm_));
             } else {
                 panic!("This thread lacks a Bun VM");
             }

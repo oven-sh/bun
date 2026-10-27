@@ -264,6 +264,11 @@ const noticedBy: Record<string, Row | Row[]> = {
   ),
   // The build stops: ./an-operation-without-a-value-stops-the-build.test.ts holds it to the line that names the read.
   StoredValuesAreNeverRead: conditionOfAPass("a-read-finds-what-was-stored.ts"),
+  // The build stops: ./a-flow-analysis-that-is-given-more-finds-no-less.test.ts holds it to the line that names the place.
+  WhatIsGivenTakesThePlaceOfWhatComes: {
+    ...conditionOfAPass("a-read-finds-what-was-stored.ts"),
+    flags: ["--aot-flow=widened", "--aot-layout-seed=0"],
+  },
 };
 /** What no program can show, and the test of the engine that shows it (./engine-tests.test.ts runs those). */
 const noticedByTheEngineTestsAlone: Record<string, string> = {};

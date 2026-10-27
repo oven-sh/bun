@@ -171,7 +171,7 @@ impl Printer<'_> {
             self.print_class_part(id, part);
         }
         if let Some(kind) = ty.opaque {
-            self.print_type_word_part(&kind.name().to_ascii_lowercase(), &mut separator);
+            self.print_type_word_part(kind.name().to_ascii_lowercase(), &mut separator);
         }
         if separator.is_empty() {
             self.out.push_str("never");
@@ -250,9 +250,6 @@ impl Printer<'_> {
     fn print_object_parts(&mut self, ty: &Type, separator: &mut &'static str) {
         for &layout in &ty.layouts {
             self.print_type_word_part(layout, separator);
-        }
-        if ty.flags.contains(TypeFlags::HAS_MEMBERS_WITHOUT_LAYOUT) {
-            self.print_type_word_part("nolayout", separator);
         }
         if let Some(layout) = ty.environment {
             self.print_type_word_part(format_args!("env {layout}"), separator);

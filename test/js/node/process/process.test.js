@@ -767,7 +767,6 @@ it("process.versions", async () => {
   const depsDir = resolve(import.meta.dir, "../../../../scripts/build/deps");
   const deps = {
     boringssl: "boringssl",
-    libarchive: "libarchive",
     mimalloc: "mimalloc",
     picohttpparser: "picohttpparser",
     zlib: "zlib",

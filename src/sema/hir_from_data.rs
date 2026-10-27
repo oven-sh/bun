@@ -30,6 +30,10 @@ pub enum DataModule<'a> {
     NativeAddon {
         path: Atom,
     },
+    /// The default export is where the executable has its copy of the file. Nothing lies there on the machine that builds.
+    EmbeddedFile {
+        path: Atom,
+    },
     Database {
         path: Atom,
         is_embedded: bool,

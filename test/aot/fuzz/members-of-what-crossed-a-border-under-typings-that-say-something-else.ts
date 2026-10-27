@@ -6,6 +6,7 @@
 //                 symbol, a list, an object, a function, or it is not there
 //   the object    in that call it has the members that the typings say, lacks the other one, has one more, or has them the other way round
 //   moved into    a fresh literal, ahead of, between or behind fields that nobody stores again; a field of a class; a typed list; a parameter; a pattern; a spread; a closure; a tuple; a static field
+//   how deep      the member is a member of the object, or (`isDenser`) of an object that is a member of the object
 //   beside it     honest calls, none, a few or ten thousand, ahead of the odd one, behind it or round it, with what the JavaScript makes or with a literal that is written in the TypeScript; the odd call stands alone, in a loop or in a function
 //
 // TypeScript accepts every program. The executable prints what plain Bun prints and ends as it ends.
@@ -45,6 +46,7 @@ const odd = [
 export function generate(
   random: Random,
   corner: (typeof corners)[number],
+  isDenser = false,
 ): { file: string; text: string; files: Record<string, string> } {
   // The relations first.
   const { type, honest, use } = said[corner];
@@ -84,34 +86,43 @@ export function generate(
   const order = random.pick(["ahead", "behind", "round"] as const);
   const isUsed = random.chance(0.5);
   const isInAnotherFile = random.chance(0.4);
-  const isHonestMadeHere = random.chance(0.6);
-  const isOneFunction = random.chance(0.3);
-  const oddShape = random.weighted([
+  const isHonestMadeHere = random.chance(0.6) || isDenser;
+  const isOneFunction = random.chance(0.3) && !isDenser;
+  const oddShapeDrawn = random.weighted([
     [3, "alike"],
     [4, "lacks the other member"],
     [1, "has one more member"],
     [1, "the other way round"],
   ] as const);
-  const oddCall = random.weighted([
+  const oddCallDrawn = random.weighted([
     [2, "straight"],
     [4, "in a loop of one turn"],
     [2, "in a loop of three turns"],
     [1, "in a function"],
   ] as const);
+  // The denser draw: each object has a maker of its own, the odd one lacks the other member and is handed over in a loop, and half of the members lie one level further down.
+  const oddShape = isDenser && random.chance(0.8) ? "lacks the other member" : oddShapeDrawn;
+  const oddCall = isDenser && oddCallDrawn !== "in a loop of three turns" ? "in a loop of one turn" : oddCallDrawn;
+  const isDeep = isDenser && random.chance(0.5);
 
-  const object = (member: string) => (member === "missing" ? "{ other: 1 }" : `{ list: ${member}, other: 1 }`);
+  const deep = (written: string) => (isDeep ? `{ inner: ${written}, outer: 2 }` : written);
+  const object = (member: string) => deep(member === "missing" ? "{ other: 1 }" : `{ list: ${member}, other: 1 }`);
   const list = given === "missing" ? "" : `list: ${given}`;
-  const oddObject = `{ ${(oddShape === "alike"
-    ? [list, "other: 1"]
-    : oddShape === "lacks the other member"
-      ? [list]
-      : oddShape === "has one more member"
-        ? ["more: 0", list, "other: 1"]
-        : ["other: 1", list]
-  )
-    .filter(part => part)
-    .join(", ")} }`;
-  const types = `export interface Inner {\n  a: number;\n}\nexport interface Given {\n  list: ${type};\n  other: number;\n}\n`;
+  const oddObject = deep(
+    `{ ${(oddShape === "alike"
+      ? [list, "other: 1"]
+      : oddShape === "lacks the other member"
+        ? [list]
+        : oddShape === "has one more member"
+          ? ["more: 0", list, "other: 1"]
+          : ["other: 1", list]
+    )
+      .filter(part => part)
+      .join(", ")} }`,
+  );
+  const types = isDeep
+    ? `export interface Inner {\n  a: number;\n}\nexport interface Held {\n  list: ${type};\n  other: number;\n}\nexport interface Given {\n  inner: Held;\n  outer: number;\n}\n`
+    : `export interface Inner {\n  a: number;\n}\nexport interface Given {\n  list: ${type};\n  other: number;\n}\n`;
   // One function makes both objects, or each has a function of its own.
   const declaration = isOneFunction
     ? `${types}export declare function make(isOdd: boolean): Given;\n`
@@ -158,7 +169,7 @@ export function generate(
       : `${types}export function make(): Given {\n  return JSON.parse(${text(object(honest))}) as Given;\n}\nexport function makeOdd(): Given {\n  return JSON.parse(${text(oddObject)}) as Given;\n}\n`;
   }
 
-  const made = {
+  const flat = {
     "a literal, first": [
       `interface Made {\n  list: Given["list"];\n  ratio: number;\n}`,
       `return { list: g.list, ratio: 0.125 };`,
@@ -217,6 +228,16 @@ export function generate(
       "Made.last",
     ],
   }[move];
+  const made = isDeep
+    ? flat.map(text =>
+        text
+          .replaceAll('Given["list"]', 'Held["list"]')
+          .replaceAll("g.list", "g.inner.list")
+          .replaceAll("const { list } = g;", "const {\n    inner: { list },\n  } = g;")
+          .replaceAll("...g,", "...g.inner,")
+          .replaceAll("extends Given", "extends Held"),
+      )
+    : flat;
   const uses = `${made[0]}\nexport function use(g: Given): Made {\n  ${made[1]}\n}\n`;
   const read = (holder: string) => made[3].replaceAll("§", holder);
   const honestly =
@@ -268,7 +289,7 @@ export function generate(
           .replaceAll("make(false)", "make()");
   if (isInAnotherFile) {
     files["uses.ts"] =
-      `import type { Given } from ${from};\n${uses.replace(/^(interface|class|type) Made/m, "export $1 Made")}`;
+      `import type { Given${isDeep ? ", Held" : ""} } from ${from};\n${uses.replace(/^(interface|class|type) Made/m, "export $1 Made")}`;
     return {
       file: "main.ts",
       text: calls(`import { make } from ${from};\nimport { Made, use } from "./uses";\n${body}`),
@@ -278,7 +299,7 @@ export function generate(
   return {
     file: "main.ts",
     text: calls(
-      `import { make, type Given } from ${from};\n${uses.replace("export function use", "function use")}${body}`,
+      `import { make, type Given${isDeep ? ", type Held" : ""} } from ${from};\n${uses.replace("export function use", "function use")}${body}`,
     ),
     files,
   };

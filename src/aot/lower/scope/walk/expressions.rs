@@ -1,8 +1,9 @@
+use bun_sema::atom::Atom;
 use bun_sema::bind::{Binding, CodeUnit, PrivateMembers, ScopeId, SymbolId};
 use bun_sema::fold::{Decision, TreeNode};
 use bun_sema::hir::{
     Call, CallId, ExprId, ExprKind, FnId, JsxId, MemberId, NodeData, PatId, PatKind, PropId,
-    PropKey, PropKind, Span,
+    PropKey, PropKind, Span, is_proto_setter,
 };
 use bun_sema::import_sites::{
     ImportSite, ImportSiteKind, JsxCallee, JsxImport, RequireCallForm, find_require_call,
@@ -16,7 +17,6 @@ use crate::builtins::table::{self, Scope};
 use crate::builtins::{Intrinsic, Mutability, Resolved};
 use crate::ir::ClassSlot;
 use crate::lower::jsx::find_key_argument;
-use crate::lower::object::put_halves_of_accessors_side_by_side;
 use crate::lower::scope::lexical_owners::ScopeObjectSearch;
 use crate::lower::scope::{BindingRef, ScopeSlot};
 use crate::lower::{class, parameters};
@@ -103,15 +103,29 @@ impl Walker<'_, '_> {
         if accessors.count() < 2 {
             return;
         }
-        let function_count = hir.fns.len();
-        let first_halves = &mut self.first_halves;
-        let mut members: SmallVec<[PropId; 8]> = properties.iter().collect();
-        let note = |half: FnId, first_half: FnId| {
-            first_halves.resize(function_count, FnId::NONE);
-            first_halves[half.idx()] = first_half;
-            true
-        };
-        put_halves_of_accessors_side_by_side(hir, &mut members, |&property| property, note);
+        let mut last_halves: SmallVec<[(Atom, FnId); 4]> = SmallVec::new();
+        for property in properties.iter() {
+            let prop = hir[property];
+            match (prop.kind, hir.runtime_property_key(property)) {
+                (PropKind::Getter | PropKind::Setter, PropKey::Name(name)) => {
+                    let ExprKind::Fn(half) = hir[prop.value].kind else {
+                        unreachable!("the value of a getter or setter is a function");
+                    };
+                    let Some(last) = last_halves.iter_mut().find(|last| last.0 == name) else {
+                        last_halves.push((name, half));
+                        continue;
+                    };
+                    self.halves_in_front.resize(hir.fns.len(), FnId::NONE);
+                    self.halves_in_front[half.idx()] = last.1;
+                    last.1 = half;
+                }
+                (PropKind::Init, _) if is_proto_setter(&prop) => {}
+                (PropKind::Init | PropKind::Shorthand | PropKind::Method, PropKey::Name(name)) => {
+                    last_halves.retain(|last| last.0 != name);
+                }
+                _ => last_halves.clear(),
+            }
+        }
     }
 
     fn push_operands_of_store<const N: usize>(&mut self, operands: [ExprId; N], context: Context) {

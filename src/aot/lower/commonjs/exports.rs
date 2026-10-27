@@ -12,7 +12,9 @@ use crate::lower::captures::Capture;
 use crate::lower::member::{PropertyName, Reference};
 use crate::lower::scope::{BindingForm, BindingRef, Storage};
 use crate::lower::{FileLowering, FunctionLowering, module};
-use crate::modules::{Member, ModuleRef, Shape, Site, SyntheticExportId, View};
+use crate::modules::{
+    DescribedPart, Member, ModuleRef, Shape, Site, SyntheticExportId, View, WrittenDescriptor,
+};
 
 impl FileLowering<'_, '_, '_, '_> {
     /// The variable that holds `module.exports` of a module whose exports are one value.
@@ -102,13 +104,12 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     fn find_described_value(&self, descriptor: ExprId) -> Option<ExprId> {
-        let hir = self.hir;
-        let ExprKind::Object(properties) = hir[hir.skip_type_assertions(descriptor)].kind else {
-            return None;
-        };
-        let mut described = properties.iter().map(|property| hir[property]);
-        let value = described.find(|property| property.key == PropKey::Name(known::value))?;
-        matches!(value.kind, PropKind::Init | PropKind::Shorthand).then_some(value.value)
+        let atoms = &self.queries.files().atoms;
+        let written = WrittenDescriptor::read(atoms, self.hir, self.decisions(), descriptor)?;
+        match written.part {
+            DescribedPart::Data { value, .. } => value,
+            DescribedPart::Accessor { .. } => None,
+        }
     }
 
     /// The module whose names the pattern takes, where `source` is a call of `require` that nobody reads as a value.

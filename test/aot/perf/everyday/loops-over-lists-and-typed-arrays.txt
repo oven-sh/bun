@@ -188,6 +188,20 @@ function turn(i: number): number {
   for (let k = 0; k < packet.length; k++) sum += packet[k]!;
   return sum;
 }
+//// buffer-values-summed
+const packet = Buffer.alloc(1000, 7);
+function turn(i: number): number {
+  let sum = i & 1;
+  for (const byte of packet) sum += byte;
+  return sum;
+}
+//// buffer-entries-summed
+const packet = Buffer.alloc(1000, 7);
+function turn(i: number): number {
+  let sum = i & 1;
+  for (const [at, byte] of packet.entries()) sum += byte * (at & 1);
+  return sum;
+}
 //// text-sum-of-char-codes
 const line = "the quick brown fox jumps over the lazy dog ".repeat(12);
 function turn(i: number): number {

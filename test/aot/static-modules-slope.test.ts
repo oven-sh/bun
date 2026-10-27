@@ -32,11 +32,14 @@ import { describe, test, unsupported } from "./supported-with-counted-calls";
 const sizes = [100, 300, 500];
 
 const classOf = (i: number) => `class K { constructor() { this.v = ${i}; } get() { return this.v; } }\n`;
-const esLeaf = "export const c = 1;\nexport function f(x) { return x + c; }\n";
-const esRest = "export const c = a.c + 1;\nexport function f(x) { return (x & 1) ? a.f(x) + c : c; }\n";
-const commonJsLeaf = '"use strict";\nexports.c = 1;\nexports.f = function (x) { return x + exports.c; };\n';
+// The entry point calls `add` when the chain has run, so `c` is a constant in no module: each one computes and stores it when it starts, however it is written.
+const esLeaf = "export let c = 1;\nexport function f(x) { return x + c; }\nexport function add(x) { c += x; }\n";
+const esRest =
+  "export let c = a.c + 1;\nexport function f(x) { return (x & 1) ? a.f(x) + c : c; }\nexport function add(x) { c += x; a.add(x); }\n";
+const commonJsLeaf =
+  '"use strict";\nexports.c = 1;\nexports.f = function (x) { return x + exports.c; };\nexports.add = function (x) { exports.c += x; };\n';
 const commonJsRest =
-  "exports.c = a.c + 1;\nexports.f = function (x) { return (x & 1) ? a.f(x) + exports.c : exports.c; };\n";
+  "exports.c = a.c + 1;\nexports.f = function (x) { return (x & 1) ? a.f(x) + exports.c : exports.c; };\nexports.add = function (x) { exports.c += x; a.add(x); };\n";
 const imports = (i: number) => `import * as a from "./m${i - 1}.mjs";\n`;
 const requires = (i: number) => `"use strict";\nconst a = require("./m${i - 1}");\n`;
 
@@ -78,7 +81,7 @@ const rows: Record<string, Row> = {
     module: i =>
       i
         ? imports(i) +
-          `import { one, g } from "./k${i}.cjs";\nexport const c = a.c + one;\nexport function f(x) { return (x & 1) ? g(a.f(x)) + c : c; }\n`
+          `import { one, g } from "./k${i}.cjs";\nexport let c = a.c + one;\nexport function f(x) { return (x & 1) ? g(a.f(x)) + c : c; }\nexport function add(x) { c += x; a.add(x); }\n`
         : esLeaf,
     beside: i =>
       i ? { [`k${i}.cjs`]: '"use strict";\nexports.one = 1;\nexports.g = function (x) { return x; };\n' } : {},
@@ -143,7 +146,69 @@ function filesOf(row: Row, n: number) {
     Object.assign(files, row.beside?.(i));
   }
   files["main.cjs"] =
-    `"use strict";\n${mark}\nconst a = require("./m${n - 1}${row.extension}");\n${mark}\nconsole.log(a.f(2));\n`;
+    `"use strict";\n${mark}\nconst a = require("./m${n - 1}${row.extension}");\n${mark}\nconsole.log(a.f(2));\na.add(process.argv.length);\n`;
+  return files;
+}
+
+/** About as many modules: what the entry point imports, and graphs that it loads with import(), one behind the other, while a chain of jobs runs. Its first argument says how many of them it loads. */
+function filesOfLargeProgram(modules: number, imports: number, levels = 12) {
+  let state = 12345;
+  const random = (below: number) => (state = (state * 1103515245 + 12345) % 2147483648) % below;
+  const files: Record<string, string> = {};
+  const shared = Math.floor(modules / 25);
+  // The first graph holds half of what import() loads, as the graph of an application behind a small starter does.
+  const small = Math.floor((modules - shared) / 2 / (imports - 1));
+  const write = (name: string, requests: string[], runsNothing: boolean) => {
+    const others = [...new Set(requests)].filter(other => other !== name);
+    const list = `[${others.map((_, index) => `c${index}`).join(", ")}].length`;
+    files[`${name}.mjs`] =
+      others.map((other, index) => `import { c as c${index} } from "./${other}.mjs";\n`).join("") +
+      (runsNothing
+        ? `export function c() { return ${list}; }\n`
+        : `export const c = () => ${list};\nglobalThis.ran = (globalThis.ran ?? 0) + 1;\n`);
+  };
+  for (let index = 0; index < shared; index++) {
+    const below = index + 1 < shared ? [`s${index + 1}`, `s${Math.min(shared - 1, index + 1 + random(9))}`] : [];
+    write(`s${index}`, below, index % 4 === 3);
+  }
+  const earlier: string[] = [];
+  for (let graph = 0; graph < imports; graph++) {
+    const width = Math.max(1, Math.floor(((graph ? small : modules - shared - small * (imports - 1)) - 1) / levels));
+    const name = (level: number, place: number) => `g${graph}l${level}p${place}`;
+    const own: string[] = [];
+    write(
+      `root${graph}`,
+      Array.from({ length: Math.min(width, 8) }, (_, place) => name(0, place)),
+      false,
+    );
+    for (let level = 0; level < levels; level++) {
+      for (let place = 0; place < width; place++) {
+        const requests: string[] = [];
+        if (level + 1 < levels)
+          requests.push(name(level + 1, place), name(level + 1, random(width)), name(level + 1, random(width)));
+        // The root asks for eight modules of the first level, and they for the others.
+        if (!level && place < 8) for (let other = place + 8; other < width; other += 8) requests.push(name(0, other));
+        // A later module of its own level, one further down, which whoever stands between the two finds above itself, one that the entry point imports, and one that an earlier import() has loaded.
+        if (place + 1 < width) requests.push(name(level, place + 1 + random(width - place - 1)));
+        if (level + 2 < levels) requests.push(name(level + 2 + random(levels - level - 2), random(width)));
+        requests.push(`s${random(shared)}`);
+        if (earlier.length) requests.push(earlier[random(earlier.length)]);
+        write(name(level, place), requests, (place + level) % 4 === 3);
+        own.push(name(level, place));
+      }
+    }
+    earlier.push(...own);
+  }
+  files["entry.mjs"] =
+    `import { c } from "./s0.mjs";\nasync function later(index) {\n  switch (index) {\n` +
+    Array.from(
+      { length: imports },
+      (_, graph) => `    case ${graph}: return (await import("./root${graph}.mjs")).c;\n`,
+    ).join("") +
+    `  }\n  return c;\n}\nconst count = Number(process.argv[2] ?? 0);\nlet isDone = false, turns = 0;\n` +
+    `(async () => { while (!isDone) { turns++; await null; } })();\n` +
+    `for (let index = 0; index < count; index++) await later(index);\nisDone = true;\n` +
+    `console.log("ran", globalThis.ran, "turns", turns);\n`;
   return files;
 }
 
@@ -529,6 +594,53 @@ describe.concurrent("modules that do not run", () => {
       );
       expect((manyDirect - fewDirect) / further).toBeLessThanOrEqual(100);
       expect((manyFired - fewFired) / further).toBeLessThanOrEqual(150);
+    },
+    1_800_000,
+  );
+
+  // A large program loads most of its modules with import(), graph behind graph, while other jobs wait, so the steps in which `bun run` would load each graph are counted.
+  // Many of its modules ask for a module of their own level, or for one that stands further up because something else asks for it too.
+  test.skipIf(!perf)(
+    "a module of a large graph costs an import() beside a chain of jobs next to nothing",
+    async () => {
+      const imports = 25;
+      const numbers = [1000, 5000];
+      const costs: number[] = [];
+      for (const modules of numbers) {
+        await slot(async () => {
+          using directory = tempDir("aot-static-modules-large", filesOfLargeProgram(modules, imports));
+          using elsewhere = tempDir("aot-static-modules-elsewhere", {});
+          const { executable } = await build(String(directory), "entry.mjs");
+          // The reference transpiles on one thread: the texts are read in the order in which they are asked for.
+          const plain = await run([bunExe(), "run", "entry.mjs", String(imports)], String(directory), {
+            ...bunEnv,
+            BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: "1",
+          });
+          expect(plain.exitCode).toBe(0);
+          const best: number[] = [];
+          for (const loaded of [0, imports]) {
+            let least = Infinity;
+            for (let attempt = 0; attempt < 5; attempt++) {
+              const counted = await run(
+                [perf as string, "stat", "-x,", "-e", "instructions:u", executable, String(loaded)],
+                String(elsewhere),
+                bunEnv,
+              );
+              expect(counted.exitCode).toBe(0);
+              // As many modules have run, and as many turns of the chain have passed.
+              if (loaded) expect(counted.stdout).toBe(plain.stdout);
+              least = Math.min(least, Number(/^(\d+),/m.exec(counted.stderr)?.[1]));
+            }
+            best.push(least);
+          }
+          costs.push(best[1] - best[0]);
+        });
+      }
+      const perModule = (costs[1] - costs[0]) / (numbers[1] - numbers[0]);
+      console.log(
+        `static-modules-slope: ${(costs[1] / imports).toFixed(0)} instructions for each of ${imports} import() that load ${numbers[1]} modules beside a chain of jobs, ${perModule.toFixed(1)} a module`,
+      );
+      expect(perModule).toBeLessThanOrEqual(2000);
     },
     1_800_000,
   );

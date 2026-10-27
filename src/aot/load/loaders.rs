@@ -1,9 +1,12 @@
 use bun_ast::Loader;
-use bun_paths::fs::PathName;
 use bun_sema::program::HostLoader;
-use bun_sema::resolve::{CodeImportKind, ScriptKind};
+use bun_sema::resolve::ScriptKind;
 
-use crate::options::DEFAULT_LOADERS;
+#[cfg(test)]
+pub(crate) use crate::module_keys::loader_name;
+pub(crate) use crate::module_keys::{
+    loader_by_name, loader_by_path, loader_named_by_path, parses_text_as_data,
+};
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub(crate) enum HostLoaderKind {
@@ -72,48 +75,6 @@ pub(crate) fn host_loader_kind(loader: HostLoader) -> Option<HostLoaderKind> {
     }
 }
 
-pub(crate) fn loader_by_name(path: &[u8]) -> Loader {
-    loader_by_path(DEFAULT_LOADERS, path, CodeImportKind::Import)
-}
-
-pub(crate) fn loader_by_path<E: AsRef<[u8]>>(
-    table: &[(E, Loader)],
-    path: &[u8],
-    kind: CodeImportKind,
-) -> Loader {
-    match (loader_named_by_path(table, path), kind) {
-        (Some(loader), _) => loader,
-        (None, _) if PathName::init(path).ext.is_empty() => Loader::Tsx,
-        (None, CodeImportKind::EntryPoint) => Loader::Tsx,
-        (None, CodeImportKind::Require) => Loader::Ts,
-        (None, CodeImportKind::Import) => Loader::File,
-    }
-}
-
-pub(crate) fn loader_named_by_path<E: AsRef<[u8]>>(
-    table: &[(E, Loader)],
-    path: &[u8],
-) -> Option<Loader> {
-    let name = PathName::init(path);
-    let found = match table.binary_search_by(|(extension, _)| extension.as_ref().cmp(name.ext)) {
-        Ok(index) => Some(table[index].1),
-        Err(_) => Loader::from_string(name.ext),
-    };
-    match matches!(found, None | Some(Loader::Json)) && is_jsonc_file_name(name.filename) {
-        true => Some(Loader::Jsonc),
-        false => found,
-    }
-}
-
-fn is_jsonc_file_name(file_name: &[u8]) -> bool {
-    let is_typescript_config =
-        file_name.starts_with(b"tsconfig.") || file_name.starts_with(b"jsconfig.");
-    file_name == b"package.json"
-        || file_name == b"bun.lock"
-        || file_name.ends_with(b".jsonc")
-        || (is_typescript_config && file_name.ends_with(b".json"))
-}
-
 pub(crate) fn script_kind_of(loader: Loader) -> Option<ScriptKind> {
     match loader {
         Loader::Js => Some(ScriptKind::Js),
@@ -137,27 +98,12 @@ pub(crate) fn reads_raw_bytes(loader: Loader) -> bool {
     )
 }
 
-/// True if the module says what the text says, and nothing about where the text is.
-pub(crate) fn parses_text_as_data(loader: Loader) -> bool {
-    matches!(
-        loader,
-        Loader::Json
-            | Loader::Jsonc
-            | Loader::Json5
-            | Loader::Toml
-            | Loader::Yaml
-            | Loader::Xml
-            | Loader::Text
-    )
-}
-
-pub(crate) fn loader_name(loader: Loader) -> &'static str {
-    loader.into()
-}
-
 #[cfg(test)]
 mod tests {
+    use bun_sema::resolve::CodeImportKind;
+
     use super::*;
+    use crate::options::DEFAULT_LOADERS;
 
     const JS_AS_TS: [(&[u8], Loader); 1] = [(b".js", Loader::Ts)];
 

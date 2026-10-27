@@ -698,11 +698,13 @@ pub(super) fn pair_embedded_copies<'b>(
 /// The run time holds what any program of the executable uses. A witness is a position in the records of the first program.
 fn add_used_features(used: &mut UsedFeatures, further: UsedFeatures) {
     for feature in further.features {
-        if !(used.features.iter()).any(|known| known.feature == feature.feature) {
-            used.features.push(UsedFeature {
-                feature: feature.feature,
+        let is_same = |known: &&mut UsedFeature| known.feature == feature.feature;
+        match used.features.iter_mut().find(is_same) {
+            Some(known) => known.is_named |= feature.is_named,
+            None => used.features.push(UsedFeature {
                 witness: None,
-            });
+                ..feature
+            }),
         }
     }
     used.causes

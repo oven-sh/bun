@@ -38,6 +38,10 @@ const RUNS_FILES_FROM_DISK: [Feature; 4] = [
     Feature::BuiltinSourceText,
 ];
 
+// A realm that the program creates holds nothing compiled: it runs the built-in modules from their text.
+pub(crate) const CREATES_REALMS: Feature = Feature::ShadowRealm;
+const RUNS_BUILTIN_MODULES_FROM_TEXT: Feature = Feature::RuntimeTranspiler;
+
 // `Bun.build` checks types, compiles ahead of time, and copies this executable's runtime into the executables it writes.
 const ENTERED_BY_BUNDLER: [Feature; 4] = [
     Feature::Check,
@@ -116,6 +120,13 @@ fn compute_seed(input: &TrimInput<'_>, requirements: &[OptionRequirement]) -> Re
     }
     for used in &input.used.features {
         seed.insert(used.feature, RetainReason::Used(used.witness));
+    }
+    if input.used.names(CREATES_REALMS) {
+        let reason = RetainReason::NeededBy {
+            feature: CREATES_REALMS,
+            strength: EdgeStrength::RecoverableGuard,
+        };
+        seed.insert(RUNS_BUILTIN_MODULES_FROM_TEXT, reason);
     }
     for (index, option) in requirements.iter().enumerate() {
         let features = option.requirement.required_features();
@@ -841,10 +852,26 @@ mod tests {
     }
 
     #[test]
+    fn named_shadow_realm_keeps_what_runs_builtin_modules_from_text() {
+        let named = using(&[Feature::ShadowRealm]);
+        let mut reached = named.clone();
+        reached.features[0].is_named = false;
+        let needed_by_realms = RetainReason::NeededBy {
+            feature: Feature::ShadowRealm,
+            strength: RecoverableGuard,
+        };
+        let reason_of =
+            |used| decide_request(used, &removing_unused()).reason_of(Feature::RuntimeTranspiler);
+        assert_eq!(reason_of(&named), Some(needed_by_realms));
+        assert_eq!(reason_of(&reached), None);
+    }
+
+    #[test]
     fn first_reason_wins() {
         let with_witness = |feature: Feature, witness: u32| UsedFeature {
             feature,
             witness: Some(WitnessIndex(witness)),
+            is_named: true,
         };
         let used = UsedFeatures {
             features: vec![

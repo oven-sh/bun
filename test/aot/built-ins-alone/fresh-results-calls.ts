@@ -424,6 +424,14 @@ const withCertificate =
 const withAssertions = "no server is of this class in a build without assertions";
 const alwaysThrows = "the constructor throws whatever it is given";
 
+/** Rows that are not called, by what their paths look like. */
+export const familiesNotCalled: { rows: RegExp; why: string }[] = [
+  {
+    rows: /_test\.bind\.ts:|^%NativeFunctions%\.[A-Za-z0-9_]+_testBindTs/,
+    why: "it exists for the tests of the generator of bindings, and only a build with assertions has it",
+  },
+];
+
 export const notCalled: Record<string, string> = {
   "%Expect%": alwaysThrows,
   "%ExpectTypeOf%": alwaysThrows,

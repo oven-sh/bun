@@ -49,14 +49,10 @@ export default b.declarations(
 
   extendAll(
     ["Histogram"],
-    ...nativeBindings("NewCppFunction", "JSNodePerformanceHooksHistogram.cpp", "jsFunction_createHistogram"),
-    ...nativeBindings(
-      "NewCppFunction",
-      "JSNodePerformanceHooksHistogramPrototype.cpp",
-      "jsFunction_disableEventLoopDelay",
-      "jsFunction_enableEventLoopDelay",
-      "jsFunction_monitorEventLoopDelay",
-    ),
+    "%Histogram%",
+    "%RecordableHistogram%",
+    "%ELDHistogram%",
+    ...nativeBindings("Bindgen", "histogram.bind.ts", "createRecordable", "createInterval"),
   ),
 
   extendAll(["NodeV8"], ...nativeBindings("Cpp", "NodeV8.cpp", "Bun::createNodeV8Binding")),

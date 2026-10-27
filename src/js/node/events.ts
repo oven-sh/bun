@@ -332,7 +332,7 @@ const emit = function emit(this: $Node.EventEmitter, type: $Node.EventName, ...a
     ("unlikely");
     return emitError(this, args);
   }
-  const events = this._events;
+  const { _events: events } = this;
   if (events === undefined) return false;
   const handler = events[type];
   if (handler === undefined) return false;

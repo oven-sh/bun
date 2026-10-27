@@ -30,6 +30,7 @@ import {
   inShare,
   mayHoldWhatIsWanted,
   measuresTimeOrMemory,
+  referenceEnv,
   slot,
   spawned,
   taken,
@@ -292,7 +293,7 @@ export function programsAsEntryPoints(part = 1, parts = 1) {
           // See measuresTimeOrMemory().
           const measures = measuresTimeOrMemory(path);
           const hold = <T>(work: () => Promise<T>) => (measures ? withEverySlot(0, work) : slot(work));
-          const runPlain = () => hold(() => spawned([bunExe(), "run", path], cwd, { ...bunEnv, ...options.env }));
+          const runPlain = () => hold(() => spawned([bunExe(), "run", path], cwd, { ...referenceEnv, ...options.env }));
           let reference: RunResult | undefined;
           for (const [index, way] of ways.entries()) {
             if (index === 1 && !typed.has(path)) continue;

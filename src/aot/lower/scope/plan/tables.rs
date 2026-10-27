@@ -128,6 +128,7 @@ fn compute_function_summaries(
 ) -> (Vec<FunctionSummary>, Vec<Capture>) {
     let functions = &context.walk.functions;
     debug_assert_eq!(functions.len(), parts.captures.captures.len());
+    debug_assert!(context.walk.halves_in_front.is_sorted());
     let over_limit = &parts.captures.functions_over_limit;
     let with_fields_for_handlers = &parts.functions_with_fields_for_handlers;
     let mut summaries = Vec::with_capacity(functions.len());
@@ -142,8 +143,7 @@ fn compute_function_summaries(
             captures: start..captures.len() as u32,
             has_too_many_captures: over_limit.binary_search(&id).is_ok(),
             has_fields_for_handlers: with_fields_for_handlers.binary_search(&id).is_ok(),
-            created_at: function.created_at,
-            copies_settle_at: find_time_when_copies_settle(parts, id),
+            half_to_stand_behind: find_half_to_stand_behind(context, parts, id),
         });
     }
     summaries.sort_unstable_by_key(|summary| summary.key);
@@ -151,6 +151,21 @@ fn compute_function_summaries(
     (summaries, captures)
 }
 
+fn find_half_to_stand_behind(
+    context: &Context<'_, '_>,
+    parts: &Parts,
+    function: WalkedFunctionId,
+) -> Option<FnId> {
+    let in_front = find_by_key(&context.walk.halves_in_front, function)?;
+    let in_front = &context.walk.functions[in_front.index()];
+    let FunctionKey::Source(source) = in_front.key else {
+        unreachable!("a half of an accessor is written");
+    };
+    let copies_same_values = find_time_when_copies_settle(parts, function) < in_front.created_at;
+    copies_same_values.then_some(source.function)
+}
+
+// The time behind which each name that the function copies keeps its value.
 fn find_time_when_copies_settle(parts: &Parts, function: WalkedFunctionId) -> u32 {
     let captures = parts.captures.captures[function.index()].iter();
     let times = captures.map(|capture| match *capture {

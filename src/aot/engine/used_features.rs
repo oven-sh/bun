@@ -29,6 +29,7 @@ fn from_records(
 ) -> UsedFeatures {
     let only_when_named = features_kept_only_when_named();
     let mut seen = FeatureSet::EMPTY;
+    let mut named = FeatureSet::EMPTY;
     let mut used = Vec::new();
     for (index, record) in features.iter().enumerate() {
         // An undeclared word can stand for any feature, so nothing may be removed.
@@ -36,6 +37,9 @@ fn from_records(
             return UsedFeatures::default();
         };
         let is_named = record.kind == FeatureUseKind::Named;
+        if is_named {
+            named.insert(feature);
+        }
         if seen.contains(feature) || (!is_named && only_when_named.contains(feature)) {
             continue;
         }
@@ -43,7 +47,11 @@ fn from_records(
         used.push(UsedFeature {
             feature,
             witness: witness_at(index),
+            is_named,
         });
+    }
+    for used in &mut used {
+        used.is_named = named.contains(used.feature);
     }
     let causes = unseen.iter().enumerate().map(|(index, record)| UnseenCode {
         cause: cause_of(record.cause),

@@ -178,6 +178,27 @@ export default b.declarations(
     writes: ["MemberGuards"],
     implementation: b.hostCall,
   }),
+  // It keeps the function. Whoever looks under the symbol with a key that is a value calls it first, on the object that has a field under the symbol.
+  b.static(cpp("BunCompiledModules.cpp", "jsFunctionPrepareHoldersBeforeLookupsUnder"), {
+    args: { symbol: b.symbol, prepare: b.callable },
+    returns: b.undefined,
+    capability: "none",
+    uses: {
+      symbol: b.inspected,
+      prepare: [
+        b.retained,
+        b.called({
+          afterwards: "TouchesOnlyWhatRowNames",
+          times: "Later",
+          this: b.any,
+          args: [],
+          result: "Ignored",
+        }),
+      ],
+    },
+    writes: externalState,
+    implementation: b.hostCall,
+  }),
   b.static(cpp("JSEventTarget.cpp", "jsEventTargetGetEventListenersCount"), {
     ...operandCodeOnly,
     args: { target: b.any.optional, type: b.any.optional },

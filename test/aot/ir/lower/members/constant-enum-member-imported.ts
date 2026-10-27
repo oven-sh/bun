@@ -14,13 +14,20 @@
 // CHECK-NOT: PropGet
 // CHECK: = Integer integer=5 @
 // CHECK-NOT: PropGet
-// CHECK-LABEL: function {{*}}name="plainEnum"
+// CHECK-LABEL: function {{*}}name="handedOn"
 // CHECK: = GetModuleVariable
-// CHECK: = PropGet {{*}}key="One"
+// CHECK-LABEL: function {{*}}name="plainEnum"
+// CHECK-NOT: GetModuleVariable
+// CHECK-NOT: PropGet
+// CHECK: = Integer integer=1 @
+// CHECK-NOT: PropGet
 // CHECK-LABEL: function {{*}}name="renamed"
 // CHECK-NOT: PropGet
 // CHECK: = Integer integer=5 @
 // CHECK-NOT: PropGet
+// CHECK-LABEL: function {{*}}name="sharedEnum"
+// CHECK: = GetModuleVariable
+// CHECK: = PropGet {{*}}key="One"
 // CHECK-LABEL: function {{*}}name="stringMember"
 // CHECK-NOT: PropGet
 // CHECK: = String string="left"
@@ -34,7 +41,7 @@
 // CHECK: = Integer integer=5 @
 // CHECK-NOT: PropGet
 
-import { Kind, Name, Plain } from "./imports/kinds";
+import { Kind, Name, Plain, Shared } from "./imports/kinds";
 import { Kind as ThroughStar, Sort } from "./imports/kinds-again";
 import * as all from "./imports/kinds-again";
 
@@ -60,12 +67,20 @@ export function direct() {
   return Kind.Both;
 }
 
+export function handedOn() {
+  return Object.keys(Shared);
+}
+
 export function plainEnum() {
   return Plain.One;
 }
 
 export function renamed() {
   return Sort.Number;
+}
+
+export function sharedEnum() {
+  return Shared.One;
 }
 
 export function stringMember() {

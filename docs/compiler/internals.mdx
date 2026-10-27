@@ -1291,6 +1291,8 @@ It's an inclusion-based analysis over a graph, in the family of Andersen's point
 
 The solver (`AOTValueFlowSolver.cpp`) works in rounds, on all threads, until nothing grows. A function's body only takes part once something calls it, so the analysis also computes what's reachable. What it never enters isn't compiled.
 
+Inside a function, an operation whose set stays empty never completes, and what follows it is unreachable. A call of something that always throws has an empty set, and so does a read from `null`. When the rule of an operation was shown a value for every operand, its result is empty and none of those reasons holds, a rule has lost a value. Every build looks for that once the solver is done (`AOTValueFlowResultsOperationsWithoutValue.cpp`) and stops with the internal error `OperationWithoutValue`.
+
 <Frame caption="Objects are followed from the site that makes them to the positions they reach.">
   <ValueFlow />
 </Frame>

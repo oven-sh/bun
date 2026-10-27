@@ -5,6 +5,8 @@
 //   AOT_FUZZ_PROGRAMS=2000 AOT_FUZZ_SEED=7 bun test test/aot/fuzzer-fixed-seeds
 //   AOT_FRESH_SEEDS=1 bun test test/aot/fuzzer-fixed-seeds                   and as many from a seed that no run has used
 //
+// A third as many more are drawn in several files: the declarations at the top of a program lie in files of their own, which import from each other.
+//
 // Every difference that fuzz/accepted-differences.tsv does not explain fails the test. The failure lists the findings, neither
 // reduced nor attributed, so that the test stays short; `bun test/aot/fuzz/run.ts --replay <source>:<seed>` shows one program again.
 import { expect, test } from "bun:test";
@@ -15,10 +17,10 @@ import { join } from "path";
 import { freshSeed } from "./fresh-seed";
 import { ProductBed } from "./fuzz/beds";
 import { fuzz } from "./fuzz/fuzzer";
-import { allSources } from "./fuzz/sources";
+import { allSources, inSeveralFiles } from "./fuzz/sources";
 import { unsupported } from "./run-programs";
 
-const programs = Number(process.env.AOT_FUZZ_PROGRAMS) || 45;
+const inOneFile = Number(process.env.AOT_FUZZ_PROGRAMS) || 45;
 const seeds = process.env.AOT_FUZZ_SEED
   ? [Number(process.env.AOT_FUZZ_SEED)]
   : freshSeed === undefined
@@ -34,20 +36,25 @@ const withoutFixedSeedsYet = [
   "very-many-values-alive-across-very-many-blocks",
 ];
 
-for (const seed of seeds)
+for (const [seed, programs, form] of seeds.flatMap(seed => [
+  [seed, inOneFile, ""] as const,
+  [seed, Math.ceil(inOneFile / 3), inSeveralFiles] as const,
+]))
   test.skipIf(!!unsupported)(
-    `${programs} programs from seed ${seed} print the same compiled and plain`,
+    `${programs} programs from seed ${seed}${form && ", each in several files,"} print the same compiled and plain`,
     async () => {
       using folder = tempDir("aot-fuzzer-fixed-seeds", {});
       const out = join(String(folder), "out");
       const programsRoot = join(import.meta.dir, "programs");
       // A source with fixed seeds of its own, in generated-<its name>.test.ts, is left to that test: a new one does not move what is drawn here. The programs as they are have tests of their own.
-      const sources = Object.keys(await allSources(programsRoot, new Set())).filter(
-        name =>
-          name !== "programs-as-they-are" &&
-          !withoutFixedSeedsYet.includes(name) &&
-          !existsSync(join(import.meta.dir, `generated-${name}.test.ts`)),
-      );
+      const sources = Object.keys(await allSources(programsRoot, new Set()))
+        .filter(
+          name =>
+            name !== "programs-as-they-are" &&
+            !withoutFixedSeedsYet.includes(name) &&
+            !existsSync(join(import.meta.dir, `generated-${name}.test.ts`)),
+        )
+        .map(name => name + form);
       const bed = new ProductBed(bunExe(), {
         baseFlags: [],
         validate: true,

@@ -14,7 +14,7 @@ members = [
   "src/install/windows-shim",
   "src/parsers",
   "src/io",
-  "src/libarchive",
+  "src/archive",
   "src/md",
   "src/paths",
   "src/resolver",
@@ -48,6 +48,7 @@ members = [
   "src/sourcemap",
   "src/sql",
   "src/sys",
+  "src/tar",
   "src/threading",
   "src/valkey",
   "src/watcher",
@@ -65,6 +66,7 @@ members = [
   "src/trim",
   "src/trim/removable_features",
   "src/highway",
+  "src/histogram",
   "src/http_jsc",
   "src/http_types",
   "src/ini",
@@ -390,7 +392,7 @@ bun_http = { path = "src/http" }
 bun_install = { path = "src/install" }
 bun_parsers = { path = "src/parsers" }
 bun_io = { path = "src/io" }
-bun_libarchive = { path = "src/libarchive" }
+bun_archive = { path = "src/archive" }
 bun_md = { path = "src/md" }
 bun_paths = { path = "src/paths" }
 bun_resolver = { path = "src/resolver" }
@@ -424,6 +426,7 @@ bun_semver = { path = "src/semver" }
 bun_sourcemap = { path = "src/sourcemap" }
 bun_sql = { path = "src/sql" }
 bun_sys = { path = "src/sys" }
+bun_tar = { path = "src/tar" }
 bun_threading = { path = "src/threading" }
 bun_valkey = { path = "src/valkey" }
 bun_watcher = { path = "src/watcher" }
@@ -440,6 +443,7 @@ bun_exe_format = { path = "src/exe_format" }
 bun_trim = { path = "src/trim" }
 bun_removable_features = { path = "src/trim/removable_features" }
 bun_highway = { path = "src/highway" }
+bun_histogram = { path = "src/histogram" }
 bun_http_jsc = { path = "src/http_jsc" }
 bun_http_types = { path = "src/http_types" }
 bun_ini = { path = "src/ini" }

@@ -574,12 +574,7 @@ pub(crate) fn lower_object_literal(
         members.push((prop, in_front));
         in_front = InFront::Property(prop);
     }
-    let scopes = &lowering.file.scopes;
-    let key_of = |function: FnId| scopes.function_key(CodeUnit::Function(function));
-    let copies_same_values = |half: FnId, first_half: FnId| {
-        scopes.copies_same_values_beside(key_of(half), key_of(first_half))
-    };
-    put_halves_of_accessors_side_by_side(hir, &mut members, |member| member.0, copies_same_values);
+    put_halves_of_accessors_side_by_side(lowering.file, &mut members);
     for (prop, in_front) in members {
         lowering.lower_property_definition(&mut object, dictionary, prop, in_front);
     }
@@ -587,56 +582,29 @@ pub(crate) fn lower_object_literal(
     super::finish_object(lowering, object)
 }
 
-// An accessor that a later half may join.
-struct OpenAccessor {
-    name: Atom,
-    // The half that stands where it is written.
-    first_half: FnId,
-    // Where the last of its halves stands.
-    last: usize,
-}
-
-// A getter or a setter goes right behind the accessor of its name that the literal has defined already, where `may_join` lets it. Making a function runs no code and nobody has seen the object yet,
-// so nobody can tell, and the name keeps the place of its first definition among the keys either way. What may give the name a value in between keeps the two apart.
-pub(in crate::lower) fn put_halves_of_accessors_side_by_side<Member>(
-    hir: &File<'_>,
-    members: &mut [Member],
-    property_of: impl Fn(&Member) -> PropId,
-    mut may_join: impl FnMut(FnId, FnId) -> bool,
+// Making a function runs no code and nobody has seen the object yet, so nobody can tell where a half is made, and the name keeps the place of its first definition among the keys either way.
+fn put_halves_of_accessors_side_by_side(
+    file: &FileLowering<'_, '_, '_, '_>,
+    members: &mut [(PropId, InFront)],
 ) {
-    let mut open: SmallVec<[OpenAccessor; 4]> = SmallVec::new();
+    let hir = file.hir;
+    let find_half = |member: &(PropId, InFront)| {
+        let prop = hir[member.0];
+        let is_half = matches!(prop.kind, PropKind::Getter | PropKind::Setter);
+        is_half.then(|| get_method_function(hir, &prop))
+    };
     for index in 0..members.len() {
-        let property = property_of(&members[index]);
-        let prop = hir[property];
-        match (prop.kind, hir.runtime_property_key(property)) {
-            (PropKind::Getter | PropKind::Setter, PropKey::Name(name)) => {
-                let half = get_method_function(hir, &prop);
-                let found = open.iter().position(|accessor| accessor.name == name);
-                let Some(found) = found.filter(|&found| may_join(half, open[found].first_half))
-                else {
-                    open.retain(|accessor| accessor.name != name);
-                    open.push(OpenAccessor {
-                        name,
-                        first_half: half,
-                        last: index,
-                    });
-                    continue;
-                };
-                let place = open[found].last + 1;
-                members[place..=index].rotate_right(1);
-                for accessor in &mut open {
-                    if accessor.last >= place {
-                        accessor.last += 1;
-                    }
-                }
-                open[found].last = place;
-            }
-            (PropKind::Init, _) if is_proto_setter(&prop) => {}
-            (PropKind::Init | PropKind::Shorthand | PropKind::Method, PropKey::Name(name)) => {
-                open.retain(|accessor| accessor.name != name);
-            }
-            _ => open.clear(),
-        }
+        let Some(half) = find_half(&members[index]) else {
+            continue;
+        };
+        let key = file.scopes.function_key(CodeUnit::Function(half));
+        let Some(in_front) = file.scopes.half_to_stand_behind(key) else {
+            continue;
+        };
+        let is_in_front = |member: &(PropId, InFront)| find_half(member) == Some(in_front);
+        let found = members[..index].iter().rposition(is_in_front);
+        let place = found.expect("the half in front stands in the same literal") + 1;
+        members[place..=index].rotate_right(1);
     }
 }
 

@@ -2,16 +2,16 @@ use super::text::Text;
 use super::{Access, AccessKind, StoredValue};
 use crate::builtins::id::BuiltinId;
 use crate::known_helpers::{Helper, Quiet, Shape};
-use crate::modules::ModuleRef;
 use crate::modules::requests::ScannedSite;
+use crate::modules::{DescribedPart, ModuleRef, WrittenDescriptor};
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{
     Binding, BindingInitializer, BindingKind, CodeUnit, CommonJsVariable, Decl, Parent, SymbolId,
 };
 use bun_sema::fold::Constant;
 use bun_sema::hir::{
-    BinOp, CallId, Chain, ExprId, ExprKind, Flags, FnBody, FnId, PatKind, PropKey, PropKind,
-    StmtId, StmtKind, UnOp, VarDeclId,
+    BinOp, CallId, Chain, ExprId, ExprKind, Flags, FnBody, FnId, FnKind, PatKind, PropKey,
+    PropKind, StmtId, StmtKind, UnOp, VarDeclId,
 };
 use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::program::{FileId, Sym};
@@ -197,13 +197,6 @@ struct Scan<'t, 'a, 's> {
     marking_calls: Vec<ExprId>,
 }
 
-#[derive(Copy, Clone)]
-enum DefinedPart {
-    Value(ExprId),
-    /// A getter that does nothing but return this expression.
-    Getter(ExprId),
-}
-
 impl Scan<'_, '_, '_> {
     fn module_of_call(&self, call: ExprId) -> Option<ModuleRef> {
         let text = self.text;
@@ -303,6 +296,11 @@ impl Scan<'_, '_, '_> {
         self.found.creations.push(creation);
     }
 
+    fn is_method(&self, value: ExprId) -> bool {
+        let hir = self.text.hir;
+        matches!(hir[value].kind, ExprKind::Fn(function) if hir[function].kind == FnKind::Method)
+    }
+
     fn find_returned_expression(&self, getter: ExprId) -> Option<ExprId> {
         let hir = self.text.hir;
         let ExprKind::Fn(function) = hir[hir.skip_type_assertions(getter)].kind else {
@@ -323,56 +321,6 @@ impl Scan<'_, '_, '_> {
             }
             FnBody::Block(_) | FnBody::None => None,
         }
-    }
-
-    // What ToPropertyDescriptor reads from an object literal: the value or the getter, `enumerable`, `writable`.
-    fn find_defined(&self, descriptor: ExprId) -> Option<(DefinedPart, bool, bool)> {
-        let text = self.text;
-        let hir = text.hir;
-        let ExprKind::Object(properties) = hir[hir.skip_type_assertions(descriptor)].kind else {
-            return None;
-        };
-        let flag = |value: ExprId| match text.constant(value)? {
-            Constant::Boolean(flag) => Some(flag),
-            Constant::Undefined | Constant::Null => Some(false),
-            Constant::Number(_) | Constant::String(_) | Constant::BigInt(_) => None,
-        };
-        let (mut part, mut is_enumerable, mut is_writable) = (None, false, false);
-        for property in properties.iter().map(|id| hir[id]) {
-            let PropKey::Name(name) = property.key else {
-                return None;
-            };
-            let found = match (text.atoms.bytes(name), property.kind) {
-                (b"value", PropKind::Init | PropKind::Shorthand) => {
-                    DefinedPart::Value(property.value)
-                }
-                (b"get", PropKind::Init | PropKind::Method) => {
-                    DefinedPart::Getter(self.find_returned_expression(property.value)?)
-                }
-                (b"enumerable", PropKind::Init) => {
-                    is_enumerable = flag(property.value)?;
-                    continue;
-                }
-                (b"writable", PropKind::Init) => {
-                    is_writable = flag(property.value)?;
-                    continue;
-                }
-                (b"configurable", PropKind::Init) => {
-                    flag(property.value)?;
-                    continue;
-                }
-                _ => return None,
-            };
-            if part.replace(found).is_some() {
-                return None;
-            }
-        }
-        let part = part?;
-        // A getter with `writable` is a TypeError.
-        if is_writable && matches!(part, DefinedPart::Getter(_)) {
-            return None;
-        }
-        Some((part, is_enumerable, is_writable))
     }
 
     // A binding that the body of the file declares at its top. It has a variable, which every file can read.
@@ -471,22 +419,32 @@ impl Scan<'_, '_, '_> {
         }
         let name = text.constant_name(hir.id_at(call.args, 1));
         let name = name.filter(|&name| text.can_name_variable(name))?;
-        let (part, is_enumerable, is_writable) = self.find_defined(hir.id_at(call.args, 2))?;
-        match part {
-            DefinedPart::Value(value) => {
+        let descriptor = hir.id_at(call.args, 2);
+        let written = WrittenDescriptor::read(text.atoms, hir, text.decisions, descriptor)?;
+        let is_enumerable = written.is_enumerable == Some(true);
+        match written.part {
+            DescribedPart::Data {
+                value: Some(value),
+                is_writable,
+            } if !self.is_method(value) => {
                 let creation = self.create(name, call_node, value, text.classify_value(value));
                 self.found.creations.push(Creation {
                     is_enumerable,
-                    is_read_only: !is_writable,
+                    is_read_only: is_writable != Some(true),
                     ..creation
                 });
                 self.found.defined_values.push((call_node, name));
             }
-            DefinedPart::Getter(returned) => {
+            DescribedPart::Accessor {
+                getter: Some(getter),
+                setter: None,
+            } => {
+                let returned = self.find_returned_expression(getter)?;
                 let target = self.find_alias_target(returned, call_node)?;
                 self.add_alias(name, target, call_node, returned, is_enumerable);
                 self.found.erased.extend(text.statement_of(call_node));
             }
+            DescribedPart::Data { .. } | DescribedPart::Accessor { .. } => return None,
         }
         Some(())
     }
@@ -1164,6 +1122,17 @@ pub(super) fn scan_own_text(input: &ScanInput<'_, '_, '_>) -> Vec<OwnText> {
         }
     }
     if input.is_file_a_module {
+        // Such a read takes the object, and the names behind it from the object.
+        for binding in (text.analysis).bindings_read_without_expression(text.hir, text.bound) {
+            match binding {
+                Binding::CommonJs(CommonJsVariable::Exports) => scans[0].found.has_names = false,
+                Binding::CommonJs(CommonJsVariable::Module) => {
+                    scans[0].found.uses_module_object = true;
+                    scans[0].found.has_names = false;
+                }
+                _ => {}
+            }
+        }
         for statement in text.hir.ids(text.hir.body) {
             // `export = e` of TypeScript is the statement `module.exports = e`.
             if let StmtKind::ExportAssign(value) = text.hir[statement].kind {

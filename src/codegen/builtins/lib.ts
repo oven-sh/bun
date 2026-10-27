@@ -82,6 +82,7 @@ export const {
   inspected,
   inspectedByHost,
   instance,
+  instancesWithoutOwnNames,
   int,
   integer,
   integrityRaisedTo,

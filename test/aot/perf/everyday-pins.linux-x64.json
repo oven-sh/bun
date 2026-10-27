@@ -291,9 +291,21 @@
     "typed": 36.1,
     "untyped": 36
   },
+  "everyday-classes/mixins-whose-objects-are-kept": {
+    "typed": 106.7,
+    "untyped": 110.9
+  },
+  "everyday-classes/mixins-with-fields-private-names-and-static-fields": {
+    "typed": 7,
+    "untyped": 7
+  },
   "everyday-classes/optional-fields": {
     "typed": 8.5,
     "untyped": 8.5
+  },
+  "everyday-classes/private-field-of-a-class-below-a-class-kept": {
+    "typed": 84.5,
+    "untyped": 86.9
   },
   "everyday-classes/private-in-check": {
     "typed": 57.5,
@@ -1107,9 +1119,17 @@
     "typed": 59.0,
     "untyped": 26.0
   },
+  "everyday-loops-over-lists-and-typed-arrays/buffer-entries-summed": {
+    "typed": 25196.6,
+    "untyped": 25197.9
+  },
   "everyday-loops-over-lists-and-typed-arrays/buffer-sum-of-a-thousand": {
     "typed": 7025,
     "untyped": 7025.9
+  },
+  "everyday-loops-over-lists-and-typed-arrays/buffer-values-summed": {
+    "typed": 7032,
+    "untyped": 7034
   },
   "everyday-loops-over-lists-and-typed-arrays/data-view-sum-of-floats": {
     "typed": 58488.7,
@@ -2082,6 +2102,22 @@
   "everyday-strings/wide-text-length-and-slice": {
     "typed": 9,
     "untyped": 9
+  },
+  "everyday-texts-of-an-interactive-program/a-few-short-texts-joined": {
+    "typed": 487.5,
+    "untyped": 487.5
+  },
+  "everyday-texts-of-an-interactive-program/a-word-looked-for-in-a-paragraph": {
+    "typed": 287,
+    "untyped": 287
+  },
+  "everyday-texts-of-an-interactive-program/the-flat-lines-of-a-screen-joined": {
+    "typed": 1681.1,
+    "untyped": 1683.9
+  },
+  "everyday-texts-of-an-interactive-program/words-of-a-line-joined-without-anything-between": {
+    "typed": 1050.7,
+    "untyped": 1051.6
   },
   "everyday-texts-that-every-match-holds/a-16-bit-line-without-the-character-behind-a-bounded-run": {
     "typed": 287.0,

@@ -122,7 +122,7 @@ export const NodeJSFS = b.class({
       ["watch", operation(3, "FSWatcher", "undefined")] as const,
       ["watchFile", operation(3, "StatWatcher", "undefined")] as const,
       ["Dirent", getter] as const,
-      ["Stats", getter] as const,
+      ["Stats", { getter: b.any.returning(table.builtin("%Stats%").spec), capability: "js" }] as const,
     ].sort(([x], [y]) => x.localeCompare(y)),
   ),
 });

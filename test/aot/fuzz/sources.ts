@@ -91,11 +91,13 @@
 //   elements-stored-below-an-object-that-intercepts-them lists, objects and instances take elements by index, and at some time an object above them begins to intercept such stores: a Proxy in the chain, a setter or a value that cannot be written under an index; objects are made before and behind that time, collections run in between, classes are made by the hundred (elements-stored-below-an-object-that-intercepts-them.ts)
 //   sums-of-whole-numbers-at-the-edges-of-what-a-double-holds loops add and subtract whole numbers at the edges of 31, 32, 52 and 53 bits and cut the sum to 32 bits, to a whole number, or not at all; now and then a field holds what is no whole number (sums-of-whole-numbers-at-the-edges-of-what-a-double-holds.ts)
 //   objects-that-may-be-missing-hold-one-another two to four objects, each made under a try of its own, hold one another and something of their own; the last one leaves the function on some ways only (objects-that-may-be-missing-hold-one-another.ts)
+//   <any of these>-in-several-files the same program with the declarations at its top laid into up to four further files, which import from each other; in every second program they import from its first file too (declarations-in-files-of-their-own.ts), and in every second typed program some of them are JavaScript, half of these beside a declaration file that says too little: `1` for number, one member of a union
 //   host-functions-throw-in-code-that-built-ins-call a function of the host or of the language throws inside a getter, a conversion, a callback, a trap, an iterator or a listener that a built-in function has called; the call stands in tail position or not, and the exception is caught in that function, around the built-in function, further up or nowhere (host-functions-throw-in-code-that-built-ins-call.ts)
 import { existsSync, readdirSync, readFileSync } from "fs";
 import { join, relative } from "path";
 import { withPackedPrograms } from "../generate";
-import { staysAScript, type Bed, type Program } from "./beds";
+import { printFor, staysAScript, type Bed, type Program } from "./beds";
+import { withDeclarationsInFilesOfTheirOwn } from "./declarations-in-files-of-their-own";
 import { erased, mutate, reprinted } from "./mutate";
 import { Random } from "./random";
 
@@ -114,9 +116,187 @@ export interface Generated extends Program {
   isForTypeScript?: true;
   /** It is the entry point of its build, never a module of a build that several programs share. */
   standsAlone?: true;
+  /** The text that was laid into its files: a finding is tried on that first. */
+  inOneFile?: string;
 }
 
 export type Source = (seed: number, bed: Bed) => Generated | undefined;
+
+export const inSeveralFiles = "-in-several-files";
+
+// At the top of a file with an `import`, `this` is null in plain Bun and undefined in an executable; in a file without one it is an object in both. The transpiler knows which `this` stands at the top: in a module it prints null in its place.
+function namesThisAtItsTop(text: string, extension: "js" | "ts"): boolean {
+  const printer = new Bun.Transpiler({ loader: extension });
+  const count = (printed: string) => printed.match(/\bthis\b/g)?.length ?? 0;
+  try {
+    return (
+      count(printer.transformSync(`async function all() {\n${text}\n}`)) >
+      count(printer.transformSync(`export {};\n${text}`))
+    );
+  } catch {
+    return false;
+  }
+}
+
+/** Where what begins at `from` ends: at the bracket that closes the one there, or, for a type, in front of the `{` of a body or the `=` of an initializer. -1 where it does not. */
+function endOf(text: string, from: number, what: "bracket" | "{" | "="): number {
+  let depth = 0;
+  for (let at = from; at < text.length; at++) {
+    const char = text[at];
+    if (char === '"' || char === "'" || char === "`") {
+      at = text.indexOf(char, at + 1);
+      if (at < 0) return -1;
+    } else if (char === "=" && text[at + 1] === ">") at++;
+    else if (depth === 0 && char === what) {
+      const before = text.slice(from, at).trimEnd();
+      // `{` may also begin a type: at the start, and behind whatever wants a type to follow.
+      if (
+        what === "=" ||
+        (before && !/(?:[|&:,<([]|=>|\b(?:is|extends|keyof|typeof|readonly|asserts|infer|new))$/.test(before))
+      )
+        return at;
+      depth++;
+    } else if ("([{<".includes(char)) depth++;
+    else if (")]}>".includes(char) && --depth === 0 && what === "bracket") return at;
+  }
+  return -1;
+}
+
+/** A type that holds fewer values than the given one, so that whoever took the given one takes it too. Nothing where no rule fits. */
+function narrower(type: string, random: Random): string | undefined {
+  const members: string[] = [];
+  let from = 0;
+  for (let at = 0, depth = 0; at <= type.length; at++) {
+    if (at === type.length || (depth === 0 && type[at] === "|"))
+      (members.push(type.slice(from, at).trim()), (from = at + 1));
+    else if (type[at] === "=" && type[at + 1] === ">") return;
+    else if ("([{<".includes(type[at])) depth++;
+    else if (")]}>".includes(type[at])) depth--;
+  }
+  if (members.length > 1) return random.pick(members.filter(Boolean));
+  const inPromise = /^Promise<(.+)>$/.exec(type);
+  if (inPromise) {
+    const inner = narrower(inPromise[1], random);
+    return inner && `Promise<${inner}>`;
+  }
+  const rules: Record<string, string[]> = {
+    number: ["1", "0"],
+    string: ['"text"', '""'],
+    boolean: ["true", "false"],
+    unknown: ["number", "string", "{ a: number }", "number[]", "null"],
+    any: ["number", "string", "{ a: number }", "number[]", "undefined"],
+    object: ["{ a: number }", "number[]"],
+    "unknown[]": ["number[]", "string[]", "[number]"],
+    "any[]": ["number[]", "string[]", "[number]"],
+    "number[]": ["[number]", "1[]", "[]"],
+    "string[]": ["[string]", '"text"[]', "[]"],
+  };
+  return rules[type] && random.pick(rules[type]);
+}
+
+/** A declaration file for the text, in which one to three functions and constants are said to give less than they give. Nothing where the text holds a form that is not known here, or nothing to say less about. */
+function declarationsThatSayTooLittle(typed: string, random: Random): string | undefined {
+  const declared: { text: string; type?: [from: number, to: number] }[] = [];
+  for (const unit of typed.split(/\n(?=[^\s})\]])/)) {
+    if (/^(?:import|export (?:interface|type))\b/.test(unit)) declared.push({ text: unit.trimEnd() });
+    else if (!unit.startsWith("export ")) continue;
+    else if (/^export (?:async )?function\b/.test(unit)) {
+      const head = /^export (async )?function(\*)? ?[\w$]+/.exec(unit)!;
+      const open = unit[head[0].length] === "<" ? endOf(unit, head[0].length, "bracket") + 1 : head[0].length;
+      const close = unit[open] === "(" ? endOf(unit, open, "bracket") : -1;
+      // A default has no place in a declaration, a pattern says nothing there, and of several signatures the last is not declared.
+      if (
+        close < 0 ||
+        /=(?!>)|(?:^|,)\s*(?:\.\.\.)?[{[]/.test(unit.slice(open + 1, close)) ||
+        !unit.startsWith(": ", close + 1)
+      )
+        return;
+      const end = endOf(unit, close + 3, "{");
+      if (end < 0 || /\n/.test(unit.slice(0, end))) return;
+      const text = `export declare function${unit.slice(`export ${head[1] ?? ""}function`.length, end).trimEnd()};`;
+      declared.push({
+        text,
+        ...(head[2] ? {} : { type: [text.length - 1 - unit.slice(close + 3, end).trimEnd().length, text.length - 1] }),
+      });
+    } else if (/^export const [\w$]+: /.test(unit)) {
+      const from = unit.indexOf(": ") + 2;
+      const end = endOf(unit, from, "=");
+      if (end < 0) return;
+      const text = `export declare const ${unit.slice("export const ".length, end).trimEnd()};`;
+      declared.push({ text, type: [text.length - 1 - unit.slice(from, end).trimEnd().length, text.length - 1] });
+    } else if (/^export const [\w$]+ = /.test(unit))
+      declared.push({ text: `export declare const ${/[\w$]+/.exec(unit.slice(13))![0]}: any;` });
+    else if (/^export class [\w$]+ /.test(unit))
+      declared.push({
+        text: `export declare class ${/[\w$]+/.exec(unit.slice(13))![0]} {\n  constructor(...all: any[]);\n  [member: string]: any;\n  static [member: string]: any;\n}`,
+      });
+    else return;
+  }
+  let said = 0;
+  for (const each of random.shuffled(declared)) {
+    const less = each.type && said < 3 && narrower(each.text.slice(...each.type), random);
+    if (!less) continue;
+    each.text = each.text.slice(0, each.type![0]) + less + each.text.slice(each.type![1]);
+    said++;
+  }
+  return said ? declared.map(each => each.text + "\n").join("") : undefined;
+}
+
+/** Some of the files as JavaScript, their types erased: what the others know about them is inferred, or stands in a declaration file beside them that says too little. A file stays as it is where another one takes a type from it, or where it declares what JavaScript has no word for. */
+function withSomeFilesInJavaScript(
+  text: string,
+  files: Record<string, string>,
+  random: Random,
+): Record<string, string> {
+  const all = [text, ...Object.values(files)].join("\n");
+  return Object.fromEntries(
+    Object.entries(files).flatMap(([path, typed]) => {
+      const stem = path.replace(/\.ts$/, "");
+      const isAsked = random.chance(0.5);
+      if (!isAsked || new RegExp(`^import type [^;]*"\\./${stem}"`, "m").test(all)) return [[path, typed]];
+      if (/\b(enum|namespace|module|declare|abstract)\b/.test(typed)) return [[path, typed]];
+      try {
+        const untyped = erased(typed, "ts");
+        if (untyped.includes('from "bun:wrap"')) return [[path, typed]];
+        const declarations = random.chance(0.5) ? declarationsThatSayTooLittle(typed, random) : undefined;
+        return [[stem + ".js", untyped], ...(declarations ? [[stem + ".d.ts", declarations]] : [])];
+      } catch {
+        return [[path, typed]];
+      }
+    }),
+  );
+}
+
+/** The programs of a source, each in several files. Nothing where a program declares too little at its top, or asks there what `this` is. */
+const laidIntoSeveralFiles =
+  (source: Source): Source =>
+  (seed, bed) => {
+    if (!bed.takesSeveralFiles) return;
+    const whole = source(seed, bed);
+    if (!whole || whole.files || namesThisAtItsTop(whole.text, whole.extension)) return;
+    // `print` is a declaration like the others: it lies in one file and the rest import it.
+    const isWithoutPrint = /\bprint\(/.test(whole.text) && !/\b(function|const|let|var) print\b/.test(whole.text);
+    const text = isWithoutPrint ? printFor(whole.extension === "ts") + whole.text : whole.text;
+    // Many a source takes the lowest bit of the seed for "typed".
+    const random = new Random(new Random(seed).next() ^ 0x2f11e5);
+    const laid = withDeclarationsInFilesOfTheirOwn(text, whole.extension, random, random.chance(0.5));
+    if (!laid) return;
+    const files =
+      whole.extension === "ts" && random.chance(0.5)
+        ? withSomeFilesInJavaScript(laid.text, laid.files, random)
+        : laid.files;
+    const untyped = whole.extension === "ts" ? Object.keys(files).filter(path => path.endsWith(".js")).length : 0;
+    const declared = Object.keys(files).filter(path => path.endsWith(".d.ts")).length;
+    const { alone, ...rest } = whole;
+    return {
+      ...rest,
+      text: laid.text,
+      files,
+      source: whole.source + inSeveralFiles,
+      inOneFile: text,
+      notes: `${whole.notes} | ${Object.keys(files).length + 1 - declared} files${untyped ? `, ${untyped} in JavaScript` : ""}${declared ? `, ${declared} of them beside declarations that say too little` : ""}`,
+    };
+  };
 
 /** The programs in a single file that print the same compiled and plain, with nothing stored beside them. */
 function singleFilePrograms(root: string) {
@@ -325,8 +505,19 @@ const untypedForTheProduct =
       : undefined;
   };
 
-/** `rejected` receives the names of the base programs that cannot be used; the caller adds those that differ unchanged. */
-export async function allSources(programsRoot: string, rejected: Set<string>): Promise<Record<string, Source>> {
+/** `rejected` receives the names of the base programs that cannot be used; the caller adds those that differ unchanged. With `alsoInSeveralFiles` each source is there a second time, as `<name>-in-several-files`. */
+export async function allSources(
+  programsRoot: string,
+  rejected: Set<string>,
+  alsoInSeveralFiles = false,
+): Promise<Record<string, Source>> {
+  const sources = await inOneFile(programsRoot, rejected);
+  if (alsoInSeveralFiles)
+    for (const [name, source] of Object.entries(sources)) sources[name + inSeveralFiles] = laidIntoSeveralFiles(source);
+  return sources;
+}
+
+async function inOneFile(programsRoot: string, rejected: Set<string>): Promise<Record<string, Source>> {
   const sources: Record<string, Source> = {};
   const mutants = mutation(programsRoot, rejected);
   if (mutants) sources.mutation = mutants;

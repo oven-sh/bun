@@ -1,11 +1,13 @@
 use bun_sema::atom::Atom;
-use bun_sema::bind::{Binding, Decl};
+use bun_sema::bind::{Binding, Decl, SymbolId};
 use bun_sema::fold::{Constant, Decision};
 use bun_sema::hir::{BinOp, EnumId, EnumMemberId, ExprId, ExprKind, UnOp};
+use bun_sema::program::Sym;
 use bun_sema::types::EnumValue;
 use smallvec::SmallVec;
 
 use crate::lower::{FileLowering, expression};
+use crate::modules::{KnownObjects, Validity};
 
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub(super) enum EnumMemberValue {
@@ -42,6 +44,58 @@ impl KnownPrimitive {
 }
 
 impl FileLowering<'_, '_, '_, '_> {
+    /// The value that stands in the place of a read of a member of an enum.
+    pub(in crate::lower) fn find_enum_member_read(&mut self, access: ExprId) -> Option<Constant> {
+        if let Ok(Some(value)) = self.queries.constant_enum_access(access) {
+            return Some(to_constant(value));
+        }
+        let members = KnownObjects {
+            files: self.queries.files(),
+            graph: self.inputs.modules,
+            known: &self.modules.known_member_values,
+            limits: self.inputs.limits,
+        };
+        let read = members.find_read(self.file, access)?;
+        let is_valid = match read.validity {
+            Validity::Always => true,
+            Validity::WhileObjectIsNotHandedOn => {
+                let left_out = self.inputs.library_functions.left_out_declarations();
+                left_out.is_object_never_handed_on(read.object.file, read.object.id)
+            }
+        };
+        is_valid.then_some(read.value)
+    }
+
+    /// The value that stands in the place of a name that is imported from a module of data.
+    pub(in crate::lower) fn find_data_variable_read(&self, symbol: SymbolId) -> Option<Constant> {
+        let members = KnownObjects {
+            files: self.queries.files(),
+            graph: self.inputs.modules,
+            known: &self.modules.known_member_values,
+            limits: self.inputs.limits,
+        };
+        let named = Sym {
+            file: self.file,
+            id: symbol,
+        };
+        members.find_data_variable(named).map(|found| found.1)
+    }
+
+    /// The value that stands in the place of a read out of the object of a module of data.
+    pub(in crate::lower) fn find_data_member_read(&mut self, access: ExprId) -> Option<Constant> {
+        let members = KnownObjects {
+            files: self.queries.files(),
+            graph: self.inputs.modules,
+            known: &self.modules.known_member_values,
+            limits: self.inputs.limits,
+        };
+        let read = members.find_data_read(self.file, access)?;
+        let left_out = self.inputs.library_functions.left_out_declarations();
+        left_out
+            .is_object_never_handed_on(read.object.file, read.object.id)
+            .then_some(read.value)
+    }
+
     pub(super) fn compute_enum_member_values(&mut self, declaration: EnumId) -> EnumMembers {
         let hir = self.hir;
         let mut members = EnumMembers::new();
@@ -224,7 +278,7 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 }
 
-pub(in crate::lower) fn to_constant(value: EnumValue) -> Constant {
+fn to_constant(value: EnumValue) -> Constant {
     match value {
         EnumValue::String(text) => Constant::String(text),
         EnumValue::Number(bits) => Constant::Number(f64::from_bits(bits)),

@@ -168,11 +168,9 @@ function publicMethodsOf(prototype: object): string[] {
   return names;
 }
 
-// The three that docs/compiler/compatibility.mdx names hold something else in an executable.
 const looks = `
 const events = require("node:events"), stream = require("node:stream"), net = require("node:net"), http = require("node:http");
 const lines = [];
-const heldOtherwise = ["kOutHeaders", "kLenientValidation", "fakeSocket"];
 function kindOf(value) {
   if (value === null || value === undefined || typeof value === "boolean") return String(value);
   if (typeof value === "function") return "function " + value.name + "/" + value.length;
@@ -185,8 +183,7 @@ function keysOf(object) {
     const name = typeof key === "symbol" ? "@" + key.description : key;
     const attributes = (descriptor.configurable ? "c" : "-") + (descriptor.enumerable ? "e" : "-");
     if (!("value" in descriptor)) return name + ":" + attributes + (descriptor.get ? "g" : "-") + (descriptor.set ? "s" : "-");
-    const held = typeof key === "symbol" && heldOtherwise.includes(key.description) ? "" : " " + kindOf(descriptor.value);
-    return name + ":" + attributes + (descriptor.writable ? "w" : "-") + held;
+    return name + ":" + attributes + (descriptor.writable ? "w" : "-") + " " + kindOf(descriptor.value);
   }).join(", ");
 }
 const seen = new Map();

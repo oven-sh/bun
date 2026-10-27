@@ -46,6 +46,7 @@ pub use builtin_types::{
 pub use diagnostic_class::DiagnosticClass;
 pub use diagnostic_effect::{Effect, FileOrigin, effect_of};
 pub use diagnostic_subject::{DiagnosticSubject, containers_completed_by_bun_types};
+pub use enum_constants::is_member_visited_before;
 pub(crate) use kept_answers::KeptAnswers;
 pub use kept_answers::KeptFact;
 pub use left_out_bodies::LeftOutBodies;

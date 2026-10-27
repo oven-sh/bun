@@ -22,7 +22,7 @@ This directory generates `build.ninja`. The scripts **describe** the build; ninj
 
 **Deps in our graph.** `BuildSpec` variants:
 
-- `direct` — list the dep's sources explicitly; each becomes a first-class `cc`/`cxx` edge in our graph and the `.o`s go straight into bun's link. Every C/C++ dep that is compiled (zlib, zstd, boringssl, libarchive, mimalloc, … and a local WebKit checkout). Skips a sub-process configure entirely and lets LTO see across the dep boundary. `groups` are further flag sets (a cmake "target" each), `steps` are generators and target executables.
+- `direct` — list the dep's sources explicitly; each becomes a first-class `cc`/`cxx` edge in our graph and the `.o`s go straight into bun's link. Every C/C++ dep that is compiled (zlib, zstd, boringssl, mimalloc, … and a local WebKit checkout). Skips a sub-process configure entirely and lets LTO see across the dep boundary. `groups` are further flag sets (a cmake "target" each), `steps` are generators and target executables.
 - `cargo` — (rule kept for out-of-workspace cargo deps; none today — lolhtml and rust-argon2 are path dependencies compiled as units of bun's own Rust graph).
 - `prebuilt` — skip build entirely, download compiled `.a`/`.lib` (WebKit, nodejs-headers).
 

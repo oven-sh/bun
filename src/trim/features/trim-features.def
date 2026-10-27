@@ -95,7 +95,7 @@ trim-feature image : Image
   about "`Bun.Image` and `.image()` on a `Blob`."
   saves 1.3 0.9
 
-trim-feature archive : Archive Libarchive
+trim-feature archive : Archive
   about "`Bun.Archive`, and everything else that reads or writes a tar archive."
   also "unpacking packages in `bun install`, and `bun pm pack`"
   also "unpacking a template in `bun create`"

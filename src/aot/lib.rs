@@ -16,6 +16,8 @@ mod linked;
 pub mod load;
 pub mod lower;
 #[cfg(test)]
+pub mod module_keys;
+#[cfg(test)]
 pub mod module_list;
 pub mod modules;
 #[cfg(test)]
@@ -28,7 +30,7 @@ pub mod statistics;
 #[cfg(not(test))]
 pub use bun_aot_builtins::builtins;
 #[cfg(not(test))]
-pub use bun_aot_interface::{diagnostic_codes, module_list, options};
+pub use bun_aot_interface::{diagnostic_codes, module_keys, module_list, options};
 
 pub use compile::{BuildFailed, Compilation, compile, emit_program, link_program};
 pub use load::source_provider::{SourceProvider, WithoutServices};

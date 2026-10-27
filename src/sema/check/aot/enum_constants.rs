@@ -63,7 +63,7 @@ fn is_declared_around(hir: &hir::File<'_>, declarations: &[Decl], name: ExprId) 
 
 /// Bun's transpiler visits the enums of a list of statements ahead of the list's other statements,
 /// and knows a member's value from that visit on.
-fn is_member_visited_before(hir: &hir::File<'_>, member: EnumMemberId, access: ExprId) -> bool {
+pub fn is_member_visited_before(hir: &hir::File<'_>, member: EnumMemberId, access: ExprId) -> bool {
     let count_ancestors = |mut node: Node| {
         let mut count = 0usize;
         while node.is_some() {

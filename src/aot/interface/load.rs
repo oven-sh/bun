@@ -6,9 +6,5 @@ pub(crate) mod data_modules {
 }
 
 pub(crate) mod loaders {
-    use bun_ast::Loader;
-
-    pub(crate) fn loader_name(loader: Loader) -> &'static str {
-        loader.into()
-    }
+    pub(crate) use crate::module_keys::loader_name;
 }

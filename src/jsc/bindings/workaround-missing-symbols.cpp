@@ -356,7 +356,7 @@ extern "C" __attribute__((used)) char __libc_single_threaded = 0;
 
 // ───────────────────────────────────────────────────────────────────────────
 // glibc 2.27–2.35 symbols pulled in by Rust std, host crt1.o, libgcc_eh,
-// libarchive, and the ASAN runtime when building on a glibc ≥ 2.27 host.
+// and the ASAN runtime when building on a glibc ≥ 2.27 host.
 // All have ABI-compatible older versions (or syscall fallbacks); pinning
 // each __wrap_X to the floor version keeps verneed ≤ 2.17 regardless of
 // build host. On a glibc 2.17 host these wraps are inert (the linker never

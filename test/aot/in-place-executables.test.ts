@@ -69,6 +69,22 @@ test("extra entry points load as compiled code by absolute path", async () => {
   ).toEqual(plain);
 }, 120_000);
 
+test("the path that an import of a file gives loads the file as compiled code", async () => {
+  using dir = tempDir("aot-in-place", {
+    "app/main.mjs": `import carried from "./carried.js" with { type: "file" };
+import { kept } from "./between.mjs";
+console.log((await import(carried)).named, require(kept).named, require.resolve(carried) === carried);\n`,
+    "app/between.mjs": `import given from "./carried.js" with { type: "file" };\nexport const kept = given;\n`,
+    "app/carried.js": `export const named = "carried";\n`,
+  });
+  const app = join(String(dir), "app");
+  const plain = await run(app, [bunExe(), "run", "./main.mjs"]);
+  expect(plain).toEqual({ stdout: "carried carried true\n", stderr: "", exitCode: 0 });
+  const built = await build(app, "./main.mjs");
+  expect({ stderr: built.exitCode ? built.stderr : "", exitCode: built.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+  expect(await run(String(dir), ["./built.exe"], { ...bunEnv, BUN_JSC_crashIfInterpreterIsUsed: "1" })).toEqual(plain);
+}, 120_000);
+
 test("a module that was not compiled is not loaded from disk", async () => {
   // The build follows `path.join(__dirname, "plugins", name + ".cjs")` and compiles what lies in that folder. It does not follow a path that comes back from native code.
   const written = `path.join(__dirname, "plugins", name + ".cjs")`;

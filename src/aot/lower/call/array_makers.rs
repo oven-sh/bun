@@ -111,11 +111,15 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.return_call_in_tail_position(made, Tail::Yes { casts: Some(&cast) })
     }
 
-    // `Array(-1)` throws where it is written, before what stands behind it is evaluated.
+    // `Array(-1)` throws where it is written, before what stands behind it is evaluated. Written in a way that calls Array, the stack lists Array.
     fn lower_checked_length(&mut self, construction: ExprId, length: ExprId) -> ValueId {
         let length = self.lower_operand_of_question(construction, length);
         self.set_position(self.file.construct_position(construction));
-        let check = BuiltinId::CompilerHelpersCheckedArrayLength;
+        let site = call_site(self.file, construction);
+        let check = match self.file.makes_array_in_caller(site) {
+            true => BuiltinId::CompilerHelpersCheckedArrayLength,
+            false => BuiltinId::CompilerHelpersCheckedLengthOfArrayCall,
+        };
         self.emit_locked_call(check, None, &[length])
     }
 
@@ -177,8 +181,10 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let length = file.find_array_of_length(array)?;
         let value = file.find_only_argument(site)?;
 
-        // The maker throws what `Array(n)` throws. Nothing else in it can be seen.
-        let length = match file.is_evaluated_without_effect(value) {
+        // The maker throws what `Array(n)` throws where the array is made in the caller. Nothing else in it can be seen.
+        let is_checked_by_maker = file.is_evaluated_without_effect(value)
+            && file.makes_array_in_caller(call_site(file, array));
+        let length = match is_checked_by_maker {
             true => self.lower_operand_of_question(array, length),
             false => self.lower_checked_length(array, length),
         };

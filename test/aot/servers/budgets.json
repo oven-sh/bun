@@ -452,8 +452,8 @@
       "operationAOTValueAdd": 342
     },
     "allocated": {
-      "cells": 8610.65,
-      "bytes": 444110.4
+      "cells": 8068.05,
+      "bytes": 419450.4
     },
     "closures": {
       "aRound": 805,

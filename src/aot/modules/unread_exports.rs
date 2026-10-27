@@ -26,18 +26,44 @@ fn loaded_value(site: ImportSiteKind) -> LoadedValue {
     }
 }
 
+// An import or export statement links names to variables of the module. Every other site asks a loader, which answers with a value or with a path that a loader takes.
+fn links_names_alone(site: ImportSiteKind) -> bool {
+    match site {
+        ImportSiteKind::Import(_)
+        | ImportSiteKind::ExportFrom(_)
+        | ImportSiteKind::ExportStar(_) => true,
+        ImportSiteKind::JsxRuntime
+        | ImportSiteKind::JsxPackage
+        | ImportSiteKind::ImportEquals(_)
+        | ImportSiteKind::ImportCall(_)
+        | ImportSiteKind::Require(_)
+        | ImportSiteKind::RequireResolve(_)
+        | ImportSiteKind::ImportMetaRequire(_)
+        | ImportSiteKind::ImportMetaResolve(_)
+        | ImportSiteKind::GetBuiltinModule(_) => false,
+    }
+}
+
 struct DataModule {
     is_required_as_namespace: bool,
     is_namespace_reached: bool,
+    // Whatever names the module in the files of the program is a statement that links names to its variables.
+    is_linked_by_names_alone: bool,
 }
 
 impl DataModule {
-    fn load(&mut self, value: LoadedValue) {
-        self.is_namespace_reached |= match value {
+    fn load(&mut self, site: ImportSiteKind) {
+        self.is_linked_by_names_alone &= links_names_alone(site);
+        self.is_namespace_reached |= match loaded_value(site) {
             LoadedValue::Namespace => true,
             LoadedValue::RequireResult => self.is_required_as_namespace,
             LoadedValue::Nothing => false,
         };
+    }
+
+    fn reach_namespace(&mut self) {
+        self.is_linked_by_names_alone = false;
+        self.is_namespace_reached = true;
     }
 }
 
@@ -56,6 +82,7 @@ impl ExportReads {
                 let data_module = DataModule {
                     is_required_as_namespace,
                     is_namespace_reached: parts.is_library,
+                    is_linked_by_names_alone: !parts.is_library,
                 };
                 modules.insert(parts.file, data_module);
             }
@@ -72,18 +99,23 @@ impl ExportReads {
         }
     }
 
-    fn load(&mut self, module: ModuleRef, value: LoadedValue) {
-        let data_module = match module {
+    fn find(&mut self, module: ModuleRef) -> Option<&mut DataModule> {
+        match module {
             ModuleRef::File(file) => self.modules.get_mut(&file),
             _ => None,
-        };
-        if let Some(data_module) = data_module {
-            data_module.load(value);
+        }
+    }
+
+    fn load(&mut self, module: ModuleRef, site: ImportSiteKind) {
+        if let Some(data_module) = self.find(module) {
+            data_module.load(site);
         }
     }
 
     fn reach_namespace(&mut self, module: ModuleRef) {
-        self.load(module, LoadedValue::Namespace);
+        if let Some(data_module) = self.find(module) {
+            data_module.reach_namespace();
+        }
     }
 
     fn add_import(&mut self, binding: ImportBinding) {
@@ -94,6 +126,11 @@ impl ExportReads {
                 phase: ImportPhase::Defer,
             }
             | ImportBinding::NamespaceRead { module, .. } => self.reach_namespace(module),
+            ImportBinding::Exports { module } => {
+                if let Some(data_module) = self.find(module) {
+                    data_module.is_linked_by_names_alone = false;
+                }
+            }
             ImportBinding::Namespace {
                 phase: ImportPhase::Evaluation,
                 ..
@@ -104,7 +141,6 @@ impl ExportReads {
             | ImportBinding::Builtin(_)
             | ImportBinding::CapturedBuiltin { .. }
             | ImportBinding::BuiltinMember { .. }
-            | ImportBinding::Exports { .. }
             | ImportBinding::Synthetic(_) => {}
         }
     }
@@ -120,15 +156,14 @@ impl ExportReads {
     }
 
     fn add_site(&mut self, parts: &FileRow, site: ImportSiteKind, answer: &StoredSiteAnswer) {
-        let value = loaded_value(site);
         match answer {
-            StoredSiteAnswer::Module(module) => self.load(*module, value),
+            StoredSiteAnswer::Module(module) => self.load(*module, site),
             StoredSiteAnswer::AllModules => {
-                self.modules.values_mut().for_each(|it| it.load(value));
+                self.modules.values_mut().for_each(|it| it.load(site));
             }
             StoredSiteAnswer::Candidates(range) => {
                 for spelled in &parts.spellings[range.start as usize..range.end as usize] {
-                    self.load(spelled.module, value);
+                    self.load(spelled.module, site);
                 }
             }
             StoredSiteAnswer::Failed(_) | StoredSiteAnswer::Erased => {}
@@ -183,8 +218,13 @@ pub(super) fn remove_unread_data_exports(files: &mut [FileRow]) {
     }
     for parts in files {
         match reads.modules.get(&parts.file) {
-            Some(data_module) if !data_module.is_namespace_reached => {}
-            Some(_) | None => continue,
+            Some(data_module) => {
+                parts.is_data_linked_by_names_alone = data_module.is_linked_by_names_alone;
+                if data_module.is_namespace_reached {
+                    continue;
+                }
+            }
+            None => continue,
         }
         let module = parts.file;
         let kept_symbols: FxHashSet<SymbolId> = parts

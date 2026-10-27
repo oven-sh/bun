@@ -151,6 +151,16 @@ impl BuildCommand {
             this_transpiler.options.ignore_module_resolution_errors = true;
         }
 
+        if ctx.bundler_options.dts
+            && (ctx.bundler_options.outdir.is_empty() || ctx.bundler_options.compile)
+        {
+            Output::err_generic(
+                "--dts requires --outdir, and cannot be used with --compile",
+                (),
+            );
+            Global::exit(1);
+        }
+
         // Note: clone the first entry point so `outfile` can borrow owned
         // storage instead of `this_transpiler.options.entry_points[0]`, which
         // would otherwise hold an immutable borrow of `this_transpiler` across
@@ -161,16 +171,6 @@ impl BuildCommand {
             .first()
             .cloned()
             .unwrap_or_default();
-
-        if ctx.bundler_options.dts
-            && (ctx.bundler_options.outdir.is_empty() || ctx.bundler_options.compile)
-        {
-            Output::err_generic(
-                "--dts requires --outdir, and cannot be used with --compile",
-                (),
-            );
-            Global::exit(1);
-        }
         // The .aot.ts file is the bundle with the types of its sources put back, by way of its source map.
         let has_typescript_entry_point =
             (this_transpiler.options.entry_points.iter()).any(|path| {

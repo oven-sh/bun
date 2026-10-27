@@ -280,7 +280,6 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
         { "openssl", "1.1.0" },
         // keep in sync with src/jsc/bindings/node/http/llhttp/README.md
         { "llhttp", "9.4.2" },
-        { "libarchive", BUN_VERSION_LIBARCHIVE },
         { "mimalloc", BUN_VERSION_MIMALLOC },
         { "picohttpparser", BUN_VERSION_PICOHTTPPARSER },
         { "uwebsockets", BUN_VERSION_UWS },

@@ -339,8 +339,7 @@ pub(crate) fn convert(
 
 // `false`, `"a"`, `undefined` and unions of them.
 fn is_literal_type(ty: &Type) -> bool {
-    let any_object = TypeFlags::ANY_OBJECT_OR_FUNCTION | TypeFlags::HAS_MEMBERS_WITHOUT_LAYOUT;
-    let has_objects = ty.flags.intersects(any_object)
+    let has_objects = ty.flags.intersects(TypeFlags::ANY_OBJECT_OR_FUNCTION)
         || !(ty.layouts.is_empty()
             && ty.classes.is_empty()
             && ty.builtins.is_empty()

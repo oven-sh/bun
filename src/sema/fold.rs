@@ -20,6 +20,7 @@ pub use children::{TreeNode, push_children};
 pub use data_literals::data_value_of;
 pub(crate) use dead_code::mark_nodes_below;
 pub(crate) use evaluate::is_exact_power;
+use evaluate::{Evaluator, Value};
 pub use inputs::{
     Define, DefinePath, DefineRoot, DefineValue, FoldInputs, FoldOptions, RuntimeValueKind,
 };
@@ -28,12 +29,13 @@ pub use removed_by_bun_run::is_removed_where_never_run;
 use crate::atom::{Atom, Interner};
 use crate::bind::Bound;
 use crate::file_analysis::FileInputs;
-use crate::hir::{ExprId, ExprKind, File, FnId, ImportedName, NodeData, StmtId};
+use crate::hir::{BinOp, ExprId, ExprKind, File, FnId, ImportedName, NodeData, StmtId, UnOp};
 use crate::hir_from_data::DataValue;
 use crate::import_sites::ImportSpecifier;
 use crate::module_format::CommonJsEvidence;
 use crate::session::Arena;
 use crate::util::PositionSet;
+use std::cell::Cell;
 
 #[derive(Copy, Clone, PartialEq, Debug)]
 pub enum Constant {
@@ -273,6 +275,35 @@ pub(crate) fn fold_file<'s>(
     arena: &'s Arena,
 ) -> FoldResult<'s> {
     folder::run(hir, bound, inputs, file, atoms, arena)
+}
+
+/// What the operator makes of a constant. `None`: the build leaves it to the run time.
+pub fn apply_unary(atoms: &Interner<'_>, op: UnOp, operand: Constant) -> Option<Constant> {
+    let over_limit_count = Cell::new(0);
+    let evaluator = Evaluator::new(atoms, usize::MAX, &over_limit_count);
+    match evaluator.unary(op, Value::from(operand)) {
+        Value::Known(result) => Some(evaluator.to_constant(result)),
+        Value::Unknown => None,
+    }
+}
+
+/// What an operator that evaluates both of its operands makes of two constants. `None`: the build leaves it to the run time.
+pub fn apply_binary(
+    atoms: &Interner<'_>,
+    op: BinOp,
+    operands: [Constant; 2],
+    max_string_bytes: usize,
+) -> Option<Constant> {
+    if matches!(op, BinOp::And | BinOp::Or | BinOp::Nullish | BinOp::Comma) {
+        return None;
+    }
+    let over_limit_count = Cell::new(0);
+    let evaluator = Evaluator::new(atoms, max_string_bytes, &over_limit_count);
+    let [left, right] = operands.map(Value::from);
+    match evaluator.binary(op, left, right) {
+        Value::Known(result) => Some(evaluator.to_constant(result)),
+        Value::Unknown => None,
+    }
 }
 
 pub(crate) fn slice_in<'s, T: Copy>(list: &[T], arena: &'s Arena) -> &'s [T] {

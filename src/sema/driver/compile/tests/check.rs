@@ -187,7 +187,7 @@ fn errors_in_code_that_is_never_reached_are_dropped() {
             return gone + alsoGone + missing + wrong;
         }"#;
     let reached = never_reached.replace("if (true)", "if (here)");
-    let lib = ("lib.ts", "export const here = 1;");
+    let lib = ("lib.ts", "export let here = 1;");
     with_program(
         &[("main.ts", never_reached), lib],
         &["./main.ts"],

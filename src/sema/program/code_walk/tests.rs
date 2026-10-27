@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::program::code_test_host::{
-    HostEvent, StatementsHost, TEXT_LOADER, TestBuild, with_compile_context,
+    EMBEDDED_FILE_LOADER, HostEvent, StatementsHost, TEXT_LOADER, TestBuild, with_compile_context,
 };
 use crate::resolve::{CodeHost, HostResolution};
 
@@ -251,6 +251,40 @@ fn loader_is_part_of_identity() {
     assert_eq!(walked.entry("/again.ts").targets, [2]);
     assert_eq!(walked.entry("/main.ts").targets, [1, 2, 3]);
     assert_eq!(count(&host.events(), &read("/data.ts")), 2);
+}
+
+#[test]
+fn path_of_embedded_file_is_not_resolved_by_the_build() {
+    const FILES: &[(&str, &str)] = &[
+        (
+            "/main.ts",
+            "import direct from \"./name.txt\" with { type: \"given\" }\n\
+             import { again, kept } from \"./between\"\n\
+             import * as all from \"./name.txt\" with { type: \"given\" }\n\
+             import(direct)\nrequire(again)\nimport(kept)\nrequire(all.default)",
+        ),
+        (
+            "/between.ts",
+            "import given from \"./name.txt\" with { type: \"given\" }\n\
+             export { default as again } from \"./name.txt\" with { type: \"given\" }\n\
+             export const kept = given",
+        ),
+        ("/name.txt", "./named"),
+        ("/named.ts", ""),
+    ];
+    let loads_named = |loader: HostLoader| {
+        let loaders: &'static [_] = match loader {
+            TEXT_LOADER => &[("/name.txt", Some("given"), TEXT_LOADER)],
+            _ => &[("/name.txt", Some("given"), EMBEDDED_FILE_LOADER)],
+        };
+        let host = StatementsHost {
+            loaders,
+            ..host_of(FILES)
+        };
+        walk(&host, &["/main.ts"]).paths().contains(&"/named.ts")
+    };
+    assert!(loads_named(TEXT_LOADER));
+    assert!(!loads_named(EMBEDDED_FILE_LOADER));
 }
 
 #[test]

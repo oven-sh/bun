@@ -19,6 +19,7 @@ class JSGlobalObject;
 class JSObject;
 class JSPromise;
 class RegExp;
+class ScriptFetchParameters;
 }
 
 namespace Bun {
@@ -32,9 +33,10 @@ inline bool hasCompiledModules() { return JSC::AOT::Image::isRegistered(); }
 std::optional<JSC::AOT::ModuleID> compiledModuleForPath(const WTF::String& path);
 inline bool isCompiledModule(const WTF::String& path) { return compiledModuleForPath(path).has_value(); }
 
-// A request with import attributes is never a request for the compiled module: these three answer null or false for it.
+// The attributes say as what the file is asked for, and the executable may hold it as that. Null: the import has none.
+JSC::JSPromise* importCompiledModule(Zig::GlobalObject*, const WTF::String& key, const JSC::ScriptFetchParameters* attributes, int64_t referrerAsyncOrder);
+// These three answer null or false for a request with import attributes.
 JSC::JSPromise* compiledModuleSource(Zig::GlobalObject*, const WTF::String& key, bool hasImportAttributes);
-JSC::JSPromise* importCompiledModule(Zig::GlobalObject*, const WTF::String& key, bool hasImportAttributes, int64_t referrerAsyncOrder);
 bool requireCompiledModule(Zig::GlobalObject*, JSCommonJSModule* target, const WTF::String& path, bool hasImportAttributes);
 // The function of the host that require() hands an ES module to, if the path names a compiled one.
 JSC::JSObject* loaderOfCompiledESModule(Zig::GlobalObject*, const WTF::String& path, bool hasImportAttributes);
@@ -79,6 +81,7 @@ void willSetRequireCacheEntry(Zig::GlobalObject*, const WTF::String& key, JSC::J
 JSC_DECLARE_HOST_FUNCTION(jsFunctionCallOwnFunctionsWithoutParameters);
 // (target, source, replacements): defines each own property of `source` that `target` does not own on `target` as it stands on `source`, in the order of the keys. A value that `replacements` holds under the key takes the place of the value.
 JSC_DECLARE_HOST_FUNCTION(jsFunctionDefineOwnPropertiesLeftOut);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionPrepareHoldersBeforeLookupsUnder);
 
 inline void willChangeRequireOverride(JSC::JSGlobalObject* globalObject, JSC::AOT::RequireOverride location, bool isOverridden)
 {

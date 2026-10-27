@@ -222,9 +222,26 @@ dependencies = [
  "bun_ast",
  "bun_core",
  "bun_options_types",
+ "bun_paths",
  "bun_sema",
  "bun_sema_driver",
  "bun_trim",
+]
+
+[[package]]
+name = "bun_archive"
+version = "0.0.0"
+dependencies = [
+ "bun_alloc",
+ "bun_collections",
+ "bun_core",
+ "bun_errno",
+ "bun_paths",
+ "bun_sys",
+ "bun_tar",
+ "bun_wyhash",
+ "scopeguard",
+ "thiserror",
 ]
 
 [[package]]
@@ -718,6 +735,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_histogram"
+version = "0.0.0"
+
+[[package]]
 name = "bun_http"
 version = "0.0.0"
 dependencies = [
@@ -823,6 +844,7 @@ dependencies = [
  "bstr",
  "bun_alloc",
  "bun_analytics",
+ "bun_archive",
  "bun_ast",
  "bun_base64",
  "bun_boringssl_sys",
@@ -842,7 +864,6 @@ dependencies = [
  "bun_io",
  "bun_js_parser",
  "bun_js_printer",
- "bun_libarchive",
  "bun_libdeflate_sys",
  "bun_options_types",
  "bun_parsers",
@@ -1061,23 +1082,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
-]
-
-[[package]]
-name = "bun_libarchive"
-version = "0.0.0"
-dependencies = [
- "bstr",
- "bun_alloc",
- "bun_collections",
- "bun_core",
- "bun_errno",
- "bun_opaque",
- "bun_paths",
- "bun_sys",
- "bun_wyhash",
- "scopeguard",
- "thiserror",
 ]
 
 [[package]]
@@ -1587,6 +1591,7 @@ dependencies = [
  "bun_alloc",
  "bun_analytics",
  "bun_aot_interface",
+ "bun_archive",
  "bun_ast",
  "bun_ast_jsc",
  "bun_base64",
@@ -1614,6 +1619,7 @@ dependencies = [
  "bun_glob",
  "bun_hash",
  "bun_highway",
+ "bun_histogram",
  "bun_http",
  "bun_http_jsc",
  "bun_http_types",
@@ -1625,7 +1631,6 @@ dependencies = [
  "bun_js_parser_jsc",
  "bun_js_printer",
  "bun_jsc",
- "bun_libarchive",
  "bun_libdeflate_sys",
  "bun_libuv_sys",
  "bun_lint_driver",
@@ -1983,6 +1988,7 @@ dependencies = [
  "bstr",
  "bun_alloc",
  "bun_aot_interface",
+ "bun_archive",
  "bun_ast",
  "bun_bundler",
  "bun_collections",
@@ -1992,7 +1998,6 @@ dependencies = [
  "bun_exe_format",
  "bun_highway",
  "bun_http",
- "bun_libarchive",
  "bun_opaque",
  "bun_options_types",
  "bun_parsers",
@@ -2043,6 +2048,17 @@ dependencies = [
  "bun_core",
  "bun_jsc",
  "bun_sys",
+]
+
+[[package]]
+name = "bun_tar"
+version = "0.0.0"
+dependencies = [
+ "bun_alloc",
+ "bun_core",
+ "bun_zlib",
+ "itoa",
+ "thiserror",
 ]
 
 [[package]]

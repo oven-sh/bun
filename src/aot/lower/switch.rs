@@ -9,7 +9,6 @@ use bun_sema::hir::{CaseId, ExprId, Span, StmtId};
 
 use super::condition::TestedField;
 use super::control::BreakTargetKind;
-use super::typescript::to_constant;
 use super::{FileLowering, FunctionLowering, scope};
 use crate::ir::{BlockId, ValueId};
 
@@ -140,9 +139,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 fn find_constant(file: &mut FileLowering<'_, '_, '_, '_>, expression: ExprId) -> FoldedValue {
     let inner = file.skip_type_syntax(expression);
     let folded = match file.decisions().constant(file.hir, inner) {
-        FoldedValue::Unknown => match file.queries.constant_enum_access(inner) {
-            Ok(Some(value)) => FoldedValue::Constant(to_constant(value)),
-            Ok(None) | Err(_) => FoldedValue::Unknown,
+        FoldedValue::Unknown => match file.find_enum_member_read(inner) {
+            Some(value) => FoldedValue::Constant(value),
+            None => FoldedValue::Unknown,
         },
         folded @ (FoldedValue::Constant(_) | FoldedValue::ConstantOutsideDeadZone(_)) => folded,
     };

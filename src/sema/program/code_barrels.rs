@@ -100,6 +100,23 @@ impl BarrelRequests {
         *self.file(file) = FileRequests::Unparsed(Asked::All);
     }
 
+    /// The file is folded once more. What has been asked of it so far is asked of the result.
+    pub(super) fn forget_folded_file(&mut self, file: u32) {
+        let state = self.file(file);
+        let asked = match state {
+            FileRequests::Waiting(barrel) => {
+                let exports = barrel.site_of_export.iter();
+                let awake = exports.filter(|entry| !barrel.is_waiting[*entry.1 as usize]);
+                let mut awake: Vec<(u32, Atom)> =
+                    awake.map(|(&name, &site)| (site, name)).collect();
+                awake.shared_sort_unstable_by_key(|entry| entry.0);
+                Asked::Names(awake.into_iter().map(|entry| entry.1).collect())
+            }
+            FileRequests::Unparsed(_) | FileRequests::Settled => Asked::All,
+        };
+        *state = FileRequests::Unparsed(asked);
+    }
+
     pub(super) fn add_parsed_file(
         &mut self,
         file: u32,

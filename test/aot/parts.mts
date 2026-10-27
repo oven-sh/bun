@@ -36,6 +36,7 @@ const programFolders: Record<string, number> = {
   "built-ins-asked-in-place": 0,
   "callees-replaced-behind-their-test": 2,
   "calls": 2,
+  "changes-to-classes-and-functions": 2,
   "classes-below-built-in-classes": 8,
   "code-that-built-ins-run": 8,
   "copies-born-in-their-holders": 0,
@@ -143,7 +144,14 @@ export const rows: Row[] = [
       ...[7, 3, 2, 1].map(every => collecting(every, false)),
     ],
     3,
-    [[["async-and-generators/awaited-steps-that-wait-or-do-not"]]],
+    [
+      [
+        [
+          "async-and-generators/awaited-steps-that-wait-or-do-not",
+          "copied-properties/rests-leave-out-a-name-that-one-object-got-under-a-key-and-keep-the-name-the-next-one-got",
+        ],
+      ],
+    ],
   ),
   // Every allocation of compiled code leaves the fast path, so a collection falls at each of them and not only where a block is used up.
   variant(
@@ -156,20 +164,60 @@ export const rows: Row[] = [
   variant("every-function-cold", ["--aot-heat=everything-is-cold"], {}, 3, [
     [
       [
+        "errors/call-sites-of-a-default-constructor-and-frames-under-a-local-named-reflect",
+        "errors/call-sites-of-reflect-construct-with-a-target-that-is-handed-in",
         "objects/a-field-that-names-a-class-gets-a-record-by-a-key-in-brackets",
         "objects/a-field-that-names-a-class-holds-a-function",
         "objects/a-field-that-names-three-classes-gets-a-record",
+        "errors/stack-positions-of-method-calls-whose-read-throws-or-runs-a-getter",
       ],
     ],
   ]),
-  variant(["every-function-cold", "no-flow-results"], ["--aot-heat=everything-is-cold", "--aot-disable=flow-results"]),
+  variant(
+    ["every-function-cold", "no-flow-results"],
+    ["--aot-heat=everything-is-cold", "--aot-disable=flow-results"],
+    {},
+    3,
+    [
+      [
+        [
+          "errors/stack-positions-behind-variables-that-are-used-once",
+          "errors/stack-positions-of-method-calls-whose-read-throws-or-runs-a-getter",
+        ],
+      ],
+    ],
+  ),
   variant("every-function-hot", ["--aot-heat=everything-is-hot"]),
   variant("every-function-neither-hot-nor-cold", ["--aot-heat=nothing-is-hottest"]),
   variant("every-stage-verified", ["--aot-check=verify-each-stage,used-values-are-listed"]),
+  variant("expected-types-shuffled", ["--aot-testing=ShuffleExpectedTypes", "--aot-layout-seed=1"]),
   variant("flow-fixpoint", ["--aot-check=flow-fixpoint"]),
   variant("full-collections-beside-the-program", [], { ...besideTheProgram, BUN_JSC_useGenerationalGC: "0" }),
+  variant("heat-shuffled", ["--aot-heat=shuffled", "--aot-layout-seed=1"], {}, 3, [
+    [
+      [
+        "classes-and-closures/what-is-made-with-a-closure-over-a-typed-parameter-that-gets-another-kind-of-value",
+        "errors/call-sites-of-a-default-constructor-and-frames-under-a-local-named-reflect",
+      ],
+    ],
+  ]),
   variant("moved-loads-checked-at-run-time", ["--aot-check=MovedLoads"]),
-  variant("no-flow-results", ["--aot-disable=flow-results"]),
+  variant("no-flow-results", ["--aot-disable=flow-results"], {}, 3, [
+    [
+      [
+        "classes-and-closures/accessor-and-bound-function-names",
+        "collector/collections-run-inside-function-objects-of-fields-that-are-called-before-anything-has-read-them-while-others-of-their-constructor-are-renamed",
+        "collector/function-objects-named-while-the-program-runs-outlive-the-collections-inside-their-calls",
+        "errors/stack-frames-name-each-function-object-of-a-factory",
+        "errors/stack-frames-name-each-function-object-of-a-factory-at-every-depth-of-long-chains-of-calls",
+        "errors/stack-frames-of-functions-given-a-display-name-where-nobody-sees-it-however-they-are-called",
+        "errors/stack-frames-of-functions-with-a-display-name-once-a-statement-has-looked-for-the-name",
+        "errors/stack-frames-of-new-function-objects-whose-names-were-read-before-the-objects-changed",
+        "errors/stack-frames-of-renamed-async-functions-and-generators",
+        "errors/stack-frames-of-renamed-classes-and-functions-that-hold-values-across-the-call-that-throws",
+      ],
+    ],
+  ]),
   variant("no-inlining", [withoutInlining]),
   variant("predictions-fail-every-time", ["--aot-testing=FailPredictions"]),
   variant("predictions-fail-half-the-time", ["--aot-testing=FailPredictions:2:1"], {}, 3, [
@@ -239,6 +287,7 @@ export const rows: Row[] = [
 
   builtWith("built-ins-asked-in-place", "validated", ["--aot-validate"]),
   builtWith("callees-replaced-behind-their-test", "validated", ["--aot-validate"]),
+  builtWith("changes-to-classes-and-functions", "validated", ["--aot-validate"], {}, 2),
   builtWith("kept-attacks", "validated", ["--aot-validate"], {}, 4),
   builtWith("lists-changed-behind-their-test", "validated", ["--aot-validate"], {}, 2),
   builtWith("relational-summaries", "collector-verifies", ["--aot-validate"], { BUN_JSC_verifyGC: "1" }),

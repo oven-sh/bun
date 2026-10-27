@@ -30,7 +30,6 @@ const bundlerFeatures = [
   "Inspector",
   "CssParser",
   "ReactCompiler",
-  "Libarchive",
   "ZstdCompressor",
   "ChildProcess",
   "Temporal",
@@ -298,8 +297,8 @@ export default b.declarations(
   extendAll(["Yaml"], "Bun.YAML"),
   extendAll(["Toml", "Temporal"], "Bun.TOML"),
 
-  extendAll(["Archive", "Libarchive", "LibdeflateCompressor", "Buffer"], "Bun.Archive"),
-  extendAll(["Archive", "Libarchive"], ...nativeBindings("Bindgen", "pack_command.bind.ts", "readTarball")),
+  extendAll(["Archive", "LibdeflateCompressor", "Buffer"], "Bun.Archive"),
+  extendAll(["Archive"], ...nativeBindings("Bindgen", "pack_command.bind.ts", "readTarball")),
 
   extendAll(["Semver"], "Bun.semver"),
   extendAll(["Ansi", "StringWidth"], "Bun.sliceAnsi", "Bun.wrapAnsi"),

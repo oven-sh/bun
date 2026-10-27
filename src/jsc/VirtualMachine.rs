@@ -2621,6 +2621,11 @@ impl VirtualMachine {
         teardown_log!("teardown: script forbidden, resources cancelled, off-thread work back");
 
         // ---- C. JSC VM -------------------------------------------------------
+        // SAFETY: fn contract (statement-scoped exclusive access).
+        unsafe {
+            (*this).regular_event_loop.release_without_global();
+            (*this).macro_event_loop.release_without_global();
+        }
         match kind {
             Teardown::Worker => WebWorker__teardownJSCVM(vm.global()),
             Teardown::MainThreadExit => Zig__GlobalObject__destructOnExit(vm.global()),

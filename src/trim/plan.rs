@@ -9,7 +9,7 @@ use bun_removable_features::{
     Feature, FeatureSet, RemovableFeatureState, Removal, RuntimeRequirement,
 };
 
-use crate::decide::decide;
+use crate::decide::{CREATES_REALMS, decide};
 use crate::error::{TrimError, TrimInternalError, TrimRequestError};
 use crate::locales::resolve_wanted_groups;
 use crate::model::{
@@ -96,11 +96,13 @@ fn can_run_unseen_code(used: &UsedFeatures, requirements: &[OptionRequirement]) 
         || requirements.iter().any(runs_unseen_code)
 }
 
-// Without ImageFlag::AdmitsLibraryText the realm of the program runs no built-in module from its text. A realm that the program creates asks for the text and throws where it is gone.
+// Without ImageFlag::AdmitsLibraryText the realm of the program runs no built-in module from its text. A realm that the program creates holds nothing compiled and runs each from its text.
 fn can_run_library_text(used: &UsedFeatures, requirements: &[OptionRequirement]) -> bool {
-    used.causes
-        .iter()
-        .any(|unseen| unseen.cause.admits_library_text())
+    used.names(CREATES_REALMS)
+        || used
+            .causes
+            .iter()
+            .any(|unseen| unseen.cause.admits_library_text())
         || requirements.iter().any(runs_unseen_code)
 }
 
@@ -843,6 +845,18 @@ mod tests {
                 planned_offsets(&used, &ExecutableSettings::default(), &removing_unused());
             let keeps_texts = !offsets.contains(&0x100) && !offsets.contains(&0x110);
             assert_eq!(keeps_texts, cause.admits_library_text(), "{cause:?}");
+        }
+    }
+
+    #[test]
+    fn named_shadow_realm_keeps_module_texts() {
+        let named = evaluating_text(&[Feature::ShadowRealm]);
+        let mut reached = named.clone();
+        reached.features[0].is_named = false;
+        for request in [removing_unused(), TrimRequest::default()] {
+            let offsets = |used| planned_offsets(used, &ExecutableSettings::default(), &request);
+            assert!(!offsets(&named).contains(&0x100) && !offsets(&named).contains(&0x110));
+            assert!(offsets(&reached).contains(&0x110));
         }
     }
 

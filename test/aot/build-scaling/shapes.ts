@@ -20,6 +20,8 @@ export type Shape = {
   isRefused?: true;
   /** What the build is given besides. Such a shape is no entry point of the build of all shapes. */
   flags?: string[];
+  /** Not an entry point of the build of all shapes. */
+  isExcludedFromCombinedBuild?: true;
   write(size: number): Record<string, string>;
 };
 
@@ -95,6 +97,54 @@ const operand =
   "const o: any = { " +
   [...upTo(11, i => `f${i}: ${i + 1}`), ...upTo(3, i => `g${i}: ${i + 1}`), ...upTo(7, i => `m${i}(a: number, b: number) { return a + b + ${i}; }`), "p(x: number) { return Promise.resolve(x); }"].join(", ") +
   " };\n";
+
+// A file whose tsconfig.json sets one of these differently from the entry point's gets a separate checker program.
+const programWideOptions: [name: string, nonDefault: boolean][] = [
+  ["strictNullChecks", false],
+  ["strictFunctionTypes", false],
+  ["strictBindCallApply", false],
+  ["strictBuiltinIteratorReturn", false],
+  ["exactOptionalPropertyTypes", true],
+  ["allowJs", true],
+];
+
+/** Up to 63 packages, no two with the same options. */
+export const packagesWithOwnCompilerOptions: Shape = {
+  name: "TypeScript packages that each have a tsconfig.json with different compiler options",
+  counted: "packages",
+  size: 12,
+  entry: "main.ts",
+  isExcludedFromCombinedBuild: true,
+  write: size => ({
+    "tsconfig.json": withoutLibraryTypes,
+    "main.ts":
+      declaredConsole +
+      lines(size, index => `import { run19 as run${index} } from "package-${index}";`) +
+      `let sum = 0;\n` +
+      lines(size, index => `sum += run${index}({ id: ${index}, name: "n", tags: [] }, 1);`) +
+      `console.log(sum);\n`,
+    ...Object.fromEntries(
+      upTo(size, index => {
+        const changed = programWideOptions.filter((_, bit) => ((index + 1) >> bit) & 1);
+        const compilerOptions = { ...JSON.parse(withoutLibraryTypes).compilerOptions, ...Object.fromEntries(changed) };
+        return [
+          [`node_modules/package-${index}/package.json`, JSON.stringify({ name: `package-${index}`, type: "module", exports: "./index.ts" }) + "\n"],
+          [`node_modules/package-${index}/tsconfig.json`, JSON.stringify({ compilerOptions }) + "\n"],
+          [
+            `node_modules/package-${index}/index.ts`,
+            `export interface Item { id: number; name: string; next?: Item; tags: string[] }\n` +
+              lines(
+                20,
+                at =>
+                  `export function run${at}(item: Item, by: number): number {\n  const local: Item = { id: item.id + ${at} + by, name: item.name, tags: item.tags };\n` +
+                  `  return local.id + local.name.length + local.tags.length${at ? ` + run${at - 1}(local, by + 1)` : ""};\n}`,
+              ),
+          ],
+        ];
+      }).flat(),
+    ),
+  }),
+};
 
 export const shapes: Shape[] = [
   {
@@ -511,6 +561,20 @@ export const shapes: Shape[] = [
         `console.log(sum);\n`,
     }),
   },
+  // A type lists no more than 16 functions here, so each place only expects its callees. Whether a test of the called value has failed earlier is asked once a place.
+  {
+    name: "functions that are stored one after another under one name and called there, more than a type lists",
+    counted: "functions",
+    size: 250,
+    entry: "main.js",
+    flags: ["--aot-limit=MaxFunctionsInType:16"],
+    write: size => ({
+      "main.js":
+        `const holder = { run: null };\nlet sum = 0;\n` +
+        lines(size, index => `holder.run = function () {\n  return ${index};\n};\nsum += holder.run();`) +
+        `console.log(sum);\n`,
+    }),
+  },
   {
     name: "functions on one line after non-ASCII text",
     counted: "functions",
@@ -664,6 +728,21 @@ export const shapes: Shape[] = [
       };
     },
   },
+  {
+    name: "long rows of constants that are each computed from the one before, each row in a function or a block of its own",
+    counted: "constants in each row",
+    size: 4000,
+    entry: "main.js",
+    write: size => {
+      const row = (first: string, step: string) => `  const c0 = ${first};\n${lines(size, index => `  const c${index + 1} = c${index}${step};`)}`;
+      const rows = [row("1", " + 1"), row(`"a"`, ` + ""`)];
+      return {
+        "main.js":
+          rows.map((row, index) => `function row${index}() {\n${row}  return c${size};\n}\nconsole.log(row${index}());\n`).join("") +
+          rows.map(row => `{\n${row}  console.log(c${size});\n}\n`).join(""),
+      };
+    },
+  },
   // Each place constructs any class of one list for any class of the other, and who allocates for a class below a call is found among the class objects above it.
   {
     name: "classes below a function that makes their base, kept in a list and constructed for the classes of another list",
@@ -730,6 +809,7 @@ export const shapes: Shape[] = [
       "main.ts": `const list = [1, 2, 3];\nlist.forEach(x => ${"type T = A extends B ? ".repeat(size)}1${" : C".repeat(size + 1)});\nconsole.log(list.length);\n`,
     }),
   },
+  packagesWithOwnCompilerOptions,
 ];
 
 if (import.meta.main) {

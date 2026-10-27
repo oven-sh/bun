@@ -1841,7 +1841,7 @@ class Sizes {
     const written = this.pick([
       `new Uint8Array([${bytes.join(", ")}])`,
       `new Uint8Array(Buffer.from("${text}", "base64"))`,
-      `Uint8Array.from(atob("${text}"), unit => unit.charCodeAt(0))`,
+      `Uint8Array.from(atob("${text}"), (unit${this.typed("any")}) => unit.charCodeAt(0))`,
       `new Uint8Array(Buffer.from("data:application/wasm;base64,${text}".split(",")[1], "base64"))`,
       `new Uint8Array(await (await fetch("data:application/wasm;base64,${text}")).arrayBuffer())`,
     ]);

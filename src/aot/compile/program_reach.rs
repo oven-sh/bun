@@ -28,16 +28,30 @@ use crate::load::named_loads::gives_unknown_name_to_imported_loader;
 use crate::load::sources::{SourceKind, parsed_source};
 use crate::lower::LeftOutDeclarations;
 use crate::modules::{
-    Candidates, ExportBinding, ExportLookup, ExportUse, ImportBinding, Member, ModuleExport,
-    ModuleGraph, ModuleRef, ModuleRequest, Shape, Site, SiteAnswer, SyntheticExportId, View,
+    Candidates, ExportBinding, ExportLookup, ExportUse, ImportBinding, KnownMemberValues,
+    KnownObjects, Member, ModuleExport, ModuleGraph, ModuleRef, ModuleRequest, Shape, Site,
+    SiteAnswer, SyntheticExportId, Validity, View, is_enum,
 };
 use crate::options::RemovableOptions;
+use crate::statistics::LimitValues;
 
 pub(crate) struct ProgramReachInput<'a, 's> {
     pub files: &'a Files<'s>,
     pub sources: &'a Sources,
     pub graph: &'a ModuleGraph,
     pub removable: RemovableOptions,
+    pub limits: &'a LimitValues,
+}
+
+impl<'a, 's> ProgramReachInput<'a, 's> {
+    fn known_objects(&self, known: &'a KnownMemberValues) -> KnownObjects<'a, 's> {
+        KnownObjects {
+            files: self.files,
+            graph: self.graph,
+            known,
+            limits: self.limits,
+        }
+    }
 }
 
 pub(super) const TOP_LEVEL: u32 = 0;
@@ -81,6 +95,14 @@ enum Interest {
     ModuleObject(ModuleObjectOwner, ModuleObjectUse),
     // A loader is given a name that the build does not know.
     LoadByUnknownName,
+    // A read of a member of an enum of another file whose value the build knows. The value stands for it unless something gets hold of the object.
+    KnownMember(Sym),
+    // Something is looked up in the object of the enum, and nothing gets hold of the object.
+    Lookup(Sym),
+    // A name of an enum of the file itself hands the object on.
+    HandedOnObject(Sym),
+    // Another piece of the enum whose piece the region is.
+    Piece(u32),
 }
 
 // What of a unit that is not reached the program does without.
@@ -134,6 +156,8 @@ struct FileUnits {
     unit_of_function: FxHashMap<FnId, u32>,
     unit_of_class: FxHashMap<ClassId, u32>,
     unit_of_inner_name: FxHashMap<SymbolId, u32>,
+    // By a unit that is a statement of an enum: the enum.
+    enum_of_unit: FxHashMap<u32, SymbolId>,
     interests: Vec<Vec<Interest>>,
     star_targets: Vec<FileId>,
     // The files that a call in this one loads.
@@ -265,6 +289,9 @@ struct FileScan<'a, 's> {
     // While units are collected: the region that they are written in, and the module whose body it is.
     region: u32,
     module: u32,
+    known_members: KnownMemberValues,
+    // Whatever reaches the first unit of a pair reaches the second.
+    units_reached_together: Vec<(u32, u32)>,
 }
 
 impl<'a, 's> FileScan<'a, 's> {
@@ -283,6 +310,8 @@ impl<'a, 's> FileScan<'a, 's> {
             sites: Vec::new(),
             region: TOP_LEVEL,
             module: 0,
+            known_members: KnownMemberValues::default(),
+            units_reached_together: Vec::new(),
         }
     }
 
@@ -409,9 +438,35 @@ impl<'a, 's> FileScan<'a, 's> {
                 return;
             }
         };
+        let is_enum = matches!(self.hir[statement].kind, StmtKind::Enum(_));
         if self.is_name_of_one_part(name) {
-            self.add_part(Part::Statement(statement), written_at, &[name]);
+            let unit = self.add_part(Part::Statement(statement), written_at, &[name]);
+            if is_enum {
+                self.units.enum_of_unit.insert(unit, name);
+            }
+        } else if self.is_name_of_enums_alone(name) {
+            let unit = self.add_part(Part::Statement(statement), written_at, &[]);
+            self.units.enum_of_unit.insert(unit, name);
+            match self.units.unit_of_symbol.get(&name) {
+                Some(&first) => self.units_reached_together.push((first, unit)),
+                None => {
+                    self.units.unit_of_symbol.insert(name, unit);
+                }
+            }
         }
+    }
+
+    // An enum in several pieces: whoever gets hold of the object finds the members of all of them.
+    fn is_name_of_enums_alone(&self, symbol: SymbolId) -> bool {
+        if !self.is_stable(symbol) {
+            return false;
+        }
+        let has_enums_alone = |symbol: SymbolId| {
+            let mut declarations = self.bound.symbol(symbol).decls.iter();
+            declarations.all(|declaration| matches!(declaration, Decl::Enum(_)))
+        };
+        let exported = self.bound.symbol(symbol).export_symbol;
+        has_enums_alone(symbol) && (exported.is_none() || has_enums_alone(exported))
     }
 
     // A statement that has no code as long as the module has no exports object: the definition of a name that stands for another one, the mark of an ES module.
@@ -914,6 +969,68 @@ impl<'a, 's> FileScan<'a, 's> {
         }
     }
 
+    // The value stands in the place of the name.
+    fn names_data_variable(&self, symbol: SymbolId) -> bool {
+        let members = self.input.known_objects(&self.known_members);
+        let named = Sym {
+            file: self.file,
+            id: symbol,
+        };
+        members.find_data_variable(named).is_some()
+    }
+
+    // What a name, or a member of the object of a module, is there for where it leads to the object of an enum and no further.
+    // `Some(None)`: the value of a member stands in its place.
+    fn interest_in_known_object(&self, holder: ExprId) -> Option<Option<Interest>> {
+        let hir = self.hir;
+        let members = self.input.known_objects(&self.known_members);
+        let mut link = holder;
+        while let (outermost, Parent::Expr(access)) = self.find_parent(link)
+            && (hir.member_key(access)).is_some_and(|(object, _)| object == outermost)
+        {
+            if let Some(read) = members.find_data_read(self.file, access) {
+                return Some(Some(Interest::KnownMember(read.object)));
+            }
+            link = access;
+        }
+        if !hir.has_typescript_semantics() {
+            return None;
+        }
+        let (outermost, Parent::Expr(access)) = self.find_parent(holder) else {
+            return (members.find_lookup(self.file, holder))
+                .map(|enumeration| Some(Interest::Lookup(enumeration)));
+        };
+        let is_object = (hir.member_key(access)).is_some_and(|(object, _)| object == outermost);
+        if is_object && let Some(read) = members.find_read(self.file, access) {
+            return Some(match read.validity {
+                Validity::Always => None,
+                Validity::WhileObjectIsNotHandedOn => Some(Interest::KnownMember(read.object)),
+            });
+        }
+        if let Some(enumeration) = members.find_lookup(self.file, holder) {
+            return Some(Some(Interest::Lookup(enumeration)));
+        }
+        // `shapes.Color.Green`
+        match is_object && members.find_enum(self.file, access).is_some() {
+            true => self.interest_in_known_object(access),
+            false => None,
+        }
+    }
+
+    // Where it leads nobody has looked.
+    fn add_name_that_is_no_expression(&mut self, symbol: SymbolId) {
+        let interests = &mut self.units.interests[TOP_LEVEL as usize];
+        if is_enum(self.bound, symbol) {
+            interests.push(Interest::HandedOnObject(Sym {
+                file: self.file,
+                id: symbol,
+            }));
+        }
+        if let Some(interest) = self.interest_in_symbol(symbol, None) {
+            self.units.interests[TOP_LEVEL as usize].push(interest);
+        }
+    }
+
     fn add_references(&mut self) {
         let (hir, bound) = (self.hir, self.bound);
         let decisions = &self.input.files.analysis(self.file).decisions;
@@ -929,6 +1046,22 @@ impl<'a, 's> FileScan<'a, 's> {
                 && !bound.is_in_type_query(reference);
             if !is_evaluated {
                 continue;
+            }
+            if self.names_data_variable(symbol) {
+                continue;
+            }
+            if let Some(interest) = self.interest_in_known_object(reference) {
+                if let Some(interest) = interest {
+                    self.add_interest(hir[reference].pos, interest);
+                }
+                continue;
+            }
+            if is_enum(bound, symbol) {
+                let enumeration = Sym {
+                    file: self.file,
+                    id: symbol,
+                };
+                self.add_interest(hir[reference].pos, Interest::HandedOnObject(enumeration));
             }
             if let Some(interest) = self.interest_in_symbol(symbol, Some(reference)) {
                 self.add_interest(hir[reference].pos, interest);
@@ -966,18 +1099,14 @@ impl<'a, 's> FileScan<'a, 's> {
         }
         // `import a = b.c`: the name at the root is no expression.
         for import in (0..hir.import_equals.len() as u32).map(ImportEqualsId) {
-            if let Binding::Symbol(symbol) = bound.entity_root_binding(import)
-                && let Some(interest) = self.interest_in_symbol(symbol, None)
-            {
-                self.units.interests[TOP_LEVEL as usize].push(interest);
+            if let Binding::Symbol(symbol) = bound.entity_root_binding(import) {
+                self.add_name_that_is_no_expression(symbol);
             }
         }
         // The factory of a JSX element, and a class that the metadata of a decorator names.
         for reference in bound.runtime.implicit_references() {
-            if let Binding::Symbol(symbol) = reference.binding
-                && let Some(interest) = self.interest_in_symbol(symbol, None)
-            {
-                self.units.interests[TOP_LEVEL as usize].push(interest);
+            if let Binding::Symbol(symbol) = reference.binding {
+                self.add_name_that_is_no_expression(symbol);
             }
         }
         for &(_, binding) in self.input.graph.jsx_bindings(self.file) {
@@ -1030,6 +1159,14 @@ impl<'a, 's> FileScan<'a, 's> {
                     match self.is_called(access) {
                         true => Interest::CalledName(export, accessed),
                         false => Interest::Name(export, accessed),
+                    }
+                }
+                Some(Member::Binding(_))
+                    if let Some(interest) = self.interest_in_known_object(access) =>
+                {
+                    match interest {
+                        Some(interest) => interest,
+                        None => continue,
                     }
                 }
                 Some(Member::Binding(defined)) => match self.is_called(access) {
@@ -1361,6 +1498,9 @@ impl<'a, 's> FileScan<'a, 's> {
         let region_count = self.units.units.len() + 1;
         self.units.interests = vec![Vec::new(); region_count];
         self.units.is_region_reached = vec![false; region_count];
+        for (first, second) in take(&mut self.units_reached_together) {
+            self.units.interests[first as usize + 1].push(Interest::Piece(second));
+        }
         self.add_references();
         self.add_members();
         self.add_requests();
@@ -1434,6 +1574,9 @@ struct Walk<'a, 's> {
     // By a module: the modules that have a call of `require` for it. Made when something asks.
     requirers: Option<FxHashMap<ModuleRef, Vec<ModuleRef>>>,
     reaches_load_by_unknown_name: bool,
+    objects_handed_on: FxHashSet<Sym>,
+    // By an enum that is not handed on: the files that read members of it whose values the build knows.
+    files_reading_members: FxHashMap<Sym, SmallVec<[FileId; 2]>>,
 }
 
 impl<'a, 's> Walk<'a, 's> {
@@ -1545,11 +1688,26 @@ impl<'a, 's> Walk<'a, 's> {
             required: FxHashSet::default(),
             requirers: None,
             reaches_load_by_unknown_name: false,
+            objects_handed_on: FxHashSet::default(),
+            files_reading_members: FxHashMap::default(),
         }
     }
 
-    // What a body declares is there once the body has run, and the body of a module inside a file once the file has.
+    // Whatever reaches the statement of an enum gets hold of the object, but for what is known to look something up in it and no more.
     fn reach_region(&mut self, file: FileId, region: u32) {
+        let units = self.files[file.idx()].as_ref();
+        let unit = region.checked_sub(1);
+        if let Some(&id) = units
+            .zip(unit)
+            .and_then(|(units, unit)| units.enum_of_unit.get(&unit))
+        {
+            self.hand_on_object(Sym { file, id });
+        }
+        self.run_region(file, region);
+    }
+
+    // What a body declares is there once the body has run, and the body of a module inside a file once the file has.
+    fn run_region(&mut self, file: FileId, region: u32) {
         let Some(units) = &mut self.files[file.idx()] else {
             return;
         };
@@ -1721,8 +1879,53 @@ impl<'a, 's> Walk<'a, 's> {
         }
     }
 
+    // From now on a read of a member reads the object.
+    fn hand_on_object(&mut self, enumeration: Sym) {
+        let known = KnownMemberValues::default();
+        let members = self.input.known_objects(&known);
+        let enumeration = match members.find_data_object_shared_by(enumeration) {
+            Some(object) => object,
+            None if is_enum(self.input.files.bound(enumeration.file), enumeration.id) => {
+                enumeration
+            }
+            None => return,
+        };
+        if !self.objects_handed_on.insert(enumeration) {
+            return;
+        }
+        let readers = self.files_reading_members.remove(&enumeration);
+        for reader in readers.unwrap_or_default() {
+            self.follow(reader, Interest::Binding(enumeration));
+        }
+    }
+
+    // A loader that is given a name which the build does not know finds a module of data by its path.
+    fn hand_on_every_data_object(&mut self) {
+        let known = KnownMemberValues::default();
+        let members = self.input.known_objects(&known);
+        let files = self.input.files.compiled_files().iter();
+        let objects: Vec<Sym> = files
+            .filter_map(|&file| members.find_data_object(file))
+            .collect();
+        for object in objects {
+            self.hand_on_object(object);
+        }
+    }
+
+    // The statements of the enum run, and nothing gets hold of the object.
+    fn look_up_in(&mut self, enumeration: Sym) {
+        let Sym { file, id } = enumeration;
+        let files = self.input.files;
+        let unit = self.files[file.idx()]
+            .as_ref()
+            .and_then(|units| units.find_unit(files.hir(file), files.bound(file), id));
+        self.bound_variables.insert(enumeration);
+        self.run_region(file, unit.map_or(TOP_LEVEL, |unit| unit + 1));
+    }
+
     // Each of these says whether what it reached can look at the object that it is called on.
     fn reach_binding(&mut self, defined: Sym) -> bool {
+        self.hand_on_object(defined);
         if let Some(&can_read_this) = self.reached_bindings.get(&defined) {
             return can_read_this;
         }
@@ -1882,6 +2085,17 @@ impl<'a, 's> Walk<'a, 's> {
     fn reach_every_export(&mut self, module: ModuleRef) {
         self.evaluate(module);
         self.look_at(module);
+        // A module of data has no units: whoever looks at it gets hold of its value.
+        if let ModuleRef::File(file) = module_with_code(module)
+            && self.files[file.idx()].is_none()
+            && self.input.graph.has_record(file)
+        {
+            for export in self.input.graph.exports(file) {
+                if let ExportBinding::Variable(variable) = export.binding {
+                    self.hand_on_object(variable);
+                }
+            }
+        }
     }
 
     // All that the object of an evaluated module shows.
@@ -2080,10 +2294,37 @@ impl<'a, 's> Walk<'a, 's> {
         }
     }
 
+    fn loads_by_unknown_name_outside_units(&self, file: FileId) -> bool {
+        self.files[file.idx()].is_none()
+            && parsed_source(self.input.files, file).is_none_or(|source| {
+                source.loads_by_unknown_name || !source.unknown_names_at.is_empty()
+            })
+    }
+
     fn follow(&mut self, file: FileId, interest: Interest) {
         match interest {
             Interest::Unit(unit) => self.reach_region(file, unit + 1),
-            Interest::LoadByUnknownName => self.reaches_load_by_unknown_name = true,
+            Interest::Piece(unit) => self.run_region(file, unit + 1),
+            Interest::LoadByUnknownName => {
+                if !replace(&mut self.reaches_load_by_unknown_name, true) {
+                    self.hand_on_every_data_object();
+                }
+            }
+            Interest::KnownMember(enumeration) => {
+                if self.objects_handed_on.contains(&enumeration) {
+                    self.follow(file, Interest::Binding(enumeration));
+                } else {
+                    let readers = self.files_reading_members.entry(enumeration).or_default();
+                    if !readers.contains(&file) {
+                        readers.push(file);
+                    }
+                }
+            }
+            Interest::Lookup(enumeration) => {
+                self.reach_files_between(file, HandedOn::Variable(enumeration));
+                self.look_up_in(enumeration);
+            }
+            Interest::HandedOnObject(enumeration) => self.hand_on_object(enumeration),
             Interest::Binding(defined) => {
                 self.reach_files_between(file, HandedOn::Variable(defined));
                 self.reach_binding(defined);
@@ -2160,6 +2401,10 @@ impl<'a, 's> Walk<'a, 's> {
     }
 
     fn run(&mut self) {
+        let mut compiled_files = self.input.files.compiled_files().iter();
+        if compiled_files.any(|&file| self.loads_by_unknown_name_outside_units(file)) {
+            self.hand_on_every_data_object();
+        }
         for entry_point in self.input.sources.entry_points() {
             self.reach_every_export(ModuleRef::File(entry_point.file));
         }
@@ -2432,15 +2677,30 @@ pub(crate) fn find_left_out_code(
         .collect();
     reached_modules.required = take(&mut walk.required);
     reached_modules.naming_ways = take(&mut walk.files_naming_ways);
-    left_out.names_read_from_objects = walk.names_read_from_objects;
-    left_out.bound_variables = walk.bound_variables;
-    let loads_outside_units = |&file: &FileId| {
-        walk.files[file.idx()].is_none()
-            && parsed_source(input.files, file).is_none_or(|source| {
-                source.loads_by_unknown_name || !source.unknown_names_at.is_empty()
-            })
-    };
+    for enumeration in walk.files_reading_members.keys() {
+        let declarations = &mut left_out.declarations;
+        declarations.note_object_never_handed_on(enumeration.file, enumeration.id);
+    }
+    let known = KnownMemberValues::default();
+    let members = input.known_objects(&known);
+    for &file in input.files.compiled_files() {
+        if let Some(object) = members.find_data_object(file)
+            && !walk.objects_handed_on.contains(&object)
+        {
+            let declarations = &mut left_out.declarations;
+            declarations.note_object_never_handed_on(file, object.id);
+            // A variable that is reached holds no object, or the object would be handed on: the value stands in the place of its initializer.
+            for (variable, declarator) in members.data_variables(file) {
+                if !walk.reached_bindings.contains_key(&variable) {
+                    declarations.leave_out_declarator(file, declarator);
+                }
+            }
+        }
+    }
+    let loads_outside_units = |&file: &FileId| walk.loads_by_unknown_name_outside_units(file);
     left_out.holds_every_load_by_unknown_name = !walk.reaches_load_by_unknown_name
         && !input.files.compiled_files().iter().any(loads_outside_units);
+    left_out.names_read_from_objects = walk.names_read_from_objects;
+    left_out.bound_variables = walk.bound_variables;
     (left_out, reached_modules)
 }

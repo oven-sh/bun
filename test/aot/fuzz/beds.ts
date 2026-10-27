@@ -6,8 +6,9 @@
 //             half a second a program. JavaScript without imports only.
 //
 // A bed answers with what the program printed or with how the build or the run failed; compare() turns the two into a verdict.
+// A program is one text, or a text and further files that it imports: the product bed lays those into a folder of their own.
 import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "fs";
-import { join } from "path";
+import { dirname, join } from "path";
 import { limitsLowered } from "../harness/limits";
 import { endAtMemoryLimit, memoryLimit } from "../harness/memory-limit";
 import { company, memberNames } from "./company";
@@ -17,6 +18,8 @@ import { asBunInitWritesIt, typeChecker, typingsOfBun, type Checker } from "./ty
 export interface Program {
   text: string;
   extension: "js" | "ts";
+  /** Its other files, by their paths from the folder it lies in. That folder is its own then, and `text` lies there as `main.<extension>`. */
+  files?: Record<string, string>;
   /** More flags for every build of it. */
   flags?: string[];
 }
@@ -63,6 +66,22 @@ export interface Failure {
 }
 
 export type Verdict = { kind: "same" } | { kind: "skipped"; why: string; /** The words of a type error that stopped the build. */ refusal?: string } | Failure;
+
+/** Everything the program is written in. */
+export const wholeText = (program: Pick<Program, "text" | "files">) => [program.text, ...Object.values(program.files ?? {})].join("\n");
+
+/** Where the program begins, from the folder of its build. */
+export const entryOf = (stem: string, program: Program) => (program.files ? `${stem}/main.${program.extension}` : `${stem}.${program.extension}`);
+
+/** One file `<stem>.<extension>`, or a folder `<stem>`. */
+export function writeProgram(folder: string, stem: string, program: Program) {
+  rmSync(join(folder, stem), { recursive: true, force: true });
+  for (const [path, text] of Object.entries({ ...program.files, [entryOf(stem, program)]: program.text })) {
+    const file = path === entryOf(stem, program) ? join(folder, path) : join(folder, stem, path);
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, text);
+  }
+}
 
 export const isFinding = (verdict: Verdict): verdict is Failure => verdict.kind !== "same" && verdict.kind !== "skipped";
 
@@ -144,6 +163,8 @@ export interface Bed {
   readonly batch: number;
   /** Whether a program can have a build to itself, as its entry point. */
   readonly buildsAlone?: boolean;
+  /** Whether a program may have `files`. */
+  readonly takesSeveralFiles?: boolean;
   /** From this time on a shared build that stops is not built again by halves to find out whose fault it is: every program of it gets the verdict. */
   lastCall?: number;
   /** Runs each program plain and compiled. One program is built by itself; several may share a build. */
@@ -184,6 +205,8 @@ const inTheCompanyOf = "--in-the-company-of=";
 /** The same: what lies in the folder beside the programs, a name of `projects`. */
 const besideTheProgram = "--beside-the-program=";
 export const staysAScript = "// stays a script\n";
+/** What a program may call without declaring it. */
+export const printFor = (isTyped: boolean) => (isTyped ? "function print(text: string): void {\n  console.log(text);\n}\n" : "function print(text) {\n  console.log(text);\n}\n");
 const isOfTheBuild = (flag: string) => !flag.startsWith(inTheRun) && !flag.startsWith(inTheCompanyOf) && !flag.startsWith(besideTheProgram);
 
 const ownOptions = { target: "esnext", module: "preserve", moduleResolution: "bundler", allowJs: true, noEmit: true, strict: true };
@@ -200,6 +223,7 @@ export class ProductBed implements Bed {
   readonly name = "product";
   readonly binary: string;
   readonly batch = 64;
+  readonly takesSeveralFiles = true;
   lastCall?: number;
   withoutFlowResults = ["--aot-disable=flow-results"];
   #switches?: { flowResults: string[]; passes: string[] };
@@ -349,13 +373,15 @@ export class ProductBed implements Bed {
     });
   }
 
-  #written(program: Program) {
-    const print = program.extension === "ts" ? "function print(text: string): void {\n  console.log(text);\n}\n" : "function print(text) {\n  console.log(text);\n}\n";
-    return /\bprint\(/.test(program.text) && !/\b(function|const|let|var) print\b/.test(program.text) ? print + program.text : program.text;
+  // Each file that prints has a `print` of its own, unless it declares or imports one.
+  #written(program: Program): Program {
+    const written = (text: string, isTyped: boolean) => (/\bprint\(/.test(text) && !/\b(function|const|let|var) print\b|^import\b[^;]*\bprint\b/m.test(text) ? printFor(isTyped) + text : text);
+    const files = program.files && Object.fromEntries(Object.entries(program.files).map(([path, text]) => [path, /\.[cm]?[jt]sx?$/.test(path) && !path.endsWith(".d.ts") ? written(text, /ts.?$/.test(path)) : text]));
+    return { ...program, text: written(program.text, program.extension === "ts"), ...(files ? { files } : {}) };
   }
 
-  #write(folder: string, file: string, program: Program, flags: string[]) {
-    writeFileSync(join(folder, file), this.#written(program));
+  #write(folder: string, stem: string, program: Program, flags: string[]) {
+    writeProgram(folder, stem, this.#written(program));
     if (program.extension === "ts" && !flags.some(flag => flag.startsWith(besideTheProgram)) && !existsSync(join(folder, "tsconfig.json"))) writeFileSync(join(folder, "tsconfig.json"), JSON.stringify(projects["the-bed's-own"].tsconfig));
   }
 
@@ -376,6 +402,8 @@ export class ProductBed implements Bed {
   #checkers = new Map<string, Checker | undefined>();
   #judged(program: Program, flags: string[], verdict: Verdict): Verdict {
     if (verdict.kind !== "skipped" || !verdict.refusal) return verdict;
+    // The build reports the errors of TypeScript 7, which reads less out of a JavaScript file than the TypeScript that is asked here: `arguments`, constructor functions, a class below Promise.
+    if (Object.keys(program.files ?? {}).some(path => /\.[cm]?js$/.test(path))) return { kind: "skipped", why: `${verdict.why}, beside JavaScript` };
     const name = flags.find(flag => flag.startsWith(besideTheProgram))?.slice(besideTheProgram.length) ?? "the-bed's-own";
     const { tsconfig } = projects[name];
     if (!this.#checkers.has(name)) this.#checkers.set(name, typeChecker({ typings: typingsOfBun(), options: tsconfig && (tsconfig.compilerOptions ?? {}) }));
@@ -405,9 +433,9 @@ export class ProductBed implements Bed {
     try {
       if (programs.length !== 1 || this.options.workers || flags.some(flag => flag.startsWith(inTheCompanyOf))) return await this.#judgeTogether(folder, programs, flags);
       const [program] = programs;
-      const file = "program." + program.extension;
+      const file = entryOf("program", program);
       this.#layBeside(folder, flags);
-      this.#write(folder, file, program, flags);
+      this.#write(folder, "program", program, flags);
       const plain = await spawned([this.bun, "run", file], folder, this.options.runSeconds, undefined, this.options.memory);
       const early = unusable(this, plain);
       if (early) return [{ plain, verdict: early }];
@@ -417,6 +445,7 @@ export class ProductBed implements Bed {
       return [{ plain, compiled, verdict: this.#judged(program, flags, compare(this, program, plain, compiled)) }];
     } finally {
       rmSync(executable, { force: true });
+      rmSync(join(folder, "program"), { recursive: true, force: true });
     }
   }
 
@@ -428,13 +457,13 @@ export class ProductBed implements Bed {
 
   #writeModules(folder: string, programs: Program[], flags: string[]) {
     this.#layBeside(folder, flags);
-    programs.forEach((program, index) => this.#write(folder, `p${index}.${program.extension}`, this.#asModule(program), flags));
+    programs.forEach((program, index) => this.#write(folder, `p${index}`, this.#asModule(program), flags));
   }
 
   #writeEntryPoint(folder: string, programs: Program[], members: number[], flags: string[]) {
     const size = Number(flags.find(flag => flag.startsWith(inTheCompanyOf))?.slice(inTheCompanyOf.length) ?? 0);
-    if (size) writeFileSync(join(folder, "company.js"), company(size, memberNames(programs.map(program => program.text))));
-    const table = `${size ? `import "./company.js";\n` : ""}const programs = {\n${members.map(index => `  ${index}: () => import("./p${index}.${programs[index].extension}"),\n`).join("")}};\n`;
+    if (size) writeFileSync(join(folder, "company.js"), company(size, memberNames(programs.map(wholeText))));
+    const table = `${size ? `import "./company.js";\n` : ""}const programs = {\n${members.map(index => `  ${index}: () => import("./${entryOf(`p${index}`, programs[index])}"),\n`).join("")}};\n`;
     if (!this.options.workers) return writeFileSync(join(folder, "main.js"), `${table}await programs[process.argv[2]]();\n`);
     writeFileSync(
       join(folder, "main.js"),
@@ -496,7 +525,7 @@ ${table}if (isMainThread) {
       const blamed = new Map<number, string>();
       for (const record of (build.stderr + "\n" + build.stdout).split(/\n(?=error\b)/)) {
         if (!record.startsWith("error")) continue;
-        const named = /\bp(\d+)\.(?:js|ts)\b/.exec(record.split(/\n\s*\n/)[0]);
+        const named = /\bp(\d+)(?:\.(?:js|ts)\b|\/[\w.-])/.exec(record.split(/\n\s*\n/)[0]);
         if (named && members.includes(Number(named[1])) && !blamed.has(Number(named[1]))) blamed.set(Number(named[1]), record.split(/\n\s*\n/)[0]);
       }
       if (members.length === 1 || blamed.size || Date.now() > (this.lastCall ?? Infinity)) {
@@ -510,7 +539,7 @@ ${table}if (isMainThread) {
       await together(members.slice(members.length >> 1));
     };
     await together(all.filter(index => !results[index]));
-    for (const index of all) rmSync(join(folder, `p${index}.${programs[index].extension}`), { force: true });
+    for (const index of all) rmSync(join(folder, programs[index].files ? `p${index}` : entryOf(`p${index}`, programs[index])), { recursive: true, force: true });
     rmSync(join(folder, "company.js"), { force: true });
     return results;
   }
@@ -561,7 +590,7 @@ export class EngineBed implements Bed {
 
   // The shell has no host, and calling a built-in of the host there is not defined.
   accepts(program: Program) {
-    return program.extension === "js" && !/\b(import|require|Bun|process|setTimeout|setInterval|setImmediate|queueMicrotask|structuredClone|Buffer|fetch|Response|Request|Headers|URL|URLSearchParams|TextEncoder|TextDecoder|performance|navigator|crypto|AbortController|Blob|Worker|WebSocket|EventTarget|Event|alert|prompt|confirm|BroadcastChannel|MessageChannel|atob|btoa|reportError|self|Intl|WebAssembly|gc|noInline)\b/.test(program.text); // prettier-ignore
+    return program.extension === "js" && !program.files && !/\b(import|require|Bun|process|setTimeout|setInterval|setImmediate|queueMicrotask|structuredClone|Buffer|fetch|Response|Request|Headers|URL|URLSearchParams|TextEncoder|TextDecoder|performance|navigator|crypto|AbortController|Blob|Worker|WebSocket|EventTarget|Event|alert|prompt|confirm|BroadcastChannel|MessageChannel|atob|btoa|reportError|self|Intl|WebAssembly|gc|noInline)\b/.test(program.text); // prettier-ignore
   }
 
   // For a built-in that is written in JavaScript a stand-in answers undefined: prepare() finds out which.

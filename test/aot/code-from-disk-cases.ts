@@ -503,6 +503,29 @@ const cases: Record<string, Case> = {
     disk: { "plugin.ts": `export default function call(f: () => number) { return f() + 1; }` },
     prints: "42 2 true\n",
   },
+  "the path of a carried file comes through a constant, another file or a namespace object": {
+    program: {
+      "main.ts":
+        prelude +
+        `import carried from "./carried.js" with { type: "file" };
+        import * as all from "./carried.js" with { type: "file" };
+        import handedOn, { kept } from "./between.ts";
+        const alias = carried;
+        await shown("a constant", () => import(alias));
+        await shown("a constant of another file", () => require(kept));
+        await shown("the default export of another file", () => import(handedOn));
+        await shown("a namespace object", () => require(all.default));
+        await shown("a longer text", () => import("" + carried));
+        await shown("import.meta.require", () => import.meta.require(kept));
+        console.log(require.resolve(carried) === carried, require.resolve(kept) === carried);`,
+      "between.ts": `import given from "./carried.js" with { type: "file" };
+        export const kept = given;
+        export default given;`,
+      "carried.js": `export default { kind: "carried" }; export const named = "asset";`,
+    },
+    disk: {},
+    prints: `a constant: {"kind":"carried"} asset\na constant of another file: {"kind":"carried"} asset\nthe default export of another file: {"kind":"carried"} asset\na namespace object: {"kind":"carried"} asset\na longer text: {"kind":"carried"} asset\nimport.meta.require: {"kind":"carried"} asset\ntrue true\n`,
+  },
 };
 
 const allowed = ["--aot", "--aot-allow-code-from-disk"];

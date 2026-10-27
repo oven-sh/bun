@@ -13,7 +13,7 @@ use crate::builtins::table;
 use crate::diagnostic_codes::Code;
 use crate::ir::generated::{FunctionFlags, OperandKind};
 use crate::ir::{BlockId, Opcode, PropertyKey, PropertyKeyId, TypeId, TypeTable, ValueId};
-use crate::lower::expression::{Evaluation, ShortCircuit};
+use crate::lower::expression::{Evaluation, ShortCircuit, Tail};
 use crate::lower::member::{self, PropertyName};
 use crate::lower::{FileLowering, FunctionLowering, parameters};
 
@@ -73,16 +73,20 @@ pub(super) fn lower_intrinsic_call(
     };
     let arguments: SmallVec<[ExprId; 4]> = hir.ids(hir[node].args).collect();
     let callee = lowering.file.skip_type_syntax(hir[node].callee);
+    let makes_array_in_caller = lowering.file.makes_array_in_caller(hir[node]);
     let site = IntrinsicCall {
         call,
         callee,
         arguments: &arguments,
         exit: evaluation.chain_exit,
         options: CallOptions {
-            tail: evaluation.tail,
+            tail: match makes_array_in_caller {
+                true => Tail::No,
+                false => evaluation.tail,
+            },
             expected_result: None,
             is_never_inlined: false,
-            is_reflect_construct_syntax: false,
+            is_done_in_place: makes_array_in_caller,
             call_number: None,
         },
     };
@@ -192,7 +196,13 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 let [argument] = lower_named_arguments(self, site)?;
                 let callee = self.emit_locked_builtin(id);
                 let arguments = Arguments::Values(smallvec![argument]);
-                Ok(self.emit_construct(callee, arguments, None))
+                Ok(match id {
+                    BuiltinId::Array => {
+                        let callee = Callee::without_key(callee, None, None);
+                        self.emit_array_made_in_caller(callee, arguments)
+                    }
+                    _ => self.emit_construct(callee, arguments, None),
+                })
             }
             Intrinsic::IsNullish => self.lower_type_test(site, TypeTable::NULLISH),
             Intrinsic::IsObject => self.lower_type_test(site, TypeTable::OBJECT),

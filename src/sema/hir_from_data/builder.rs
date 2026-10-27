@@ -122,6 +122,11 @@ impl<'s> Builder<'_, 's> {
                 vec![self.export_default(value)]
             }
             DataModule::NativeAddon { path } => self.native_addon(path),
+            DataModule::EmbeddedFile { path } => {
+                let path = self.expr(ExprKind::String(path));
+                self.file.add_flags(path, ExprFlags::RESOLVED_AT_RUNTIME);
+                vec![self.export_default(path)]
+            }
             DataModule::Database { path, is_embedded } => {
                 let database = self.database(path, is_embedded);
                 vec![self.export_default(database)]

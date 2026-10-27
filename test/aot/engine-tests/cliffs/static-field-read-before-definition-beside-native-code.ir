@@ -21,8 +21,7 @@
 # ORDER-NOT: initialization=StoredBeforeEveryRead
 # ORDER: variable g20 {{*}}stores=AtMostOnce
 # ORDER-NOT: initialization=StoredBeforeEveryRead
-# ORDER: variable g21 module=
-# ORDER-NOT: stores=AtMostOnce
+# ORDER: variable g21 {{*}}stores=AtMostOnce
 # ORDER-NOT: initialization=StoredBeforeEveryRead
 # ORDER: module m0 path=
 

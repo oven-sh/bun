@@ -334,6 +334,44 @@ let total = 0;
 for (let i = 0; i < 400; i++) total = mix(total, work(i, 200));
 console.log(total);
 `,
+  "an-object-of-some-records-beside-records-that-end-with-a-flag.ts": `// A record holds a flag or an object, so the fields of one kind of record reach further than those of the other. A loop that runs often reads the object behind the test of the kind.
+${mix}type Result = { kind: 0; flag: boolean } | { kind: 1; inner: { x: number } };
+function make(i: number): Result {
+  if (i % 7 === 3) return { kind: 1, inner: { x: i } };
+  return { kind: 0, flag: i % 2 === 0 };
+}
+function work(i: number, n: number): number {
+  const r = make(i);
+  let sum = 0;
+  for (let j = 0; j < n; j++) {
+    if (r.kind === 0) sum = mix(sum, r.flag ? 3 : 4);
+    else sum = mix(sum, r.inner.x);
+  }
+  return sum;
+}
+let total = 0;
+for (let i = 0; i < 400; i++) total = mix(total, work(i, 100));
+console.log(total);
+`,
+  "three-members-of-some-records-beside-records-with-a-flag-and-an-object.ts": `// A record holds a flag and an object, or a name, a list and an object. A loop that runs often reads all the members of a record behind the test of the kind, and some calls ask for no turn.
+${mix}type Result = { kind: 0; flag: boolean; inner: { x: number } } | { kind: 1; name: string; part: number[]; other: { x: number } };
+function make(i: number): Result {
+  if (i % 7 === 3) return { kind: 1, name: "name" + i, part: [i, i + 1], other: { x: i } };
+  return { kind: 0, flag: i % 2 === 0, inner: { x: i } };
+}
+function work(i: number, n: number): number {
+  const r = make(i);
+  let sum = 0;
+  for (let j = 0; j < n; j++) {
+    if (r.kind === 0) sum = mix(sum, (r.flag ? 3 : 4) + r.inner.x);
+    else sum = mix(sum, r.name.length + r.part[1]! + r.other.x);
+  }
+  return sum;
+}
+let total = 0;
+for (let i = 0; i < 400; i++) total = mix(total, work(i, i % 5 === 0 ? 0 : 100));
+console.log(total);
+`,
   "a-list-and-a-map-filled-from-a-list-that-some-records-lack.ts": `// A new list and a new map are filled in loops that run up to the length of the list of a record. The loops stand behind the test of the kind.
 ${mix}${records}function work(i: number): number {
   const r = make(i);
@@ -1158,12 +1196,4 @@ stopsToday(
   "--aot-validate",
   undefined,
   "the build stops: UnspecifiedValueInspected, the comparison of the position in the list that the generator hands over to; with every pass verified, behind FuseGeneratorLoops",
-);
-stopsToday(
-  values,
-  "a-list-of-one-of-three-classes-that-some-records-lack.ts",
-  "with-the-claims-to-the-back-end-checked",
-  "--aot-check=ClaimsToBackEnd",
-  ["claims-checked-at-run-time"],
-  "the run stops at the check of StackSlotIsWrittenBeforeRead in work()",
 );

@@ -9,10 +9,9 @@ use crate::lower::{FileLowering, FunctionLowering, operator};
 
 impl FileLowering<'_, '_, '_, '_> {
     pub(super) fn is_read_left_out_by_bun_run(&self, expression: ExprId) -> bool {
-        match self.builtins.of_expr(self.skip_type_syntax(expression)) {
-            Some(Resolved::Builtin(path)) => is_read_left_out_by_bun_run(path.id),
-            Some(Resolved::DynamicGlobal(_) | Resolved::Intrinsic(_)) | None => false,
-        }
+        self.builtins
+            .global_path(self.hir, self.bound, expression)
+            .is_some_and(|steps| is_read_left_out_by_bun_run(steps[0].id))
     }
 
     // `"name" in object`, where the table has the member: the host looks for a member as it reads one.

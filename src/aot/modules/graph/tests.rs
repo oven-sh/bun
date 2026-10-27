@@ -68,6 +68,7 @@ fn source_text_file(file: FileId) -> FileRow {
         holders: Vec::new(),
         exports: Vec::new(),
         unread_exports: Vec::new(),
+        is_data_linked_by_names_alone: false,
         required_names: Vec::new(),
     }
 }

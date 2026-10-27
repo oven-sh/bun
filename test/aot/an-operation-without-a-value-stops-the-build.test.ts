@@ -1,7 +1,7 @@
 // The compiler follows every value of a program from where it is made to where it is used. What stands behind an operation for which it finds no value is unreachable to it.
 // That is right where the operation never completes: a call of what always throws or is no function, a read from null. The compiler knows those reasons.
-// Where every operand of an operation has a value, its result has none and no such reason holds, a value has been lost. A build that verifies the program, as every build of
-// these tests does, stops there: an internal error that names the operation, the function, the file and the line.
+// Where every operand of an operation has a value, its result has none and no such reason holds, a value has been lost. Every build stops there, a user's as well as one of
+// these tests, which also verify the program between the stages of the compiler: an internal error that names the operation, the function, the file and the line.
 //
 // `--aot-sabotage=StoredValuesAreNeverRead` (hidden) loses values on purpose: a read no longer finds what was stored.
 import { expect } from "bun:test";
@@ -65,37 +65,44 @@ const cases = [() => { for (const x of undefined as any) console.log(x); }, () =
 for (const f of cases) try { f(); } catch (e) { console.log((e as Error).name); }`,
 };
 
-async function build(source: string, ...flags: string[]) {
+const { BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: _, ...asUsersHaveIt } = bunEnv;
+const environments = { "a build of these tests": bunEnv, "a user's build": asUsersHaveIt };
+type Builder = keyof typeof environments;
+
+async function build(builder: Builder, source: string, ...flags: string[]) {
   using folder = tempDir("aot-an-operation-without-a-value", { "main.ts": source });
   const executable = join(String(folder), "main");
   const result = await slot(() =>
     spawned(
       [bunExe(), "build", "--compile", "--aot", ...flags, "./main.ts", "--outfile", executable],
       String(folder),
-      bunEnv,
+      environments[builder],
     ),
   );
   return { exitCode: result.exitCode, stderr: result.stderr, isThere: existsSync(executable) };
 }
 
+const both = <T>(names: T[]) =>
+  (Object.keys(environments) as Builder[]).flatMap(builder => names.map(name => [builder, name] as const));
+
 const hasTheWord = !unsupported && registry().sabotages?.includes("StoredValuesAreNeverRead");
 
 describe.skipIf(!hasTheWord)("compile/aot/an operation without a value stops the build", () => {
-  test.concurrent.each(Object.keys(stopped))("is named: %s", async name => {
+  test.concurrent.each(both(Object.keys(stopped)))("in %s it is named: %s", async (builder, name) => {
     const { source, place } = stopped[name];
-    const result = await build(source, losesValues);
+    const result = await build(builder, source, losesValues);
     expect(result.stderr).toMatch(
       new RegExp(`internal compiler error \\(AnalyzeFlow\\): OperationWithoutValue: .*${place}`),
     );
     expect(result.stderr).toContain("This is a bug in Bun. Please report it");
     expect({ exitCode: result.exitCode, isThere: result.isThere }).toEqual({ exitCode: 1, isThere: false });
-    expect(await build(source)).toMatchObject({ exitCode: 0, isThere: true });
+    expect(await build(builder, source)).toMatchObject({ exitCode: 0, isThere: true });
   });
 });
 
 describe("compile/aot/an operation that never completes has no value", () => {
-  test.concurrent.each(Object.keys(built))("is built: %s", async name => {
-    const result = await build(built[name]);
+  test.concurrent.each(both(Object.keys(built)))("in %s it is built: %s", async (builder, name) => {
+    const result = await build(builder, built[name]);
     expect(result.stderr).not.toContain("internal compiler error");
     expect({ exitCode: result.exitCode, isThere: result.isThere }).toEqual({ exitCode: 0, isThere: true });
   });

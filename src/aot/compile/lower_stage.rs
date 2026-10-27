@@ -1,6 +1,7 @@
 use super::runtime_reach::{ReachInput, find_reached_runtime_code};
 use super::{BoundApplication, BoundBuild, BoundProject, Build, LoadedBuild, LoadedProject};
-use crate::diagnostics::{DiagnosticBuffer, InternalError, ProgramView};
+use crate::builtins::BuiltinNames;
+use crate::diagnostics::{DiagnosticBuffer, Diagnostics, InternalError, LoadMessages, ProgramView};
 use crate::ir::generated::FunctionRole;
 use crate::ir::{FunctionId, FunctionKey, Id};
 use crate::link::{KeyContext, LinkUnit, Rehoming};
@@ -15,22 +16,22 @@ use crate::lower::{
 use crate::modules::{ApplicationGraph, Library, LinkedProject, ModuleGraph, ModuleRef, Shape};
 use crate::package_diagnostics::report_package_errors;
 use crate::report;
-use crate::statistics::{Counters, Stage, StatisticId};
+use crate::statistics::{Counters, Stage, StatisticId, Statistics};
 use bun_core::current_work;
-use bun_sema::atom::known;
+use bun_sema::atom::{Interner, known};
 use bun_sema::check::aot::{
     DiagnosticClass, FileOrigin, FunctionRef, LeftOutBodies, QueryStatistics,
 };
 use bun_sema::config;
 use bun_sema::hir::DiagnosticKind;
-use bun_sema::program::{FileId, FileRole, Files};
+use bun_sema::program::{FileId, FileRole, Files, Run};
 use bun_sema::resolve::Options as CompilerOptions;
 use bun_sema::session::Session;
 use bun_sema_driver::{
     self as driver, BuildDiagnostic, CheckedProgram, CompileRequest, Demotion, EntryPoints,
-    Incomplete, RoleDecision, decide_roles, keep_verified_roles, run_on_one_thread_while,
+    Incomplete, RoleDecision, decide_roles, keep_verified_roles, load_program_with_parsed_files,
+    run_on_one_thread_while,
 };
-#[cfg(bun_fuzzilli)]
 use bun_threading::Guarded;
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::borrow::Cow;
@@ -85,6 +86,18 @@ struct WorldToLower<'a, 's> {
     configuration: WorldConfiguration<'a>,
     // Of the application.
     files: &'a [FileId],
+}
+
+/// Shared by the worlds, which run in parallel.
+struct WorldInputs<'a, 'b, 's> {
+    projects: &'a PerProject<LoadedProject<'b, 's>>,
+    bound: &'a BoundProject<'a>,
+    parsed_declarations: Option<&'s Run<'s>>,
+    atoms: Interner<'s>,
+    messages: &'b LoadMessages,
+    builtin_names: &'b BuiltinNames,
+    can_load_code_at_run_time: bool,
+    loads_code_by_unknown_names_alone: bool,
 }
 
 // In whatever order.
@@ -150,6 +163,13 @@ struct Worlds {
     demoted: Vec<Demotion>,
 }
 
+struct LoweredWorld {
+    world: Worlds,
+    diagnostics: Diagnostics,
+    statistics: Statistics,
+    has_withdrawn_trust: bool,
+}
+
 struct ProjectToLower<'a, 'b, 's> {
     loaded: &'a LoadedProject<'b, 's>,
     decided: &'a DecidedProject,
@@ -213,12 +233,12 @@ impl<'a, 'b, 's> ProjectToLower<'a, 'b, 's> {
                 let Some(lowered) = lowered else {
                     return;
                 };
+                let defined = self.inputs.defined_object_types;
+                assert_eq!(defined.link_position(file), self.keys.file(file).0);
                 for (ty, level) in lowered.unit.defined_object_types() {
-                    self.inputs
-                        .defined_object_types
-                        .add_definition(ty, level, file);
+                    defined.add_definition(ty, level, file);
                 }
-                self.inputs.defined_object_types.publish_names_of_file(file);
+                defined.publish_names_of_file(file);
             },
         )
     }
@@ -393,7 +413,6 @@ impl Build<'_> {
             let group = group.or_insert_with(|| (manifest_path.clone(), Vec::new()));
             group.1.push(file);
         }
-        let mut worlds = Worlds::default();
         let groups: Vec<(Option<Vec<u8>>, Vec<FileId>)> = groups.into_values().collect();
         let of_typed_packages = groups.iter().map(|(config_path, group)| {
             let configuration = WorldConfiguration::OfTypedPackages(config_path.as_deref());
@@ -405,17 +424,62 @@ impl Build<'_> {
             .map(|(origin, options, group)| {
                 (WorldConfiguration::OfProject(*origin, *options), &group[..])
             });
-        for (index, (configuration, group)) in of_projects.chain(of_typed_packages).enumerate() {
-            let Some(session) = loaded.world_sessions.get(index) else {
-                break;
-            };
-            let world = WorldToLower {
+        let to_lower: Vec<WorldToLower<'_, '_>> = (of_projects.chain(of_typed_packages))
+            .zip(loaded.world_sessions)
+            .enumerate()
+            .map(|(index, ((configuration, files), session))| WorldToLower {
                 session,
                 index,
                 configuration,
-                files: group,
-            };
-            self.lower_world(loaded, bound, &world, &mut worlds);
+                files,
+            })
+            .collect();
+        let mut worlds = Worlds::default();
+        if to_lower.is_empty() {
+            return worlds;
+        }
+        let parsed_declarations = (to_lower.len() > 1).then(|| {
+            let parsed = Run::of_compile_build(loaded.session, loaded.atoms);
+            &*loaded.session.arena().alloc(parsed)
+        });
+        let inputs = WorldInputs {
+            projects: &loaded.projects,
+            bound,
+            parsed_declarations,
+            atoms: loaded.atoms,
+            messages: loaded.messages,
+            builtin_names: loaded.builtin_names,
+            can_load_code_at_run_time: loaded.can_load_code_at_run_time,
+            loads_code_by_unknown_names_alone: loaded.loads_code_by_unknown_names_alone,
+        };
+        let (options, provider, caches, limits) =
+            (self.options, self.provider, self.caches, &self.limits);
+        let lowered: Vec<Guarded<Option<LoweredWorld>>> =
+            to_lower.iter().map(|_| Guarded::new(None)).collect();
+        let lower = |index: usize| {
+            let mut build = Build::new(options, provider, caches, limits.clone());
+            let mut world = Worlds::default();
+            build.lower_world(&inputs, &to_lower[index], &mut world);
+            *lowered[index].lock() = Some(LoweredWorld {
+                world,
+                diagnostics: build.diagnostics,
+                statistics: build.statistics,
+                has_withdrawn_trust: build.has_withdrawn_trust,
+            });
+        };
+        // A load started on a pool thread walks the files only after they are all parsed.
+        match to_lower.len() {
+            1 => lower(0),
+            count => (self.parallel_runner())(count, &lower),
+        }
+        for mut lowered in lowered {
+            let lowered = lowered.get_mut().take().expect("each index is visited");
+            self.diagnostics.merge(lowered.diagnostics);
+            self.statistics.merge(lowered.statistics);
+            self.has_withdrawn_trust |= lowered.has_withdrawn_trust;
+            worlds.lowered.extend(lowered.world.lowered);
+            worlds.units.extend(lowered.world.units);
+            worlds.demoted.extend(lowered.world.demoted);
         }
         worlds.lowered.sort_unstable();
         worlds
@@ -423,13 +487,13 @@ impl Build<'_> {
 
     fn lower_world<'s>(
         &mut self,
-        loaded: &LoadedBuild<'_, 's>,
-        bound_application: &BoundProject<'_>,
+        loaded: &WorldInputs<'_, '_, 's>,
         world: &WorldToLower<'_, 's>,
         worlds: &mut Worlds,
     ) {
-        let application = loaded.project(ProjectId::Application);
-        let runtime = loaded.project(ProjectId::Runtime);
+        let bound_application = loaded.bound;
+        let application = &loaded.projects.application;
+        let runtime = &loaded.projects.runtime;
         let files = application.loaded.files();
         let paths: Vec<Vec<u8>> = (world.files.iter())
             .map(|&file| files.module(file).file_name().to_vec())
@@ -448,7 +512,10 @@ impl Build<'_> {
             ..*application.request
         };
         // The application's program goes on with the files of a program that does not load.
-        let Ok(program) = driver::load_program(world.session, application.host, &request) else {
+        let parsed = loaded.parsed_declarations;
+        let program =
+            load_program_with_parsed_files(world.session, application.host, &request, parsed);
+        let Ok(program) = program else {
             return;
         };
         let world_files = program.files();
@@ -500,7 +567,7 @@ impl Build<'_> {
             builtin_names: loaded.builtin_names,
             can_load_code_at_run_time: loaded.can_load_code_at_run_time,
             loads_code_by_unknown_names_alone: loaded.loads_code_by_unknown_names_alone,
-            finish_asset_reads: loaded.finish_asset_reads,
+            finish_asset_reads: &|| true,
         };
         let Ok(bound) = self.bind_modules(&world_build) else {
             return;
@@ -833,7 +900,16 @@ impl Build<'_> {
         let mut library_functions = LibraryFunctions::compute(files, &file_inputs, sources);
         library_functions.leave_out(left_out_functions);
         library_functions.leave_out_declarations(bound_project.left_out.declarations.clone());
-        let defined_object_types = DefinedObjectTypes::default();
+        let defined_object_types = match (project, loaded.application) {
+            (ProjectId::Application, Some(application)) => {
+                let positions = (0..files.modules.len() as u32).map(|file| {
+                    let in_application = (application.graph.to_application)(FileId(file));
+                    in_application.map_or(u32::MAX, |file| file.0)
+                });
+                DefinedObjectTypes::with_link_positions(positions.collect())
+            }
+            (ProjectId::Application | ProjectId::Runtime, _) => DefinedObjectTypes::default(),
+        };
         let lowering_roles = roles_for_lowering(&roles.roles, files, self.options.aot.erases_types);
         let library = Library {
             project: LinkedProject {

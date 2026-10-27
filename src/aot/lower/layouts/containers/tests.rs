@@ -130,6 +130,7 @@ Object.defineProperty(exports, \"byVariable\", descriptor);
 Object.defineProperty(exports, \"bySpread\", { ...descriptor });
 Object.defineProperty(exports, \"byFlag\", { value: 1, enumerable: Math.random() > 2 });
 Object.defineProperty(exports, \"both\", { value: 1, get() {} });
+Object.defineProperty(exports, \"fixedGetter\", { get() {}, writable: false });
 exports.byVariable = 2;
 exports.known = 3;
 ",

@@ -89,6 +89,9 @@
 #include "ErrorCode.h"
 #include "GeneratedJest.h"
 #include "WebCoreJSBuiltins.h"
+#if ENABLE(AOT)
+#include <JavaScriptCore/AOTPropertyWalk.h>
+#endif
 
 namespace Bun {
 using namespace JSC;
@@ -107,6 +110,37 @@ static bool canPerformFastEnumeration(Structure* s)
         return false;
     if (s->hasUnderscoreProtoPropertyExcludingOriginalProto())
         return false;
+    return true;
+}
+
+static bool tryFastEnumeration(VM& vm, JSObject* object, const Invocable<void(UniquedStringImpl*, JSValue)> auto& function)
+{
+#if ENABLE(AOT)
+    // A compiled object stands in the place of an ordinary one and is listed as the Structure of that one lists it.
+    if (AOT::PropertyWalk::isCompiledObject(object)) {
+        Vector<Identifier, 16> keys;
+        MarkedArgumentBuffer values;
+        bool hasUnderscoreProto = false;
+        auto walked = AOT::PropertyWalk::forEachOwnPropertyAsCreated(vm, object, [&](const AOT::PropertyWalk::OwnProperty& own) -> IterationStatus {
+            hasUnderscoreProto |= own.name == vm.propertyNames->underscoreProto.impl();
+            keys.append(Identifier::fromUid(vm, own.name));
+            values.appendWithCrashOnOverflow(own.value);
+            return IterationStatus::Continue;
+        });
+        if (walked != AOT::PropertyWalk::Result::Completed || hasUnderscoreProto)
+            return false;
+        for (size_t i = 0; i < keys.size(); i++)
+            function(keys[i].impl(), values.at(i));
+        return true;
+    }
+#endif
+    Structure* structure = object->structure();
+    if (!canPerformFastEnumeration(structure))
+        return false;
+    structure->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
+        function(entry.key(), object->getDirect(entry.offset()));
+        return true;
+    });
     return true;
 }
 
@@ -1170,22 +1204,19 @@ void populateESMExports(
         exportNames.reserveCapacity(size + 2);
         exportValues.ensureCapacity(size + 2);
 
+        const Identifier& skippedKey = hasESModuleMarker ? esModuleMarker : vm.propertyNames->defaultKeyword;
+        bool didFastEnumeration = tryFastEnumeration(vm, exports, [&](UniquedStringImpl* key, JSValue value) {
+            if (key->isSymbol() || key == skippedKey)
+                return;
+
+            needsToAssignDefault = needsToAssignDefault && key != vm.propertyNames->defaultKeyword;
+
+            exportNames.append(Identifier::fromUid(vm, key));
+            exportValues.append(value);
+        });
+
         if (hasESModuleMarker) {
-            if (canPerformFastEnumeration(structure)) {
-                exports->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
-                    auto key = entry.key();
-                    if (key->isSymbol() || key == esModuleMarker)
-                        return true;
-
-                    needsToAssignDefault = needsToAssignDefault && key != vm.propertyNames->defaultKeyword;
-
-                    JSValue value = exports->getDirect(entry.offset());
-
-                    exportNames.append(Identifier::fromUid(vm, key));
-                    exportValues.append(value);
-                    return true;
-                });
-            } else {
+            if (!didFastEnumeration) {
                 JSC::PropertyNameArrayBuilder properties(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
                 exports->methodTable()->getOwnPropertyNames(exports, globalObject, properties, DontEnumPropertiesMode::Exclude);
                 RETURN_IF_EXCEPTION(scope, );
@@ -1228,19 +1259,7 @@ void populateESMExports(
                 }
             }
 
-        } else if (canPerformFastEnumeration(structure)) {
-            exports->structure()->forEachProperty(vm, [&](const PropertyTableEntry& entry) -> bool {
-                auto key = entry.key();
-                if (key->isSymbol() || key == vm.propertyNames->defaultKeyword)
-                    return true;
-
-                JSValue value = exports->getDirect(entry.offset());
-
-                exportNames.append(Identifier::fromUid(vm, key));
-                exportValues.append(value);
-                return true;
-            });
-        } else {
+        } else if (!didFastEnumeration) {
             JSC::PropertyNameArrayBuilder properties(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
             exports->methodTable()->getOwnPropertyNames(exports, globalObject, properties, DontEnumPropertiesMode::Include);
             RETURN_IF_EXCEPTION(scope, );

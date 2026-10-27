@@ -214,7 +214,6 @@
 #include "JSPublicKeyObject.h"
 #include "JSPrivateKeyObject.h"
 #include "webcore/JSMIMEParams.h"
-#include "JSNodePerformanceHooksHistogram.h"
 #include "JSS3File.h"
 #include "S3Error.h"
 #include "ProcessBindingBuffer.h"
@@ -2513,11 +2512,6 @@ void GlobalObject::finishCreation(VM& vm)
              setupHTTPParserClassStructure(init);
              BUN_END_REMOVABLE_ENTRY_POINT
          } },
-        { OBJECT_OFFSETOF(GlobalObject, m_JSNodePerformanceHooksHistogramClassStructure), [](LazyClassStructure::Initializer& init) {
-             BUN_BEGIN_REMOVABLE_ENTRY_POINT(Histogram, Abort, void)
-             Bun::setupJSNodePerformanceHooksHistogramClassStructure(init);
-             BUN_END_REMOVABLE_ENTRY_POINT
-         } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSStatsClassStructure), [](LazyClassStructure::Initializer& init) {
              BUN_BEGIN_REMOVABLE_ENTRY_POINT(FsStats, Abort, void)
              Bun::initJSStatsClassStructure(init);
@@ -4092,7 +4086,7 @@ JSC::JSPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* jsGlobalO
         Bun::willRequire(globalObject, moduleNameValue, JSC::AOT::LoadByName::Import);
         if (scope.exception()) [[unlikely]]
             return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
-        JSC::JSPromise* imported = Bun::importCompiledModule(globalObject, key.string(), !!parameters, referrerAsyncOrder);
+        JSC::JSPromise* imported = Bun::importCompiledModule(globalObject, key.string(), parameters.get(), referrerAsyncOrder);
         if (scope.exception()) [[unlikely]]
             return JSC::JSPromise::rejectedPromiseWithCaughtException(globalObject, scope);
         if (imported)

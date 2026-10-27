@@ -8,8 +8,7 @@ use bun_sema::bind::{Binding, Bound, CodeUnit, CommonJsVariable, Decl, Parent, S
 use bun_sema::check::aot::ObjectOrigin;
 use bun_sema::fold::{Constant, Decisions, FoldedValue};
 use bun_sema::hir::{
-    self, Call, ExprId, ExprKind, Flags, FnId, FnKind, MemberKey, PropKey, PropKind, StmtId,
-    StmtKind,
+    self, Call, ExprId, ExprKind, Flags, FnId, FnKind, MemberKey, StmtId, StmtKind,
 };
 use bun_sema::program::{FileId, Files, Sym};
 use rustc_hash::FxHashSet;
@@ -21,7 +20,7 @@ use crate::builtins::id::BuiltinId;
 use crate::ir::generated::{Field, FieldForm, Layout, LayoutKind, LimitId};
 use crate::ir::{DeclaredType, LayoutId, LayoutKey};
 use crate::lower::{CheckerTypeId, FileLowering};
-use crate::modules::{ModuleKind, ModuleRef, Shape};
+use crate::modules::{DescribedPart, ModuleKind, ModuleRef, Shape, WrittenDescriptor};
 
 impl FileLowering<'_, '_, '_, '_> {
     fn find_container_position(&self, symbol: Sym) -> u32 {
@@ -362,45 +361,25 @@ fn find_constant_name(text: &ModuleText<'_, '_>, key: ExprId) -> Option<Atom> {
     }
 }
 
-// What ToPropertyDescriptor reads from an object literal.
+// The form of a property that the descriptor creates.
 fn find_defined_form(text: &ModuleText<'_, '_>, descriptor: ExprId) -> Option<FieldForm> {
-    let hir = text.hir;
-    let ExprKind::Object(properties) = hir[hir.skip_type_assertions(descriptor)].kind else {
-        return None;
+    let (atoms, decisions) = (&text.files.atoms, text.decisions);
+    let written = WrittenDescriptor::read(atoms, text.hir, decisions, descriptor)?;
+    let mut form = match written.part {
+        DescribedPart::Accessor { .. } => FieldForm::IS_ACCESSOR,
+        DescribedPart::Data {
+            is_writable: Some(true),
+            ..
+        } => FieldForm::default(),
+        DescribedPart::Data { .. } => FieldForm::IS_READ_ONLY,
     };
-    let mut form =
-        FieldForm::IS_READ_ONLY | FieldForm::IS_NOT_ENUMERABLE | FieldForm::IS_NOT_CONFIGURABLE;
-    let mut is_accessor = false;
-    let mut is_data = false;
-    for property in properties.iter().map(|property| hir[property]) {
-        let PropKey::Name(name) = property.key else {
-            return None;
-        };
-        match property.kind {
-            PropKind::Init | PropKind::Shorthand | PropKind::Method => {}
-            PropKind::Spread | PropKind::Getter | PropKind::Setter => return None,
-        }
-        let name = text.files.atoms.bytes(name);
-        is_data |= matches!(name, b"value" | b"writable");
-        is_accessor |= matches!(name, b"get" | b"set");
-        let denied = match name {
-            b"writable" => FieldForm::IS_READ_ONLY,
-            b"enumerable" => FieldForm::IS_NOT_ENUMERABLE,
-            b"configurable" => FieldForm::IS_NOT_CONFIGURABLE,
-            b"__proto__" => return None,
-            _ => continue,
-        };
-        form = match find_constant(text, property.value)? {
-            Constant::Boolean(true) => form.without(denied),
-            Constant::Boolean(false) | Constant::Undefined | Constant::Null => form | denied,
-            Constant::Number(_) | Constant::String(_) | Constant::BigInt(_) => return None,
-        };
+    if written.is_enumerable != Some(true) {
+        form |= FieldForm::IS_NOT_ENUMERABLE;
     }
-    match (is_accessor, is_data) {
-        (true, true) => None,
-        (true, false) => Some(form.without(FieldForm::IS_READ_ONLY) | FieldForm::IS_ACCESSOR),
-        (false, true | false) => Some(form),
+    if written.is_configurable != Some(true) {
+        form |= FieldForm::IS_NOT_CONFIGURABLE;
     }
+    Some(form)
 }
 
 fn create_creation(

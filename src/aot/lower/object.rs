@@ -5,7 +5,6 @@ use smallvec::SmallVec;
 
 pub(in crate::lower) use self::builder::set_prototype;
 pub(crate) use self::literal::lower_object_literal;
-pub(in crate::lower) use self::literal::put_halves_of_accessors_side_by_side;
 use super::FunctionLowering;
 use crate::ir::{LayoutId, ValueId};
 

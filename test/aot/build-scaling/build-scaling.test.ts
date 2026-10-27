@@ -22,6 +22,9 @@
 // an allocator that hands what one thread has freed to the others, or back to the system. Only its memory is held against the budget, with less slack:
 // it wavers by a twentieth.
 //
+// One row uses a clock, as a ratio. Files whose tsconfig.json changes a program-wide compiler option get a separate checker program per set of options.
+// Those programs are independent and run in parallel, so the stages they run in must take at most half as long on eight threads as on one.
+//
 // Instructions are counted with perf_event_open on Linux and /usr/bin/time -l on macOS; where neither may be used only the memory is judged. The growth
 // of memory is judged only where the size adds enough of it to tell it from what the allocators keep for themselves. The budgets are those of Linux on x64 with glibc.
 //
@@ -35,13 +38,15 @@
 import { afterAll, expect } from "bun:test";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMusl, isWindows, tempDir } from "harness";
+import { availableParallelism } from "os";
 import { join } from "path";
 import { measureCommandWithMemory, type Cost } from "../analysis-scaling/measure-check";
-import { withThreads } from "../harness/flags";
+import { readBuildReport } from "../harness/build-report";
+import { withReport, withThreads } from "../harness/flags";
 import { measureUntilWithinBounds } from "../harness/measure-again";
 import { slot, spawned, withoutDebugInformation } from "../run-programs";
 import { describe, test } from "../supported";
-import { shapes, type Shape } from "./shapes";
+import { packagesWithOwnCompilerOptions, shapes, type Shape } from "./shapes";
 
 interface Budget {
   /** At twice the size. */
@@ -125,7 +130,9 @@ const allShapesTogether = "all shapes as the entry points of one build, on four 
 const slackOfAllShapesTogether = 1.15;
 
 async function measureAllShapesTogether(carrier: string[]): Promise<Cost> {
-  const built = shapes.filter(shape => !shape.isRefused && !shape.isBundledFirst && !shape.flags);
+  const built = shapes.filter(
+    shape => !shape.isRefused && !shape.isBundledFirst && !shape.flags && !shape.isExcludedFromCombinedBuild,
+  );
   const files = built.flatMap((shape, index) =>
     Object.entries(shape.write(shape.size * factor)).map(([path, text]) => [`shape-${index}/${path}`, text]),
   );
@@ -139,6 +146,29 @@ async function measureAllShapesTogether(carrier: string[]): Promise<Cost> {
     900_000,
     bunEnv,
   );
+}
+
+const parallelProgramsRow = "checker programs of packages with different compiler options, eight threads against one";
+const maxRatioToOneThread = 0.5;
+
+async function measureFrontEndMilliseconds(threads: number, carrier: string[]): Promise<number> {
+  const shape = packagesWithOwnCompilerOptions;
+  using folder = tempDir("aot-build-scaling", shape.write(2 * shape.size * factor));
+  const cwd = String(folder);
+  const report = join(cwd, "report.json");
+  const command = [
+    bunExe(),
+    "build",
+    "--compile",
+    "--aot",
+    withThreads(threads),
+    ...withReport(report, "summary"),
+    ...carrier,
+  ];
+  const built = await spawned([...command, shape.entry, "--outfile", join(cwd, "program")], cwd, bunEnv);
+  expect({ stderr: built.stderr, exitCode: built.exitCode }).toEqual({ stderr: expect.any(String), exitCode: 0 });
+  const { statistics } = readBuildReport(report);
+  return (statistics.BindModulesNanoseconds + statistics.CheckNanoseconds + statistics.LowerNanoseconds) / 1e6;
 }
 
 const inMillions = (count: number) => Math.round(count / 1e6);
@@ -254,6 +284,26 @@ describe.skipIf(!!skipped)("compile/aot/build scaling", () => {
       1_800_000,
     );
   }
+
+  if (parallelProgramsRow.includes(wanted))
+    test.skipIf(availableParallelism() < 4)(
+      parallelProgramsRow,
+      async () => {
+        const measured = await measureUntilWithinBounds(
+          parallelProgramsRow,
+          async () => ({
+            onOne: await measureFrontEndMilliseconds(1, carrier),
+            onEight: await measureFrontEndMilliseconds(8, carrier),
+          }),
+          ({ onOne, onEight }) => onEight <= onOne * maxRatioToOneThread,
+        );
+        console.error(
+          `SCALING ${parallelProgramsRow}: ${Math.round(measured.onEight)} ms against ${Math.round(measured.onOne)} ms`,
+        );
+        expect(measured.onEight).toBeLessThanOrEqual(measured.onOne * maxRatioToOneThread);
+      },
+      1_800_000,
+    );
 
   for (const [name, slackOfRow, measureMegabytes] of [
     [oneLine, slack, async () => inMillions((await slot(() => measureOneLine(carrier))).peakBytes)],

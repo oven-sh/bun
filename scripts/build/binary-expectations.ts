@@ -374,6 +374,7 @@ function symbolsOfIRText(cfg: Config): string[] | undefined {
     "*3JSC3AOT5Typed12parseVariant*",
     "*3JSC3AOT5Typed18WireProgramBuilder*",
     "*3JSC3AOT5Typed9IRPrinter*",
+    "*3JSC3AOT5Typed*14SolvesCompared*",
     "*3JSC3AOT5Typed11printFields*",
     "*3JSC3AOT5Typed12printVariant*",
     "*3JSC3AOT5Typed12printProgram*",
@@ -617,11 +618,7 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
             "ole32.dll",
           ],
           exact: true,
-          // bcrypt.dll: libarchive's archive_random.c / archive_digest.c call
-          // BCryptOpenAlgorithmProvider and BCryptGenRandom. A release link
-          // drops them as unreferenced (/OPT:REF); a debug link keeps every
-          // section, and the import with them. Never in a shipped binary.
-          allowed: [...sanitizerLibs, ...(cfg.debug ? ["bcrypt.dll"] : [])],
+          allowed: sanitizerLibs,
         },
         minOSVersion: "6.0",
         forbiddenImports: forbiddenImports(cfg),

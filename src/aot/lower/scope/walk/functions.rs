@@ -40,12 +40,13 @@ impl Walker<'_, '_> {
     fn push_function(&mut self, function: FnId, id: WalkedFunctionId) {
         let context = self.enter_unit(id, self.bound.fns[function.idx()].scope);
         // A half of an accessor that may be made with an earlier one copies only what has its last value by then.
-        let first_half = self.first_halves.get(function.idx()).copied();
-        let first_half = first_half.and_then(|first_half| first_half.some());
-        match first_half.and_then(|first_half| self.walk.function_of_fn[first_half.idx()]) {
-            Some(first_half) => {
-                let time = self.walk.functions[first_half.index()].created_at;
+        let in_front = self.halves_in_front.get(function.idx()).copied();
+        let in_front = in_front.and_then(|in_front| in_front.some());
+        match in_front.and_then(|in_front| self.walk.function_of_fn[in_front.idx()]) {
+            Some(in_front) => {
+                let time = self.walk.functions[in_front.index()].created_at;
                 self.walk.functions[id.index()].created_at = time;
+                self.walk.halves_in_front.push((id, in_front));
             }
             None => self.push_task(Task::MarkCreated(id), context),
         }

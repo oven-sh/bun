@@ -352,6 +352,49 @@ fn an_exported_holder_holds_the_object() {
 }
 
 #[test]
+fn a_holder_that_an_import_alias_names_holds_the_object() {
+    let sources = [
+        "import m = require('./x.mjs'); import a = m.a; export const b = a + 1;",
+        "import m = require('./x.mjs'); import a = m.a; export const b = a + m.c;",
+        "import m = require('./x.mjs'); export import a = m.a;",
+        "import m = require('./x.mjs'); namespace N { export import a = m.a; } export const b = N.a;",
+        "const m = require('./x.mjs'); import a = m.a; export const b = a + 1;",
+    ];
+    for source in sources {
+        let exporter = "export const a = 1; export const c = 2;";
+        let files = [("main.ts", source), ("x.mjs", exporter)];
+        with_plan(&files, |plan| {
+            assert_eq!(plan.holder("main.ts", "m"), None, "{source}");
+        });
+    }
+}
+
+#[test]
+fn a_holder_that_an_import_alias_nobody_reads_names_stands_for_the_module() {
+    let main = "import m = require('./x.mjs'); import a = m.a; export const b = m.c;";
+    let files = [
+        ("main.ts", main),
+        ("x.mjs", "export const a = 1; export const c = 2;"),
+    ];
+    with_plan(&files, |plan| {
+        let namespace = View::Namespace(plan.module("x.mjs"));
+        assert_eq!(plan.holder("main.ts", "m"), Some(namespace));
+    });
+}
+
+#[test]
+fn a_commonjs_module_whose_namespace_an_import_alias_names_keeps_its_object() {
+    let main = "import * as m from './x.cjs'; import a = m.a; export const b = a + m.c;";
+    let files = [
+        ("main.ts", main),
+        ("x.cjs", "exports.a = 1; exports.c = 2;"),
+    ];
+    with_plan(&files, |plan| {
+        assert_eq!(plan.shape("x.cjs"), Shape::Value);
+    });
+}
+
+#[test]
 fn a_require_site_of_a_namespace_that_is_looked_at_records() {
     let main = "import * as ns from './x.mjs'; require('./x.mjs'); console.log(ns);";
     let files = [("main.mjs", main), ("x.mjs", "export const a = 1;")];

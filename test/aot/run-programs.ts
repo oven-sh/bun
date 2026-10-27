@@ -797,6 +797,9 @@ export function expectStored(file: string, result: RunResult) {
   expect(text).toBe(readFileSync(file, "utf8"));
 }
 
+/** What plain Bun is started with. The reference transpiles on one thread: the texts are read in the order in which they are asked for. An executable reads nothing. */
+export const referenceEnv = { ...bunEnv, BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: "1" };
+
 async function runReference(path: string, options: ProgramOptions, setup: Setup): Promise<RunResult> {
   const cwd = join(path, "..");
   const executable = nextExecutablePath(setup.folder, "reference");
@@ -823,7 +826,7 @@ async function runReference(path: string, options: ProgramOptions, setup: Setup)
     }
     const startReference = () =>
       spawned(options.reference === "compiled" ? [executable] : [bunExe(), "run", path], cwd, {
-        ...bunEnv,
+        ...referenceEnv,
         ...options.env,
       });
     const plain = await (measuresTimeOrMemory(path) ? withEverySlot(1, startReference) : startReference());

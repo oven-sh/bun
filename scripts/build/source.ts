@@ -471,9 +471,7 @@ export type DepName =
   | "boringssl"
   | "brotli"
   | "cares"
-  | "hdrhistogram"
   | "highway"
-  | "libarchive"
   | "libdeflate"
   | "libjpeg-turbo"
   | "libspng"
@@ -516,7 +514,7 @@ export interface Dependency {
   patches?: string[] | ((cfg: Config) => string[]);
 
   /**
-   * Other deps whose headers this dep's sources include — e.g. libarchive
+   * Other deps whose headers this dep's sources include — e.g. a dep that
    * needs zlib's `zlib.h`, which zlib's build generates.
    *
    * Resolves to the named dep's `outputs` (generated headers + source stamp),
@@ -901,7 +899,7 @@ export function resolveDep(
   }
 
   // ─── Resolve fetchDeps → order-only inputs of this dep's compiles ───
-  // Deps whose headers this one includes (libarchive → zlib's generated
+  // Deps whose headers this one includes (a dep → zlib's generated
   // zlib.h): they must exist first; the depfiles track their content.
   const fetchDepStamps = (dep.fetchDeps ?? []).flatMap(d => {
     const r = resolved.get(d);

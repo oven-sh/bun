@@ -50,6 +50,9 @@ pub struct EventLoop {
     /// Set when teardown releases the queue: from then on `enqueue_task`
     /// releases instead of parking (nothing will tick this loop again).
     closed_for_tasks: bool,
+    /// Set when teardown goes on to destroy the JSC VM: the global object goes
+    /// with it, in no particular order with the finalizers that still enqueue.
+    global_is_going: bool,
 
     /// setImmediate() gets it's own two task queues
     /// When you call `setImmediate` in JS, it queues to the start of the next tick
@@ -125,6 +128,7 @@ impl Default for EventLoop {
         Self {
             tasks: Queue::init(),
             closed_for_tasks: false,
+            global_is_going: false,
             immediate_tasks: Vec::new(),
             next_immediate_tasks: Vec::new(),
             yield_tasks: Vec::new(),
@@ -909,11 +913,25 @@ impl EventLoop {
             // Teardown already released the queue and this loop never ticks
             // again: release the task now, as `release_queued_tasks` would have
             // — the queue owns refusal, like `VmHandle::post` does off-thread.
-            // SAFETY: JS thread, JSC heap alive (teardown phase B/C).
+            // SAFETY: JS thread, JSC heap alive (teardown phase B), or a finalizer's
+            // task in phase C, after `release_without_global`.
             unsafe { self.release_task_unrun(task) };
             return;
         }
         let _ = self.tasks.write_item(task);
+    }
+
+    /// Teardown phase C is next. What a finalizer enqueues from here on is
+    /// released without the fold: the releases that enter JS belong to work that
+    /// came back in phase B, and the fold would ask the global object.
+    pub fn release_without_global(&mut self) {
+        debug_assert!(self.closed_for_tasks);
+        self.global_is_going = true;
+    }
+
+    /// [`Self::release_without_global`] was called.
+    pub(crate) fn global_is_going(&self) -> bool {
+        self.global_is_going
     }
 
     /// Release one task that will never run, folding what its release left
@@ -926,6 +944,9 @@ impl EventLoop {
     unsafe fn release_task_unrun(&mut self, task: Task) {
         // SAFETY: fn contract.
         unsafe { __bun_release_task_unrun(task) };
+        if self.global_is_going {
+            return;
+        }
         if let Some(global) = self.global {
             // SAFETY: set at VM init; live for the loop's lifetime.
             let global = unsafe { global.as_ref() };

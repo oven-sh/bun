@@ -18,7 +18,7 @@ use std::cmp::Ordering;
 use std::sync::OnceLock;
 
 const FILE_NAMESPACE: &[u8] = b"file";
-const DATA_URL_NAMESPACE: &[u8] = b"dataurl";
+pub(super) const DATA_URL_NAMESPACE: &[u8] = b"dataurl";
 const VIRTUAL_DIRECTORY: &[u8] = b"plugin/";
 const ENCODED_EMPTY_SEGMENT: &[u8] = b"%2f";
 

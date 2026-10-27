@@ -86,7 +86,7 @@ describe("WebKit prebuilt URL", () => {
     );
   });
 
-  test("debug picks the -debug artifact from the same release tag", () => {
+  test("debug picks the -debug-aot artifact from the same release tag", () => {
     const cfg = resolveConfig(
       { os: "linux", arch: "x64", abi: "gnu", buildType: "Debug", asan: false, baseline: false, linuxSysroot: "/fake" },
       mockToolchain(),
@@ -94,6 +94,28 @@ describe("WebKit prebuilt URL", () => {
     expect(prebuiltUrlOf(cfg)).toBe(
       `https://github.com/oven-sh/WebKit/releases/download/${defaultTag}/bun-webkit-linux-amd64-debug-aot.tar.gz`,
     );
+  });
+
+  test("every variant is built with JavaScriptCore's ahead-of-time compiler", () => {
+    const suffixOf = (partial: PartialConfig) =>
+      prebuiltUrlOf(resolveLinuxRelease(partial)).match(/bun-webkit-linux-amd64(.*)\.tar\.gz$/)?.[1];
+    expect({
+      release: suffixOf({}),
+      lto: suffixOf({ lto: true }),
+      ltoHardened: suffixOf({ lto: true, hardened: true }),
+      hardened: suffixOf({ hardened: true }),
+      asan: suffixOf({ asan: true }),
+      assertions: suffixOf({ assertions: true }),
+      fuzzilli: suffixOf({ assertions: true, fuzzilli: true }),
+    }).toEqual({
+      release: "-aot",
+      lto: "-lto-aot",
+      ltoHardened: "-lto-hardened-aot",
+      hardened: "-hardened-aot",
+      asan: "-asan-aot",
+      assertions: "-assertions-aot",
+      fuzzilli: "-assertions-coverage-aot",
+    });
   });
 
   test("baseline does not affect the suffix (every x64 WebKit is built at the nehalem floor)", () => {

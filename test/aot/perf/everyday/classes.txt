@@ -517,6 +517,87 @@ function turn(i: number): number {
   const value = new Stamped();
   return value.id + value.stamp + (i & 1);
 }
+//// mixins-with-fields-private-names-and-static-fields
+type Constructor<T = {}> = new (...args: any[]) => T;
+class Base {
+  id = 1;
+}
+function Timed<T extends Constructor>(Parent: T) {
+  return class extends Parent {
+    started = 5;
+    #ticks = 0;
+    static kind = "timed";
+    tick(): number {
+      return ++this.#ticks + this.started;
+    }
+  };
+}
+function Tagged<T extends Constructor<{ id: number }>>(Parent: T) {
+  return class extends Parent {
+    tag = "t";
+    static kind = "tagged";
+    size(): number {
+      return this.tag.length + this.id;
+    }
+  };
+}
+class A extends Timed(Base) {}
+class B extends Tagged(Timed(Base)) {}
+const plain = new Base();
+function turn(i: number): number {
+  const a = new A();
+  const b = new B();
+  return a.tick() + b.tick() + b.size() + A.kind.length + B.kind.length + plain.id + (i & 1);
+}
+//// mixins-whose-objects-are-kept
+type Constructor<T = {}> = new (...args: any[]) => T;
+class Base {
+  id = 1;
+}
+function Timed<T extends Constructor>(Parent: T) {
+  return class extends Parent {
+    started = 5;
+    #ticks = 0;
+    tick(): number {
+      return ++this.#ticks + this.started;
+    }
+  };
+}
+class A extends Timed(Base) {}
+class B extends Timed(A) {
+  tag = "t";
+}
+const kept: Base[] = [];
+function turn(i: number): number {
+  const a = new A();
+  const b = new B();
+  kept[i & 7] = a;
+  kept[8 + (i & 7)] = b;
+  return a.tick() + b.tick() + b.tag.length + (i & 1);
+}
+//// private-field-of-a-class-below-a-class-kept
+class Base {
+  id = 1;
+}
+class Timed extends Base {
+  started = 5;
+  #ticks = 0;
+  tick(): number {
+    return ++this.#ticks + this.started;
+  }
+}
+class A extends Timed {}
+class B extends A {
+  tag = "t";
+}
+const kept: Base[] = [];
+function turn(i: number): number {
+  const a = new A();
+  const b = new B();
+  kept[i & 7] = a;
+  kept[8 + (i & 7)] = b;
+  return a.tick() + b.tick() + b.tag.length + (i & 1);
+}
 //// constructor-function-with-a-prototype
 function Legacy(this: any, n: number) {
   this.n = n;

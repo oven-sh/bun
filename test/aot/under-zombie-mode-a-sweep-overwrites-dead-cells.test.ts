@@ -1,4 +1,4 @@
-// Under BUN_JSC_useZombieMode=1 a sweep overwrites dead cells. The program reads its own words behind a full collection.
+// Under BUN_JSC_useZombieMode=1 a sweep overwrites dead cells, and leaves the pages alone that it gave back: BUN_JSC_poisonDecommittedMarkedBlockPages=1 fills those with 0xbd. The program reads its own words behind a full collection.
 import { expect } from "bun:test";
 import { bunEnv, bunExe, isASAN, isLinux, tempDir } from "harness";
 import { join } from "node:path";
@@ -8,6 +8,7 @@ import { test } from "./supported";
 const program = `import { fullGC, jscDescribe } from "bun:jsc";
 import { openSync, readSync } from "node:fs";
 const fd = openSync("/proc/self/mem", "r");
+const givenBack = 0xbdbdbdbdbdbdbdbdn;
 const kinds = [["fractions", 12], ["objects", 12], ["fractions", 300], ["fractions", 40000], ["fields", 0]];
 function make(kind, length) {
   let made;
@@ -25,15 +26,20 @@ function writeOverTheStack(depth) {
   return depth ? writeOverTheStack(depth - 1) + list.length : 0;
 }
 const made = kinds.map(([kind, length]) => Array.from({ length: 8 }, () => make(kind, length)));
+// One in 50 stays, and the last: every block stays, with pages that hold nothing alive.
+kinds.push(["fractions", 12, "many"]);
+made.push(Array.from({ length: 4000 }, () => make("fractions", 12)));
+const kept = made.at(-1).filter((_, i) => i % 50 === 0 || i === 3999).map(({ reference }) => reference.deref());
 await new Promise(resolve => setTimeout(resolve, 5));
 writeOverTheStack(200);
 fullGC();
 for (const copies of made) for (const { address, words } of copies) readSync(fd, words, 0, 32, address);
 for (let i = 0; i < kinds.length; i++) {
   const collected = made[i].filter(({ reference }) => reference.deref() === undefined);
-  const overwritten = collected.filter(({ words }) => words.every(word => word === 0xbadbeef0n));
+  const overwritten = collected.filter(({ words }) => words.every(word => word === 0xbadbeef0n || word === givenBack));
   console.log(kinds[i].join(" "), collected.length > 0, overwritten.length === collected.length);
 }
+console.log(kept.length, "stay, some lay in a page that was given back", made.at(-1).some(({ words }) => words.every(word => word === givenBack)));
 `;
 
 test.skipIf(!isLinux || isASAN)(
@@ -50,10 +56,14 @@ test.skipIf(!isLinux || isASAN)(
       exitCode: 0,
     });
     for (const command of [[bunExe(), "entry.js"], [executable]]) {
-      const { stdout, exitCode } = await run(command, String(dir), { ...bunEnv, BUN_JSC_useZombieMode: "1" });
+      const { stdout, exitCode } = await run(command, String(dir), {
+        ...bunEnv,
+        BUN_JSC_useZombieMode: "1",
+        BUN_JSC_poisonDecommittedMarkedBlockPages: "1",
+      });
       expect({ stdout, exitCode }).toEqual({
         stdout:
-          "fractions 12 true true\nobjects 12 true true\nfractions 300 true true\nfractions 40000 true true\nfields 0 true true\n",
+          "fractions 12 true true\nobjects 12 true true\nfractions 300 true true\nfractions 40000 true true\nfields 0 true true\nfractions 12 many true true\n81 stay, some lay in a page that was given back true\n",
         exitCode: 0,
       });
     }

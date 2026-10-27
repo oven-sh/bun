@@ -94,13 +94,13 @@ impl FileLowering<'_, '_, '_, '_> {
         if modules.member_binding(self.file, access).is_some() {
             return false;
         }
+        if self.find_data_member_read(access).is_some() {
+            return false;
+        }
         if !self.hir.has_typescript_semantics() {
             return true;
         }
-        match self.queries.constant_enum_access(access) {
-            Ok(Some(_)) => false,
-            Ok(None) | Err(_) => true,
-        }
+        self.find_enum_member_read(access).is_none()
     }
 }
 

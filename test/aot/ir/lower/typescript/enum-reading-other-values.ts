@@ -8,17 +8,22 @@
 // CHECK: PropSet [[enum]], {{*}}key="FromConst"
 // CHECK: [[constKey]] = ToPropertyKey
 // CHECK: ElemSet [[enum]], [[constKey]],
-// CHECK: = CheckInitialized {{*}}name="Color"
-// CHECK: = PropGet {{*}}key="Red"
-// CHECK: PropSet [[enum]], {{*}}key="FromImport"
+// CHECK-NOT: PropGet {{*}}key="Red"
+// CHECK: [[red]] = Integer @
+// CHECK: PropSet [[enum]], [[red]] key="FromImport"
 // CHECK: [[importKey]] = ToPropertyKey
 // CHECK: ElemSet [[enum]], [[importKey]],
+// CHECK: = CheckInitialized {{*}}name="Shade"
+// CHECK: = PropGet {{*}}key="Dark"
+// CHECK: PropSet [[enum]], {{*}}key="FromHandedOn"
+// CHECK: [[handedOnKey]] = ToPropertyKey
+// CHECK: ElemSet [[enum]], [[handedOnKey]],
 // CHECK: = PropGet {{*}}key="Value"
 // CHECK: PropSet [[enum]], {{*}}key="FromAmbient"
 // CHECK: [[ambientKey]] = ToPropertyKey
 // CHECK: ElemSet [[enum]], [[ambientKey]],
 
-import { Color } from "./imports/colors";
+import { Color, Shade } from "./imports/colors";
 
 declare enum Ambient {
   Value = 7,
@@ -31,5 +36,8 @@ export enum E {
   FromOwn = Own + 1,
   FromConst = base,
   FromImport = Color.Red,
+  FromHandedOn = Shade.Dark,
   FromAmbient = Ambient.Value,
 }
+
+export const shades = Object.keys(Shade);

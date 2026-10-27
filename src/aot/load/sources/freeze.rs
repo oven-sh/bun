@@ -53,6 +53,7 @@ pub(crate) fn freeze_sources(
     let context = PathContext {
         runs_in_place,
         paths,
+        loaders: &input.options.load.loaders,
         manifest: input.manifest,
         maps: &maps,
     };

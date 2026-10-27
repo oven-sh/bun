@@ -15,6 +15,9 @@
 // CHECK-LABEL: function {{*}}name="filledFromAnIndex"
 // CHECK-NOT: CompilerHelpers
 // CHECK: = Call {{*}}calleeKey="fill"
+// CHECK-LABEL: function {{*}}name="filledUnderAnotherName"
+// CHECK-NOT: CompilerHelpers
+// CHECK: = Call {{*}}calleeKey="fill"
 // CHECK-LABEL: function {{*}}name="filledWithConstant"
 // CHECK: b0([[constantLength]]: {{*}}):
 // CHECK-NOT: CompilerHelpersCheckedArrayLength
@@ -54,6 +57,9 @@
 // CHECK: [[makeMapped]] = Builtin builtin=CompilerHelpersMappedFilledArray
 // CHECK-NEXT: [[mappedList]] = Call [[makeMapped]], -, [[checkedMapped]], {{*}}, {{*}}
 // CHECK-NEXT: ReturnCall [[mappedList]]
+// CHECK-LABEL: function {{*}}name="mappedUnderAnotherName"
+// CHECK-NOT: CompilerHelpers
+// CHECK: = Call {{*}}calleeKey="map"
 // CHECK-LABEL: function {{*}}name="mapperThatTakesTheList"
 // CHECK-NOT: CompilerHelpersMappedFilledArray
 // CHECK: = Builtin builtin=CompilerHelpersFilledArray
@@ -73,6 +79,10 @@ export function filled(length, value) {
 
 export function filledFromAnIndex(length) {
   return Array(length).fill(0, 1);
+}
+
+export function filledUnderAnotherName(length) {
+  return globalThis.Array(length).fill(0);
 }
 
 export function filledWithConstant(length) {
@@ -105,6 +115,10 @@ export function indexesAndMore(length) {
 
 export function mapped(length) {
   return Array(length).fill(0).map((value, index) => index);
+}
+
+export function mappedUnderAnotherName(length) {
+  return new globalThis.Array(length).fill(0).map((value, index) => index);
 }
 
 export function mapperThatTakesTheList(length) {

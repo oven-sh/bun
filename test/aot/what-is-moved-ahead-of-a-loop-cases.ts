@@ -1,6 +1,6 @@
 // The programs of ./generate/what-is-moved-ahead-of-a-loop.ts, each shaped for one way in which the compiler does the work of a loop ahead of its turns. ./programs-in-every-run.txt lists them, so
-// every run builds them as they are and with erased types. Here each is built five more times: with the checks of a validating build, with every function hot, with every function cold, with
-// every pass verified, and with the loads that were moved checked at run time. Which way a loop is compiled hangs on how hot it is, and a read that stands too early shows in those checks first.
+// every run builds them as they are and with erased types. Here each is built six more times: with the checks of a validating build, with every function hot, with every function cold, with
+// every pass verified, with the loads that were moved checked at run time, and with what the back end is told checked at run time. Which way a loop is compiled hangs on how hot it is, and a read that stands too early shows in those checks first.
 // So do the programs in which a loop of the library runs ahead of a variable that holds a closure: every run builds them with the checks of a validating build.
 import { programs as programsOfCallees } from "./generate/callees-replaced-behind-their-test";
 import { programs as programsOfValues } from "./generate/values-that-are-there-only-behind-a-test";
@@ -21,6 +21,7 @@ const ways: [label: string, flag: string][] = [
   ["every-function-cold", "--aot-heat=everything-is-cold"],
   ["verify-each-pass", buildFlags.verifyEachPass],
   ["moved-loads-checked-at-run-time", "--aot-check=MovedLoads"],
+  ["claims-checked-at-run-time", "--aot-check=ClaimsToBackEnd"],
 ];
 
 /** The names of the programs of a folder, without those that have a flag of their own. */

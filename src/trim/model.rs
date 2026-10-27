@@ -12,6 +12,8 @@ pub struct WitnessIndex(pub u32);
 pub struct UsedFeature {
     pub feature: Feature,
     pub witness: Option<WitnessIndex>,
+    /// Evaluated text and computed keys reach a feature without naming it.
+    pub is_named: bool,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -97,6 +99,7 @@ impl UsedFeatures {
         let without_witness = |feature: &Feature| UsedFeature {
             feature: *feature,
             witness: None,
+            is_named: true,
         };
         UsedFeatures {
             features: features.iter().map(without_witness).collect(),
@@ -107,6 +110,12 @@ impl UsedFeatures {
 
     pub fn has_cause(&self, cause: UnseenCodeCause) -> bool {
         self.causes.iter().any(|unseen| unseen.cause == cause)
+    }
+
+    pub fn names(&self, feature: Feature) -> bool {
+        self.features
+            .iter()
+            .any(|used| used.feature == feature && used.is_named)
     }
 }
 

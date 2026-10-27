@@ -15,7 +15,7 @@ use super::expression::{Evaluation, Tail, TailCast};
 use super::positions::SiteOrigin;
 use super::{FileLowering, FunctionLowering, scope};
 use crate::builtins::id::BuiltinId;
-use crate::builtins::{Resolved, builtin_value_of};
+use crate::builtins::{Intrinsic, Resolved, builtin_value_of};
 use crate::ir::generated::TypeSiteKind;
 use crate::ir::{DeclaredType, ExpectedResultId, PropertyKeyId, StringId, ValueId};
 
@@ -58,7 +58,7 @@ pub(in crate::lower) struct CallOptions<'t> {
     pub(in crate::lower) tail: Tail<'t>,
     pub(in crate::lower) expected_result: Option<ExpectedResultId>,
     pub(in crate::lower) is_never_inlined: bool,
-    pub(in crate::lower) is_reflect_construct_syntax: bool,
+    pub(in crate::lower) is_done_in_place: bool,
     pub(in crate::lower) call_number: Option<u32>,
 }
 
@@ -207,7 +207,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 options.call_number,
                 IS_ANNOTATED_PURE,
                 options.is_never_inlined,
-                options.is_reflect_construct_syntax,
+                options.is_done_in_place,
             ),
             Arguments::List(list) => self.builder.call_list(
                 callee.function,
@@ -251,16 +251,17 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let hir = self.file.hir;
         let site = call_site(self.file, call);
         self.convert_argument_values(call, &mut arguments);
+        let is_reflect_construct_syntax = self.file.is_reflect_construct_syntax(site.callee)
+            && matches!(&arguments, Arguments::Values(values) if values.len() >= 2);
         let options = CallOptions {
             tail: Tail::No,
             expected_result: self.find_expected_result(call),
             is_never_inlined: false,
-            is_reflect_construct_syntax: self.file.is_reflect_construct_syntax(site.callee)
-                && matches!(&arguments, Arguments::Values(values) if values.len() >= 2),
+            is_done_in_place: is_reflect_construct_syntax || self.file.makes_array_in_caller(site),
             call_number: self.file.find_number_of_symbol_call(call),
         };
         self.set_position(self.file.call_position(site));
-        if options.is_reflect_construct_syntax {
+        if is_reflect_construct_syntax {
             // A call site lists the start of a construction only in front of the place where the construction is reported. The key may be a constant that is written earlier.
             let start = self.file.first_position(call);
             self.set_position(self.position().max(start));
@@ -293,13 +294,28 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         self.convert_argument_values(expression, &mut arguments);
         self.set_position(self.file.construct_position(expression));
         let site = call_site(self.file, expression);
-        if !self.file.is_printed_as_call(site.callee) && !self.file.makes_array_in_caller(site) {
+        if !self.file.is_printed_as_call(site) && !self.file.makes_array_in_caller(site) {
             self.builder
                 .set_written_position(self.file.hir[expression].pos);
         }
-        let value = self.emit_construct(callee.function, arguments, callee.name);
+        let value = if self.file.makes_array_in_caller(site) {
+            self.emit_array_made_in_caller(callee, arguments)
+        } else {
+            self.emit_construct(callee.function, arguments, callee.name)
+        };
         self.set_position(self.file.hir[expression].pos);
         self.claim_call_result(expression, value)
+    }
+
+    fn emit_array_made_in_caller(&mut self, callee: Callee, arguments: Arguments) -> ValueId {
+        let options = CallOptions {
+            tail: Tail::No,
+            expected_result: None,
+            is_never_inlined: false,
+            is_done_in_place: true,
+            call_number: None,
+        };
+        self.emit_call_at(callee, arguments, options)
     }
 
     fn convert_argument_values(&mut self, call: ExprId, arguments: &mut Arguments) {
@@ -346,7 +362,7 @@ pub(in crate::lower) fn emit_call_of(
         tail: Tail::No,
         expected_result: None,
         is_never_inlined: false,
-        is_reflect_construct_syntax: false,
+        is_done_in_place: false,
         call_number: None,
     };
     lowering.emit_call_at(callee, arguments, options)
@@ -371,7 +387,7 @@ impl FileLowering<'_, '_, '_, '_> {
             false => {
                 !site.args.is_empty()
                     || self.is_base_of_access(expression)
-                    || self.is_printed_as_call(site.callee)
+                    || self.is_printed_as_call(site)
             }
         };
         match is_reported_at_callee {
@@ -410,32 +426,38 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // A native error constructor and `Function` do the same with and without `new`, and Bun's transpiler prints the call. So a stack trace shows the position of a call, and in tail position the caller leaves the stack.
-    fn is_printed_as_call(&self, callee: ExprId) -> bool {
-        let inner = self.skip_type_syntax(callee);
+    // A native error constructor, `Function` and `Array` do the same with and without `new`, and Bun's transpiler prints the call. So a stack trace shows the position of a call, and in tail position the caller leaves the stack.
+    // Of `new Array(..)` without a spread argument it prints a list, or a call that bytecode does in the caller.
+    fn is_printed_as_call(&self, site: Call) -> bool {
+        let inner = self.skip_type_syntax(site.callee);
         if !self.is_free_name(inner) || self.runs_as_written() {
             return false;
         }
-        matches!(
-            self.builtins.of_expr(inner),
-            Some(Resolved::Builtin(path) | Resolved::DynamicGlobal(path)) if matches!(
-                path.id,
-                BuiltinId::Error
-                    | BuiltinId::TypeError
-                    | BuiltinId::SyntaxError
-                    | BuiltinId::RangeError
-                    | BuiltinId::ReferenceError
-                    | BuiltinId::EvalError
-                    | BuiltinId::URIError
-                    | BuiltinId::AggregateError
-                    | BuiltinId::Function
-            )
-        )
+        let Some(Resolved::Builtin(path) | Resolved::DynamicGlobal(path)) =
+            self.builtins.of_expr(inner)
+        else {
+            return false;
+        };
+        match path.id {
+            BuiltinId::Error
+            | BuiltinId::TypeError
+            | BuiltinId::SyntaxError
+            | BuiltinId::RangeError
+            | BuiltinId::ReferenceError
+            | BuiltinId::EvalError
+            | BuiltinId::URIError
+            | BuiltinId::AggregateError
+            | BuiltinId::Function => true,
+            BuiltinId::Array => {
+                let arguments: SmallVec<[ExprId; 4]> = self.hir.ids(site.args).collect();
+                intrinsic::has_spread(self.hir, &arguments)
+            }
+            _ => false,
+        }
     }
 
     fn is_tail_call(&self, construction: ExprId, tail: Tail<'_>) -> bool {
-        matches!(tail, Tail::Yes { .. })
-            && self.is_printed_as_call(call_site(self, construction).callee)
+        matches!(tail, Tail::Yes { .. }) && self.is_printed_as_call(call_site(self, construction))
     }
 
     fn is_free_name(&self, expression: ExprId) -> bool {
@@ -443,13 +465,16 @@ impl FileLowering<'_, '_, '_, '_> {
             && self.bound.binding(expression) == Binding::Free
     }
 
-    // The bytecode of `Array()` and `Array(length)` makes the array without a call, so the caller stays on the stack.
+    // The bytecode of `Array()` and `Array(length)` makes the array without a call, so the caller stays on the stack. A module of the library is bytecode too.
     fn makes_array_in_caller(&self, site: Call) -> bool {
-        let inner = self.skip_type_syntax(site.callee);
-        let is_array = matches!(
-            self.builtins.of_expr(inner),
-            Some(Resolved::Builtin(path) | Resolved::DynamicGlobal(path)) if path.id == BuiltinId::Array
-        );
+        let inner = self.skip_unprinted_syntax(site.callee);
+        let is_array = match self.builtins.of_expr(inner) {
+            Some(Resolved::Builtin(path) | Resolved::DynamicGlobal(path)) => {
+                path.id == BuiltinId::Array
+            }
+            Some(Resolved::Intrinsic(Intrinsic::Builtin(id))) => id == BuiltinId::Array,
+            Some(Resolved::Intrinsic(_)) | None => false,
+        };
         let arguments: SmallVec<[ExprId; 4]> = self.hir.ids(site.args).collect();
         is_array
             && self.is_free_name(inner)

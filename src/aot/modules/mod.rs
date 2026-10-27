@@ -7,6 +7,7 @@ mod failures;
 mod graph;
 mod imports;
 mod interop;
+mod known_members;
 mod module_set;
 mod namespace_members;
 mod order;
@@ -23,6 +24,7 @@ mod tests;
 mod unloadable;
 mod unread_exports;
 mod wrapped;
+mod written_descriptor;
 
 pub use bindings::{
     AccessedModule, Candidates, ExportBinding, ExportLookup, ExportUse, Holder, ImportBinding,
@@ -36,9 +38,11 @@ pub use deferred_exports::DeferredExports;
 pub use failures::{FailureEffect, ModuleFailure, ModuleFailureId, ModuleFailureKind};
 pub use graph::ModuleGraph;
 pub use interop::{ImportPhase, Interop, ModuleKind, RequireResult, SyntheticExportRule};
+pub(crate) use known_members::{KnownMemberValues, KnownObjects, Validity, is_enum};
 pub use plan::{Member, ModuleRef, Shape, Site, View};
 pub use referents::{Library, LinkedProject};
 pub use wrapped::{InnerModule, InnerModuleKind, WrappedModules};
+pub(crate) use written_descriptor::{DescribedPart, WrittenDescriptor};
 
 use crate::builtins::{BuiltinNames, Platforms};
 use crate::ir::InParallel;
@@ -264,6 +268,7 @@ pub fn bind_modules(input: &BindInput<'_, '_>) -> BoundModules {
             holders: imports.holders,
             exports,
             unread_exports: Vec::new(),
+            is_data_linked_by_names_alone: false,
             required_names: imports.required_names,
         }
     });

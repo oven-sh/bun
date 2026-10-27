@@ -63,7 +63,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let root = names.next()?;
         self.set_position(root.pos());
         let binding = self.file.bound.entity_root_binding(declaration);
-        let mut value = self.get_binding(binding, root.text);
+        let mut value = self.get_binding_without_expression(binding, root.text);
         for name in names {
             self.set_position(name.pos());
             let key = self.file.name_key(name.text);

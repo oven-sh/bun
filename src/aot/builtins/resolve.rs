@@ -21,9 +21,9 @@ use super::table::{
     self, BuiltinId, Intrinsic, Mutability, Platforms, RuntimeFunction, RuntimeModule,
 };
 use bun_sema::atom::Atom;
-use bun_sema::bind::{Bound, CommonJsVariable, SymbolId};
+use bun_sema::bind::{Binding, Bound, CommonJsVariable, SymbolId};
 use bun_sema::fold::Decisions;
-use bun_sema::hir::{self, ExprId};
+use bun_sema::hir::{self, Chain, ExprId, ExprKind, MemberKey, NodeData};
 use bun_sema::import_sites::ImportSiteKind;
 use bun_sema::module_format::ModuleFormat;
 use core::ops::Range;
@@ -218,6 +218,44 @@ impl ResolvedBuiltins {
         }
         let at = self.exprs.binary_search_by_key(&expr, |entry| entry.0);
         at.ok().map(|at| self.exprs[at].1)
+    }
+
+    /// `Object.keys` gives `[Object.keys, Object]`. `of_expr` resolves the value of any expression, `(f(), Object.keys)` too.
+    /// This one answers only for a free name and for named, non-optional member reads on one, which have no side effects.
+    pub fn global_path(
+        &self,
+        hir: &hir::File<'_>,
+        bound: &Bound<'_>,
+        expr: ExprId,
+    ) -> Option<SmallVec<[BuiltinPath; 4]>> {
+        let mut steps = SmallVec::new();
+        let mut current = hir.skip_type_assertions(expr);
+        loop {
+            let Some(Resolved::Builtin(path)) = self.of_expr(current) else {
+                return None;
+            };
+            steps.push(path);
+            match hir[current].kind {
+                ExprKind::Dot {
+                    chain: Chain::No, ..
+                }
+                | ExprKind::Index {
+                    chain: Chain::No, ..
+                } => match hir.member_key(current)? {
+                    (object, MemberKey::Name(_)) => current = hir.skip_type_assertions(object),
+                    (_, MemberKey::PrivateName(_) | MemberKey::Computed(_)) => return None,
+                },
+                ExprKind::Ident(_) => {
+                    let is_free_name = bound.is_evaluated_ident(current)
+                        && bound
+                            .dynamic_lookup_scope(NodeData::Expr(current))
+                            .is_none()
+                        && bound.binding(current) == Binding::Free;
+                    return is_free_name.then_some(steps);
+                }
+                _ => return None,
+            }
+        }
     }
 
     pub fn builtin_of_expression(&self, expr: ExprId) -> Option<BuiltinId> {

@@ -2,6 +2,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { SourceMap } from "node:module";
 import { join } from "node:path";
+import { createHistogram, monitorEventLoopDelay } from "node:perf_hooks";
 import { everyCandidate, operandOrigin, Unavailable, type Candidate } from "../differential/instances";
 import type { Realm } from "../differential/members";
 import { isObject } from "../differential/table-description";
@@ -291,6 +292,11 @@ function instanceOf(className: string, open: Open): Open {
   return Object.assign((realm: Realm) => open(realm), { className });
 }
 
+const openIntervalHistogram: Open = () => {
+  const histogram = monitorEventLoopDelay();
+  return { value: histogram, close: () => histogram.disable() };
+};
+
 const openers: (Open & { className?: string })[] = [
   openTLSSocket,
   openServer(() => ({ development: false })),
@@ -344,6 +350,8 @@ const openers: (Open & { className?: string })[] = [
   () => ({ value: new Bun.Image(Buffer.from(pixel, "base64")), close: noop }),
   openTerminal,
   openCronJob,
+  () => ({ value: createHistogram(), close: noop }),
+  openIntervalHistogram,
   () => ({ value: new SourceMap({ version: 3, sources: ["a.js"], names: [], mappings: "AAAA", file: "b.js", sourceRoot: "" }), close: noop }),
   openMatcherContext(context => context),
   openMatcherContext(context => context.utils),
@@ -362,8 +370,14 @@ export async function addHostInstances(
     try {
       const first = await open(realm);
       const token = ("className" in open ? open.className : undefined) ?? realm.classesOf(first.value)[0];
-      const prototypeEntry = realm.table.entries.get(realm.table.classes.get(token)?.prototype ?? "");
-      if (prototypeEntry && realm.valueOf(prototypeEntry.token) === undefined) realm.register(prototypeEntry.path, Reflect.getPrototypeOf(first.value));
+      // The classes above it too: nothing else may lead to the prototype of a class that has no instances of its own.
+      let prototype = Reflect.getPrototypeOf(first.value);
+      for (const ancestor of token === undefined ? [] : realm.table.ancestryOf(token)) {
+        if (prototype === null) break;
+        const prototypeEntry = realm.table.entries.get(realm.table.classes.get(ancestor)?.prototype ?? "");
+        if (prototypeEntry && realm.valueOf(prototypeEntry.token) === undefined) realm.register(prototypeEntry.path, prototype);
+        prototype = Reflect.getPrototypeOf(prototype);
+      }
       await first.close();
       if (token === undefined || token === "Object") failures.push(`opener ${index}: the table has no class for what it makes`);
       else if (!everyCandidate.some(candidate => candidate.instanceOf === token)) candidates.push(hostCandidate(realm, token, open));

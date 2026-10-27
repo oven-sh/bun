@@ -69,6 +69,13 @@ impl Diagnostics {
             .collect()
     }
 
+    pub(crate) fn merge(&mut self, other: Diagnostics) {
+        self.entries.extend(other.entries);
+        self.internal_errors.extend(other.internal_errors);
+        self.int32_flows.extend(other.int32_flows);
+        self.error_count += other.error_count;
+    }
+
     pub(super) fn add_message(&mut self, code: u32, message: Msg) {
         if message.kind == Kind::Err {
             self.error_count += 1;

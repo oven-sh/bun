@@ -16,11 +16,16 @@
 // `--names-of-globals 20` gives variables of 20 programs of 100 the names of globals.
 // `--unwraps-try-blocks 50` takes `try` blocks out of 50 programs of 100.
 // `--validates 100` builds each batch a second time with --aot-validate and runs it: a program at which that executable stops is kept.
+// `--collects 100` runs each executable a second time in an environment in which it collects at every few allocations and overwrites what it frees: a program that prints something else there, or ends by a signal, is kept.
+// `--beside-an-external 50` lets 50 processes of 100 build everything with `--external` for a package that every entry point imports, so the executable also runs code that the compiler hasn't seen.
 // `--splits 80` cuts functions and classes of 80 programs of 100 out into other files, with declarations that can be wrong (split-into-files.ts).
 // `--draws ts` needs no `--programs`: the driver makes the programs of a batch itself. Each starts empty, and the options above write its scenes.
 // `--families 30` draws 30 programs of 100 from the sources of ../sources.ts instead. Those stay as they are drawn.
 // `--together 32`, with `--group 1`, first builds a batch with 32 programs to an entry point, which imports them with `import` statements: one program for the compiler, and a Worker runs the 32 one behind the other.
 // Only a program that prints something else there than under `bun run` goes on into a batch as above, and so does one that doesn't end by itself and without an error.
+// `--throwers 20`, with `--together`, takes 20 of 100 programs that end in an error. Such a program is the last of its entry point, and an entry point costs a build as much as twenty programs.
+// `--slow 10`, with `--together`, takes 10 of 100 programs that don't end in time under `bun run`. Each of them needs an entry point to itself.
+// `--ignores-type-errors 100` writes `// @ts-ignore` above every line of a TypeScript program. One error of the type checker in one program costs the whole batch a build.
 import {
   appendFileSync,
   copyFileSync,
@@ -69,9 +74,14 @@ const { values: options } = parseArgs({
     "names-of-globals": { type: "string", default: "0" },
     "unwraps-try-blocks": { type: "string", default: "0" },
     validates: { type: "string", default: "0" },
+    collects: { type: "string", default: "0" },
+    "beside-an-external": { type: "string", default: "0" },
     draws: { type: "string", default: "" },
     families: { type: "string", default: "0" },
     together: { type: "string", default: "1" },
+    throwers: { type: "string", default: "100" },
+    slow: { type: "string", default: "100" },
+    "ignores-type-errors": { type: "string", default: "0" },
     "hides-function-text": { type: "boolean", default: false },
     // Kinds of outcomes that are only counted otherwise, separated by commas.
     "also-keep": { type: "string", default: "" },
@@ -96,6 +106,10 @@ const buildFlags = [
   ...options.flags.split(" ").filter(Boolean),
   ...(hidesFunctionText ? ["--no-compile-function-source"] : []),
 ];
+/** A package that stays outside the executable. Beside it the compiler counts on code that it hasn't seen, which can reach every built-in module. */
+const packageOutside = Math.random() * 100 < Number(options["beside-an-external"]) ? "a-package-outside" : "";
+if (packageOutside) buildFlags.push("--external", packageOutside);
+const importOfThePackageOutside = packageOutside && `import "${packageOutside}";\n`;
 const runner = "run-each-program-in-a-worker.ts";
 const mark = `=== ${Math.random().toString(36).slice(2)} ended`;
 /** What an entry point of several programs prints behind each of them. */
@@ -125,11 +139,12 @@ async function spawn(stage: string, cmd: string[], cwd: string, env: Record<stri
   const child = Bun.spawn({
     cmd,
     cwd,
-    env: { ...process.env, ...env },
+    // The cache of transpiled files goes by the text of a file alone, and the same text can be a module under one name and a script under another.
+    env: { ...process.env, BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0", ...env },
     stdin: "ignore",
     stdout: Bun.file(stdout),
     stderr: Bun.file(stderr),
-    timeout: seconds * 1000,
+    timeout: Math.ceil(seconds * 1000),
     killSignal: "SIGKILL",
   });
   const exitCode = await child.exited;
@@ -179,9 +194,10 @@ function layOut(folder: string, texts: string[], extension: string, inGroup: num
       );
     writeFileSync(
       join(folder, `group-${entryPoint}${extension}`),
-      members
-        .map(index => `import "./programs/${index}${extension}";\nimport "./programs/behind-${index}${extension}";\n`)
-        .join(""),
+      importOfThePackageOutside +
+        members
+          .map(index => `import "./programs/${index}${extension}";\nimport "./programs/behind-${index}${extension}";\n`)
+          .join(""),
     );
   });
   for (let first = 0; !entryPoints && first < texts.length; first += inGroup) {
@@ -192,11 +208,20 @@ function layOut(folder: string, texts: string[], extension: string, inGroup: num
     writeFileSync(
       join(folder, `group-${first / inGroup}${extension}`),
       inGroup === 1
-        ? `import "./programs/${first}${extension}";\n`
-        : `const programs = [\n${rows.join("")}];\nawait programs[Number(process.env.BATCH_PROGRAM) - ${first}]();\n`,
+        ? `${importOfThePackageOutside}import "./programs/${first}${extension}";\n`
+        : `${importOfThePackageOutside}const programs = [\n${rows.join("")}];\nawait programs[Number(process.env.BATCH_PROGRAM) - ${first}]();\n`,
     );
   }
   copyFileSync(join(import.meta.dir, runner), join(folder, runner));
+  if (packageOutside) {
+    const root = join(folder, "node_modules", packageOutside);
+    mkdirSync(root, { recursive: true });
+    writeFileSync(
+      join(root, "package.json"),
+      JSON.stringify({ name: packageOutside, version: "1.0.0", type: "module", main: "./index.js" }) + "\n",
+    );
+    writeFileSync(join(root, "index.js"), "export default 0;\n");
+  }
 }
 
 /** The largest value of each counter of the compiler in the builds so far. A counter that stays at zero counts something that no program has made the compiler do. */
@@ -273,8 +298,11 @@ async function build(
     { length: Math.ceil(programCount / inGroup) },
     (_, group) => `./group-${group}${extension}`,
   );
+  // A build with --aot-validate takes three times as long, and a build that ends in errors is paid on top of the one that follows it.
+  const stage = mode.includes("--aot-validate") ? "validating-build" : "build";
+  const before = { ...spent[stage] };
   const ran = await spawn(
-    "build",
+    stage,
     [
       bun,
       "build",
@@ -307,6 +335,12 @@ async function build(
   }
   if (ran.exitCode === 0 && existsSync(join(folder, "batch")))
     return { refused: new Set<number>(), writesToBuiltins, ...programsOf(folder, groups.length + 1) };
+  const failed = (spent["failed-build"] ??= { cpuSeconds: 0, wallSeconds: 0, peakMegabytes: 0 });
+  failed.cpuSeconds += spent[stage].cpuSeconds - (before.cpuSeconds ?? 0);
+  failed.wallSeconds += spent[stage].wallSeconds - (before.wallSeconds ?? 0);
+  failed.peakMegabytes = Math.max(failed.peakMegabytes, spent[stage].peakMegabytes);
+  if (before.cpuSeconds === undefined) delete spent[stage];
+  else spent[stage] = before as Spent;
   // Of several such lines, the first that names a program.
   const stops = [...ran.stderr.matchAll(/internal compiler error.*$|Stopped while compiling.*$/gm)].map(
     ([stop]) => stop,
@@ -315,11 +349,14 @@ async function build(
   if (!ran.signal && reason === undefined && refused.size)
     return { refused, reasonsOfRefusals, errors: ran.stderr.slice(0, 32 << 10), writesToBuiltins };
   const culprit = programsNamedBy(reason ?? "", folder)[0];
+  // A compiler that ends by a signal says why in a line of its own, and two such ends in one pass are two finds.
+  const panic = /^panic(?:\([^)\n]*\))?: .*$/m.exec(ran.stderr)?.[0];
+  const said = [panic, reason].filter(line => line !== undefined).join(" | ");
   return {
     refused,
     writesToBuiltins,
     stopped: {
-      reason: `${ran.signal ?? `exit code ${ran.exitCode}`}: ${reason ?? "the errors name no program"}`,
+      reason: `${ran.signal ?? `exit code ${ran.exitCode}`}: ${said || "the errors name no program"}`,
       culprit,
       stderr: ran.stderr.slice(-8000),
     },
@@ -483,6 +520,8 @@ const setsThePrototypeOfABuiltIn = /\bsetPrototypeOf\([A-Z]/;
 // What `bun run` says when it refuses a file that the compiler builds.
 const refusalsOfBunRun = [
   "is a constant",
+  // A variable at the top of a file that `bun run` takes for CommonJS, named like a parameter of the function around such a file.
+  "Cannot declare a let variable twice",
   "Left side of assignment is not a reference",
   "Unexpected token '...'",
   "Unexpected private name",
@@ -574,8 +613,12 @@ const reservedTooManyAddresses = ({ stderr }: Ended) => stderr.includes("mprotec
 const classOfError = ({ stderr }: Ended) => /\b\w*Error\b/.exec(stderr)?.[0];
 
 function keepFind(kind: string, summary: string, files: Record<string, string>) {
+  // The kernel, the bound of `spawn`, or whoever stops the lane ended that build.
+  if (/^SIG(?:KILL|TERM): the errors name no program$/.test(summary)) return;
+  // What a compiler says when it stops names a function, a value and a place, which differ from program to program.
+  const words = kind.endsWith("build-stopped") ? summary.replace(/'[^'\n]*'|\bat \S+|\bfunction \S+/g, "") : summary;
   const group = `${kind.replaceAll(" ", "-")}-${Bun.hash
-    .crc32(summary.replace(/[0-9a-f]/gi, ""))
+    .crc32(words.replace(/[0-9a-f]/gi, ""))
     .toString(16)
     .padStart(8, "0")}`;
   const name = `${group}/${Math.floor(Math.log2(Math.max(1, Object.values(files)[0].length)))}`;
@@ -776,6 +819,39 @@ function stoppedAtAnUnusedLiteral(text: string, { stderr }: Ended) {
   return line !== undefined && /^\s*\(\{/.test(text.split("\n")[Number(line) - 1] ?? "");
 }
 
+/** What a stopped build said, without the numbers and the names that differ from build to build. */
+const wordsOf = (reason: string) => reason.replace(/[0-9a-f]/gi, "");
+
+/**
+ * The fewest of `texts`, found by halves, whose build stops with the words of `reason`. For a build that stopped and named no program.
+ * Returns their indexes, or none when neither the kernel's nor the clock's end of a build can be asked again.
+ */
+async function programsThatStopTheBuild(texts: string[], extension: string, reason: string, mode?: string[]) {
+  if (/^SIG(?:KILL|TERM): /.test(reason)) return [];
+  const subset = join(work, `stops-${process.pid}`);
+  const stops = async (indexes: number[]) => {
+    const inGroup = Math.min(groupSize, indexes.length);
+    layOut(
+      subset,
+      indexes.map(index => texts[index]),
+      extension,
+      inGroup,
+    );
+    const { stopped } = await build(subset, indexes.length, extension, inGroup, mode);
+    return stopped !== undefined && wordsOf(stopped.reason) === wordsOf(reason);
+  };
+  let suspects = texts.map((_, index) => index);
+  while (suspects.length > 1) {
+    const halves = [suspects.slice(0, suspects.length >> 1), suspects.slice(suspects.length >> 1)];
+    let kept: number[] | undefined;
+    for (const half of halves) if (!kept && (await stops(half))) kept = half;
+    if (!kept) break;
+    suspects = kept;
+  }
+  rmSync(subset, { recursive: true, force: true });
+  return suspects;
+}
+
 /** Waits until it has `count` programs. A rename decides which of several processes gets a file. */
 async function takePrograms(): Promise<string[]> {
   const claimed = join(work, `claimed-${process.pid}`);
@@ -796,6 +872,25 @@ async function takePrograms(): Promise<string[]> {
   }
 }
 
+/** `// @ts-ignore` above every line of the TypeScript files of a program that has no such comment above it. The comment counts only where the line below it has an error. */
+function ignoreTypeErrors(text: string) {
+  return text
+    .split(/^(?=\/\/ @filename: )/m)
+    .map(file => {
+      const name = /^\/\/ @filename: (\S+)/.exec(file)?.[1] ?? ".ts";
+      if (!/\.[cm]?ts$/.test(name) || /\.d\.[cm]?ts$/.test(name)) return file;
+      const lines: string[] = [];
+      for (const line of file.split("\n")) {
+        const [indentation] = /^\s*/.exec(line)!;
+        const isCode = indentation.length < line.length && !line.startsWith("//", indentation.length);
+        if (isCode && !lines.at(-1)?.trimStart().startsWith("// @ts-")) lines.push(indentation + "// @ts-ignore");
+        lines.push(line);
+      }
+      return lines.join("\n");
+    })
+    .join("");
+}
+
 /** The program as the batch takes it. What is drawn depends on the text alone, and a find holds the text that was built. */
 function rewritten(text: string, extension: string) {
   const random = randomFrom("rewritten" + text);
@@ -811,7 +906,13 @@ function rewritten(text: string, extension: string) {
   if (random() * 100 < Number(options["unwraps-try-blocks"])) text = unwrapTryBlocks(text);
   if (random() * 100 < Number(options["prints-members"])) text = printMembersOfObjects(text, isTypeScript);
   if (random() * 100 < Number(options["prints-into-a-text"])) text = keepWhatIsPrintedInAText(text, isTypeScript);
-  if (!hasSizes && random() * 100 < Number(options.splits)) text = splitIntoFiles(text, extension);
+  if (!hasSizes && random() * 100 < Number(options.splits)) {
+    // The splitter erases the types of a part, which fails where it has cut a scene in the wrong place. The program stays whole then.
+    try {
+      text = splitIntoFiles(text, extension);
+    } catch {}
+  }
+  if (isTypeScript && random() * 100 < Number(options["ignores-type-errors"])) text = ignoreTypeErrors(text);
   return text;
 }
 
@@ -907,6 +1008,12 @@ const listed = (texts: string[]) => texts.map((text, offset) => `// ---- ${offse
  */
 async function judgeTogether(texts: string[], extension: string, add: (kind: string, by?: number) => void) {
   const folder = join(work, `batch-${process.pid}`);
+  // A text that shows neither kind of module becomes an ES module.
+  texts = texts.map(text =>
+    isAModule(text) || /\b(?:require|module|exports)\b|^["']use strict["']/m.test(text)
+      ? text
+      : text + "\nexport {};\n",
+  );
   // An error that nobody catches ends the entry point, and so does a program that never ends. What `bun run` makes of each program alone tells.
   layOut(folder, texts, extension, 1);
   const everyProgram = texts.map((_, index) => index);
@@ -930,10 +1037,16 @@ async function judgeTogether(texts: string[], extension: string, add: (kind: str
   waitingForABatchOfTheirOwn.push(...scripts.map(({ text }) => text));
   programs = programs.filter(each => !scripts.includes(each));
   const canBeLast = ({ end }: { end: string }) => end === "error" || /^[1-9]\d*$/.test(end);
-  waitingForABatchOfTheirOwn.push(
-    ...programs.filter(each => each.end !== "0" && !canBeLast(each)).map(({ text }) => text),
-  );
+  const onTheirOwn = programs.filter(each => each.end !== "0" && !canBeLast(each));
+  const kept = onTheirOwn.filter(({ end }) => end !== "time" || Math.random() * 100 < Number(options.slow));
+  add("does not end in time and is left out", onTheirOwn.length - kept.length);
+  add("taken", kept.length - onTheirOwn.length);
+  waitingForABatchOfTheirOwn.push(...kept.map(({ text }) => text));
   programs = programs.filter(each => each.end === "0" || canBeLast(each));
+  const taken = programs.filter(each => each.end === "0" || Math.random() * 100 < Number(options.throwers));
+  add("ends in an error and is left out", programs.length - taken.length);
+  add("taken", taken.length - programs.length);
+  programs = taken;
   let entryPoints: number[][] = [];
   const howTheyAreLaidOut = `${together} to an entry point that imports them with import statements`;
   for (;;) {
@@ -996,6 +1109,7 @@ async function judgeTogether(texts: string[], extension: string, add: (kind: str
   }
   const everyEntryPoint = entryPoints.map((_, entryPoint) => entryPoint);
   const { compiled, plain } = await runTogether(folder, everyEntryPoint, extension, together);
+  const printedTheSame = new Set<number>();
   for (const entryPoint of everyEntryPoint) {
     const members = entryPoints[entryPoint];
     const last = members.at(-1)!;
@@ -1012,6 +1126,7 @@ async function judgeTogether(texts: string[], extension: string, add: (kind: str
     add("same", members.length - differing.length);
     add("prints something else beside the others", differing.length);
     const same = members.filter(index => !differing.includes(index));
+    for (const index of same) printedTheSame.add(index);
     for (const index of differing) {
       waitingForABatchOfTheirOwn.push(texts[index]);
       neighborsOf.set(texts[index], {
@@ -1020,6 +1135,20 @@ async function judgeTogether(texts: string[], extension: string, add: (kind: str
       });
     }
   }
+  if (Math.random() * 100 < Number(options.collects))
+    await judgeUnderCollections(
+      folder,
+      texts,
+      extension,
+      1,
+      everyEntryPoint,
+      entryPoint => entryPoints[entryPoint],
+      true,
+      compiled,
+      printedTheSame,
+      milliseconds * 16 + 80 * together,
+      add,
+    );
   if (Math.random() * 100 < Number(options.validates)) {
     const flags = [...buildFlags, "--aot-validate"];
     const command = `${bun} build --compile --aot ${flags.join(" ")}`;
@@ -1066,12 +1195,21 @@ async function judgeTogether(texts: string[], extension: string, add: (kind: str
 async function askAmongNeighbors(text: string, extension: string, add: (kind: string, by?: number) => void) {
   const around = neighborsOf.get(text);
   if (!around) return;
+  // What a module prints behind an `await` at its top level can come behind the mark, or behind a neighbor's. When it comes differs from run to run, under `bun run` too.
+  const awaits = (program: string) => /\bawait\b/.test(program);
+  if (awaits(text)) {
+    add("awaits, and prints something else only beside the others");
+    return;
+  }
   const subset = join(work, `subset-${process.pid}`);
-  let { before, behind } = around;
+  let [before, behind] = [around.before, around.behind].map(programs => programs.filter(each => !awaits(each)));
   const ask = (before: string[], behind: string[]) =>
     differsTogether(subset, [...before, text, ...behind], extension, before.length);
   let difference = await ask(before, behind);
-  add(difference ? "among-neighbors" : "prints something else only beside a program that does too");
+  if (difference && withoutLayout(difference.compiled) === withoutLayout(difference.plain)) {
+    add("function text");
+    difference = undefined;
+  } else add(difference ? "among-neighbors" : "prints something else only beside a program that does too");
   if (difference) {
     // What runs behind the program seldom counts, and of what runs before it one half is often enough.
     for (let shrank = true; shrank && before.length + behind.length > 0; ) {
@@ -1101,6 +1239,124 @@ async function askAmongNeighbors(text: string, extension: string, add: (kind: st
     });
   }
   rmSync(subset, { recursive: true, force: true });
+}
+
+/** An environment in which an executable collects at every few allocations that leave the fast path, and overwrites what it frees. One interval is blind to what another sees. */
+function drawCollections(): Record<string, string> {
+  const pick = (list: number[]) => list[Math.floor(Math.random() * list.length)];
+  const areYoung = Math.random() < 0.5;
+  // Full collections at every second to fifth such allocation take a batch as long as its build. Young ones, and full ones at every seventh, take a tenth of that.
+  const every = areYoung
+    ? pick([1, 2, 3, 5, 7, 11, 13])
+    : Math.random() < 0.1
+      ? pick([2, 3, 5])
+      : pick([7, 11, 13, 17, 23, 37]);
+  return {
+    BUN_JSC_slowPathAllocsBetweenGCs: String(every),
+    BUN_JSC_scribbleFreeCells: "1",
+    BUN_JSC_useZombieMode: "1",
+    ...(areYoung && { BUN_JSC_useEdenCollectionsAtSlowPathAllocs: "1" }),
+  };
+}
+/** What a program names when its output depends on when the collector runs. */
+const namesTheCollector = /\b(?:WeakRef|FinalizationRegistry|heapStats|memoryUsage|resourceUsage|heapSize)\b|\bgc\(/;
+
+/**
+ * The executable in `folder` once more, under collections. A unit of the run is what `run` takes an index of, and `membersOf` lists the programs in it: with `hasMarks`, a mark stands behind each.
+ * `atDefault` is the first run of the executable. Only the programs in `judged` count, which printed there what they print under `bun run`.
+ */
+async function judgeUnderCollections(
+  folder: string,
+  texts: string[],
+  extension: string,
+  inGroup: number,
+  units: number[],
+  membersOf: (unit: number) => number[],
+  hasMarks: boolean,
+  atDefault: Map<number, Ended>,
+  judged: Set<number>,
+  limit: number,
+  add: (kind: string, by?: number) => void,
+) {
+  const environment = drawCollections();
+  const words = Object.entries(environment)
+    .map(([name, value]) => `${name}=${value}`)
+    .join(" ");
+  add(
+    `collections at every ${environment.BUN_JSC_slowPathAllocsBetweenGCs}, ${environment.BUN_JSC_useEdenCollectionsAtSlowPathAllocs ? "young" : "full"}`,
+  );
+  const executable = [join(folder, "batch")];
+  const runSo = (stage: string, command: string[], which: number[], more: Record<string, string> = {}) =>
+    run(stage, command, folder, extension, inGroup, which, limit, { ...environment, ...more });
+  const gaveUp = (ended: Ended) =>
+    isLimit(ended) || wasKilled(ended) || reservedTooManyAddresses(ended) || ended.end === "the process ended: SIGTERM";
+  const printedBy = (ended: Ended, members: number[]) =>
+    hasMarks ? partsOf(ended.stdout).ofProgram : new Map([[members[0], removeDetailsOfErrors(ended.stdout)]]);
+  const collected = await runSo("collecting", executable, units);
+  for (const unit of units) {
+    const [ended, before, members] = [collected.get(unit)!, atDefault.get(unit)!, membersOf(unit)];
+    if (gaveUp(before) || before.end.startsWith("the process ended")) continue;
+    if (gaveUp(ended)) {
+      add("did not end under collections", members.length);
+      continue;
+    }
+    const endedEarly = ended.end.startsWith("the process ended");
+    const [now, then] = [printedBy(ended, members), printedBy(before, members)];
+    // A process that ends early was in the program behind the last mark.
+    let suspects = endedEarly
+      ? [members[hasMarks ? now.size : 0] ?? members.at(-1)!]
+      : members.filter(index => judged.has(index) && now.get(index) !== then.get(index));
+    if (!endedEarly && suspects.length === 0 && ended.end !== before.end && judged.has(members.at(-1)!))
+      suspects = [members.at(-1)!];
+    add("same under collections", members.length - suspects.length);
+    if (!endedEarly) {
+      add("names the collector", suspects.filter(index => namesTheCollector.test(texts[index])).length);
+      suspects = suspects.filter(index => !namesTheCollector.test(texts[index]));
+    }
+    if (suspects.length === 0) continue;
+    // What `bun run` makes of the same files in the same environment, and the executable a second time.
+    const plain = (await runSo("plain-collecting", [bun, "run", "./" + runner], [unit], plainEnv)).get(unit)!;
+    const again = (await runSo("collecting", executable, [unit])).get(unit)!;
+    const [expected, second] = [printedBy(plain, members), printedBy(again, members)];
+    if (!endedEarly && !gaveUp(plain)) {
+      const alike = suspects.filter(index => expected.get(index) === now.get(index));
+      add("bun run prints that under collections too", alike.length);
+      suspects = suspects.filter(index => !alike.includes(index));
+    }
+    for (const index of suspects.slice(0, 3)) {
+      const kind = !endedEarly
+        ? "collections-stdout"
+        : plain.end.startsWith("the process ended") && !gaveUp(plain)
+          ? "bun-run-collections-signal"
+          : "collections-signal";
+      add(kind);
+      const [left, right] = [(now.get(index) ?? "").split("\n"), (then.get(index) ?? "").split("\n")];
+      const differs = left.findIndex((line, at) => line !== right[at]);
+      const line = differs < 0 ? left.length : differs;
+      const lastWords = [/^panic(?:\([^)\n]*\))?: .*$/m, /([^\n]*)\n={20,}\n/]
+        .map(pattern => pattern.exec(ended.stderr)?.at(-1))
+        .filter(Boolean)
+        .join(" | ");
+      const summary = endedEarly
+        ? `under collections: ${ended.end}${lastWords && " | " + lastWords}\nwithout:           ${before.end}\n`
+        : `under collections: ${ended.end} ${(left[line] ?? "").slice(0, 400)}\nwithout:           ${before.end} ${(right[line] ?? "").slice(0, 400)}\n`;
+      const isSteady = endedEarly ? again.end === ended.end : second.get(index) === now.get(index);
+      keepFind(kind, summary, {
+        ["program" + extension]: texts[index],
+        ...(members.length > 1 && { "programs.txt": listed(members.map(member => texts[member])) }),
+        "report.txt": `${kind}, ${
+          hasMarks
+            ? `one of ${members.length} programs that an entry point imports with import statements, number ${members.indexOf(index)}`
+            : `one of ${texts.length} programs in groups of ${inGroup}`
+        }\n${bun} build --compile --aot ${buildFlags.join(" ")}\nthe executable runs with ${words}\n${summary}a second run in that environment: ${isSteady ? "the same" : `something else, and it ends with ${again.end}`}\nbun run in that environment: ${plain.end}\n`,
+        "collecting.stdout": ended.stdout,
+        "collecting.stderr": ended.stderr,
+        "compiled.stdout": before.stdout,
+        "bun-run-collecting.stdout": plain.stdout,
+        "bun-run-collecting.stderr": plain.stderr,
+      });
+    }
+  }
 }
 
 let extension = "";
@@ -1167,35 +1423,42 @@ for (
   let writesToBuiltins = new Set<number>();
   for (;;) {
     layOut(folder, texts, extension, groupSize);
-    const secondsBefore = spent.build?.cpuSeconds ?? 0;
+    const secondsBefore = spent["failed-build"]?.cpuSeconds ?? 0;
     const { refused, stopped, ...built } = await build(folder, texts.length, extension, groupSize);
     writesToBuiltins = built.writesToBuiltins;
     if (stopped || refused.size) {
       add("builds that made no executable");
-      add("processor seconds in them", Math.round(spent.build.cpuSeconds - secondsBefore));
+      add("processor seconds in them", Math.round(spent["failed-build"].cpuSeconds - secondsBefore));
     }
     if (stopped) {
+      // Halves of the batch say which programs it takes.
+      const enough =
+        stopped.culprit === undefined ? await programsThatStopTheBuild(texts, extension, stopped.reason) : [];
+      if (enough.length === 1) stopped.culprit = enough[0];
+      const listedPrograms =
+        enough.length > 1 && enough.length < texts.length ? enough : texts.map((_, index) => index);
       keepFind("build-stopped", stopped.reason, {
         ["program" + extension]: stopped.culprit === undefined ? "" : texts[stopped.culprit],
-        "programs.txt": texts.map((text, offset) => `// ---- ${offset}\n${text}`).join("\n"),
-        "report.txt": `${stopped.reason}\n${bun} build --compile --aot ${buildFlags.join(" ")}\nprograms.txt holds the ${texts.length} programs of the build, in groups of ${groupSize}, and the program is number ${stopped.culprit ?? 0} in it\n`,
+        "programs.txt": listedPrograms.map((index, offset) => `// ---- ${offset}\n${texts[index]}`).join("\n"),
+        "report.txt": `${stopped.reason}\n${bun} build --compile --aot ${buildFlags.join(" ")}\nprograms.txt holds ${listedPrograms.length} of the ${texts.length} programs of the build, in groups of ${groupSize}${enough.length > 1 ? ", which are enough to stop it" : enough.length ? ", of which one alone stops it" : ""}, and the program is number ${Math.max(0, listedPrograms.indexOf(stopped.culprit ?? -1))} in it\n`,
         "compiler.stderr": stopped.stderr,
       });
       add("stopped the build");
-      if (stopped.culprit === undefined) {
+      if (stopped.culprit === undefined && (enough.length === 0 || enough.length === texts.length)) {
         add("in a build that stopped and named no program", texts.length);
         texts = [];
         break;
       }
-      refused.add(stopped.culprit);
+      for (const index of stopped.culprit === undefined ? enough : [stopped.culprit]) refused.add(index);
     }
     if (refused.size) {
-      add("refused", refused.size - (stopped ? 1 : 0));
+      if (!stopped) add("refused", refused.size);
       for (const reason of built.reasonsOfRefusals ?? []) add(`refused: ${reason}`);
       // A build reports the errors of the type checker. A program in a folder with a tsconfig.json is a project, which `bun check` checks as a whole.
       for (const index of refused) {
-        const project = /^\/\/ @filename: \.\/(\S+)\/tsconfig\.json$/m.exec(texts[index])?.[1];
-        if (project === undefined || index === stopped?.culprit) continue;
+        // The folder of the program itself. A package below it can have a tsconfig.json of its own.
+        const project = /^\/\/ @filename: \.\/([^/\s]+)\/tsconfig\.json$/m.exec(texts[index])?.[1];
+        if (project === undefined || stopped) continue;
         // What a second entry point reaches is checked with the first entry point's answer to whether `undefined` and `null` belong to every type, and a group is a second entry point.
         if (/^ +"strict(?:NullChecks)?": false,?$/m.test(texts[index])) continue;
         // How far the checker reads the JavaScript of packages is the entry point's answer too.
@@ -1408,6 +1671,20 @@ for (
       "bun-run.stderr": referenceAgain.stderr,
     });
   }
+  if (texts.length && Math.random() * 100 < Number(options.collects))
+    await judgeUnderCollections(
+      folder,
+      texts,
+      extension,
+      groupSize,
+      all,
+      index => [index],
+      false,
+      compiled,
+      new Set(all.filter(index => !differing.includes(index))),
+      milliseconds * 20,
+      add,
+    );
   // The same programs once more, in an executable that checks while it runs what the compiler took for proven. It stops where that is false, also where the output happens to be right.
   if (texts.length && Math.random() * 100 < Number(options.validates)) {
     const flags = [...buildFlags, "--aot-validate"];

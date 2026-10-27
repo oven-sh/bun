@@ -192,9 +192,20 @@ impl Statistics {
         });
     }
 
+    pub fn merge(&mut self, other: Statistics) {
+        self.add_values(&other.values);
+        for loss in other.losses {
+            self.merge_loss(loss);
+        }
+    }
+
     fn add_loss(&mut self, loss: LocatedLoss) {
         debug_assert!(loss.limit != LimitId::None);
         self.count(loss.limit.hits(), u64::from(loss.count));
+        self.merge_loss(loss);
+    }
+
+    fn merge_loss(&mut self, loss: LocatedLoss) {
         let position = self
             .losses
             .binary_search_by_key(&loss.limit, |known| known.limit);

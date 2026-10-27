@@ -6,6 +6,8 @@ mod bind_stage;
 mod import_graph;
 #[cfg(test)]
 mod imported_constant_tests;
+#[cfg(test)]
+mod known_member_tests;
 mod link_stage;
 mod load_stage;
 mod lower_stage;

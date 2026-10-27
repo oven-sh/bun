@@ -93,7 +93,7 @@ const responseRoad: {
     bit: number,
   ) => boolean;
   flatHeadersOf?: (exchange: $Node.HttpExchange) => unknown[];
-  headerEntriesOf?: (exchange: $Node.HttpExchange, message: $Node.OutgoingMessage) => unknown[];
+  headerEntriesOf?: (exchange: $Node.HttpExchange | undefined, message: $Node.OutgoingMessage) => unknown[] | undefined;
   pushRenderedHeader?: (
     flat: unknown[],
     message: $Node.OutgoingMessage,

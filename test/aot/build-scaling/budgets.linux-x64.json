@@ -196,6 +196,13 @@
       "instructions": 3.23
     }
   },
+  "functions that are stored one after another under one name and called there, more than a type lists": {
+    "millionInstructions": 8383,
+    "megabytes": 134,
+    "growth": {
+      "instructions": 3.22
+    }
+  },
   "functions on one line after non-ASCII text": {
     "millionInstructions": 13994,
     "megabytes": 243,
@@ -267,6 +274,10 @@
     "millionInstructions": 12894,
     "megabytes": 215
   },
+  "long rows of constants that are each computed from the one before, each row in a function or a block of its own": {
+    "millionInstructions": 6095,
+    "megabytes": 171
+  },
   "classes below a function that makes their base, kept in a list and constructed for the classes of another list": {
     "millionInstructions": 9047,
     "megabytes": 129
@@ -282,6 +293,10 @@
   "a declaration where an expression belongs, nested in itself": {
     "millionInstructions": 6900,
     "megabytes": 280
+  },
+  "TypeScript packages that each have a tsconfig.json with different compiler options": {
+    "millionInstructions": 6476,
+    "megabytes": 374
   },
   "all shapes as the entry points of one build, on four threads": {
     "megabytes": 654

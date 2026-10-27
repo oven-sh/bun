@@ -82,3 +82,20 @@ test.skipIf(process.arch !== "x64" || isASAN)(
     expect(await pointersHeldWith("--aot-disable=b3:FoldTrapsIntoAccesses")).toEqual(usual);
   },
 );
+
+// What takes a caught value from the run time is a place where the collector can run. In the first program nothing else stands between two reads through one pointer; the second is the first without its handlers.
+async function pointersHeldIn(program: string) {
+  const { stderr, exitCode } = await build(program, "--explain=statistics");
+  return { exitCode, pointers: Number(/^InnerPointersAcrossSafepoints (\d+)$/m.exec(stderr)?.[1]) };
+}
+
+test.skipIf(process.arch !== "x64" || isASAN)("a pointer that is held across a handler alone is counted", async () => {
+  expect(await pointersHeldIn("only-the-handler-stands-between-two-reads-through-one-pointer.ts")).toEqual({
+    exitCode: 0,
+    pointers: 2,
+  });
+  expect(await pointersHeldIn("nothing-stands-between-two-reads-through-one-pointer.ts")).toEqual({
+    exitCode: 0,
+    pointers: 0,
+  });
+});

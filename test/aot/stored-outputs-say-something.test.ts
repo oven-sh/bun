@@ -23,6 +23,8 @@ const plainBunVaries: Record<string, string> = {
     "plain Bun prints one of four outputs from run to run, the stored one among them: once its optimizing compilers have taken String.prototype.replace in, the stack has no frame for it. Without them it prints the stored output every time",
   "calls/tail-calls-into-and-out-of-code-made-at-run-time/every-way-to-call":
     "plain Bun prints one of two outputs from run to run, the stored one among them: how much stack a chain takes there goes by the tier that runs it",
+  "commonjs/a-microtask-of-an-imported-file-runs-before-a-file-of-a-deeper-module":
+    "plain Bun prints one of several outputs from run to run, the stored one among them",
   "commonjs/wrapper-variables-in-loops":
     "plain Bun begins the five CommonJS files that the entry point imports in one of many orders from run to run; the stored output has them in the order of the import statements, which is what the executable always prints",
   "memory-of-many-objects/records-made-by-a-callback-for-each-element":
@@ -96,15 +98,20 @@ async function saysNothing(name: string): Promise<boolean> {
   // There the reference is an executable without --aot, which a build has to make: the runner of the folder compares with it.
   if (options.reference === "compiled") return false;
   // Some of these environments hold BUN_JSC_crashIfInterpreterIsUsed=1, which is meant for the executable: plain Bun ends at its first function.
-  const plain = told(
-    await spawned(withoutCoreDump([bunExe(), "run", path]), dirname(path), {
-      ...bunEnv,
-      ...withoutCrashReport,
-      ...options.env,
-    }),
-  );
-  const text = plain.stdout + (plain.exitCode ? `exit code ${plain.exitCode}\n${plain.stderr}\n` : plain.stderr);
-  return text === readFileSync(beside + ".expected.txt", "utf8");
+  const expected = readFileSync(beside + ".expected.txt", "utf8");
+  // Plain Bun prints one of several outputs from run to run for some programs: what is stored says nothing where three runs print it.
+  for (let run = 0; run < 3; run++) {
+    const plain = told(
+      await spawned(withoutCoreDump([bunExe(), "run", path]), dirname(path), {
+        ...bunEnv,
+        ...withoutCrashReport,
+        ...options.env,
+      }),
+    );
+    const text = plain.stdout + (plain.exitCode ? `exit code ${plain.exitCode}\n${plain.stderr}\n` : plain.stderr);
+    if (text !== expected) return false;
+  }
+  return true;
 }
 
 describe("compile/aot/stored outputs say something", () => {

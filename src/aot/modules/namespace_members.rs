@@ -91,6 +91,14 @@ impl FileBinder<'_, '_> {
                 self.look_at(root.stands_for);
             }
         }
+        // Such a read takes the object, and the names behind it from the object.
+        for binding in analysis.bindings_read_without_expression(hir, bound) {
+            if let Binding::Symbol(symbol) = binding
+                && let Ok(position) = roots.binary_search_by_key(&symbol, |root| root.symbol)
+            {
+                self.look_at_root(roots[position], holders);
+            }
+        }
         let mut references: Vec<(usize, ExprId)> = Vec::new();
         for index in 0..hir.exprs.len() as u32 {
             let reference = ExprId(index);
@@ -111,14 +119,17 @@ impl FileBinder<'_, '_> {
             for &(_, reference) in of_root {
                 is_needed_as_value |= self.bind_member_path(reference, root.stands_for);
             }
-            if !is_needed_as_value {
-                continue;
+            if is_needed_as_value {
+                self.look_at_root(root, holders);
             }
-            if let Some(holder) = root.holder {
-                holders[holder].is_needed_as_value = true;
-            }
-            self.look_at(root.stands_for);
         }
+    }
+
+    fn look_at_root(&mut self, root: Root, holders: &mut [Holder]) {
+        if let Some(holder) = root.holder {
+            holders[holder].is_needed_as_value = true;
+        }
+        self.look_at(root.stands_for);
     }
 
     fn look_at(&mut self, stands_for: StandsFor) {

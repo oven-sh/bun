@@ -6,12 +6,16 @@
 //   behind the end of a run a few failures are confirmed, the rest is listed, and nothing is built again
 //   a build or a run that holds more memory than it may is ended and named, and whatever a bed started ends with the fuzzer
 //   what plain Bun does not get through is not run again for every mode
+//   a program of several files lies in a folder of its own, by itself and in a shared build, and TypeScript is asked about all its files
+//   a finding in several files is tried in one file first; where it takes the files, files are cut first, then lines
 import { expect, test } from "bun:test";
 import { chmodSync, existsSync, readFileSync, readdirSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { ProductBed, projects, type Bed, type Judged, type Program } from "./fuzz/beds";
 import { fuzz } from "./fuzz/fuzzer";
+import { reduceFiles, type Whole } from "./fuzz/reduce";
+import { allSources } from "./fuzz/sources";
 import { typeChecker, typingsOfBun } from "./fuzz/type-check";
 
 const options = { baseFlags: [], validate: false, threads: 1, buildSeconds: 60, runSeconds: 60 };
@@ -22,7 +26,7 @@ function refusesEveryBuild(folder: string): string {
   const path = join(folder, "stand-in");
   writeFileSync(
     path,
-    `#!/bin/sh\ncase "$1" in\nbuild) ls -a > seen.txt; echo "error: TS2554: Expected 0 arguments, but got 1." >&2; exit 1;;\n*) exec "${bunExe()}" "$@";;\nesac\n`,
+    `#!/bin/sh\ncase "$1" in\nbuild) ls -a > seen.txt; find . -type f | sort > files.txt; echo "error: TS2554: Expected 0 arguments, but got 1." >&2; exit 1;;\n*) exec "${bunExe()}" "$@";;\nesac\n`,
   );
   chmodSync(path, 0o755);
   return path;
@@ -299,6 +303,190 @@ await spawned([process.execPath, "-e", 'require("fs").writeFileSync("pid", Strin
     } finally {
       if (isAlive()) process.kill(pid, "SIGKILL");
     }
+  },
+  timeout,
+);
+
+const inThreeFiles = (second: string): Program => ({
+  extension: "ts",
+  text: `import { twice } from "./declared-2";\nexport const one: number = 1;\nprint(String(twice(4)));\n`,
+  files: {
+    "declared-1.ts": `import { one } from "./main";\nexport function plusOne(n: number): number {\n  return n + one;\n}\n`,
+    "declared-2.ts": second,
+  },
+});
+const twice = `import { plusOne } from "./declared-1";\nexport function twice(n: number): number {\n  print("twice");\n  return plusOne(n) * 2;\n}\n`;
+
+test.skipIf(isWindows || !typeChecker())(
+  "a program of several files lies in a folder of its own and is judged as a whole",
+  async () => {
+    using folder = tempDir("aot-fuzzer-files", {});
+    const bed = new ProductBed(refusesEveryBuild(String(folder)), options);
+    const files = () =>
+      readFileSync(join(String(folder), "files.txt"), "utf8")
+        .split("\n")
+        .filter(file => /^\.\/p/.test(file));
+    const [alone] = await bed.judge(String(folder), [inThreeFiles(twice)], []);
+    expect(alone.plain.stdout).toBe("twice\n10\n");
+    expect(files()).toEqual(["./program/declared-1.ts", "./program/declared-2.ts", "./program/main.ts"]);
+    expect(alone.verdict.kind).toBe("build refused");
+    // The error lies in a file that the first one imports.
+    const wrong = twice.replace("return plusOne(n) * 2", `return plusOne("n") * 2`);
+    expect((await bed.judge(String(folder), [inThreeFiles(wrong)], []))[0].verdict).toEqual({
+      kind: "skipped",
+      why: "type error TS2554, as in TypeScript",
+    });
+    // What another version of TypeScript makes of JavaScript says nothing about the build.
+    const { "declared-2.ts": typed, ...rest } = inThreeFiles(twice).files!;
+    const besideJavaScript = { ...rest, "declared-2.js": typed.replaceAll(/: number/g, "") };
+    expect(
+      (await bed.judge(String(folder), [{ ...inThreeFiles(twice), files: besideJavaScript }], []))[0],
+    ).toMatchObject({
+      plain: { stdout: "twice\n10\n" },
+      verdict: { kind: "skipped", why: "type error TS2554, beside JavaScript" },
+    });
+    const shared = await bed.judge(
+      String(folder),
+      [{ text: `console.log(1);\n`, extension: "ts" }, inThreeFiles(twice), inThreeFiles(wrong)],
+      [],
+    );
+    expect(shared.map(each => each.plain.stdout)).toEqual(["1\n", "twice\n10\n", "twice\nNaN\n"]);
+    expect(shared.map(each => each.verdict.kind)).toEqual(["build refused", "build refused", "skipped"]);
+    // Nothing of a program stays behind for the next one.
+    expect(readdirSync(String(folder)).filter(name => /^p(rogram$|\d)/.test(name))).toEqual([]);
+  },
+  timeout,
+);
+
+test("files are cut first, then lines", async () => {
+  const whole: Whole = {
+    text: `import { a } from "./declared-1";\nimport { b, unused } from "./declared-2";\nimport { c } from "./declared-3";\nconsole.log(a());\nconsole.log(b());\nconsole.log(c());\n`,
+    files: {
+      "declared-1.ts": `export function a() {\n  return 1;\n}\n`,
+      "declared-2.ts": `import { helper } from "./declared-4";\nexport function b() {\n  return helper() + 1;\n}\nexport function unused() {\n  return 3;\n}\n`,
+      "declared-3.ts": `import { helper } from "./declared-4";\nexport function c() {\n  return helper();\n}\n`,
+      "declared-4.ts": `export function helper() {\n  return 2;\n}\nexport const more = 4;\n`,
+    },
+  };
+  const parser = new Bun.Transpiler({ loader: "ts" });
+  const asked: number[] = [];
+  // It shows as long as b() is called in another file than the one that declares it, and every import finds its file and its name.
+  const shows = ({ text, files = {} }: Whole) => {
+    const all: Record<string, string> = { "main.ts": text, ...files };
+    for (const each of Object.values(all))
+      for (const [, names, from] of each.matchAll(/import\s*\{\s*([^}]*?)\s*\}\s*from\s*"\.\/([\w-]+)"/g))
+        for (const name of names.split(/\s*,\s*/).filter(Boolean))
+          if (!new RegExp(`export (function|const) ${name}\\b`).test(all[from + ".ts"] ?? "")) return false;
+    for (const each of Object.values(all))
+      for (const [, name] of each.matchAll(/\b(a|b|c|helper)\(\)(?! \{)/g))
+        if (!new RegExp(`(function|[{,]) ${name}\\b`).test(each)) return false;
+    return /\bb\(\)/.test(text) && !/function b\b/.test(text);
+  };
+  const reduced = await reduceFiles(whole, {
+    entry: "main.ts",
+    width: 4,
+    seconds: 60,
+    parses(candidate) {
+      try {
+        return (parser.transformSync(candidate), true);
+      } catch {
+        return false;
+      }
+    },
+    fails: async candidates => (
+      asked.push(...candidates.map(each => Object.keys(each.files ?? {}).length)),
+      candidates.map(shows)
+    ),
+  });
+  const dense = (text: string) => text.replace(/[\s;]/g, "");
+  expect(dense(reduced.text)).toBe(`import{b}from"./declared-2"b()`);
+  // Without a body it is an overload, which parses.
+  expect(Object.entries(reduced.files!).map(([path, text]) => [path, dense(text)])).toEqual([
+    ["declared-2.ts", "exportfunctionb()"],
+  ]);
+  // Candidates with fewer files come before any that only has fewer lines.
+  expect(asked.slice(0, 4)).toEqual([3, 3, 3, 3]);
+});
+
+test(
+  "a finding in several files is tried in one file first",
+  async () => {
+    const sources = await allSources(join(import.meta.dir, "programs"), new Set(), true);
+    const source = "numbers-across-their-borders-in-several-files";
+    // A bed that takes one file a program is given no other.
+    expect(
+      sources[source](
+        1,
+        standIn(() => {}),
+      ),
+    ).toBeUndefined();
+    expect(Object.keys(sources[source](1, { ...standIn(() => {}), takesSeveralFiles: true })!.files!)).not.toEqual([]);
+    // As a module it would print another `this`, compiled and plain, than as the script that it is.
+    const asksForThis = "a-class-definition-throws-and-the-program-goes-on";
+    const takesFiles = { ...standIn(() => {}), takesSeveralFiles: true };
+    expect(sources[asksForThis](54301000265, takesFiles)!.text).toContain(`show("after", this);`);
+    expect(sources[asksForThis + "-in-several-files"](54301000265, takesFiles)).toBeUndefined();
+    // TypeScript and JavaScript import from each other.
+    const mixed = Array.from({ length: 40 }, (_, seed) => sources[source](seed, takesFiles)).filter(
+      program => program && Object.keys(program.files!).some(path => path.endsWith(".js")),
+    );
+    expect(mixed.length).toBeGreaterThan(4);
+    // Some of the JavaScript has a declaration file beside it, and that is no file of the program's own making.
+    const declared = Array.from({ length: 200 }, (_, seed) => sources[source](seed, takesFiles)).flatMap(program =>
+      Object.keys(program?.files ?? {})
+        .filter(path => path.endsWith(".d.ts"))
+        .map(path => [
+          program!.files![path.replace(/\.d\.ts$/, ".js")] !== undefined,
+          program!.files![path],
+          program!.notes,
+        ]),
+    );
+    expect(declared.length).toBeGreaterThan(4);
+    for (const [isBesideJavaScript, text, notes] of declared)
+      expect([isBesideJavaScript, text, notes]).toEqual([
+        true,
+        expect.stringContaining("export declare "),
+        expect.stringContaining("beside declarations that say too little"),
+      ]);
+    for (const program of mixed)
+      expect([program!.extension, program!.notes]).toEqual(["ts", expect.stringContaining("in JavaScript")]);
+    const stored = async (fails: (program: Program) => boolean) => {
+      using folder = tempDir("aot-fuzzer-files-first", {});
+      const bed = { ...standIn(() => {}), takesSeveralFiles: true };
+      const judge = bed.judge.bind(bed);
+      bed.judge = async (where, programs, flags) =>
+        (await judge(where, programs, flags)).map((each, index) =>
+          fails(programs[index])
+            ? { ...each, verdict: { kind: "crash" as const, detail: "stopped", signature: "stopped" } }
+            : each,
+        );
+      await fuzz({
+        ...settings(String(folder)),
+        beds: [{ bed, jobs: 1 }],
+        sources: [source],
+        seconds: 60,
+        programs: 1,
+        batch: 1,
+        reduceSeconds: 20,
+      });
+      const [name, ...rest] = readdirSync(join(String(folder), "out", "findings"));
+      expect(rest).toEqual([]);
+      const finding = join(String(folder), "out", "findings", name);
+      return {
+        files: readdirSync(finding).sort(),
+        reduced: existsSync(join(finding, "reduced")) ? readdirSync(join(finding, "reduced")).sort() : [],
+        original: readdirSync(join(finding, "original")).length,
+        ...JSON.parse(readFileSync(join(finding, "finding.json"), "utf8")),
+      };
+    };
+    const anywhere = await stored(() => true);
+    expect(anywhere).toMatchObject({ source, failsInOneFile: true, reduced: [] });
+    expect(anywhere.files).toContain("reduced.ts");
+    expect(anywhere.original).toBeGreaterThan(1);
+    const acrossFiles = await stored(program => Object.keys(program.files ?? {}).length > 0);
+    expect(acrossFiles).toMatchObject({ source, failsInOneFile: false });
+    expect(acrossFiles.reduced).toContain("main.ts");
+    expect(acrossFiles.reduced.length).toBe(2);
   },
   timeout,
 );

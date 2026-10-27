@@ -84,8 +84,8 @@
 # CHECK-NEXT: v11:{{*}}= AreFunctionNamesUnchanged
 # CHECK-NEXT: Return
 # CHECK-NEXT: }
-# CHECK-NEXT: function f5 name="elements" module=m0 thisType={type=anything} parameters=[{type=Array}, {type=number}, {type=anything}, {type=object}, {type=string}, {type=Array<anything, pristine[Storage, Names]>}, {type=int}] results=[{type=anything}]
-# CHECK-NEXT: b0(v0: Array, v1: number, v2: anything, v3: object, v4: string, v5: Array<anything, pristine[Storage, Names]>, v6: int):
+# CHECK-NEXT: function f5 name="elements" module=m0 thisType={type=anything} parameters=[{type=Array}, {type=number}, {type=anything}, {type=Uint8Array}, {type=string}, {type=Array<anything, pristine[Storage, Names]>}, {type=int}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: Array, v1: number, v2: anything, v3: Uint8Array, v4: string, v5: Array<anything, pristine[Storage, Names]>, v6: int):
 # CHECK-NEXT: v7:{{*}}= IsPristine v0 builtinClass=Array aspects=[Storage, Names]
 # CHECK-NEXT: Branch v7 -> taken b1(| 0), notTaken b3()
 # CHECK-NEXT: b1(v8:{{*}}):
@@ -355,8 +355,8 @@
 # CHECK-NEXT: ConvertToDoubleStorage v0
 # CHECK-NEXT: Return
 # CHECK-NEXT: }
-# CHECK-NEXT: function f25 name="insideView" module=m0 thisType={type=anything} parameters=[{type=object}, {type=int}, {type=number}] results=[{type=anything}]
-# CHECK-NEXT: b0(v0: object, v1: int, v2: number):
+# CHECK-NEXT: function f25 name="insideView" module=m0 thisType={type=anything} parameters=[{type=Uint8Array}, {type=int}, {type=number}] results=[{type=anything}]
+# CHECK-NEXT: b0(v0: Uint8Array, v1: int, v2: number):
 # CHECK-NEXT: v3:{{*}}= IsInsideView v0, v1 typedArrayType=2 [keyIsIntegral]
 # CHECK-NEXT: Branch v3 -> taken b1(| 0), notTaken b2()
 # CHECK-NEXT: b1(v4:{{*}}):
@@ -503,8 +503,8 @@ function f4 name="otherGuards" module=m0 thisType={type=anything} parameters=[{t
     v11 = AreFunctionNamesUnchanged
     Return
 }
-function f5 name="elements" module=m0 thisType={type=anything} parameters=[{type=Array}, {type=number}, {type=anything}, {type=object}, {type=string}, {type=Array<anything, pristine[Storage, Names]>}, {type=int}] results=[{type=anything}] {
-  b0(v0: Array, v1: number, v2: anything, v3: object, v4: string, v5: Array<anything, pristine[Storage, Names]>, v6: int):
+function f5 name="elements" module=m0 thisType={type=anything} parameters=[{type=Array}, {type=number}, {type=anything}, {type=Uint8Array}, {type=string}, {type=Array<anything, pristine[Storage, Names]>}, {type=int}] results=[{type=anything}] {
+  b0(v0: Array, v1: number, v2: anything, v3: Uint8Array, v4: string, v5: Array<anything, pristine[Storage, Names]>, v6: int):
     v7 = IsPristine v0 builtinClass=Array aspects=[Storage, Names]
     Branch v7 -> taken b1(| 0), notTaken b3()
   b1(v8):
@@ -774,8 +774,8 @@ function f24 name="presentElements" module=m0 thisType={type=anything} parameter
     ConvertToDoubleStorage v0
     Return
 }
-function f25 name="insideView" module=m0 thisType={type=anything} parameters=[{type=object}, {type=int}, {type=number}] results=[{type=anything}] {
-  b0(v0: object, v1: int, v2: number):
+function f25 name="insideView" module=m0 thisType={type=anything} parameters=[{type=Uint8Array}, {type=int}, {type=number}] results=[{type=anything}] {
+  b0(v0: Uint8Array, v1: int, v2: number):
     v3 = IsInsideView v0, v1 typedArrayType=2 [keyIsIntegral]
     Branch v3 -> taken b1(| 0), notTaken b2()
   b1(v4):

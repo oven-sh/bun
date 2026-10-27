@@ -96,7 +96,7 @@
 +	+	+	-	-	ts	import * as ns from "./dep.ts"; const MARK = ns["value"];
 +	+	+	-	-	ts	import * as ns from "./dep.ts"; const MARK = (ns as any).value;
 -	-	-	-	-	ts	import * as ns from "./dep.ts"; const MARK = ns.value.x;
--	-	-	-	-	ts	import * as ns from "./dep.ts"; const MARK = ns?.value;
++	-	-	folded	-	ts	import * as ns from "./dep.ts"; const MARK = ns?.value;
 -	-	-	-	-	ts	import * as ns from "./dep.ts"; let k = "value"; const MARK = ns[k];
 +	+	+	-	-	ts	const MARK = Object.keys;
 +	+	+	-	-	ts	const MARK = Math.PI;

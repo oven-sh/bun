@@ -513,7 +513,7 @@ const incomingMessageRead = function _read(this: $Node.IncomingMessage, _n: numb
     if (isReadableState(state)) removeFlags(state, kReadingMore);
     else {
       ("unlikely");
-      this._readableState.readingMore = false;
+      (state as $Node.ReadableState).readingMore = false;
     }
     this._consuming = true;
   }

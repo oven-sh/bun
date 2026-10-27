@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests;
 
+use bun_sema::bind::SymbolId;
 use bun_sema::hir::{self, ClassId, StmtId, StmtKind, VarDeclId};
 use bun_sema::program::FileId;
 use rustc_hash::FxHashSet;
@@ -10,6 +11,8 @@ enum Declaration {
     Declarator(VarDeclId),
     Class(ClassId),
     Statement(StmtId),
+    // Not left out by itself: the variable of an enum or of the value of a module of data, whose object nothing that the program can run gets hold of.
+    ObjectNeverHandedOn(SymbolId),
 }
 
 /// One declarator of `const a = f(), b = 1` can go while the other stays, so a declarator is named by itself.
@@ -46,6 +49,17 @@ impl LeftOutDeclarations {
                 self.0.insert((file, Declaration::Statement(statement)));
             }
         }
+    }
+
+    pub fn note_object_never_handed_on(&mut self, file: FileId, variable: SymbolId) {
+        self.0
+            .insert((file, Declaration::ObjectNeverHandedOn(variable)));
+    }
+
+    /// Nothing stores to the object, so each member holds what it was made with.
+    pub fn is_object_never_handed_on(&self, file: FileId, variable: SymbolId) -> bool {
+        self.0
+            .contains(&(file, Declaration::ObjectNeverHandedOn(variable)))
     }
 
     pub fn is_declarator_left_out(&self, file: FileId, declarator: VarDeclId) -> bool {

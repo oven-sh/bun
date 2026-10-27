@@ -359,8 +359,27 @@ const exports = {
           errno: $processBindingConstants.os.errno.EISDIR,
         });
       }
+      return fs.rm(path, options);
     }
-    return fs.rm(path, options);
+    // Like Node's rimraf, wait for the next attempt on a timer: no thread is held.
+    for (let retries = 0; ;) {
+      try {
+        return await fs.rm(path, options);
+      } catch (err) {
+        const code = err?.code;
+        if (retries > 0 && code === "ENOENT") return;
+        if (
+          retries >= (options.maxRetries ?? 0) ||
+          (code !== "EBUSY" && code !== "EMFILE" && code !== "ENFILE" && code !== "ENOTEMPTY" && code !== "EPERM")
+        ) {
+          throw err;
+        }
+        retries++;
+        const { promise, resolve } = Promise.withResolvers();
+        setTimeout(resolve, retries * (options.retryDelay ?? 100));
+        await promise;
+      }
+    }
   },
   rmdir: async function rmdir(path, options) {
     // Node 26 removed `recursive` (DEP0147), but packages still pass it. Keep it working through `rm`.

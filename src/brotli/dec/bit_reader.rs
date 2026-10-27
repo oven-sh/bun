@@ -250,3 +250,28 @@ impl BitReader {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The decoder computes with this in 32 bits, signed (CVE-2020-8927).
+    #[test]
+    fn remaining_bytes_fits_an_i32_however_long_the_input_is() {
+        for len in [
+            1 << 30,
+            (1 << 30) + 1,
+            (1 << 31) - 1,
+            1 << 31,
+            (1 << 32) + 5,
+            usize::MAX - 1,
+        ] {
+            let mut br = BitReader {
+                bit_pos: 64,
+                ..Default::default()
+            };
+            br.set_input(len, 0);
+            assert!(br.remaining_bytes() <= (1 << 30) + 8, "{len}");
+        }
+    }
+}

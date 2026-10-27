@@ -46,7 +46,7 @@ quality `q`: `0xFFF` for all of them.
 | `enc-big <seed> <bytes> <param>=<value>...` | one long stream, through both decoders too. The position wraps at 3 GiB and then every 2 GiB |
 | `enc-lap <seed> <bytes> <param>=<value>...` | random data with a period of 2 GiB, for a window of more than 24 bits (`2=25 6=1`). The C encoder writes a stream that decodes to something else: its rolling hasher finds the current position in its table, left there by the lap before, and takes it for a match at distance 0. Only Rust's stream has to be right |
 | `enc-files <mask> <lgwin>`, `enc-one <file> <param>=<value>...` | files |
-| `api <seed> <iterations>` | values out of range, calls at the wrong time, metadata and dictionaries of every size, more than 1 GiB in one call: always the same cases, which take 3.5 GB of memory. The seed and the iterations are for `SpareCapacity` |
+| `api <seed> <iterations>` | values out of range, calls at the wrong time, metadata and dictionaries of every size, more than 1 GiB and more than 2 GiB in one call: always the same cases, which take 3.5 GB of memory. The seed and the iterations are for `SpareCapacity` |
 | `oom <seed> <iterations> <max length>` | fails each allocation in turn, or 150 of them if there are more, in the encoder, the decoder and `StreamingDecoder`. An allocation that cannot fail is reported with its source line |
 | `oom-cold` | the same for the first call in a process, which builds the tables that later calls share; a process for each allocation |
 | `gen-corpus <dir> <n>`, `replay-dec <dir>` | seeds for the libFuzzer targets; runs a `fuzz_dec` corpus (for coverage) |

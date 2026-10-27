@@ -432,6 +432,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut spread_range = bun_ast::Range::default();
         let mut type_colon_range = bun_ast::Range::default();
         let mut comma_after_spread = bun_ast::Loc::EMPTY;
+        let mut close_paren_after_comma = bun_ast::Loc::EMPTY;
 
         // Push a scope assuming this is an arrow function. It may not be, in which
         // case we'll need to roll this change back. This has to be done ahead of
@@ -501,6 +502,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // Eat the comma token
             p.lexer.next()?;
+
+            // A comma before the ")" is only valid if these turn out to be arguments
+            if p.lexer.token == T::TCloseParen {
+                close_paren_after_comma = p.lexer.loc();
+                break;
+            }
         }
         let items: &'a mut [Expr] = items_list.into_bump_slice_mut();
 
@@ -649,6 +656,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if spread_range.len > 0 {
                 p.log()
                     .add_range_error(Some(p.source), type_colon_range, b"Unexpected \"...\"");
+                return Err(crate::Error::SyntaxError);
+            }
+
+            // Not in esbuild, which accepts "(a,)". Node refuses it.
+            // "b || (a,)" gets the same message from the lexer.
+            if !close_paren_after_comma.is_empty() {
+                p.log().add_range_error(
+                    Some(p.source),
+                    bun_ast::Range {
+                        loc: close_paren_after_comma,
+                        len: 1,
+                    },
+                    b"Unexpected )",
+                );
                 return Err(crate::Error::SyntaxError);
             }
 

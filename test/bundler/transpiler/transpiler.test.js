@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, bunRun, hideFromStackTrace, integersThatNeedRounding, isDebug, tempDir } from "harness";
+import vm from "node:vm";
 import { join } from "path";
 
 describe("Bun.Transpiler", () => {
@@ -3920,6 +3921,250 @@ console.log(resolve.length)
       expectPrintedNoTrim("for (var [a] in y) ;", "for ([a] in y)\n  ;\nvar a;\n");
       expectPrintedNoTrim("for (let [a] of y) ;", "for (let [a] of y)\n  ;\n");
       expectPrintedNoTrim("for (const {a} of y) ;", "for (const { a } of y)\n  ;\n");
+    });
+
+    describe("a comma before the `)` of a parenthesized list", () => {
+      const loaders = {
+        js: new Bun.Transpiler({ loader: "js" }),
+        jsx: new Bun.Transpiler({ loader: "jsx" }),
+        ts: new Bun.Transpiler({ loader: "ts" }),
+        tsx: new Bun.Transpiler({ loader: "tsx" }),
+      };
+      const errorsOf = parse => {
+        try {
+          parse();
+        } catch (er) {
+          return (er instanceof AggregateError ? er.errors : [er]).map(e => ({
+            message: e.message,
+            offset: e.position?.offset,
+          }));
+        }
+        return [];
+      };
+      // `scanImports` uses the scan-only parser.
+      const everyEntry = (code, loader) => ({
+        transformSync: errorsOf(() => loaders[loader].transformSync(code)),
+        scan: errorsOf(() => loaders[loader].scan(code)),
+        scanImports: errorsOf(() => loaders[loader].scanImports(code)),
+      });
+      const prints = (code, out, loader = "js") => {
+        expect({ code, out: loaders[loader].transformSync(code).trim(), ...everyEntry(code, loader) }).toEqual({
+          code,
+          out,
+          transformSync: [],
+          scan: [],
+          scanImports: [],
+        });
+      };
+
+      it("is an error when the list is an expression", () => {
+        // The caret marks the ")" that the one error points at.
+        const rejects = (marked, loader = "js") => {
+          const offset = marked.indexOf("^");
+          const code = marked.slice(0, offset) + marked.slice(offset + 1);
+          const error = [{ message: "Unexpected )", offset }];
+          expect({ code, ...everyEntry(code, loader) }).toEqual({
+            code,
+            transformSync: error,
+            scan: error,
+            scanImports: error,
+          });
+        };
+
+        rejects("x = (a,^)");
+        rejects("x = (a, b,^)");
+        rejects("x = (a,\n^)");
+        rejects("x = (a, /* ) */ ^)");
+        rejects("x = ((a,^))");
+        rejects("x = ((a),^)");
+        rejects("x = (a, (b,^))");
+        rejects("x = ((a,^), b,)");
+        rejects("x = (a = 1,^)");
+        rejects("x = ([a,],^)");
+        rejects("x = ({ a, },^)");
+        rejects("x = (a,^).b");
+        rejects("x = (a,^) ? b : c");
+        rejects("x = y ? (a,^) : b");
+        rejects("x = y ? a : (b,^)");
+        rejects("x = f((a,^))");
+        rejects("x = [(a,^)]");
+        rejects("x = () => (a,^)");
+        rejects("x = (a,) => (b,^)");
+        rejects("x = ((a,) => a,^)");
+        rejects("x = ((a,^)) => a");
+        rejects("x = (b = (a,^)) => b");
+        rejects("(a,^) = 1");
+        rejects("for ((a,^);;) ;");
+        rejects("function f() { return (a,^) }");
+        rejects("x = <div>{(a,^)}</div>", "jsx");
+        rejects("x = (a,^)", "ts");
+        rejects("x = (a as any,^)", "ts");
+        rejects("x = <T>(a,^)", "ts");
+        rejects("x = 1 + <T>(a,^)", "ts");
+        rejects("x = (a,^): T", "ts");
+        rejects("x = y ? (a,^) : b", "ts");
+        rejects("x = y ? (a,^) : b => c", "ts");
+        rejects("x = <div>{(a,^)}</div>", "tsx");
+        // A line of TypeScript's commaOperatorWithoutOperand.ts. tsc reports TS1109 at the same place.
+        rejects("(ANY, ^);", "ts");
+
+        // The same list after an operator gets the same error, from the lexer.
+        rejects("x = b || (a,^)");
+        rejects("x = typeof (a,^)");
+
+        // replMode reads `{a: 1},` as `({a: 1},)`.
+        const repl = new Bun.Transpiler({ loader: "tsx", replMode: true });
+        expect(errorsOf(() => repl.transformSync("{a: 1},"))).toEqual([{ message: "Unexpected )", offset: 8 }]);
+      });
+
+      it("is valid in arrow function parameters and in call arguments", () => {
+        prints("x = (a,) => a;", "x = (a) => a;");
+        prints("x = (a, b,) => a;", "x = (a, b) => a;");
+        prints("x = (\n  a,\n  b,\n) => a;", "x = (a, b) => a;");
+        prints("x = (a, /* ) */ ) => a;", "x = (a) => a;");
+        prints("x = (a = 1,) => a;", "x = (a = 1) => a;");
+        prints("x = ({ a = 1 }, [b],) => a;", "x = ({ a = 1 }, [b]) => a;");
+        prints("x = ((a,) => a, b);", "x = ((a) => a, b);");
+        prints("x = async (a,) => a;", "x = async (a) => a;");
+        prints("x = async(a,);", "x = async(a);");
+        prints("x = async(a, b,);", "x = async(a, b);");
+        prints("x = async(...a,);", "x = async(...a);");
+        prints("x = f(a,);", "x = f(a);");
+        prints("x = new f(a,);", "x = new f(a);");
+        prints("x = (a,): T => a;", "x = (a) => a;", "ts");
+        prints("x = (a?,) => a;", "x = (a) => a;", "ts");
+        prints("x = (a: T,) => a;", "x = (a) => a;", "ts");
+        prints("x = <T>(a,) => a;", "x = (a) => a;", "ts");
+        prints("x = async <T>(a,) => a;", "x = async (a) => a;", "ts");
+        prints("x = async <T>(a,);", "x = async(a);", "ts");
+        prints("x = y ? (a,): T => a : c;", "x = y ? (a) => a : c;", "ts");
+        prints("x = y ? (a,) : b => c : d;", "x = y ? (a) => c : d;", "ts");
+        prints("x = y ? async (a,) : b => c;", "x = y ? async(a) : (b) => c;", "ts");
+        prints("x = y ? async (a,) : b => c : d;", "x = y ? async (a) => c : d;", "ts");
+        prints("x = y ? (a,): T => (b) : (c) => d;", "x = y ? (a) => b : (c) => d;", "ts");
+        prints(
+          "x = y ? ({ a, b },): T => ({ a, b }) : (c) => d;",
+          "x = y ? ({ a, b }) => ({ a, b }) : (c) => d;",
+          "ts",
+        );
+        prints("x = <T,>(a,) => a;", "x = (a) => a;", "tsx");
+
+        // A setter has no parenthesized list. JavaScriptCore refuses this comma. V8 and tsc accept it.
+        prints("x = { set m(a,) {} };", "x = { set m(a) {} };");
+        prints("class A { set m(a,) {} }", "class A {\n  set m(a) {}\n}");
+      });
+
+      // tsc reads each of these as `y ? <arrow function> : <arrow function>`. The parser takes `: c =>` for a
+      // return type of `(b)`, with and without a trailing comma (the first three rows are wrong on main too).
+      // The last two rows were the program `y ? a : (T) => (b) => d` before, and are an error now.
+      describe("does not repair a TypeScript arrow function before `:` that has a body in parentheses", () => {
+        for (const [code, out] of [
+          ["x = y ? (a) => (b) : c => d;", "x = y ? (a) => b : (c) => d;"],
+          ["x = y ? (a): T => (b) : c => d;", "x = y ? (a) => b : (c) => d;"],
+          ["x = y ? async (a,): T => (b) : c => d;", "x = y ? async (a) => b : (c) => d;"],
+          ["x = y ? (a,): T => (b) : c => d;", "x = y ? (a) => b : (c) => d;"],
+          ["x = y ? ({ a, b },): T => ({ a, b }) : c => d;", "x = y ? ({ a, b }) => ({ a, b }) : (c) => d;"],
+        ]) {
+          it.failing(code, () => prints(code, out, "ts"));
+        }
+      });
+
+      it("comes after an earlier error in the list", () => {
+        const rejectsWith = (code, messages, loader = "js") => {
+          const errors = errorsOf(() => loaders[loader].transformSync(code)).map(e => e.message);
+          expect({ code, errors }).toEqual({ code, errors: messages });
+        };
+
+        // An error that stops the parser is the only one.
+        rejectsWith("x = (...a,)", ['Unexpected "..."']);
+        rejectsWith("x = (...a,) => a", ['Unexpected "," after rest pattern']);
+        rejectsWith("x = (a,)\n=> a", ['Unexpected newline before "=>"']);
+        rejectsWith("x = (a: T,)", ['Unexpected ":"'], "ts");
+        rejectsWith("x = (a,); y = (b,)", ["Unexpected )"]);
+        // Other errors come first, as they do for the same list after an operator.
+        rejectsWith("x = ({ a = 1 },)", ['Unexpected "="', "Unexpected )"]);
+        rejectsWith("x = b || ({ a = 1 },)", ['Unexpected "="', "Unexpected )"]);
+        rejectsWith("x = (super.a,)", ['Unexpected "super"', "Unexpected )"]);
+        rejectsWith("x = b || (super.a,)", ['Unexpected "super"', "Unexpected )"]);
+        rejectsWith("x = (a?,)", ["Unexpected ,", "Unexpected )"], "ts");
+      });
+
+      it("is accepted only where JavaScriptCore accepts it", () => {
+        const accepts = parse => {
+          try {
+            parse();
+            return true;
+          } catch {
+            return false;
+          }
+        };
+        const lists = ["a", "a, b", "a = 1", "[a]", "{ a }", "a, [b] = c", "...a", "a, ...b"];
+        const places = [
+          list => `x = (${list});`,
+          list => `x = (${list}) => y;`,
+          list => `x = async (${list}) => y;`,
+          list => `x = async(${list});`,
+          list => `x = f(${list});`,
+          list => `x = new f(${list});`,
+          list => `x = ((${list}));`,
+          list => `x = ((${list}), z);`,
+          list => `x = (z, (${list}));`,
+          list => `x = y ? (${list}) : z;`,
+          list => `x = y ? z : (${list});`,
+          list => `x = y || (${list});`,
+          list => `x = (${list}).p;`,
+          list => `x = [(${list})];`,
+          list => `x = { k: (${list}) };`,
+          list => `x = () => (${list});`,
+          list => `x = (p = (${list})) => p;`,
+          list => `if ((${list})) ;`,
+          list => `for ((${list});;) ;`,
+          list => `function g() { return (${list}); }`,
+          list => `(${list}) = 1;`,
+          list => `x = \`\${(${list})}\`;`,
+        ];
+        const differ = [];
+        let accepted = 0;
+        let refused = 0;
+        for (const place of places) {
+          for (const list of lists) {
+            for (const code of [place(list), place(list + ",")]) {
+              // `vm.Script` gives the text to JavaScriptCore as it is, with no transpiler before it.
+              const engine = accepts(() => new vm.Script(code));
+              if (engine) accepted++;
+              else refused++;
+              if (accepts(() => loaders.js.transformSync(code)) !== engine) differ.push(code);
+            }
+          }
+        }
+        expect(differ).toEqual([]);
+        expect({ accepted: accepted > 0, refused: refused > 0 }).toEqual({ accepted: true, refused: true });
+      });
+
+      it("is an error when bun runs the file", async () => {
+        const source = "var a = 1;\nvar x = (a,);\nconsole.log('RAN', x);\n";
+        using dir = tempDir("paren-trailing-comma", { "esm.mjs": source, "cjs.cjs": source });
+        const run = async file => {
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), file],
+            env: bunEnv,
+            cwd: String(dir),
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          return {
+            stdout,
+            error: stderr.match(/^error: (.*)$/m)?.[1],
+            at: stderr.match(/^\s+at .*?(\w+\.\w+:\d+:\d+)$/m)?.[1],
+            exitCode,
+          };
+        };
+        expect(await Promise.all([run("esm.mjs"), run("cjs.cjs")])).toEqual([
+          { stdout: "", error: "Unexpected )", at: "esm.mjs:2:12", exitCode: 1 },
+          { stdout: "", error: "Unexpected )", at: "cjs.cjs:2:12", exitCode: 1 },
+        ]);
+      });
     });
 
     it("regexp", () => {

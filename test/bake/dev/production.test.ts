@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync } from "fs";
+import { existsSync, readFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import path from "path";
 import { minimalFramework, tempDirWithBakeDeps } from "../bake-harness";
@@ -360,11 +360,13 @@ export default function Docs() {
       "pages/about/index.tsx": `export default function About() { return <p>about</p>; }`,
     });
 
-    const { stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx --outdir ./dist`
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx --outdir ./dist`
       .cwd(dir)
       .env(bunEnv)
       .throws(false);
     expect(stderr.toString()).toContain("Multiple pages matching the same route pattern is ambiguous");
+    expect(existsSync(path.join(dir, "dist"))).toBe(false);
+    expect(exitCode).toBe(1);
   });
 
   // The bundler has no transform for these modules yet. The build used to abort
@@ -503,6 +505,121 @@ export default function () {
     expect(stderr.toString()).toContain('"routes/[oops.ts" is not a valid route');
     expect(existsSync(path.join(String(dir), "dist"))).toBe(false);
     expect(exitCode).toBe(1);
+  });
+
+  describe.concurrent("route collisions", () => {
+    const router = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts" };
+    // The framework can prerender every route of these fixtures, so only a collision stops a build.
+    const fixture = (routerTypes: object[], routeFiles: string[]) => ({
+      "app.ts": `export default { app: { framework: { fileSystemRouterTypes: ${JSON.stringify(routerTypes)} } } };`,
+      "server.ts": `
+        export function render(req, meta) {
+          return new Response(String(meta.pageModule.default()));
+        }
+        export async function prerender(meta) {
+          return { files: { "/index.html": String(meta.pageModule.default()) } };
+        }
+        export function getParams() {
+          return [{ id: "first", slug: "first" }];
+        }
+      `,
+      ...Object.fromEntries(routeFiles.map(file => [file, `export default () => ${JSON.stringify(file)};`])),
+    });
+
+    async function build(dir: string) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--app", "./app.ts"],
+        env: bunEnv,
+        cwd: dir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const lines = normalizePath(stderr).split("\n");
+      const result = {
+        errors: lines.filter(line => line.startsWith("error: ")),
+        // A collision report lists its two files, one per line. Their order follows the scan order.
+        reportedFiles: lines
+          .filter(line => line.startsWith("  - "))
+          .map(line => line.slice("  - ".length))
+          .sort(),
+        stdout,
+        wroteDist: existsSync(path.join(dir, "dist")),
+        exitCode,
+      };
+      return { result, stderr };
+    }
+
+    const collisions: [name: string, noun: string, routerTypes: object[], reportedFiles: string[]][] = [
+      ["a file and the index file of a directory", "pages", [router], ["routes/about.ts", "routes/about/index.ts"]],
+      ["one file name with two extensions", "pages", [router], ["routes/index.ts", "routes/index.js"]],
+      ["two param names in one position", "pages", [router], ["routes/blog/[id].ts", "routes/blog/[slug].ts"]],
+      [
+        "a route group",
+        "pages",
+        [{ ...router, style: "nextjs-app-ui" }],
+        ["routes/docs/page.tsx", "routes/(marketing)/docs/page.tsx"],
+      ],
+      ["one path in two routers", "pages", [router, { ...router, root: "more" }], ["routes/about.ts", "more/about.ts"]],
+      // Both routers map the one file to the one URL, so the report lists it twice.
+      ["one file in two routers", "pages", [router, { ...router }], ["routes/about.ts", "routes/about.ts"]],
+      [
+        "two layouts of one directory",
+        "layout",
+        [{ ...router, layouts: true }],
+        ["routes/_layout.ts", "routes/_layout.js"],
+      ],
+      [
+        "two collisions in one build",
+        "pages",
+        [router],
+        ["routes/about.ts", "routes/about/index.ts", "routes/blog/[id].ts", "routes/blog/[slug].ts"],
+      ],
+    ];
+    test.each(collisions)("fail the build (%s)", async (_, noun, routerTypes, reportedFiles) => {
+      using dir = tempDir("bake-production-route-collision", fixture(routerTypes, reportedFiles));
+      const { result, stderr } = await build(String(dir));
+      expect(result, stderr).toEqual({
+        errors: Array(reportedFiles.length / 2).fill(
+          `error: Multiple ${noun} matching the same route pattern is ambiguous`,
+        ),
+        reportedFiles: reportedFiles.toSorted(),
+        stdout: "",
+        wroteDist: false,
+        exitCode: 1,
+      });
+    });
+
+    test("routers that share no URL build", async () => {
+      const routerTypes = [
+        router,
+        { ...router, root: "more" },
+        { ...router, root: "app", style: "nextjs-app-ui" },
+        { ...router, root: "app", style: "nextjs-app-routes" },
+      ];
+      const pages = {
+        "about/index.html": "routes/about.ts",
+        "first/index.html": "routes/[id].ts",
+        "contact/index.html": "more/contact.ts",
+        "docs/index.html": "app/docs/page.tsx",
+        "api/hello/index.html": "app/api/hello/route.ts",
+      };
+      using dir = tempDir("bake-production-no-route-collision", fixture(routerTypes, Object.values(pages)));
+      const { result, stderr } = await build(String(dir));
+      expect(result, stderr).toEqual({
+        errors: [],
+        reportedFiles: [],
+        stdout: "done\n",
+        wroteDist: true,
+        exitCode: 0,
+      });
+      const dist = path.join(String(dir), "dist");
+      const written = Array.from(new Bun.Glob("**/*.html").scanSync(dist), file => [
+        normalizePath(file),
+        readFileSync(path.join(dist, file), "utf8"),
+      ]);
+      expect(Object.fromEntries(written)).toEqual(pages);
+    });
   });
 
   test("handles build with no pages directory without crashing", async () => {

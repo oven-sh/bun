@@ -596,13 +596,13 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     let mut router = FrameworkRouter::init_empty(cwd, router_types.into_boxed_slice())?;
     let mut route_scan = entry_points::RouteScan {
         entry_points: &mut entry_points,
-        invalid_routes: 0,
+        error_count: 0,
     };
     router.scan_all(
         &mut server_transpiler.resolver,
         router::InsertionContext::wrap(&mut route_scan),
     )?;
-    if route_scan.invalid_routes > 0 {
+    if route_scan.error_count > 0 {
         Global::crash();
     }
 

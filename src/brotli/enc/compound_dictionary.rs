@@ -1,24 +1,41 @@
 //! Bytes that the encoder can refer to as if they came before the start of the stream.
 
 use super::Fallible;
-use crate::util::{Bug, SliceExt, load_u64_le, try_zeroed};
+use crate::util::{SliceExt, load_u64_le, try_zeroed};
 
 pub(crate) const MAX_COMPOUND_DICTS: usize = 15;
 
-pub(crate) const PREPARED_DICTIONARY_HASH_MUL_64_LONG: u64 = 0x1FE3_5A7B_D357_9BD3;
+/// Of the positions with the same hash, only this many are kept, the last ones.
+const BUCKET_LIMIT: u16 = 32;
+/// `log2` of how many buckets share a slot.
+const BUCKETS_PER_SLOT_BITS: u32 = 10;
+/// In `heads`.
+pub(crate) const EMPTY_BUCKET: u16 = 0xFFFF;
+/// Set in the last item of a bucket.
+pub(crate) const LAST_ITEM_FLAG: u32 = 1 << 31;
 
-/// A dictionary and an index of where in it each sequence of `hash_bits / 8` bytes occurs.
+// Where a bucket starts in its slot fits in `heads`.
+const _: () = assert!((BUCKET_LIMIT as u32) << BUCKETS_PER_SLOT_BITS < EMPTY_BUCKET as u32);
+
+/// The bucket of the 5 bytes in the low bits of `bytes`.
+#[inline(always)]
+pub(crate) fn bucket_index(bytes: u64, bucket_bits: u32) -> usize {
+    const MASK: u64 = (1 << 40) - 1;
+    const MULTIPLIER: u64 = 0x1FE3_5A7B_D357_9BD3;
+    ((bytes & MASK).wrapping_mul(MULTIPLIER) >> (64 - bucket_bits)) as usize
+}
+
+/// A dictionary and an index of where in it each sequence of 5 bytes occurs.
 ///
-/// A hash selects a bucket, and its low `slot_bits` a slot. The positions of a bucket are the items from
-/// `slot_offsets[slot] + heads[bucket]` up to the first one with the highest bit set.
+/// The low `slot_bits` of the index of a bucket select a slot. The positions of a bucket are the items from
+/// `slot_offsets[slot] + heads[bucket]` up to the first one with [`LAST_ITEM_FLAG`].
 pub struct PreparedDictionary {
     pub(crate) source: Box<[u8]>,
-    pub(crate) hash_bits: u32,
     pub(crate) bucket_bits: u32,
     pub(crate) slot_bits: u32,
     /// One for each slot.
     pub(crate) slot_offsets: Vec<u32>,
-    /// One for each bucket. 0xFFFF for an empty one.
+    /// One for each bucket, or [`EMPTY_BUCKET`].
     pub(crate) heads: Vec<u16>,
     pub(crate) items: Vec<u32>,
 }
@@ -30,46 +47,27 @@ impl PreparedDictionary {
             return None;
         }
         let mut bucket_bits = 17u32;
-        let mut slot_bits = 7u32;
-        let hash_bits = 40u32;
-        let bucket_limit = 32u16;
         let mut volume = 16usize << bucket_bits;
         // More buckets for a larger dictionary.
         while volume < source.len() && bucket_bits < 22 {
             bucket_bits += 1;
-            slot_bits += 1;
             volume <<= 1;
         }
-        Self::with_params(source, bucket_bits, slot_bits, hash_bits, bucket_limit).ok()
+        Self::with_bucket_bits(source, bucket_bits).ok()
     }
 
-    fn with_params(
-        source: Box<[u8]>,
-        bucket_bits: u32,
-        slot_bits: u32,
-        hash_bits: u32,
-        bucket_limit: u16,
-    ) -> Fallible<Self> {
-        let source_size = source.len();
+    fn with_bucket_bits(source: Box<[u8]>, bucket_bits: u32) -> Fallible<Self> {
+        let slot_bits = bucket_bits - BUCKETS_PER_SLOT_BITS;
         let num_slots = 1usize << slot_bits;
         let num_buckets = 1usize << bucket_bits;
-        let hash_shift = 64 - bucket_bits;
-        let hash_mask = !0u64 >> (64 - hash_bits);
         let slot_mask = num_slots - 1;
-        if slot_bits > 16 || slot_bits > bucket_bits || bucket_bits - slot_bits >= 16 {
-            return Err(Bug.into());
-        }
 
-        // Step 1: chain the positions of each bucket, the last one first.
-        let mut slot_size = try_zeroed::<u32>(num_slots)?;
-        let mut slot_limit = try_zeroed::<u32>(num_slots)?;
+        // Chain the positions of each bucket, the last one first.
         let mut num = try_zeroed::<u16>(num_buckets)?;
         let mut bucket_heads = try_zeroed::<u32>(num_buckets)?;
-        let mut next_bucket = try_zeroed::<u32>(source_size)?;
-        for i in 0..source_size.saturating_sub(7) {
-            let h = (load_u64_le(&source, i)? & hash_mask)
-                .wrapping_mul(PREPARED_DICTIONARY_HASH_MUL_64_LONG);
-            let key = (h >> hash_shift) as usize;
+        let mut next_bucket = try_zeroed::<u32>(source.len())?;
+        for i in 0..source.len().saturating_sub(7) {
+            let key = bucket_index(load_u64_le(&source, i)?, bucket_bits);
             let count = num.at(key)?;
             next_bucket.put(
                 i,
@@ -80,49 +78,28 @@ impl PreparedDictionary {
                 },
             )?;
             bucket_heads.put(key, i as u32)?;
-            num.put(key, (count + 1).min(bucket_limit))?;
+            num.put(key, (count + 1).min(BUCKET_LIMIT))?;
         }
 
-        // Step 2: lower the limit of each slot until its buckets can be addressed with 16 bits.
-        let mut total_items = 0u32;
-        for i in 0..num_slots {
-            let mut limit = u32::from(bucket_limit);
-            loop {
-                let mut count = 0u32;
-                let mut overflow = false;
-                for &size in num.sub(i..)?.iter().step_by(num_slots) {
-                    // The last chain may reach past the limit. Only its start has to be addressable.
-                    if count >= 0xFFFF {
-                        overflow = true;
-                        break;
-                    }
-                    count += u32::from(size).min(limit);
-                }
-                if !overflow {
-                    slot_size.put(i, count)?;
-                    total_items += count;
-                    break;
-                }
-                limit -= 1;
-            }
-            slot_limit.put(i, limit)?;
+        // Lay the chains out one after the other, those of a slot together.
+        let mut slot_size = try_zeroed::<u32>(num_slots)?;
+        for (i, &count) in num.iter().enumerate() {
+            *slot_size.at_mut(i & slot_mask)? += u32::from(count);
         }
-
-        // Step 3: lay the chains out one after the other.
         let mut slot_offsets = try_zeroed::<u32>(num_slots)?;
-        let mut heads = try_zeroed::<u16>(num_buckets)?;
-        let mut items = try_zeroed::<u32>(total_items as usize)?;
-        total_items = 0;
+        let mut total_items = 0u32;
         for (offset, size) in slot_offsets.iter_mut().zip(&mut slot_size) {
             *offset = total_items;
             total_items += *size;
             *size = 0;
         }
+        let mut heads = try_zeroed::<u16>(num_buckets)?;
+        let mut items = try_zeroed::<u32>(total_items as usize)?;
         for (i, head) in heads.iter_mut().enumerate() {
             let slot = i & slot_mask;
-            let count = u32::from(num.at(i)?).min(slot_limit.at(slot)?);
+            let count = u32::from(num.at(i)?);
             if count == 0 {
-                *head = 0xFFFF;
+                *head = EMPTY_BUCKET;
                 continue;
             }
             let size = slot_size.at_mut(slot)?;
@@ -135,12 +112,11 @@ impl PreparedDictionary {
                 cursor += 1;
                 pos = next_bucket.at(pos as usize)?;
             }
-            *items.at_mut(cursor - 1)? |= 0x8000_0000;
+            *items.at_mut(cursor - 1)? |= LAST_ITEM_FLAG;
         }
 
         Ok(Self {
             source,
-            hash_bits,
             bucket_bits,
             slot_bits,
             slot_offsets,

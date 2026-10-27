@@ -17,7 +17,7 @@ use self::longest_match_tagged::{DenseBuckets, HashLongestMatchTagged, SparseBuc
 use self::rolling::HashRolling;
 pub(crate) use self::to_binary_tree::{H10, MAX_NUM_MATCHES_H10};
 use super::compound_dictionary::{
-    CompoundDictionary, PREPARED_DICTIONARY_HASH_MUL_64_LONG, PreparedDictionary,
+    CompoundDictionary, EMPTY_BUCKET, LAST_ITEM_FLAG, PreparedDictionary, bucket_index,
 };
 use super::dictionary_hash::DictionaryHash;
 use super::fast_log::log2_floor_nonzero;
@@ -608,19 +608,14 @@ fn compound_dictionary_chain(
     data: &[u8],
     cur_ix_masked: usize,
 ) -> Checked<Option<usize>> {
-    let hash_shift = 64 - dictionary.bucket_bits;
-    let slot_mask = u32::MAX >> (32 - dictionary.slot_bits);
-    let hash_mask = u64::MAX >> (64 - dictionary.hash_bits);
-    let h = (load_u64_le(data, cur_ix_masked)? & hash_mask)
-        .wrapping_mul(PREPARED_DICTIONARY_HASH_MUL_64_LONG);
-    let key = (h >> hash_shift) as u32;
-    let slot = key & slot_mask;
-    let head = dictionary.heads.at(key as usize)?;
-    if head == 0xFFFF {
+    let key = bucket_index(load_u64_le(data, cur_ix_masked)?, dictionary.bucket_bits);
+    let slot = key & ((1 << dictionary.slot_bits) - 1);
+    let head = dictionary.heads.at(key)?;
+    if head == EMPTY_BUCKET {
         return Ok(None);
     }
     Ok(Some(
-        (dictionary.slot_offsets.at(slot as usize)? + u32::from(head)) as usize,
+        (dictionary.slot_offsets.at(slot)? + u32::from(head)) as usize,
     ))
 }
 
@@ -682,8 +677,8 @@ fn find_compound_dictionary_match(
         return Ok(());
     };
     for &item in dictionary.items.sub(chain..)? {
-        let offset = (item & 0x7FFF_FFFF) as usize;
-        let is_last = item & 0x8000_0000 != 0;
+        let offset = (item & !LAST_ITEM_FLAG) as usize;
+        let is_last = item & LAST_ITEM_FLAG != 0;
         let distance = distance_offset.wrapping_sub(offset);
         let limit = source_size.wrapping_sub(offset).min(max_length);
         if distance <= max_distance
@@ -740,8 +735,8 @@ fn find_all_compound_dictionary_matches(
         return Ok(0);
     };
     for &item in dictionary.items.sub(chain..)? {
-        let offset = (item & 0x7FFF_FFFF) as usize;
-        let is_last = item & 0x8000_0000 != 0;
+        let offset = (item & !LAST_ITEM_FLAG) as usize;
+        let is_last = item & LAST_ITEM_FLAG != 0;
         let distance = distance_offset.wrapping_sub(offset);
         let limit = source_size.wrapping_sub(offset).min(max_length);
         if distance <= max_distance

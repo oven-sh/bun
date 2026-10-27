@@ -2,7 +2,7 @@
 // the same errors, the same bytes. record.ts says where the expected results come from.
 import { describe, expect, test } from "bun:test";
 import { join } from "node:path";
-import { load, observeDecode, observeEncode, observeMetadata, type DecodeCase, type EncodeCase } from "./observe";
+import { hash, load, observeDecode, observeEncode, observeMetadata, type DecodeCase, type EncodeCase } from "./observe";
 
 const decodeCases = await load<DecodeCase>(join(import.meta.dir, "decode.json.gz"));
 const encodeCases = await load<EncodeCase>(join(import.meta.dir, "encode.json.gz"));
@@ -52,4 +52,9 @@ describe("encode", () => {
       expect({ ...c, ...(await observeEncode(c)) }).toEqual(c);
     },
   );
+
+  test("an image that takes more than 500 cost intervals", async () => {
+    const file = await Bun.file(join(import.meta.dir, "intervals.webp")).bytes();
+    expect(hash(await new Bun.Image(file).webp({ lossless: true }).bytes())).toBe(hash(file));
+  });
 });

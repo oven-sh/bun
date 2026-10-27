@@ -12,8 +12,6 @@ pub(crate) fn decode(data: &[u8], width: usize, height: usize) -> Result<Vec<u8>
     if width == 0 || height == 0 {
         return Err(Error::Bug);
     }
-    let mut plane = try_vec(0, width * height)?;
-
     let Some((&header, alpha_data @ [_, ..])) = data.split_first() else {
         return Err(Error::BitstreamError);
     };
@@ -30,15 +28,16 @@ pub(crate) fn decode(data: &[u8], width: usize, height: usize) -> Result<Vec<u8>
         return Err(Error::BitstreamError);
     }
 
-    match method {
-        ALPHA_NO_COMPRESSION => {
-            let deltas = alpha_data.get(..plane.len()).ok_or(Error::BitstreamError)?;
-            plane.write_at(0, deltas)?;
-        }
-        ALPHA_LOSSLESS_COMPRESSION => {
-            vp8l::dec::decode_alpha(alpha_data, width, height, &mut plane)?;
-        }
+    let size = width * height;
+    let raw = match method {
+        ALPHA_NO_COMPRESSION => Some(alpha_data.get(..size).ok_or(Error::BitstreamError)?),
+        ALPHA_LOSSLESS_COMPRESSION => None,
         _ => return Err(Error::BitstreamError),
+    };
+    let mut plane = try_vec(0, size)?;
+    match raw {
+        Some(raw) => plane.write_at(0, raw)?,
+        None => vp8l::dec::decode_alpha(alpha_data, width, height, &mut plane)?,
     }
     unfilter(filter, &mut plane, width)?;
     Ok(plane)

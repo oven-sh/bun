@@ -380,6 +380,14 @@ impl<'a> Segments<'a> {
         spot.segment.read64(spot.pos)
     }
 
+    /// What differs between `bytes` and the 8 bytes at `place`: 0 if nothing does. Not 0 in the lower half if they are
+    /// not in one segment, or if `place` is the first one, which takes no branch to find out.
+    #[inline(always)]
+    pub(super) fn diff64_after_first(self, place: u32, bytes: u64) -> u64 {
+        let spot = self.spot(place);
+        spot.segment.diff64(spot.pos, bytes) | u64::from(place == 0)
+    }
+
     /// The 4 bytes that are `offset` before the position `pos`, if they are in one segment. Which one that is does not
     /// change much from one time to the next.
     #[inline(always)]
@@ -647,18 +655,20 @@ impl Finder {
             }
 
             // `ip0` is not past the last position that can be looked at.
-            let Some(around) = near.window::<{ 2 + HASH_READ_SIZE }>(ip0 - 2) else {
+            let Some(bytes) = near.read64(ip0) else {
                 break 'block;
             };
+            bytes0 = bytes;
             if let Some(to_insert) = near.read64((current0 + 2).wrapping_sub(base_index)) {
                 table_put(hash_table, hash_of::<MLS>(to_insert, hlog), current0 + 2);
             }
-            table_put(
-                hash_table,
-                hash_of::<MLS>(le64_at::<0, _>(around), hlog),
-                base_index.wrapping_add(ip0 - 2),
-            );
-            bytes0 = le64_at::<2, _>(around);
+            if let Some(before) = near.read64(ip0 - 2) {
+                table_put(
+                    hash_table,
+                    hash_of::<MLS>(before, hlog),
+                    base_index.wrapping_add(ip0 - 2),
+                );
+            }
 
             while window.read32_before(ip0, rep_offset2) == Some(bytes0 as u32) && rep_offset2 > 0 {
                 let rep_place = window.place_of(ip0).wrapping_sub(rep_offset2);
@@ -866,18 +876,20 @@ impl Finder {
             }
 
             // `ip0` is not past the last position that can be looked at.
-            let Some(around) = near.window::<{ 2 + HASH_READ_SIZE }>(ip0 - 2) else {
+            let Some(bytes) = near.read64(ip0) else {
                 break 'block;
             };
+            bytes0 = bytes;
             if let Some(to_insert) = near.read64((curr + 2).wrapping_sub(base_index)) {
                 table_put(hash_table, hash_of::<MLS>(to_insert, hlog), curr + 2);
             }
-            table_put(
-                hash_table,
-                hash_of::<MLS>(le64_at::<0, _>(around), hlog),
-                base_index.wrapping_add(ip0 - 2),
-            );
-            bytes0 = le64_at::<2, _>(around);
+            if let Some(before) = near.read64(ip0 - 2) {
+                table_put(
+                    hash_table,
+                    hash_of::<MLS>(before, hlog),
+                    base_index.wrapping_add(ip0 - 2),
+                );
+            }
 
             while window.read32_before(ip0, rep_offset2) == Some(bytes0 as u32) {
                 let rep_place = window.place_of(ip0).wrapping_sub(rep_offset2);

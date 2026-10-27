@@ -222,7 +222,11 @@ impl Finder {
             ip = end;
 
             // `ip` is not past the last position that can be looked at.
-            let Some(around) = near.window::<{ 2 + HASH_READ_SIZE }>(ip - 2) else {
+            let Some(bytes) = near.read64(ip) else {
+                break 'block;
+            };
+            bytes0 = bytes;
+            let Some(around) = near.window::<{ 1 + HASH_READ_SIZE }>(ip - 2) else {
                 break 'block;
             };
             let index_to_insert = curr + 2;
@@ -244,7 +248,6 @@ impl Finder {
                 hash_of::<MLS>(le64_at::<1, _>(around), h_bits_s),
                 base_index.wrapping_add(ip - 1),
             );
-            bytes0 = le64_at::<2, _>(around);
 
             while offset_2 > 0 && sink.read32_before(ip, offset_2) == Some(bytes0 as u32) {
                 let end = ip + 4 + sink.count_before(ip + 4, offset_2);
@@ -535,10 +538,9 @@ impl Finder {
                 ip = end;
             } else {
                 // The match, and how much of it is known. `ip` is moved to where it is for.
-                let (place, known) = if window.read64(place_long) == Some(bytes0) && place_long > 0
-                {
+                let (place, known) = if window.diff64_after_first(place_long, bytes0) == 0 {
                     (place_long, 8)
-                } else if window.read32(place_short) == Some(bytes0 as u32) && place_short > 0 {
+                } else if window.diff64_after_first(place_short, bytes0) as u32 == 0 {
                     // A short match: a long one at the next position is preferred.
                     let bytes1 = le64_at::<1, _>(here);
                     let place3 = table_swap(hash_long, hash8(bytes1, h_bits_l, 0), curr + 1)

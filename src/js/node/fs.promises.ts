@@ -363,8 +363,18 @@ const exports = {
     return fs.rm(path, options);
   },
   rmdir: async function rmdir(path, options) {
-    // Node 26 removed `recursive` (DEP0147), but packages still pass it. Keep it working through `rm`.
-    if (options?.recursive) return exports.rm(path, options);
+    // Node 25 removed `recursive` (DEP0147), but packages still pass it. Node 24's rmdir: https://github.com/nodejs/node/blob/v24.0.0/lib/internal/fs/promises.js#L807-L824
+    if (options?.recursive) {
+      const { validateInt32, validateUint32 } = require("internal/validators");
+      validateObject(options, "options");
+      const rmOptions = { recursive: false, retryDelay: 100, maxRetries: 0, ...options, force: false };
+      validateBoolean(rmOptions.recursive, "options.recursive");
+      validateInt32(rmOptions.retryDelay, "options.retryDelay", 0);
+      validateUint32(rmOptions.maxRetries, "options.maxRetries");
+      // stat, not lstat: rm then unlinks a symlink to a directory. An inherited `recursive` is false after the merge.
+      if (rmOptions.recursive && (await fs.stat(path)).isDirectory()) return exports.rm(path, rmOptions);
+      return fs.rmdir(path);
+    }
     return fs.rmdir(path, options);
   },
   writev: async (fd, buffers, position) => {

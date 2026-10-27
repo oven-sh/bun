@@ -2306,15 +2306,13 @@ impl JSValue {
             _ => Ok(None),
         }
     }
-    /// `JSValue.getOwnNonObservable` — own data property lookup that never runs
-    /// user code: an accessor, a Proxy trap or a module namespace yields `None`.
-    /// Like `get` and `get_own_truthy`, an `undefined` value is `None`.
+    /// Own data property lookup that never runs user code: an accessor, a Proxy, a module namespace or `undefined` is `None`.
     pub fn get_own_non_observable(
         self,
         global: &JSGlobalObject,
         property_name: impl AsRef<[u8]>,
     ) -> Option<JSValue> {
-        let name = bun_core::String::borrow_utf8(property_name.as_ref());
+        let name = bun_core::StringView::borrow_utf8(property_name.as_ref());
         let v = JSC__JSValue__getOwnNonObservable(self, global, &name);
         if v.is_empty() || v.is_undefined() {
             None

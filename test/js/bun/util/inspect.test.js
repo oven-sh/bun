@@ -91,83 +91,6 @@ it("getter/setters", () => {
   expect(Bun.inspect(obj)).toBe("{\n" + "  foo: [Getter/Setter]," + "\n" + "}");
 });
 
-it("does not call a $$typeof getter while checking for a React element", () => {
-  let called = 0;
-  const obj = {
-    get $$typeof() {
-      called++;
-      return Symbol.for("react.element");
-    },
-  };
-
-  expect(Bun.inspect(obj)).toBe("{\n" + "  $$typeof: [Getter]," + "\n" + "}");
-  expect(called).toBe(0);
-
-  const throwing = {
-    get $$typeof() {
-      called++;
-      throw new Error("Test failed!");
-    },
-  };
-
-  expect(Bun.inspect(throwing)).toBe("{\n" + "  $$typeof: [Getter]," + "\n" + "}");
-  expect(Bun.inspect([throwing, "after"])).toBe('[\n  {\n    $$typeof: [Getter],\n  }, "after"\n]');
-  expect(Bun.inspect(new Map([[1, throwing]]))).toBe("Map(1) {\n  1: {\n    $$typeof: [Getter],\n  },\n}");
-  expect(Bun.inspect(new Set([throwing]))).toBe("Set(1) {\n  {\n    $$typeof: [Getter],\n  },\n}");
-  expect(Bun.inspect({ nested: throwing })).toBe("{\n  nested: {\n    $$typeof: [Getter],\n  },\n}");
-
-  const hidden = {};
-  Object.defineProperty(hidden, "$$typeof", {
-    get() {
-      called++;
-      throw new Error("Test failed!");
-    },
-    enumerable: false,
-  });
-  expect(() => Bun.inspect(hidden)).not.toThrow();
-  expect(called).toBe(0);
-
-  // A plain data property still marks a React element.
-  const element = { $$typeof: Symbol.for("react.element"), type: "div", key: null, ref: null, props: { id: "x" } };
-  expect(Bun.inspect(element)).toBe('<div id="x" />');
-});
-
-it("prints a React element without calling getters on its type, key, props or children", () => {
-  const $$typeof = Symbol.for("react.element");
-  let called = 0;
-  const getter = {
-    get() {
-      called++;
-      throw new Error("Test failed!");
-    },
-    enumerable: true,
-  };
-  const withGetter = (target, name) => Object.defineProperty(target, name, getter);
-
-  expect(Bun.inspect(withGetter({ $$typeof, props: {} }, "type"))).toBe("<unknown />");
-  expect(Bun.inspect(withGetter({ $$typeof, type: "div", props: {} }, "key"))).toBe("<div />");
-  expect(Bun.inspect(withGetter({ $$typeof, type: "div" }, "props"))).toBe("<div />");
-  expect(Bun.inspect({ $$typeof, type: "div", props: withGetter({}, "children") })).toBe("<div />");
-  // An accessor prop prints like every other accessor.
-  expect(Bun.inspect({ $$typeof, type: "div", props: withGetter({ id: "x" }, "hidden") })).toBe(
-    '<div id="x" hidden=[Getter] />',
-  );
-  // A Proxy props object, nested or not, is read through its innermost target.
-  const trap = () => {
-    called++;
-    throw new Error("Test failed!");
-  };
-  const proxyProps = new Proxy({ id: "x" }, { get: trap, ownKeys: trap, getOwnPropertyDescriptor: trap });
-  expect(Bun.inspect({ $$typeof, type: "div", props: proxyProps })).toBe('<div id="x" />');
-  expect(Bun.inspect({ $$typeof, type: "div", props: new Proxy(proxyProps, {}) })).toBe('<div id="x" />');
-  expect(called).toBe(0);
-
-  // Data props, including a numeric key, still print.
-  expect(Bun.inspect({ $$typeof, type: "div", key: "k", props: { 0: "a", b: 1, children: "hi" } })).toBe(
-    '<div key="k" 0="a" b=1>hi</div>',
-  );
-});
-
 it("Timeout", () => {
   const id = setTimeout(() => {}, 0);
   expect(Bun.inspect(id)).toBe(`Timeout (#${+id})`);
@@ -1627,4 +1550,81 @@ it.skipIf(!isASAN)("prints a substring-rope jsx type after a prop's inspect.cust
   const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout).toEndWith("</div-abcdefghijklmnopqrstuvwxyz>\n");
   expect(exitCode).toBe(0);
+});
+
+it("does not call a $$typeof getter while checking for a React element", () => {
+  let called = 0;
+  const obj = {
+    get $$typeof() {
+      called++;
+      return Symbol.for("react.element");
+    },
+  };
+
+  expect(Bun.inspect(obj)).toBe("{\n" + "  $$typeof: [Getter]," + "\n" + "}");
+  expect(called).toBe(0);
+
+  const throwing = {
+    get $$typeof() {
+      called++;
+      throw new Error("Test failed!");
+    },
+  };
+
+  expect(Bun.inspect(throwing)).toBe("{\n" + "  $$typeof: [Getter]," + "\n" + "}");
+  expect(Bun.inspect([throwing, "after"])).toBe('[\n  {\n    $$typeof: [Getter],\n  }, "after"\n]');
+  expect(Bun.inspect(new Map([[1, throwing]]))).toBe("Map(1) {\n  1: {\n    $$typeof: [Getter],\n  },\n}");
+  expect(Bun.inspect(new Set([throwing]))).toBe("Set(1) {\n  {\n    $$typeof: [Getter],\n  },\n}");
+  expect(Bun.inspect({ nested: throwing })).toBe("{\n  nested: {\n    $$typeof: [Getter],\n  },\n}");
+
+  const hidden = {};
+  Object.defineProperty(hidden, "$$typeof", {
+    get() {
+      called++;
+      throw new Error("Test failed!");
+    },
+    enumerable: false,
+  });
+  expect(() => Bun.inspect(hidden)).not.toThrow();
+  expect(called).toBe(0);
+
+  // A plain data property still marks a React element.
+  const element = { $$typeof: Symbol.for("react.element"), type: "div", key: null, ref: null, props: { id: "x" } };
+  expect(Bun.inspect(element)).toBe('<div id="x" />');
+});
+
+it("prints a React element without calling getters on its type, key, props or children", () => {
+  const $$typeof = Symbol.for("react.element");
+  let called = 0;
+  const getter = {
+    get() {
+      called++;
+      throw new Error("Test failed!");
+    },
+    enumerable: true,
+  };
+  const withGetter = (target, name) => Object.defineProperty(target, name, getter);
+
+  expect(Bun.inspect(withGetter({ $$typeof, props: {} }, "type"))).toBe("<unknown />");
+  expect(Bun.inspect(withGetter({ $$typeof, type: "div", props: {} }, "key"))).toBe("<div />");
+  expect(Bun.inspect(withGetter({ $$typeof, type: "div" }, "props"))).toBe("<div />");
+  expect(Bun.inspect({ $$typeof, type: "div", props: withGetter({}, "children") })).toBe("<div />");
+  // An accessor prop prints like every other accessor.
+  expect(Bun.inspect({ $$typeof, type: "div", props: withGetter({ id: "x" }, "hidden") })).toBe(
+    '<div id="x" hidden=[Getter] />',
+  );
+  // A Proxy props object, nested or not, is read through its innermost target.
+  const trap = () => {
+    called++;
+    throw new Error("Test failed!");
+  };
+  const proxyProps = new Proxy({ id: "x" }, { get: trap, ownKeys: trap, getOwnPropertyDescriptor: trap });
+  expect(Bun.inspect({ $$typeof, type: "div", props: proxyProps })).toBe('<div id="x" />');
+  expect(Bun.inspect({ $$typeof, type: "div", props: new Proxy(proxyProps, {}) })).toBe('<div id="x" />');
+  expect(called).toBe(0);
+
+  // Data props, including a numeric key, still print.
+  expect(Bun.inspect({ $$typeof, type: "div", key: "k", props: { 0: "a", b: 1, children: "hi" } })).toBe(
+    '<div key="k" 0="a" b=1>hi</div>',
+  );
 });

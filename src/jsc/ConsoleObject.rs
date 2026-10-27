@@ -5102,6 +5102,7 @@ pub mod formatter {
                         own_properties_only: true,
                         observable: false,
                         only_non_index_properties: false,
+                        include_symbols: false,
                     },
                 )?;
 

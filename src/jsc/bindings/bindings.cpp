@@ -4721,8 +4721,7 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__getOwnNonObservable(JSC::EncodedJSV
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSObject* object = JSC::JSValue::decode(JSValue0).getObject();
     if (!object) return {};
-    WTF::String propertyNameString = propertyName->tag == BunStringTag::Empty ? WTF::emptyString() : propertyName->toWTFString(BunString::ZeroCopy);
-    auto identifier = JSC::Identifier::fromString(vm, propertyNameString);
+    auto identifier = Bun::toIdentifier(vm, *propertyName);
     auto property = JSC::PropertyName(identifier);
     PropertySlot slot(object, PropertySlot::InternalMethodType::VMInquiry, &vm);
     bool hasSlot = object->methodTable()->getOwnPropertySlot(object, globalObject, property, slot);

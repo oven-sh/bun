@@ -2743,36 +2743,6 @@ JSC_DEFINE_CUSTOM_GETTER(getConsoleConstructor, (JSGlobalObject * globalObject, 
     return JSValue::encode(result);
 }
 
-// `console._stdout` is equal to `process.stdout`
-JSC_DEFINE_CUSTOM_GETTER(getConsoleStdout, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName property))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto console = JSValue::decode(thisValue).getObject();
-    auto global = uncheckedDowncast<Zig::GlobalObject>(globalObject);
-
-    // instead of calling the constructor builtin, go through the process.stdout getter to ensure it's only created once.
-    auto stdoutValue = global->processObject()->get(globalObject, Identifier::fromString(vm, "stdout"_s));
-    if (!stdoutValue) return {};
-
-    console->putDirect(vm, property, stdoutValue, PropertyAttribute::DontEnum | 0);
-    return JSValue::encode(stdoutValue);
-}
-
-// `console._stderr` is equal to `process.stderr`
-JSC_DEFINE_CUSTOM_GETTER(getConsoleStderr, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName property))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto console = JSValue::decode(thisValue).getObject();
-    auto global = uncheckedDowncast<Zig::GlobalObject>(globalObject);
-
-    // instead of calling the constructor builtin, go through the process.stdout getter to ensure it's only created once.
-    auto stderrValue = global->processObject()->get(globalObject, Identifier::fromString(vm, "stderr"_s));
-    if (!stderrValue) return {};
-
-    console->putDirect(vm, property, stderrValue, PropertyAttribute::DontEnum | 0);
-    return JSValue::encode(stderrValue);
-}
-
 // The CommonJS `require()` machinery (`@requireESM`, `@loadEsmIntoCjs`,
 // `@internalRequire`) is only ever reached from inside CommonJS modules. A
 // process whose entry point is ESM (the common case for short scripts) never
@@ -3077,8 +3047,7 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     consoleObject->putDirectBuiltinFunction(vm, this, vm.propertyNames->asyncIteratorSymbol, consoleObjectAsyncIteratorCodeGenerator(vm), PropertyAttribute::Builtin | 0);
     consoleObject->putDirectBuiltinFunction(vm, this, clientData->builtinNames().writePublicName(), consoleObjectWriteCodeGenerator(vm), PropertyAttribute::Builtin | 0);
     consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "Console"_s), CustomGetterSetter::create(vm, getConsoleConstructor, nullptr), PropertyAttribute::CustomValue | 0);
-    consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "_stdout"_s), CustomGetterSetter::create(vm, getConsoleStdout, nullptr), PropertyAttribute::DontEnum | PropertyAttribute::CustomValue | 0);
-    consoleObject->putDirectCustomAccessor(vm, Identifier::fromString(vm, "_stderr"_s), CustomGetterSetter::create(vm, getConsoleStderr, nullptr), PropertyAttribute::DontEnum | PropertyAttribute::CustomValue | 0);
+    Bun::bindConsoleStreamsLazy(vm, this, consoleObject);
 }
 
 // ===================== start conditional builtin globals =====================

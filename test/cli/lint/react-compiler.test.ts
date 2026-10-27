@@ -580,6 +580,19 @@ ${body}
   const s2 = p.z ? f2 : k2;
   o.x = s2;
   o();`),
+      // What a function returned in the round before stands for what it returns: `q` is assigned again after `mk`.
+      "in-a-return.jsx": component(`  const k = p.q ? [ra] : [rb];
+  const k2 = p.r ? [ra] : [rb];
+  const s = p.z ? f2 : k2;
+  const w = () => {
+    let q = k;
+    const mk = () => { if (p.m) return q; return s; };
+    q = f1;
+    return mk;
+  };
+  const m = w();
+  const g = m();
+  g();`),
       // What an array had in the round before stands for what it has, in a function.
       "in-a-loop.jsx": `import { useRef } from "react";
 export function Component(p) {
@@ -647,6 +660,7 @@ export function Comp(props) {
     });
     expect(Object.fromEntries(Object.entries(diagnostics).map(([path, found]) => [path, labelsOf(found)]))).toEqual({
       "in-a-loop.jsx": [["20:3 This function accesses a ref value", "15:18 The ref is accessed here"]],
+      "in-a-return.jsx": [["20:3 This function accesses a ref value", "7:24 The ref is accessed here"]],
       "stored.jsx": [
         ["13:4 Cannot update ref value during render", "13:3 This value is a ref"],
         ["14:3 This function accesses a ref value", "8:20 The ref is accessed here"],

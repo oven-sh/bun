@@ -4454,6 +4454,10 @@ test("react-compiler time does not grow with the cube of a chain of functions", 
   expect((await cpuTime("2n.jsx")) / (await cpuTime("n.jsx"))).toBeLessThan(isDebug || isASAN ? 4 : 8);
 });
 
+// How long a build of the three tests below gets. A build that does not end takes 270 MB more each second, or 60 MB
+// in a debug build, and a debug build needs a second for what a release build does in 0.05 seconds.
+const hangGuard = isDebug || isASAN ? 30_000 : 10_000;
+
 // ValidateNoRefAccessInRender joins two nested types once, but it did not where the join makes a ref id: upstream
 // makes a new id at each join of two different refs. `w` returns one. `v1` returns `v0`, and `v0` is then assigned
 // what holds `v1`, so the type of `v0` holds its own earlier type, and with `w` in it that type was joined again on
@@ -4508,7 +4512,7 @@ test("react-compiler ref validation ends on a local that holds a closure over it
     stdout: "pipe",
     stderr: "pipe",
     // A build that joins the type on each path takes all the memory that it gets, and does not end.
-    timeout: 4_000,
+    timeout: hangGuard,
     killSignal: "SIGKILL",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
@@ -4560,7 +4564,7 @@ test("react-compiler ref validation leaves its first run where a guard reads a r
     stdout: "pipe",
     stderr: "pipe",
     // Where the first run goes on, the build takes 20 seconds, and 100 times that with one more function.
-    timeout: 4_000,
+    timeout: hangGuard,
     killSignal: "SIGKILL",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
@@ -4603,8 +4607,12 @@ test("react-compiler ref validation time does not double with each level of a ty
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",
+      // A build that walks each path does not end for this many levels.
+      timeout: hangGuard,
+      killSignal: "SIGKILL",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(proc.signalCode).toBeNull();
     expect(stderr).toBe("");
     expect(stdout).toContain("react/compiler-runtime");
     expect(exitCode).toBe(0);

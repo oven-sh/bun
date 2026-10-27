@@ -111,7 +111,6 @@ impl Decoder<'_> {
                     Reached::Eoi => break,
                 }
             }
-            self.eoi_reached = true;
         }
 
         let idcts: Vec<Idct> = self
@@ -172,11 +171,8 @@ impl Decoder<'_> {
         }
 
         // Whatever follows has to be well formed up to the end of the image.
-        if !self.eoi_reached {
-            match self.read_markers()? {
-                Reached::Sos => return Err(Error::EoiExpected),
-                Reached::Eoi => self.eoi_reached = true,
-            }
+        if !self.has_multiple_scans && matches!(self.read_markers()?, Reached::Sos) {
+            return Err(Error::EoiExpected);
         }
         Ok(pixels.into_flattened())
     }

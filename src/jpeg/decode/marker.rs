@@ -71,13 +71,6 @@ impl Decoder<'_> {
         if self.saw_soi {
             return Err(Error::SoiDuplicate);
         }
-        self.arith_dc_l = [0; NUM_ARITH_TBLS];
-        self.arith_dc_u = [1; NUM_ARITH_TBLS];
-        self.arith_ac_k = [5; NUM_ARITH_TBLS];
-        self.restart_interval = 0;
-        self.saw_jfif = false;
-        self.saw_adobe = false;
-        self.adobe_transform = 0;
         self.saw_soi = true;
         Ok(())
     }

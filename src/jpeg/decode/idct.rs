@@ -49,16 +49,13 @@ fn dequantize(coefs: &Block, table: &DctTable, lane: usize) -> [i16; 8] {
 /// Whether the coefficients in the rows and columns picked by `mask`, a bit for each in row-major order, are all zero.
 #[inline(always)]
 fn all_zero(coefs: &Block, mask: u64) -> bool {
-    // Four at a time. Masks are made of whole groups, but for the one with the DC coefficient.
+    // Four at a time: masks are made of whole groups.
     let (quads, _) = coefs.as_chunks::<4>();
     let mut any = 0u64;
     for (i, quad) in quads.iter().enumerate() {
         let [a, b, c, d] = quad.map(|coef| u64::from(coef as u16));
-        let picked = (mask >> (i * 4)) & 15;
-        if picked == 15 {
+        if (mask >> (i * 4)) & 15 != 0 {
             any |= a | b << 16 | c << 32 | d << 48;
-        } else if picked == 14 {
-            any |= b | c | d;
         }
     }
     any == 0
@@ -259,7 +256,7 @@ pub(crate) fn idct2x2(coefs: &Block, table: &DctTable) -> [[u8; 2]; 2] {
         let tmp0 = (c1 * F_3_624 - c3 * F_1_272).wrapping_add(c5 * F_0_850 - c7 * F_0_720);
         let tmp10 = c0.wrapping_shl(CONST_BITS + 2);
         [tmp10.wrapping_add(tmp0), tmp10.wrapping_sub(tmp0)]
-            .map(|v| to_sample(round_shift(v, DESCALE_P2).clamp(-32768, 32767) as i16))
+            .map(|v| to_sample(round_shift(v, DESCALE_P2) as i16))
     })
 }
 

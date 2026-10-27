@@ -118,7 +118,6 @@ pub struct Decoder<'a> {
     pub(crate) input_scan_number: u32,
 
     pub(crate) has_multiple_scans: bool,
-    pub(crate) eoi_reached: bool,
     pub(crate) max_h_samp: u32,
     pub(crate) max_v_samp: u32,
     /// An iMCU row is what a row of MCUs of a scan with all the components covers.
@@ -177,7 +176,6 @@ impl<'a> Decoder<'a> {
             al: 0,
             input_scan_number: 0,
             has_multiple_scans: false,
-            eoi_reached: false,
             max_h_samp: 1,
             max_v_samp: 1,
             total_imcu_rows: 0,
@@ -287,8 +285,6 @@ impl<'a> Decoder<'a> {
             ));
         }
 
-        self.max_h_samp = 1;
-        self.max_v_samp = 1;
         for comp in &self.comps {
             if !(1..=MAX_SAMP_FACTOR).contains(&comp.h_samp)
                 || !(1..=MAX_SAMP_FACTOR).contains(&comp.v_samp)

@@ -269,9 +269,7 @@ mod advanced {
         /// messages keep the version-1 wire format.
         SerializedMessageWithBuffers = 4,
     }
-    // SAFETY: `#[repr(u8)]` fieldless enum → size 1, align 1, no padding,
-    // `Copy + 'static`; the single byte is always an initialized discriminant.
-    unsafe impl bytemuck::NoUninit for IPCMessageType {}
+    bun_core::impl_no_uninit!(IPCMessageType);
 
     impl IPCMessageType {
         fn tag_name(raw: u8) -> &'static str {

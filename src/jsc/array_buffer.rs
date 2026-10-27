@@ -677,23 +677,10 @@ impl ArrayBuffer {
         self.byte_slice_mut()
     }
 
-    /// See [`as_u16`]; 4-byte variant.
+    /// The whole `u32`s of the view. `Unaligned`: JS can put an ArrayBuffer over any address.
     #[inline]
-    pub fn as_u32(&mut self) -> &mut [u32] {
-        bun_core::Unaligned::slice_align_cast_mut(self.as_u32_unaligned())
-    }
-
-    /// See [`as_u16_unaligned`]; 4-byte variant.
-    #[inline]
-    pub(crate) fn as_u32_unaligned(&mut self) -> &mut [bun_core::Unaligned<u32>] {
-        if self.is_detached() {
-            return &mut [];
-        }
-        let len = self.byte_len / core::mem::size_of::<u32>();
-        // SAFETY: ptr non-null; `Unaligned<u32>` has size 4 / align 1, so any
-        // `*mut u8` is a valid `*mut Unaligned<u32>`. `&mut self` enforces
-        // exclusive access to this view.
-        unsafe { core::slice::from_raw_parts_mut(self.ptr.cast::<bun_core::Unaligned<u32>>(), len) }
+    pub fn as_u32(&mut self) -> &mut [bun_core::Unaligned<u32>] {
+        bun_core::Unaligned::slice_of_mut(self.byte_slice_mut())
     }
 }
 

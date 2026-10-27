@@ -348,7 +348,7 @@ pub(crate) fn string_as_is_or_bytes<'a>(heap: &JsHeap<'a>, data: StringOrJsBytes
     match data {
         StringOrJsBytes::Bytes(bytes) => [&[0], bytes.get(heap)].concat(),
         StringOrJsBytes::String(text) if text.is_8bit() => [&[1], text.latin1()].concat(),
-        StringOrJsBytes::String(text) => [&[2], bytemuck::cast_slice(text.utf16())].concat(),
+        StringOrJsBytes::String(text) => [&[2], bun_core::slice_as_bytes(text.utf16())].concat(),
     }
 }
 

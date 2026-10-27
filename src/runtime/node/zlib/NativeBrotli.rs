@@ -203,7 +203,7 @@ mod _impl {
 
             let params_ = params_buf.as_u32();
 
-            for (i, &d) in params_.iter().enumerate() {
+            for (i, d) in params_.iter().map(|d| d.get()).enumerate() {
                 // (d == -1) {
                 if d == u32::MAX {
                     continue;
@@ -509,9 +509,8 @@ mod _impl {
             }
         }
 
-        pub(crate) fn update_write_result(&self, avail_in: &mut u32, avail_out: &mut u32) {
-            *avail_in = u32::try_from(self.avail_in).expect("int cast");
-            *avail_out = u32::try_from(self.avail_out).expect("int cast");
+        pub(crate) fn write_result(&self) -> [u32; 2] {
+            [self.avail_out, self.avail_in].map(|n| u32::try_from(n).expect("int cast"))
         }
 
         pub(crate) fn get_error_info(&self) -> Error {

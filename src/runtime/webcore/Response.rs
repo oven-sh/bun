@@ -1038,15 +1038,7 @@ impl Response {
                         &bun_s3_signing::SignOptions {
                             path: s3.path(),
                             method: Method::GET,
-                            content_hash: None,
-                            content_md5: None,
-                            search_params: None,
-                            content_disposition: None,
-                            content_type: None,
-                            content_encoding: None,
-                            acl: None,
-                            storage_class: None,
-                            request_payer: false,
+                            ..Default::default()
                         },
                         Some(bun_s3_signing::SignQueryOptions { expires: 15 * 60 }),
                     ) {

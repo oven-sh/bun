@@ -288,28 +288,20 @@ impl S3Credentials {
         }
 
         let search_params = sign_options.search_params;
+        let headers = &sign_options.headers;
 
-        let mut content_disposition = sign_options.content_disposition;
-        if matches!(content_disposition, Some(s) if s.is_empty()) {
-            content_disposition = None;
-        }
-        let mut content_type = sign_options.content_type;
-        if matches!(content_type, Some(s) if s.is_empty()) {
-            content_type = None;
-        }
-        let mut content_encoding = sign_options.content_encoding;
-        if matches!(content_encoding, Some(s) if s.is_empty()) {
-            content_encoding = None;
-        }
+        let content_disposition = headers.content_disposition.filter(|s| !s.is_empty());
+        let content_type = headers.content_type.filter(|s| !s.is_empty());
+        let content_encoding = headers.content_encoding.filter(|s| !s.is_empty());
+        let tagging = headers.tagging.filter(|s| !s.is_empty());
         let session_token: Option<&[u8]> = if self.session_token.is_empty() {
             None
         } else {
             Some(&self.session_token)
         };
 
-        let acl: Option<&'static [u8]> = sign_options.acl.map(|a| a.to_string());
-        let storage_class: Option<&'static [u8]> =
-            sign_options.storage_class.map(|s| s.to_string());
+        let acl: Option<&'static [u8]> = headers.acl.map(|a| a.to_string());
+        let storage_class: Option<&'static [u8]> = headers.storage_class.map(|s| s.to_string());
 
         if self.access_key_id.is_empty() || self.secret_access_key.is_empty() {
             return Err(SignError::MissingCredentials);
@@ -451,27 +443,44 @@ impl S3Credentials {
         // `amz_date` (Box<[u8]>) drops on `?`.
 
         let amz_day = &amz_date[0..8];
-        let request_payer = sign_options.request_payer;
-        let header_key = SignedHeadersKey {
-            content_disposition: content_disposition.is_some(),
-            content_encoding: content_encoding.is_some(),
-            content_md5: content_md5.is_some(),
-            acl: acl.is_some(),
-            request_payer,
-            session_token: session_token.is_some(),
-            storage_class: storage_class.is_some(),
-        };
-        let mut signed_headers_buf = [0u8; 256];
-        let signed_headers: &[u8] = if sign_query {
-            b"host"
+        let request_payer = headers.request_payer;
+        // S3 ignores `x-amz-tagging` in a query, so a presigned PUT signs it as a header.
+        let header_key = if sign_query {
+            SignedHeadersKey {
+                tagging: tagging.is_some() && method == Method::PUT,
+                ..Default::default()
+            }
         } else {
-            SignedHeaders::get(header_key, &mut signed_headers_buf)
+            SignedHeadersKey {
+                content_disposition: content_disposition.is_some(),
+                content_encoding: content_encoding.is_some(),
+                content_md5: content_md5.is_some(),
+                acl: acl.is_some(),
+                content_sha256_date: true,
+                request_payer,
+                session_token: session_token.is_some(),
+                storage_class: storage_class.is_some(),
+                tagging: tagging.is_some(),
+            }
+        };
+        let mut signed_headers_buf = [0u8; SignedHeaders::MAX_LEN];
+        let signed_headers: &[u8] = SignedHeaders::get(header_key, &mut signed_headers_buf);
+        let canonical_values = CanonicalHeaderValues {
+            content_disposition,
+            content_encoding,
+            content_md5: content_md5.as_deref(),
+            acl,
+            session_token,
+            storage_class,
+            tagging,
         };
 
         let service_name: &str = "s3";
 
         let aws_content_hash: &[u8] = content_hash.unwrap_or(b"UNSIGNED-PAYLOAD");
         let mut tmp_buffer = [0u8; 4096];
+        // Holds a canonical request that `tmp_buffer` cannot (ten encoded tags exceed 20 KB).
+        let mut canonical_heap: Vec<u8> = Vec::new();
 
         let authorization: Box<[u8]> = 'brk: {
             // we hash the hash so we need 2 buffers
@@ -579,6 +588,14 @@ impl S3Credentials {
                     );
                 }
 
+                // The signed header list is a query value, so `;` is encoded.
+                let mut signed_headers_encoded_buffer = [0u8; SignedHeaders::MAX_LEN * 3];
+                let encoded_signed_headers = encode_uri_component::<true>(
+                    signed_headers,
+                    &mut signed_headers_encoded_buffer,
+                )
+                .map_err(|_| SignError::FailedToGenerateSignature)?;
+
                 // Build query parameters in alphabetical order for AWS Signature V4 canonical request
                 let canonical: &[u8] = 'brk_canonical: {
                     let mut query_parts: Vec<Vec<u8>> = Vec::with_capacity(13);
@@ -604,7 +621,10 @@ impl S3Credentials {
                     if let Some(token) = encoded_session_token {
                         query_parts.push(alloc_print!("X-Amz-Security-Token={}", BStr::new(token)));
                     }
-                    query_parts.push(alloc_print!("X-Amz-SignedHeaders=host"));
+                    query_parts.push(alloc_print!(
+                        "X-Amz-SignedHeaders={}",
+                        BStr::new(encoded_signed_headers)
+                    ));
                     if let Some(cd) = encoded_content_disposition {
                         query_parts.push(alloc_print!(
                             "response-content-disposition={}",
@@ -630,16 +650,31 @@ impl S3Credentials {
                         query_string.extend_from_slice(part);
                     }
 
-                    break 'brk_canonical buf_print(
+                    let buf = canonical_buffer(
                         &mut tmp_buffer,
-                        format_args!(
-                            "{}\n{}\n{}\nhost:{}\n\nhost\n{}",
-                            method_name,
-                            BStr::new(normalized_path),
-                            BStr::new(&query_string),
-                            BStr::new(&host),
-                            BStr::new(aws_content_hash)
+                        &mut canonical_heap,
+                        CanonicalRequest::len_hint(
+                            method_name.as_bytes(),
+                            normalized_path,
+                            &query_string,
+                            &host,
+                            aws_content_hash,
+                            &amz_date,
+                            &canonical_values,
+                            signed_headers,
                         ),
+                    );
+                    break 'brk_canonical CanonicalRequest::format(
+                        buf,
+                        header_key,
+                        method_name.as_bytes(),
+                        normalized_path,
+                        &query_string,
+                        &host,
+                        aws_content_hash,
+                        &amz_date,
+                        &canonical_values,
+                        signed_headers,
                     )
                     .map_err(|_| SignError::NoSpaceLeft)?;
                 };
@@ -698,7 +733,10 @@ impl S3Credentials {
                     "X-Amz-Signature={}",
                     HexLower(&signature[0..DIGESTED_HMAC_256_LEN])
                 ));
-                url_query_parts.push(alloc_print!("X-Amz-SignedHeaders=host"));
+                url_query_parts.push(alloc_print!(
+                    "X-Amz-SignedHeaders={}",
+                    BStr::new(encoded_signed_headers)
+                ));
                 if let Some(cd) = encoded_content_disposition {
                     url_query_parts.push(alloc_print!(
                         "response-content-disposition={}",
@@ -733,21 +771,31 @@ impl S3Credentials {
                 )
                 .into_boxed_slice();
             } else {
-                let canonical = CanonicalRequest::format(
+                let query = search_params.map(|p| &p[1..]).unwrap_or(b"");
+                let buf = canonical_buffer(
                     &mut tmp_buffer,
+                    &mut canonical_heap,
+                    CanonicalRequest::len_hint(
+                        method_name.as_bytes(),
+                        normalized_path,
+                        query,
+                        &host,
+                        aws_content_hash,
+                        &amz_date,
+                        &canonical_values,
+                        signed_headers,
+                    ),
+                );
+                let canonical = CanonicalRequest::format(
+                    buf,
                     header_key,
                     method_name.as_bytes(),
                     normalized_path,
-                    search_params.map(|p| &p[1..]).unwrap_or(b""),
-                    content_disposition,
-                    content_encoding,
-                    content_md5.as_deref(),
+                    query,
                     &host,
-                    acl,
                     aws_content_hash,
                     &amz_date,
-                    session_token,
-                    storage_class,
+                    &canonical_values,
                     signed_headers,
                 )
                 .map_err(|_| SignError::NoSpaceLeft)?;
@@ -796,9 +844,9 @@ impl S3Credentials {
             // SignResult implements Drop, so struct-update `..default()`
             // is forbidden; mutate a default in place instead.
             let mut r = SignResult::default();
-            r.acl = sign_options.acl;
+            r.acl = headers.acl;
             r.url = authorization;
-            r.storage_class = sign_options.storage_class;
+            r.storage_class = headers.storage_class;
             return Ok(r);
         }
 
@@ -809,6 +857,7 @@ impl S3Credentials {
             || content_md5.as_deref().is_some_and(contains_newline_or_cr)
             || content_disposition.is_some_and(contains_newline_or_cr)
             || content_encoding.is_some_and(contains_newline_or_cr)
+            || tagging.is_some_and(contains_newline_or_cr)
             || session_token.is_some_and(contains_newline_or_cr)
             || contains_newline_or_cr(region)
             || contains_newline_or_cr(&self.access_key_id)
@@ -831,8 +880,8 @@ impl S3Credentials {
         result.amz_date = amz_date;
         result.host = host;
         result.authorization = authorization;
-        result.acl = sign_options.acl;
-        result.storage_class = sign_options.storage_class;
+        result.acl = headers.acl;
+        result.storage_class = headers.storage_class;
         result.request_payer = request_payer;
         result.url = url;
         result._headers_len = 4;
@@ -894,7 +943,25 @@ impl S3Credentials {
             result._headers_len += 1;
         }
 
+        if let Some(t) = tagging {
+            let tagging_value = Box::<[u8]>::from(t);
+            result._headers[result._headers_len as usize] =
+                pico_header_new(b"x-amz-tagging", &tagging_value);
+            result.tagging = tagging_value;
+            result._headers_len += 1;
+        }
+
         Ok(result)
+    }
+}
+
+/// `stack` when `len` fits in it, else `heap` grown to `len`.
+fn canonical_buffer<'b>(stack: &'b mut [u8], heap: &'b mut Vec<u8>, len: usize) -> &'b mut [u8] {
+    if len <= stack.len() {
+        stack
+    } else {
+        heap.resize(len, 0);
+        heap
     }
 }
 
@@ -975,6 +1042,7 @@ pub struct SignResult {
     pub(crate) content_encoding: Box<[u8]>,
     pub(crate) content_md5: Box<[u8]>,
     pub(crate) session_token: Box<[u8]>,
+    pub(crate) tagging: Box<[u8]>,
     pub(crate) acl: Option<ACL>,
     pub(crate) storage_class: Option<StorageClass>,
     pub(crate) request_payer: bool,
@@ -985,7 +1053,7 @@ pub struct SignResult {
 }
 
 impl SignResult {
-    pub const MAX_HEADERS: usize = 11;
+    pub const MAX_HEADERS: usize = 12;
 
     pub fn headers(&self) -> &[PicoHeader] {
         &self._headers[0..self._headers_len as usize]
@@ -1017,6 +1085,7 @@ impl Default for SignResult {
             content_encoding: Box::default(),
             content_md5: Box::default(),
             session_token: Box::default(),
+            tagging: Box::default(),
             acl: None,
             storage_class: None,
             request_payer: false,
@@ -1033,6 +1102,7 @@ impl Drop for SignResult {
         zero_sensitive(&mut self.session_token);
         zero_sensitive(&mut self.content_disposition);
         zero_sensitive(&mut self.content_encoding);
+        zero_sensitive(&mut self.tagging);
         zero_sensitive(&mut self.host);
         zero_sensitive(&mut self.authorization);
         zero_sensitive(&mut self.url);
@@ -1055,6 +1125,72 @@ pub struct SignQueryOptions {
     pub expires: usize,
 }
 
+/// The object headers of a PutObject, CreateMultipartUpload or presign, carried as one value.
+#[derive(Clone, Copy, Default)]
+pub struct PutHeaders<'a> {
+    pub content_type: Option<&'a [u8]>,
+    pub content_disposition: Option<&'a [u8]>,
+    pub content_encoding: Option<&'a [u8]>,
+    pub acl: Option<ACL>,
+    pub storage_class: Option<StorageClass>,
+    pub request_payer: bool,
+    /// The `x-amz-tagging` value, already encoded as `k=v&k2=v2`.
+    pub tagging: Option<&'a [u8]>,
+}
+
+impl<'a> PutHeaders<'a> {
+    /// For a read, delete, part or completion: only `request_payer` applies.
+    pub const fn request_payer_only(request_payer: bool) -> Self {
+        Self {
+            content_type: None,
+            content_disposition: None,
+            content_encoding: None,
+            acl: None,
+            storage_class: None,
+            request_payer,
+            tagging: None,
+        }
+    }
+}
+
+/// `PutHeaders` with owned bytes, for a multipart upload that outlives its options.
+#[derive(Default)]
+pub struct PutHeadersOwned {
+    pub content_type: Option<Box<[u8]>>,
+    pub content_disposition: Option<Box<[u8]>>,
+    pub content_encoding: Option<Box<[u8]>>,
+    pub acl: Option<ACL>,
+    pub storage_class: Option<StorageClass>,
+    pub request_payer: bool,
+    pub tagging: Option<Box<[u8]>>,
+}
+
+impl PutHeadersOwned {
+    pub fn new(headers: &PutHeaders<'_>) -> Self {
+        Self {
+            content_type: headers.content_type.map(Box::<[u8]>::from),
+            content_disposition: headers.content_disposition.map(Box::<[u8]>::from),
+            content_encoding: headers.content_encoding.map(Box::<[u8]>::from),
+            acl: headers.acl,
+            storage_class: headers.storage_class,
+            request_payer: headers.request_payer,
+            tagging: headers.tagging.map(Box::<[u8]>::from),
+        }
+    }
+
+    pub fn borrow(&self) -> PutHeaders<'_> {
+        PutHeaders {
+            content_type: self.content_type.as_deref(),
+            content_disposition: self.content_disposition.as_deref(),
+            content_encoding: self.content_encoding.as_deref(),
+            acl: self.acl,
+            storage_class: self.storage_class,
+            request_payer: self.request_payer,
+            tagging: self.tagging.as_deref(),
+        }
+    }
+}
+
 // transient param-pack struct; lifetime added because every field is a caller-owned
 // borrow. PORTING.md discourages struct lifetimes, but raw pointers here would be strictly worse.
 #[derive(Clone, Copy)]
@@ -1064,12 +1200,7 @@ pub struct SignOptions<'a> {
     pub content_hash: Option<&'a [u8]>,
     pub content_md5: Option<&'a [u8]>,
     pub search_params: Option<&'a [u8]>,
-    pub content_disposition: Option<&'a [u8]>,
-    pub content_type: Option<&'a [u8]>,
-    pub content_encoding: Option<&'a [u8]>,
-    pub acl: Option<ACL>,
-    pub storage_class: Option<StorageClass>,
-    pub request_payer: bool,
+    pub headers: PutHeaders<'a>,
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1221,12 +1352,7 @@ impl<'a> Default for SignOptions<'a> {
             content_hash: None,
             content_md5: None,
             search_params: None,
-            content_disposition: None,
-            content_type: None,
-            content_encoding: None,
-            acl: None,
-            storage_class: None,
-            request_payer: false,
+            headers: PutHeaders::default(),
         }
     }
 }
@@ -1244,66 +1370,99 @@ pub struct S3CredentialsWithOptions {
     pub content_disposition: Option<bun_core::Utf8Bytes<'static>>,
     pub content_type: Option<bun_core::Utf8Bytes<'static>>,
     pub content_encoding: Option<bun_core::Utf8Bytes<'static>>,
+    /// The `x-amz-tagging` value, encoded as `k=v&k2=v2`.
+    pub tagging: Option<Box<[u8]>>,
     /// indicates if requester pays for the request (for requester pays buckets)
     pub request_payer: bool,
     /// indicates if the credentials have changed
     pub changed_credentials: bool,
 }
 
+impl S3CredentialsWithOptions {
+    /// The headers of a write. The blob's `content_type` wins over the `type` option.
+    pub fn put_headers<'a>(&'a self, content_type: Option<&'a [u8]>) -> PutHeaders<'a> {
+        PutHeaders {
+            content_type: content_type.or(self.content_type.as_deref()),
+            content_disposition: self.content_disposition.as_deref(),
+            content_encoding: self.content_encoding.as_deref(),
+            acl: self.acl,
+            storage_class: self.storage_class,
+            request_payer: self.request_payer,
+            tagging: self.tagging.as_deref(),
+        }
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // SignedHeaders
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Headers must be in alphabetical order per AWS Signature V4 spec.
+/// Which headers a signature covers, in the alphabetical order SigV4 requires. `host` always is.
 #[derive(Clone, Copy, Default)]
 pub(crate) struct SignedHeadersKey {
     pub content_disposition: bool,
     pub content_encoding: bool,
     pub content_md5: bool,
     pub acl: bool,
+    /// `x-amz-content-sha256` and `x-amz-date`: headers for `Authorization`, query for a presign.
+    pub content_sha256_date: bool,
     pub request_payer: bool,
     pub session_token: bool,
     pub storage_class: bool,
+    pub tagging: bool,
 }
 
 struct SignedHeaders;
 
 impl SignedHeaders {
+    /// The longest list: every name plus the `;` separators.
+    const MAX_LEN: usize = 256;
+
     // Built at runtime into a caller buffer.
     // Could switch to a build.rs-generated static table if profiling shows this matters.
-    fn get(key: SignedHeadersKey, buf: &mut [u8; 256]) -> &[u8] {
+    fn get(key: SignedHeadersKey, buf: &mut [u8; Self::MAX_LEN]) -> &[u8] {
         let mut n = 0usize;
         macro_rules! push {
             ($s:expr) => {{
                 let s: &[u8] = $s;
+                if n > 0 {
+                    buf[n] = b';';
+                    n += 1;
+                }
                 buf[n..n + s.len()].copy_from_slice(s);
                 n += s.len();
             }};
         }
         if key.content_disposition {
-            push!(b"content-disposition;");
+            push!(b"content-disposition");
         }
         if key.content_encoding {
-            push!(b"content-encoding;");
+            push!(b"content-encoding");
         }
         if key.content_md5 {
-            push!(b"content-md5;");
+            push!(b"content-md5");
         }
-        push!(b"host;");
+        push!(b"host");
         if key.acl {
-            push!(b"x-amz-acl;");
+            push!(b"x-amz-acl");
         }
-        push!(b"x-amz-content-sha256;x-amz-date");
+        if key.content_sha256_date {
+            push!(b"x-amz-content-sha256");
+            push!(b"x-amz-date");
+        }
         if key.request_payer {
-            push!(b";x-amz-request-payer");
+            push!(b"x-amz-request-payer");
         }
         if key.session_token {
-            push!(b";x-amz-security-token");
+            push!(b"x-amz-security-token");
         }
         if key.storage_class {
-            push!(b";x-amz-storage-class");
+            push!(b"x-amz-storage-class");
         }
-        // SAFETY: n <= 256 by construction.
+        if key.tagging {
+            push!(b"x-amz-tagging");
+        }
+        // SAFETY: n <= MAX_LEN by construction.
         unsafe { core::slice::from_raw_parts(buf.as_ptr(), n) }
     }
 }
@@ -1312,9 +1471,64 @@ impl SignedHeaders {
 // CanonicalRequest
 // ──────────────────────────────────────────────────────────────────────────
 
+/// The header values of a canonical request. One is read only when its `SignedHeadersKey` bit is set.
+#[derive(Clone, Copy, Default)]
+struct CanonicalHeaderValues<'a> {
+    content_disposition: Option<&'a [u8]>,
+    content_encoding: Option<&'a [u8]>,
+    content_md5: Option<&'a [u8]>,
+    acl: Option<&'a [u8]>,
+    session_token: Option<&'a [u8]>,
+    storage_class: Option<&'a [u8]>,
+    tagging: Option<&'a [u8]>,
+}
+
+impl CanonicalHeaderValues<'_> {
+    /// An upper bound of the bytes the values add to the canonical request.
+    fn len(&self) -> usize {
+        [
+            self.content_disposition,
+            self.content_encoding,
+            self.content_md5,
+            self.acl,
+            self.session_token,
+            self.storage_class,
+            self.tagging,
+        ]
+        .iter()
+        .map(|v| v.map_or(0, <[u8]>::len))
+        .sum()
+    }
+}
+
 struct CanonicalRequest;
 
 impl CanonicalRequest {
+    /// Room for every header name, separator and newline, in addition to the values.
+    const FIXED_LEN: usize = 512;
+
+    /// An upper bound of the canonical request length.
+    fn len_hint(
+        method: &[u8],
+        path: &[u8],
+        query: &[u8],
+        host: &[u8],
+        hash: &[u8],
+        date: &[u8],
+        values: &CanonicalHeaderValues<'_>,
+        signed_headers: &[u8],
+    ) -> usize {
+        Self::FIXED_LEN
+            + method.len()
+            + path.len()
+            + query.len()
+            + host.len()
+            + hash.len() * 2
+            + date.len()
+            + values.len()
+            + signed_headers.len()
+    }
+
     // Builds the canonical request at runtime with conditional writes; profile if hot.
     fn format<'b>(
         buf: &'b mut [u8],
@@ -1322,20 +1536,30 @@ impl CanonicalRequest {
         method: &[u8],
         path: &[u8],
         query: &[u8],
-        content_disposition: Option<&[u8]>,
-        content_encoding: Option<&[u8]>,
-        content_md5: Option<&[u8]>,
         host: &[u8],
-        acl: Option<&[u8]>,
         hash: &[u8],
         date: &[u8],
-        session_token: Option<&[u8]>,
-        storage_class: Option<&[u8]>,
+        values: &CanonicalHeaderValues<'_>,
         signed_headers: &[u8],
     ) -> Result<&'b [u8], core::fmt::Error> {
         let mut c = bun_core::fmt::SliceCursor::new(buf);
         macro_rules! w {
             ($($arg:tt)*) => { core::fmt::Write::write_fmt(&mut c, format_args!($($arg)*))? };
+        }
+        // A header line. SigV4 trims the value and collapses inner whitespace to one space.
+        macro_rules! header {
+            ($name:literal, $value:expr) => {{
+                w!(concat!($name, ":"));
+                let value: &[u8] = $value;
+                let mut rest = strings::trim(value, b" \t");
+                while let Some(at) = strings::index_of_any(rest, b" \t") {
+                    write_bytes(&mut c, &rest[..at])?;
+                    write_bytes(&mut c, b" ")?;
+                    rest = strings::trim_left(&rest[at..], b" \t");
+                }
+                write_bytes(&mut c, rest)?;
+                w!("\n");
+            }};
         }
         // method, path, query
         w!(
@@ -1345,43 +1569,33 @@ impl CanonicalRequest {
             BStr::new(query)
         );
         if key.content_disposition {
-            w!(
-                "content-disposition:{}\n",
-                BStr::new(content_disposition.unwrap())
-            );
+            header!("content-disposition", values.content_disposition.unwrap());
         }
         if key.content_encoding {
-            w!(
-                "content-encoding:{}\n",
-                BStr::new(content_encoding.unwrap())
-            );
+            header!("content-encoding", values.content_encoding.unwrap());
         }
         if key.content_md5 {
-            w!("content-md5:{}\n", BStr::new(content_md5.unwrap()));
+            header!("content-md5", values.content_md5.unwrap());
         }
-        w!("host:{}\n", BStr::new(host));
+        header!("host", host);
         if key.acl {
-            w!("x-amz-acl:{}\n", BStr::new(acl.unwrap()));
+            header!("x-amz-acl", values.acl.unwrap());
         }
-        w!(
-            "x-amz-content-sha256:{}\nx-amz-date:{}\n",
-            BStr::new(hash),
-            BStr::new(date)
-        );
+        if key.content_sha256_date {
+            header!("x-amz-content-sha256", hash);
+            header!("x-amz-date", date);
+        }
         if key.request_payer {
-            w!("x-amz-request-payer:requester\n");
+            header!("x-amz-request-payer", b"requester");
         }
         if key.session_token {
-            w!(
-                "x-amz-security-token:{}\n",
-                BStr::new(session_token.unwrap())
-            );
+            header!("x-amz-security-token", values.session_token.unwrap());
         }
         if key.storage_class {
-            w!(
-                "x-amz-storage-class:{}\n",
-                BStr::new(storage_class.unwrap())
-            );
+            header!("x-amz-storage-class", values.storage_class.unwrap());
+        }
+        if key.tagging {
+            header!("x-amz-tagging", values.tagging.unwrap());
         }
         // signed_headers, hash
         w!("\n{}\n{}", BStr::new(signed_headers), BStr::new(hash));
@@ -1389,6 +1603,14 @@ impl CanonicalRequest {
         let len = c.at;
         Ok(&c.buf[..len])
     }
+}
+
+/// Writes `bytes` as they are: a header value is signed over its bytes, not over a UTF-8 view.
+fn write_bytes(
+    c: &mut bun_core::fmt::SliceCursor<'_>,
+    bytes: &[u8],
+) -> Result<(), core::fmt::Error> {
+    bun_core::io::Write::write_all(c, bytes).map_err(|_| core::fmt::Error)
 }
 
 // ──────────────────────────────────────────────────────────────────────────

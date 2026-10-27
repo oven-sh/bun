@@ -9,6 +9,7 @@ use bun_jsc::{JSGlobalObject, JSValue, JsResult, RangeErrorOptions, StringJsc as
 
 use bun_s3_signing::{
     ACL, MultiPartUploadOptions, S3Credentials, S3CredentialsWithOptions, StorageClass,
+    encode_uri_component,
 };
 use bun_url::URL;
 
@@ -54,13 +55,20 @@ const ACL_ONE_OF: &str = "\"private\", \"public-read\", \"public-read-write\", \
 const STORAGE_CLASS_ONE_OF: &str = "\"STANDARD\", \"STANDARD_IA\", \"INTELLIGENT_TIERING\", \"EXPRESS_ONEZONE\", \
 \"ONEZONE_IA\", \"GLACIER\", \"GLACIER_IR\", \"REDUCED_REDUNDANCY\", \"OUTPOSTS\", \"DEEP_ARCHIVE\", \"SNOW\"";
 
+/// The per-client or per-file settings that an S3 options object overrides.
+#[derive(Default)]
+pub(crate) struct S3Defaults<'a> {
+    pub options: MultiPartUploadOptions,
+    pub acl: Option<ACL>,
+    pub storage_class: Option<StorageClass>,
+    pub request_payer: bool,
+    pub tagging: Option<&'a [u8]>,
+}
+
 pub(crate) fn get_credentials_with_options(
     this: &S3Credentials,
-    default_options: MultiPartUploadOptions,
+    defaults: &S3Defaults<'_>,
     options: Option<JSValue>,
-    default_acl: Option<ACL>,
-    default_storage_class: Option<StorageClass>,
-    default_request_payer: bool,
     global_object: &JSGlobalObject,
 ) -> JsResult<S3CredentialsWithOptions> {
     bun_analytics::features::s3.fetch_add(1, Ordering::Relaxed);
@@ -70,10 +78,11 @@ pub(crate) fn get_credentials_with_options(
     // deep field copy with a fresh ref-count.
     let mut new_credentials = S3CredentialsWithOptions {
         credentials: this.clone(),
-        options: default_options,
-        acl: default_acl,
-        storage_class: default_storage_class,
-        request_payer: default_request_payer,
+        options: defaults.options,
+        acl: defaults.acl,
+        storage_class: defaults.storage_class,
+        request_payer: defaults.request_payer,
+        tagging: defaults.tagging.map(Box::<[u8]>::from),
         ..Default::default()
     };
 
@@ -258,6 +267,8 @@ pub(crate) fn get_credentials_with_options(
             if let Some(request_payer) = opts.get_boolean_strict(global_object, "requestPayer")? {
                 new_credentials.request_payer = request_payer;
             }
+
+            get_tagging(opts, global_object, &mut new_credentials.tagging)?;
         }
     }
     Ok(new_credentials)
@@ -265,4 +276,72 @@ pub(crate) fn get_credentials_with_options(
 
 fn contains_newline_or_cr(value: &[u8]) -> bool {
     strings::index_of_any(value, b"\r\n").is_some()
+}
+
+/// Sets `tagging` from `opts.tagging`, a record (URL-encoded here) or a string. Empty clears it.
+fn get_tagging(
+    opts: JSValue,
+    global: &JSGlobalObject,
+    tagging: &mut Option<Box<[u8]>>,
+) -> JsResult<()> {
+    let Some(value) = opts.get(global, "tagging")? else {
+        return Ok(());
+    };
+    if value.is_empty_or_undefined_or_null() {
+        return Ok(());
+    }
+    if value.is_string() {
+        let utf8 = value.to_utf8(global)?;
+        let bytes = utf8.slice();
+        // S3 collapses whitespace before it verifies, so such a value can never sign.
+        if !bytes.iter().all(|b| b.is_ascii_graphic()) {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "tagging must be a URL-encoded query string (\"key=value&key2=value2\") of \
+                 printable ASCII without spaces. Pass a record to have Bun encode the tags"
+            )));
+        }
+        *tagging = (!bytes.is_empty()).then(|| Box::<[u8]>::from(bytes));
+        return Ok(());
+    }
+    let Some(object) = value.get_object() else {
+        return Err(global.throw_invalid_argument_type_value(
+            b"tagging",
+            b"object or string",
+            value,
+        ));
+    };
+    let iter = bun_jsc::JSPropertyIterator::init(
+        global,
+        object,
+        bun_jsc::PropertyIteratorOptions {
+            skip_empty_name: false,
+            include_value: true,
+        },
+    )?;
+    let mut encoded: Vec<u8> = Vec::new();
+    while let Some((key, tag_value)) = iter.next()? {
+        if !tag_value.is_string() {
+            return Err(global
+                .throw_invalid_arguments(format_args!("tagging[\"{}\"] must be a string", key)));
+        }
+        let key = key.to_utf8();
+        let tag_value = tag_value.to_utf8(global)?;
+        if !encoded.is_empty() {
+            encoded.push(b'&');
+        }
+        push_uri_encoded(&mut encoded, key.slice());
+        encoded.push(b'=');
+        push_uri_encoded(&mut encoded, tag_value.slice());
+    }
+    *tagging = (!encoded.is_empty()).then(|| encoded.into_boxed_slice());
+    Ok(())
+}
+
+fn push_uri_encoded(out: &mut Vec<u8>, input: &[u8]) {
+    let start = out.len();
+    out.resize(start + input.len() * 3, 0);
+    let written = encode_uri_component::<true>(input, &mut out[start..])
+        .expect("buffer holds three bytes per input byte")
+        .len();
+    out.truncate(start + written);
 }

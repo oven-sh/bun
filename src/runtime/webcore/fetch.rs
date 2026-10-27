@@ -131,6 +131,19 @@ pub(crate) fn s3_credentials_from_env(
     )
 }
 
+/// The headers of a `fetch("s3://")` write. `Content-*` come from the request headers only.
+fn s3_put_headers<'a>(
+    credentials_with_options: &'a s3::S3CredentialsWithOptions,
+    headers: Option<&'a Headers>,
+) -> s3::PutHeaders<'a> {
+    s3::PutHeaders {
+        content_type: headers.and_then(Headers::get_content_type),
+        content_disposition: headers.and_then(Headers::get_content_disposition),
+        content_encoding: headers.and_then(Headers::get_content_encoding),
+        ..credentials_with_options.put_headers(None)
+    }
+}
+
 /// `Blob.Any` accessor shim.
 trait AnyBlobExt {
     fn blob(&self) -> &Blob;
@@ -1682,9 +1695,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         );
         let mut credentials_with_options = s3::S3CredentialsWithOptions {
             credentials: env_creds,
-            options: Default::default(),
-            acl: None,
-            storage_class: None,
             ..Default::default()
         };
         // `defer credentialsWithOptions.deinit()` → Drop.
@@ -1699,11 +1709,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     use crate::webcore::s3_client::S3CredentialsExt as _;
                     credentials_with_options = <s3::S3Credentials>::get_credentials_with_options(
                         &credentials_with_options.credentials,
-                        Default::default(),
+                        &Default::default(),
                         Some(s3_options),
-                        None,
-                        None,
-                        false,
                         global_this,
                     )?;
                 }
@@ -1770,13 +1777,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 readable_stream.get().unwrap(),
                 &global_this.js_thread(context),
                 credentials_with_options.options,
-                credentials_with_options.acl,
-                credentials_with_options.storage_class,
-                headers.as_ref().and_then(|h| h.get_content_type()),
-                headers.as_ref().and_then(|h| h.get_content_disposition()),
-                headers.as_ref().and_then(|h| h.get_content_encoding()),
+                &s3_put_headers(&credentials_with_options, headers.as_ref()),
                 proxy_url,
-                credentials_with_options.request_payer,
                 Some(s3_stream_wrapper_resolve),
                 bun_core::heap::into_raw(s3_stream).cast::<libc::c_void>(),
             )?;
@@ -1787,10 +1789,17 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             method = Method::PUT;
         }
 
+        // A read or delete sends none of the object headers.
+        let put_headers = if method == Method::PUT {
+            s3_put_headers(&credentials_with_options, headers.as_ref())
+        } else {
+            s3::PutHeaders::request_payer_only(credentials_with_options.request_payer)
+        };
         let mut result = match credentials_with_options.credentials.sign_request::<false>(
             &SignOptions {
                 path: url.s3_path(),
                 method,
+                headers: put_headers,
                 ..Default::default()
             },
             None,

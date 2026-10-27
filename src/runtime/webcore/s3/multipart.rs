@@ -104,10 +104,8 @@ use bun_io::StreamBuffer;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, JsCell};
 use bun_ptr::RefPtr;
-use bun_s3_signing::acl::ACL;
-use bun_s3_signing::credentials::S3Credentials;
+use bun_s3_signing::credentials::{PutHeaders, PutHeadersOwned, S3Credentials};
 use bun_s3_signing::error::S3Error;
-use bun_s3_signing::storage_class::StorageClass;
 
 // File-level mods are declared flat in `webcore.rs` via `#[path]`, so `super`
 // here is `crate::webcore`, not the `s3` directory. Route through the `s3`
@@ -134,9 +132,8 @@ pub struct MultiPartUpload {
     pub(crate) ended: Cell<bool>,
 
     pub(crate) options: Cell<MultiPartUploadOptions>,
-    pub(crate) acl: Option<ACL>,
-    pub(crate) storage_class: Option<StorageClass>,
-    pub(crate) request_payer: bool,
+    /// Sent with the single PUT or CreateMultipartUpload. Later requests send `request_payer` only.
+    pub(crate) headers: PutHeadersOwned,
     pub(crate) credentials: RefPtr<S3Credentials>,
     pub poll_ref: JsCell<KeepAlive>,
     /// An upload waits for its script to write more, which the script of a `Bun.ModuleGraph` that
@@ -156,9 +153,6 @@ pub struct MultiPartUpload {
     pub path: Box<[u8]>,
     /// As `S3SimpleRequestOptions::proxy_url`.
     pub(crate) proxy: Option<Box<[u8]>>,
-    pub(crate) content_type: Option<Box<[u8]>>,
-    pub(crate) content_disposition: Option<Box<[u8]>>,
-    pub(crate) content_encoding: Option<Box<[u8]>>,
     pub(crate) upload_id: JsCell<Box<[u8]>>,
 
     pub(crate) multipart_etags: JsCell<Vec<UploadPartResult>>,
@@ -383,7 +377,7 @@ impl UploadPart {
                 proxy_url: ctx.proxy_url(),
                 body: data.as_deref().map_or(&[][..], Vec::as_slice),
                 search_params: Some(search_params),
-                request_payer: ctx.request_payer,
+                headers: PutHeaders::request_payer_only(ctx.headers.request_payer),
                 ..Default::default()
             },
             s3_simple_request::S3Callback::Part(Self::on_part_response),
@@ -463,12 +457,7 @@ impl MultiPartUpload {
                             method: bun_http::Method::PUT,
                             proxy_url: self_.proxy_url(),
                             body: self_.buffered.get().slice(),
-                            content_type: self_.content_type.as_deref(),
-                            content_disposition: self_.content_disposition.as_deref(),
-                            content_encoding: self_.content_encoding.as_deref(),
-                            acl: self_.acl,
-                            storage_class: self_.storage_class,
-                            request_payer: self_.request_payer,
+                            headers: self_.headers.borrow(),
                             ..Default::default()
                         },
                         s3_simple_request::S3Callback::Upload(Self::single_send_upload_response),
@@ -885,7 +874,7 @@ impl MultiPartUpload {
                 proxy_url: self.proxy_url(),
                 body: self.multipart_upload_list.get().as_slice(),
                 search_params: Some(search_params),
-                request_payer: self.request_payer,
+                headers: PutHeaders::request_payer_only(self.headers.request_payer),
                 ..Default::default()
             },
             s3_simple_request::S3Callback::Commit(Self::on_commit_multi_part_request),
@@ -918,7 +907,7 @@ impl MultiPartUpload {
                 proxy_url: self.proxy_url(),
                 body: b"",
                 search_params: Some(search_params),
-                request_payer: self.request_payer,
+                headers: PutHeaders::request_payer_only(self.headers.request_payer),
                 ..Default::default()
             },
             s3_simple_request::S3Callback::Delete(Self::on_rollback_multi_part_request),
@@ -945,12 +934,7 @@ impl MultiPartUpload {
                     proxy_url: self.proxy_url(),
                     body: b"",
                     search_params: Some(b"?uploads="),
-                    content_type: self.content_type.as_deref(),
-                    content_disposition: self.content_disposition.as_deref(),
-                    content_encoding: self.content_encoding.as_deref(),
-                    acl: self.acl,
-                    storage_class: self.storage_class,
-                    request_payer: self.request_payer,
+                    headers: self.headers.borrow(),
                     ..Default::default()
                 },
                 s3_simple_request::S3Callback::Download(Self::start_multi_part_request_result),
@@ -1070,12 +1054,7 @@ impl MultiPartUpload {
                     method: bun_http::Method::PUT,
                     proxy_url: self.proxy_url(),
                     body: self.buffered.get().slice(),
-                    content_type: self.content_type.as_deref(),
-                    content_disposition: self.content_disposition.as_deref(),
-                    content_encoding: self.content_encoding.as_deref(),
-                    acl: self.acl,
-                    storage_class: self.storage_class,
-                    request_payer: self.request_payer,
+                    headers: self.headers.borrow(),
                     ..Default::default()
                 },
                 s3_simple_request::S3Callback::Upload(Self::single_send_upload_response),

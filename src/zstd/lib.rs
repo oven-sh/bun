@@ -193,7 +193,13 @@ pub fn decompress_alloc(src: &[u8]) -> Result<Vec<u8>, ZstdError> {
     }
 
     // Fast path: size is known and within reasonable limits
-    let mut output = output_buffer(size as usize + OUTPUT_SLACK)?;
+    // Not where it would be most of the buffer: to give that back can take a copy.
+    let slack = if size as usize >= 2 * OUTPUT_SLACK {
+        OUTPUT_SLACK
+    } else {
+        0
+    };
+    let mut output = output_buffer(size as usize + slack)?;
     let written = decompress(&mut output, src)
         .map_err(|code| ZstdError::for_decompression(code, ZstdError::DecompressionFailed))?;
     output.truncate(written);

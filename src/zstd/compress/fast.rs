@@ -387,13 +387,6 @@ impl<'a> Segments<'a> {
         spot.segment.read32(spot.pos)
     }
 
-    /// The 8 bytes at `place`, if they are in one segment.
-    #[inline(always)]
-    pub(super) fn read64(self, place: u32) -> Option<u64> {
-        let spot = self.spot(place);
-        spot.segment.read64(spot.pos)
-    }
-
     /// Whether the bits of `MASK` are the same in `bytes` and in the 8 bytes at `place`, which are in one segment, as they
     /// are wherever a table leads to.
     #[inline(always)]

@@ -207,7 +207,7 @@ impl Finder {
                     let end = ip + 4 + near.count(ip + 4, matchs0 + 4);
                     let idxl1 = table_get(hash_long, hash8(bytes1, h_bits_l, 0));
                     let matchl1 = idxl1.wrapping_sub(base_index);
-                    if matchl1 > 0 && near.read64(matchl1) == Some(bytes1) {
+                    if near.has::<{ u64::MAX }>(matchl1, bytes1) && matchl1 > 0 {
                         let end1 = ip1 + 8 + near.count(ip1 + 8, matchl1 + 8);
                         if end1 - ip1 > end - ip {
                             ip = ip1;
@@ -406,7 +406,7 @@ impl Finder {
                     let bytes1 = le64_at::<1, _>(here);
                     let match_long1 = table_swap(hash_long, hash8(bytes1, h_bits_l, 0), curr + 1)
                         .wrapping_sub(base_index);
-                    if near.read64(match_long1) == Some(bytes1) {
+                    if near.has::<{ u64::MAX }>(match_long1, bytes1) {
                         ip += 1;
                         break 'found (window.place_of(match_long1), 8);
                     }
@@ -584,7 +584,7 @@ impl Finder {
                         let bytes1 = le64_at::<1, _>(here);
                         let place3 = table_swap(hash_long, hash8(bytes1, h_bits_l, 0), curr + 1)
                             .wrapping_sub(origin_index);
-                        if window.read64(place3) == Some(bytes1) && place3 > 0 {
+                        if window.has::<{ u64::MAX }>(place3, bytes1) && place3 > 0 {
                             ip += 1;
                             (place3, 8)
                         } else {

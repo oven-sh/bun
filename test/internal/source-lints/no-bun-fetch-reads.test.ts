@@ -28,13 +28,23 @@ test("no file in src/js that oxlint ignores reads Bun.fetch or Bun.plugin", () =
   }
   expect(files.size).toBeGreaterThan(0);
   for (const rel of [...files].sort()) {
-    const lines = readFileSync(path.join(repoRoot, rel), "utf8").split("\n");
-    lines.forEach((line, i) => {
-      const code = line.replace(/\/\/.*$/, "");
-      if (/\bBun\s*\.\s*(fetch|plugin)\b/.test(code) || /\bBun\s*\[\s*["'](fetch|plugin)["']\s*\]/.test(code)) {
-        violations.push(`${rel}:${i + 1}: ${line.trim()}`);
-      }
-    });
+    const source = readFileSync(path.join(repoRoot, rel), "utf8");
+    stripCommentsAndStrings(source)
+      .split("\n")
+      .forEach((code, i) => {
+        if (/\bBun\s*\.\s*(fetch|plugin)\b/.test(code) || /\bBun\s*\[\s*["'](fetch|plugin)["']\s*\]/.test(code)) {
+          violations.push(`${rel}:${i + 1}: ${source.split("\n")[i].trim()}`);
+        }
+      });
   }
   expect(violations).toEqual([]);
 });
+
+// Blank out comments and string literals, and keep every newline, so a match
+// reports the right line. A `//` inside a string does not start a comment and
+// a `Bun.fetch` inside a comment or a string is not a read. The key strings of
+// `Bun["fetch"]` and `Bun["plugin"]` stay, so the bracket form is still a read.
+function stripCommentsAndStrings(source: string): string {
+  const pattern = /\/\*[\s\S]*?\*\/|\/\/[^\n]*|"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|`(?:[^`\\]|\\[\s\S])*`/g;
+  return source.replace(pattern, m => (/^["'](fetch|plugin)["']$/.test(m) ? m : m.replace(/[^\n]/g, " ")));
+}

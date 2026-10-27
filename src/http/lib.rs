@@ -152,6 +152,45 @@ pub struct HTTPResponseMetadata {
 }
 
 impl HTTPResponseMetadata {
+    /// Deep-copy `response` (status and headers) and `href` into storage this metadata owns.
+    pub(crate) fn new(response: &bun_picohttp::Response<'_>, href: &[u8]) -> Self {
+        let mut builder = bun_picohttp::StringBuilder::default();
+        response.count(&mut builder);
+        builder.count(href);
+        let _ = builder.allocate();
+        // headers_buf is owned by the cloned_response (aka cloned_response.headers)
+        // `Response::clone` ties its return lifetime to
+        // `headers: &'a mut [Header]`; leak the box to obtain `'static` so
+        // the cloned response can be stored in `HTTPResponseMetadata`.
+        // Reclaimed by `Drop for HTTPResponseMetadata`.
+        let headers_buf = bun_core::heap::release(
+            vec![bun_picohttp::Header::ZERO; response.headers.list.len()].into_boxed_slice(),
+        );
+        let cloned_response = response.clone(headers_buf, &mut builder);
+        // SAFETY: `href` aliases `builder`'s heap buffer; ownership of that
+        // buffer is transferred to `owned_buf` immediately below and stored
+        // alongside `href` in `HTTPResponseMetadata`.
+        let href = bun_ptr::RawSlice::new(unsafe { builder.append_raw(href) });
+        // Transfer the single backing allocation out of the builder
+        // (`builder.ptr.?[0..builder.cap]`) so its Drop becomes a no-op.
+        let owned_buf = builder.move_to_slice();
+        HTTPResponseMetadata {
+            owned_buf,
+            response: cloned_response,
+            url: href,
+        }
+    }
+
+    /// The response head, borrowing this metadata.
+    #[inline]
+    pub fn response(&self) -> bun_picohttp::Response<'_> {
+        self.response
+    }
+    /// The URL the response came from, after redirects.
+    #[inline]
+    pub fn url(&self) -> &[u8] {
+        self.url.slice()
+    }
     /// Accessors tied to `&self`: `response` is typed `'static` but its slices
     /// borrow the sibling `owned_buf` / header slice that `Drop` frees, so
     /// hand out reborrows that cannot outlive this metadata.
@@ -4159,31 +4198,7 @@ impl<'a> HTTPClient<'a> {
     /// buffer the parsed slices borrow.
     pub(crate) fn clone_metadata(&mut self, response: &picohttp::Response<'_>) {
         self.state.cloned_metadata = None;
-        let mut builder = picohttp::StringBuilder::default();
-        response.count(&mut builder);
-        builder.count(self.url.href);
-        let _ = builder.allocate();
-        // headers_buf is owned by the cloned_response (aka cloned_response.headers)
-        // `Response::clone` ties its return lifetime to
-        // `headers: &'a mut [Header]`; leak the box to obtain `'static` so
-        // the cloned response can be stored in `HTTPResponseMetadata`.
-        // Reclaimed by `Drop for HTTPResponseMetadata`.
-        let headers_buf = bun_core::heap::release(
-            vec![picohttp::Header::ZERO; response.headers.list.len()].into_boxed_slice(),
-        );
-        let cloned_response = response.clone(headers_buf, &mut builder);
-        // SAFETY: `href` aliases `builder`'s heap buffer; ownership of that
-        // buffer is transferred to `owned_buf` immediately below and stored
-        // alongside `href` in `HTTPResponseMetadata`.
-        let href = bun_ptr::RawSlice::new(unsafe { builder.append_raw(self.url.href) });
-        // Transfer the single backing allocation out of the builder
-        // (`builder.ptr.?[0..builder.cap]`) so its Drop becomes a no-op.
-        let owned_buf = builder.move_to_slice();
-        self.state.cloned_metadata = Some(HTTPResponseMetadata {
-            owned_buf,
-            response: cloned_response,
-            url: href,
-        });
+        self.state.cloned_metadata = Some(HTTPResponseMetadata::new(response, self.url.href));
     }
 
     /// The idle timeout to arm for this request, in seconds (0 = disabled):
@@ -5444,3 +5459,155 @@ impl<'a> HTTPClient<'a> {
         }
     }
 } // impl HTTPClient
+
+#[cfg(test)]
+mod response_metadata_tests {
+    //! `HTTPResponseMetadata` through the moves a result makes, Miri-clean under Tree Borrows (`bun run rust:miri`).
+    use super::{HTTPClientResult, HTTPResponseMetadata};
+    use bun_picohttp as picohttp;
+
+    const HREF: &[u8] = b"http://example.com/";
+
+    /// Clones a head whose text and header array die here: the copy must not point into them.
+    fn cloned(status: &[u8], headers: &[(&[u8], &[u8])]) -> HTTPResponseMetadata {
+        let text: Vec<(Vec<u8>, Vec<u8>)> = headers
+            .iter()
+            .map(|(name, value)| (name.to_vec(), value.to_vec()))
+            .collect();
+        let parsed: Vec<picohttp::Header> = text
+            .iter()
+            .map(|(name, value)| picohttp::Header::new(name, value))
+            .collect();
+        let (status, href) = (status.to_vec(), HREF.to_vec());
+        HTTPResponseMetadata::new(
+            &picohttp::Response {
+                minor_version: 1,
+                status_code: 200,
+                status: &status,
+                headers: picohttp::HeaderList { list: &parsed },
+                bytes_read: 0,
+            },
+            &href,
+        )
+    }
+
+    fn head() -> HTTPResponseMetadata {
+        cloned(
+            b"OK",
+            &[(b"Content-Type", b"text/plain"), (b"ETag", b"\"1\"")],
+        )
+    }
+
+    fn result(metadata: HTTPResponseMetadata) -> HTTPClientResult<'static> {
+        HTTPClientResult {
+            metadata: Some(metadata),
+            ..Default::default()
+        }
+    }
+
+    /// Reads through every view the metadata hands out.
+    fn read(metadata: &HTTPResponseMetadata) {
+        let response = metadata.response();
+        assert_eq!((response.status_code, response.minor_version), (200, 1));
+        assert_eq!(response.status, b"OK");
+        assert_eq!(response.headers.list.len(), 2);
+        assert_eq!(response.headers.list[1].name(), b"ETag");
+        assert_eq!(metadata.url(), HREF);
+        assert_eq!(metadata.status_code(), 200);
+        assert_eq!(metadata.status_text(), b"OK");
+        assert_eq!(metadata.header(b"content-type"), Some(&b"text/plain"[..]));
+        let etag = metadata.header_if_other_is_absent(b"etag", b"x-missing");
+        assert_eq!(etag, Some(&b"\"1\""[..]));
+        let none = metadata.header_if_other_is_absent(b"etag", b"content-type");
+        assert_eq!(none, None);
+    }
+
+    /// A result callback that looks at the head and passes the result on.
+    fn reads_and_forwards(result: HTTPClientResult<'_>, next: fn(HTTPClientResult<'_>)) {
+        read(result.metadata.as_ref().unwrap());
+        next(result);
+    }
+
+    /// The last result callback: the head is read, then dropped by the call it moved into.
+    fn reads_and_drops(result: HTTPClientResult<'_>) {
+        read(result.metadata.as_ref().unwrap());
+    }
+
+    fn drops_unread(_: HTTPClientResult<'_>) {}
+
+    /// `FetchTasklet::callback`: the head of this result, else the one an earlier result left.
+    fn keeps(
+        mut result: HTTPClientResult<'_>,
+        earlier: Option<HTTPResponseMetadata>,
+    ) -> Option<HTTPResponseMetadata> {
+        result.metadata.take().or(earlier)
+    }
+
+    #[test]
+    fn dropped_in_place() {
+        let metadata = head();
+        read(&metadata);
+        let mut stored = Some(head());
+        read(stored.as_ref().unwrap());
+        stored = Some(head());
+        read(stored.as_ref().unwrap());
+        stored = None;
+        assert!(stored.is_none());
+    }
+
+    #[test]
+    fn dropped_by_the_call_it_moved_into() {
+        drops_unread(result(head()));
+        reads_and_drops(result(head()));
+        reads_and_forwards(result(head()), drops_unread);
+        reads_and_forwards(result(head()), reads_and_drops);
+    }
+
+    #[test]
+    fn stored_by_a_callback_then_read_and_replaced() {
+        let first = keeps(result(head()), None);
+        read(first.as_ref().unwrap());
+        let kept = keeps(HTTPClientResult::default(), first);
+        read(kept.as_ref().unwrap());
+        let replaced = keeps(result(head()), kept);
+        read(replaced.as_ref().unwrap());
+    }
+
+    #[test]
+    fn boxed_as_the_reply_to_a_refused_connect() {
+        fn reads_the_reply_and_drops(result: HTTPClientResult<'_>) {
+            read(result.proxy_connect_response.as_deref().unwrap());
+        }
+        let mut stored = Some(head());
+        let refused = HTTPClientResult {
+            fail: Some(crate::Error::ProxyConnectFailed),
+            proxy_connect_response: stored.take().map(Box::new),
+            ..Default::default()
+        };
+        read(refused.proxy_connect_response.as_deref().unwrap());
+        reads_the_reply_and_drops(refused);
+    }
+
+    #[test]
+    fn into_metadata() {
+        let Ok(metadata) = result(head()).into_metadata() else {
+            panic!("a result with a head and no error is its head");
+        };
+        read(&metadata);
+        let failed = HTTPClientResult {
+            fail: Some(crate::Error::ConnectionClosed),
+            ..result(head())
+        };
+        assert!(failed.into_metadata().err() == Some(crate::Error::ConnectionClosed));
+    }
+
+    #[test]
+    fn no_headers_and_no_status_text() {
+        let metadata = cloned(b"", &[]);
+        let response = metadata.response();
+        assert!(response.status.is_empty() && response.headers.list.is_empty());
+        assert_eq!(metadata.url(), HREF);
+        assert_eq!(metadata.header(b"content-type"), None);
+        drops_unread(result(metadata));
+    }
+}

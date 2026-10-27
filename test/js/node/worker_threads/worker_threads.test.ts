@@ -760,21 +760,26 @@ an object, through a worker with no 'error' listener: {"events":["online",${unse
     );
   }
 
+  // Every 'error' of the worker, read at its 'exit': a worker that reports nothing fails its test at once.
+  const reportOf = async (worker: Worker) => {
+    const errors: any[] = [];
+    worker.on("error", err => errors.push(err instanceof Error ? { message: err.message, code: err.code } : err));
+    const exitCode = await new Promise<number>(resolve => worker.on("exit", resolve));
+    return { errors, exitCode };
+  };
+  const unserializableReport = {
+    message: "Serializing an uncaught exception failed",
+    code: "ERR_WORKER_UNSERIALIZABLE_ERROR",
+  };
+
   // Bun only: node delivers an object whose inspection is "". This render is complete and empty, so there is no
   // text to post, and the Worker reads an empty text as "emit the clone". The listener got null.
   test("is ERR_WORKER_UNSERIALIZABLE_ERROR for a value that does not clone and prints as the empty string", async () => {
-    const worker = new Worker(`throw { [Symbol.for("nodejs.util.inspect.custom")]() { return ""; }, fn() {} };`, {
-      eval: true,
-    });
-    const [err] = await once(worker, "error");
-    expect(err).toBeInstanceOf(Error);
-    expect({ message: err.message, code: err.code }).toEqual({
-      message: "Serializing an uncaught exception failed",
-      code: "ERR_WORKER_UNSERIALIZABLE_ERROR",
-    });
+    const { errors } = await reportOf(
+      new Worker(`throw { [Symbol.for("nodejs.util.inspect.custom")]() { return ""; }, fn() {} };`, { eval: true }),
+    );
+    expect(errors).toEqual([unserializableReport]);
   });
-
-  const shown = (err: any) => (err instanceof Error ? { message: err.message, code: err.code } : err);
 
   // "Nothing to report" is for a worker that the clone stopped. A stop from before the clone is not that: the
   // worker's own 'error' listener runs first, and its process.exit() does not take the report away.
@@ -783,31 +788,27 @@ an object, through a worker with no 'error' listener: {"events":["online",${unse
     [
       "a value that neither clones nor prints",
       `{ [Symbol.for("nodejs.util.inspect.custom")]() { throw new Error("x"); }, fn() {} }`,
-      { message: "Serializing an uncaught exception failed", code: "ERR_WORKER_UNSERIALIZABLE_ERROR" },
+      unserializableReport,
     ],
   ])("process.exit() in the worker's own 'error' listener keeps the report of %s", async (_what, thrown, expected) => {
-    const worker = new Worker(`addEventListener("error", () => { process.exit(5); }); throw ${thrown};`, {
-      eval: true,
-    });
-    const errors: any[] = [];
-    worker.on("error", err => errors.push(shown(err)));
-    const exitCode = await new Promise(resolve => worker.on("exit", resolve));
-    expect({ errors, exitCode }).toEqual({ errors: [expected], exitCode: 5 });
+    const report = await reportOf(
+      new Worker(`addEventListener("error", () => { process.exit(5); }); throw ${thrown};`, { eval: true }),
+    );
+    expect(report).toEqual({ errors: [expected], exitCode: 5 });
   });
 
   // A node:vm timeout also ends the clone with a termination, and it stops no worker, so the render is still the
   // report. This passes on main too: it guards the rule above. Only the watchdog can end the spin, at its deadline.
   // The deadline has to fire inside the spin, and a debug build under load needs up to 250 ms to get there.
   test("falls back to the render when a node:vm timeout cuts the clone short", async () => {
-    const worker = new Worker(
-      `globalThis.target = new EventTarget();
-       target.addEventListener("x", () => { throw { get a() { for (;;) {} } }; });
-       try { require("node:vm").runInThisContext("target.dispatchEvent(new Event('x'))", { timeout: 2000 }); } catch {}`,
-      { eval: true },
+    const { errors } = await reportOf(
+      new Worker(
+        `globalThis.target = new EventTarget();
+         target.addEventListener("x", () => { throw { get a() { for (;;) {} } }; });
+         try { require("node:vm").runInThisContext("target.dispatchEvent(new Event('x'))", { timeout: 2000 }); } catch {}`,
+        { eval: true },
+      ),
     );
-    const errors: any[] = [];
-    worker.on("error", err => errors.push(shown(err)));
-    await new Promise(resolve => worker.on("exit", resolve));
     expect(errors).toEqual([{ message: "{\n  a: [Getter],\n}", code: undefined }]);
   });
 

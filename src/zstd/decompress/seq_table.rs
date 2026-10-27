@@ -1,14 +1,14 @@
 //! The FSE tables that sequences are decoded with: `ZSTD_seqSymbol` and `ZSTD_buildFSETable`.
 
 use crate::common::{
-    LL_DEFAULT_NORM_LOG, MAX_LL, MAX_ML, MAX_OFF, MAX_SEQ, ML_DEFAULT_NORM_LOG,
+    LL_BITS, LL_DEFAULT_NORM_LOG, MAX_LL, MAX_ML, MAX_OFF, ML_BITS, ML_DEFAULT_NORM_LOG,
     OF_DEFAULT_NORM_LOG, fse_table_step,
 };
 use crate::error::Result;
-use crate::util::{SliceExt, highbit32, write_le64};
+use crate::util::{SliceExt, write_le64};
 
 #[rustfmt::skip]
-pub(crate) const LL_BASE: [u32; MAX_LL as usize + 1] = [
+const LL_BASE: [u32; MAX_LL as usize + 1] = [
          0,      1,      2,       3,     4,     5,     6,      7,
          8,      9,     10,      11,    12,    13,    14,     15,
         16,     18,     20,      22,    24,    28,    32,     40,
@@ -16,25 +16,9 @@ pub(crate) const LL_BASE: [u32; MAX_LL as usize + 1] = [
     0x2000, 0x4000, 0x8000, 0x10000,
 ];
 
-#[rustfmt::skip]
-pub(crate) const OF_BASE: [u32; MAX_OFF as usize + 1] = [
-           0,         1,         1,         5,       0xD,       0x1D,       0x3D,       0x7D,
-        0xFD,     0x1FD,     0x3FD,     0x7FD,     0xFFD,     0x1FFD,     0x3FFD,     0x7FFD,
-      0xFFFD,   0x1FFFD,   0x3FFFD,   0x7FFFD,   0xFFFFD,   0x1FFFFD,   0x3FFFFD,   0x7FFFFD,
-    0xFFFFFD, 0x1FFFFFD, 0x3FFFFFD, 0x7FFFFFD, 0xFFFFFFD, 0x1FFFFFFD, 0x3FFFFFFD, 0x7FFFFFFD,
-];
-
-#[rustfmt::skip]
-pub(crate) const OF_BITS: [u8; MAX_OFF as usize + 1] = [
-     0,  1,  2,  3,  4,  5,  6,  7,
-     8,  9, 10, 11, 12, 13, 14, 15,
-    16, 17, 18, 19, 20, 21, 22, 23,
-    24, 25, 26, 27, 28, 29, 30, 31,
-];
-
 /// What a match length code starts at, above `MINMATCH`.
 #[rustfmt::skip]
-pub(crate) const ML_BASE: [u32; MAX_ML as usize + 1] = [
+const ML_BASE: [u32; MAX_ML as usize + 1] = [
          0,      1,      2,      3,       4,     5,     6,     7,
          8,      9,     10,     11,      12,    13,    14,    15,
         16,     17,     18,     19,      20,    21,    22,    23,
@@ -57,7 +41,13 @@ pub(crate) struct SeqSymbol {
 pub(crate) trait Cell: Copy + 'static {
     const EMPTY: Self;
     const EMPTY_REF: &'static Self;
-    fn pack(symbol: SeqSymbol) -> Self;
+    /// Where `next_state` is in `to_bits`.
+    const NEXT_STATE_SHIFT: u32;
+    /// For each `nb_bits`, `to_bits` of a cell where nothing else is set but what follows from it.
+    const NB_BITS: &'static [u64; 16];
+    /// The fields one after the other, from the lowest bits on.
+    fn from_bits(bits: u64) -> Self;
+    fn has_additional_bits(self) -> bool;
     fn unpack(self) -> SeqSymbol;
 }
 
@@ -84,6 +74,14 @@ const fn l(next_state: u16, nb_additional_bits: u8, nb_bits: u8, base_value: u32
 }
 
 impl LengthCell {
+    const fn to_bits(self) -> u64 {
+        self.base_value as u64
+            | (self.next_state as u64) << 16
+            | (self.state_mask as u64) << 32
+            | (self.nb_additional_bits as u64) << 48
+            | (self.nb_bits as u64) << 56
+    }
+
     #[inline(always)]
     pub(crate) fn base_value(self) -> u32 {
         u32::from(self.base_value) + (u32::from(self.nb_additional_bits >> 4) << 16)
@@ -94,15 +92,33 @@ impl Cell for LengthCell {
     const EMPTY: Self = l(0, 0, 0, 0);
     const EMPTY_REF: &'static Self = &Self::EMPTY;
 
-    #[inline(always)]
-    fn pack(symbol: SeqSymbol) -> Self {
-        Self {
-            base_value: symbol.base_value as u16,
-            next_state: symbol.next_state,
-            state_mask: (1u16.wrapping_shl(u32::from(symbol.nb_bits))).wrapping_sub(1),
-            nb_additional_bits: symbol.nb_additional_bits,
-            nb_bits: symbol.nb_bits,
+    const NEXT_STATE_SHIFT: u32 = 16;
+    const NB_BITS: &'static [u64; 16] = &{
+        let mut all = [0; 16];
+        let mut left: &mut [u64] = &mut all;
+        let mut nb_bits = 0;
+        while let [bits, others @ ..] = left {
+            *bits = l(0, 0, nb_bits, 0).to_bits();
+            nb_bits += 1;
+            left = others;
         }
+        all
+    };
+
+    #[inline(always)]
+    fn from_bits(bits: u64) -> Self {
+        Self {
+            base_value: bits as u16,
+            next_state: (bits >> 16) as u16,
+            state_mask: (bits >> 32) as u16,
+            nb_additional_bits: (bits >> 48) as u8,
+            nb_bits: (bits >> 56) as u8,
+        }
+    }
+
+    #[inline(always)]
+    fn has_additional_bits(self) -> bool {
+        self.nb_additional_bits != 0
     }
 
     #[inline(always)]
@@ -139,19 +155,47 @@ const fn o(next_state: u8, nb_additional_bits: u8, nb_bits: u8) -> OffsetCell {
     }
 }
 
+impl OffsetCell {
+    const fn to_bits(self) -> u64 {
+        self.first_value as u64
+            | (self.next_state as u64) << 32
+            | (self.state_mask as u64) << 40
+            | (self.nb_additional_bits as u64) << 48
+            | (self.nb_bits as u64) << 56
+    }
+}
+
 impl Cell for OffsetCell {
     const EMPTY: Self = o(0, 0, 0);
     const EMPTY_REF: &'static Self = &Self::EMPTY;
 
-    #[inline(always)]
-    fn pack(symbol: SeqSymbol) -> Self {
-        Self {
-            first_value: 1u32.wrapping_shl(u32::from(symbol.nb_additional_bits)),
-            next_state: symbol.next_state as u8,
-            state_mask: (1u16.wrapping_shl(u32::from(symbol.nb_bits))).wrapping_sub(1) as u8,
-            nb_additional_bits: symbol.nb_additional_bits,
-            nb_bits: symbol.nb_bits,
+    const NEXT_STATE_SHIFT: u32 = 32;
+    const NB_BITS: &'static [u64; 16] = &{
+        let mut all = [0; 16];
+        let mut left: &mut [u64] = &mut all;
+        let mut nb_bits = 0;
+        while let [bits, others @ ..] = left {
+            *bits = o(0, 0, nb_bits).to_bits() - o(0, 0, 0).to_bits();
+            nb_bits += 1;
+            left = others;
         }
+        all
+    };
+
+    #[inline(always)]
+    fn from_bits(bits: u64) -> Self {
+        Self {
+            first_value: bits as u32,
+            next_state: (bits >> 32) as u8,
+            state_mask: (bits >> 40) as u8,
+            nb_additional_bits: (bits >> 48) as u8,
+            nb_bits: (bits >> 56) as u8,
+        }
+    }
+
+    #[inline(always)]
+    fn has_additional_bits(self) -> bool {
+        self.nb_additional_bits != 0
     }
 
     #[inline(always)]
@@ -160,7 +204,6 @@ impl Cell for OffsetCell {
             next_state: u16::from(self.next_state),
             nb_additional_bits: self.nb_additional_bits,
             nb_bits: self.nb_bits,
-            // `OF_BASE`
             base_value: if self.nb_additional_bits < 2 {
                 u32::from(self.nb_additional_bits)
             } else {
@@ -170,69 +213,124 @@ impl Cell for OffsetCell {
     }
 }
 
-const MAX_TABLE_SIZE: usize = 1 << 9;
+/// What each code of a kind stands for: `to_bits` of a cell that leads to no state. There are fewer codes than that.
+pub(crate) type Codes = [u64; 64];
 
-/// The first two passes of `ZSTD_buildFSETable`: which symbol each state decodes.
-struct Spread {
-    symbols: [u8; MAX_TABLE_SIZE + 8],
-    symbol_next: [u16; MAX_SEQ as usize + 1],
+const fn length_codes(mut base_values: &[u32], mut nb_additional_bits: &[u8]) -> Codes {
+    let mut codes = [0; 64];
+    let mut left: &mut [u64] = &mut codes;
+    while let (
+        [code, other_codes @ ..],
+        [base_value, other_values @ ..],
+        [nb_bits, other_nb_bits @ ..],
+    ) = (left, base_values, nb_additional_bits)
+    {
+        *code = l(0, *nb_bits, 0, *base_value).to_bits();
+        (left, base_values, nb_additional_bits) = (other_codes, other_values, other_nb_bits);
+    }
+    codes
 }
 
-impl Spread {
-    fn new(normalized_counter: &[i16], table_log: u32) -> Result<Self> {
-        let table_size = 1usize << table_log;
-        let mut symbols = [0u8; MAX_TABLE_SIZE + 8];
-        let mut symbol_next = [0u16; MAX_SEQ as usize + 1];
-        let mut high_threshold = table_size - 1;
+const fn offset_codes() -> Codes {
+    let mut codes = [0; 64];
+    let (mut left, _) = codes.split_at_mut(MAX_OFF as usize + 1);
+    let mut nb_additional_bits = 0;
+    while let [code, others @ ..] = left {
+        *code = o(0, nb_additional_bits, 0).to_bits();
+        nb_additional_bits += 1;
+        left = others;
+    }
+    codes
+}
 
-        for (symbol, (&count, next)) in normalized_counter.iter().zip(&mut symbol_next).enumerate()
+pub(crate) static LL_CODES: Codes = length_codes(&LL_BASE, &LL_BITS);
+pub(crate) static OF_CODES: Codes = offset_codes();
+pub(crate) static ML_CODES: Codes = length_codes(&ML_BASE, &ML_BITS);
+
+const MAX_TABLE_SIZE: usize = 1 << 9;
+
+/// The position of the highest bit set.
+static HIGH_BIT: [u8; 2 * MAX_TABLE_SIZE] = {
+    let mut table = [0; 2 * MAX_TABLE_SIZE];
+    let (_, mut left) = table.split_at_mut(1);
+    let mut value = 1u32;
+    while let [high_bit, others @ ..] = left {
+        *high_bit = value.ilog2() as u8;
+        value += 1;
+        left = others;
+    }
+    table
+};
+
+/// What tables are built with.
+#[derive(Clone)]
+pub(crate) struct Workspace {
+    /// The symbols, each as many times as it has states.
+    in_order: [u8; MAX_TABLE_SIZE + 8],
+    /// Which symbol each state decodes.
+    symbols: [u8; MAX_TABLE_SIZE],
+    symbol_next: [u16; 64],
+    /// The symbols of low probability.
+    rare: [u8; 64],
+}
+
+impl Workspace {
+    pub(crate) const fn new() -> Self {
+        Self {
+            in_order: [0; _],
+            symbols: [0; _],
+            symbol_next: [0; _],
+            rare: [0; _],
+        }
+    }
+
+    /// The first two passes of `ZSTD_buildFSETable`, with few branches to mispredict.
+    fn spread(&mut self, normalized_counter: &[i16], table_log: u32) -> Result<()> {
+        let table_size = 1usize << table_log;
+        let mut nb_rare = 0usize;
+        let mut nb_in_order = 0usize;
+        let mut eight_times = 0u64;
+        for ((symbol, &count), next) in normalized_counter
+            .iter()
+            .enumerate()
+            .zip(&mut self.symbol_next)
         {
-            if count == -1 {
-                symbols.put(high_threshold, symbol as u8)?;
-                high_threshold = high_threshold.wrapping_sub(1);
-                *next = 1;
-            } else {
-                *next = count as u16;
+            let is_rare = count < 0;
+            if let Some(rare) = self.rare.get_mut(nb_rare % 64) {
+                *rare = symbol as u8;
             }
+            nb_rare += usize::from(is_rare);
+            *next = if is_rare { 1 } else { count as u16 };
+            let count = if is_rare { 0 } else { count as usize };
+            write_le64(&mut self.in_order, nb_in_order, eight_times)?;
+            if count > 8 {
+                for done in (8..count).step_by(8) {
+                    write_le64(&mut self.in_order, nb_in_order + done, eight_times)?;
+                }
+            }
+            nb_in_order += count;
+            eight_times += 0x0101_0101_0101_0101;
         }
 
+        // The states from here on are those of the rare symbols. Others that would go there go to the next place.
+        let first_rare = table_size - nb_rare.min(table_size);
         let table_mask = table_size - 1;
         let step = fse_table_step(table_size);
-        if high_threshold == table_size - 1 {
-            // No symbol of low probability: lay the symbols down in order, then spread them in a second pass that
-            // has no branch to mispredict.
-            let mut in_order = [0u8; MAX_TABLE_SIZE + 8];
-            let mut pos = 0usize;
-            let mut sv = 0u64;
-            for &count in normalized_counter {
-                let n = count as usize;
-                for i in (0..n.max(1)).step_by(8) {
-                    write_le64(&mut in_order, pos + i, sv)?;
-                }
-                pos += n;
-                sv += 0x0101_0101_0101_0101;
+        let symbols = self.symbols.sub_mut(..table_size)?;
+        let mut position = 0usize;
+        let mut from = 0usize;
+        for _ in 0..table_size / 2 {
+            for position in [position, (position + step) & table_mask] {
+                let symbol = self.in_order.get(from % MAX_TABLE_SIZE).copied();
+                symbols.put(position, symbol.unwrap_or(0))?;
+                from += usize::from(position < first_rare);
             }
-            let mut position = 0usize;
-            for &symbol in in_order.sub(..table_size)? {
-                symbols.put(position, symbol)?;
-                position = (position + step) & table_mask;
-            }
-        } else {
-            let mut position = 0usize;
-            for (symbol, &count) in normalized_counter.iter().enumerate() {
-                for _ in 0..count {
-                    symbols.put(position, symbol as u8)?;
-                    position = (position + step) & table_mask;
-                    while position > high_threshold {
-                        position = (position + step) & table_mask;
-                    }
-                }
-            }
+            position = (position + 2 * step) & table_mask;
         }
-        Ok(Self {
-            symbols,
-            symbol_next,
-        })
+        for (symbol, &rare) in symbols.iter_mut().rev().zip(self.rare.sub(..nb_rare)?) {
+            *symbol = rare;
+        }
+        Ok(())
     }
 }
 
@@ -302,16 +400,12 @@ impl<C: Cell, const N: usize> SeqTable<C, N> {
     }
 
     /// `ZSTD_buildSeqTable_rle`
-    pub(crate) fn build_rle(&mut self, base_value: u32, nb_additional_bits: u8) {
+    pub(crate) fn build_rle(&mut self, code: u64) {
+        let code = C::from_bits(code);
         self.table_log = 0;
-        self.with_more_bits = u32::from(nb_additional_bits != 0) << 9;
+        self.with_more_bits = u32::from(code.has_additional_bits()) << 9;
         if let Some(cell) = self.table.first_mut() {
-            *cell = C::pack(SeqSymbol {
-                next_state: 0,
-                nb_additional_bits,
-                nb_bits: 0,
-                base_value,
-            });
+            *cell = code;
         }
     }
 
@@ -319,38 +413,36 @@ impl<C: Cell, const N: usize> SeqTable<C, N> {
     pub(crate) fn build(
         &mut self,
         normalized_counter: &[i16],
-        base_value: &[u32],
-        nb_additional_bits: &[u8],
+        codes: &Codes,
         table_log: u32,
+        workspace: &mut Workspace,
     ) -> Result<()> {
         let table_size = 1usize << table_log;
         let table_decode = self.table.sub_mut(..table_size)?;
         self.table_log = table_log;
         self.with_more_bits = normalized_counter
             .iter()
-            .zip(nb_additional_bits)
-            .filter(|&(_, &nb_bits)| nb_bits != 0)
+            .zip(codes)
+            .filter(|&(_, &code)| C::from_bits(code).has_additional_bits())
             .map(|(&count, _)| u32::from(count.unsigned_abs()))
             .sum::<u32>()
             << (9 - table_log.min(9));
-        let Spread {
-            symbols,
-            mut symbol_next,
-        } = Spread::new(normalized_counter, table_log)?;
+        workspace.spread(normalized_counter, table_log)?;
 
-        for (cell, &symbol) in table_decode.iter_mut().zip(&symbols) {
-            let symbol = usize::from(symbol);
-            let next = symbol_next.at_mut(symbol)?;
-            let next_state = u32::from(*next);
+        for (cell, &symbol) in table_decode.iter_mut().zip(&workspace.symbols) {
+            let symbol = usize::from(symbol) % 64;
+            let (Some(next), Some(code)) =
+                (workspace.symbol_next.get_mut(symbol), codes.get(symbol))
+            else {
+                continue;
+            };
+            let next_state = usize::from(*next);
             *next = next.wrapping_add(1);
-            let nb_bits = table_log.wrapping_sub(highbit32(next_state));
-            *cell = C::pack(SeqSymbol {
-                next_state: (next_state.wrapping_shl(nb_bits) as usize).wrapping_sub(table_size)
-                    as u16,
-                nb_additional_bits: nb_additional_bits.at(symbol)?,
-                nb_bits: nb_bits as u8,
-                base_value: base_value.at(symbol)?,
-            });
+            let high_bit = HIGH_BIT.get(next_state % (2 * MAX_TABLE_SIZE)).copied();
+            let nb_bits = table_log.wrapping_sub(u32::from(high_bit.unwrap_or(0)));
+            let next_state = next_state.wrapping_shl(nb_bits).wrapping_sub(table_size) as u64;
+            let nb_bits = C::NB_BITS.get(nb_bits as usize % 16).copied().unwrap_or(0);
+            *cell = C::from_bits(code | nb_bits | next_state << C::NEXT_STATE_SHIFT);
         }
         Ok(())
     }

@@ -10,18 +10,18 @@ use std::borrow::Cow;
 use block::{
     BlockDecoder, BlockOutput, EntropyDTables, ExtDict, OutputBuffer, Streaming, get_c_block_size,
 };
-use seq_table::{LL_BASE, ML_BASE, OF_BASE, OF_BITS, SeqTableSources, TableSource};
+use seq_table::{LL_CODES, ML_CODES, OF_CODES, SeqTableSources, TableSource};
 
 use crate::common::entropy::read_ncount;
 use crate::common::xxhash::Xxh64;
 use crate::common::{
-    BlockType, LL_BITS, LL_FSE_LOG, MAX_LL, MAX_ML, MAX_OFF, ML_BITS, ML_FSE_LOG, OFF_FSE_LOG,
-    REP_START_VALUE, WILDCOPY_OVERLENGTH, ZSTD_BLOCKHEADERSIZE, ZSTD_BLOCKSIZE_MAX,
-    ZSTD_CONTENTSIZE_ERROR, ZSTD_CONTENTSIZE_UNKNOWN, ZSTD_DID_FIELD_SIZE, ZSTD_FCS_FIELD_SIZE,
-    ZSTD_FRAMEHEADERSIZE_MAX, ZSTD_FRAMEIDSIZE, ZSTD_MAGIC_DICTIONARY, ZSTD_MAGIC_SKIPPABLE_MASK,
-    ZSTD_MAGIC_SKIPPABLE_START, ZSTD_MAGICNUMBER, ZSTD_SKIPPABLEHEADERSIZE,
-    ZSTD_WINDOWLOG_ABSOLUTEMIN, ZSTD_WINDOWLOG_LIMIT_DEFAULT, ZSTD_WINDOWLOG_MAX,
-    ZSTD_WORKSPACETOOLARGE_FACTOR, ZSTD_WORKSPACETOOLARGE_MAXDURATION,
+    BlockType, LL_FSE_LOG, MAX_LL, MAX_ML, MAX_OFF, ML_FSE_LOG, OFF_FSE_LOG, REP_START_VALUE,
+    WILDCOPY_OVERLENGTH, ZSTD_BLOCKHEADERSIZE, ZSTD_BLOCKSIZE_MAX, ZSTD_CONTENTSIZE_ERROR,
+    ZSTD_CONTENTSIZE_UNKNOWN, ZSTD_DID_FIELD_SIZE, ZSTD_FCS_FIELD_SIZE, ZSTD_FRAMEHEADERSIZE_MAX,
+    ZSTD_FRAMEIDSIZE, ZSTD_MAGIC_DICTIONARY, ZSTD_MAGIC_SKIPPABLE_MASK, ZSTD_MAGIC_SKIPPABLE_START,
+    ZSTD_MAGICNUMBER, ZSTD_SKIPPABLEHEADERSIZE, ZSTD_WINDOWLOG_ABSOLUTEMIN,
+    ZSTD_WINDOWLOG_LIMIT_DEFAULT, ZSTD_WINDOWLOG_MAX, ZSTD_WORKSPACETOOLARGE_FACTOR,
+    ZSTD_WORKSPACETOOLARGE_MAXDURATION,
 };
 use crate::error::{ErrorCode, Result};
 use crate::util::{SliceExt, read_le16, read_le32, read_le64, try_copy};
@@ -343,9 +343,9 @@ fn load_d_entropy(entropy: &mut EntropyDTables, dict: &[u8]) -> Result<usize> {
         }
         entropy.seq.of.build(
             ncount.sub(..header.max_symbol_value as usize + 1)?,
-            &OF_BASE,
-            &OF_BITS,
+            &OF_CODES,
             header.table_log,
+            &mut entropy.workspace,
         )?;
         pos += header.size;
     }
@@ -357,9 +357,9 @@ fn load_d_entropy(entropy: &mut EntropyDTables, dict: &[u8]) -> Result<usize> {
         }
         entropy.seq.ml.build(
             ncount.sub(..header.max_symbol_value as usize + 1)?,
-            &ML_BASE,
-            &ML_BITS,
+            &ML_CODES,
             header.table_log,
+            &mut entropy.workspace,
         )?;
         pos += header.size;
     }
@@ -371,9 +371,9 @@ fn load_d_entropy(entropy: &mut EntropyDTables, dict: &[u8]) -> Result<usize> {
         }
         entropy.seq.ll.build(
             ncount.sub(..header.max_symbol_value as usize + 1)?,
-            &LL_BASE,
-            &LL_BITS,
+            &LL_CODES,
             header.table_log,
+            &mut entropy.workspace,
         )?;
         pos += header.size;
     }

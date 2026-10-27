@@ -2,16 +2,17 @@
 
 use super::huf::{self, HufDTable};
 use super::seq_table::{
-    Cell, LL_BASE, ML_BASE, OF_BASE, OF_BITS, OffsetTable, SeqTable, SeqTableSources, SeqTables,
-    TableSource,
+    Cell, Codes, LL_CODES, ML_CODES, OF_CODES, OffsetTable, SeqTable, SeqTableSources, SeqTables,
+    TableSource, Workspace,
 };
+use core::cell::OnceCell;
 use core::hint::{Locality, prefetch_read};
 
 use crate::common::bitstream::BitDStream;
 use crate::common::entropy::read_ncount;
 use crate::common::{
-    BlockType, LL_BITS, LL_FSE_LOG, LONGNBSEQ, MAX_LL, MAX_ML, MAX_OFF, MAX_SEQ, MIN_CBLOCK_SIZE,
-    MIN_LITERALS_FOR_4_STREAMS, MIN_SEQUENCES_SIZE, MINMATCH, ML_BITS, ML_FSE_LOG, OFF_FSE_LOG,
+    BlockType, LL_FSE_LOG, LONGNBSEQ, MAX_LL, MAX_ML, MAX_OFF, MAX_SEQ, MIN_CBLOCK_SIZE,
+    MIN_LITERALS_FOR_4_STREAMS, MIN_SEQUENCES_SIZE, MINMATCH, ML_FSE_LOG, OFF_FSE_LOG,
     REP_START_VALUE, SymbolEncodingType, WILDCOPY_OVERLENGTH, ZSTD_BLOCKHEADERSIZE, ZSTD_REP_NUM,
 };
 use crate::error::{ErrorCode, Result};
@@ -55,6 +56,7 @@ pub(crate) struct EntropyDTables {
     pub(crate) seq: SeqTables,
     pub(crate) huf_table: HufDTable,
     pub(crate) rep: [u32; ZSTD_REP_NUM],
+    pub(crate) workspace: Workspace,
 }
 
 impl EntropyDTables {
@@ -63,6 +65,7 @@ impl EntropyDTables {
             seq: SeqTables::new(),
             huf_table: HufDTable::new(),
             rep: REP_START_VALUE,
+            workspace: Workspace::new(),
         }
     }
 }
@@ -442,8 +445,8 @@ impl BlockDecoder {
             MAX_LL,
             LL_FSE_LOG,
             src.sub(ip..)?,
-            &LL_BASE,
-            &LL_BITS,
+            &LL_CODES,
+            &mut self.entropy.workspace,
             fse_entropy,
         )
         .map_err(|_| ErrorCode::CorruptionDetected)?;
@@ -454,8 +457,8 @@ impl BlockDecoder {
             MAX_OFF,
             OFF_FSE_LOG,
             src.sub(ip..)?,
-            &OF_BASE,
-            &OF_BITS,
+            &OF_CODES,
+            &mut self.entropy.workspace,
             fse_entropy,
         )
         .map_err(|_| ErrorCode::CorruptionDetected)?;
@@ -466,8 +469,8 @@ impl BlockDecoder {
             MAX_ML,
             ML_FSE_LOG,
             src.sub(ip..)?,
-            &ML_BASE,
-            &ML_BITS,
+            &ML_CODES,
+            &mut self.entropy.workspace,
             fse_entropy,
         )
         .map_err(|_| ErrorCode::CorruptionDetected)?;
@@ -562,13 +565,13 @@ impl BlockDecoder {
         };
 
         if nb_seq > 0 {
-            let mut seq_state = SeqState::new(sequences, tables, rep)?;
-            if use_prefetch_decoder {
-                exec.run::<true>(&mut seq_state, nb_seq)?;
+            let seq_state = SeqState::new(sequences, tables, rep)?;
+            let prev_offset = if use_prefetch_decoder {
+                exec.run::<true>(&seq_state, nb_seq)?
             } else {
-                exec.run::<false>(&mut seq_state, nb_seq)?;
-            }
-            *rep = seq_state.prev_offset.map(|offset| offset as u32);
+                exec.run::<false>(&seq_state, nb_seq)?
+            };
+            *rep = prev_offset.map(|offset| offset as u32);
         }
         exec.last_literals()?;
         Ok(exec.op - start)
@@ -583,8 +586,8 @@ fn build_seq_table<C: Cell, const N: usize>(
     max: u32,
     max_log: u32,
     src: &[u8],
-    base_value: &[u32],
-    nb_additional_bits: &[u8],
+    codes: &Codes,
+    workspace: &mut Workspace,
     flag_repeat_table: bool,
 ) -> Result<usize> {
     match encoding_type {
@@ -595,8 +598,7 @@ fn build_seq_table<C: Cell, const N: usize>(
             if u32::from(symbol) > max {
                 return Err(ErrorCode::CorruptionDetected);
             }
-            let symbol = usize::from(symbol);
-            table.build_rle(base_value.at(symbol)?, nb_additional_bits.at(symbol)?);
+            table.build_rle(codes.at(usize::from(symbol))?);
             *source = TableSource::Local;
             Ok(1)
         }
@@ -619,9 +621,9 @@ fn build_seq_table<C: Cell, const N: usize>(
             }
             table.build(
                 norm.sub(..header.max_symbol_value as usize + 1)?,
-                base_value,
-                nb_additional_bits,
+                codes,
                 header.table_log,
+                workspace,
             )?;
             *source = TableSource::Local;
             Ok(header.size)
@@ -683,6 +685,51 @@ impl History {
         prefetch_read(from, Locality::L1);
         prefetch_read(from.wrapping_add(64), Locality::L1);
         self.position += (match_length + MINMATCH) as usize;
+    }
+}
+
+/// A copy of the start of a stream after zeroes, where it can be read as if its start were far. That it was not shows
+/// afterwards.
+struct PaddedStart(OnceCell<[u8; Self::PADDING + Self::MAX_SIZE]>);
+
+impl PaddedStart {
+    const PADDING: usize = 32;
+    const MAX_SIZE: usize = 32;
+
+    const fn new() -> Self {
+        Self(OnceCell::new())
+    }
+
+    /// `bit_d` on the copy, if little enough is left of it.
+    fn set(&self, bit_d: &BitDStream<'_>) -> Option<BitDStream<'_>> {
+        let src = bit_d.bytes();
+        if src.len() > Self::MAX_SIZE || bit_d.bits_consumed > 64 {
+            return None;
+        }
+        let copy = self.0.get_or_init(|| {
+            let mut copy = [0; _];
+            if let Some(start) = copy.get_mut(Self::PADDING..Self::PADDING + src.len()) {
+                start.copy_from_slice(src);
+            }
+            copy
+        });
+        // A stream of less than 8 bytes counts what it lacks as consumed.
+        let lacking = 8usize.saturating_sub(src.len()) as u32 * 8;
+        let pos = Self::PADDING + src.len() - 8;
+        BitDStream::resume(copy, pos, bit_d.bits_consumed.checked_sub(lacking)?).ok()
+    }
+
+    /// How many bits are left to read of the copy and of the zeroes.
+    fn bits_left(bit_d: &BitDStream<'_>) -> usize {
+        (bit_d.bytes().len() * 8).saturating_sub(bit_d.bits_consumed as usize)
+    }
+
+    fn is_reached(bit_d: &BitDStream<'_>) -> bool {
+        Self::bits_left(bit_d) == Self::PADDING * 8
+    }
+
+    fn is_passed(bit_d: &BitDStream<'_>) -> bool {
+        Self::bits_left(bit_d) < Self::PADDING * 8
     }
 }
 
@@ -896,14 +943,7 @@ impl<'a> SeqState<'a> {
     }
 }
 
-#[inline(always)]
-fn copy_within<const N: usize>(buf: &mut [u8], src: usize, dst: usize) -> Result<()> {
-    let chunk: [u8; N] = *buf.array_at(src)?;
-    *buf.array_at_mut(dst)? = chunk;
-    Ok(())
-}
-
-/// The same for positions that do not overflow. Whether they are in `buf`.
+/// Copies 16 bytes within `buf`, between positions that do not overflow. Whether they are in `buf`.
 #[inline(always)]
 fn copy_16(buf: &mut [u8], src: usize, dst: usize) -> bool {
     let Some(Ok(chunk)) = buf.get(src..src + 16).map(<[u8; 16]>::try_from) else {
@@ -1305,15 +1345,32 @@ impl<'a> Executor<'_, 'a> {
     }
 
     /// `ZSTD_decompressSequences_body`, `ZSTD_decompressSequences_bodySplitLitBuffer` and, with `LONG`,
-    /// `ZSTD_decompressSequencesLong_body`.
-    fn run<const LONG: bool>(&mut self, seq_state: &mut SeqState<'_>, nb_seq: usize) -> Result<()> {
-        const BATCH: usize = 128;
-        // After 3 that only stand for the last offsets.
-        let mut batch = [RawSequence::default(); 3 + BATCH];
+    /// `ZSTD_decompressSequencesLong_body`. Returns the last offsets.
+    fn run<const LONG: bool>(
+        &mut self,
+        seq_state: &SeqState<'_>,
+        nb_seq: usize,
+    ) -> Result<[usize; ZSTD_REP_NUM]> {
+        // Sequences are decoded that many at a time, after 3 that only stand for the last offsets.
+        if nb_seq < 32 {
+            self.run_by_batch::<LONG>(seq_state, nb_seq, &mut [RawSequence::default(); 3 + 32])
+        } else {
+            self.run_by_batch::<LONG>(seq_state, nb_seq, &mut [RawSequence::default(); 3 + 128])
+        }
+    }
+
+    fn run_by_batch<const LONG: bool>(
+        &mut self,
+        seq_state: &SeqState<'_>,
+        nb_seq: usize,
+        batch: &mut [RawSequence],
+    ) -> Result<[usize; ZSTD_REP_NUM]> {
         // The C code then decodes 8 sequences ahead, so it sees whether the stream ends where it should before it
         // executes the last ones.
         let mut ahead = [Sequence::default(); 8];
         let ahead = ahead.sub_mut(..if LONG { nb_seq.min(8) } else { 0 })?;
+        let start = PaddedStart::new();
+        let mut seq_state: SeqState<'_> = *seq_state;
 
         // A branch that goes wrong costs about 10 times what it saves.
         let tables = seq_state.tables;
@@ -1323,46 +1380,79 @@ impl<'a> Executor<'_, 'a> {
         // Long copies go on while the next sequences are decoded, if that is what comes next.
         if tables.ml.with_more_bits > 512 / 2 && !self.split {
             let mut exec = self.fork();
-            let mut state = *seq_state;
             while remaining > ahead.len() {
-                let sequence = state.decode_sequence(remaining == 1);
+                let sequence = seq_state.decode_sequence(remaining == 1);
                 remaining -= 1;
                 exec.exec_sequence::<false>(sequence)?;
             }
             let exec = (exec.op, exec.lits, exec.split);
             self.join(exec);
-            *seq_state = state;
         }
+        // Where decoding went on from a copy of the start of the stream, if it did.
+        let mut left_at = None;
+        let mut can_leave = !LONG;
         while remaining > ahead.len() {
+            let mut count = 0;
             if !self.split {
-                let room = batch.span_mut(3, BATCH.min(remaining - ahead.len().max(1)))?;
+                let room = (batch.len() - 3).min(remaining - ahead.len().max(1));
+                let room = batch.span_mut(3, room)?;
                 let history = &mut self.history();
-                let count = if more_bits {
+                count = if more_bits {
                     seq_state.decode_batch::<LONG, true>(room, history)?
                 } else {
                     seq_state.decode_batch::<LONG, false>(room, history)?
                 };
-                if count > 0 {
-                    remaining -= count;
-                    self.exec_all(batch.sub_mut(..3 + count)?, &mut seq_state.prev_offset)?;
+                if count == 0
+                    && can_leave
+                    && let Some(bit_d) = start.set(&seq_state.bit_d)
+                {
+                    can_leave = false;
+                    left_at = Some((seq_state, remaining));
+                    seq_state.bit_d = bit_d;
                     continue;
                 }
             }
-            let sequence = seq_state.decode_sequence(remaining == 1);
-            remaining -= 1;
-            self.exec_sequence_maybe_split(sequence)?;
+            let mut sequence = None;
+            if count == 0 {
+                sequence = Some(seq_state.decode_sequence(remaining == 1));
+            }
+            if let Some((state, at)) = left_at
+                && PaddedStart::is_passed(&seq_state.bit_d)
+            {
+                // What the C code makes of that depends on more than the bits.
+                seq_state = state;
+                for _ in remaining..at {
+                    seq_state.decode_sequence(false);
+                }
+                left_at = None;
+                continue;
+            }
+            match sequence {
+                Some(sequence) => {
+                    remaining -= 1;
+                    self.exec_sequence_maybe_split(sequence)?;
+                }
+                None => {
+                    remaining -= count;
+                    self.exec_all(batch.sub_mut(..3 + count)?, &mut seq_state.prev_offset)?;
+                }
+            }
         }
         for sequence in &mut *ahead {
             *sequence = seq_state.decode_sequence(remaining == 1);
             remaining -= 1;
         }
-        if !seq_state.bit_d.is_at_end() {
+        let is_at_end = match left_at {
+            Some(_) => PaddedStart::is_reached(&seq_state.bit_d),
+            None => seq_state.bit_d.is_at_end(),
+        };
+        if !is_at_end {
             return Err(ErrorCode::CorruptionDetected);
         }
         for &sequence in &*ahead {
             self.exec_sequence_maybe_split(sequence)?;
         }
-        Ok(())
+        Ok(seq_state.prev_offset)
     }
 
     fn history(&mut self) -> History {

@@ -5,16 +5,16 @@ off the JS thread.
 
 ## Layout
 
-| file                                  | owns                                                                                                            | touch when                               |
-| ------------------------------------- | --------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
-| `Image.bind.ts`                       | JS surface (codegen input)                                                                                      | adding/renaming a JS method              |
-| `Image.rs`                            | JS↔native glue: arg parsing, op recording, `ConcurrentPromiseTask` scheduling, result delivery                  | new options, new chainable, new terminal |
-| `codecs.rs`                           | thin wrappers over `bun_jpeg` / libspng / libwebp + the `Format` sniffer + the pixel-limit guard                | bumping a codec, adding a format         |
-| `exif.rs`                             | JPEG APP1/TIFF Orientation reader (tag 0x0112 only)                                                             | extending EXIF coverage                  |
-| `quantize.rs`                         | median-cut RGBA → palette for `png({palette})`                                                                  | dithering, perceptual weighting          |
-| `backend_coregraphics.rs`             | macOS ImageIO/CoreGraphics, lazy `dlopen`                                                                       | macOS-specific behaviour                 |
-| `backend_wic.rs`                      | Windows WIC, COM                                                                                                | Windows-specific behaviour               |
-| `../bun.js/bindings/image_resize.cpp` | highway resize/rotate/flip/modulate kernels (`bun_image_*` C ABI)                                               | new filter, perf work                    |
+| file                                  | owns                                                                                             | touch when                               |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------ | ---------------------------------------- |
+| `Image.bind.ts`                       | JS surface (codegen input)                                                                       | adding/renaming a JS method              |
+| `Image.rs`                            | JS↔native glue: arg parsing, op recording, `ConcurrentPromiseTask` scheduling, result delivery   | new options, new chainable, new terminal |
+| `codecs.rs`                           | thin wrappers over `bun_jpeg` / libspng / libwebp + the `Format` sniffer + the pixel-limit guard | bumping a codec, adding a format         |
+| `exif.rs`                             | JPEG APP1/TIFF Orientation reader (tag 0x0112 only)                                              | extending EXIF coverage                  |
+| `quantize.rs`                         | median-cut RGBA → palette for `png({palette})`                                                   | dithering, perceptual weighting          |
+| `backend_coregraphics.rs`             | macOS ImageIO/CoreGraphics, lazy `dlopen`                                                        | macOS-specific behaviour                 |
+| `backend_wic.rs`                      | Windows WIC, COM                                                                                 | Windows-specific behaviour               |
+| `../bun.js/bindings/image_resize.cpp` | highway resize/rotate/flip/modulate kernels (`bun_image_*` C ABI)                                | new filter, perf work                    |
 
 `system_backend` in `codecs.rs` is a cfg-gated module re-export — absent on Linux (callers gate on `HAS_SYSTEM_BACKEND`), so the dispatch
 compiles away. On macOS/Windows the backend is tried first; it returns

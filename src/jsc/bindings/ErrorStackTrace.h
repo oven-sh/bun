@@ -56,7 +56,6 @@ private:
     // Lazy-initialized
     WTF::String m_sourceURL;
     WTF::String m_functionName;
-    WTF::String m_typeName;
 
     // m_wasmFunctionIndexOrName has meaning only when m_isWasmFrame is set
     JSC::Wasm::IndexOrName m_wasmFunctionIndexOrName;
@@ -84,7 +83,6 @@ public:
     intptr_t sourceID() const;
     JSC::JSString* sourceURL();
     JSC::JSString* functionName();
-    JSC::JSString* typeName();
 
     bool isFunctionOrEval() const { return m_isFunctionOrEval; }
     bool isAsync() const { return m_isAsync; }
@@ -151,8 +149,6 @@ private:
      */
     ALWAYS_INLINE String retrieveFunctionName();
 
-    ALWAYS_INLINE String retrieveTypeName();
-
     bool calculateSourcePositions();
 };
 
@@ -200,11 +196,6 @@ String sourceURL(JSC::VM& vm, const JSC::StackFrame& frame);
 String sourceURL(JSC::StackVisitor& visitor);
 String sourceURL(JSC::VM& vm, JSC::JSFunction* function);
 
-enum class FinalizerSafety {
-    NotInFinalizer,
-    MustNotTriggerGC,
-};
-
 class FunctionNameFlags {
 public:
     static constexpr unsigned None = 0;
@@ -216,7 +207,7 @@ public:
 };
 
 String functionName(JSC::VM& vm, JSC::CodeBlock* codeBlock);
-String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* callee);
-String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const JSC::StackFrame& frame, FinalizerSafety, unsigned int* flags);
+String functionName(JSC::VM& vm, JSC::JSObject* callee);
+String functionName(JSC::VM& vm, const JSC::StackFrame& frame, unsigned int* flags);
 
 }

@@ -1,66 +1,3 @@
-// ─── byte ↔ typed-slice reinterpretation ─────────────────────────────────────
-/// Reinterpret `&mut [u8]` as `&mut [T]`.
-///
-/// SAFETY (caller-upheld):
-/// * `bytes.as_ptr()` must be aligned to `align_of::<T>()`. We enforce this
-///   with a hard `assert!` rather than
-///   `debug_assert!`: forming a misaligned `&mut [T]` is instant UB in Rust
-///   even if never dereferenced, so this must not be silently elided in
-///   release. The check is a single AND+CMP and every current call site is
-///   immediately followed by a syscall, so the cost is negligible.
-/// * `T` must be plain-old-data — every byte pattern in `bytes[..len/size]`
-///   must be a valid `T` (callers use `u16`/`u32` only),
-/// * the trailing `len % size_of::<T>()` bytes are silently dropped from the
-///   reinterpreted view.
-#[inline]
-pub unsafe fn bytes_as_slice_mut<T>(bytes: &mut [u8]) -> &mut [T] {
-    assert!(
-        bytes.as_ptr().cast::<T>().is_aligned(),
-        "bytes_as_slice_mut: misaligned for {}",
-        core::any::type_name::<T>(),
-    );
-    let len = bytes.len() / core::mem::size_of::<T>();
-    // SAFETY: alignment + validity preconditions documented above.
-    unsafe { core::slice::from_raw_parts_mut(bytes.as_mut_ptr().cast::<T>(), len) }
-}
-
-// ─── Unaligned<T> ─────────────────────────────────────────────────────────────
-/// Element wrapper with alignment 1. Rust references and slices require
-/// natural alignment for `T`; producing a `&[u16]` from an odd address is
-/// instant UB even if never dereferenced. `#[repr(packed)]` on this wrapper
-/// drops the alignment requirement to 1, so `&[Unaligned<T>]` is the sound
-/// translation of `[]align(1) T`. Reads/writes go through `ptr::read_unaligned`
-/// / `ptr::write_unaligned` (the compiler emits byte-wise or unaligned-load
-/// instructions as appropriate for the target).
-#[repr(C, packed)]
-#[derive(Copy, Clone)]
-pub struct Unaligned<T: Copy>(T);
-
-impl<T: Copy> Unaligned<T> {
-    #[inline(always)]
-    pub fn get(self) -> T {
-        // `self` is by-value (already moved into an aligned local), so a plain
-        // field read is fine; the `packed` repr only affects in-place borrows.
-        self.0
-    }
-
-    #[inline]
-    pub fn slice_align_cast_mut(slice: &mut [Unaligned<T>]) -> &mut [T] {
-        if slice.is_empty() {
-            return &mut [];
-        }
-        debug_assert!(
-            (slice.as_ptr() as usize).is_multiple_of(core::mem::align_of::<T>()),
-            "Unaligned::slice_align_cast_mut: pointer is not {}-byte aligned",
-            core::mem::align_of::<T>(),
-        );
-        // SAFETY: `#[repr(C, packed)]` around a single `T` gives identical size
-        // and field offset 0; the debug-asserted alignment upgrades it to `T`'s
-        // layout. `&mut` exclusivity is preserved.
-        unsafe { core::slice::from_raw_parts_mut(slice.as_mut_ptr().cast::<T>(), slice.len()) }
-    }
-}
-
 // ════════════════════════════════════════════════════════════════════════════
 // Low-tier primitives hoisted into bun_core.
 // Forward-referenced as `crate::X` by Global.rs / output.rs / fmt.rs / env.rs.
@@ -195,7 +132,7 @@ impl ZStr {
     }
     /// Borrow a NUL-terminated FFI C string as `&ZStr`, or `EMPTY` if `p` is
     /// null. Single audited funnel for the `strlen`-then-`from_raw` shape that
-    /// previously appeared as ad-hoc local helpers in libarchive / uSockets /
+    /// previously appeared as ad-hoc local helpers in uSockets /
     /// HTTPCertError. Returns `&'a ZStr` so the *caller* picks the lifetime.
     ///
     /// # Safety
@@ -261,6 +198,8 @@ impl ZBox {
     /// Take ownership of `v` and append a trailing NUL.
     #[inline]
     pub fn from_vec(mut v: Vec<u8>) -> ZBox {
+        // Grow by exactly one so `into_boxed_slice` doesn't have to shrink again.
+        v.reserve_exact(1);
         v.push(0);
         ZBox(v.into_boxed_slice())
     }
@@ -465,22 +404,6 @@ impl WStr {
         // release) and `buf[..buf.len()-1]` is in-bounds by slice invariant.
         unsafe { Self::from_raw(buf.as_ptr(), buf.len() - 1) }
     }
-    /// Borrow a NUL-terminated FFI wide string as `&WStr`, or [`EMPTY`] if
-    /// `p` is null. UTF-16 mirror of [`ZStr::from_c_ptr`]; single audited
-    /// funnel for the `wcslen`-then-`from_raw` shape at libarchive `_w`
-    /// accessors and Windows path-API ingestion points.
-    ///
-    /// # Safety
-    /// If non-null, `p` must point to a NUL-terminated u16 sequence readable
-    /// for `'a`. Null is explicitly allowed (→ `WStr::EMPTY`).
-    #[inline]
-    pub unsafe fn from_ptr<'a>(p: *const u16) -> &'a WStr {
-        if p.is_null() {
-            return Self::EMPTY;
-        }
-        // SAFETY: non-null and NUL-terminated per caller contract.
-        unsafe { Self::from_raw(p, crate::ffi::wcslen(p)) }
-    }
     #[inline]
     pub const fn as_slice(&self) -> &[u16] {
         &self.0
@@ -563,6 +486,23 @@ macro_rules! zstr {
         // SAFETY: literal is NUL-terminated; len excludes the NUL.
         unsafe { $crate::ZStr::from_raw(__B.as_ptr(), __B.len() - 1) }
     }};
+}
+
+/// The path of the null device, as a literal that `concat!` accepts. Use it for paths handed to a
+/// child process, because most Windows programs treat `/dev/null` as an ordinary path.
+#[cfg(not(windows))]
+#[macro_export]
+macro_rules! null_device {
+    () => {
+        "/dev/null"
+    };
+}
+#[cfg(windows)]
+#[macro_export]
+macro_rules! null_device {
+    () => {
+        "NUL"
+    };
 }
 
 /// Nomicon-style opaque FFI handle. Expands to a zero-sized `#[repr(C)]`
@@ -693,14 +633,17 @@ pub type OSPathSlice<'a> = &'a [OSPathChar];
 
 pub use bun_alloc::SEP;
 
-/// `[u8; MAX_PATH_BYTES]` stack buffer for path syscalls.
+/// `[u8; MAX_PATH_BYTES]` scratch buffer for path syscalls.
 ///
 /// Canonical definition; `bun_paths::PathBuffer` re-exports this so the two
 /// crates share ONE nominal type and callers can pass a `bun_paths` buffer to
 /// `bun_core::getcwd`/`which` without a pointer cast.
 ///
+/// Scratch instances come from `bun_paths::path_buffer_pool::get()`. `ZEROED`
+/// is for long-lived struct fields: on Windows it is a 98 KB memset.
+///
 /// NOTE on alignment: `os_path_kernel32` (Windows) reinterprets a
-/// `&mut PathBuffer` as `&mut [u16]` via [`bytes_as_slice_mut`]. The language
+/// `&mut PathBuffer` as `&mut [u16]` via [`cast_slice_mut`]. The language
 /// only guarantees align=1 for `[u8; N]`, so that reinterpret is guarded by a
 /// hard `assert!`. We do *not* bump this struct
 /// to `#[repr(align(2))]` because several call sites reinterpret an arbitrary
@@ -712,23 +655,6 @@ pub use bun_alloc::SEP;
 pub struct PathBuffer(pub [u8; MAX_PATH_BYTES]);
 impl PathBuffer {
     pub const ZEROED: Self = Self([0; MAX_PATH_BYTES]);
-    /// The bytes are immediately overwritten by the syscall
-    /// that fills it, so the initial contents are never observed.
-    ///
-    /// On Windows `MAX_PATH_BYTES` is 98 302 (vs 4 096 Linux / 1 024 macOS), so
-    /// the previous `Self::ZEROED` body here was a ~100 KB `memset` at every
-    /// one of the ~400 call sites — turning hot loops (glob scan, module load,
-    /// stack-trace formatting) into multi-GB zero-fill workloads and timing out
-    /// the leak/stress tests. Leave the bytes uninit.
-    #[inline]
-    #[allow(invalid_value, clippy::uninit_assumed_init)]
-    pub fn uninit() -> Self {
-        // SAFETY: `PathBuffer` is `repr(transparent)` over `[u8; N]`; every bit
-        // pattern is a valid `u8`, and callers treat this as a write-only
-        // scratch buffer (length-tracked). No byte is read before being
-        // written by the consuming syscall / encoder.
-        unsafe { core::mem::MaybeUninit::uninit().assume_init() }
-    }
     #[inline]
     pub fn as_mut_slice(&mut self) -> &mut [u8] {
         &mut self.0
@@ -736,12 +662,6 @@ impl PathBuffer {
     #[inline]
     pub fn as_slice(&self) -> &[u8] {
         &self.0
-    }
-}
-impl Default for PathBuffer {
-    #[inline]
-    fn default() -> Self {
-        Self::uninit()
     }
 }
 impl core::ops::Deref for PathBuffer {
@@ -759,31 +679,14 @@ impl core::ops::DerefMut for PathBuffer {
 }
 
 /// `[u16; PATH_MAX_WIDE]` wide path buffer. Same newtype shape as [`PathBuffer`].
+/// Scratch instances come from `bun_paths::w_path_buffer_pool::get()`.
 #[repr(transparent)]
 pub struct WPathBuffer(pub [u16; PATH_MAX_WIDE]);
 impl WPathBuffer {
     pub const ZEROED: Self = Self([0; PATH_MAX_WIDE]);
-    /// See [`PathBuffer::uninit`] — `PATH_MAX_WIDE` is
-    /// 32 767 `u16`s (~64 KB), and these are allocated per Windows syscall
-    /// for UTF-8→UTF-16 path conversion, so zero-initialising dominated the
-    /// hot path on Windows.
-    #[inline]
-    #[allow(invalid_value, clippy::uninit_assumed_init)]
-    pub fn uninit() -> Self {
-        // SAFETY: `repr(transparent)` over `[u16; N]`; every bit pattern is a
-        // valid `u16`. Callers treat this as a write-only scratch buffer and
-        // track the written length out-of-band.
-        unsafe { core::mem::MaybeUninit::uninit().assume_init() }
-    }
     #[inline]
     pub fn as_mut_slice(&mut self) -> &mut [u16] {
         &mut self.0
-    }
-}
-impl Default for WPathBuffer {
-    #[inline]
-    fn default() -> Self {
-        Self::uninit()
     }
 }
 impl core::ops::Deref for WPathBuffer {
@@ -1040,10 +943,17 @@ impl Fd {
             .copied()
             .unwrap_or(Fd::INVALID)
     }
+    /// The Windows `AT_FDCWD`; [`Fd::decode_windows`] maps it to the PEB's
+    /// current directory handle. Handles fit in 32 bits, bit 63 is the uv tag
+    /// and `INVALID_HANDLE_VALUE` masks to all of bits 0..63, so bit 62 alone
+    /// is out of band.
+    #[cfg(windows)]
+    const WINDOWS_CWD: u64 = 1 << 62;
+
     #[cfg(windows)]
     #[inline]
     pub fn cwd() -> Fd {
-        Fd::from_system(fd::windows_current_directory_handle())
+        Fd(Self::WINDOWS_CWD)
     }
 
     /// Whether this is the process's stdin/stdout/stderr.
@@ -1095,9 +1005,12 @@ impl Fd {
         match self.kind() {
             FdKind::System => {
                 // A stored value of 0 decodes to INVALID_HANDLE_VALUE.
-                let n = self.value_as_system();
-                let h = if n == 0 { usize::MAX } else { n as usize };
-                DecodeWindows::Windows(h as *mut core::ffi::c_void)
+                let h = match self.value_as_system() {
+                    0 => usize::MAX as *mut core::ffi::c_void,
+                    Self::WINDOWS_CWD => fd::windows_current_directory_handle(),
+                    n => n as usize as *mut core::ffi::c_void,
+                };
+                DecodeWindows::Windows(h)
             }
             // Direct extract — do NOT recurse into self.uv() (which calls decode_windows).
             FdKind::Uv => DecodeWindows::Uv((self.0 & FD_VALUE_MASK) as u32 as i32),
@@ -1245,23 +1158,6 @@ impl Stdio {
             1 => Some(Stdio::StdOut),
             2 => Some(Stdio::StdErr),
             _ => None,
-        }
-    }
-}
-
-/// Niche-packed `Option<Fd>`: the invalid-fd bit pattern is the `none` sentinel.
-/// Use instead of encoding the invalid value directly.
-#[repr(transparent)]
-#[derive(Copy, Clone, Eq, PartialEq)]
-pub struct FdOptional(FdBacking);
-impl FdOptional {
-    pub const NONE: FdOptional = FdOptional(Fd::INVALID.0);
-    #[inline]
-    pub const fn unwrap(self) -> Option<Fd> {
-        if self.0 == FdOptional::NONE.0 {
-            None
-        } else {
-            Some(Fd(self.0))
         }
     }
 }
@@ -1448,6 +1344,9 @@ impl core::fmt::Display for Fd {
         }
         #[cfg(windows)]
         {
+            if fd == Fd::cwd() {
+                return w.write_str("[cwd]");
+            }
             match fd.decode_windows() {
                 DecodeWindows::Windows(_) => write!(w, "{}[handle]", fd.value_as_system()),
                 DecodeWindows::Uv(n) => write!(w, "{}[libuv]", n),
@@ -1550,7 +1449,7 @@ pub mod fd {
 }
 
 // ─── FileKind / Mode / kind_from_mode (from bun_sys) ──────────────────────
-// Pure S_IFMT arithmetic, no syscalls (libarchive_sys req).
+// Pure S_IFMT arithmetic, no syscalls.
 pub type Mode = u32; // POSIX `mode_t`
 
 /// `stat` mode-flag constants and predicates.
@@ -2236,20 +2135,45 @@ impl StackCheck {
     pub fn update(&mut self) {
         self.cached_stack_end = Bun__StackCheck__getMaxStack() as usize;
     }
+    /// Stack reserved for the work a frame does before the next check. One
+    /// `WTF::StringBuilder` growth reallocates through libpas, a ~35 frame
+    /// path that measures ~160 KB under a sanitizer and a few KB without one.
+    const THRESHOLD: usize = if cfg!(windows) {
+        256 * 1024
+    } else {
+        128 * 1024
+    } + if cfg!(bun_asan) { 384 * 1024 } else { 0 };
+
     /// Is there enough stack space to safely recurse?
-    /// Threshold: `> 256K` on Windows, `> 128K` elsewhere.
     #[inline]
     pub fn is_safe_to_recurse(self) -> bool {
         // Saturating sub: if probe < end (already past limit),
         // result saturates to 0 → "not safe". wrapping_sub would yield a huge
         // positive and incorrectly return true.
         let remaining = Self::frame_address().saturating_sub(self.cached_stack_end);
-        let threshold: usize = if cfg!(windows) {
-            256 * 1024
-        } else {
-            128 * 1024
-        };
-        remaining > threshold
+        remaining > Self::THRESHOLD
+    }
+
+    /// How many bytes of stack this thread has left before `is_safe_to_recurse` says no.
+    #[inline]
+    pub fn remaining(self) -> usize {
+        Self::frame_address()
+            .saturating_sub(self.cached_stack_end)
+            .saturating_sub(Self::THRESHOLD)
+    }
+
+    /// The same check, which says no after at most `bytes` more of stack
+    /// than are in use here. For what builds a tree that other code walks
+    /// afterwards: that code needs stack for each level too, its frames can
+    /// be larger, and a derived `Drop` cannot ask.
+    #[inline]
+    pub fn with_at_most(self, bytes: usize) -> Self {
+        let end = Self::frame_address()
+            .saturating_sub(Self::THRESHOLD)
+            .saturating_sub(bytes);
+        Self {
+            cached_stack_end: self.cached_stack_end.max(end),
+        }
     }
 
     /// Like [`is_safe_to_recurse`] but reserves `extra` bytes of additional
@@ -2260,12 +2184,7 @@ impl StackCheck {
     #[inline]
     pub fn is_safe_to_recurse_with_extra(self, extra: usize) -> bool {
         let remaining = Self::frame_address().saturating_sub(self.cached_stack_end);
-        let threshold: usize = if cfg!(windows) {
-            256 * 1024
-        } else {
-            128 * 1024
-        };
-        remaining > threshold.saturating_add(extra)
+        remaining > Self::THRESHOLD.saturating_add(extra)
     }
 
     /// Approximate the current stack position. Reads the stack-pointer
@@ -2704,7 +2623,15 @@ fn os_entropy(bytes: &mut [u8]) {
                 if err == libc::EINTR {
                     continue;
                 }
-                panic!("getrandom failed: errno {err}");
+                // Linux before 3.17 returns ENOSYS, and a seccomp filter can return EPERM.
+                use std::io::Read;
+                if std::fs::File::open("/dev/urandom")
+                    .and_then(|mut f| f.read_exact(&mut bytes[filled..]))
+                    .is_err()
+                {
+                    panic!("getrandom failed: errno {err}");
+                }
+                return;
             }
             filled += rc as usize;
         }
@@ -2827,15 +2754,11 @@ pub fn get_thread_count() -> u16 {
             None
         };
         let raw = from_env().unwrap_or_else(|| {
-            // `WTF::numberOfProcessorCores()` → sysconf(_SC_NPROCESSORS_ONLN)
-            // on POSIX / GetSystemInfo on Windows. **Not** the same as
-            // `std::thread::available_parallelism()`, which on Linux also
-            // consults sched_getaffinity + cgroup cpu.max quota; on
-            // cgroup-limited CI runners or P/E-core machines the two diverge,
-            // changing bundler `max_threads` (and per-thread mimalloc arena
-            // RSS). Declare the C symbol locally — `jsc`
-            // is above `bun_core` in the crate DAG so we can't `use` it, but
-            // the symbol is always linked (wtf-bindings.cpp).
+            // `WTF::numberOfProcessorCores()`: on Linux Bun's fork takes the
+            // minimum of _SC_NPROCESSORS_ONLN, the sched_getaffinity mask and
+            // the cgroup cpu quota (uv_get_constrained_cpu), so this is the
+            // same number as navigator.hardwareConcurrency. `jsc` is above
+            // `bun_core` in the crate DAG; the symbol comes from wtf-bindings.cpp.
             unsafe extern "C" {
                 safe fn WTF__numberOfProcessorCores() -> core::ffi::c_int;
             }
@@ -2915,9 +2838,7 @@ pub mod time {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum EmbedKind {
     Codegen,
-    CodegenEager,
     Src,
-    SrcEager,
 }
 
 #[doc(hidden)]
@@ -2926,10 +2847,8 @@ pub fn __runtime_embed_load(kind: EmbedKind, sub: &'static str) -> String {
     // → bytes), so the bytes are valid UTF-8 by construction.
     let from = |b: &'static [u8]| unsafe { ::core::str::from_utf8_unchecked(b) };
     let mut p = match kind {
-        EmbedKind::Codegen | EmbedKind::CodegenEager => {
-            ::std::path::PathBuf::from(from(crate::build_options::CODEGEN_PATH))
-        }
-        EmbedKind::Src | EmbedKind::SrcEager => {
+        EmbedKind::Codegen => ::std::path::PathBuf::from(from(crate::build_options::CODEGEN_PATH)),
+        EmbedKind::Src => {
             let mut b = ::std::path::PathBuf::from(from(crate::build_options::BASE_PATH));
             b.push("src");
             b
@@ -2945,8 +2864,8 @@ pub fn __runtime_embed_load(kind: EmbedKind, sub: &'static str) -> String {
 }
 
 /// Per-call-site embedded file.
-/// `$root` must be one of the bare idents `Codegen` /
-/// `CodegenEager` / `Src` / `SrcEager` and `$sub_path` a string literal.
+/// `$root` must be one of the bare idents `Codegen` / `Src` and `$sub_path` a
+/// string literal.
 ///
 /// The `cfg(bun_codegen_embed)` split lives **inside** the macro so call
 /// sites never repeat the `#[cfg]`/`#[cfg(not)]` pair (which is error-prone
@@ -2963,10 +2882,8 @@ pub fn __runtime_embed_load(kind: EmbedKind, sub: &'static str) -> String {
 /// whenever `bun_codegen_embed` is set).
 #[macro_export]
 macro_rules! runtime_embed_file {
-    (Codegen,      $sub:literal) => { $crate::__runtime_embed_impl!(@codegen $sub) };
-    (CodegenEager, $sub:literal) => { $crate::__runtime_embed_impl!(@codegen $sub) };
-    (Src,          $sub:literal) => { $crate::__runtime_embed_impl!(@src     $sub) };
-    (SrcEager,     $sub:literal) => { $crate::__runtime_embed_impl!(@src     $sub) };
+    (Codegen, $sub:literal) => { $crate::__runtime_embed_impl!(@codegen $sub) };
+    (Src,     $sub:literal) => { $crate::__runtime_embed_impl!(@src     $sub) };
 }
 
 #[doc(hidden)]
@@ -3081,59 +2998,12 @@ impl<H: core::hash::Hasher> Hasher for H {
     }
 }
 
-/// Re-export so downstream crates can write `T: bun_core::NoUninit` without a
-/// direct `bytemuck` dep.
-pub use bytemuck::NoUninit;
-
-/// Reinterpret a value's storage as a borrowed byte slice.
-///
-/// Safe: the [`bytemuck::NoUninit`] bound statically guarantees `T` is `Copy`,
-/// `'static`, and contains no uninitialized (padding) bytes, so every byte of
-/// the returned slice is initialized and reading it is defined behaviour.
-#[inline]
-pub fn bytes_of<T: bytemuck::NoUninit>(v: &T) -> &[u8] {
-    bytemuck::bytes_of(v)
-}
-
-// ─── Slice reinterpretation (canonical) ───────────────────────────────────────
-// Split by mutability, with two safety surfaces:
-//   - `cast_slice` / `cast_slice_mut`  → SAFE, bytemuck-bounded, panics on
-//     misalign or `len % size_of::<B>() != 0`. Use for Pod↔Pod (u8↔u16 etc.).
-//   - `bytes_as_slice_mut`             → UNSAFE escape hatch, unbounded `T`,
-//     TRUNCATES trailing bytes. Use only when `T` is not
-//     `AnyBitPattern` or the input length is intentionally not a multiple.
-// Every current caller targets `u16` over an even-length buffer, so the safe
-// path is the default.
-
-/// Read-only `&[A]` → `&[B]` reinterpretation. Safe: the [`bytemuck::NoUninit`] bound
-/// on `A` guarantees every source byte is initialized, and
-/// [`bytemuck::AnyBitPattern`] on `B` guarantees every byte pattern is a valid
-/// `B`. Panics if size/alignment don't divide evenly (same as `bytemuck`).
-#[inline]
-pub fn cast_slice<A: bytemuck::NoUninit, B: bytemuck::AnyBitPattern>(a: &[A]) -> &[B] {
-    bytemuck::cast_slice(a)
-}
-
-/// Mutable counterpart of [`cast_slice`]: reinterpret `&mut [A]` as `&mut [B]`.
-/// Safe: both [`bytemuck::Pod`] bounds guarantee every byte pattern is valid in
-/// both directions and there are no uninitialized bytes. Panics on misalignment
-/// or if `a.len() * size_of::<A>() % size_of::<B>() != 0` (same as `bytemuck`).
-#[inline]
-pub fn cast_slice_mut<A: bytemuck::Pod, B: bytemuck::Pod>(a: &mut [A]) -> &mut [B] {
-    bytemuck::cast_slice_mut(a)
-}
-
-/// Reinterpret `&[T]` as `&[u8]`.
-///
-/// This is [`cast_slice`] with the output type fixed to `u8`, so callers never
-/// need a `::<_, u8>` turbofish. Safe: [`bytemuck::NoUninit`] guarantees every
-/// byte of `T` is initialized; `align_of::<u8>() == 1` and
-/// `size_of::<T>() % 1 == 0` mean the bytemuck size/align checks are trivially
-/// satisfied and this never panics.
-#[inline]
-pub fn slice_as_bytes<T: bytemuck::NoUninit>(s: &[T]) -> &[u8] {
-    bytemuck::cast_slice(s)
-}
+// ─── plain-old-data casts ─────────────────────────────────────────────────────
+pub use bun_pod::{
+    AnyBitPattern, NoUninit, Pod, Unaligned, bytes_of, bytes_of_mut, cast_slice, cast_slice_mut,
+    impl_any_bit_pattern, impl_no_uninit, impl_pod, impl_zeroable, read_prefix, slice_as_bytes,
+    slice_as_bytes_mut, try_cast_slice, try_cast_slice_mut, vec_from_bytes,
+};
 
 // ─── extern_union_accessors! ──────────────────────────────────────────────────
 // Wraps each bare-union field read in a tag-asserted `unsafe` accessor so call
@@ -3223,37 +3093,10 @@ macro_rules! extern_union_accessors {
     };
 }
 
-/// Feed a value's raw bytes to a hasher. Taking a generic by-value-as-bytes
-/// safely requires a `bytemuck` bound, so this
-/// accepts anything that is itself viewable as bytes (covers the actual call
-/// sites: `u8` tags, `usize` lengths, `Index` newtypes).
+/// Feed a value's bytes to a hasher.
 #[inline]
-pub fn write_any_to_hasher<H: Hasher + ?Sized, T: AsBytes>(hasher: &mut H, thing: T) {
-    hasher.update(thing.as_bytes_for_hash());
-}
-
-/// Helper trait for `write_any_to_hasher` — "viewable as raw bytes".
-/// Blanket-implemented for all `Copy` plain-data ints and references-to-slices.
-pub trait AsBytes {
-    fn as_bytes_for_hash(&self) -> &[u8];
-}
-macro_rules! as_bytes_pod {
-    ($($t:ty),* $(,)?) => { $(
-        impl AsBytes for $t {
-            #[inline] fn as_bytes_for_hash(&self) -> &[u8] {
-                bytemuck::bytes_of(self)
-            }
-        }
-    )* }
-}
-as_bytes_pod!(
-    u8, i8, u16, i16, u32, i32, u64, i64, usize, isize, u128, i128
-);
-impl<T: AsBytes> AsBytes for &T {
-    #[inline]
-    fn as_bytes_for_hash(&self) -> &[u8] {
-        (**self).as_bytes_for_hash()
-    }
+pub fn write_any_to_hasher<H: Hasher + ?Sized, T: NoUninit>(hasher: &mut H, thing: T) {
+    hasher.update(bytes_of(&thing));
 }
 
 // ── GenericIndex ──────────────────────────────────────────────────────────
@@ -3392,55 +3235,38 @@ impl<I: GenericIndexInt, M> GenericIndexOptional<I, M> {
 pub trait GenericIndexInt: Copy + Eq + PartialOrd {
     const NULL_VALUE: Self;
     fn to_usize(self) -> usize;
-    fn from_usize(n: usize) -> Self;
 }
 macro_rules! generic_index_int { ($($t:ty),*) => { $(
     impl GenericIndexInt for $t {
         const NULL_VALUE: Self = <$t>::MAX;
         #[inline] fn to_usize(self) -> usize { self as usize }
-        #[inline] fn from_usize(n: usize) -> Self {
-            debug_assert!(n as u128 <= <$t>::MAX as u128, "GenericIndex::from_usize: truncation");
-            n as Self
-        }
     }
 )* } }
 generic_index_int!(u8, u16, u32, u64, usize, i32, i64);
 
-/// Generic-integer bound used by `validateIntegerRange` /
-/// `validateBigIntRange` / `getInteger`
+/// Generic-integer bound used by `validateIntegerRange` / `getInteger`
 /// (JSGlobalObject). Provides the small surface those callers need:
-/// signedness, range as `i128`, and lossy/wrapping casts from the JSC numeric
-/// carriers (i32 / f64 / i64 / u64).
+/// range as `i128`, and lossy/wrapping casts from the JSC numeric
+/// carriers (i32 / f64).
 pub trait Integer: Copy + Default {
-    const SIGNED: bool;
     const MIN_I128: i128;
     const MAX_I128: i128;
     const ZERO: Self;
     fn from_i32(v: i32) -> Self;
     fn from_f64(v: f64) -> Self;
-    fn from_i64(v: i64) -> Self;
-    fn from_u64(v: u64) -> Self;
-    fn to_f64(self) -> f64;
 }
 macro_rules! impl_integer {
-    ($($t:ty: $signed:expr),* $(,)?) => { $(
+    ($($t:ty),* $(,)?) => { $(
         impl Integer for $t {
-            const SIGNED: bool = $signed;
             const MIN_I128: i128 = <$t>::MIN as i128;
             const MAX_I128: i128 = <$t>::MAX as i128;
             const ZERO: Self = 0;
             #[inline] fn from_i32(v: i32) -> Self { v as Self }
             #[inline] fn from_f64(v: f64) -> Self { v as Self }
-            #[inline] fn from_i64(v: i64) -> Self { v as Self }
-            #[inline] fn from_u64(v: u64) -> Self { v as Self }
-            #[inline] fn to_f64(self) -> f64 { self as f64 }
         }
     )* };
 }
-impl_integer!(
-    i8: true, i16: true, i32: true, i64: true, isize: true,
-    u8: false, u16: false, u32: false, u64: false, usize: false,
-);
+impl_integer!(i8, i16, i32, i64, isize, u8, u16, u32, u64, usize);
 
 /// Primitive integers transcodable as native-endian raw bytes.
 ///
@@ -3450,8 +3276,6 @@ pub trait NativeEndianInt: Copy + 'static {
     const SIZE: usize;
     /// Reinterpret `b[..SIZE]` as `Self` (native endian).
     fn from_ne_slice(b: &[u8]) -> Self;
-    /// Write `self.to_ne_bytes()` into `out[..SIZE]`.
-    fn encode_ne(self, out: &mut [u8]);
 }
 
 macro_rules! impl_native_endian_int {
@@ -3464,18 +3288,10 @@ macro_rules! impl_native_endian_int {
                 a.copy_from_slice(&b[..core::mem::size_of::<$t>()]);
                 <$t>::from_ne_bytes(a)
             }
-            #[inline]
-            fn encode_ne(self, out: &mut [u8]) {
-                out[..core::mem::size_of::<$t>()].copy_from_slice(&self.to_ne_bytes());
-            }
         }
     )*};
 }
 impl_native_endian_int!(u8, i8, u16, i16, u32, i32, u64, i64);
-
-// ── mach_port ─────────────────────────────────────────────────────────────
-#[cfg(target_os = "macos")]
-pub type mach_port = libc::mach_port_t;
 
 // ── rand ──────────────────────────────────────────────────────────────────
 // xoshiro256++; the exact algorithm keeps `bun.fastRandom()` output
@@ -3755,42 +3571,27 @@ fn raw_os_argv() -> Option<&'static [*const core::ffi::c_char]> {
 fn argv_storage() -> &'static [ZBox] {
     ARGV_STORAGE.get_or_init(|| {
         // Windows: the CRT-provided `char** argv` captured by `init_argv` is
-        // ANSI-encoded (CP_ACP) — `WideCharToMultiByte` lossy-converts the
-        // UTF-16 command line, replacing unrepresentable code points with `?`.
-        // Go straight to `GetCommandLineW` +
-        // `CommandLineToArgvW` and convert each UTF-16 arg to WTF-8 ourselves
-        // so non-ASCII argv (e.g. `bun -e "🌊 测试"`)
-        // round-trips. See https://github.com/oven-sh/bun/issues/11610.
+        // ANSI-encoded (CP_ACP) — lossy for non-ASCII argv (e.g.
+        // `bun -e "🌊 测试"`, https://github.com/oven-sh/bun/issues/11610).
+        // libstd's `args_os()` splits `GetCommandLineW` itself with the MSVC
+        // CRT (2008+) rules — the argv every `wmain` program, node included,
+        // sees — without loading shell32.dll for `CommandLineToArgvW`.
+        // `into_string()` is an O(1) check that moves the buffer through; only
+        // an arg with an unpaired surrogate takes the lossy copy (→ U+FFFD, as
+        // before).
         #[cfg(windows)]
-        {
-            use bun_windows_sys::externs::{CommandLineToArgvW, GetCommandLineW};
-            let mut argc: core::ffi::c_int = 0;
-            // SAFETY: `GetCommandLineW` returns a process-static buffer;
-            // `CommandLineToArgvW` allocates its own array (lifetime managed
-            // by the system — intentionally not `LocalFree`d, the
-            // argv strings are referenced for the process lifetime).
-            let argvw = unsafe { CommandLineToArgvW(GetCommandLineW(), &mut argc) };
-            if !argvw.is_null() {
-                let argc = argc.max(0) as usize;
-                // SAFETY: `CommandLineToArgvW` returned `argc` valid `LPWSTR`s.
-                let argvw = unsafe { core::slice::from_raw_parts(argvw, argc) };
-                return argvw
-                    .iter()
-                    .map(|&p| {
-                        // SAFETY: each entry is a NUL-terminated UTF-16 string
-                        // owned by the `CommandLineToArgvW` allocation.
-                        let arg = unsafe { crate::ffi::wstr_units(p) };
-                        ZBox::from_vec(crate::strings::to_utf8_alloc(arg))
-                    })
-                    .collect();
-            }
-            // Fall through to `args_os` if `CommandLineToArgvW` failed (OOM /
-            // INVAL) — degrade to libstd's
-            // own `GetCommandLineW`-backed parser instead of aborting.
-        }
+        let args = std::env::args_os()
+            .map(|a| {
+                ZBox::from_vec(
+                    a.into_string()
+                        .unwrap_or_else(|a| a.to_string_lossy().into_owned())
+                        .into_bytes(),
+                )
+            })
+            .collect();
         #[cfg(not(windows))]
-        if let Some(raw) = raw_os_argv() {
-            return raw
+        let args = match raw_os_argv() {
+            Some(raw) => raw
                 .iter()
                 .map(|&p| {
                     // SAFETY: kernel argv entries are NUL-terminated and live
@@ -3798,15 +3599,16 @@ fn argv_storage() -> &'static [ZBox] {
                     let s = unsafe { core::ffi::CStr::from_ptr(p) };
                     ZBox::from_bytes(s.to_bytes())
                 })
-                .collect();
-        }
-        // Fallback for entry points that don't go through `extern "C" fn main`
-        // (e.g. `cargo test` harness, Rust `fn main()` via `lang_start`). On
-        // glibc/macOS/Windows this also works for the real binary — only
-        // musl-static needs the `raw_os_argv` path above.
-        std::env::args_os()
-            .map(|a| ZBox::from_vec_with_nul(a.into_encoded_bytes()))
-            .collect()
+                .collect(),
+            // Entry points that don't go through `extern "C" fn main` (the
+            // `cargo test` harness, Rust `fn main()` via `lang_start`). On
+            // glibc/macOS this also works for the real binary — only
+            // musl-static needs the `raw_os_argv` path above.
+            None => std::env::args_os()
+                .map(|a| ZBox::from_vec_with_nul(a.into_encoded_bytes()))
+                .collect(),
+        };
+        args
     })
 }
 
@@ -4363,7 +4165,7 @@ pub fn maybe_handle_panic_during_process_reload() {
     }
 }
 
-/// Port of `bun.reloadProcess`. `may_return == true` → returns on failure; `false` → panics.
+/// Port of `bun.reloadProcess`. `may_return == true` → returns on failure; `false` → exits with 1.
 /// `on_before_reload_process_posix` clears CLOEXEC on stdio/IPC and resets caught signal
 /// dispositions on all POSIX; the close_range sweep is Linux/BSD only.
 pub fn reload_process(clear_terminal: bool, may_return: bool) {
@@ -4455,19 +4257,26 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
         envp.push(core::ptr::null());
 
         // we must clone selfExePath in case argv[0] was not an absolute path
-        let exec_path = self_exe_path().expect("unreachable").as_ptr();
+        let exec_path = self_exe_path().expect("unreachable");
 
-        libc::execve(exec_path, newargv.as_ptr().cast(), envp.as_ptr().cast());
+        libc::execve(
+            exec_path.as_ptr(),
+            newargv.as_ptr().cast(),
+            envp.as_ptr().cast(),
+        );
         // execve only returns on error.
         let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(-1);
+        crate::err_generic!(
+            "Failed to reload \"<b>{}<r>\": {} <d>(execve)<r>",
+            bstr::BStr::new(exec_path.as_bytes()),
+            crate::ErrnoNames::SYS
+                .name(errno)
+                .unwrap_or("unknown error"),
+        );
         if may_return {
-            crate::output::pretty_errorln(format_args!(
-                "error: Failed to reload process: errno {}",
-                errno
-            ));
             return;
         }
-        panic!("Unexpected error while reloading: errno {}", errno);
+        crate::Global::exit(1);
     }
 
     #[cfg(not(any(unix, windows)))]
@@ -4669,7 +4478,7 @@ fn spawn_sync_inherit_impl(
         #[cfg(any(target_os = "linux", target_os = "freebsd"))]
         let pid: libc::pid_t = {
             let arg0 = argv[0].as_ref();
-            let mut pathbuf = PathBuffer::uninit();
+            let mut pathbuf = PathBuffer::ZEROED;
             let exe: *const core::ffi::c_char = if crate::strings::contains_char(arg0, b'/') {
                 // Contains a separator → use as-is (execve resolves relative
                 // to cwd, matching posix_spawnp semantics for non-bare names).
@@ -4887,11 +4696,7 @@ pub struct Timespec {
     pub sec: i64,
     pub nsec: i64,
 }
-// SAFETY: two `i64` fields; all-zero is the epoch.
-unsafe impl crate::ffi::Zeroable for Timespec {}
-// SAFETY: `#[repr(C)]` with two `i64` fields → size 16, align 8, no padding,
-// no interior mutability, `Copy + 'static`. Every byte is initialized.
-unsafe impl bytemuck::NoUninit for Timespec {}
+impl_pod!(Timespec);
 
 /// Lowercase alias (`bun.timespec`).
 #[allow(non_camel_case_types)]
@@ -5092,49 +4897,49 @@ pub mod timespec_mode {
 
 /// Mocked-time storage. The data lives at T0 so `Timespec::now` reads it
 /// directly; the test-runner (`useFakeTimers`) writes via `set`/`clear`
-/// from `bun_runtime::test_runner::timers::FakeTimers::CurrentTime`.
-/// Sentinel `i64::MIN` / `NaN` ⇒ not mocked.
+/// from `bun_runtime::test_runner::timers::FakeTimers`. Thread-local, like
+/// each VM's fake timer heap.
 pub mod mock_time {
-    use core::sync::atomic::{AtomicI64, AtomicU64, Ordering};
+    use core::cell::Cell;
 
-    static MOCKED_TIME_NS: AtomicI64 = AtomicI64::new(i64::MIN);
-    // Mocked wall-clock `Date.now()` in ms, stored as f64 bits; NaN = unset.
-    static MOCKED_WALL_MS: AtomicU64 = AtomicU64::new(f64::NAN.to_bits());
+    thread_local! {
+        static MOCKED_TIME_NS: Cell<Option<i64>> = const { Cell::new(None) };
+        /// Mocked wall-clock `Date.now()` in ms.
+        static MOCKED_WALL_MS: Cell<Option<f64>> = const { Cell::new(None) };
+    }
 
     /// Set the mocked monotonic time (nanoseconds). Called by fake-timers.
     #[inline]
     pub fn set(ns: i64) {
-        MOCKED_TIME_NS.store(ns, Ordering::Relaxed);
+        MOCKED_TIME_NS.set(Some(ns));
     }
     /// Clear the mocked time so `Timespec::now(AllowMockedTime)` reads the
     /// real clock again.
     #[inline]
     pub fn clear() {
-        MOCKED_TIME_NS.store(i64::MIN, Ordering::Relaxed);
+        MOCKED_TIME_NS.set(None);
     }
     /// Current mocked time, or `None` if not mocked.
     #[inline]
     pub fn get() -> Option<i64> {
-        let v = MOCKED_TIME_NS.load(Ordering::Relaxed);
-        if v == i64::MIN { None } else { Some(v) }
+        MOCKED_TIME_NS.get()
     }
     /// Set the mocked wall-clock time (`Date.now()` in ms). Called by
     /// fake-timers alongside `set` so calendar-based consumers and the
     /// monotonic timer heap move through the same mock.
     #[inline]
     pub fn set_wall_ms(ms: f64) {
-        MOCKED_WALL_MS.store(ms.to_bits(), Ordering::Relaxed);
+        MOCKED_WALL_MS.set(Some(ms));
     }
     /// Clear the mocked wall-clock time.
     #[inline]
     pub fn clear_wall() {
-        MOCKED_WALL_MS.store(f64::NAN.to_bits(), Ordering::Relaxed);
+        MOCKED_WALL_MS.set(None);
     }
     /// Current mocked wall-clock time in ms, or `None` if not mocked.
     #[inline]
     pub(crate) fn wall_ms() -> Option<f64> {
-        let v = f64::from_bits(MOCKED_WALL_MS.load(Ordering::Relaxed));
-        if v.is_nan() { None } else { Some(v) }
+        MOCKED_WALL_MS.get()
     }
 }
 
@@ -5185,13 +4990,7 @@ impl From<f16> for f32 {
         h.to_f64() as f32
     }
 }
-// SAFETY: `#[repr(transparent)]` over `u16` — every bit pattern is a valid
-// `f16`, no padding, `Copy + 'static`. Enables safe `bytemuck::cast_slice`
-// from `&[u8]` for Float16Array printing (ConsoleObject).
-unsafe impl bytemuck::Zeroable for f16 {}
-// SAFETY: `#[repr(transparent)]` over `u16` — no padding, every bit pattern is
-// valid, `Copy + Zeroable + 'static`; satisfies all `bytemuck::Pod` invariants.
-unsafe impl bytemuck::Pod for f16 {}
+impl_pod!(f16);
 impl core::fmt::Display for f16 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         self.to_f64().fmt(f)

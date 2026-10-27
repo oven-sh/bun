@@ -30,7 +30,6 @@ namespace WebCore {
 class JSWebSocket : public JSEventTarget {
 public:
     using Base = JSEventTarget;
-    using DOMWrapped = WebSocket;
     static JSWebSocket* create(JSC::Structure* structure, JSDOMGlobalObject* globalObject, Ref<WebSocket>&& impl)
     {
         JSWebSocket* ptr = new (NotNull, JSC::allocateCell<JSWebSocket>(globalObject->vm())) JSWebSocket(structure, *globalObject, WTF::move(impl));
@@ -46,7 +45,7 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), JSC::NonArray);
+        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info(), JSC::NonArray);
     }
 
     static JSC::JSValue getConstructor(JSC::VM&, const JSC::JSGlobalObject*);
@@ -57,12 +56,18 @@ public:
         return subspaceForImpl(vm);
     }
     static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
+    DECLARE_VISIT_CHILDREN;
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
     static size_t estimatedSize(JSCell*, JSC::VM&);
     WebSocket& wrapped() const
     {
         return static_cast<WebSocket&>(Base::wrapped());
     }
+
+    // Only set for sockets created by the `ws` module. m_owner is the module's WebSocket object, passed as `this` to every handler.
+    // m_handlers is the module's table of handler functions, shared by all of its sockets.
+    JSC::WriteBarrier<JSC::JSObject> m_owner;
+    JSC::WriteBarrier<JSC::JSObject> m_handlers;
 
 protected:
     JSWebSocket(JSC::Structure*, JSDOMGlobalObject&, Ref<WebSocket>&&);
@@ -93,5 +98,8 @@ template<> struct JSDOMWrapperConverterTraits<WebSocket> {
 };
 
 JSC::JSValue getWebSocketConstructor(Zig::GlobalObject* globalObject);
+// Native binding for the built-in `ws` module:
+// { createWebSocket, createWebSocketOverStream, sendFrame, setRef, detach, remoteAddress, feed, streamClosed }
+JSC::JSValue createWebSocketBindingForWs(Zig::GlobalObject* globalObject);
 
 } // namespace WebCore

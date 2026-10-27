@@ -1,0 +1,39 @@
+------------------
+{ printWidth: 80 }
+------------------
+export const getDefaultTagsFromPreset = memoize(1)(
+  (
+    presets: TagsOptions,
+  ): {
+    included: Tag[];
+  } => {
+    a;
+  },
+);
+export const b = memoize(1)((presets: TagsOptions): { included: Tag[] } => {
+  a;
+});
+export const c = memoize(1)(({ presets }: TagsOptions): Tag[] => {
+  a;
+});
+
+-------------------
+{ printWidth: 100 }
+-------------------
+export const getDefaultTagsFromPreset = memoize(1)(
+  (
+    presets: TagsOptions,
+  ): {
+    included: Tag[];
+  } => {
+    a;
+  },
+);
+export const b = memoize(1)((presets: TagsOptions): { included: Tag[] } => {
+  a;
+});
+export const c = memoize(1)(({ presets }: TagsOptions): Tag[] => {
+  a;
+});
+
+===================== End =====================

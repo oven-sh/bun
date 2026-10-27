@@ -1,6 +1,6 @@
 // TODO: prefer generating this file via bindgen
 
-#![allow(non_camel_case_types, non_snake_case)]
+#![allow(non_camel_case_types)]
 
 use core::ffi::{c_char, c_int, c_uint, c_void};
 
@@ -48,6 +48,7 @@ unsafe extern "C" {
     // `!Freeze` (UnsafeCell) so internal C mutation through `&` is sound.
     pub safe fn BrotliDecoderGetErrorCode(state: &BrotliDecoder) -> BrotliDecoderErrorCode2;
     pub safe fn BrotliDecoderErrorString(c: BrotliDecoderErrorCode) -> *const c_char;
+    pub safe fn BrotliDecoderHasMoreOutput(state: &BrotliDecoder) -> c_int;
 }
 
 bun_opaque::opaque_ffi! {
@@ -106,6 +107,11 @@ impl BrotliDecoder {
         }
     }
 
+    /// True when decoded bytes are still held in the decoder's ring buffer.
+    pub fn has_more_output(state: &BrotliDecoder) -> bool {
+        BrotliDecoderHasMoreOutput(state) != 0
+    }
+
     pub fn initialize_brotli() -> bool {
         true
     }
@@ -148,6 +154,7 @@ pub enum BrotliDecoderErrorCode2 {
     ERROR_FORMAT_PADDING_1 = -14,
     ERROR_FORMAT_PADDING_2 = -15,
     ERROR_FORMAT_DISTANCE = -16,
+    ERROR_FORMAT_BLOCK_SWITCH = -17,
     ERROR_COMPOUND_DICTIONARY = -18,
     ERROR_DICTIONARY_NOT_SET = -19,
     ERROR_INVALID_ARGUMENTS = -20,
@@ -265,4 +272,6 @@ impl BrotliEncoder {
 
 pub const BROTLI_MIN_QUALITY: c_int = 0;
 pub const BROTLI_MAX_QUALITY: c_int = 11;
+/// `BrotliEncoderParameter::BROTLI_PARAM_QUALITY` (encode.h).
+pub const BROTLI_PARAM_QUALITY: c_uint = 1;
 pub const BROTLI_DEFAULT_WINDOW: c_int = 22;

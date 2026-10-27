@@ -27,13 +27,16 @@ macro_rules! opaque {
 /// `#define EVP_MAX_MD_SIZE 64` — SHA-512 is the longest digest.
 pub const EVP_MAX_MD_SIZE: c_int = 64;
 
-/// `#define RIPEMD160_DIGEST_LENGTH 20`
-pub const RIPEMD160_DIGEST_LENGTH: c_int = 20;
-
+pub(crate) const NID_undef: c_int = 0;
+pub(crate) const NID_md5: c_int = 4;
 /// `#define NID_commonName 13`
 pub(crate) const NID_commonName: c_int = 13;
+pub(crate) const NID_sha1: c_int = 64;
 /// `#define NID_subject_alt_name 85`
 pub(crate) const NID_subject_alt_name: c_int = 85;
+pub(crate) const NID_rsassaPss: c_int = 912;
+
+pub(crate) const V_ASN1_SEQUENCE: c_int = 16;
 
 pub(crate) const GEN_DNS: c_int = 2;
 pub(crate) const GEN_URI: c_int = 6;
@@ -56,6 +59,16 @@ pub struct asn1_string_st {
 pub(crate) type ASN1_STRING = asn1_string_st;
 pub type ASN1_OCTET_STRING = asn1_string_st;
 pub(crate) type ASN1_IA5STRING = asn1_string_st;
+
+/// `struct rsa_pss_params_st` (`typedef ... RSA_PSS_PARAMS`): RFC 4055 RSASSA-PSS-params.
+#[repr(C)]
+pub struct RSA_PSS_PARAMS {
+    pub hashAlgorithm: *mut X509_ALGOR,
+    pub maskGenAlgorithm: *mut X509_ALGOR,
+    pub saltLength: *mut asn1_string_st,
+    pub trailerField: *mut asn1_string_st,
+    pub maskHash: *mut X509_ALGOR,
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Opaque handles
@@ -80,6 +93,14 @@ opaque!(
 opaque!(
     /// `struct crypto_buffer_pool_st` (`typedef ... CRYPTO_BUFFER_POOL`).
     CRYPTO_BUFFER_POOL
+);
+opaque!(
+    /// `struct crypto_buffer_st` (`typedef ... CRYPTO_BUFFER`).
+    CRYPTO_BUFFER
+);
+opaque!(
+    /// `struct x509_lazy_cert_set_st` (`typedef ... X509_LAZY_CERT_SET`, oven-sh/boringssl).
+    X509_LAZY_CERT_SET
 );
 opaque!(
     /// `struct x509_st` (`typedef ... X509`).
@@ -108,6 +129,10 @@ opaque!(
 opaque!(
     /// `struct asn1_type_st` (`typedef ... ASN1_TYPE`).
     ASN1_TYPE
+);
+opaque!(
+    /// `struct X509_algor_st` (`typedef ... X509_ALGOR`).
+    X509_ALGOR
 );
 opaque!(
     /// `struct evp_pkey_ctx_st`.
@@ -194,29 +219,6 @@ pub struct SHA256_CTX {
     pub md_len: c_uint,
 }
 
-/// `struct sha512_state_st`.
-#[repr(C)]
-#[derive(Copy, Clone)]
-pub struct SHA512_CTX {
-    pub h: [u64; 8],
-    pub num: u16,
-    pub md_len: u16,
-    pub bytes_so_far_high: u32,
-    pub bytes_so_far_low: u64,
-    pub p: [u8; 128],
-}
-
-/// `struct RIPEMD160state_st` (`vendor/boringssl/include/openssl/ripemd.h`).
-#[repr(C)]
-#[derive(Copy, Clone)]
-pub struct RIPEMD160_CTX {
-    pub h: [u32; 5],
-    pub Nl: u32,
-    pub Nh: u32,
-    pub data: [u8; 64],
-    pub num: c_uint,
-}
-
 // ═══════════════════════════════════════════════════════════════════════════
 // X509v3 GENERAL_NAME
 // ═══════════════════════════════════════════════════════════════════════════
@@ -285,6 +287,7 @@ unsafe extern "C" {
 
 /// Owns one `SSL_CTX` reference; `SSL_CTX_free`s it on drop. Construct from a
 /// pointer that already carries a +1 (`SSL_CTX_new`, `SSL_CTX_up_ref`).
+#[repr(transparent)]
 pub struct OwnedSslCtx(core::ptr::NonNull<SSL_CTX>);
 
 impl OwnedSslCtx {
@@ -303,6 +306,15 @@ impl OwnedSslCtx {
     /// Transfers the reference back out; the caller must free it.
     pub fn into_raw(self) -> *mut SSL_CTX {
         core::mem::ManuallyDrop::new(self).0.as_ptr()
+    }
+}
+
+impl Clone for OwnedSslCtx {
+    /// Another reference to the same `SSL_CTX` (`SSL_CTX_up_ref`).
+    fn clone(&self) -> Self {
+        // SAFETY: `self.0` is a live SSL_CTX.
+        unsafe { SSL_CTX_up_ref(self.0.as_ptr()) };
+        Self(self.0)
     }
 }
 
@@ -421,6 +433,77 @@ impl X509 {
         }
     }
 
+    /// RFC 5929 §4.1 `tls-server-end-point`: hashed with the digest of the signature algorithm,
+    /// SHA-256 in place of MD5 and SHA-1. `None` when the algorithm names no digest (Ed25519).
+    pub fn tls_server_end_point_hash(
+        &self,
+        out: &mut [u8; EVP_MAX_MD_SIZE as usize],
+    ) -> Option<usize> {
+        let mut len: c_uint = 0;
+        // SAFETY: `self` is live; `X509_digest` writes at most `EVP_MAX_MD_SIZE` bytes to `out`.
+        unsafe {
+            let md = match self.signature_digest_nid() {
+                NID_undef => return None,
+                NID_md5 | NID_sha1 => EVP_sha256(),
+                nid => EVP_get_digestbynid(nid),
+            };
+            if md.is_null() || X509_digest(self, md, out.as_mut_ptr(), &raw mut len) != 1 {
+                return None;
+            }
+        }
+        Some(len as usize).filter(|len| (1..=out.len()).contains(len))
+    }
+
+    /// RSASSA-PSS names its digest in its parameters. `NID_undef` when there is none.
+    fn signature_digest_nid(&self) -> c_int {
+        let mut digest_nid: c_int = NID_undef;
+        // SAFETY: `self` owns `algorithm`; a `V_ASN1_SEQUENCE` parameter is an `ASN1_STRING` (DER).
+        unsafe {
+            let signature_nid = X509_get_signature_nid(self);
+            if signature_nid != NID_rsassaPss {
+                OBJ_find_sigid_algs(signature_nid, &raw mut digest_nid, core::ptr::null_mut());
+                return digest_nid;
+            }
+            let mut algorithm: *const X509_ALGOR = core::ptr::null();
+            X509_get0_signature(core::ptr::null_mut(), &raw mut algorithm, self);
+            let mut parameter_type: c_int = 0;
+            let mut parameter: *const c_void = core::ptr::null();
+            X509_ALGOR_get0(
+                core::ptr::null_mut(),
+                &raw mut parameter_type,
+                &raw mut parameter,
+                algorithm,
+            );
+            if parameter_type != V_ASN1_SEQUENCE {
+                return NID_undef;
+            }
+            let Some(der) = parameter.cast::<ASN1_STRING>().as_ref() else {
+                return NID_undef;
+            };
+            let mut input = der.data.cast_const();
+            let params =
+                d2i_RSA_PSS_PARAMS(core::ptr::null_mut(), &raw mut input, der.length as c_long);
+            let Some(hash) = params.as_ref().map(|params| params.hashAlgorithm) else {
+                ERR_clear_error();
+                return NID_undef;
+            };
+            // RFC 4055 §3.1: `hashAlgorithm [0] HashAlgorithm DEFAULT sha1Identifier`
+            digest_nid = NID_sha1;
+            if !hash.is_null() {
+                let mut object: *const ASN1_OBJECT = core::ptr::null();
+                X509_ALGOR_get0(
+                    &raw mut object,
+                    core::ptr::null_mut(),
+                    core::ptr::null_mut(),
+                    hash,
+                );
+                digest_nid = OBJ_obj2nid(object);
+            }
+            RSA_PSS_PARAMS_free(params);
+        }
+        digest_nid
+    }
+
     /// Iterates this certificate's Subject Common Names in order.
     pub fn common_names(&mut self) -> CommonNames<'_> {
         // SAFETY: `self` is a live certificate; a null subject yields an
@@ -507,6 +590,27 @@ impl Iterator for CommonNames<'_> {
 }
 
 impl SSL {
+    /// The SNI host name configured on (client) or received by (server) this
+    /// connection, if any.
+    pub fn servername(&self) -> Option<&[u8]> {
+        // SAFETY: `self` is a live SSL; the returned string is owned by the
+        // SSL/session and outlives this borrow.
+        unsafe {
+            let p = SSL_get_servername(self, 0 /* TLSEXT_NAMETYPE_host_name */);
+            if p.is_null() {
+                None
+            } else {
+                Some(core::ffi::CStr::from_ptr(p).to_bytes())
+            }
+        }
+    }
+
+    /// Client side: the SNI host name to send, set before the handshake. `false` if BoringSSL rejects it.
+    pub fn set_servername(&mut self, hostname: &core::ffi::CStr) -> bool {
+        // SAFETY: `self` is a live SSL; BoringSSL copies `hostname`.
+        unsafe { SSL_set_tlsext_host_name(self, hostname.as_ptr()) == 1 }
+    }
+
     /// The peer's leaf certificate, borrowed from this SSL's cert chain.
     pub fn peer_leaf_certificate(&mut self) -> Option<&mut X509> {
         // SAFETY: the chain and its entries are owned by this SSL and outlive
@@ -577,7 +681,6 @@ unsafe extern "C" {
     // ── EVP digest getters (infallible, return static singletons) ────────
     pub safe fn EVP_md4() -> *const EVP_MD;
     pub safe fn EVP_md5() -> *const EVP_MD;
-    pub safe fn EVP_md5_sha1() -> *const EVP_MD;
     pub safe fn EVP_ripemd160() -> *const EVP_MD;
     pub safe fn EVP_sha1() -> *const EVP_MD;
     pub safe fn EVP_sha224() -> *const EVP_MD;
@@ -653,30 +756,6 @@ unsafe extern "C" {
     pub fn SHA256_Final(out: *mut u8, sha: *mut SHA256_CTX) -> c_int;
     pub fn SHA256(data: *const u8, len: usize, out: *mut u8) -> *mut u8;
 
-    // ── SHA-384 ──────────────────────────────────────────────────────────
-    pub fn SHA384_Init(sha: *mut SHA512_CTX) -> c_int;
-    pub fn SHA384_Update(sha: *mut SHA512_CTX, data: *const c_void, len: usize) -> c_int;
-    pub fn SHA384_Final(out: *mut u8, sha: *mut SHA512_CTX) -> c_int;
-    pub fn SHA384(data: *const u8, len: usize, out: *mut u8) -> *mut u8;
-
-    // ── SHA-512 ──────────────────────────────────────────────────────────
-    pub fn SHA512_Init(sha: *mut SHA512_CTX) -> c_int;
-    pub fn SHA512_Update(sha: *mut SHA512_CTX, data: *const c_void, len: usize) -> c_int;
-    pub fn SHA512_Final(out: *mut u8, sha: *mut SHA512_CTX) -> c_int;
-    pub fn SHA512(data: *const u8, len: usize, out: *mut u8) -> *mut u8;
-
-    // ── SHA-512/256 ──────────────────────────────────────────────────────
-    pub fn SHA512_256_Init(sha: *mut SHA512_CTX) -> c_int;
-    pub fn SHA512_256_Update(sha: *mut SHA512_CTX, data: *const c_void, len: usize) -> c_int;
-    pub fn SHA512_256_Final(out: *mut u8, sha: *mut SHA512_CTX) -> c_int;
-    pub fn SHA512_256(data: *const u8, len: usize, out: *mut u8) -> *mut u8;
-
-    // ── RIPEMD-160 ───────────────────────────────────────────────────────
-    pub fn RIPEMD160_Init(ctx: *mut RIPEMD160_CTX) -> c_int;
-    pub fn RIPEMD160_Update(ctx: *mut RIPEMD160_CTX, data: *const c_void, len: usize) -> c_int;
-    pub fn RIPEMD160_Final(out: *mut u8, ctx: *mut RIPEMD160_CTX) -> c_int;
-    pub fn RIPEMD160(data: *const u8, len: usize, out: *mut u8) -> *mut u8;
-
     // ── SSL ──────────────────────────────────────────────────────────────
     pub safe fn SSL_library_init() -> c_int;
     pub safe fn SSL_load_error_strings();
@@ -687,6 +766,37 @@ unsafe extern "C" {
     pub fn d2i_X509(out: *mut *mut X509, inp: *mut *const u8, len: c_long) -> *mut X509;
     pub fn i2d_X509(x: *mut X509, outp: *mut *mut u8) -> c_int;
     pub fn X509_free(x509: *mut X509);
+    fn X509_get_signature_nid(x509: *const X509) -> c_int;
+    fn X509_get0_signature(
+        out_sig: *mut *const asn1_string_st,
+        out_alg: *mut *const X509_ALGOR,
+        x509: *const X509,
+    );
+    fn X509_ALGOR_get0(
+        out_obj: *mut *const ASN1_OBJECT,
+        out_param_type: *mut c_int,
+        out_param_value: *mut *const c_void,
+        alg: *const X509_ALGOR,
+    );
+    fn d2i_RSA_PSS_PARAMS(
+        out: *mut *mut RSA_PSS_PARAMS,
+        inp: *mut *const u8,
+        len: c_long,
+    ) -> *mut RSA_PSS_PARAMS;
+    fn RSA_PSS_PARAMS_free(params: *mut RSA_PSS_PARAMS);
+    fn OBJ_obj2nid(obj: *const ASN1_OBJECT) -> c_int;
+    fn X509_digest(
+        x509: *const X509,
+        md: *const EVP_MD,
+        out: *mut u8,
+        out_len: *mut c_uint,
+    ) -> c_int;
+    fn OBJ_find_sigid_algs(
+        sign_nid: c_int,
+        out_digest_nid: *mut c_int,
+        out_pkey_nid: *mut c_int,
+    ) -> c_int;
+    fn EVP_get_digestbynid(nid: c_int) -> *const EVP_MD;
     pub fn X509_get_subject_name(x509: *const X509) -> *mut X509_NAME;
     pub fn X509_get_ext_by_NID(x: *const X509, nid: c_int, lastpos: c_int) -> c_int;
     pub fn X509_get_ext(x: *const X509, loc: c_int) -> *mut X509_EXTENSION;
@@ -781,55 +891,27 @@ pub const SSL_OP_LEGACY_SERVER_CONNECT: u32 = 0;
 pub const RSA_PKCS1_OAEP_PADDING: c_int = 4;
 
 // ═══════════════════════════════════════════════════════════════════════════
-// BIO — opaque-ish handle + method vtable
+// BIO
 // (`vendor/boringssl/include/openssl/bio.h`)
 // ═══════════════════════════════════════════════════════════════════════════
-
-/// `CRYPTO_refcount_t` (`openssl/thread.h`) — atomic-ish u32 in BoringSSL.
-pub(crate) type CRYPTO_refcount_t = u32;
 
 /// `ossl_ssize_t` — signed counterpart of `size_t` for BoringSSL "length or -1"
 /// parameters.
 pub(crate) type ossl_ssize_t = isize;
 
-/// `bio_info_cb` — callback type for `BIO_METHOD.callback_ctrl`.
-pub(crate) type bio_info_cb =
-    Option<unsafe extern "C" fn(*mut BIO, c_int, *const c_char, c_int, c_long, c_long) -> c_long>;
+opaque!(
+    /// `struct bio_method_st` (`typedef ... BIO_METHOD`).
+    BIO_METHOD
+);
+opaque!(
+    /// `struct bio_st` (`typedef ... BIO`).
+    BIO
+);
 
-/// `struct bio_method_st` — vtable for a BIO implementation. Laid out by-value
-/// so callers can construct custom BIO methods on the Rust side.
-#[repr(C)]
-#[derive(Copy, Clone)]
-pub struct BIO_METHOD {
-    pub r#type: c_int,
-    pub name: *const c_char,
-    pub bwrite: Option<unsafe extern "C" fn(*mut BIO, *const c_char, c_int) -> c_int>,
-    pub bread: Option<unsafe extern "C" fn(*mut BIO, *mut c_char, c_int) -> c_int>,
-    pub bputs: Option<unsafe extern "C" fn(*mut BIO, *const c_char) -> c_int>,
-    pub bgets: Option<unsafe extern "C" fn(*mut BIO, *mut c_char, c_int) -> c_int>,
-    pub ctrl: Option<unsafe extern "C" fn(*mut BIO, c_int, c_long, *mut c_void) -> c_long>,
-    pub create: Option<unsafe extern "C" fn(*mut BIO) -> c_int>,
-    pub destroy: Option<unsafe extern "C" fn(*mut BIO) -> c_int>,
-    pub callback_ctrl: Option<unsafe extern "C" fn(*mut BIO, c_int, bio_info_cb) -> c_long>,
-}
-
-/// `struct bio_st` — exposed by-value because callers reach into
-/// `flags`/`num`/`ptr` directly when implementing custom BIO backends.
-#[repr(C)]
-#[derive(Copy, Clone)]
-pub struct BIO {
-    pub method: *const BIO_METHOD,
-    pub init: c_int,
-    pub shutdown: c_int,
-    pub flags: c_int,
-    pub retry_reason: c_int,
-    pub num: c_int,
-    pub references: CRYPTO_refcount_t,
-    pub ptr: *mut c_void,
-    pub next_bio: *mut BIO,
-    pub num_read: usize,
-    pub num_write: usize,
-}
+/// `#define BIO_CTRL_FLUSH 11`
+pub const BIO_CTRL_FLUSH: c_int = 11;
+/// `#define BIO_TYPE_SOURCE_SINK 0x0400`
+pub const BIO_TYPE_SOURCE_SINK: c_int = 0x0400;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Additional opaque handles
@@ -861,8 +943,7 @@ opaque!(
 pub type SSL_verify_cb = Option<unsafe extern "C" fn(c_int, *mut X509_STORE_CTX) -> c_int>;
 
 /// `int pem_password_cb(char *buf, int size, int rwflag, void *userdata)`.
-pub(crate) type pem_password_cb =
-    unsafe extern "C" fn(*mut c_char, c_int, c_int, *mut c_void) -> c_int;
+pub type pem_password_cb = unsafe extern "C" fn(*mut c_char, c_int, c_int, *mut c_void) -> c_int;
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Extern functions — SSL / BIO / ERR / HMAC / RSA / PBKDF2
@@ -877,10 +958,13 @@ unsafe extern "C" {
     pub fn SSL_CTX_new(method: *const SSL_METHOD) -> *mut SSL_CTX;
     pub fn SSL_CTX_free(ctx: *mut SSL_CTX);
     pub fn SSL_CTX_get_verify_mode(ctx: *const SSL_CTX) -> c_int;
+    pub fn SSL_CTX_set_session_id_context(
+        ctx: *mut SSL_CTX,
+        sid_ctx: *const u8,
+        sid_ctx_len: usize,
+    ) -> c_int;
     pub fn SSL_CTX_set_ex_data(ctx: *mut SSL_CTX, idx: c_int, data: *mut c_void) -> c_int;
-    pub fn SSL_CTX_get_ex_data(ctx: *const SSL_CTX, idx: c_int) -> *mut c_void;
     pub fn SSL_CTX_set0_buffer_pool(ctx: *mut SSL_CTX, pool: *mut CRYPTO_BUFFER_POOL);
-    pub fn SSL_CTX_set_cipher_list(ctx: *mut SSL_CTX, str_: *const c_char) -> c_int;
     pub fn SSL_CTX_set1_groups_list(ctx: *mut SSL_CTX, groups: *const c_char) -> c_int;
     /// `enum ssl_compliance_policy_t` (int-sized via BORINGSSL_ENUM_INT).
     pub fn SSL_CTX_set_compliance_policy(ctx: *mut SSL_CTX, policy: c_int) -> c_int;
@@ -894,8 +978,6 @@ unsafe extern "C" {
     pub fn SSL_set_connect_state(ssl: *mut SSL);
     pub fn SSL_set_accept_state(ssl: *mut SSL);
     pub fn SSL_set_bio(ssl: *mut SSL, rbio: *mut BIO, wbio: *mut BIO);
-    pub fn SSL_get_rbio(ssl: *const SSL) -> *mut BIO;
-    pub fn SSL_get_wbio(ssl: *const SSL) -> *mut BIO;
     pub fn SSL_do_handshake(ssl: *mut SSL) -> c_int;
     pub fn SSL_read(ssl: *mut SSL, buf: *mut c_void, num: c_int) -> c_int;
     pub fn SSL_pending(ssl: *const SSL) -> c_int;
@@ -905,6 +987,11 @@ unsafe extern "C" {
     pub fn SSL_get_shutdown(ssl: *const SSL) -> c_int;
     pub fn SSL_is_init_finished(ssl: *const SSL) -> c_int;
     pub fn SSL_set_verify(ssl: *mut SSL, mode: c_int, callback: SSL_verify_cb);
+    pub fn SSL_set_session_id_context(
+        ssl: *mut SSL,
+        sid_ctx: *const u8,
+        sid_ctx_len: usize,
+    ) -> c_int;
     pub fn SSL_set0_verify_cert_store(ssl: *mut SSL, store: *mut X509_STORE) -> c_int;
     pub fn SSL_set_renegotiate_mode(ssl: *mut SSL, mode: ssl_renegotiate_mode_t);
     pub fn SSL_renegotiate(ssl: *mut SSL) -> c_int;
@@ -974,12 +1061,26 @@ unsafe extern "C" {
     // ── BIO ──────────────────────────────────────────────────────────────
     pub fn BIO_new(method: *const BIO_METHOD) -> *mut BIO;
     pub fn BIO_free(bio: *mut BIO) -> c_int;
-    pub fn BIO_read(bio: *mut BIO, data: *mut c_void, len: c_int) -> c_int;
-    pub fn BIO_write(bio: *mut BIO, data: *const c_void, len: c_int) -> c_int;
-    pub fn BIO_ctrl_pending(bio: *const BIO) -> usize;
-    pub safe fn BIO_s_mem() -> *const BIO_METHOD;
     pub fn BIO_new_mem_buf(buf: *const c_void, len: ossl_ssize_t) -> *mut BIO;
-    pub fn BIO_set_mem_eof_return(bio: *mut BIO, eof_value: c_int) -> c_int;
+    pub safe fn BIO_get_new_index() -> c_int;
+    pub fn BIO_meth_new(r#type: c_int, name: *const c_char) -> *mut BIO_METHOD;
+    pub fn BIO_meth_set_write(
+        method: *mut BIO_METHOD,
+        write_func: Option<unsafe extern "C" fn(*mut BIO, *const c_char, c_int) -> c_int>,
+    ) -> c_int;
+    pub fn BIO_meth_set_read(
+        method: *mut BIO_METHOD,
+        read_func: Option<unsafe extern "C" fn(*mut BIO, *mut c_char, c_int) -> c_int>,
+    ) -> c_int;
+    pub fn BIO_meth_set_ctrl(
+        method: *mut BIO_METHOD,
+        ctrl_func: Option<unsafe extern "C" fn(*mut BIO, c_int, c_long, *mut c_void) -> c_long>,
+    ) -> c_int;
+    pub fn BIO_set_data(bio: *mut BIO, ptr: *mut c_void);
+    pub fn BIO_get_data(bio: *mut BIO) -> *mut c_void;
+    pub fn BIO_set_init(bio: *mut BIO, init: c_int);
+    pub fn BIO_set_retry_read(bio: *mut BIO);
+    pub fn BIO_clear_retry_flags(bio: *mut BIO);
 
     // ── RAND ─────────────────────────────────────────────────────────────
     /// Fills `buf[0..len]` from BoringSSL's thread-local CTR-DRBG and returns 1.
@@ -991,7 +1092,6 @@ unsafe extern "C" {
     // Thread-local error queue — no pointer args, no preconditions.
     pub safe fn ERR_clear_error();
     pub safe fn ERR_get_error() -> u32;
-    pub safe fn ERR_peek_error() -> u32;
     pub safe fn ERR_peek_last_error() -> u32;
     pub fn ERR_error_string(packed_error: u32, buf: *mut c_char) -> *mut c_char;
     // `ERR_error_string_n` declared once in the crypto/err block above.
@@ -1084,10 +1184,6 @@ opaque!(
     EVP_PKEY
 );
 opaque!(
-    /// `struct ssl_cipher_st` (`typedef ... SSL_CIPHER`).
-    SSL_CIPHER
-);
-opaque!(
     /// `struct ssl_session_st` (`typedef ... SSL_SESSION`).
     SSL_SESSION
 );
@@ -1105,11 +1201,33 @@ unsafe extern "C" {
     pub fn SSL_CTX_use_PrivateKey(ctx: *mut SSL_CTX, pkey: *mut EVP_PKEY) -> c_int;
 
     pub fn SSL_get_verify_result(ssl: *const SSL) -> c_long;
-    pub fn SSL_get_current_cipher(ssl: *const SSL) -> *const SSL_CIPHER;
-    pub fn SSL_CIPHER_standard_name(cipher: *const SSL_CIPHER) -> *const c_char;
-    pub fn SSL_CIPHER_get_name(cipher: *const SSL_CIPHER) -> *const c_char;
-    pub fn SSL_get_version(ssl: *const SSL) -> *const c_char;
 
+    /// Reads the next PEM block whose type is `expected_name` (e.g. `c"CERTIFICATE"`), skipping others, and
+    /// returns its decoded (and, with `cb`, decrypted) payload without parsing it.
+    pub fn PEM_bytes_read_bio(
+        out_data: *mut *mut u8,
+        out_len: *mut c_long,
+        out_name: *mut *mut c_char,
+        expected_name: *const c_char,
+        bio: *mut BIO,
+        cb: Option<pem_password_cb>,
+        userdata: *mut c_void,
+    ) -> c_int;
+    pub fn CRYPTO_BUFFER_new(
+        data: *const u8,
+        len: usize,
+        pool: *mut CRYPTO_BUFFER_POOL,
+    ) -> *mut CRYPTO_BUFFER;
+    pub fn CRYPTO_BUFFER_free(buf: *mut CRYPTO_BUFFER);
+    /// oven-sh/boringssl: a set of DER certificates indexed by subject and parsed on first use. Takes a reference to
+    /// each buffer; NULL if any cannot be indexed (see `X509_LAZY_CERT_SET_can_index`).
+    pub fn X509_LAZY_CERT_SET_new(
+        certs: *const *mut CRYPTO_BUFFER,
+        num_certs: usize,
+    ) -> *mut X509_LAZY_CERT_SET;
+    pub fn X509_LAZY_CERT_SET_can_index(der: *const u8, len: usize) -> c_int;
+    pub safe fn X509_get_default_cert_file() -> *const c_char;
+    pub safe fn X509_get_default_cert_dir() -> *const c_char;
     pub fn PEM_read_bio_X509(
         bp: *mut BIO,
         x: *mut *mut X509,
@@ -1126,10 +1244,10 @@ unsafe extern "C" {
 
     pub fn X509_verify_cert_error_string(err: c_long) -> *const c_char;
 
-    pub fn X509_STORE_free(store: *mut X509_STORE);
     pub fn X509_STORE_add_cert(store: *mut X509_STORE, x509: *mut X509) -> c_int;
     pub fn X509_STORE_add_crl(store: *mut X509_STORE, crl: *mut X509_CRL) -> c_int;
     pub fn X509_STORE_set_flags(store: *mut X509_STORE, flags: c_ulong) -> c_int;
+    pub fn X509_VERIFY_PARAM_set_flags(param: *mut c_void, flags: c_ulong) -> c_int;
     pub fn X509_CRL_free(crl: *mut X509_CRL);
     pub fn PEM_read_bio_X509_CRL(
         bp: *mut BIO,
@@ -1141,15 +1259,9 @@ unsafe extern "C" {
     /// Returns a NEW reference (caller frees) or null when the peer sent no
     /// certificate.
     pub fn SSL_get_peer_certificate(ssl: *const SSL) -> *mut X509;
-    /// Returns a BORROWED reference to the local certificate, or null.
-    pub fn SSL_get_certificate(ssl: *const SSL) -> *mut X509;
+    /// Returns a BORROWED reference to the context's leaf certificate, or null.
+    pub fn SSL_CTX_get0_certificate(ctx: *const SSL_CTX) -> *mut X509;
 
-    pub fn i2d_SSL_SESSION(session: *mut SSL_SESSION, pp: *mut *mut u8) -> c_int;
-    pub fn d2i_SSL_SESSION(
-        a: *mut *mut SSL_SESSION,
-        pp: *mut *const u8,
-        length: c_long,
-    ) -> *mut SSL_SESSION;
     pub fn SSL_set_session(ssl: *mut SSL, session: *mut SSL_SESSION) -> c_int;
     pub fn SSL_SESSION_free(session: *mut SSL_SESSION);
 }

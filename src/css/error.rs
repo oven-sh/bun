@@ -74,7 +74,8 @@ impl<T: fmt::Display> Err<T> {
             data: bun_ast::Data {
                 location: match &self.loc {
                     Some(loc) => Some(loc.to_location(source)?),
-                    None => None,
+                    // An error with no location still reports the file name.
+                    None => bun_ast::Location::init_or_null(Some(source), bun_ast::Range::NONE),
                 },
                 text: text.into(),
             },
@@ -178,18 +179,14 @@ impl ErrorLocation {
         &self,
         source: &bun_ast::Source,
     ) -> Result<bun_ast::Location, bun_core::Error> {
-        // SAFETY: `'bump`-erasure — `bun_ast::Location.line_text` is `Option<&'static [u8]>`
-        // (`Str` placeholder per src/logger/lib.rs); the slice borrows
-        // `source.contents` which outlives the diagnostic. Re-thread once
-        // `bun_ast::Location` grows a real lifetime.
         let line_text = bun_core::strings::get_lines_in_text::<1>(&source.contents, self.line)
-            .map(|lines| unsafe { &*std::ptr::from_ref::<[u8]>(lines.as_slice()[0]) });
+            .map(|lines| Box::from(lines.as_slice()[0]));
         Ok(bun_ast::Location {
-            file: std::borrow::Cow::Borrowed(source.path.text),
-            namespace: source.path.namespace,
+            file: Box::from(source.path.text),
+            namespace: Box::from(source.path.namespace),
             line: i32::try_from(self.line + 1).expect("int cast"),
             column: i32::try_from(self.column).expect("int cast"),
-            line_text: line_text.map(std::borrow::Cow::Borrowed),
+            line_text,
             ..Default::default()
         })
     }
@@ -296,6 +293,7 @@ pub enum ParserError {
         expected: Str,
         received: Str,
     },
+    input_too_large,
 }
 
 impl fmt::Display for ParserError {
@@ -326,6 +324,7 @@ impl fmt::Display for ParserError {
             Self::unexpected_value { expected, received } => {
                 write!(f, "Expected {}, received {}", bs(*expected), bs(*received))
             }
+            Self::input_too_large => f.write_str("CSS file is too large to parse (2 GiB maximum)"),
         }
     }
 }

@@ -13,19 +13,21 @@ function mockToolchain(): Toolchain {
     cxx: "/fake/llvm/bin/clang++",
     hostCc: undefined,
     hostCxx: undefined,
-    clangVersion: "21.1.8",
-    clangResourceDir: "/fake/llvm/lib/clang/21",
+    clangVersion: "23.1.1",
+    clangResourceDir: "/fake/llvm/lib/clang/23",
     ar: "/fake/llvm/bin/llvm-ar",
     ranlib: "/fake/llvm/bin/llvm-ranlib",
     ld: "/fake/llvm/bin/ld.lld",
     ld64Lld: "/fake/llvm/bin/ld64.lld",
-    rustLld: undefined,
-    rustLlvmVersion: "22.1.4",
+    rustLlvmVersion: "23.1.1",
     rustSysroot: undefined,
     rustHostTriple: undefined,
     strip: "/fake/bin/strip",
     llvmStrip: "/fake/llvm/bin/llvm-strip",
     nm: "/fake/llvm/bin/llvm-nm",
+    readobj: "/fake/llvm/bin/llvm-readobj",
+    objdump: "/fake/llvm/bin/llvm-objdump",
+    cxxfilt: "/fake/llvm/bin/llvm-cxxfilt",
     dsymutil: "/fake/llvm/bin/dsymutil",
     bun: "/fake/bin/bun",
     jsRuntime: "/fake/bin/bun",
@@ -86,14 +88,36 @@ describe("WebKit prebuilt URL", () => {
     );
   });
 
-  test("debug picks the -debug artifact from the same release tag", () => {
+  test("debug picks the -debug-aot artifact from the same release tag", () => {
     const cfg = resolveConfig(
       { os: "linux", arch: "x64", abi: "gnu", buildType: "Debug", asan: false, baseline: false, linuxSysroot: "/fake" },
       mockToolchain(),
     );
     expect(prebuiltUrlOf(cfg)).toBe(
-      `https://github.com/oven-sh/WebKit/releases/download/${defaultTag}/bun-webkit-linux-amd64-debug.tar.gz`,
+      `https://github.com/oven-sh/WebKit/releases/download/${defaultTag}/bun-webkit-linux-amd64-debug-aot.tar.gz`,
     );
+  });
+
+  test("only what ships is built without JavaScriptCore's ahead-of-time compiler", () => {
+    const suffixOf = (partial: PartialConfig) =>
+      prebuiltUrlOf(resolveLinuxRelease(partial)).match(/bun-webkit-linux-amd64(.*)\.tar\.gz$/)?.[1];
+    expect({
+      release: suffixOf({}),
+      lto: suffixOf({ lto: true }),
+      ltoHardened: suffixOf({ lto: true, hardened: true }),
+      hardened: suffixOf({ hardened: true }),
+      asan: suffixOf({ asan: true }),
+      assertions: suffixOf({ assertions: true }),
+      fuzzilli: suffixOf({ assertions: true, fuzzilli: true }),
+    }).toEqual({
+      release: "",
+      lto: "-lto",
+      ltoHardened: "-lto-hardened",
+      hardened: "-hardened-aot",
+      asan: "-asan-aot",
+      assertions: "-assertions-aot",
+      fuzzilli: "-assertions-coverage-aot",
+    });
   });
 
   test("baseline does not affect the suffix (every x64 WebKit is built at the nehalem floor)", () => {
@@ -101,7 +125,7 @@ describe("WebKit prebuilt URL", () => {
       `https://github.com/oven-sh/WebKit/releases/download/${defaultTag}/bun-webkit-linux-amd64-lto.tar.gz`,
     );
     expect(prebuiltUrlOf(resolveLinuxRelease({ asan: true, baseline: true }))).toBe(
-      `https://github.com/oven-sh/WebKit/releases/download/${defaultTag}/bun-webkit-linux-amd64-asan.tar.gz`,
+      `https://github.com/oven-sh/WebKit/releases/download/${defaultTag}/bun-webkit-linux-amd64-asan-aot.tar.gz`,
     );
   });
 

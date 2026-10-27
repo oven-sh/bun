@@ -4,8 +4,11 @@ import {
   bunExe,
   bunRun,
   bunRunAsScript,
+  isASAN,
+  isDebug,
   isLinux,
   isMacOS,
+  isRoot,
   isWindows,
   tempDir,
   tempDirWithFiles,
@@ -86,7 +89,7 @@ describe("fs.watch", () => {
       count++;
       try {
         expect(["rename", "change"]).toContain(event);
-        expect(["new-file.txt", "new-folder.txt"]).toContain(filename);
+        expect(["new-file.txt", "new-folder.txt"]).toContain(filename as string);
         if (count >= 2) {
           watcher.close();
         }
@@ -270,7 +273,7 @@ describe("fs.watch", () => {
       expect(watcher.constructor.name).toBe("FSWatcher");
       expect(typeof watcher.ref).toBe("function");
       expect(typeof watcher.unref).toBe("function");
-      expect(typeof watcher.start).toBe("function");
+      expect(typeof (watcher as any).start).toBe("function");
     } finally {
       watcher.close();
     }
@@ -532,8 +535,6 @@ describe("fs.watch", () => {
   // on windows 0o200 will be readable (match nodejs behavior)
   // Root has CAP_DAC_OVERRIDE, so the chmod 0o200 below never yields the
   // EACCES these two tests expect; they only make sense as a non-root user.
-  const isRoot = process.getuid?.() === 0;
-
   test.skipIf(isWindows || isRoot)("should throw if no permission to watch the directory", async () => {
     const filepath = path.join(testDir, "permission-dir");
     fs.mkdirSync(filepath, { recursive: true });
@@ -708,7 +709,7 @@ describe("fs.watch", () => {
   // seccomp. The same `add_one` error branch is reachable with EACCES by
   // watching a tree that contains one unreadable subdirectory as an
   // unprivileged user, so this test drops privileges to trigger it.
-  test.skipIf(!isLinux || process.getuid?.() !== 0)(
+  test.skipIf(!isLinux || !isRoot)(
     "recursive watch surfaces inotify_add_watch failure on a subdirectory as an 'error' event",
     async () => {
       const NOBODY = 65534;
@@ -719,7 +720,7 @@ describe("fs.watch", () => {
       const root = fs.realpathSync(String(dir));
       // The de-privileged child must be able to traverse into `root`, read it,
       // and write inside `open/`, while `locked/` denies read so
-      // inotify_add_watch on it returns EACCES. CI's runner.node.mjs points
+      // inotify_add_watch on it returns EACCES. CI's runner.node.ts points
       // TMPDIR at a mode-0700 mkdtemp dir, so every ancestor of `root` needs
       // +x for uid 65534 or the child fails at path resolution on the root
       // itself before the recursive walk ever reaches `locked/`.
@@ -834,6 +835,222 @@ describe("fs.watch", () => {
       }
     },
   );
+
+  // A directory can sit deeper than PATH_MAX: every component is legal, it just
+  // has to be created relative to a cwd that is itself below the limit. The
+  // recursive walk used to join such an entry's path into a fixed PATH_MAX
+  // buffer and abort the process with a bounds panic, both during the initial
+  // walk inside fs.watch() and later on the inotify reader thread when an entry
+  // appeared under a watched directory that is close to the limit. inotify
+  // cannot watch a path that long (ENAMETOOLONG), so that subtree is reported
+  // through the 'error' event like any other registration failure; events whose
+  // relative path exceeds PATH_MAX are still delivered and the rest of the tree
+  // stays watched. Runs in a subprocess because the unfixed behavior is an abort.
+  test.skipIf(!isLinux)("recursive watch survives directories deeper than PATH_MAX", async () => {
+    const PATH_MAX = 4096;
+    // Absolute length of the deepest directory inotify can still watch. Any
+    // entry inside it (names below are NAME_MAX bytes) ends up beyond PATH_MAX.
+    const deepLength = PATH_MAX - 16;
+    const existingDir = Buffer.alloc(255, "e").toString();
+    const createdDir = Buffer.alloc(255, "d").toString();
+    const createdFile = Buffer.alloc(255, "f").toString();
+    // Only there to dump what did arrive when an event goes missing; the whole
+    // scenario takes about a second under ASAN, and CI's per-test timeout is
+    // well above this.
+    const deadlineMs = isASAN || isDebug ? 30_000 : 10_000;
+
+    using dir = tempDir("fs-watch-deeper-than-path-max", {});
+
+    const fixture = /* js */ `
+      const fs = require("fs"), path = require("path");
+      const deepLength = ${deepLength};
+      const existingDir = ${JSON.stringify(existingDir)};
+      const createdDir = ${JSON.stringify(createdDir)};
+      const createdFile = ${JSON.stringify(createdFile)};
+      const root = fs.realpathSync(process.env.WATCH_ROOT);
+
+      // root/ccc…/ccc…/ppp… with an absolute length of exactly deepLength.
+      process.chdir(root);
+      const segment = Buffer.alloc(200, "c").toString();
+      let length = root.length;
+      while (deepLength - length > 1 + 255) {
+        fs.mkdirSync(segment);
+        process.chdir(segment);
+        length += 1 + segment.length;
+      }
+      const last = Buffer.alloc(deepLength - length - 1, "p").toString();
+      fs.mkdirSync(last);
+      process.chdir(last);
+      const deep = process.cwd();
+      const deepRel = path.relative(root, deep);
+      // Exists before the watch starts, so the initial walk meets it.
+      fs.mkdirSync(existingDir);
+      process.chdir(root);
+
+      const events = [], errors = [], waiters = [];
+      const settle = () => {
+        for (const waiter of waiters.splice(0)) {
+          if (waiter.ready()) waiter.resolve();
+          else waiters.push(waiter);
+        }
+      };
+      const until = ready => new Promise(resolve => { waiters.push({ ready, resolve }); settle(); });
+      const delivered = name => () => events.some(event => event.name === name);
+
+      const watcher = fs.watch(root, { recursive: true }, (type, name) => {
+        events.push({ type, name });
+        settle();
+      });
+      watcher.on("error", error => {
+        errors.push({ code: error.code, syscall: error.syscall, path: error.path });
+        settle();
+      });
+
+      const deadline = setTimeout(() => {
+        console.log(JSON.stringify({
+          timedOut: true,
+          errors,
+          events: events.map(event => [event.type, String(event.name).length]),
+        }));
+        process.exit(1);
+      }, ${deadlineMs});
+
+      (async () => {
+        await until(() => errors.length === 1);
+
+        // Created under a running watch: the absolute path is beyond PATH_MAX
+        // (reported), and so is the relative path (delivered).
+        process.chdir(deep);
+        fs.mkdirSync(createdDir);
+        process.chdir(root);
+        await until(() => errors.length === 2);
+        await until(delivered(path.join(deepRel, createdDir)));
+
+        // Nothing to register for a file; only its relative path is over the limit.
+        process.chdir(deep);
+        fs.writeFileSync(createdFile, "x");
+        process.chdir(root);
+        await until(delivered(path.join(deepRel, createdFile)));
+
+        fs.writeFileSync(path.join(root, "shallow.txt"), "x");
+        await until(delivered("shallow.txt"));
+
+        clearTimeout(deadline);
+        watcher.close();
+        console.log(JSON.stringify({ deep, relativeLength: path.join(deepRel, createdFile).length, errors }));
+      })();
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, WATCH_ROOT: String(dir) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const result = JSON.parse(stdout.trim());
+    expect(result.deep).toHaveLength(deepLength);
+    expect(result.relativeLength).toBeGreaterThan(PATH_MAX);
+    expect(result.errors).toEqual([
+      { code: "ENAMETOOLONG", syscall: "watch", path: `${result.deep}/${existingDir}` },
+      { code: "ENAMETOOLONG", syscall: "watch", path: `${result.deep}/${createdDir}` },
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  // The inotify reader thread walks a directory that's moved into a recursive watch.
+  test.concurrent.skipIf(!isLinux).each([
+    { title: "deeper than the open-file limit", limit: "ulimit -n 64; ", levels: 100 },
+    { title: "300 levels deep", limit: "", levels: 300 },
+  ])("recursive watch covers a moved-in tree that's $title", async ({ limit, levels }) => {
+    using dir = tempDir("fs-watch-deep-move", { "watched": {} });
+    const root = String(dir);
+    fs.mkdirSync(path.join(root, "src", ...Array(levels).fill("a")), { recursive: true });
+
+    // inotify delivers events in order, so an event for a later action means the earlier step is done.
+    const fixture = /* js */ `
+      const fs = require("fs"), path = require("path");
+      const root = process.env.WATCH_ROOT;
+      const watched = path.join(root, "watched");
+      const seen = new Set(), errors = [], dirs = [];
+      for (let dir = "moved"; dirs.length < ${levels}; ) dirs.push((dir = path.join(dir, "a")));
+      const bottomFile = path.join(dirs.at(-1), "f.txt");
+      const watcher = fs.watch(watched, { recursive: true }, (type, name) => {
+        seen.add(name);
+        if (type !== "rename") return;
+        if (name === "walked.txt") {
+          fs.writeFileSync(path.join(watched, bottomFile), "x");
+          fs.writeFileSync(path.join(watched, "last.txt"), "x");
+        } else if (name === "last.txt") {
+          watcher.close();
+          console.log(JSON.stringify({
+            unreported: dirs.flatMap((dir, i) => (seen.has(dir) ? [] : [i + 1])),
+            bottomFile: seen.has(bottomFile),
+            errors,
+          }));
+        }
+      });
+      watcher.on("error", error => errors.push(error.code));
+      fs.renameSync(path.join(root, "src"), path.join(watched, "moved"));
+      fs.writeFileSync(path.join(watched, "walked.txt"), "x");
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: ["/bin/sh", "-c", limit + 'exec "$0" "$@"', bunExe(), "-e", fixture],
+      env: { ...bunEnv, WATCH_ROOT: root },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ unreported: [], bottomFile: true, errors: [] }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test.concurrent.skipIf(!isLinux)(
+    "recursive watch reports a moved-in tree's files and directories in walk order",
+    async () => {
+      using dir = tempDir("fs-watch-mixed-tree", { "watched": {} });
+      const root = String(dir);
+
+      // Creates three levels that each mix files and directories.
+      function makeTree(top: string, depth: number) {
+        fs.mkdirSync(top, { recursive: true });
+        for (const name of ["f0.txt", "f1.txt", "f2.txt"]) fs.writeFileSync(path.join(top, name), "");
+        fs.mkdirSync(path.join(top, "empty"));
+        if (depth < 2) for (const name of ["sub0", "sub1"]) makeTree(path.join(top, name), depth + 1);
+        for (const name of ["g0.txt", "g1.txt"]) fs.writeFileSync(path.join(top, name), "");
+      }
+      // Returns the entries under `top` in readdir order, each directory before its contents.
+      function listTree(top: string, rel: string): string[] {
+        return fs.readdirSync(top, { withFileTypes: true }).flatMap(entry => {
+          const name = path.join(rel, entry.name);
+          return entry.isDirectory() ? [name, ...listTree(path.join(top, entry.name), name)] : [name];
+        });
+      }
+      makeTree(path.join(root, "mixed"), 0);
+      const expected = ["mixed", ...listTree(path.join(root, "mixed"), "mixed")];
+
+      const events: string[] = [];
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      const watcher = fs.watch(path.join(root, "watched"), { recursive: true }, (_type, name) => {
+        if (name === "last.txt") resolve();
+        else events.push(name!);
+      });
+      watcher.on("error", reject);
+      try {
+        fs.renameSync(path.join(root, "mixed"), path.join(root, "watched", "mixed"));
+        fs.writeFileSync(path.join(root, "watched", "last.txt"), "x");
+        await promise;
+      } finally {
+        watcher.close();
+      }
+      expect(events).toEqual(expected);
+    },
+  );
 });
 
 describe("fs.promises.watch", () => {
@@ -859,7 +1076,7 @@ describe("fs.promises.watch", () => {
         count++;
         try {
           expect(["rename", "change"]).toContain(event.eventType);
-          expect(["new-file.txt", "new-folder.txt"]).toContain(event.filename);
+          expect(["new-file.txt", "new-folder.txt"]).toContain(event.filename!);
 
           if (count >= 2) {
             success = true;
@@ -1097,7 +1314,6 @@ describe("fs.promises.watch", () => {
 
     expect(event).toBeDefined();
     expect(Object.getPrototypeOf(event)).toBe(null);
-    // @ts-expect-error
     expect(event.hasOwnProperty).toBeUndefined();
     expect(() => String(event)).toThrow(TypeError);
     expect(Object.keys(event!).sort()).toEqual(["eventType", "filename"]);
@@ -1373,7 +1589,7 @@ test.skipIf(!isMacOS)("fs.watch(dir) on macOS does not leak the resolved FSEvent
       /* ts */ `
         const fs = require("fs");
         const dir = process.argv[1];
-        const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+        const rss = process.memoryUsage.rss;
 
         async function cycle(count) {
           for (let i = 0; i < count; i++) fs.watch(dir, () => {}).close();

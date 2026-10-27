@@ -1,5 +1,6 @@
 #include "root.h"
 #include "wtf-bindings.h"
+#include "helpers.h"
 #include "BunTTYState.h"
 #include <wtf/StackBounds.h>
 #include <wtf/StackCheck.h>
@@ -7,6 +8,7 @@
 #include <wtf/dtoa.h>
 #include <wtf/DateMath.h>
 #include <wtf/NumberOfCores.h>
+#include <JavaScriptCore/JSDateMath-v8.h>
 #include <atomic>
 #include <cassert>
 
@@ -42,7 +44,7 @@ int uv__tcsetattr(int fd, int how, const struct termios* term)
     return 0;
 }
 
-extern "C" int uv_tty_reset_mode(void)
+extern "C" BUN_EXPORT int uv_tty_reset_mode(void)
 {
     int saved_errno;
     int err;
@@ -50,11 +52,11 @@ extern "C" int uv_tty_reset_mode(void)
     saved_errno = errno;
 
     if (atomic_exchange(&orig_termios_spinlock, 1))
-        return 16; // UV_EBUSY; /* In uv_tty_set_mode(). */
+        return -EBUSY; // UV_EBUSY, ttySetMode() is taking the snapshot
 
     err = 0;
     if (orig_termios_fd != -1)
-        err = uv__tcsetattr(orig_termios_fd, TCSANOW, &orig_termios);
+        err = -uv__tcsetattr(orig_termios_fd, TCSANOW, &orig_termios); // UV__ERR(errno)
 
     atomic_store(&orig_termios_spinlock, 0);
     errno = saved_errno;
@@ -237,18 +239,23 @@ extern "C" size_t WTF__base64URLEncode(const char* __restrict inputDataBuffer, s
     return simdutf::binary_to_base64(inputDataBuffer, inputDataBufferSize, destinationDataBuffer, simdutf::base64_url);
 }
 
-extern "C" double WTF__parseES5Date(const Latin1Character* string, size_t length)
+// JS `Date.parse` with no VM, except that a date-time with no time zone reads as UTC.
+extern "C" double Bun__parseDateTimeString(const Latin1Character* string, size_t length)
 {
-    bool isLocalTime;
-    return WTF::parseES5Date({ string, length }, isLocalTime);
+    bool isLocalTime = false;
+    return v8::TimeClip(v8::ParseDateTimeString(byteCast<uint8_t>(string), length, isLocalTime));
 }
 
 namespace Bun {
-String base64URLEncodeToString(Vector<uint8_t> data)
+String base64URLEncodeToString(const Vector<uint8_t>& data)
 {
     auto size = data.size();
     size_t encodedLength = ((size * 4) + 2) / 3;
     if (!encodedLength)
+        return String();
+
+    // String::createUninitialized CRASH()es above String::MaxLength.
+    if (encodedLength > std::min(Bun__stringSyntheticAllocationLimit, static_cast<size_t>(String::MaxLength))) [[unlikely]]
         return String();
 
     std::span<Latin1Character> ptr;
@@ -267,8 +274,7 @@ size_t toISOString(JSC::VM& vm, double date, char in[64])
     if (!std::isfinite(date))
         return 0;
 
-    GregorianDateTime gregorianDateTime;
-    vm.dateCache.msToGregorianDateTime(date, WTF::TimeType::UTCTime, gregorianDateTime);
+    auto gregorianDateTime = vm.dateCache.msToGregorianDateTime(date, WTF::TimeType::UTCTime);
 
     // Maximum amount of space we need in buffer: 8 (max. digits in year) + 2 * 5 (2 characters each for month, day, hour, minute, second) + 4 (. + 3 digits for milliseconds)
     // 6 for formatting and one for null termination = 29.
@@ -297,7 +303,10 @@ static thread_local WTF::StackBounds stackBoundsForCurrentThread = WTF::StackBou
 
 extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__StackCheck__initialize()
 {
-    stackBoundsForCurrentThread = WTF::StackBounds::currentThreadStackBounds();
+    // A thread's bounds are fixed. On Windows they are the reserved range, and the stack grows inside it.
+    if (!stackBoundsForCurrentThread.isEmpty())
+        return;
+    stackBoundsForCurrentThread = WTF::StackBounds::currentThreadStackBoundsForEmbedder();
 }
 
 extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((__always_inline__)) void* Bun__StackCheck__getMaxStack()

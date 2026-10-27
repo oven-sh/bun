@@ -22,9 +22,13 @@ try {
   server = null;
   release.resolve();
   while (!received.endsWith("ok")) await once(client, "data");
-  // The client end no longer holds the loop; the process exits now iff the
-  // closed server doesn't either.
+  // The client end no longer holds the loop. Like in Node.js, the surviving
+  // connection still does, on the server side.
   client.unref();
+  // An unref'd timer runs only while something else holds the loop. It closes
+  // the surviving connection: the process exits iff the closed server then
+  // drops its loop ref.
+  setTimeout(() => client.end(), 0).unref();
   process.on("exit", () => {
     console.log(
       JSON.stringify({ status: received.split("\r\n")[0], connectionOpenAtExit: client.readyState === "open" }),

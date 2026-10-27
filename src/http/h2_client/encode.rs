@@ -363,12 +363,19 @@ pub(crate) fn drain_send_body(session: &mut ClientSession, stream: &mut Stream, 
     }
 }
 
-pub(crate) fn drain_send_bodies(session: &mut ClientSession) {
+/// True if it stopped at `WRITE_BUFFER_HIGH_WATER` with body bytes still sendable.
+pub(crate) fn drain_send_bodies(session: &mut ClientSession) -> bool {
     // Round-robin: each pass gives every uploader at most one
     // remote_max_frame_size slice before the next stream gets a turn, so
     // the lowest-index stream can't monopolise conn_send_window.
     let slice: usize = session.remote_max_frame_size as usize;
-    while session.conn_send_window > 0 && session.write_buffer.size() < WRITE_BUFFER_HIGH_WATER {
+    loop {
+        if session.conn_send_window <= 0 {
+            return false;
+        }
+        if session.write_buffer.size() >= WRITE_BUFFER_HIGH_WATER {
+            return true;
+        }
         let mut progressed = false;
         // Iterating `session.streams.values()` while passing `session` mutably
         // to `drain_send_body` would conflict; iterate by index
@@ -388,7 +395,7 @@ pub(crate) fn drain_send_bodies(session: &mut ClientSession) {
             }
         }
         if !progressed {
-            break;
+            return false;
         }
     }
 }

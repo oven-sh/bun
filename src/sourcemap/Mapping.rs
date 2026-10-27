@@ -3,7 +3,7 @@ use core::mem::size_of;
 
 use bun_ast::Loc;
 use bun_collections::MultiArrayList;
-use bun_core::{self, ZigStringSlice};
+use bun_core::{self, Utf8Bytes};
 use bun_core::{declare_scope, scoped_log};
 use bun_semver::String as SemverString;
 
@@ -47,17 +47,6 @@ pub struct Mapping {
     pub original: LineColumnOffset,
     pub source_index: i32,
     pub name_index: i32, // = -1
-}
-
-impl Default for Mapping {
-    fn default() -> Self {
-        Self {
-            generated: LineColumnOffset::default(),
-            original: LineColumnOffset::default(),
-            source_index: 0,
-            name_index: -1,
-        }
-    }
 }
 
 /// Optimization: if we don't care about the "names" column, then don't store the names.
@@ -335,20 +324,18 @@ impl Lookup {
 
         let name: &[u8] = &source_map.external_source_names[source_idx];
 
-        if source_map.is_standalone_module_graph {
-            return Some(bun_core::String::clone_utf8(name));
-        }
-
-        if bun_paths::is_absolute(base_filename) {
+        let display = if !source_map.is_standalone_module_graph
+            && bun_paths::is_absolute(base_filename)
+        {
             // `platform::Auto` is a cfg-selected
             // type alias (Posix on unix, Windows on windows).
             let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(base_filename);
-            return Some(bun_core::String::clone_utf8(
-                bun_paths::resolve_path::join_abs::<bun_paths::platform::Auto>(dir, name),
-            ));
-        }
+            bun_paths::resolve_path::join_abs::<bun_paths::platform::Auto>(dir, name)
+        } else {
+            name
+        };
 
-        Some(bun_core::String::borrow_utf8(name))
+        Some(bun_core::String::clone_utf8(display))
     }
 
     /// Only valid if `lookup.source_map.is_external()`
@@ -356,7 +343,7 @@ impl Lookup {
     ///
     /// This data is freed after printed on the assumption that printing
     /// errors to the console are rare (this isnt used for error.stack)
-    pub fn get_source_code(self, base_filename: &[u8]) -> Option<ZigStringSlice> {
+    pub fn get_source_code(self, base_filename: &[u8]) -> Option<Utf8Bytes<'static>> {
         let bytes: Vec<u8> = 'bytes: {
             if let Some(code) = self.prefetched_source_code {
                 break 'bytes code.into_vec();
@@ -383,7 +370,7 @@ impl Lookup {
                 // per-index decompression cache through a `OnceLock`.
                 let code = unsafe { (*serialized).source_file_contents(index) };
 
-                return Some(ZigStringSlice::from_utf8_never_free(code?));
+                return Some(Utf8Bytes::Borrowed(code?));
             }
 
             if let Some(parsed) = provider.get_source_map(
@@ -402,20 +389,21 @@ impl Lookup {
 
             let name: &[u8] = &source_map.external_source_names[index];
 
-            let mut buf = bun_paths::PathBuffer::uninit();
+            let mut buf = bun_paths::path_buffer_pool::get();
             // `platform::Auto` is
             // cfg-selected (Posix on unix, Windows on windows).
             let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(base_filename);
-            let normalized = bun_paths::resolve_path::join_abs_string_buf_z::<
+            // `name` comes from the source map and can be any length. A path too long for `buf` is too long to open.
+            let path = bun_paths::resolve_path::join_abs_string_buf_checked::<
                 bun_paths::platform::Loose,
-            >(dir, &mut buf, &[name]);
-            match bun_sys::File::read_from(bun_sys::Fd::cwd(), normalized) {
+            >(dir, &mut buf[..], &[name])?;
+            match bun_sys::File::read_from(bun_sys::Fd::cwd(), path) {
                 Ok(r) => break 'bytes r,
                 Err(_) => return None,
             }
         };
 
-        Some(ZigStringSlice::init_owned(bytes))
+        Some(Utf8Bytes::Owned(bytes))
     }
 }
 
@@ -450,7 +438,6 @@ pub fn parse(
     bytes: &[u8],
     estimated_mapping_count: Option<usize>,
     sources_count: i32,
-    input_line_count: usize,
     options: ParseOptions,
 ) -> ParseResult {
     scoped_log!(SourceMap, "parse mappings ({} bytes)", bytes.len());
@@ -736,7 +723,6 @@ pub fn parse(
 
     let mut psm = ParsedSourceMap::default();
     psm.mappings = mapping;
-    psm.input_line_count = input_line_count;
     Ok(psm)
 }
 

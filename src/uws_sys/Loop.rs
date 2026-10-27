@@ -1,4 +1,5 @@
 use core::ffi::{c_int, c_uint, c_void};
+use core::ptr::NonNull;
 
 use crate::InternalLoopData;
 use crate::Timespec;
@@ -229,13 +230,13 @@ impl PosixLoop {
         unsafe { c::us_quic_loop_flush_if_pending(self) };
     }
 
-    pub fn create<H: LoopHandler>() -> *mut Loop {
+    /// `None` if epoll/kqueue cannot be created (EMFILE).
+    pub fn create<H: LoopHandler>() -> Option<NonNull<Loop>> {
         // SAFETY: us_create_loop allocates and returns a new loop; null hint is valid
         let p = unsafe {
             c::us_create_loop(core::ptr::null_mut(), Some(H::WAKEUP), H::PRE, H::POST, 0)
         };
-        assert!(!p.is_null(), "us_create_loop returned null");
-        p
+        NonNull::new(p)
     }
 
     pub fn wakeup(&mut self) {
@@ -278,47 +279,18 @@ impl PosixLoop {
         unsafe { c::us_internal_free_closed_sockets(self) };
     }
 
+    /// Runs the uWS pre handler, which flushes queued `publish()` batches and leftover corks.
+    pub fn flush_pending_writes(&mut self) {
+        // SAFETY: self is a valid loop pointer
+        unsafe { c::uws_loop_flush_pending_writes(self) };
+    }
+
     /// `us_socket_group_close_all()` on every group currently linked to this
     /// loop — covers Listener/App-owned groups that `RareData`'s static field
     /// list doesn't enumerate. Returns whether any group was linked.
     pub fn close_all_groups(&mut self) -> bool {
         // SAFETY: self is a valid loop pointer
         unsafe { c::us_loop_close_all_groups(self) != 0 }
-    }
-
-    // Rust cannot monomorphize an `extern "C"` fn over a fn-pointer const generic on stable,
-    // so callers pass the C-ABI callback directly. The returned `Handler` stores it for later
-    // removal.
-    //
-    // Takes `this: *mut Self` (not `&mut self`) so the stored `Handler.loop_` inherits the
-    // long-lived raw-pointer provenance from `us_create_loop`/`uws_get_loop`. Routing through
-    // a `&mut self` reborrow would bound the stored pointer's provenance to this call, and any
-    // subsequent `&mut`/`&` to the C-owned singleton would invalidate it under Stacked Borrows,
-    // making the later FFI write in `Handler::remove_*` UB.
-    /// # Safety
-    /// `this` must be the live C-allocated loop pointer returned by
-    /// `us_create_loop`/`uws_get_loop` (not derived from a `&mut` reborrow).
-    pub unsafe fn add_post_handler(
-        this: *mut Self,
-        ctx: *mut c_void,
-        callback: unsafe extern "C" fn(*mut c_void, *mut Loop),
-    ) -> Handler {
-        // SAFETY: `this` is the live C-allocated loop pointer per fn contract.
-        unsafe { c::uws_loop_addPostHandler(this, ctx, callback) };
-        Handler { loop_: this }
-    }
-
-    /// # Safety
-    /// `this` must be the live C-allocated loop pointer returned by
-    /// `us_create_loop`/`uws_get_loop` (not derived from a `&mut` reborrow).
-    pub unsafe fn add_pre_handler(
-        this: *mut Self,
-        ctx: *mut c_void,
-        callback: unsafe extern "C" fn(*mut c_void, *mut Loop),
-    ) -> Handler {
-        // SAFETY: `this` is the live C-allocated loop pointer per fn contract.
-        unsafe { c::uws_loop_addPreHandler(this, ctx, callback) };
-        Handler { loop_: this }
     }
 
     pub fn should_enable_date_header_timer(&self) -> bool {
@@ -338,15 +310,6 @@ impl PosixLoop {
     }
 }
 
-/// Stores the loop ref and the C-ABI callback so it can be unregistered later.
-///
-/// Stores `*mut Loop` (not `&Loop`)
-/// — the loop is C-owned/heap-allocated and the FFI remove calls mutate it, so a
-/// shared `&Loop` would make the `*const → *mut` cast UB when written through.
-pub struct Handler {
-    pub loop_: *mut Loop,
-}
-
 // ───────────────────────────── WindowsLoop ─────────────────────────────
 
 #[cfg(windows)]
@@ -358,6 +321,7 @@ pub struct WindowsLoop {
     pub is_default: c_int,
     pub pre: *mut uv::uv_prepare_t,
     pub check: *mut uv::uv_check_t,
+    pub idle_sweep_timer: *mut crate::Timer,
 }
 
 #[cfg(windows)]
@@ -450,13 +414,13 @@ impl WindowsLoop {
         unsafe { c::us_quic_loop_flush_if_pending(self) };
     }
 
-    pub fn create<H: LoopHandler>() -> *mut WindowsLoop {
+    /// `None` if `uv_loop_init` fails (handle exhaustion).
+    pub fn create<H: LoopHandler>() -> Option<NonNull<WindowsLoop>> {
         // SAFETY: us_create_loop allocates and returns a new loop; null hint is valid
         let p = unsafe {
             c::us_create_loop(core::ptr::null_mut(), Some(H::WAKEUP), H::PRE, H::POST, 0)
         };
-        assert!(!p.is_null(), "us_create_loop returned null");
-        p
+        NonNull::new(p)
     }
 
     pub fn run(&mut self) {
@@ -496,6 +460,11 @@ impl WindowsLoop {
         unsafe { c::us_internal_free_closed_sockets(self) };
     }
 
+    pub fn flush_pending_writes(&mut self) {
+        // SAFETY: self is a valid loop pointer
+        unsafe { c::uws_loop_flush_pending_writes(self) };
+    }
+
     pub fn close_all_groups(&mut self) -> bool {
         // SAFETY: self is a valid loop pointer
         unsafe { c::us_loop_close_all_groups(self) != 0 }
@@ -513,37 +482,6 @@ impl WindowsLoop {
         // SAFETY: `this` was returned by us_create_loop/uws_get_loop_with_native and not yet freed
         unsafe { c::us_loop_free(this) };
     }
-
-    // See PosixLoop::add_post_handler — same trampoline-synthesis limitation.
-    // Takes `this: *mut Self` (not `&mut self`) so the stored `Handler.loop_` inherits the
-    // long-lived raw-pointer provenance from `us_create_loop`/`uws_get_loop_with_native`
-    // rather than a transient `&mut` reborrow (which Stacked Borrows would invalidate on the
-    // next access to the C-owned singleton).
-    /// # Safety
-    /// `this` must be the live C-allocated loop pointer returned by
-    /// `us_create_loop`/`uws_get_loop_with_native` (not derived from a `&mut` reborrow).
-    pub unsafe fn add_post_handler(
-        this: *mut Self,
-        ctx: *mut c_void,
-        callback: unsafe extern "C" fn(*mut c_void, *mut Loop),
-    ) -> Handler {
-        // SAFETY: `this` is the live C-allocated loop pointer per fn contract.
-        unsafe { c::uws_loop_addPostHandler(this, ctx, callback) };
-        Handler { loop_: this }
-    }
-
-    /// # Safety
-    /// `this` must be the live C-allocated loop pointer returned by
-    /// `us_create_loop`/`uws_get_loop_with_native` (not derived from a `&mut` reborrow).
-    pub unsafe fn add_pre_handler(
-        this: *mut Self,
-        ctx: *mut c_void,
-        callback: unsafe extern "C" fn(*mut c_void, *mut Loop),
-    ) -> Handler {
-        // SAFETY: `this` is the live C-allocated loop pointer per fn contract.
-        unsafe { c::uws_loop_addPreHandler(this, ctx, callback) };
-        Handler { loop_: this }
-    }
 }
 
 // ───────────────────────────── Loop alias ─────────────────────────────
@@ -556,9 +494,7 @@ pub type Loop = PosixLoop;
 // ───────────────────────────── extern "C" ─────────────────────────────
 
 type LoopCb = unsafe extern "C" fn(*mut Loop);
-type LoopCtxCb = unsafe extern "C" fn(ctx: *mut c_void, loop_: *mut Loop);
 
-#[allow(non_snake_case)]
 mod c {
     use super::*;
 
@@ -583,8 +519,6 @@ mod c {
         #[cfg(windows)]
         pub(super) fn us_loop_pump(loop_: *mut Loop);
         pub fn us_wakeup_loop(loop_: *mut Loop);
-        pub(super) fn uws_loop_addPostHandler(loop_: *mut Loop, ctx: *mut c_void, cb: LoopCtxCb);
-        pub(super) fn uws_loop_addPreHandler(loop_: *mut Loop, ctx: *mut c_void, cb: LoopCtxCb);
         #[cfg(not(windows))]
         pub(super) fn us_loop_run_bun_tick(
             loop_: *mut Loop,
@@ -598,6 +532,7 @@ mod c {
         #[cfg(windows)]
         pub(super) fn uws_get_loop_with_native(native: *mut c_void) -> *mut WindowsLoop;
         pub(super) fn uws_loop_date_header_timer_update(loop_: *mut Loop);
+        pub(super) fn uws_loop_flush_pending_writes(loop_: *mut Loop);
     }
 }
 // Re-exported raw externs for cross-thread callers (e.g. bun_http's

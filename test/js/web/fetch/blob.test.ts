@@ -1,6 +1,7 @@
+import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, tempDir } from "harness";
-import type { BlobOptions } from "node:buffer";
+import { bunEnv, bunExe, gcTick, isASAN, tempDir } from "harness";
+import type { BlobPropertyBag } from "node:buffer";
 import type { BinaryLike } from "node:crypto";
 import path from "node:path";
 
@@ -58,11 +59,12 @@ for (const info of [
     expect(blob.slice(0, NaN).size).toBe(0);
     // @ts-expect-error
     expect(blob.slice(Symbol(), "-123").size).toBe(6);
+    // @ts-expect-error
     expect(blob.slice(Object.create(null), "-123").size).toBe(6);
     // @ts-expect-error
     expect(blob.slice(null, "-123").size).toBe(6);
     expect(blob.slice(0, 10).size).toBe(blob.size);
-    expect(blob.slice("text/plain;charset=utf-8").type).toBe("text/plain;charset=utf-8");
+    expect((blob as Bun.BunFile).slice("text/plain;charset=utf-8").type).toBe("text/plain;charset=utf-8");
 
     // test Blob.slice().slice(), issue#6252
     expect(await blob.slice(0, 4).slice(0, 3).text()).toBe("Bun");
@@ -105,10 +107,15 @@ test("new Blob", () => {
 
 test("new Blob stringifies non-Blob object parts in order", async () => {
   const url = new URL("https://example.com/path");
+  // @ts-expect-error
   expect(await new Blob([url]).text()).toBe("https://example.com/path");
+  // @ts-expect-error
   expect(await new Blob(["a", url, "b"]).text()).toBe("ahttps://example.com/pathb");
+  // @ts-expect-error
   expect(await new Blob(["a", {}, "b"]).text()).toBe("a[object Object]b");
+  // @ts-expect-error
   expect(await new Blob(["a", {}, "b", { toString: () => "X" }]).text()).toBe("a[object Object]bX");
+  // @ts-expect-error
   expect(await new Blob(["a", ["x", "y"], "b"]).text()).toBe("ax,yb");
 });
 
@@ -187,18 +194,38 @@ test("blob: can reliable get type from fetch #10072", async () => {
 
 // https://github.com/oven-sh/bun/issues/13049
 test("new Blob(new Uint8Array()) is supported", async () => {
-  const blob = new Blob(Buffer.from("1234"));
+  const blob = new Blob(Buffer.from("1234") as any);
   expect(await blob.text()).toBe("1234");
+});
+
+test("estimateShallowMemoryUsageOf(new File()) is at least that of a Blob", () => {
+  expect(estimateShallowMemoryUsageOf(new File(["1234"], "file.txt"))).toBeGreaterThanOrEqual(
+    estimateShallowMemoryUsageOf(new Blob(["1234"])),
+  );
+});
+
+test("new File reads new.target.prototype before it looks for the realm of new.target", () => {
+  const { proxy, revoke } = Proxy.revocable(function () {}, {});
+  revoke();
+  const keys: PropertyKey[] = [];
+  const newTarget = new Proxy(proxy, {
+    get(target, key) {
+      keys.push(key);
+    },
+  });
+  expect(() => Reflect.construct(File, [[], "file.txt"], newTarget)).toThrow(TypeError);
+  expect(keys).toEqual(["prototype"]);
 });
 
 // https://github.com/oven-sh/bun/issues/13049
 test("new File(new Uint8Array()) is supported", async () => {
-  const blob = new File(Buffer.from("1234"), "file.txt");
+  const blob = new File(Buffer.from("1234") as any, "file.txt");
   expect(await blob.text()).toBe("1234");
   expect(blob.name).toBe("file.txt");
 });
 
 test("new File('123', '123') is NOT supported", async () => {
+  // @ts-expect-error
   expect(() => new File("123", "123")).toThrow();
 });
 
@@ -245,6 +272,7 @@ describe("new File() lastModified option", () => {
 });
 
 test("new Blob('123') is NOT supported", async () => {
+  // @ts-expect-error
   expect(() => new Blob("123")).toThrow();
 });
 
@@ -268,7 +296,7 @@ test("blob: can set name property #10178", () => {
   expect(blob.name).toBe(42);
 
   class MyBlob extends Blob {
-    constructor(sources: Array<BinaryLike | Blob>, options?: BlobOptions) {
+    constructor(sources: Array<BinaryLike | Blob>, options?: BlobPropertyBag) {
       super(sources, options);
       // @ts-expect-error
       this.name = "logo.svg";
@@ -291,7 +319,7 @@ test("blob: can set name property #10178", () => {
 
   class MyOtherBlob extends Blob {
     name: string | number;
-    constructor(sources: Array<BinaryLike | Blob>, options?: BlobOptions) {
+    constructor(sources: Array<BinaryLike | Blob>, options?: BlobPropertyBag) {
       super(sources, options);
       this.name = "logo.svg";
     }
@@ -305,6 +333,16 @@ test("blob: can set name property #10178", () => {
 test("#12894", () => {
   const bunFile = Bun.file("foo.txt");
   expect(new File([bunFile], "bar.txt").name).toBe("bar.txt");
+});
+
+test("new File([file], name) does not rename the source", () => {
+  const a = new File(["x"], "a.txt");
+  const b = new File([a], "b.txt");
+  expect([a.name, b.name]).toEqual(["a.txt", "b.txt"]);
+  const c = new Blob(["y"]);
+  const d = new File([c], "d.txt");
+  const e = new File([c], "e.txt");
+  expect([d.name, e.name]).toEqual(["d.txt", "e.txt"]);
 });
 
 test("dupeWithContentType does not alias the source's allocated content_type", async () => {
@@ -381,7 +419,7 @@ test("Bun.file(path, {type}).text() does not leak the duped content_type", async
     "data.txt": "hello",
   });
   const script = `
-    const rss = process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function" ? Bun.unsafe.memoryFootprint : process.memoryUsage.rss;
+    const rss = process.memoryUsage.rss;
     const p = ${JSON.stringify(path.join(String(dir), "data.txt"))};
     const type = "application/x-" + Buffer.alloc(64 * 1024, "a").toString();
     const file = Bun.file(p, { type });
@@ -600,6 +638,137 @@ describe("slice bounds are respected when streaming and serving", () => {
   });
 });
 
+// A slice shares its parent's backing store. Once the parent and the slice
+// objects have been collected, a stream made from the slice holds the only
+// reference to that store, and the buffered consumers (Bun.readableStreamTo*,
+// stream.text(), text() of a Response or Request whose body is that stream)
+// take a fast path that hands the store itself to JS. That path used to ignore
+// the slice's offset and size and return every byte in the store.
+describe("consuming a slice's stream after the Blobs were collected", () => {
+  // Bytes on both sides of the slice, non-ASCII after it. The slice is valid
+  // JSON so that every consumer can be checked against the same fixture.
+  const parts = ["xx", '"abc"', "héllo wörld ✓"];
+  const start = 2;
+  const end = 7;
+  const sliced = '"abc"';
+
+  // Resolves once every Blob passed to `track` has been finalized, which is
+  // when it releases its reference on the store.
+  async function afterBlobsAreCollected<T>(make: (track: (blob: Blob) => Blob) => T): Promise<T> {
+    let tracked = 0;
+    let collected = 0;
+    const registry = new FinalizationRegistry(() => collected++);
+    const result = make(blob => {
+      tracked++;
+      registry.register(blob, undefined);
+      return blob;
+    });
+    while (collected < tracked) await gcTick();
+    return result;
+  }
+
+  type Track = (blob: Blob) => Blob;
+
+  function fromCollectedSlice<T>(make: (slice: Blob, track: Track) => T) {
+    return afterBlobsAreCollected(track => {
+      const parent = track(new Blob(parts));
+      const slice = track(parent.slice(start, end));
+      return make(slice, track);
+    });
+  }
+
+  const sources: [string, (slice: Blob, track: Track) => ReadableStream][] = [
+    ["slice.stream()", slice => slice.stream()],
+    ["new Response(slice).body", slice => new Response(slice).body!],
+    ["new Blob([slice]).stream()", (slice, track) => track(new Blob([slice])).stream()],
+  ];
+
+  const consumers: [string, (stream: ReadableStream) => Promise<unknown>, unknown][] = [
+    ["Bun.readableStreamToText", stream => Bun.readableStreamToText(stream), sliced],
+    [
+      "Bun.readableStreamToBytes",
+      async stream => Buffer.from(await Bun.readableStreamToBytes(stream)).toString(),
+      sliced,
+    ],
+    [
+      "Bun.readableStreamToArrayBuffer",
+      async stream => Buffer.from(await Bun.readableStreamToArrayBuffer(stream)).toString(),
+      sliced,
+    ],
+    ["Bun.readableStreamToJSON", stream => Bun.readableStreamToJSON(stream), "abc"],
+    [
+      "Bun.readableStreamToBlob",
+      async stream => {
+        const blob = await Bun.readableStreamToBlob(stream);
+        return [blob.size, await blob.text()];
+      },
+      [sliced.length, sliced],
+    ],
+    ["stream.text()", stream => stream.text(), sliced],
+    ["stream.json()", stream => stream.json(), "abc"],
+    ["stream.bytes()", async stream => Buffer.from(await stream.bytes()).toString(), sliced],
+  ];
+
+  describe.each(sources)("%s", (_, makeStream) => {
+    test.each(consumers)("%s", async (_, consume, expected) => {
+      const stream = await fromCollectedSlice(makeStream);
+      expect(await consume(stream)).toEqual(expected);
+    });
+  });
+
+  // A body keeps a Blob-backed stream as its stream, and text() reads it
+  // through the same fast path as Bun.readableStreamToText.
+  const bodies: [string, (slice: Blob) => Response | Request][] = [
+    [
+      "new Response(slice) after .body was accessed",
+      slice => {
+        const response = new Response(slice);
+        expect(response.body).toBeInstanceOf(ReadableStream);
+        return response;
+      },
+    ],
+    ["new Response(slice.stream())", slice => new Response(slice.stream())],
+    ["new Response(new Response(slice).body)", slice => new Response(new Response(slice).body)],
+    [
+      "new Request(url, { body: new Response(slice).body })",
+      slice => new Request("http://localhost/", { method: "POST", body: new Response(slice).body, duplex: "half" }),
+    ],
+  ];
+
+  test.each(bodies)("%s, read by text()", async (_, makeBody) => {
+    const body = await fromCollectedSlice(makeBody);
+    expect(await body.text()).toBe(sliced);
+  });
+
+  // A prefix starts at the store's first byte and a suffix ends at its last:
+  // the offset alone, or the end alone, does not tell them from the whole store.
+  const windows: [string, (parent: Blob, track: Track) => Blob, string][] = [
+    ["slice(0, 7), a prefix", parent => parent.slice(0, 7), 'xx"abc"'],
+    ["slice(0, 7).slice(0, 2), a prefix of a prefix", (parent, track) => track(parent.slice(0, 7)).slice(0, 2), "xx"],
+    ["slice(7), a suffix", parent => parent.slice(7), "héllo wörld ✓"],
+    ["slice(1).slice(1, 6), a slice of a slice", (parent, track) => track(parent.slice(1)).slice(1, 6), sliced],
+    ["slice(0, 0), empty at the start", parent => parent.slice(0, 0), ""],
+    ["slice(2, 2), empty in the middle", parent => parent.slice(2, 2), ""],
+    ["slice(0), the whole Blob", parent => parent.slice(0), parts.join("")],
+  ];
+
+  test.each(windows)("%s", async (_, makeWindow, expected) => {
+    const stream = await afterBlobsAreCollected(track => track(makeWindow(track(new Blob(parts)), track)).stream());
+    expect(await Bun.readableStreamToText(stream)).toBe(expected);
+  });
+
+  // An unsliced Blob views its whole store, so handing the store over is fine.
+  // A type makes the stream go through the same code a slice does, with a
+  // view that happens to cover the store.
+  test.each([
+    ["untyped", undefined],
+    ["typed", { type: "text/plain" }],
+  ])("%s unsliced Blob still yields everything", async (_, options) => {
+    const stream = await afterBlobsAreCollected(track => track(new Blob(parts, options)).stream());
+    expect(await Bun.readableStreamToText(stream)).toBe(parts.join(""));
+  });
+});
+
 // Wrapping a Blob whose type is heap-owned (not in the mime table) with a
 // known mime type overwrote content_type with a static pointer without
 // clearing content_type_allocated, so GC sweep freed a static pointer.
@@ -801,4 +970,17 @@ describe("Blob from ArrayBuffer-like values", () => {
     ]);
     expect(await blob.text()).toBe("abcdefgh");
   });
+});
+
+// A `type` that is a registered MIME string is interned; `slice()` without a
+// contentType keeps an interned parent type. Guards the interned set's membership.
+test.each([
+  ["text/plain;charset=utf-8", "text/plain;charset=utf-8"],
+  ["image/tiff", "image/tiff"],
+  ["application/vnd.api+json", "application/vnd.api+json"],
+  ["application/x-www-form-urlencoded", "application/x-www-form-urlencoded;charset=UTF-8"],
+  ["application/x-not-a-registered-type", ""],
+])("new Blob([], { type: %j }).slice().type", (type, expected) => {
+  const blob = new Blob(["abc"], { type });
+  expect(blob.slice(0, 1).type).toBe(expected);
 });

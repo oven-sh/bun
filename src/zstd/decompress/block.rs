@@ -232,6 +232,8 @@ struct Scratch {
     batch: [RawSequence; 3 + 128],
     /// Where a block that is all of a small output is decoded: with room to copy in chunks up to its end.
     small_output: [u8; Self::MAX_SMALL_OUTPUT + WILDCOPY_OVERLENGTH],
+    /// All of `small_output` from here on is zeros.
+    small_output_used: usize,
 }
 
 thread_local! {
@@ -263,7 +265,10 @@ impl Drop for BlockDecoder {
     fn drop(&mut self) {
         if let Some(mut scratch) = self.scratch.take() {
             scratch.lit_buffer.clear();
-            scratch.small_output.fill(0);
+            let used = core::mem::take(&mut scratch.small_output_used);
+            if let Some(used) = scratch.small_output.get_mut(..used) {
+                used.fill(0);
+            }
             if scratch.lit_buffer.capacity() > Scratch::MAX_SPARE_LIT_BUFFER {
                 scratch.lit_buffer = Vec::new();
             }
@@ -297,6 +302,7 @@ impl BlockDecoder {
                     lit_buffer: Vec::new(),
                     batch: [RawSequence::EMPTY; _],
                     small_output: [0; _],
+                    small_output_used: 0,
                 })
             })
         })
@@ -612,6 +618,7 @@ impl BlockDecoder {
             lit_buffer,
             batch,
             small_output,
+            small_output_used,
         } = &mut **scratch;
         let dict_tables = dict_entropy.map(|dict| &dict.seq);
         let is_history_long = total_history_size > (1 << 24);
@@ -648,15 +655,21 @@ impl BlockDecoder {
         } else {
             literals.size
         };
+        // A block that has that room where it goes needs no other place.
         let is_small = start == prefix_start
             && capacity <= Scratch::MAX_SMALL_OUTPUT
+            && capacity < block_size_max + WILDCOPY_OVERLENGTH
             && literals.location == LitLocation::NotInDst
             && matches!(ext_dict, ExtDict::Dict(_));
         let (out, copy_to) = match buf {
-            OutputBuffer::Whole(bytes) if is_small => (
-                OutputBuffer::Whole(small_output.sub_mut(..capacity + WILDCOPY_OVERLENGTH)?),
-                Some(bytes.span_mut(start, capacity)?),
-            ),
+            OutputBuffer::Whole(bytes) if is_small => {
+                let used = capacity + WILDCOPY_OVERLENGTH;
+                *small_output_used = used.max(*small_output_used);
+                (
+                    OutputBuffer::Whole(small_output.sub_mut(..used)?),
+                    Some(bytes.span_mut(start, capacity)?),
+                )
+            }
             OutputBuffer::Whole(bytes) => (OutputBuffer::Whole(bytes.sub_mut(..oend)?), None),
             used => (used, None),
         };

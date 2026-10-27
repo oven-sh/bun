@@ -466,7 +466,6 @@ fn read_symbol(table: Tree<'_>, br: &mut BitReader, input: &[u8]) -> Checked<u32
 }
 
 /// [`decode_symbol`] when fewer than 15 bits are left in the input. `None` if the symbol is longer than that.
-#[inline(never)]
 fn safe_decode_symbol(table: Tree<'_>, br: &mut BitReader) -> Checked<Option<u32>> {
     let mut available_bits = br.available_bits();
     if available_bits == 0 {
@@ -595,7 +594,6 @@ fn bit_width(x: u32) -> u32 {
 }
 
 /// Reads a number from 0 to 255, which takes 1 to 11 bits. `value` holds an intermediate result between calls.
-#[inline(never)]
 fn decode_var_len_uint8(
     substate: &mut DecodeUint8State,
     br: &mut BitReader,
@@ -1142,7 +1140,6 @@ fn safe_read_block_length(
 
 /// 7.3. Replaces each index in `map` by the value at that index of a list, which starts as 0, 1, 2, ..., and moves the
 /// value to the front of the list.
-#[inline(never)]
 fn inverse_move_to_front_transform(map: &mut [u8]) -> Checked {
     let mut mtf = [0u8; 256];
     for (i, value) in mtf.iter_mut().enumerate() {
@@ -1317,7 +1314,6 @@ impl Decoder {
     }
 
     /// 9.2. Reads the length and the flags of a meta-block, which take 2 to 31 bits.
-    #[inline(never)]
     fn decode_meta_block_length(&mut self, input: &[u8]) -> Step {
         let br = &mut self.br;
         loop {
@@ -1554,7 +1550,6 @@ impl Decoder {
 
     /// Hands output to the caller. Asks for more room only if there is more to write and either the ring buffer cannot
     /// grow any further or `force` is set.
-    #[inline(never)]
     fn write_ring_buffer(&mut self, output: &mut dyn Output, force: bool) -> Step {
         let start = self.partial_pos_out & self.ringbuffer_mask as usize;
         let to_write = self.unwritten_bytes(true);
@@ -1579,7 +1574,6 @@ impl Decoder {
     }
 
     /// Moves what was written past the end of the ring buffer to its start.
-    #[inline(never)]
     fn wrap_ring_buffer(&mut self) -> Checked {
         if self.should_wrap_ringbuffer {
             self.ringbuffer
@@ -1591,7 +1585,6 @@ impl Decoder {
 
     /// Makes the ring buffer as large as [`Self::calculate_ring_buffer_size`] found it has to be. Fails with
     /// `out_of_memory` if there is no memory for that.
-    #[inline(never)]
     fn ensure_ring_buffer(&mut self, out_of_memory: E) -> Step {
         if self.ringbuffer_size == self.new_ringbuffer_size {
             return Ok(());
@@ -1608,7 +1601,6 @@ impl Decoder {
         Ok(())
     }
 
-    #[inline(never)]
     fn skip_metadata_block(&mut self) -> Step {
         let nbytes = (self.br.remaining_bytes() as i32).min(self.meta_block_remaining_len);
         self.br.skip_bytes(nbytes as usize);
@@ -1619,7 +1611,6 @@ impl Decoder {
         Ok(())
     }
 
-    #[inline(never)]
     fn copy_uncompressed_block_to_output(&mut self, input: &[u8], output: &mut dyn Output) -> Step {
         self.ensure_ring_buffer(E::AllocRingBuffer1)?;
 
@@ -1665,7 +1656,6 @@ impl Decoder {
 
     /// Finds the smallest ring buffer that will do, now that the length and the flags of the meta-block are known: a
     /// stream that announces a large window need not have that much data.
-    #[inline(never)]
     fn calculate_ring_buffer_size(&mut self) {
         let window_size = 1i32 << self.window_bits;
         let mut new_ringbuffer_size = window_size;

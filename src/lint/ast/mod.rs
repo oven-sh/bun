@@ -201,13 +201,40 @@ impl Bound<'_> {
     }
 }
 
-/// The first and last of [`Lazy::unicode_escapes`]. It covers the whole text until those are computed, and it's empty
-/// if there are none.
+/// The first and last of [`TextLazies::unicode_escapes`]. It covers the whole text until those are computed, and it's
+/// empty if there are none.
 struct UnicodeEscapeRange(Cell<(u32, u32)>);
 
 impl Default for UnicodeEscapeRange {
     fn default() -> Self {
         UnicodeEscapeRange(Cell::new((0, u32::MAX)))
+    }
+}
+
+/// Values found in the text alone, by scanning all of it once.
+#[derive(Default)]
+struct TextLazies {
+    /// [`File::backslashes`]
+    backslashes: OnceCell<Box<[u32]>>,
+    /// The offset of every `\u` in the text, in order.
+    unicode_escapes: OnceCell<Box<[u32]>>,
+    unicode_escape_range: UnicodeEscapeRange,
+}
+
+/// What a [`File`] finds in its text alone (its backslashes), shared by the `File`s made one after another over the
+/// same text, such as the parts of a Svelte component. [`File::sharing_text_facts`] scans the text once, not once per
+/// `File`.
+pub struct TextFacts<'t> {
+    text: &'t [u8],
+    lazies: TextLazies,
+}
+
+impl<'t> TextFacts<'t> {
+    pub fn of(text: &'t [u8]) -> TextFacts<'t> {
+        TextFacts {
+            text,
+            lazies: TextLazies::default(),
+        }
     }
 }
 
@@ -221,10 +248,9 @@ pub(crate) struct Lazy {
     has_error_types: OnceCell<bool>,
     /// [`crate::utils::oxlint::source_type`]
     pub(crate) oxc_source_type: OnceCell<crate::language::SourceType>,
-    /// [`File::backslashes`]
-    backslashes: OnceCell<Box<[u32]>>,
-    /// The offset of every `\u` in the text, in order.
-    unicode_escapes: OnceCell<Box<[u32]>>,
+    /// Of this file's text, unless the file shares them with others over the same text.
+    text: TextLazies,
+    /// A copy of the range in the `TextLazies` that count, for the check that every identifier's span makes.
     unicode_escape_range: UnicodeEscapeRange,
     /// One bit per expression, set if it's in parentheses.
     parenthesized: OnceCell<Box<[u64]>>,
@@ -256,6 +282,8 @@ pub struct File<'a> {
     pub(crate) atoms: &'a dyn Intern,
     pub(crate) texts: bun_sema::atom::OwnTexts<'a>,
     pub(crate) lazy: Lazy,
+    /// [`File::sharing_text_facts`]
+    shared_text: Option<&'a TextLazies>,
     pub(crate) types: Option<crate::types::Checker<'a>>,
     pub(crate) sink: crate::context::Sink,
     pub(crate) modules: std::cell::Cell<Option<&'a dyn crate::modules::Modules>>,
@@ -332,6 +360,7 @@ impl<'a> File<'a> {
             atoms,
             texts: atoms.own_texts(),
             lazy: Lazy::default(),
+            shared_text: None,
             types,
             sink: crate::context::Sink::default(),
             modules: std::cell::Cell::new(None),
@@ -383,6 +412,25 @@ impl<'a> File<'a> {
     pub fn with_text(mut self, text: &'a [u8]) -> File<'a> {
         self.hir.text = text;
         self
+    }
+
+    /// With what other `File`s over the same text have found in it. After [`File::with_text`].
+    pub fn sharing_text_facts(mut self, facts: &'a TextFacts<'a>) -> File<'a> {
+        assert!(
+            core::ptr::eq(facts.text, self.hir.text),
+            "the facts are of another text"
+        );
+        (self.lazy.unicode_escape_range.0).set(facts.lazies.unicode_escape_range.0.get());
+        self.shared_text = Some(&facts.lazies);
+        self
+    }
+
+    #[inline]
+    fn text_lazies(&self) -> &TextLazies {
+        match self.shared_text {
+            Some(shared) => shared,
+            None => &self.lazy.text,
+        }
     }
 
     #[inline]
@@ -468,7 +516,20 @@ impl<'a> File<'a> {
     /// The offset of the first TypeScript-only syntax in a JavaScript file, which still parses: `a: T`, `a as T`,
     /// `class A<T> {}`, `enum A {}`.
     pub fn first_typescript_syntax_in_javascript(&self) -> Option<u32> {
-        (self.hir.diagnostics.iter())
+        Self::first_typescript_syntax_among(self.hir.diagnostics)
+    }
+
+    /// [`File::first_typescript_syntax_in_javascript`], looking only at the diagnostics with these ids.
+    pub fn first_typescript_syntax_in_javascript_among(
+        &self,
+        diagnostics: core::ops::Range<u32>,
+    ) -> Option<u32> {
+        let range = diagnostics.start as usize..diagnostics.end as usize;
+        Self::first_typescript_syntax_among(self.hir.diagnostics.get(range).unwrap_or_default())
+    }
+
+    fn first_typescript_syntax_among(diagnostics: &[hir::Diagnostic]) -> Option<u32> {
+        (diagnostics.iter())
             .filter(|it| it.kind == hir::DiagnosticKind::Js)
             .map(|it| it.start)
             .min()
@@ -478,6 +539,13 @@ impl<'a> File<'a> {
     #[inline]
     pub fn body(&'a self) -> List<'a, Stmt<'a>> {
         List::ids(self, self.body)
+    }
+
+    /// The statement with this id of the HIR, which need not be among [`File::body`].
+    #[inline]
+    pub fn stmt_by_id(&'a self, id: hir::StmtId) -> Stmt<'a> {
+        debug_assert!(id.idx() < self.hir.stmts.len());
+        Stmt::new(self, id)
     }
 
     #[inline]
@@ -511,7 +579,7 @@ impl<'a> File<'a> {
     /// The offset of every `\` in the text, in order, whether in a string, template, regular expression, name or
     /// comment. The text is scanned once and the result is cached.
     pub fn backslashes(&self) -> &[u32] {
-        self.lazy.backslashes.get_or_init(|| {
+        self.text_lazies().backslashes.get_or_init(|| {
             let (mut all, mut from) = (Vec::new(), 0);
             while let Some(at) = (self.hir.text.get(from..))
                 .and_then(|rest| bun_core::strings::index_of_char_usize(rest, b'\\'))
@@ -544,11 +612,12 @@ impl<'a> File<'a> {
     #[inline(never)]
     fn end_of_identifier_slow(&self, pos: u32, end: u32) -> u32 {
         let text = self.hir.text;
-        let escapes = self.lazy.unicode_escapes.get_or_init(|| {
+        let lazies = self.text_lazies();
+        let escapes = lazies.unicode_escapes.get_or_init(|| {
             let is_before_u = |at: &u32| text.get(*at as usize + 1) == Some(&b'u');
             let all = self.backslashes().iter().copied().filter(is_before_u);
             let all: Vec<u32> = all.collect();
-            self.lazy
+            lazies
                 .unicode_escape_range
                 .0
                 .set(match (all.first(), all.last()) {
@@ -557,6 +626,7 @@ impl<'a> File<'a> {
                 });
             all.into_boxed_slice()
         });
+        (self.lazy.unicode_escape_range.0).set(lazies.unicode_escape_range.0.get());
         match escapes.get(escapes.partition_point(|&at| at < pos)) {
             Some(&at) if at < end => end.max(
                 pos + crate::tokens::token_len(text.get(pos as usize..).unwrap_or_default()) as u32,

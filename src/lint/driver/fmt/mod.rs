@@ -21,7 +21,7 @@ use crate::{fs, git, paths};
 use bstr::BStr;
 use bun_collections::index_sort::sort_slice_by;
 use bun_core::strings;
-use bun_format::options::{Code, Goal, ParsePart, PartError, Then};
+use bun_format::options::{Code, Goal, ParsePart, ParsedPart, PartError, Then};
 use bun_format::pragma::BeforeParsing;
 use bun_format::syntax_error::SyntaxError;
 use bun_format::tailwind::Tailwind;
@@ -533,7 +533,8 @@ fn parse_code(
     with_file(&how, code.text, |file, _, _| then(file));
 }
 
-/// Parses the expressions in a Svelte component.
+/// Parses the expressions in a Svelte component: one file over the whole text, which holds one part at a time. Each
+/// part binds the file over all that it holds, so a part is rolled back once `then` is done with it.
 fn parse_parts(text: &[u8], then: &mut dyn FnMut(ParsePart<'_>)) {
     let names = Session::new();
     let (atoms, plain) = (Interner::new_in(&names), Resolved::default());
@@ -549,6 +550,7 @@ fn parse_parts(text: &[u8], then: &mut dyn FnMut(ParsePart<'_>)) {
     let [javascript, typescript] =
         [&b"dummy.js"[..], b"dummy.ts"].map(|path| (path, how(path).language_and_dialect()));
     let mut parts = bun_sema_parser::Parts::of(text);
+    let facts = bun_lint::ast::TextFacts::of(text);
     then(&mut |part, then| {
         let (path, (language, dialect, _)) = match part.is_typescript {
             true => &typescript,
@@ -564,37 +566,42 @@ fn parse_parts(text: &[u8], then: &mut dyn FnMut(ParsePart<'_>)) {
             until: part.until,
         };
         let is_javascript = language.parser != Parser::TypeScript;
-        let is_bound = parts.parse(
-            *dialect,
-            is_javascript,
-            part,
-            |summary, atoms, code, end| {
-                let mut recycled = Recycled::for_current_thread();
-                let Summary::InPlace(hir) = summary else {
-                    return false;
-                };
-                let Some(bound) = try_bind_for_format_in(&*hir, &mut recycled) else {
-                    return false;
-                };
-                then(
-                    &File::new(path, &*hir, bound, atoms, language, None).with_text(code),
-                    end,
-                );
-                true
-            },
-        );
-        match is_bound {
-            Ok(true) => Ok(()),
+        let mark = parts.mark();
+        // `None`: the part can't be bound.
+        let read = parts.parse(*dialect, is_javascript, part, |summary, atoms, text, ok| {
+            let mut recycled = Recycled::for_current_thread();
+            let Summary::InPlace(hir) = summary else {
+                return None;
+            };
+            let bound = try_bind_for_format_in(&*hir, &mut recycled)?;
+            let file = File::new(path, &*hir, bound, atoms, language, None)
+                .with_text(text)
+                .sharing_text_facts(&facts);
+            then(
+                &file,
+                file.stmt_by_id(ok.stmt),
+                ParsedPart {
+                    end: ok.end.0,
+                    comments: (ok.comments.start, ok.comments.end),
+                    diagnostics: (ok.diagnostics.start, ok.diagnostics.end),
+                },
+            );
+            Some(())
+        });
+        let error = match read {
+            Ok(Some(())) => None,
             // The stack ran out there.
-            Ok(false) => Err(PartError {
+            Ok(None) => Some(PartError {
                 at: part.from,
                 is_nested_too_deeply: true,
             }),
-            Err(error) => Err(PartError {
+            Err(error) => Some(PartError {
                 at: error.at,
                 is_nested_too_deeply: error.is_too_deep,
             }),
-        }
+        };
+        parts.rollback(&mark);
+        error.map_or(Ok(()), Err)
     });
 }
 

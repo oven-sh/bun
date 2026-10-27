@@ -45,6 +45,21 @@ fn position_of(sign: u8, text: &[u8], from: u32) -> u32 {
     from + strings::index_of_char(rest, sign).unwrap_or(0)
 }
 
+/// The lengths of the lists of a `FileBuilder` before the part that `report_typescript_only_syntax_since` reports on.
+#[derive(Default, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Since {
+    pub stmts: u32,
+    pub var_decls: u32,
+    pub params: u32,
+    pub members: u32,
+    pub props: u32,
+    pub modifiers_of_props: u32,
+}
+
+fn from<T>(list: &[T], since: u32) -> &[T] {
+    list.get(since as usize..).unwrap_or_default()
+}
+
 /// Reports the errors of the checker's `checkGrammar..` functions about TypeScript-only syntax in `file`, whose text is
 /// `text`:
 /// - a JavaScript modifier where it isn't allowed: `class A { async a }`, `({ static a: 1 })`, `export export class A
@@ -54,8 +69,13 @@ fn position_of(sign: u8, text: &[u8], from: u32) -> u32 {
 /// - a `this` parameter
 /// - `declare module "a"`, `declare global`, `export as namespace a`
 pub fn report_typescript_only_syntax(file: &mut FileBuilder, text: &[u8]) {
+    report_typescript_only_syntax_since(file, text, Since::default());
+}
+
+/// `report_typescript_only_syntax` over the nodes from `since` on only.
+pub fn report_typescript_only_syntax_since(file: &mut FileBuilder, text: &[u8], since: Since) {
     let mut found: Vec<Found> = Vec::new();
-    for (stmt, id) in file.stmts.iter().zip(0..) {
+    for (stmt, id) in from(&file.stmts, since.stmts).iter().zip(since.stmts..) {
         let modifier_span = file.stmt_modifiers(StmtId(id));
         match stmt.kind {
             StmtKind::Module(module) if !matches!(file[module].name, ModuleName::Ident(_)) => {
@@ -75,19 +95,19 @@ pub fn report_typescript_only_syntax(file: &mut FileBuilder, text: &[u8]) {
             }
         }
     }
-    for declaration in file.var_decls.iter() {
+    for declaration in from(&file.var_decls, since.var_decls) {
         if declaration.flags.contains(Flags::DEFINITE) {
             let name_end = file[declaration.pat].end;
             found.push((position_of(b'!', text, name_end), 1255, ""));
         }
     }
-    for param in file.params.iter() {
+    for param in from(&file.params, since.params) {
         let name = file[param.pat];
         if matches!(name.kind, PatKind::Ident(known::this)) {
             found.push((name.pos, 1003, ""));
         }
     }
-    for member in file.members.iter() {
+    for member in from(&file.members, since.members) {
         let allowed = match member.kind {
             // `static async constructor() {}` is a method.
             MemberKind::Method | MemberKind::Constructor => Flags::STATIC | Flags::ASYNC,
@@ -113,7 +133,8 @@ pub fn report_typescript_only_syntax(file: &mut FileBuilder, text: &[u8]) {
             found.extend(decorator.map(|it| (it.pos, 1206, "")));
         }
     }
-    for prop in file.props.iter().filter(|it| it.postfix_token != 0) {
+    let props = from(&file.props, since.props);
+    for prop in props.iter().filter(|it| it.postfix_token != 0) {
         match text.get(prop.postfix_token as usize) {
             Some(b'!') => found.push((prop.postfix_token, 1255, "")),
             // `checkJSSyntax` reports the `?` of a method.
@@ -121,7 +142,7 @@ pub fn report_typescript_only_syntax(file: &mut FileBuilder, text: &[u8]) {
             _ => found.push((prop.postfix_token, 1162, "")),
         }
     }
-    for &(prop, modifiers) in file.modifiers_of_props.iter() {
+    for &(prop, modifiers) in from(&file.modifiers_of_props, since.modifiers_of_props) {
         // `checkJSSyntax` only looks at the modifiers of a method.
         let (allowed, relevant) = match file[prop].kind {
             PropKind::Method => (Flags::ASYNC, JAVASCRIPT_MODIFIERS),

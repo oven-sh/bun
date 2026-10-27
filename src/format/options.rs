@@ -157,10 +157,21 @@ pub struct Part {
     pub is_typescript: bool,
 }
 
-/// The callback that gets the file parsed from a [`Part`], and the part's end in that file, including the parentheses
-/// around it. The file's text starts where the part starts, and the part is its only statement. A type is parsed as the
-/// type of an alias.
-pub type ThenWithEnd<'t> = &'t mut dyn for<'b> FnMut(&'b bun_lint::ast::File<'b>, u32);
+/// Where a parsed [`Part`] is in the file that holds it.
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub struct ParsedPart {
+    /// The part's end in the text, including the parentheses around it.
+    pub end: u32,
+    /// The ids of its comments in the file: from the first to one past the last.
+    pub comments: (u32, u32),
+    /// The ids of its diagnostics in the file: from the first to one past the last.
+    pub diagnostics: (u32, u32),
+}
+
+/// The callback that gets the file of the whole text that a [`Part`] was parsed into, the statement the part became
+/// (a type is parsed as the type of an alias), and where it is. The caller forgets the part once this returns.
+pub type ThenWithEnd<'t> =
+    &'t mut dyn for<'b> FnMut(&'b bun_lint::ast::File<'b>, bun_lint::ast::Stmt<'b>, ParsedPart);
 
 /// Why a [`Part`] can't be parsed.
 #[derive(Debug, Copy, Clone)]

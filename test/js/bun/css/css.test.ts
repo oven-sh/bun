@@ -8420,12 +8420,12 @@ describe("whitespace in values kept as tokens", () => {
     ["--x: a  \n  b /* c */ d", "--x: a b d", "--x:a b d"],
     ["--x: a/* c */b", "--x: a b", "--x:a b"],
   ];
-  for (const [declaration, normal, minified] of declarations) {
+  describe.each(declarations)("%s", (declaration, normal, minified) => {
     test(declaration, () => {
       expect(cssInternals._test(`.c { ${declaration}; }`, "")).toBe(`.c {\n  ${normal};\n}\n`);
       expect(cssInternals.minifyTest(`.c { ${declaration}; }`, "")).toBe(`.c{${minified}}`);
     });
-  }
+  });
 
   // [stylesheet, default output, minified output]
   test.each([
@@ -8497,7 +8497,7 @@ describe("blocks of declarations reject at-rules and qualified rules", () => {
 
 describe("numeric tokens that print as written", () => {
   // z-index, custom properties and var() fallbacks are token lists, whose numbers are f32.
-  for (const css of [
+  describe.each([
     ".a{z-index:2147483647}.b{z-index:2147483646}",
     ".a{z-index:1000001}.b{z-index:1000000}",
     ".foo{z-index:-2147483648}",
@@ -8509,9 +8509,9 @@ describe("numeric tokens that print as written", () => {
     "a{--v:1.0.0}",
     "a{--v:2.0.0-beta.1}",
     "a{--v:10.20.30}",
-  ]) {
+  ])("%s", css => {
     minify_test(css, css);
-  }
+  });
   minify_test("a{--v:5.0 .10}", "a{--v:5 .1}");
 });
 
@@ -8578,7 +8578,7 @@ describe("math functions", () => {
 
 describe("a number is not a length", () => {
   // Outside of quirks mode browsers drop these declarations. With `px` added they would apply.
-  for (const css of [
+  describe.each([
     ".a{height:1.5715;padding:8px}",
     "a{top:100}",
     "a{gap:5}",
@@ -8592,9 +8592,9 @@ describe("a number is not a length", () => {
     "a{transform:translateX(calc(0 - 0%))}",
     "@media (min-width:600){a{color:red}}",
     "@container t (max-width:912){a{color:red}}",
-  ]) {
+  ])("%s", css => {
     minify_test(css, css);
-  }
+  });
   cssTest("a { margin-left: calc(-1 * 0) }", "a { margin-left: calc(-1 * 0); }");
   minify_test("a{width:100px;width:10}", "a{width:100px;width:10}");
   minify_test("a{width:0;margin:0 auto;flex:1 1 0}", "a{flex:1 1 0;width:0;margin:0 auto}");
@@ -8985,7 +8985,7 @@ describe("a selector list that a target cannot parse", () => {
 
   // An engine that does not know a vendor prefix drops the whole list. Browser hacks rely on that.
   describe("stays whole when the author wrote a vendor prefix", () => {
-    for (const [source, expected] of [
+    describe.each([
       [".s{color:red}.s *::-ms-backdrop,.s{color:blue}", ".s { color: red; } .s ::-ms-backdrop, .s { color: #00f; }"],
       [".opera-only :-o-prefocus, .pure-g {color:red}", ".opera-only :-o-prefocus, .pure-g { color: red; }"],
       [".govuk-fieldset, x:-moz-any-link {color:red}", ".govuk-fieldset, x:-moz-any-link { color: red; }"],
@@ -8995,9 +8995,9 @@ describe("a selector list that a target cannot parse", () => {
         "summary::marker, summary::-webkit-details-marker {color:red}",
         "summary::marker, summary::-webkit-details-marker { color: red; }",
       ],
-    ]) {
+    ])("%s", (source, expected) => {
       prefix_test(source, expected, defaults);
-    }
+    });
     minify_test("::selection, ::-moz-selection {color:red}", "::selection,::-moz-selection{color:red}");
   });
 
@@ -9364,9 +9364,9 @@ describe("rules", () => {
 
 describe("@font-face", () => {
   // Chrome < 108 and Firefox < 105 drop a `src` that holds a format() keyword.
-  for (const format of ["woff", "woff2", "truetype", "opentype", "embedded-opentype", "collection", "svg"]) {
+  describe.each(["woff", "woff2", "truetype", "opentype", "embedded-opentype", "collection", "svg"])("%s", format => {
     minify_test(`@font-face{src:url(a.font)format("${format}")}`, `@font-face{src:url(a.font)format("${format}")}`);
-  }
+  });
   minify_test("@font-face{src:url(a.woff2)format(woff2)}", '@font-face{src:url(a.woff2)format("woff2")}');
   minify_test(
     '@font-face{src:url(a.otf)format("opentype")tech(features-aat)}',
@@ -9869,14 +9869,14 @@ describe("font shorthand", () => {
 });
 
 describe("css-wide keywords are not names", () => {
-  for (const keyword of ["inherit", "initial", "unset", "revert", "revert-layer"]) {
+  describe.each(["inherit", "initial", "unset", "revert", "revert-layer"])("%s", keyword => {
     minify_test(`.a{font:12px Arial;font-family:${keyword}}`, `.a{font:12px Arial;font-family:${keyword}}`);
     minify_test(
       `.a{transition:all .2s;transition-property:${keyword}}`,
       `.a{transition:all .2s;transition-property:${keyword}}`,
     );
     minify_test(`.a{color-scheme:${keyword}}`, `.a{color-scheme:${keyword}}`);
-  }
+  });
   minify_test(
     ".a{transition:inherit;transition-property:opacity}",
     ".a{transition:inherit;transition-property:opacity}",
@@ -9924,19 +9924,19 @@ describe("gradient stops and directions stay as written", () => {
 
   // In the prefixed syntax a keyword names the side the gradient starts from, `0deg` points right
   // and the default is `top`.
-  for (const [written, printed] of [
+  describe.each([
     ["", ""],
     ["top,", ""],
     ["bottom,", "bottom,"],
     ["left,", "left,"],
     ["0deg,", "0deg,"],
     ["180deg,", "180deg,"],
-  ]) {
+  ])("%s", (written, printed) => {
     minify_test(
       `.a{background:-webkit-linear-gradient(${written}red,blue)}`,
       `.a{background:-webkit-linear-gradient(${printed}red,#00f)}`,
     );
-  }
+  });
   cssTest(
     ".a{background:-moz-repeating-linear-gradient(bottom,red,blue 20px)}",
     ".a{background:-moz-repeating-linear-gradient(bottom,red,#00f 20px);}",
@@ -10065,7 +10065,7 @@ describe("blanks that --minify drops from values kept as tokens", () => {
 describe("a generated prefixed gradient points the same way", () => {
   // In the prefixed syntax a keyword names the side the gradient starts from, and angles turn
   // counterclockwise from `to right`.
-  for (const [standard, prefixed, printed = standard] of [
+  describe.each([
     ["to top,", "bottom,"],
     ["to right,", "left,"],
     ["to left,", "right,"],
@@ -10076,7 +10076,7 @@ describe("a generated prefixed gradient points the same way", () => {
     [".25turn,", "0deg,"],
     ["to bottom,", "", ""],
     ["180deg,", "", ""],
-  ]) {
+  ])("%s", (standard, prefixed, printed = standard) => {
     prefix_test(
       `.a{background-image:linear-gradient(${standard}red,blue)}`,
       `.a{
@@ -10085,7 +10085,7 @@ describe("a generated prefixed gradient points the same way", () => {
       }`,
       { chrome: 20 << 16 },
     );
-  }
+  });
   prefix_test(
     ".a{background-image:repeating-linear-gradient(to right,red,blue 20px)}",
     `.a{
@@ -10133,7 +10133,7 @@ describe("a `&` with no parent rule", () => {
 });
 
 describe("rounding to 6 digits only cuts a fraction short", () => {
-  for (const css of [
+  describe.each([
     // Kept as tokens: the source text prints.
     "a{--x:1234567.5}",
     "a{--ts:1700000000.25}",
@@ -10147,9 +10147,9 @@ describe("rounding to 6 digits only cuts a fraction short", () => {
     "a{transition-delay:9999999s}",
     // 1024.08 * 100 is 102407.99 as an f32.
     "a{width:102408%}",
-  ]) {
+  ])("%s", css => {
     minify_test(css, css);
-  }
+  });
   minify_test("@media (min-width:1234567px){a{color:red}}", "@media (width>=1234567px){a{color:red}}");
   // From 2^24 on an f32 does not hold every integer.
   minify_test("a{width:2147483647px}", "a{width:2147483600px}");

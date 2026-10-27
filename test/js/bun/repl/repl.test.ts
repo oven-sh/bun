@@ -382,6 +382,19 @@ describe.concurrent("Bun REPL", () => {
       expect(exitCode).toBe(0);
     });
 
+    // .exit is a requested exit, as process.exit() is: nothing runs after the 'exit' listeners.
+    test(".exit runs process.on('exit') listeners and not their promise jobs", async () => {
+      const { stdout, stderr, exitCode } = await runRepl([
+        "process.on('exit', async () => { console.log('exit listener'); await null; console.log('its job'); }), 0",
+        ".exit",
+      ]);
+      expect({ afterLastPrompt: stripAnsi(stdout).split("> \n").at(-1), stderr, exitCode }).toEqual({
+        afterLastPrompt: "exit listener\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
     test(".help shows help message", async () => {
       const { outputs, stderr, exitCode } = await runRepl([".help", ".exit"]);
       expect(outputs).toHaveLength(1);
@@ -959,6 +972,44 @@ describe.concurrent("Bun REPL", () => {
       expect(stdout).toBe("beforeExit fired\n");
       expect(stderr).toBe("");
       expect(exitCode).toBe(0);
+    });
+
+    // The loop ran dry, as at the end of a script: the promise jobs of the listeners run.
+    test("-e runs the promise jobs of process.on('exit') listeners", async () => {
+      const { stdout, stderr, exitCode } = await runReplWith([
+        "-e",
+        "process.on('exit', async () => { console.log('exit listener'); await null; console.log('its job'); })",
+      ]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "exit listener\nits job\n", stderr: "", exitCode: 0 });
+    });
+
+    // Node reports a rejection that an 'exit' listener leaves and exits with the assigned process.exitCode, or with 1.
+    test.each([
+      ["", 1],
+      ["process.exitCode = 2;", 2],
+      ["process.exitCode = 0;", 0],
+    ])("-e %j then an 'exit' listener that rejects: exit code %d", async (assignment, code) => {
+      const { stdout, stderr, exitCode } = await runReplWith([
+        "-e",
+        `${assignment} process.on('exit', async () => { throw new Error('cleanup failed'); })`,
+      ]);
+      expect({ stdout, reported: stderr.includes("error: cleanup failed"), exitCode }).toEqual({
+        stdout: "",
+        reported: true,
+        exitCode: code,
+      });
+    });
+
+    // The run ended with an unhandled error, not with a dry loop: nothing follows the 'exit' listeners.
+    test("-e runs no promise job of an 'exit' listener after a rejection that 'beforeExit' work made", async () => {
+      const { stdout } = await runReplWith([
+        "-e",
+        `process.once('beforeExit', () => {
+           setTimeout(() => { Promise.reject(new Error('cleanup failed')); setTimeout(() => {}, 20); }, 1);
+         });
+         process.on('exit', async () => { console.log('exit listener'); await null; console.log('its job'); })`,
+      ]);
+      expect(stdout).toBe("exit listener\n");
     });
 
     test("-e drains event loop (timers fire before exit)", async () => {

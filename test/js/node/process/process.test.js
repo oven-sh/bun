@@ -3,7 +3,19 @@ import { CString, dlopen, ptr } from "bun:ffi";
 import { memoryUsage as jscMemoryUsage } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
-import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, isRoot, isWindows, tempDir, tmpdirSync } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isASAN,
+  isDebug,
+  isLinux,
+  isMacOS,
+  isRoot,
+  isWindows,
+  nodeExeAtLeast,
+  tempDir,
+  tmpdirSync,
+} from "harness";
 import { basename, join, resolve } from "path";
 import { getHeapStatistics } from "v8";
 
@@ -1243,6 +1255,249 @@ describe.concurrent(() => {
       expect(stderr).not.toInclude("error: boom");
       expect(exitCode).toBe(0);
     });
+
+    // Node emits the 'exit' of an event loop that ran dry through MakeCallback: when the listeners
+    // have returned, their promise jobs run, and then what they rejected is reported.
+    // process.exit() and a fatal error emit 'exit' with a plain call: nothing runs after the listeners.
+    const out = `const out = s => require("node:fs").writeSync(1, s + " ");\n`;
+    const failed = `new Error("cleanup failed")`;
+    const asyncListener = `process.on("exit", async () => { out("a"); await null; out("b"); throw ${failed}; });`;
+
+    async function run(cmd, options = {}) {
+      await using proc = Bun.spawn({ cmd, env: bunEnv, stdio: ["ignore", "pipe", "pipe"], ...options });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    // [name, script, [what it writes, whether the error is reported, exit code], flags]
+    const afterDryLoop = [
+      [
+        "an async listener continues after each await",
+        `process.on("exit", async () => { out("a"); await null; out("b"); await null; out("c"); });`,
+        ["a b c ", false, 0],
+      ],
+      [
+        "the jobs run when every listener has returned",
+        `process.on("exit", async () => { out("a1"); await null; out("a2"); });
+         process.on("exit", () => { out("b"); queueMicrotask(() => out("b2")); });`,
+        ["a1 b a2 b2 ", false, 0],
+      ],
+      [
+        "a listener that 'beforeExit' added",
+        `process.once("beforeExit", () => {
+           process.once("exit", async () => { out("a"); await null; out("b"); });
+         });`,
+        ["a b ", false, 0],
+      ],
+      [
+        "a listener that process.emit('exit') called before",
+        `process.on("exit", async () => { out("a"); await null; out("b"); });
+         process.emit("exit", 0);
+         out("main");`,
+        ["a main b a b ", false, 0],
+      ],
+      [
+        "a job assigns process.exitCode",
+        `process.on("exit", async code => { await null; out("was " + code); process.exitCode = 5; });`,
+        ["was 0 ", false, 5],
+      ],
+      [
+        "a job calls process.exit()",
+        `process.on("exit", async () => { await null; out("a"); process.exit(3); });`,
+        ["a ", false, 3],
+      ],
+      ["a job throws", `process.on("exit", () => { queueMicrotask(() => { throw ${failed}; }); });`, ["", true, 1]],
+      ["an async listener throws", `process.on("exit", async () => { throw ${failed}; });`, ["", true, 1]],
+      [
+        "a listener calls an async function that rejects",
+        `const save = async () => { throw ${failed}; }; process.on("exit", () => { save(); });`,
+        ["", true, 1],
+      ],
+      [
+        "a rejection is reported after the jobs",
+        `process.on("exit", () => { Promise.reject(${failed}); });
+         process.on("exit", () => { Promise.resolve().then(() => out("job")); });`,
+        ["job ", true, 1],
+      ],
+      [
+        "a rejection that a job handles is not reported",
+        `process.on("exit", () => {
+           const rejected = Promise.reject(${failed});
+           Promise.resolve().then(() => rejected.catch(e => out("caught " + e.message)));
+         });`,
+        ["caught cleanup failed ", false, 0],
+      ],
+      [
+        "a rejection reaches an 'unhandledRejection' listener",
+        `process.on("unhandledRejection", e => out("unhandledRejection " + e.message));
+         process.on("exit", async () => { throw ${failed}; });`,
+        ["unhandledRejection cleanup failed ", false, 0],
+      ],
+      [
+        "a rejection under --unhandled-rejections=strict",
+        `process.on("exit", async () => { out("a"); throw ${failed}; });`,
+        ["a ", true, 1],
+        "--unhandled-rejections=strict",
+      ],
+      [
+        "a rejection under --unhandled-rejections=throw reaches an 'uncaughtException' listener",
+        `process.on("uncaughtException", (e, origin) => out(origin));
+         process.on("exit", async () => { throw ${failed}; });`,
+        ["unhandledRejection ", false, 0],
+        "--unhandled-rejections=throw",
+      ],
+      [
+        "a rejection under --unhandled-rejections=warn-with-error-code",
+        `process.on("exit", async () => { out("a"); throw ${failed}; });`,
+        ["a ", false, 1],
+        "--unhandled-rejections=warn-with-error-code",
+      ],
+      [
+        "a rejection under --unhandled-rejections=warn",
+        `process.on("exit", async () => { out("a"); throw ${failed}; });`,
+        ["a ", false, 0],
+        "--unhandled-rejections=warn",
+      ],
+      [
+        "a rejection under --unhandled-rejections=none",
+        `process.on("exit", async () => { out("a"); throw ${failed}; });`,
+        ["a ", false, 0],
+        "--unhandled-rejections=none",
+      ],
+      [
+        "a tick, a timer or an immediate that a listener or a job queued does not run",
+        `process.on("exit", () => {
+           out("a");
+           process.nextTick(() => out("tick"));
+           setTimeout(() => out("timer"), 0);
+           setImmediate(() => out("immediate"));
+           queueMicrotask(() => { out("job"); process.nextTick(() => out("tick")); });
+         });`,
+        ["a job ", false, 0],
+      ],
+      [
+        "with no 'exit' listener, the job that an 'unhandledRejection' listener left",
+        `process.on("unhandledRejection", async () => { out("a"); await null; out("b"); process.exit(1); });
+         setTimeout(() => { Promise.reject(${failed}); }, 1);`,
+        ["a b ", false, 1],
+      ],
+    ];
+    const nothingAfter = [
+      ["process.exit()", `${asyncListener} process.exit(0);`, ["a ", false, 0]],
+      [
+        "an uncaught error",
+        `process.on("exit", async () => { out("a"); await null; out("b"); });
+         setTimeout(() => { throw ${failed}; }, 1);`,
+        ["a ", true, 1],
+      ],
+      [
+        "a rejection that a 'beforeExit' listener made",
+        `process.on("beforeExit", () => { Promise.reject(${failed}); });
+         process.on("exit", async () => { out("a"); await null; out("b"); });`,
+        ["a ", true, 1],
+      ],
+      [
+        "a listener that threw",
+        `process.on("uncaughtException", (e, origin) => out(origin));
+         process.on("exit", () => { out("a"); queueMicrotask(() => out("job")); throw ${failed}; });`,
+        ["a uncaughtException ", false, 0],
+      ],
+    ];
+
+    const expectRow = async (_, script, [stdout, error, exitCode], ...flags) => {
+      expect(await run([bunExe(), ...flags, "-e", out + script])).toEqual({
+        stdout,
+        stderr: error ? expect.stringContaining("error: cleanup failed") : "",
+        exitCode,
+      });
+    };
+    it.each(afterDryLoop)("when the loop ran dry: %s", expectRow);
+    it.each(nothingAfter)("nothing runs after the listeners of %s", expectRow);
+
+    const node = nodeExeAtLeast("24.0.0");
+    it.skipIf(!node)("node gives the same output", async () => {
+      const rows = [...afterDryLoop, ...nothingAfter];
+      const results = await Promise.all(
+        rows.map(([, script, , ...flags]) => run([node, ...flags, "-e", out + script])),
+      );
+      expect(
+        results.map(({ stdout, stderr, exitCode }) => [stdout, stderr.includes("cleanup failed"), exitCode]),
+      ).toEqual(rows.map(([, , expected]) => expected));
+    });
+
+    it("the jobs run in an ES module and under --print", async () => {
+      using dir = tempDir("process-exit-jobs", {
+        "entry.mjs": `import { writeSync } from "node:fs";
+                      process.on("exit", async () => { writeSync(1, "a "); await null; writeSync(1, "b "); });`,
+      });
+      const listener = `process.on("exit", async () => { out("a"); await null; out("b"); })`;
+      expect(
+        await Promise.all([
+          run([bunExe(), join(String(dir), "entry.mjs")]),
+          run([bunExe(), "--print", `${out}${listener}, 1`]),
+        ]),
+      ).toEqual([
+        { stdout: "a b ", stderr: "", exitCode: 0 },
+        { stdout: "1\na b ", stderr: "", exitCode: 0 },
+      ]);
+    });
+
+    // What runs a vendored node test: the file ends when its loop runs dry. `node --test` fails this file too.
+    it("a listener that rejects fails a node:test file whose loop ran dry", async () => {
+      using dir = tempDir("process-exit-jobs-test", {
+        "exit.test.js": `const { test } = require("node:test");
+                         ${out}
+                         process.on("exit", async () => { out("a"); await null; out("b"); throw ${failed}; });
+                         test("passes", () => {});`,
+      });
+      expect(
+        await run([bunExe(), "test", "./exit.test.js"], {
+          cwd: String(dir),
+          env: { ...bunEnv, BUN_TEST_DRAIN_EVENT_LOOP: "1" },
+        }),
+      ).toEqual({
+        stdout: expect.stringContaining("a b "),
+        stderr: expect.stringContaining("error: cleanup failed"),
+        exitCode: 1,
+      });
+    });
+
+    // A tick never runs once 'exit' is emitted. Node runs this one before the event.
+    it("a tick queued before 'exit' does not run after its listeners", async () => {
+      const { stdout, stderr, exitCode } = await run([
+        bunExe(),
+        "-e",
+        `${out}
+         process.on("unhandledRejection", () => { out("unhandledRejection"); process.nextTick(() => out("tick")); });
+         setTimeout(() => { Promise.reject(${failed}); }, 1);
+         process.on("exit", async () => { out("a"); await null; out("b"); });`,
+      ]);
+      expect({ end: stdout.slice(-4), stderr, exitCode }).toEqual({ end: "a b ", stderr: "", exitCode: 0 });
+    });
+
+    // Node reports a failed write on a tick, which never runs once 'exit' is emitted.
+    it.each([`process.stdout.write("late\\n")`, `process.stdout.end("late\\n")`])(
+      "%s in a listener to a closed pipe is not an error",
+      async write => {
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `process.stdout.write("ready\\n");
+             process.stdin.on("end", () => {}).resume();
+             process.on("exit", () => { ${write}; });`,
+          ],
+          env: bunEnv,
+          stdio: ["pipe", "pipe", "pipe"],
+        });
+        const reader = proc.stdout.getReader();
+        await reader.read();
+        await reader.cancel();
+        proc.stdin.end();
+        const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+        expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      },
+    );
   });
 
   it("process.memoryUsage", () => {

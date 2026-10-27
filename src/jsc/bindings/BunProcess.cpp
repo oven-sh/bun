@@ -873,6 +873,19 @@ extern "C" void Process__dispatchOnExit(Zig::GlobalObject* globalObject, uint8_t
     dispatchExitInternal(globalObject, process, exitCode);
 }
 
+// `process.exitCode` is not undefined.
+extern "C" bool Bun__Process__hasExitCode(Zig::GlobalObject* globalObject)
+{
+    return globalObject->hasProcessObject() && globalObject->processObject()->m_isExitCodeObservable;
+}
+
+// A tick that process.nextTick() queued before 'exit' does not run after it.
+extern "C" void Bun__Process__discardNextTicks(Zig::GlobalObject* globalObject)
+{
+    if (auto* nextTickQueue = globalObject->m_nextTickQueue.get())
+        nextTickQueue->discard(globalObject->vm());
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionUptime, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     double now = static_cast<double>(Bun__readOriginTimer(bunVM(lexicalGlobalObject)));

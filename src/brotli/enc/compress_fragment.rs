@@ -167,6 +167,9 @@ fn build_and_store_literal_prefix_code(
             histogram_total += adjust as usize;
         }
     }
+    // A caller may lend memory that changes while it is read. A byte that was not counted then gets no bits at all, not
+    // those that an earlier code had for it.
+    s.lit_bits.fill(0);
     build_and_store_huffman_tree_fast(
         &mut s.tree,
         histogram,

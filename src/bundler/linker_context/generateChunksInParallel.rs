@@ -436,8 +436,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
             chunk.final_rel_path = rel_path.into_boxed_slice();
         }
 
-        // Every chunk and every copied asset needs its own output path. An asset that no live code uses is copied
-        // too, so it also takes its path. Standalone HTML inlines the assets into the page instead.
+        // An asset that no live code uses is copied too, so it also takes its output path.
         #[derive(Clone, Copy)]
         enum Output {
             Chunk(u32),
@@ -445,6 +444,7 @@ pub(crate) fn generate_chunks_in_parallel<'a, const IS_DEV_SERVER: bool>(
             Asset(u32),
         }
         let mode = c.options.compile_mode;
+        // Standalone HTML inlines the assets into the page.
         let assets: &[options::OutputFile] = if mode.is_standalone_html() {
             &[]
         } else {
@@ -2040,12 +2040,10 @@ fn chunk_load_order(
     (position, startup_count.unwrap_or(0))
 }
 
-/// Two spellings of one output file have one key. An executable stores a file under its path less one leading `./`
-/// (`StandaloneModuleGraph::module_dest_path`) and resolves nothing else: `a/../x` and `x` are two files there. Every
-/// other path is joined to the output directory, where `a/../x`, `./x` and `.//x` are one file. `path` has `/`
-/// separators on every platform.
+/// One key for `./x`, `.//x` and `a/../x`, which are one file in an output directory. `path` is `/`-separated.
 fn output_path_key(mode: options::CompileMode, mut path: &[u8]) -> Cow<'_, [u8]> {
     if mode.is_executable() {
+        // An executable looks a file up as `StandaloneModuleGraph::module_dest_path` stores it: `a/../x` is not `x`.
         return Cow::Borrowed(strings::remove_leading_dot_slash(path));
     }
     while let Some(rest) = path.strip_prefix(b"./") {

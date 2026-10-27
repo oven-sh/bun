@@ -322,6 +322,24 @@ export function Component({ nodes, i18n }) {
 }
 `;
 
+/** Two functions that return one type are one type, and a local that is one of them is the first: impure, or a setter. */
+const joinedFunctions = `import { useReducer, useState } from "react";
+
+export function Clock(props) {
+  const now = props.precise ? performance.now : Date.now;
+  const at = now();
+  return <time>{at}</time>;
+}
+
+export function Counter(props) {
+  const [count, setCount] = useState(0);
+  const [total, dispatch] = useReducer(props.reducer, 0);
+  const set = props.counts ? setCount : dispatch;
+  set(1);
+  return <output>{count + total}</output>;
+}
+`;
+
 /** JSX can't be evaluated earlier, and neither can an expression that contains JSX. */
 const defaultsWithJsx = `export function A({ icon = { on: <Eye />, off: <Off /> } }) {
   return <div>{icon.on}</div>;
@@ -635,6 +653,7 @@ function Component(props) {
   },
   order: { ".oxlintrc.json": rc(), "order.jsx": order },
   writes: { ".oxlintrc.json": rc(), "writes.jsx": writes },
+  functions: { ".oxlintrc.json": rc(), "joined-functions.jsx": joinedFunctions },
   names: {
     ".oxlintrc.json": rc(),
     "own-hooks.tsx": ownHooks,
@@ -726,6 +745,7 @@ ${["a", "b", "c", "d", "e", "f", "g", "h", "i"].map(name => `    value += props.
   "casts.tsx": casts,
   "defaults.tsx": defaults,
   "writes.jsx": writes,
+  "joined-functions.jsx": joinedFunctions,
   "own-hooks.tsx": ownHooks,
   "defaults-with-jsx.jsx": defaultsWithJsx,
   "react-by-its-name.jsx": reactByItsName,

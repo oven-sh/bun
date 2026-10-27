@@ -48,6 +48,7 @@ pub(crate) fn infer_types(
         enable_treat_ref_like_identifiers_as_refs,
         custom_hook_type,
         enable_treat_set_identifiers_as_state_setters,
+        env.config.joined_functions_are_told_apart,
         env.stack(),
     );
     let generated = generate(func, env, &mut unifier);
@@ -324,6 +325,30 @@ fn type_equals(mut a: &Type, mut b: &Type) -> bool {
             _ => false,
         };
     }
+}
+
+/// `EnvironmentConfig::joined_functions_are_told_apart`: the two are functions, or functions that return functions,
+/// that differ in their shape or in whether they are made with `new`. `type_equals` asks neither.
+fn are_told_apart(mut a: &Type, mut b: &Type) -> bool {
+    while let (
+        Type::Function {
+            shape_id: shape_a,
+            return_type: ret_a,
+            is_constructor: con_a,
+        },
+        Type::Function {
+            shape_id: shape_b,
+            return_type: ret_b,
+            is_constructor: con_b,
+        },
+    ) = (a, b)
+    {
+        if shape_a != shape_b || con_a != con_b {
+            return true;
+        }
+        (a, b) = (ret_a, ret_b);
+    }
+    false
 }
 
 /// Only a name that is told from others: `get_name` is asked for nothing else.
@@ -1083,6 +1108,7 @@ struct Unifier {
     resolved: RefCell<OfPhis<Option<Arc<[Type]>>>>,
     enable_treat_ref_like_identifiers_as_refs: bool,
     enable_treat_set_identifiers_as_state_setters: bool,
+    joined_functions_are_told_apart: bool,
     custom_hook_type: Option<Type>,
     stack: bun_core::StackCheck,
     is_out_of_stack: std::cell::Cell<bool>,
@@ -1093,6 +1119,7 @@ impl Unifier {
         enable_treat_ref_like_identifiers_as_refs: bool,
         custom_hook_type: Option<Type>,
         enable_treat_set_identifiers_as_state_setters: bool,
+        joined_functions_are_told_apart: bool,
         stack: bun_core::StackCheck,
     ) -> Self {
         Unifier {
@@ -1100,6 +1127,7 @@ impl Unifier {
             resolved: RefCell::default(),
             enable_treat_ref_like_identifiers_as_refs,
             enable_treat_set_identifiers_as_state_setters,
+            joined_functions_are_told_apart,
             custom_hook_type,
             stack,
             is_out_of_stack: std::cell::Cell::new(false),
@@ -1310,7 +1338,10 @@ impl Unifier {
                         candidate_type = Some(resolved);
                     }
                     Some(candidate) => {
-                        if !type_equals(&resolved, candidate) {
+                        if !type_equals(&resolved, candidate)
+                            || (self.joined_functions_are_told_apart
+                                && are_told_apart(&resolved, candidate))
+                        {
                             let union_type = try_union_types(&resolved, candidate);
                             if let Some(union) = union_type {
                                 candidate_type = Some(union);

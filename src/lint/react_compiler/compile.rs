@@ -52,6 +52,7 @@ fn config_of(flavor: Flavor, has_no_foreign_config: bool) -> EnvironmentConfig {
         tagged_templates_are_always_called: is_oxlint,
         react_is_known_by_its_module: false,
         dependencies_are_sorted_by_bytes: is_oxlint,
+        joined_functions_are_told_apart: false,
         validate_no_set_state_in_render: true,
         validate_no_set_state_in_effects: true,
         validate_no_jsx_in_try_statements: true,

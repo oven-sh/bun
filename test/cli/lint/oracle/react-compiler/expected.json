@@ -3804,6 +3804,50 @@
     ]
    }
   },
+  "functions": {
+   "exit": 1,
+   "files": 1,
+   "diagnostics": {
+    "joined-functions.jsx": [
+     {
+      "code": "react(purity)",
+      "help": "`performance.now` is an impure function. Calling an impure function can produce unstable results that update unpredictably when the component re-renders",
+      "labels": [
+       {
+        "label": "Cannot call impure function",
+        "span": {
+         "column": 14,
+         "length": 5,
+         "line": 5,
+         "offset": 149
+        }
+       }
+      ],
+      "message": "Cannot call impure function during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/purity",
+      "severity": "error"
+     },
+     {
+      "code": "react(set-state-in-render)",
+      "help": "Calling setState during render may trigger an infinite loop.\n* To reset state when other state/props change, store the previous value in state and update conditionally.\n* To derive data from other state/props, compute the derived data during render without using state",
+      "labels": [
+       {
+        "label": "Found setState() in render",
+        "span": {
+         "column": 3,
+         "length": 3,
+         "line": 13,
+         "offset": 371
+        }
+       }
+      ],
+      "message": "Cannot call setState during render",
+      "note": "React Compiler skipped optimizing this component or hook. Additional guidance: https://react.dev/reference/eslint-plugin-react-hooks/lints/set-state-in-render",
+      "severity": "error"
+     }
+    ]
+   }
+  },
   "names": {
    "exit": 1,
    "files": 5,
@@ -4892,6 +4936,31 @@
       "column": 40,
       "endLine": 2,
       "endColumn": 41,
+      "suggestions": []
+     }
+    ],
+    "suppressed": []
+   },
+   "joined-functions.jsx": {
+    "messages": [
+     {
+      "ruleId": "react-hooks/purity",
+      "severity": 2,
+      "message": "Error: Cannot call impure function during render\n\n`performance.now` is an impure function. Calling an impure function can produce unstable results that update unpredictably when the component happens to re-render. (https://react.dev/reference/rules/components-and-hooks-must-be-pure#components-and-hooks-must-be-idempotent).\n\n  3 | export function Clock(props) {\n  4 |   const now = props.precise ? performance.now : Date.now;\n> 5 |   const at = now();\n    |              ^^^^^ Cannot call impure function\n  6 |   return <time>{at}</time>;\n  7 | }\n  8 |",
+      "line": 5,
+      "column": 14,
+      "endLine": 5,
+      "endColumn": 19,
+      "suggestions": []
+     },
+     {
+      "ruleId": "react-hooks/set-state-in-render",
+      "severity": 2,
+      "message": "Error: Cannot call setState during render\n\nCalling setState during render may trigger an infinite loop.\n* To reset state when other state/props change, store the previous value in state and update conditionally: https://react.dev/reference/react/useState#storing-information-from-previous-renders\n* To derive data from other state/props, compute the derived data during render without using state.\n\n  11 |   const [total, dispatch] = useReducer(props.reducer, 0);\n  12 |   const set = props.counts ? setCount : dispatch;\n> 13 |   set(1);\n     |   ^^^ Found setState() in render\n  14 |   return <output>{count + total}</output>;\n  15 | }\n  16 |",
+      "line": 13,
+      "column": 3,
+      "endLine": 13,
+      "endColumn": 6,
       "suggestions": []
      }
     ],

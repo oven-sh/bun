@@ -1173,6 +1173,275 @@ describe("bundler", () => {
     },
   });
 
+  const reactWithAMemoCachePerComponent = {
+    "/node_modules/react/jsx-runtime.js": `exports.jsx = (t, p) => ({ t, p }); exports.jsxs = exports.jsx;`,
+    "/node_modules/react/jsx-dev-runtime.js": `exports.jsxDEV = (t, p) => ({ t, p });`,
+    "/node_modules/react/compiler-runtime.js": `
+      const caches = (globalThis.caches = new Map());
+      exports.c = n => {
+        if (!caches.has(globalThis.rendering))
+          caches.set(globalThis.rendering, new Array(n).fill(Symbol.for("react.memo_cache_sentinel")));
+        return caches.get(globalThis.rendering);
+      };
+    `,
+    "/node_modules/react/package.json": `{"name":"react","main":"./index.js"}`,
+  };
+
+  // A local that is one of two functions has a type only where the two are one function. Two functions that return
+  // one type were one type, and the local was the first of them: `Math.max`, which only reads what it is given. The
+  // call then stood outside the memo block of the array, and each render wrote to the array of the render before.
+  itBundled("react-compiler/LocalThatIsOneOfTwoFunctions", {
+    files: {
+      "/entry.jsx": /* jsx */ `
+        function OneOfTwoInAConditional(props) {
+          const arr = [props.x];
+          const f = props.e ? Math.max : a => { a.push("m"); return 2; };
+          const out = f(arr);
+          return <div arr={arr} out={out} />;
+        }
+        function AssignedInAnIf(props) {
+          const arr = [props.x];
+          let f = a => { a.push("m"); return 2; };
+          if (props.e) f = Math.max;
+          const out = f(arr);
+          return <div arr={arr} out={out} />;
+        }
+        function ReturnedFromAFunction(props) {
+          const arr = [props.x];
+          const pick = () => {
+            if (props.e) return Math.max;
+            return a => { a.push("m"); return 2; };
+          };
+          const f = pick();
+          const out = f(arr);
+          return <div arr={arr} out={out} />;
+        }
+        function ReturnedFromOneOfTwoFunctions(props) {
+          const arr = [props.x];
+          const make = props.e ? () => Math.max : () => a => { a.push("m"); return 2; };
+          const f = make();
+          const out = f(arr);
+          return <div arr={arr} out={out} />;
+        }
+        // What \`g\` returns is a number, because it is multiplied.
+        function CalledBeforeItIsOneOfTwo(props) {
+          const arr = [props.x];
+          const g = props.mutate;
+          const twice = g([]) * 2;
+          const f = props.e ? Math.max : g;
+          const out = f(arr);
+          return <div arr={arr} out={out + twice} />;
+        }
+        function CalledAfterItIsOneOfTwo(props) {
+          const arr = [props.x];
+          const g = props.mutate;
+          const f = props.e ? Math.max : g;
+          const twice = g([]) * 2;
+          const out = f(arr);
+          return <div arr={arr} out={out + twice} />;
+        }
+        // \`made()\` and \`new Made()\` are numbers here. What \`new Made()\` is says nothing of what \`Made()\` returns.
+        function OneIsCalledAndOneIsMadeWithNew(props) {
+          const arr = [props.x];
+          const Made = props.Made;
+          const made = props.made;
+          const twice = new Made() * 2 + made() * 2;
+          const f = props.e ? made : Made;
+          const pick = () => f(arr);
+          const same = pick();
+          same.push("m");
+          return <div arr={arr} out={twice} />;
+        }
+        // The two of each of these are one function, or two of one shape. The local has their type, and the memo
+        // cache is as small as that makes it.
+        function OneFunctionOnBothPaths(props) {
+          const arr = [props.x];
+          let f = Math.max;
+          if (props.e) f = Math.max;
+          const out = f(arr);
+          return <div arr={arr} out={out} />;
+        }
+        function OneOfTwoArrowsThatReturnNumbers(props) {
+          const f = props.e ? () => 1 : () => 2;
+          const out = f();
+          return <div x={props.x} out={out} />;
+        }
+
+        function Made(a) {
+          if (!new.target) return a;
+          this.valueOf = () => 1;
+        }
+        const made = () => 1;
+        // Each render gets a \`mutate\` of its own, as from a parent that makes it when it renders.
+        const propsOf = () => ({ x: 1, e: false, Made, made, mutate: a => { a.push("m"); return a.length; } });
+        const components = [
+          OneOfTwoInAConditional,
+          AssignedInAnIf,
+          ReturnedFromAFunction,
+          ReturnedFromOneOfTwoFunctions,
+          CalledBeforeItIsOneOfTwo,
+          CalledAfterItIsOneOfTwo,
+          OneIsCalledAndOneIsMadeWithNew,
+          OneFunctionOnBothPaths,
+          OneOfTwoArrowsThatReturnNumbers,
+        ];
+        for (const component of components) {
+          globalThis.rendering = component;
+          // The second render has the memo cache of the first.
+          const render = () => JSON.stringify(Object.values(component(propsOf()).p));
+          console.log(component.name, render(), render());
+        }
+        const sizeOf = component => globalThis.caches.get(component).length;
+        console.log("compiled", globalThis.caches.size);
+        console.log("sizes", sizeOf(OneFunctionOnBothPaths), sizeOf(OneOfTwoArrowsThatReturnNumbers));
+      `,
+      ...reactWithAMemoCachePerComponent,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: {
+      stdout: [
+        'OneOfTwoInAConditional [[1,"m"],2] [[1,"m"],2]',
+        'AssignedInAnIf [[1,"m"],2] [[1,"m"],2]',
+        'ReturnedFromAFunction [[1,"m"],2] [[1,"m"],2]',
+        'ReturnedFromOneOfTwoFunctions [[1,"m"],2] [[1,"m"],2]',
+        'CalledBeforeItIsOneOfTwo [[1,"m"],4] [[1,"m"],4]',
+        'CalledAfterItIsOneOfTwo [[1,"m"],4] [[1,"m"],4]',
+        'OneIsCalledAndOneIsMadeWithNew [[1,"m"],4] [[1,"m"],4]',
+        "OneFunctionOnBothPaths [[1],1] [[1],1]",
+        "OneOfTwoArrowsThatReturnNumbers [1,2] [1,2]",
+        "compiled 9",
+        "sizes 5 3",
+      ].join("\n"),
+    },
+  });
+
+  // Where a loop assigns the local, it has the type of its first value, whatever the loop assigns: InferTypes takes
+  // what the loop assigns out of the type of the local at the head of the loop. Upstream 1.0.0 does the same.
+  itBundled("react-compiler/LocalThatALoopMakesOneOfTwoFunctions", {
+    todo: true,
+    files: {
+      "/entry.jsx": /* jsx */ `
+        function ReassignedInALoop(props) {
+          const arr = [props.x];
+          let f = Math.max;
+          for (let i = 0; i < props.n; i++) {
+            if (props.e) f = props.mutate;
+          }
+          const out = f(arr);
+          return <div arr={arr} out={out} />;
+        }
+        function SwappedInALoop(props) {
+          const arr = [props.x];
+          let a = props.mutate;
+          let b = Math.max;
+          for (let i = 0; i < props.n; i++) {
+            if (props.e) {
+              const t = a;
+              a = b;
+              b = t;
+            }
+          }
+          const out = b(arr);
+          return <div arr={arr} out={out} />;
+        }
+        function ReassignedInALoopInALoop(props) {
+          const arr = [props.x];
+          let f = String;
+          for (let i = 0; i < props.n; i++) {
+            for (let j = 0; j < props.n; j++) {
+              if (props.e) f = props.mutate;
+            }
+          }
+          const out = f(arr);
+          return <div arr={arr} out={out} />;
+        }
+        function ReassignedInACallback(props) {
+          const arr = [props.x];
+          const run = () => {
+            let f = Math.max;
+            for (let i = 0; i < props.n; i++) {
+              if (props.e) f = props.mutate;
+            }
+            return f(arr);
+          };
+          const out = run();
+          return <div arr={arr} out={out} />;
+        }
+        function ReassignedInAnObjectMethod(props) {
+          const arr = [props.x];
+          const object = {
+            run() {
+              let f = Math.max;
+              for (let i = 0; i < props.n; i++) {
+                if (props.e) f = props.mutate;
+              }
+              return f(arr);
+            },
+          };
+          const out = object.run();
+          return <div arr={arr} out={out} />;
+        }
+        // \`list.indexOf\` is the one of arrays only where \`list\` is an array.
+        function MethodOfWhatALoopReassigns(props) {
+          const arr = [props.x];
+          let list = [];
+          for (let i = 0; i < props.n; i++) {
+            if (props.e) list = props.listOf(arr);
+          }
+          const out = list.indexOf("m");
+          return <div arr={arr} out={out} />;
+        }
+        function ArrowAssignedInALoop(props) {
+          const arr = [props.x];
+          let f = Math.max;
+          for (let i = 0; i < props.n; i++) {
+            if (props.e) f = a => { a.push("m"); return 2; };
+          }
+          const out = f(arr);
+          return <div arr={arr} out={out} />;
+        }
+
+        const listOf = arr => ({ indexOf(item) { arr.push(item); return arr.length; } });
+        // Each render gets a \`mutate\` of its own, as from a parent that makes it when it renders.
+        const propsOf = () => ({ x: 1, n: 1, e: true, listOf, mutate: a => { a.push("m"); return a.length; } });
+        const components = [
+          ReassignedInALoop,
+          SwappedInALoop,
+          ReassignedInALoopInALoop,
+          ReassignedInACallback,
+          ReassignedInAnObjectMethod,
+          MethodOfWhatALoopReassigns,
+          ArrowAssignedInALoop,
+        ];
+        for (const component of components) {
+          globalThis.rendering = component;
+          // The second render has the memo cache of the first.
+          const render = () => JSON.stringify(Object.values(component(propsOf()).p));
+          console.log(component.name, render(), render());
+        }
+        console.log("compiled", globalThis.caches.size);
+      `,
+      ...reactWithAMemoCachePerComponent,
+    },
+    reactCompiler: true,
+    target: "browser",
+    backend: "cli",
+    run: {
+      stdout: [
+        'ReassignedInALoop [[1,"m"],2] [[1,"m"],2]',
+        'SwappedInALoop [[1,"m"],2] [[1,"m"],2]',
+        'ReassignedInALoopInALoop [[1,"m"],2] [[1,"m"],2]',
+        'ReassignedInACallback [[1,"m"],2] [[1,"m"],2]',
+        'ReassignedInAnObjectMethod [[1,"m"],2] [[1,"m"],2]',
+        'MethodOfWhatALoopReassigns [[1,"m"],2] [[1,"m"],2]',
+        'ArrowAssignedInALoop [[1,"m"],2] [[1,"m"],2]',
+        "compiled 7",
+      ].join("\n"),
+    },
+  });
+
   // The pattern was what is left when all slashes are taken off both ends: `/^https?:\/\//` lost the one that closes it.
   itBundled("react-compiler/RegExpThatEndsInASlash", {
     files: {

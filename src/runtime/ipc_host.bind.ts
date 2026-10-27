@@ -18,11 +18,22 @@ export const MessageTarget = b.union({
 });
 /** What the other process sent: any value. */
 export const ReceivedMessage = b.union({ object: b.object, primitive: b.any });
+/** `false`: the listener for the message left while the handle was made. */
 export const emitHandleIPCMessage = b.fn({
   args: { target: MessageTarget, message: ReceivedMessage, handle: b.any },
+  returns: b.bool,
   capability: "js",
   throws: true,
 });
+
+/** `process[kHandle]` of a `ChildProcess`. */
+const subprocess = Subprocess.otherAsNull;
+/** In the channel of a `ChildProcess`, a 'message' waits for a 'message' listener. */
+export const gateSubprocessIpc = b.fn({ args: { subprocess } });
+/** A `ChildProcess` got a listener while its channel held messages back. */
+export const requestSubprocessIpcDrain = b.fn({ args: { subprocess } });
+/** The next-tick callback of a drain request. `owner` is not a Subprocess for the channel of this process. */
+export const drainIpc = b.fn({ export: "Bun__IPC__drain", args: { owner: subprocess } });
 
 /** `process.send()` */
 export const send = b.fn({

@@ -684,6 +684,8 @@ function spawnSync(file, args, options?): SpawnSyncResult {
 }
 const etimedoutErrorCode = $bindgen("node_util_binding.bind.ts", "etimedoutErrorCode");
 const enobufsErrorCode = $bindgen("node_util_binding.bind.ts", "enobufsErrorCode");
+const gateSubprocessIpc = $bindgen("ipc_host.bind.ts", "gateSubprocessIpc");
+const requestSubprocessIpcDrain = $bindgen("ipc_host.bind.ts", "requestSubprocessIpcDrain");
 
 /**
  * Spawns a file as a shell synchronously.
@@ -1144,6 +1146,7 @@ class ChildProcess extends EventEmitter {
   #handle;
   #closesNeeded = 1;
   #closesGot = 0;
+  #ipcDrainOnListener;
 
   declare send?: (message, handle?, options?, callback?) => boolean;
   declare disconnect?: () => void;
@@ -1512,6 +1515,8 @@ class ChildProcess extends EventEmitter {
         this.send = this.#send;
         this.disconnect = this.#disconnect;
         this.channel = new Control();
+        // A 'message' that no listener takes waits in the channel. `#emitIpcMessage` answers for each one.
+        gateSubprocessIpc(this.#handle);
         Object.defineProperty(this, "_channel", {
           get() {
             return this.channel;
@@ -1563,8 +1568,31 @@ class ChildProcess extends EventEmitter {
     }
   }
 
-  #emitIpcMessage(message, _, handle) {
-    this.emit(isInternalIpcMessage(message) ? "internalMessage" : "message", message, handle);
+  // Answers the channel with a number when no 'message' listener is there (1 with a 'disconnect' listener): the message then stays in the channel. `ask` only asks.
+  #emitIpcMessage(message, _, handle, ask?) {
+    if (ask) {
+      if (this.listenerCount("message") > 0) return;
+    } else if (isInternalIpcMessage(message)) {
+      this.emit("internalMessage", message, handle);
+      return;
+    } else if (this.emit("message", message, handle)) {
+      return;
+    }
+    // node has this listener on every ChildProcess with a channel. Here it is there only while a message waits.
+    if (!this.#ipcDrainOnListener) {
+      this.on(
+        "newListener",
+        (this.#ipcDrainOnListener = name => {
+          if (name !== "message" && name !== "disconnect") return;
+          if (name === "message") {
+            this.off("newListener", this.#ipcDrainOnListener);
+            this.#ipcDrainOnListener = undefined;
+          }
+          requestSubprocessIpcDrain(this.#handle);
+        }),
+      );
+    }
+    return this.listenerCount("disconnect") > 0 ? 1 : 0;
   }
 
   #send(message, handle, options, callback) {

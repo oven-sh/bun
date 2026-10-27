@@ -1,6 +1,7 @@
 /**
  * All tests in this file run in both Bun and Node.js: `bun test` runs them
- * here, and the last test runs this same file under Node.js.
+ * here, and the last test runs this same file under Node.js. They are not in
+ * vm.test.ts because that file uses bun:test, which Node.js cannot run.
  *
  *   node --experimental-vm-modules vm-module-link-status.test.ts
  *
@@ -352,6 +353,30 @@ describe("status while the evaluate() of an importer runs", () => {
     assert.deepStrictEqual(statuses(g.modules), { a: "evaluated", b: "evaluated", c: "evaluated", d: "evaluated" });
   });
 
+  test("a module that imports a running module links from the body of that module", async () => {
+    const g = graph({ D: `import "W"; import "Z";`, W: `import "D";`, Z: `inBodyOfZ(); export const z = 1;` });
+    const byRequests = new vm.SourceTextModule(`import "Z";`, { identifier: "byRequests" });
+    const byLinker = new vm.SourceTextModule(`import "Z";`, { identifier: "byLinker" });
+    const seen: { instantiate?: string; link?: Promise<string>; statuses?: string[] } = {};
+    await withGlobal(
+      "inBodyOfZ",
+      () => {
+        byRequests.linkRequests([g.modules.Z]);
+        seen.instantiate = errorCode(() => byRequests.instantiate());
+        seen.link = errorCode(byLinker.link(() => g.modules.Z));
+        seen.statuses = [g.modules.Z.status, byRequests.status];
+      },
+      async () => {
+        await g.link("D");
+        await g.modules.D.evaluate();
+      },
+    );
+    assert.deepStrictEqual(
+      { ...seen, link: await seen.link, byLinker: byLinker.status },
+      { instantiate: "no error", link: "no error", statuses: ["evaluating", "linked"], byLinker: "linked" },
+    );
+  });
+
   test("a module of a cycle with a top-level await ends evaluated", async () => {
     const gate = Promise.withResolvers<void>();
     await withGlobal("gate", gate.promise, async () => {
@@ -369,7 +394,8 @@ describe("status while the evaluate() of an importer runs", () => {
     });
   });
 
-  // Bun evaluates m2 before m0, where Node.js evaluates m0 first. So in Bun m2 is "evaluating" in the body of m0.
+  // Bun evaluates m2 before m0, where Node.js evaluates m0 first. So in Bun m2 is "evaluating" in the body of m0, and
+  // a loader that evaluates a "linked" module there (jest-runtime in a require() of an ES module) refuses m2.
   test.todo("a module of a cycle that has not run yet is linked in the body of another one", async () => {
     const g = graph({ m0: `import "m1"; inBodyOfM0();`, m1: `import "m0"; import "m2";`, m2: `import "m0";` });
     let seen: string | undefined;

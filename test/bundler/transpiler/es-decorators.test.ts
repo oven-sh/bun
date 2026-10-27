@@ -1917,7 +1917,7 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
 
-    test.concurrent("a direct eval in the class also pins the private field of an undecorated accessor", async () => {
+    test.concurrent("a direct eval in the file pins the private field of an undecorated accessor", async () => {
       // The eval keeps every `#private` name of the class. A field the minifier
       // renames next to them gets a one letter name, and all of those are taken.
       const letters = [..."abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ_$"];
@@ -1929,6 +1929,14 @@ describe("ES Decorators", () => {
           }
           console.log(f());
         `,
+        // The eval is in a class around the accessor's, and after it.
+        "around.js": `
+          function f() {
+            class Outer { #a = 1; n() { return class { accessor #acc = 2; m() { return this.#acc } } } m() { return eval("this.#a") } }
+            return new (new Outer().n())().m();
+          }
+          console.log(f());
+        `,
       });
       const build = await runIn(String(dir), ["build", "--minify-identifiers", "entry.js", "--outfile=out.js"]);
       expect({ stderr: filterStderr(build.stderr), exitCode: build.exitCode }).toEqual({ stderr: "", exitCode: 0 });
@@ -1936,6 +1944,11 @@ describe("ES Decorators", () => {
       expect(filterStderr(stderr)).toBe("");
       expect(stdout).toBe("3\n");
       expect(exitCode).toBe(0);
+
+      const around = await runIn(String(dir), ["build", "--minify-identifiers", "around.js"]);
+      expect(filterStderr(around.stderr)).toBe("");
+      expect(around.stdout).toContain("#acc_accessor_storage = 2");
+      expect(around.exitCode).toBe(0);
     });
   });
 

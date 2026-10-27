@@ -252,9 +252,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         is_static: bool,
         taken: &mut BumpVec<'a, &'a [u8]>,
     ) -> Ref {
-        let accessor = &self.symbols[accessor.inner_index() as usize];
-        let accessor_name: &'a [u8] = accessor.original_name.slice();
-        let is_pinned = accessor.must_not_be_renamed();
+        let accessor_name: &'a [u8] = self.symbols[accessor.inner_index() as usize]
+            .original_name
+            .slice();
         let mut name = self.bump_name3(accessor_name, b"_accessor_storage", b"");
         let mut suffix = 1u32;
         while taken.contains(&name) || self.enclosing_scope_declares(name) {
@@ -277,8 +277,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             },
             name,
         );
-        // A direct `eval` in the class pins its names, and a renamed name can get the spelling of one.
-        self.symbols[storage.inner_index() as usize].set_must_not_be_renamed(is_pinned);
+        self.accessor_storage_fields.push(storage);
         storage
     }
 

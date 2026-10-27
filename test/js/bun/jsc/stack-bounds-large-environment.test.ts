@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isLinux, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, isGlibc, isLinux, tempDir } from "harness";
 import { closeSync, openSync, readFileSync, readSync } from "node:fs";
 
-// oven-sh/WebKit#556. The Linux kernel lets the main thread's stack mapping reach RLIMIT_STACK, measured from the
-// end of the mapping. The argument and environment strings are at that end. A bound measured from below them is too
-// low by their size. Once they pass the reserve that a recursion check keeps, the kernel's limit comes first and
-// the process gets SIGSEGV. The largest reserve is 512 KB (bun's checks in an ASAN build).
+// The Linux kernel lets the main thread's stack mapping reach RLIMIT_STACK, measured from the end of the mapping.
+// The argument and environment strings are at that end. A bound measured from below them is too low by their size.
+// Once they pass the reserve that a recursion check keeps, the kernel's limit comes first and the process gets
+// SIGSEGV. The largest reserve is 512 KB (bun's checks in an ASAN build). endOfMainThreadStack() in WTF's
+// StackBounds.cpp finds the end of the mapping from AT_EXECFN, the path of the executable.
 //
 // Linux only. Windows and macOS give bun an 18 MB main stack at link time and do not measure it this way. Windows
 // caps a variable at 32,767 characters, and macOS caps the arguments plus the environment at 1 MB.
@@ -115,9 +116,11 @@ describe.concurrent.skipIf(!isLinux || !canSetStackLimit)("with 700 KB of enviro
     expect(await run(withStackLimit(8192, [bunExe(), "index.js"]), String(dir))).toEqual(deepDefineError);
   });
 
-  // glibc's loader points AT_EXECFN, which marks the end of the stack mapping, at argv[0].
+  // glibc's loader points AT_EXECFN at argv[0], which is below the environment. The bound is too low again and the
+  // child gets SIGSEGV. oven-sh/WebKit#755 corrects that. musl's loader does not change AT_EXECFN.
   const loader = isLinux ? programInterpreter(bunExe()) : undefined;
-  test.skipIf(!loader)("a deeply nested [define] value is an error when the loader starts bun", async () => {
+  const testWithLoader = loader ? test.todoIf(isGlibc) : test.skip;
+  testWithLoader("a deeply nested [define] value is an error when the loader starts bun", async () => {
     using dir = deepDefine();
     expect(await run(withStackLimit(8192, [loader!, bunExe(), "index.js"]), String(dir))).toEqual(deepDefineError);
   });

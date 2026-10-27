@@ -87,9 +87,10 @@ pub(crate) const MAX_SPREAD_SIZE: usize = 1 << 9;
 pub(crate) struct Spread {
     /// The symbols, each as many times as it has states.
     in_order: [u8; MAX_SPREAD_SIZE + 8],
-    pub(crate) symbols: [u8; MAX_SPREAD_SIZE],
-    /// For each symbol, what to give [`NextState::at`] for its first state.
-    pub(crate) symbol_next: [u16; FSE_MAX_SYMBOL_VALUE as usize + 1],
+    /// The symbol of each state.
+    by_state: [u8; MAX_SPREAD_SIZE + 8],
+    /// For each symbol, what to give [`NextState::at`] for its next state.
+    symbol_next: [u16; FSE_MAX_SYMBOL_VALUE as usize + 1],
     /// The symbols of low probability.
     rare: [u8; FSE_MAX_SYMBOL_VALUE as usize + 1],
     /// Room for the counts that all that is made from.
@@ -100,7 +101,7 @@ impl Spread {
     pub(crate) const fn new() -> Self {
         Self {
             in_order: [0; _],
-            symbols: [0; _],
+            by_state: [0; _],
             symbol_next: [0; _],
             rare: [0; _],
             counts: [0; _],
@@ -109,8 +110,15 @@ impl Spread {
 
     /// The first two passes of `FSE_buildDTable` and `ZSTD_buildFSETable`, with few branches to mispredict, for the
     /// first `nb_symbols` of `counts`. They add up to the size of the table, which is at most [`MAX_SPREAD_SIZE`].
-    pub(crate) fn set(&mut self, nb_symbols: usize, table_log: u32) -> Result<()> {
+    pub(crate) fn states(&mut self, nb_symbols: usize, table_log: u32) -> Result<States<'_>> {
         let table_size = 1usize << table_log;
+        let table_mask = table_size - 1;
+        let step = fse_table_step(table_size);
+        // What `step` times this is 1 more than a multiple of the size of the table.
+        let mut stride = step;
+        for _ in 0..2 {
+            stride = stride.wrapping_mul(2usize.wrapping_sub(step.wrapping_mul(stride)));
+        }
         let mut nb_rare = 0usize;
         let mut nb_in_order = 0usize;
         let mut eight_times = 0u64;
@@ -138,25 +146,73 @@ impl Spread {
             eight_times += 0x0101_0101_0101_0101;
         }
 
+        if nb_rare == 0 {
+            // One symbol after the other goes `step` states further, so the symbol of the next state is `stride` symbols
+            // further.
+            return Ok(States {
+                symbols: &self.in_order,
+                index: 0,
+                stride: stride & table_mask,
+                mask: table_mask,
+                symbol_next: &mut self.symbol_next,
+            });
+        }
+
         // The states from here on are those of the rare symbols. Others that would go there go to the next place.
         let first_rare = table_size - nb_rare.min(table_size);
-        let table_mask = table_size - 1;
-        let step = fse_table_step(table_size);
-        let symbols = self.symbols.sub_mut(..table_size)?;
+        let by_state = self.by_state.sub_mut(..table_size)?;
         let mut position = 0usize;
         let mut from = 0usize;
         for _ in 0..table_size / 2 {
             for position in [position, (position + step) & table_mask] {
                 let symbol = self.in_order.get(from % MAX_SPREAD_SIZE).copied();
-                symbols.put(position, symbol.unwrap_or(0))?;
+                by_state.put(position, symbol.unwrap_or(0))?;
                 from += usize::from(position < first_rare);
             }
             position = (position + 2 * step) & table_mask;
         }
-        for (symbol, &rare) in symbols.iter_mut().rev().zip(self.rare.sub(..nb_rare)?) {
+        for (symbol, &rare) in by_state.iter_mut().rev().zip(self.rare.sub(..nb_rare)?) {
             *symbol = rare;
         }
-        Ok(())
+        Ok(States {
+            symbols: &self.by_state,
+            index: 0,
+            stride: 1,
+            mask: table_mask,
+            symbol_next: &mut self.symbol_next,
+        })
+    }
+}
+
+/// The states of a table, from the first on.
+pub(crate) struct States<'a> {
+    symbols: &'a [u8; MAX_SPREAD_SIZE + 8],
+    /// Where in `symbols` the symbol of the next state is.
+    index: usize,
+    /// How much further the one after it is, around `mask`.
+    stride: usize,
+    mask: usize,
+    symbol_next: &'a mut [u16; FSE_MAX_SYMBOL_VALUE as usize + 1],
+}
+
+/// A state of a table.
+pub(crate) struct State {
+    pub(crate) symbol: u8,
+    /// What to give [`NextState::at`].
+    pub(crate) next: u16,
+}
+
+impl States<'_> {
+    #[inline(always)]
+    pub(crate) fn next(&mut self) -> State {
+        let symbol = (self.symbols.get(self.index % MAX_SPREAD_SIZE)).map_or(0, |&symbol| symbol);
+        self.index = (self.index + self.stride) & self.mask;
+        let mut next = 0;
+        if let Some(symbol_next) = self.symbol_next.get_mut(usize::from(symbol)) {
+            next = *symbol_next;
+            *symbol_next = next.wrapping_add(1);
+        }
+        State { symbol, next }
     }
 }
 
@@ -197,18 +253,10 @@ fn build_dtable(
         return Err(ErrorCode::TableLogTooLarge);
     }
     dt.table_log = table_log;
-    spread.set(max_symbol_value as usize + 1, table_log)?;
-    for (decode, &symbol) in dt
-        .table
-        .sub_mut(..1 << table_log)?
-        .iter_mut()
-        .zip(&spread.symbols)
-    {
-        let Some(next) = spread.symbol_next.get_mut(usize::from(symbol)) else {
-            continue;
-        };
-        let next_state = NEXT_STATES.get(usize::from(*next) % NEXT_STATES.len());
-        *next = next.wrapping_add(1);
+    let mut states = spread.states(max_symbol_value as usize + 1, table_log)?;
+    for decode in dt.table.sub_mut(..1 << table_log)? {
+        let State { symbol, next } = states.next();
+        let next_state = NEXT_STATES.get(usize::from(next) % NEXT_STATES.len());
         *decode = FseDecode {
             symbol,
             ..*next_state.unwrap_or(&FseDecode::EMPTY)

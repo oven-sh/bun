@@ -175,7 +175,7 @@ describe("net.createServer listen", () => {
 
   // A kernel without IPv6 (ipv6.disable=1) fails socket(AF_INET6) with EAFNOSUPPORT. Node binds
   // "::" when listen() gets no host and falls back to "0.0.0.0" there.
-  it.skipIf("skip" in denySocket)(
+  it.concurrent.skipIf("skip" in denySocket)(
     "should fall back to 0.0.0.0 when no host is given and the kernel has no IPv6",
     async () => {
       const { stdout, stderr, exitCode } = await runWithSocketDenied(
@@ -221,19 +221,22 @@ describe("net.createServer listen", () => {
     },
   );
 
-  it.skipIf("skip" in denySocket)("should report the errno when socket() fails for a unix path", async () => {
-    using dir = tempDir("net-listen-unix-no-socket", {});
-    const { stdout, stderr, exitCode } = await runWithSocketDenied(
-      AF_UNIX,
-      EMFILE,
-      `${listenOutcome}
-       const { code, syscall } = await listenOutcome(${JSON.stringify(join(String(dir), "listen.sock"))});
-       console.log(JSON.stringify({ code, syscall }));`,
-    );
-    expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual({ code: "EMFILE", syscall: "listen" });
-    expect(exitCode).toBe(0);
-  });
+  it.concurrent.skipIf("skip" in denySocket)(
+    "should report the errno when socket() fails for a unix path",
+    async () => {
+      using dir = tempDir("net-listen-unix-no-socket", {});
+      const { stdout, stderr, exitCode } = await runWithSocketDenied(
+        AF_UNIX,
+        EMFILE,
+        `${listenOutcome}
+         const { code, syscall } = await listenOutcome(${JSON.stringify(join(String(dir), "listen.sock"))});
+         console.log(JSON.stringify({ code, syscall }));`,
+      );
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ code: "EMFILE", syscall: "listen" });
+      expect(exitCode).toBe(0);
+    },
+  );
 
   it("should call listening", done => {
     const { mustCall } = createCallCheckCtx(done);

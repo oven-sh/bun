@@ -77,15 +77,11 @@ function setServers(servers) {
   return setServersOn(servers, dns);
 }
 
-const getRuntimeDefaultResultOrderOption = $newRustFunction(
-  "runtime/dns_jsc/dns.rs",
-  "Resolver.getRuntimeDefaultResultOrderOption",
-  0,
-);
+const getRuntimeDefaultResultOrderOption = $bindgen("dns_internals.bind.ts", "getRuntimeDefaultResultOrderOption");
 
 function newResolver(options) {
   if (!newResolver.native) {
-    newResolver.native = $newRustFunction("runtime/dns_jsc/dns.rs", "Resolver.newResolver", 1) as NewNativeResolver;
+    newResolver.native = $bindgen("dns_internals.bind.ts", "newResolver") as NewNativeResolver;
   }
   return newResolver.native(options);
 }

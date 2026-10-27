@@ -28,7 +28,7 @@ use bun_jsc::virtual_machine::{
 };
 use bun_jsc::{
     self as jsc, ConsoleObject, JSArrayIterator, JSGlobalObject, JSPropertyIterator, JSValue,
-    JsError, ModuleLoader, WebCore,
+    JsError, MarkedArgumentBuffer, ModuleLoader, WebCore,
 };
 use bun_jsc::{BuildMessage, ResolveMessage};
 
@@ -59,7 +59,7 @@ pub(crate) struct MacroContext {
     /// UTF-16 string data / `from_blob` JSON sub-parse), so we own the backing arena here
     /// — `MacroContext` is stored in the long-lived `Transpiler` and outlives
     /// every `Expr` it produces (the parser splices the result into the AST and
-    /// prints it before the `Transpiler` drops).
+    /// prints it before the context is freed).
     ///
     /// Lazy: `Arena::new()` calls `mi_heap_new()`, and `MacroContext::init`
     /// runs once per `RuntimeTranspilerStore::TranspilerJob::run` iteration
@@ -110,6 +110,16 @@ impl MacroContext {
         caller: Expr,
         function_name: &[u8],
     ) -> crate::Result<Expr> {
+        // A macro's entry point is text made here, with names in it from the source that imports the macro, which may be a
+        // string. The engine would refuse it, but nothing catches that rejection.
+        if bun_core::code_generation_from_strings() == bun_core::CodeGenerationFromStrings::Strict {
+            log.add_range_error(
+                Some(source),
+                import_range,
+                b"Macros cannot be used with --disallow-code-generation-from-strings=strict",
+            );
+            return Err(crate::Error::MacroFailed);
+        }
         let _store_guard = DisableStoreReset::new();
         // const is_package_path = isPackagePath(specifier);
         let import_record_path_without_macro_prefix = if is_macro_path(import_record_path) {
@@ -166,9 +176,6 @@ impl MacroContext {
                     return Err(e.into());
                 }
             };
-            // The resolver's `Result` owns its path strings via the global `DirnameStore`
-            // (lifetime-erased `&'static [u8]`), so dropping `resolve_result`
-            // does not invalidate `text`.
             break 'brk resolve_result.path_pair.primary.text;
         };
 
@@ -263,7 +270,7 @@ fn __bun_macro_context_init(transpiler: *mut core::ffi::c_void) -> js_parser::Ma
     // SAFETY: every caller of `js_parser::Macro::MacroContext::init<T>` passes a
     // `&mut bun_bundler::Transpiler<'_>`; the lifetime parameter is erased at
     // runtime so reading it as `'static` is layout-identical. The boxed state
-    // is leaked for the long-lived `vm.transpiler` instance — but callers that run on a
+    // stays with the long-lived `vm.transpiler` instance — but callers that run on a
     // short-lived bytewise-cloned `Transpiler` (e.g.
     // `RuntimeTranspilerStore::TranspilerJob::run`) MUST pair this with
     // `__bun_macro_context_deinit` or the `Box<MacroContext>` (and, if a macro
@@ -432,10 +439,19 @@ impl Macro {
             // JSC needs to be initialized if building from CLI
             jsc::initialize(jsc::InitializeOptions::default());
 
+            // `env` is shared by every parse thread, and this VM's transpiler loads `.env` files
+            // into its loader, so give the VM its own copy.
+            // SAFETY: `env` is the build's loader. It outlives the build and nothing writes to
+            // it while parse tasks run.
+            let owned_env_loader = match unsafe { env.as_ref() } {
+                Some(env) => Some(Box::new(env.clone_loaded()?)),
+                None => None,
+            };
+
             let _vm = VirtualMachine::init(VirtualMachineInitOptions {
                 transform_options,
                 log: Some(NonNull::from(&mut *log)),
-                env_loader: NonNull::new(env),
+                owned_env_loader,
                 is_main_thread: false,
                 ..Default::default()
             })?;
@@ -488,7 +504,47 @@ impl Macro {
 
 struct Runner;
 
-type VisitMap = HashMap<JSValue, Expr>;
+mod visit_map {
+    use super::*;
+    use bun_collections::hash_map::GetOrPutResult;
+
+    /// Keyed by cell address. `roots` keeps every key alive so the GC can't reuse an address.
+    pub(crate) struct VisitMap<'a> {
+        exprs: HashMap<JSValue, Expr>,
+        roots: &'a mut MarkedArgumentBuffer,
+    }
+
+    impl<'a> VisitMap<'a> {
+        pub(crate) fn new(roots: &'a mut MarkedArgumentBuffer) -> Self {
+            Self {
+                exprs: HashMap::default(),
+                roots,
+            }
+        }
+
+        pub(crate) fn get(&self, value: JSValue) -> Option<&Expr> {
+            self.exprs.get(&value)
+        }
+
+        pub(crate) fn get_or_put(
+            &mut self,
+            value: JSValue,
+        ) -> Result<GetOrPutResult<'_, Expr>, bun_alloc::AllocError> {
+            let entry = self.exprs.get_or_put(value)?;
+            if !entry.found_existing {
+                self.roots.append(value);
+            }
+            Ok(entry)
+        }
+
+        pub(crate) fn insert(&mut self, value: JSValue, expr: Expr) {
+            if self.exprs.insert(value, expr).is_none() {
+                self.roots.append(value);
+            }
+        }
+    }
+}
+use visit_map::VisitMap;
 
 thread_local! {
     static EXCEPTION_HOLDER: Cell<bool> = const { Cell::new(false) };
@@ -541,9 +597,10 @@ pub(crate) struct Run<'a> {
     // printed long after this frame returns.
     pub(crate) bump: &'a bun_alloc::Arena,
     pub(crate) log: &'a mut Log,
-    pub(crate) source: &'a Source,
-    pub(crate) visited: VisitMap,
+    pub(crate) source: &'a Source<'a>,
+    pub(crate) visited: VisitMap<'a>,
     pub(crate) is_top_level: bool,
+    pub(crate) stack_check: bun_core::StackCheck,
 }
 
 impl<'a> Run<'a> {
@@ -569,24 +626,33 @@ impl<'a> Run<'a> {
                 .unwrap_or_else(|_| global.try_take_exception().unwrap_or_default())
         });
 
-        let mut runner = Run {
-            caller,
-            macro_,
-            global: VirtualMachine::get().global(),
-            bump,
-            log,
-            source,
-            visited: VisitMap::default(),
-            is_top_level: false,
-        };
+        MarkedArgumentBuffer::new(|roots| {
+            let mut runner = Run {
+                caller,
+                macro_,
+                global: VirtualMachine::get().global(),
+                bump,
+                log,
+                source,
+                visited: VisitMap::new(roots),
+                is_top_level: false,
+                stack_check: bun_core::StackCheck::init(),
+            };
 
-        // `runner.visited` dropped at scope exit (was `defer runner.visited.deinit(allocator)`)
-
-        runner.run(result)
+            runner.run(result)
+        })
     }
 
     pub(crate) fn run(&mut self, value: JSValue) -> Result<Expr, MacroError> {
         use ConsoleObject::formatter::Tag as T;
+        if !self.stack_check.is_safe_to_recurse() {
+            self.log.add_error(
+                Some(self.source),
+                self.caller.loc,
+                b"The value returned by this macro is nested too deeply",
+            );
+            return Err(MacroError::MacroFailed);
+        }
         // `Tag::get` returns `TagResult { tag: TagPayload, .. }`;
         // collapse the payload to its discriminant via `.tag()`.
         match T::get(value, self.global)?.tag.tag() {
@@ -644,9 +710,6 @@ impl<'a> Run<'a> {
             T::Null => return Ok(Expr::init(E::Null {}, self.caller.loc)),
             T::Private => {
                 self.is_top_level = false;
-                if let Some(cached) = self.visited.get(&value) {
-                    return Ok(*cached);
-                }
 
                 let mut blob_: Option<*const WebCore::Blob> = None;
 
@@ -833,7 +896,7 @@ impl<'a> Run<'a> {
                 ));
             }
             T::Promise => {
-                if let Some(cached) = self.visited.get(&value) {
+                if let Some(cached) = self.visited.get(value) {
                     return Ok(*cached);
                 }
 
@@ -1003,7 +1066,7 @@ impl Runner {
             bump: &'c bun_alloc::Arena,
             caller: Expr,
             js_args: &'c [JSValue],
-            source: &'c Source,
+            source: &'c Source<'c>,
             id: i32,
             result: Result<Expr, MacroError>,
         }

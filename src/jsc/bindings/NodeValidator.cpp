@@ -56,7 +56,6 @@ template<typename T> JSC::EncodedJSValue V::validateInteger(JSC::ThrowScope& sco
     RETURN_IF_EXCEPTION(scope, {});
     auto max_num = max.toNumber(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    max_num = std::max(min_num, max_num);
 
     if (std::fmod(value_num, 1.0) != 0) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, "an integer"_s, value);
     if (value_num < min_num || value_num > max_num) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, conjunctiveRange(min_num, max_num), value);
@@ -75,7 +74,6 @@ template<typename T> JSC::EncodedJSValue V::validateInteger(JSC::ThrowScope& sco
     RETURN_IF_EXCEPTION(scope, {});
     auto max_num = max.toNumber(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    max_num = std::max(min_num, max_num);
 
     if (std::fmod(value_num, 1.0) != 0) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, "an integer"_s, value);
     if (value_num < min_num || value_num > max_num) return Bun::ERR::OUT_OF_RANGE(scope, globalObject, name, conjunctiveRange(min_num, max_num), value);
@@ -287,7 +285,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_validatePort, (JSC::JSGlobalObject * globalO
     if (port_num > 0xffff) return Bun::ERR::SOCKET_BAD_PORT(scope, globalObject, name, port, allowZero_b);
     if (port_num == 0 && !allowZero_b) return Bun::ERR::SOCKET_BAD_PORT(scope, globalObject, name, port, allowZero_b);
 
-    return JSValue::encode(port);
+    return JSValue::encode(jsNumber(static_cast<int32_t>(port_num)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsFunction_validateAbortSignal, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))

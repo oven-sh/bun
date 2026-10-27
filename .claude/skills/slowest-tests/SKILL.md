@@ -9,7 +9,7 @@ Args: `[N] [#channel]` — both optional. `N` defaults to 500. If `#channel` is 
 
 ## 1. Gather the data
 
-Run the script. With no build number it auto-picks the most recent finished build from a merged PR.
+Run the script. With no build number it auto-picks the most recent finished build of a merged PR in which every `test-bun` job started. That build often reports `state=failed` because of flaky tests. That is fine, the timing data is still valid.
 
 ```bash
 bun run ci:slowest                 # top 500 from a recent merged-PR build → TSV on stdout
@@ -19,14 +19,20 @@ bun run ci:slowest --json > /tmp/slow.json
 
 The script (`scripts/ci-slowest-tests.ts`) does the heavy lifting:
 
-- Lists `test-bun` jobs from `bk build view <N>`, skipping `retried: true`.
+- Lists the `test-bun` jobs of the build, skipping `retried: true` and jobs that never started (no `started_at`: their log is empty).
 - Fetches each job's `raw_log_url` directly with `Authorization: Bearer $BUILDKITE_TOKEN`. **Do not use `bk job log` — it hangs indefinitely on some Windows/alpine jobs.**
 - Caches logs to `$TMPDIR/bun-ci-logs-<build>/` so re-runs are instant.
 - Parses `_bk;t=<ms> ... --- [N/TOTAL] <file>` group headers, normalising backslashes to `/` and stripping `[attempt #N]` retries.
 - Aggregates each file's duration as the **max across all platforms** (a file appears once per platform; shards within a platform are disjoint).
 - Drops `package.json` / non-JS entries — those are setup steps, not tests.
 
-If the script can't find a build automatically (rare — it walks the last 10 merged PRs), pick one yourself: `gh pr list --state merged --limit 10 --json number,headRefName`, then `bk build list --branch <headRefName>` and pass the first build with a `finished_at`. Merged-PR builds usually report `state: failed` because of flaky tests — that's fine, the timing data is still valid.
+If the script finds no build, it exits 1 with nothing on stdout. Do not walk the PRs by hand: the script already did that, and its stderr says what to do next.
+
+1. `failed to list the builds of ...` lines: `bk build list` failed for those PRs, and each line carries the error. Run the same command again.
+2. A `note:` that names a build: no recent build ran every `test-bun` job, and that build has the most timings. Pass its number.
+3. Neither: no recent merged-PR build has test timings. Stop and report the stderr.
+
+With a build number, a `warning:` line on stderr names the platforms whose jobs never started. The table has no timings from them, so repeat that warning wherever you post the table. A build with no test timings at all gives `error: build #N has no test timings` and exit 1.
 
 ## 2. Post to Slack (only if a channel was given)
 

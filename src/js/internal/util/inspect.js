@@ -59,9 +59,9 @@ const ArrayPrototypeSort = uncurryThis(Array.prototype.sort);
 const ArrayPrototypeUnshift = uncurryThis(Array.prototype.unshift);
 const BigIntPrototypeValueOf = uncurryThis(BigInt.prototype.valueOf);
 const BooleanPrototypeValueOf = uncurryThis(Boolean.prototype.valueOf);
-const DatePrototypeGetTime = uncurryThis(Date.prototype.getTime);
-const DatePrototypeToISOString = uncurryThis(Date.prototype.toISOString);
-const DatePrototypeToString = uncurryThis(Date.prototype.toString);
+const DatePrototypeGetTime = $cpp("DatePrimordials.cpp", "Bun::createDatePrototypeGetTime");
+const DatePrototypeToISOString = $cpp("DatePrimordials.cpp", "Bun::createDatePrototypeToISOString");
+const DatePrototypeToString = $cpp("DatePrimordials.cpp", "Bun::createDatePrototypeToString");
 const ErrorPrototypeToString = uncurryThis(Error.prototype.toString);
 const FunctionPrototypeBind = uncurryThis(Function.prototype.bind);
 const FunctionPrototypeToString = uncurryThis(Function.prototype.toString);
@@ -1407,7 +1407,9 @@ function formatRaw(ctx, value, recurseTimes, typedArray) {
       }
     } else if (isDate(value)) {
       // Make dates with properties first say the date
-      base = NumberIsNaN(DatePrototypeGetTime(value)) ? DatePrototypeToString(value) : DatePrototypeToISOString(value);
+      base = NumberIsNaN(DatePrototypeGetTime.$call(value))
+        ? DatePrototypeToString.$call(value)
+        : DatePrototypeToISOString.$call(value);
       const prefix = getPrefix(constructor, tag, "Date");
       if (prefix !== "Date ") base = `${prefix}${base}`;
       if (keys.length === 0 && protoProps === undefined) {

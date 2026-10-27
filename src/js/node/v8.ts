@@ -10,7 +10,7 @@ const { isStringOneByteRepresentation, startGCProfiler, stopGCProfiler, discardG
   "Bun::createNodeV8Binding",
 );
 
-const DateNow = Date.now;
+const DateNow: () => number = $cpp("DatePrimordials.cpp", "Bun::createDateNow");
 const FunctionPrototypeCall = Function.prototype.call;
 const uncurryThis = func => FunctionPrototypeCall.bind(func);
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;

@@ -29,7 +29,7 @@ const ArrayPrototypeSortFn = Array.prototype.sort;
 const ArrayPrototypeSpliceFn = Array.prototype.splice;
 const ArrayPrototypeToSortedFn = Array.prototype.toSorted;
 const ArrayPrototypeUnshiftFn = Array.prototype.unshift;
-const DateNowFn = Date.now;
+const DateNowFn = $cpp("DatePrimordials.cpp", "Bun::createDateNow");
 const FunctionPrototypeBindFn = Function.prototype.bind;
 const JSONStringifyFn = JSON.stringify;
 const MathMaxFn = Math.max;
@@ -76,7 +76,7 @@ export default {
   ArrayPrototypeToSorted: (a, fn) => ArrayPrototypeToSortedFn.$call(a, fn),
   ArrayPrototypeUnshift: (a, ...items) => ArrayPrototypeUnshiftFn.$apply(a, items),
   Boolean,
-  DateNow: () => DateNowFn.$call(Date),
+  DateNow: DateNowFn,
   Error,
   FunctionPrototypeBind: (fn, thisArg, ...args) => {
     ArrayPrototypeUnshiftFn.$call(args, thisArg);

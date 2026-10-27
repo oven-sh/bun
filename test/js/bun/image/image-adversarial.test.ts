@@ -486,19 +486,25 @@ describe("malformed PNG structure", () => {
     await new Bun.Image(withProfile(1 << 20), { maxPixels: 64 }).png().bytes();
   });
 
+  // The largest image the default maxPixels allows, 1 GiB of RGBA, and its first row.
   test.each([
-    ["an interlaced", 1, 2048],
-    ["a plain", 0, 16383],
-  ])("%s image takes memory as its rows come, not when its header does", async (_, interlace, firstRowPixels) => {
-    // The largest image the default maxPixels allows, 1 GiB of RGBA, and its first row.
+    ["1-bit", 16383, 16383, 1, 0, 0, 1 + 2048],
+    ["interlaced 1-bit", 16383, 16383, 1, 0, 1, 1 + 256],
+    ["RGBA", 16383, 16383, 8, 6, 0, 1 + 16383 * 4],
+    ["RGB", 16383, 16383, 8, 2, 0, 1 + 16383 * 3],
+    ["interlaced RGB", 16383, 16383, 8, 2, 1, 1 + 2048 * 3],
+    // A row of 512 MiB, and only its filter byte.
+    ["very wide", 1 << 26, 1, 16, 6, 0, 1],
+  ])("a %s image takes memory as its rows come, not when its header does", async (_, ...args) => {
+    const [width, height, depth, colorType, interlace, bytes] = args;
     const ihdr = Buffer.alloc(13);
-    ihdr.writeUInt32BE(16383, 0);
-    ihdr.writeUInt32BE(16383, 4);
-    ihdr.set([1, 0, 0, 0, interlace], 8);
+    ihdr.writeUInt32BE(width, 0);
+    ihdr.writeUInt32BE(height, 4);
+    ihdr.set([depth, colorType, 0, 0, interlace], 8);
     const png = Buffer.concat([
       tinyPng.subarray(0, 8),
       pngChunk("IHDR", ihdr),
-      pngChunk("IDAT", zlib.deflateSync(Buffer.alloc(1 + Math.ceil(firstRowPixels / 8)))),
+      pngChunk("IDAT", zlib.deflateSync(Buffer.alloc(bytes))),
     ]);
     const fixture = `
       const png = Buffer.from("${png.toString("base64")}", "base64");

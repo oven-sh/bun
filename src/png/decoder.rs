@@ -571,7 +571,19 @@ fn read_rgba8(stride: usize, size: usize, idat: &mut Idat, image: &mut Vec<u8>) 
     Ok(())
 }
 
-/// RGB becomes RGBA in the image before its filter is undone, because that is faster on 4-byte pixels.
+/// Appends a row that came as RGB. It becomes RGBA before its filter is undone, because that is faster on 4-byte pixels.
+fn push_rgb_row<'a>(
+    filter: u8,
+    rgb: &[u8],
+    rows: &'a mut Vec<u8>,
+    above_first: &[u8],
+) -> Result<&'a mut [u8]> {
+    filter::push_rgb_as_rgba(rgb, rows);
+    let row = undo_last_row(filter, rows, rgb.len() / 3 * 4, above_first)?;
+    filter::make_opaque(row);
+    Ok(row)
+}
+
 fn read_rgb8(header: Header, expand: &Expand, idat: &mut Idat, image: &mut Vec<u8>) -> Result<()> {
     let (line_len, stride) = (header.width as usize * 3 + 1, header.width as usize * 4);
     let mut line: Vec<u8> = Vec::new();
@@ -586,10 +598,7 @@ fn read_rgb8(header: Header, expand: &Expand, idat: &mut Idat, image: &mut Vec<u
         let Some((&filter, filtered)) = line.split_first() else {
             return Err(Error::IdatTooShort);
         };
-        filter::push_rgb_as_rgba(filtered, image);
-        let row = undo_last_row(filter, image, stride, &above_first)?;
-        filter::make_opaque(row);
-        expand.make_transparent(row);
+        expand.make_transparent(push_rgb_row(filter, filtered, image, &above_first)?);
     }
     Ok(())
 }
@@ -618,85 +627,82 @@ fn read_image(header: Header, expand: &Expand, idat: &mut Idat) -> Result<Vec<u8
 
 fn read_rows(header: Header, expand: &Expand, idat: &mut Idat, image: &mut Vec<u8>) -> Result<()> {
     let stride = header.width as usize * 4;
-    let size = image.capacity();
+    let longest = header.passes().map(|pass| pass.row_bytes).max();
+    let line_len = longest.unwrap_or_default().saturating_add(1);
     // A filter byte and a row.
     let mut line: Vec<u8> = Vec::new();
-    let mut line_above: Vec<u8> = Vec::new();
-    let longest = header.passes().map(|pass| pass.row_bytes).max();
-    line.try_reserve_exact(longest.unwrap_or_default().saturating_add(1))?;
-    line_above.try_reserve_exact(longest.unwrap_or_default().saturating_add(1))?;
+    line.try_reserve_exact(line_len)?;
 
-    // As in `read_rgb8()`.
+    // What the row above became: like `line`, or RGBA if it came as RGB.
     let is_rgb = matches!(expand.layout, Layout::Rgb8(_));
+    let mut line_above: Vec<u8> = Vec::new();
     let mut widened: Vec<u8> = Vec::new();
     let mut widened_above: Vec<u8> = Vec::new();
     if is_rgb {
         widened.try_reserve_exact(stride)?;
         widened_above.try_reserve_exact(stride)?;
+    } else {
+        line_above.try_reserve_exact(line_len)?;
     }
 
+    // For the passes that do not have every pixel of a row.
     let mut pass_rgba: Vec<u8> = Vec::new();
     if header.interlaced {
-        pass_rgba.try_reserve_exact(stride)?;
+        pass_rgba.try_reserve_exact(header.width.div_ceil(2) as usize * 4)?;
     }
 
     for pass in header.passes() {
         for y in 0..pass.height as usize {
             line.clear();
             idat.read(&mut line, pass.row_bytes + 1)?;
+            // After the read, for the same reason as in `read_rgba8()`.
             if y == 0 {
-                line_above.clear();
-                line_above.resize(pass.row_bytes + 1, 0);
                 if is_rgb {
                     widened_above.clear();
                     widened_above.resize(pass.width as usize * 4, 0);
+                } else {
+                    line_above.clear();
+                    line_above.resize(pass.row_bytes + 1, 0);
                 }
-                if header.interlaced {
+                if pass.x_step != 1 {
                     pass_rgba.resize(pass.width as usize * 4, 0);
                 }
             }
-            let (Some((filter, mut row)), Some((_, above))) =
-                (line.split_first_mut(), line_above.split_first())
-            else {
+            let Some((&mut filter, mut row)) = line.split_first_mut() else {
                 return Err(Error::IdatTooShort);
             };
             if is_rgb {
                 widened.clear();
-                filter::push_rgb_as_rgba(row, &mut widened);
-                filter::undo(*filter, 4, &mut widened, &widened_above)?;
-                filter::make_opaque(&mut widened);
-                row = &mut widened;
+                row = push_rgb_row(filter, row, &mut widened, &widened_above)?;
             } else {
-                filter::undo(*filter, header.bytes_per_pixel(), row, above)?;
+                let above = line_above.get(1..).unwrap_or_default();
+                filter::undo(filter, header.bytes_per_pixel(), row, above)?;
             }
 
-            if header.interlaced {
-                let start = (pass.y_start + y * pass.y_step) * stride;
-                // The first pass has a row in every eight, so the image is whole at the end of it.
-                let reached = size.min(start + pass.y_step * stride);
-                if image.len() < reached {
-                    image.resize(reached, 0);
-                }
-                let image_row = image.get_mut(start..start + stride).unwrap_or_default();
-                if pass.x_step == 1 {
-                    expand.row(row, image_row);
-                } else {
-                    expand.row(row, &mut pass_rgba);
-                    let places = image_row.as_chunks_mut::<4>().0.get_mut(pass.x_start..);
-                    let places = places.unwrap_or_default().chunks_mut(pass.x_step);
-                    for (place, from) in places.zip(pass_rgba.as_chunks().0) {
-                        if let Some(to) = place.first_mut() {
-                            *to = *from;
-                        }
+            let start = (pass.y_start + y * pass.y_step) * stride;
+            // The first pass has a row in every eight, so the image is whole at the end of it.
+            let rows = (pass.y_start + (y + 1) * pass.y_step).min(header.height as usize);
+            if image.len() < rows * stride {
+                image.resize(rows * stride, 0);
+            }
+            let image_row = image.get_mut(start..start + stride).unwrap_or_default();
+            if pass.x_step == 1 {
+                expand.row(row, image_row);
+            } else {
+                expand.row(row, &mut pass_rgba);
+                let places = image_row.as_chunks_mut::<4>().0.get_mut(pass.x_start..);
+                let places = places.unwrap_or_default().chunks_mut(pass.x_step);
+                for (place, from) in places.zip(pass_rgba.as_chunks().0) {
+                    if let Some(to) = place.first_mut() {
+                        *to = *from;
                     }
                 }
-            } else {
-                let start = image.len();
-                image.resize(start + stride, 0);
-                expand.row(row, image.get_mut(start..).unwrap_or_default());
             }
-            core::mem::swap(&mut line, &mut line_above);
-            core::mem::swap(&mut widened, &mut widened_above);
+            if is_rgb {
+                core::mem::swap(&mut widened, &mut widened_above);
+            } else {
+                core::mem::swap(&mut line, &mut line_above);
+            }
         }
     }
     Ok(())

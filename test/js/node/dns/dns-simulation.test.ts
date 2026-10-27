@@ -2,8 +2,7 @@
 // routes, sockets and the clock are the script's. What a script and a log say is in src/dns_resolver/simulation.rs.
 import { dnsSimulate } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { marked, read } from "./c-ares-driver/golden";
 import { a, aaaa, cname, encode, name, parse, RCODE, record, type Reply, TYPE, u16 } from "./dns-server";
 
 /** A word of a script that stands for these bytes. */
@@ -1004,14 +1003,6 @@ describe("c-ares", () => {
   /** What its driver says to whatever follows `shutdown`, and stops. */
   const AFTER_THE_END = "! after the end\n";
 
-  /** A line that nothing understands after each command, so that `? @` in the log ends what the command did. */
-  const marked = (script: string) =>
-    script
-      .split("\n")
-      .filter(line => line !== "")
-      .flatMap(line => [line, "@"])
-      .join("\n") + "\n";
-
   /**
    * c-ares says what became of its sockets after everything else a call did, tells of states it only passes through, and
    * closes in another order. So this is, for each command, every other line, then where each socket ended up if that is news.
@@ -1038,16 +1029,11 @@ describe("c-ares", () => {
       });
   }
 
-  // `=== title`, the script, `---`, the log of c-ares and, where this resolver's is to be another, `+++` and that log.
-  const entries = readFileSync(join(import.meta.dir, "dns-simulation-c-ares.txt"), "utf8")
-    .split(/^=== /m)
-    .slice(1)
-    .map(entry => {
-      const [head, logs] = entry.split(/^---\n/m);
-      const [theirs, ours] = logs.split(/^\+\+\+\n/m);
-      const title = head.slice(0, head.indexOf("\n"));
-      return { title, script: marked(head.slice(title.length + 1)), theirs, ours };
-    });
+  const entries = read().entries.map(entry => ({ ...entry, script: marked(entry.script) }));
+
+  test("there are entries", () => {
+    expect(entries.length).toBeGreaterThan(200);
+  });
 
   test.each(entries.filter(entry => entry.ours === undefined))("did the same: $title", ({ script, theirs }) => {
     const expected = normalized(theirs);

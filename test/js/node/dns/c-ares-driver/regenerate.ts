@@ -1,14 +1,19 @@
 // Writes the logs of c-ares in ../dns-simulation-c-ares.txt again. Linux only: it needs clang, llvm-objcopy or objcopy, and
-// a checkout of https://github.com/c-ares/c-ares at bc91829cce983a35ec01f5dbc05465858a3df469 (1.34.9).
+// a checkout of https://github.com/c-ares/c-ares at 1.34.9.
 //
 //   bun test/js/node/dns/c-ares-driver/regenerate.ts path/to/c-ares
 import { $ } from "bun";
 import { tempDir } from "harness";
-import { readFileSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { marked, path, read } from "./golden";
+
+const COMMIT = "bc91829cce983a35ec01f5dbc05465858a3df469";
 
 const [source] = process.argv.slice(2);
 if (!source) throw new Error("usage: regenerate.ts path/to/c-ares");
+const head = (await $`git -C ${source} rev-parse HEAD`.text()).trim();
+if (head !== COMMIT) throw new Error(`${source} is at ${head}, not at ${COMMIT}`);
 const lib = resolve(source, "src/lib");
 const here = import.meta.dir;
 const objcopy = Bun.which("llvm-objcopy") ?? Bun.which("objcopy");
@@ -23,32 +28,25 @@ const flags = [
 using directory = tempDir("c-ares-driver", {});
 const build = String(directory);
 const objects = await Promise.all(
-  readFileSync(join(here, "sources.txt"), "utf8")
-    .split("\n")
-    .filter(name => name !== "")
-    .map(async name => {
-      const object = join(build, name.replaceAll("/", "_") + ".o");
-      await $`clang ${flags} -D_POSIX_C_SOURCE=200809 -D_XOPEN_SOURCE=700 -c ${join(lib, name + ".c")} -o ${object}`;
+  [...new Bun.Glob("**/*.c").scanSync(lib)]
+    // The driver has random numbers of its own.
+    .filter(file => file !== "util/ares_rand.c")
+    .map(async file => {
+      const object = join(build, file.replaceAll("/", "_") + ".o");
+      await $`clang ${flags} -D_POSIX_C_SOURCE=200809 -D_XOPEN_SOURCE=700 -c ${join(lib, file)} -o ${object}`;
       await $`${objcopy} --redefine-syms=${join(here, "renamed-symbols.txt")} ${object}`;
-      if (name === "dsa/ares_slist") await $`${objcopy} --redefine-sym ares_rand_bytes=sim_slist_rand_bytes ${object}`;
+      if (file === "dsa/ares_slist.c")
+        await $`${objcopy} --redefine-sym ares_rand_bytes=sim_slist_rand_bytes ${object}`;
       return object;
     }),
 );
 const driver = join(build, "driver");
 await $`clang ${flags} ${join(here, "driver.c")} ${objects} -lpthread -o ${driver}`;
 
-const path = join(here, "../dns-simulation-c-ares.txt");
-const entries = readFileSync(path, "utf8")
-  .split(/^=== /m)
-  .slice(1)
-  .map(entry => {
-    const [head, logs] = entry.split(/^---\n/m);
-    const [, ours] = logs.split(/^\+\+\+\n/m);
-    // As the test marks a script.
-    const lines = head.split("\n").slice(1);
-    const script = lines.filter(line => line !== "").flatMap(line => [line, "@"]).join("\n") + "\n"; // prettier-ignore
-    const { stdout, exitCode } = Bun.spawnSync([driver], { stdin: Buffer.from(script) });
-    if (exitCode !== 0) throw new Error(`the driver failed on ${head}`);
-    return `=== ${head}---\n${stdout}${ours === undefined ? "" : `+++\n${ours}`}`;
-  });
-writeFileSync(path, entries.join(""));
+const { preamble, entries } = read();
+const written = entries.map(({ title, script, ours }) => {
+  const { stdout, exitCode } = Bun.spawnSync([driver], { stdin: Buffer.from(marked(script)) });
+  if (exitCode !== 0) throw new Error(`the driver failed on ${title}`);
+  return `=== ${title}\n${script}---\n${stdout}${ours === undefined ? "" : `+++\n${ours}`}`;
+});
+writeFileSync(path, preamble + written.join(""));

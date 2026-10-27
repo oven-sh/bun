@@ -1,3 +1,16 @@
+What c-ares 1.34.9 logged for each script, for dns-simulation.test.ts to compare with what src/dns_resolver logs.
+src/dns_resolver/simulation.rs says what a script and a log mean. An entry is:
+
+    === title
+    the script
+    ---
+    the log of c-ares. c-ares-driver/regenerate.ts writes it: do not edit
+    +++
+    the log of src/dns_resolver, only where it is meant to be another. The title then starts with "differs:" and says
+    what c-ares does. It is dnsSimulate() of the script with a line "@" after each of its lines. Nothing writes it again.
+
+To add an entry, write its title, its script and "---", then run regenerate.ts.
+
 === 001
 file /etc/hosts 10.0.0.3%20%20localhost%20a.test%0Afe80::1%09x.localhost%20foo.onion%0A#%20comment%0A
 query PTR ::1

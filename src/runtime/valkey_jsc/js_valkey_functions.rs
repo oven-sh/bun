@@ -219,17 +219,14 @@ macro_rules! cmd_key_varargs {
                 self, $name,
             )?;
 
-            if arguments.is_empty() {
-                return Err(global.throw_missing_arguments_value(&[$arg0_name]));
-            }
-
             let mut args: Vec<JSArgument> = Vec::with_capacity(arguments.len());
 
-            for (index, arg) in arguments.iter().enumerate() {
+            for arg in arguments.iter() {
                 let arg = arg.convert(global)?;
                 if matches!(arg, RedisArgument::Missing) {
-                    if index == 0 {
-                        return Err(global.throw_missing_arguments_value(&[$arg0_name]));
+                    // Nothing was taken yet, so this is the key.
+                    if args.is_empty() {
+                        break;
                     }
                     continue;
                 }
@@ -242,6 +239,9 @@ macro_rules! cmd_key_varargs {
                     ));
                 };
                 args.push(another);
+            }
+            if args.is_empty() {
+                return Err(global.throw_missing_arguments_value(&[$arg0_name]));
             }
             send_cmd(
                 self,

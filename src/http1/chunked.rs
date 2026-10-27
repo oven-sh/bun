@@ -52,91 +52,112 @@ impl ChunkedDecoder {
     /// extension is dropped unread, and no whitespace may come between it and the size, as in llhttp (Node.js).
     pub fn decode(&mut self, buf: &mut [u8]) -> Decoded {
         let (mut src, mut dst) = (0, 0);
-        let status = loop {
-            let Some(&byte) = buf.get(src) else {
-                break ChunkedStatus::Incomplete;
-            };
-            match self.state {
-                State::Size => match hex_digit(byte) {
-                    Some(_) if self.size_digits == MAX_SIZE_DIGITS => {
-                        break ChunkedStatus::Malformed;
+        // A local, and an `if` per state in the order in which they follow each other: going on to the next state is
+        // then falling through, where a `match` in a loop jumps through a table for every byte.
+        let mut state = self.state;
+        let status = 'decode: loop {
+            /// Reads this byte and nothing else.
+            macro_rules! expect {
+                ($byte:literal) => {
+                    match buf.get(src) {
+                        None => break 'decode ChunkedStatus::Incomplete,
+                        Some($byte) => src += 1,
+                        Some(_) => break 'decode ChunkedStatus::Malformed,
                     }
-                    Some(digit) => {
-                        self.chunk_remaining = (self.chunk_remaining << 4) | usize::from(digit);
-                        self.size_digits += 1;
-                        src += 1;
+                };
+            }
+            if state == State::Size {
+                loop {
+                    let Some(&byte) = buf.get(src) else {
+                        break 'decode ChunkedStatus::Incomplete;
+                    };
+                    let Some(digit) = hex_digit(byte) else {
+                        if self.size_digits == 0 || !matches!(byte, b';' | b'\r') {
+                            break 'decode ChunkedStatus::Malformed;
+                        }
+                        break;
+                    };
+                    if self.size_digits == MAX_SIZE_DIGITS {
+                        break 'decode ChunkedStatus::Malformed;
                     }
-                    None if self.size_digits != 0 && matches!(byte, b';' | b'\r') => {
-                        self.size_digits = 0;
-                        self.state = State::Extension;
-                    }
-                    None => break ChunkedStatus::Malformed,
-                },
-                State::Extension => match byte {
-                    b'\r' => {
-                        src += 1;
-                        self.state = State::SizeLineFeed;
-                    }
-                    b'\n' => break ChunkedStatus::Malformed,
-                    _ => src += 1,
-                },
-                State::SizeLineFeed => {
-                    if byte != b'\n' {
-                        break ChunkedStatus::Malformed;
-                    }
+                    self.chunk_remaining = (self.chunk_remaining << 4) | usize::from(digit);
+                    self.size_digits += 1;
                     src += 1;
-                    self.state = if self.chunk_remaining == 0 {
-                        State::TrailerLineStart
-                    } else {
-                        State::Data
+                }
+                self.size_digits = 0;
+                state = State::Extension;
+            }
+            if state == State::Extension {
+                loop {
+                    match buf.get(src) {
+                        None => break 'decode ChunkedStatus::Incomplete,
+                        Some(b'\r') => break,
+                        Some(b'\n') => break 'decode ChunkedStatus::Malformed,
+                        Some(_) => src += 1,
+                    }
+                }
+                src += 1;
+                state = State::SizeLineFeed;
+            }
+            if state == State::SizeLineFeed {
+                expect!(b'\n');
+                state = if self.chunk_remaining == 0 {
+                    State::TrailerLineStart
+                } else {
+                    State::Data
+                };
+            }
+            if state == State::Data {
+                let len = self.chunk_remaining.min(buf.len() - src);
+                if dst != src {
+                    buf.copy_within(src..src + len, dst);
+                }
+                src += len;
+                dst += len;
+                self.chunk_remaining -= len;
+                if self.chunk_remaining != 0 {
+                    break ChunkedStatus::Incomplete;
+                }
+                state = State::DataCarriageReturn;
+            }
+            if state == State::DataCarriageReturn {
+                expect!(b'\r');
+                state = State::DataLineFeed;
+            }
+            if state == State::DataLineFeed {
+                expect!(b'\n');
+                state = State::Size;
+                continue;
+            }
+            if state == State::TrailerLineStart {
+                let first = loop {
+                    match buf.get(src) {
+                        None => break 'decode ChunkedStatus::Incomplete,
+                        Some(b'\r') => src += 1,
+                        Some(&byte) => break byte,
+                    }
+                };
+                src += 1;
+                if first == b'\n' {
+                    break ChunkedStatus::Complete {
+                        trailing: buf.len() - src,
                     };
                 }
-                State::Data => {
-                    let len = self.chunk_remaining.min(buf.len() - src);
-                    if dst != src {
-                        buf.copy_within(src..src + len, dst);
-                    }
-                    src += len;
-                    dst += len;
-                    self.chunk_remaining -= len;
-                    if self.chunk_remaining == 0 {
-                        self.state = State::DataCarriageReturn;
-                    }
-                }
-                State::DataCarriageReturn => {
-                    if byte != b'\r' {
-                        break ChunkedStatus::Malformed;
-                    }
-                    src += 1;
-                    self.state = State::DataLineFeed;
-                }
-                State::DataLineFeed => {
-                    if byte != b'\n' {
-                        break ChunkedStatus::Malformed;
-                    }
-                    src += 1;
-                    self.state = State::Size;
-                }
-                State::TrailerLineStart => {
-                    src += 1;
-                    match byte {
-                        b'\r' => {}
-                        b'\n' => {
-                            break ChunkedStatus::Complete {
-                                trailing: buf.len() - src,
-                            };
-                        }
-                        _ => self.state = State::TrailerLine,
-                    }
-                }
-                State::TrailerLine => {
-                    src += 1;
-                    if byte == b'\n' {
-                        self.state = State::TrailerLineStart;
-                    }
+                state = State::TrailerLine;
+            }
+            // `State::TrailerLine`
+            loop {
+                let Some(&byte) = buf.get(src) else {
+                    break 'decode ChunkedStatus::Incomplete;
+                };
+                src += 1;
+                if byte == b'\n' {
+                    break;
                 }
             }
+            state = State::TrailerLineStart;
         };
+        self.state = state;
         if dst != src {
             buf.copy_within(src.., dst);
         }

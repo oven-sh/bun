@@ -70,6 +70,7 @@ int main(int argc, char **argv) {
 
 const TRAP = 0;
 const EPERM = 1;
+const EACCES = 13;
 const ENOSYS = 38;
 
 // Returns the binary path, or null when the host cannot build it (no cc, no
@@ -149,11 +150,13 @@ describe.skipIf(!isLinux)("stdio on a socketpair when seccomp denies the socket 
     },
   ];
 
-  // EPERM is what a SECCOMP_RET_ERRNO policy returns. ENOSYS is what bun's
-  // SIGSYS handler reports for a SECCOMP_RET_TRAP policy (TRAP exercises that
-  // handler, ENOSYS the errno on its own).
+  // EPERM is what a SECCOMP_RET_ERRNO policy returns, EACCES what systemd's
+  // SystemCallErrorNumber=EACCES returns. ENOSYS is what bun's SIGSYS handler
+  // reports for a SECCOMP_RET_TRAP policy (TRAP exercises that handler, ENOSYS
+  // the errno on its own).
   for (const [errnoName, errno] of [
     ["EPERM", EPERM],
+    ["EACCES", EACCES],
     ["ENOSYS", ENOSYS],
     ["TRAP", TRAP],
   ] as const) {

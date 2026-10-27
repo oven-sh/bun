@@ -113,6 +113,10 @@ const server = serve({
             ws.send(`unsubscribed:${topic}`);
             return;
           }
+          if (message === "remote-address") {
+            ws.send(`remote-address:${ws.remoteAddress}`);
+            return;
+          }
           if (message === "subscriptions") {
             ws.send(JSON.stringify(ws.subscriptions));
             return;
@@ -143,19 +147,19 @@ const server = serve({
             return;
           }
           if (message === "close-long") {
-            ws.close(1000, "x".repeat(200));
+            ws.close(1000, Buffer.alloc(200, "x").toString());
             return;
           }
           if (message === "fill-backpressure") {
-            ws.send("x".repeat(70_000));
+            ws.send(Buffer.alloc(70_000, "x").toString());
             return;
           }
           if (message === "fill-bounded-backpressure") {
-            ws.send("x".repeat(66_000));
+            ws.send(Buffer.alloc(66_000, "x").toString());
             return;
           }
           if (message === "fill-slow-backpressure") {
-            ws.send("x".repeat(256 * 1024));
+            ws.send(Buffer.alloc(256 * 1024, "x").toString());
             return;
           }
           if (typeof message === "string" && message.startsWith("publish-status:")) {

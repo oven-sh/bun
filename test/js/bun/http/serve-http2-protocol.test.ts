@@ -122,6 +122,34 @@ const barrier = async (raw: RawH2, tag: string) => {
   );
 };
 
+/** Collects an HTTP/1 WebSocket's text messages. `waitFor` rejects if the socket closes first. */
+const h1Inbox = (ws: WebSocket) => {
+  const messages: string[] = [];
+  let closed = false;
+  let wake: (() => void) | undefined;
+  const notify = () => {
+    wake?.();
+    wake = undefined;
+  };
+  ws.addEventListener("message", event => {
+    messages.push(String(event.data));
+    notify();
+  });
+  ws.addEventListener("close", () => {
+    closed = true;
+    notify();
+  });
+  return {
+    messages,
+    async waitFor(expected: string) {
+      while (!messages.includes(expected)) {
+        if (closed) throw new Error(`socket closed before ${expected}; got ${JSON.stringify(messages)}`);
+        await new Promise<void>(resolve => (wake = resolve));
+      }
+    },
+  };
+};
+
 let fx: Fixture;
 let shared: SharedSession;
 let session: http2.ClientHttp2Session;
@@ -1660,6 +1688,7 @@ test("GET WebSocket routes accept both HTTP/1 upgrade and RFC 8441 Extended CONN
     h1.onopen = () => h1.send("h1-route");
     h1.onmessage = event => resolve(String(event.data));
     h1.onerror = reject;
+    h1.onclose = event => reject(new Error(`socket closed with ${event.code} before the echo`));
   });
   expect(await h1Echo).toBe("h1-route");
   h1.close();
@@ -1856,20 +1885,12 @@ test("RFC 8441 handshake, binary echo, and close work over TLS/ALPN", async () =
 test("server.reload keeps an existing HTTP/1 WebSocket handler reference valid", async () => {
   await using reloadFixture = await startFixture({ tls: secure });
   const ws = new WebSocket(`ws://127.0.0.1:${reloadFixture.port}/ws`);
-  const messages: string[] = [];
-  let wake: (() => void) | undefined;
-  ws.onmessage = event => {
-    messages.push(String(event.data));
-    wake?.();
-    wake = undefined;
-  };
+  const inbox = h1Inbox(ws);
   await new Promise<void>((resolve, reject) => {
     ws.onopen = () => resolve();
     ws.onerror = event => reject(event);
   });
-  const waitForMessage = async (expected: string) => {
-    while (!messages.includes(expected)) await new Promise<void>(resolve => (wake = resolve));
-  };
+  const waitForMessage = inbox.waitFor;
 
   ws.send("reload-handlers");
   await waitForMessage("reload-complete");
@@ -1881,20 +1902,12 @@ test("server.reload keeps an existing HTTP/1 WebSocket handler reference valid",
 test("pub/sub bridges HTTP/1 and RFC 8441 subscribers", async () => {
   await using pubsubFixture = await startFixture({ tls: secure });
   const h1 = new WebSocket(`ws://127.0.0.1:${pubsubFixture.port}/ws`);
-  const h1Messages: string[] = [];
-  let h1Wake: (() => void) | undefined;
-  h1.onmessage = event => {
-    h1Messages.push(String(event.data));
-    h1Wake?.();
-    h1Wake = undefined;
-  };
+  const h1Messages = h1Inbox(h1);
   await new Promise<void>((resolve, reject) => {
     h1.onopen = () => resolve();
     h1.onerror = event => reject(event);
   });
-  const waitForH1 = async (expected: string) => {
-    while (!h1Messages.includes(expected)) await new Promise<void>(resolve => (h1Wake = resolve));
-  };
+  const waitForH1 = h1Messages.waitFor;
 
   const h2 = await RawH2.connect(pubsubFixture.port, secure);
   h2.headers(1, websocketHeaders(), F.END_HEADERS);
@@ -2002,7 +2015,7 @@ test("RFC 8441 pub/sub honors closeOnBackpressureLimit", async () => {
       raw.write(frame(T.DATA, 0, 1, wsClientFrame(1, "publisher-alive")));
       await waitText(1, "publisher-alive", aliveAfter);
     } else {
-      await Bun.sleep(50);
+      await barrier(raw, "no-rst");
       expect(raw.frames.some(f => f.type === T.RST_STREAM && f.streamId === 3)).toBe(false);
       raw.write(frame(T.WINDOW_UPDATE, 0, 0, u32(70_000)));
       raw.write(frame(T.WINDOW_UPDATE, 0, 3, u32(70_000)));
@@ -2625,6 +2638,33 @@ test("RFC 8441 keeps WebSocket fragmentation and control frames stream-local", a
   raw.close();
 });
 
+test("RFC 8441 ws.remoteAddress reports the peer's IP like HTTP/1", async () => {
+  const raw = await RawH2.connect(fx.port, secure);
+  raw.headers(1, websocketHeaders(), F.END_HEADERS);
+  expect(decodeStatus((await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1)).payload)).toBe(200);
+  raw.write(frame(T.DATA, 0, 1, wsClientFrame(1, "remote-address")));
+  const reply = await raw.waitFor(
+    f =>
+      f.type === T.DATA &&
+      f.streamId === 1 &&
+      f.payload[0] === 0x81 &&
+      wsServerFrame(f.payload).payload.toString().startsWith("remote-address:"),
+  );
+  raw.close();
+
+  const h1 = new WebSocket(`ws://127.0.0.1:${fx.port}/ws`);
+  const h1Reply = new Promise<string>((resolve, reject) => {
+    h1.onopen = () => h1.send("remote-address");
+    h1.onmessage = event => resolve(String(event.data));
+    h1.onerror = reject;
+    h1.onclose = event => reject(new Error(`socket closed with ${event.code} before the reply`));
+  });
+  const fromH1 = await h1Reply;
+  h1.close();
+  expect(fromH1).toMatch(/^remote-address:(::ffff:)?127\.0\.0\.1$/);
+  expect(wsServerFrame(reply.payload).payload.toString()).toBe(fromH1);
+});
+
 test("RFC 8441 pause() withholds stream flow-control credit until resume()", async () => {
   const raw = await RawH2.connect(fx.port, secure);
   raw.headers(1, websocketHeaders("/ws-pause"), F.END_HEADERS);
@@ -2940,7 +2980,7 @@ test("RFC 8441 streams a large WebSocket frame without a contiguous outbound cop
   raw.write(frame(T.DATA, F.END_STREAM, 1, wsClientFrame(8, Buffer.from([0x03, 0xe8]))));
   await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && (f.flags & F.END_STREAM) !== 0);
   raw.close();
-}, 15_000);
+});
 
 test("RFC 8441 rejects a projected fragmented message before reserving past maxPayloadLength", async () => {
   await using limitedFixture = await startFixture({
@@ -3084,7 +3124,7 @@ test("RFC 8441 accepts a dedicated-compressor frame when its exact output fits b
   for (let offset = 0; offset < firstFrame.length; offset += 16_000) {
     raw.write(frame(T.DATA, 0, 1, firstFrame.subarray(offset, offset + 16_000)));
   }
-  await Bun.sleep(50);
+  await barrier(raw, "dc-zero1");
   expect(received(raw, 1)).toBe(0);
 
   raw.write(frame(T.WINDOW_UPDATE, 0, 0, u32(4096)));
@@ -3153,7 +3193,7 @@ test("RFC 8441 does not advance a dedicated compressor when backpressure drops a
   for (let offset = 0; offset < firstFrame.length; offset += 16_000) {
     raw.write(frame(T.DATA, 0, 1, firstFrame.subarray(offset, offset + 16_000)));
   }
-  await Bun.sleep(50);
+  await barrier(raw, "dc-zero2");
   expect(received(raw, 1)).toBe(0);
 
   raw.write(frame(T.WINDOW_UPDATE, 0, 0, u32(4096)));

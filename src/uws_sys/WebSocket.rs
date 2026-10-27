@@ -325,9 +325,22 @@ impl AnyWebSocket {
             let Some(address) = address else {
                 return &mut buf[..0];
             };
-            let ip = address.ip();
-            let len = ip.len().min(buf.len());
-            buf[..len].copy_from_slice(&ip[..len]);
+            // The stream transports report the address as text. Callers expect the 4 or 16 raw bytes
+            // that the HTTP/1 socket returns.
+            let parsed = core::str::from_utf8(address.ip())
+                .ok()
+                .and_then(|text| text.parse::<std::net::IpAddr>().ok());
+            let len = match parsed {
+                Some(std::net::IpAddr::V4(v4)) if buf.len() >= 4 => {
+                    buf[..4].copy_from_slice(&v4.octets());
+                    4
+                }
+                Some(std::net::IpAddr::V6(v6)) if buf.len() >= 16 => {
+                    buf[..16].copy_from_slice(&v6.octets());
+                    16
+                }
+                _ => 0,
+            };
             return &mut buf[..len];
         }
         let (ssl_flag, ws) = self.h1_parts();

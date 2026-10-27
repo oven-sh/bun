@@ -1,5 +1,5 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, normalizeBunSnapshot, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, normalizeBunSnapshot, tempDir, tls } from "harness";
 import fs from "node:fs";
 import net from "node:net";
 import { join } from "node:path";
@@ -1836,6 +1836,107 @@ describe.concurrent("--isolate: collects globals pinned by leaked handles", () =
       "data.json": `{ "value": 1 }`,
     });
     expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
+  });
+
+  // A Worker's thread reports its exit to the context that made the Worker, which it finds by
+  // identifier. The swap stops a file's Workers, so the report arrives while the next global is
+  // made. A report that finds no context is dropped: nothing then releases the Worker's pending
+  // getHeapSnapshot() promise, which stays protected and pins the file's global.
+  //
+  // The fixture holds the swap at that point. JSC destroys the first eight global objects of a
+  // heap in the collection that finds them dead, and a later one when the next global is
+  // allocated, which is in the swap. The ninth is a realm with thousands of EventTargets, and its
+  // context takes quadratic time to notify them (#44898, until #45404): the Worker's thread exits
+  // meanwhile.
+  test.each(["--isolate", "--parallel=2"])("a Worker that the swap stops (%s)", async flag => {
+    const targets = isDebug ? 12_000 : 30_000;
+    // Only a run that fails waits this long.
+    const patience = isASAN ? 30_000 : 10_000;
+    const files = {
+      "a-worker.test.js": `
+        import { expect, test } from "bun:test";
+        import { fullGC, heapStats } from "bun:jsc";
+        import { once } from "node:events";
+        import { writeFileSync } from "node:fs";
+        import { join } from "node:path";
+        import { Worker } from "node:worker_threads";
+
+        test("leaves a Worker with a pending request", async () => {
+          // Bun.gc(true) leaves no empty block, which a realm would take before a precise allocation.
+          Bun.gc(true);
+          expect(heapStats().objectTypeCounts.GlobalObject).toBe(1);
+          let realms = Array.from({ length: 8 }, () => new ShadowRealm());
+          expect(heapStats().objectTypeCounts.GlobalObject).toBe(9);
+          realms[7].evaluate("globalThis.targets = Array.from({ length: ${targets} }, () => new EventTarget()); 0");
+
+          // It runs script, so its thread takes a while to exit. It is blocked, so it does not answer.
+          const worker = new Worker(
+            'require("node:worker_threads").parentPort.postMessage("blocked"); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0);',
+            { eval: true },
+          );
+          await once(worker, "message");
+          const before = heapStats().protectedObjectTypeCounts.Promise ?? 0;
+          writeFileSync(join(import.meta.dir, "protected-promises"), String(before));
+          worker.getHeapSnapshot();
+          expect(heapStats().protectedObjectTypeCounts.Promise).toBe(before + 1);
+
+          // The file's last script: fullGC() finds the realms dead and sweeps nothing.
+          realms = null;
+          setImmediate(() => {
+            fullGC();
+          });
+        });
+      `,
+      "b-next.test.js": `
+        import { test } from "bun:test";
+        import { heapStats } from "bun:jsc";
+        import { readFileSync } from "node:fs";
+        import { join } from "node:path";
+
+        console.log("LIVE_EVENT_TARGETS=" + (heapStats().objectTypeCounts.EventTarget ?? 0));
+
+        test("the Worker's request is released", async () => {
+          const before = Number(readFileSync(join(import.meta.dir, "protected-promises"), "utf8"));
+          const deadline = Date.now() + ${patience};
+          let now;
+          while ((now = heapStats().protectedObjectTypeCounts.Promise ?? 0) > before && Date.now() < deadline) {
+            await Bun.sleep(10);
+          }
+          console.log("UNRELEASED_PROMISES=" + (now - before));
+        });
+      `,
+    };
+    async function run() {
+      using dir = tempDir("isolate-leak-worker-exit", files);
+      const { stdout, stderr, exitCode } = await runTests(
+        String(dir),
+        [flag, `--timeout=${patience + 10_000}`],
+        ["./a-worker.test.js", "./b-next.test.js"],
+        // One --parallel worker takes both files. A concurrent compilation would keep the realm alive.
+        {
+          ...bunEnv,
+          BUN_GARBAGE_COLLECTOR_LEVEL: "0",
+          BUN_JSC_useConcurrentJIT: "0",
+          BUN_TEST_PARALLEL_SCALE_MS: "60000",
+        },
+      );
+      // --parallel prints what a file writes to stdout on its own stderr.
+      const printed = (name: string) => Number((stdout + stderr).match(new RegExp(name + "=(-?\\d+)"))?.[1]);
+      return {
+        liveEventTargets: printed("LIVE_EVENT_TARGETS"),
+        unreleasedPromises: printed("UNRELEASED_PROMISES"),
+        stderr,
+        exitCode,
+      };
+    }
+
+    let result = await run();
+    // A realm that outlives its collection is not destroyed in the swap: that run tests nothing.
+    for (let retries = 2; retries > 0 && result.liveEventTargets >= targets; retries--) result = await run();
+    if (result.exitCode !== 0) expect(result.stderr).toBe("");
+    expect(result.liveEventTargets).toBeLessThan(targets);
+    expect(result.unreleasedPromises).toBe(0);
+    expect(result.exitCode).toBe(0);
   });
 });
 

@@ -140,7 +140,7 @@ public:
     GlobalObject* globalObject() { return this; }
 
     GlobalObject(JSC::VM& vm, JSC::Structure* structure, const JSC::GlobalObjectMethodTable*);
-    GlobalObject(JSC::VM& vm, JSC::Structure* structure, uint32_t, const JSC::GlobalObjectMethodTable*);
+    GlobalObject(JSC::VM& vm, JSC::Structure* structure, uint32_t, const JSC::GlobalObjectMethodTable*, WebCore::ScriptExecutionContext* predecessor = nullptr);
 
     DOMGuardedObjectSet& guardedObjects() WTF_REQUIRES_LOCK(m_gcLock) { return m_guardedObjects; }
 
@@ -158,7 +158,8 @@ public:
     static GlobalObject* create(JSC::VM& vm, JSC::Structure* structure);
     static GlobalObject* create(JSC::VM& vm, JSC::Structure* structure, uint32_t scriptExecutionContextId);
     static GlobalObject* create(JSC::VM& vm, JSC::Structure* structure, const JSC::GlobalObjectMethodTable* methodTable);
-    static GlobalObject* create(JSC::VM& vm, JSC::Structure* structure, uint32_t scriptExecutionContextId, const JSC::GlobalObjectMethodTable* methodTable);
+    // `predecessor`: see ScriptExecutionContext's constructor.
+    static GlobalObject* create(JSC::VM& vm, JSC::Structure* structure, uint32_t scriptExecutionContextId, const JSC::GlobalObjectMethodTable* methodTable, WebCore::ScriptExecutionContext* predecessor = nullptr);
 
     JSC::Structure* domStructure(WebCore::DOMStructureSlot slot) const
     {

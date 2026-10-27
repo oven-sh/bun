@@ -609,9 +609,9 @@ GlobalObject* GlobalObject::create(JSC::VM& vm, JSC::Structure* structure, const
     return ptr;
 }
 
-GlobalObject* GlobalObject::create(JSC::VM& vm, JSC::Structure* structure, uint32_t scriptExecutionContextId, const JSC::GlobalObjectMethodTable* methodTable)
+GlobalObject* GlobalObject::create(JSC::VM& vm, JSC::Structure* structure, uint32_t scriptExecutionContextId, const JSC::GlobalObjectMethodTable* methodTable, WebCore::ScriptExecutionContext* predecessor)
 {
-    GlobalObject* ptr = new (NotNull, JSC::allocateCell<GlobalObject>(vm)) GlobalObject(vm, structure, scriptExecutionContextId, methodTable);
+    GlobalObject* ptr = new (NotNull, JSC::allocateCell<GlobalObject>(vm)) GlobalObject(vm, structure, scriptExecutionContextId, methodTable, predecessor);
     ptr->finishCreation(vm);
     return ptr;
 }
@@ -864,16 +864,14 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
 
     // The new global must inherit the old one's ScriptExecutionContext identifier so that
     // `Bun.isMainThread` (identifier == 1) and cross-thread task dispatch keep working.
-    // Move the old context to a fresh identifier first to free the slot.
+    // Its context takes the identifier over from the old one, which is registered until then.
     const auto inheritedId = oldContext->identifier();
-    oldContext->removeFromContextsMap();
-    oldContext->regenerateIdentifier();
 
     auto* structure = Zig::GlobalObject::createStructure(vm);
     if (!structure) [[unlikely]] {
         BUN_PANIC("Failed to allocate global object structure for test isolation");
     }
-    auto* globalObject = Zig::GlobalObject::create(vm, structure, inheritedId, &methodTableOfProgram(inheritedId));
+    auto* globalObject = Zig::GlobalObject::create(vm, structure, inheritedId, &methodTableOfProgram(inheritedId), oldContext);
     if (!globalObject) [[unlikely]] {
         BUN_PANIC("Failed to allocate global object for test isolation");
     }
@@ -1393,13 +1391,13 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, const JSC::Gl
     globalEventScope->m_context = m_scriptExecutionContext;
 }
 
-GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::ScriptExecutionContextIdentifier contextId, const JSC::GlobalObjectMethodTable* methodTable)
+GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::ScriptExecutionContextIdentifier contextId, const JSC::GlobalObjectMethodTable* methodTable, WebCore::ScriptExecutionContext* predecessor)
     : Base(vm, structure, methodTable)
     , m_bunVM(Bun__getVM())
     , m_constructors(makeUnique<WebCore::DOMConstructors>())
     , m_world(static_cast<JSVMClientData*>(vm.clientData)->normalWorld())
     , m_builtinInternalFunctions(makeUnique<WebCore::JSBuiltinInternalFunctions>(vm))
-    , m_scriptExecutionContext(new WebCore::ScriptExecutionContext(&vm, this, contextId))
+    , m_scriptExecutionContext(new WebCore::ScriptExecutionContext(&vm, this, contextId, predecessor))
     , globalEventScope(adoptRef(*new Bun::GlobalEventScope(m_scriptExecutionContext)))
 {
     // m_scriptExecutionContext = globalEventScope.m_context;

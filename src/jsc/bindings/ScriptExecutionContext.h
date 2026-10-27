@@ -54,7 +54,8 @@ class ScriptExecutionContext : public CanMakeWeakPtr<ScriptExecutionContext>, pu
 
 public:
     ScriptExecutionContext(JSC::VM* vm, Zig::GlobalObject* globalObject);
-    ScriptExecutionContext(JSC::VM* vm, Zig::GlobalObject* globalObject, ScriptExecutionContextIdentifier identifier);
+    // `predecessor` (`bun test --isolate`): the context registered under `identifier` that this one succeeds on its VM.
+    ScriptExecutionContext(JSC::VM* vm, Zig::GlobalObject* globalObject, ScriptExecutionContextIdentifier identifier, ScriptExecutionContext* predecessor = nullptr);
     // A graph's context in `parent`'s realm.
     explicit ScriptExecutionContext(ScriptExecutionContext& parent);
     // A further context in `parent`'s global, for a Bun.ModuleGraph: what the graph's
@@ -140,15 +141,11 @@ public:
 
     void checkConsistency() const;
 
-    void regenerateIdentifier();
-
     // bun:sqlite and node:sqlite databases are closed with the Bun.ModuleGraph whose script opened
     // them, as they are with the VM that did. `ownerOfSQLiteDatabase`: the context to record for
     // one that is being opened (0: the running script is not a graph's).
     static ScriptExecutionContextIdentifier ownerOfSQLiteDatabase(JSC::JSGlobalObject*);
     void closeSQLiteDatabases();
-    void addToContextsMap();
-    void removeFromContextsMap();
 
     void postTaskConcurrently(Function<void(ScriptExecutionContext&)>&& lambda);
     // Executes the task on context's thread asynchronously.
@@ -185,6 +182,10 @@ public:
     static ScriptExecutionContext* getMainThreadScriptExecutionContext();
 
 private:
+    void addToContextsMap();
+    void removeFromContextsMap();
+    void takeOverIdentifierOf(ScriptExecutionContext& predecessor);
+
     std::atomic<bool> m_isTerminating { false };
     RefPtr<Bun::SharedEnvStore> m_sharedEnvStore;
     JSC::VM* m_vm = nullptr;

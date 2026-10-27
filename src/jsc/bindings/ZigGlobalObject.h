@@ -718,8 +718,7 @@ public:
 
     JSObject* cryptoObject() const { return m_cryptoObject.getInitializedOnMainThread(this); }
     JSObject* JSDOMFileConstructor() const { return m_JSDOMFileConstructor.getInitializedOnMainThread(this); }
-    // The native fetch that `Bun.fetch` starts as. Internal modules (node-fetch, undici) read it from here so
-    // a user who replaces `Bun.fetch` or `globalThis.fetch` does not change what they call.
+    // The native fetch for internal modules. A user can replace `Bun.fetch`, not this.
     JSObject* nativeFetchFunction() const { return m_nativeFetchFunction.getInitializedOnMainThread(this); }
 
     JSMap* nodeWorkerEnvironmentData() { return m_nodeWorkerEnvironmentData.get(); }

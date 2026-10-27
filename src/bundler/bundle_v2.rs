@@ -2761,8 +2761,9 @@ pub mod bv2_impl {
             let mut had_busted_dir_cache = false;
             let resolve_result = loop {
                 // SAFETY: see `transpiler` note above.
+                let options = unsafe { &(*transpiler).options };
                 if let Some(external) = self.external_file_result(
-                    unsafe { &(*transpiler).options },
+                    options,
                     source_dir,
                     &import_record.specifier,
                     import_record.kind,
@@ -6436,8 +6437,7 @@ pub mod bv2_impl {
             )
         }
 
-        /// `options::ExternalFiles`: what the resolver gives for its own externals, for a
-        /// specifier that matches as written or names a path that a wildcard matches.
+        /// The resolver's external result for a specifier that `options::ExternalFiles` matches.
         fn external_file_result<'r>(
             &self,
             options: &options::BundleOptions<'_>,

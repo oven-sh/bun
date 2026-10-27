@@ -181,8 +181,7 @@ pub(crate) fn init_external_modules(
     result
 }
 
-/// File-path `external` entries as only a bundle matches them, like esbuild: the
-/// specifier as written, or a wildcard against the path the specifier names.
+/// File-path `external` entries as only a bundle matches them: as written, or a wildcard by path.
 #[derive(Default)]
 pub struct ExternalFiles {
     /// Entries as written. A specifier that matches stays in the output as written.

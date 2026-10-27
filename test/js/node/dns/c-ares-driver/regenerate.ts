@@ -3,8 +3,8 @@
 //
 //   bun test/js/node/dns/c-ares-driver/regenerate.ts path/to/c-ares
 import { $ } from "bun";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { tempDir } from "harness";
+import { readFileSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 const [source] = process.argv.slice(2);
@@ -20,39 +20,35 @@ const flags = [
   ...[here, resolve(source, "include"), lib, join(lib, "include")].map(directory => `-I${directory}`),
 ];
 
-const build = mkdtempSync(join(tmpdir(), "c-ares-driver-"));
-try {
-  const objects = await Promise.all(
-    readFileSync(join(here, "sources.txt"), "utf8")
-      .split("\n")
-      .filter(name => name !== "")
-      .map(async name => {
-        const object = join(build, name.replaceAll("/", "_") + ".o");
-        await $`clang ${flags} -D_POSIX_C_SOURCE=200809 -D_XOPEN_SOURCE=700 -c ${join(lib, name + ".c")} -o ${object}`;
-        await $`${objcopy} --redefine-syms=${join(here, "renamed-symbols.txt")} ${object}`;
-        if (name === "dsa/ares_slist")
-          await $`${objcopy} --redefine-sym ares_rand_bytes=sim_slist_rand_bytes ${object}`;
-        return object;
-      }),
-  );
-  const driver = join(build, "driver");
-  await $`clang ${flags} ${join(here, "driver.c")} ${objects} -lpthread -o ${driver}`;
+using directory = tempDir("c-ares-driver", {});
+const build = String(directory);
+const objects = await Promise.all(
+  readFileSync(join(here, "sources.txt"), "utf8")
+    .split("\n")
+    .filter(name => name !== "")
+    .map(async name => {
+      const object = join(build, name.replaceAll("/", "_") + ".o");
+      await $`clang ${flags} -D_POSIX_C_SOURCE=200809 -D_XOPEN_SOURCE=700 -c ${join(lib, name + ".c")} -o ${object}`;
+      await $`${objcopy} --redefine-syms=${join(here, "renamed-symbols.txt")} ${object}`;
+      if (name === "dsa/ares_slist") await $`${objcopy} --redefine-sym ares_rand_bytes=sim_slist_rand_bytes ${object}`;
+      return object;
+    }),
+);
+const driver = join(build, "driver");
+await $`clang ${flags} ${join(here, "driver.c")} ${objects} -lpthread -o ${driver}`;
 
-  const path = join(here, "../dns-simulation-c-ares.txt");
-  const entries = readFileSync(path, "utf8")
-    .split(/^=== /m)
-    .slice(1)
-    .map(entry => {
-      const [head, logs] = entry.split(/^---\n/m);
-      const [, ours] = logs.split(/^\+\+\+\n/m);
-      // As the test marks a script.
-      const lines = head.split("\n").slice(1);
-      const script = lines.filter(line => line !== "").flatMap(line => [line, "@"]).join("\n") + "\n"; // prettier-ignore
-      const { stdout, exitCode } = Bun.spawnSync([driver], { stdin: Buffer.from(script) });
-      if (exitCode !== 0) throw new Error(`the driver failed on ${head}`);
-      return `=== ${head}---\n${stdout}${ours === undefined ? "" : `+++\n${ours}`}`;
-    });
-  writeFileSync(path, entries.join(""));
-} finally {
-  rmSync(build, { recursive: true, force: true });
-}
+const path = join(here, "../dns-simulation-c-ares.txt");
+const entries = readFileSync(path, "utf8")
+  .split(/^=== /m)
+  .slice(1)
+  .map(entry => {
+    const [head, logs] = entry.split(/^---\n/m);
+    const [, ours] = logs.split(/^\+\+\+\n/m);
+    // As the test marks a script.
+    const lines = head.split("\n").slice(1);
+    const script = lines.filter(line => line !== "").flatMap(line => [line, "@"]).join("\n") + "\n"; // prettier-ignore
+    const { stdout, exitCode } = Bun.spawnSync([driver], { stdin: Buffer.from(script) });
+    if (exitCode !== 0) throw new Error(`the driver failed on ${head}`);
+    return `=== ${head}---\n${stdout}${ours === undefined ? "" : `+++\n${ours}`}`;
+  });
+writeFileSync(path, entries.join(""));

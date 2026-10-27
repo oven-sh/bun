@@ -327,7 +327,11 @@ describe("dns", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: expect.stringMatching(/^\[.*\]\n$/),
+        stderr: "",
+        exitCode: 0,
+      });
       return JSON.parse(stdout);
     }
 
@@ -370,6 +374,22 @@ describe("dns", () => {
       ]);
       expect(await lookups({ RES_OPTIONS: "ndots:3" }, ["host.other.test", { family: 4 }])).toEqual([
         ["host.other.test", ["10.0.0.2 4"], ["host.other.test.corp.test 1", "host.other.test 1"]],
+      ]);
+    });
+
+    test("only addresses of the type that was asked for are taken", async () => {
+      expect(await lookups({}, ["mixed.test", { family: 4 }], ["mixed.test", { family: 6 }], ["mixed.test"])).toEqual([
+        ["mixed.test", ["10.0.0.7 4"], ["mixed.test 1"]],
+        ["mixed.test", ["2001:db8::7 6"], ["mixed.test 28"]],
+        ["mixed.test", ["10.0.0.7 4", "2001:db8::7 6"], []],
+      ]);
+    });
+
+    test("with an IPv4 address in hand, a server that is silent about AAAA is not asked again", async () => {
+      expect(await lookups({}, ["silent"], ["silent"])).toEqual([
+        ["silent", ["10.0.0.8 4"], ["silent.corp.test 1", "silent.corp.test 28", "silent 1", "silent 28"]],
+        // That there is no silent.corp.test is remembered.
+        ["silent", ["10.0.0.8 4"], ["silent 1", "silent 28"]],
       ]);
     });
 

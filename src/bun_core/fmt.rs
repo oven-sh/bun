@@ -3510,7 +3510,7 @@ pub fn int_as_bytes<T: ::itoa::Integer>(buf: &mut [u8], value: T) -> &[u8] {
 /// returning a [`CStr`] borrowing the head of `buf`.
 ///
 /// Used when handing an integer to a C API that wants a `*const c_char`
-/// service/port string (e.g. `getaddrinfo`, `ares_getaddrinfo`). 21 bytes
+/// service/port string (e.g. `getaddrinfo`). 21 bytes
 /// covers `u64::MAX` (20 digits) + NUL; `u16`/`u32` callers widen via `as u64`.
 #[inline]
 pub fn itoa_z(buf: &mut [u8; 21], n: u64) -> &core::ffi::CStr {

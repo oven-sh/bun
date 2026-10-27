@@ -1182,13 +1182,24 @@ static int out_txt(Str *o, const unsigned char *abuf, int alen)
 }
 static int out_a(Str *o, const unsigned char *b, int n) { return out_addresses(o, b, n, AF_INET); }
 static int out_aaaa(Str *o, const unsigned char *b, int n) { return out_addresses(o, b, n, AF_INET6); }
+/* As Bun and Node.js read it: the name of the host that an A reply is about. */
+static int out_cname(Str *o, const unsigned char *abuf, int alen)
+{
+  struct hostent *host = NULL;
+  int             rc   = ares_parse_a_reply(abuf, alen, &host, NULL, NULL);
+  if (rc != ARES_SUCCESS) return rc;
+  str_add(o, " ", 1);
+  str_ctext(o, host->h_name);
+  ares_free_hostent(host);
+  return rc;
+}
 
 typedef int (*OutFn)(Str *, const unsigned char *, int);
 
 /* `kind`'s reading of a message, as ` ...` or ` error E...`. */
 static void c_reply(Str *o, enum Kind kind, const unsigned char *abuf, int alen)
 {
-  static const OutFn fns[] = { out_a, out_aaaa, NULL, out_caa, out_a, out_mx, out_naptr, out_ns, out_ptr, out_soa, out_srv, out_txt };
+  static const OutFn fns[] = { out_a, out_aaaa, NULL, out_caa, out_cname, out_mx, out_naptr, out_ns, out_ptr, out_soa, out_srv, out_txt };
   size_t             mark  = o->len;
   int                rc;
   if (kind == K_ANY) {

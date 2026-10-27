@@ -2,7 +2,7 @@
 
 use core::net::IpAddr;
 
-use crate::record::{Name, RData, Record, class};
+use crate::message::{Message, Name, RData, class, rr_type};
 use crate::{Error, Result};
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -25,11 +25,12 @@ impl Family {
     }
 }
 
+/// A CNAME record.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Alias {
-    pub ttl: i32,
-    pub alias: Name,
-    pub name: Name,
+pub(crate) struct Alias {
+    pub(crate) ttl: i32,
+    pub(crate) owner: Name,
+    pub(crate) target: Name,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -41,12 +42,12 @@ pub struct Node {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct AddrInfo {
-    pub name: Option<Name>,
-    pub aliases: Vec<Alias>,
+    pub(crate) name: Option<Name>,
+    pub(crate) aliases: Vec<Alias>,
     pub nodes: Vec<Node>,
 }
 
-pub(crate) fn ttl_as_int(ttl: u32) -> i32 {
+fn ttl_as_int(ttl: u32) -> i32 {
     i32::try_from(ttl).unwrap_or(i32::MAX)
 }
 
@@ -65,31 +66,38 @@ impl AddrInfo {
         });
     }
 
-    /// Adds the A, AAAA and CNAME records of `record`'s answer.
-    pub(crate) fn add_answer(
+    /// Adds the CNAME records of `response`'s answer section, and the addresses of the type that its
+    /// question asks for.
+    pub(crate) fn add_response(
         &mut self,
-        record: &Record,
+        response: &Message,
         cname_alone_is_no_data: bool,
         port: u16,
     ) -> Result<()> {
-        let mut hostname = record.question.first().map(|question| &question.name);
+        let qtype = response.question.qtype;
+        let is_asked_for = |rr_type| qtype == rr_type || qtype == rr_type::ANY;
+        let mut hostname = &response.question.name;
         let mut found = AddrInfo::default();
 
-        for rr in &record.answer {
+        for rr in &response.answer {
             if rr.class != class::IN {
                 continue;
             }
             match &rr.data {
                 RData::Cname(target) => {
-                    hostname = Some(target);
+                    hostname = target;
                     found.aliases.push(Alias {
                         ttl: ttl_as_int(rr.ttl),
-                        alias: rr.name.clone(),
-                        name: target.clone(),
+                        owner: rr.name.clone(),
+                        target: target.clone(),
                     });
                 }
-                RData::A(address) => found.push(IpAddr::from(*address), port, rr.ttl),
-                RData::Aaaa(address) => found.push(IpAddr::from(*address), port, rr.ttl),
+                RData::A(address) if is_asked_for(rr_type::A) => {
+                    found.push(IpAddr::from(*address), port, rr.ttl);
+                }
+                RData::Aaaa(address) if is_asked_for(rr_type::AAAA) => {
+                    found.push(IpAddr::from(*address), port, rr.ttl);
+                }
                 _ => {}
             }
         }
@@ -97,7 +105,6 @@ impl AddrInfo {
             return Err(Error::ENODATA);
         }
 
-        let hostname = hostname.ok_or(Error::EBADRESP)?;
         let is_same_name = self
             .name
             .as_ref()

@@ -1403,8 +1403,8 @@ impl FetchTasklet {
         // The hostname never resolved: report the resolver error (`ENOTFOUND`,
         // ...) with `syscall`/`hostname`, the same shape `node:dns` produces,
         // rather than a generic connect-failure message. `dns_error` is the
-        // raw getaddrinfo(3) code and is nonzero on this path, so `init_eai`
-        // is always `Some`.
+        // raw getaddrinfo(3) code and is nonzero on this path, so
+        // `error_from_eai` is always `Some`.
         if fail == http::Error::DNSResolveFailed {
             if let Some(dns_err) = bun_dns::error_from_eai(self.result.dns_error) {
                 // `dns_hostname` is the owned copy of the exact name the

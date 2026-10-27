@@ -4,7 +4,9 @@ use core::net::{IpAddr, SocketAddr};
 
 use bun_collections::ArrayHashMap;
 use bun_core::env_var;
-use bun_dns_resolver::io::{FileError, Io, IoError, Opened, Settings, Socket, Transport, Variable};
+use bun_dns_resolver::io::{
+    EnvVar, FileError, FileIdentity, Io, IoError, Opened, Settings, Socket, Transport,
+};
 #[cfg(not(windows))]
 use bun_io as Async;
 #[cfg(not(windows))]
@@ -16,6 +18,8 @@ use bun_sys::{self as sys, Fd, socket};
 use super::Resolver;
 #[cfg(windows)]
 use super::UvDnsPoll;
+#[cfg(not(windows))]
+use super::dns_body::js_event_loop_ctx;
 
 #[cfg(windows)]
 type PollType = UvDnsPoll;
@@ -41,6 +45,14 @@ fn io_error(error: &sys::Error) -> IoError {
     match error.get_errno() {
         sys::E::EAGAIN | sys::E::EINPROGRESS => IoError::WouldBlock,
         _ => IoError::Failed,
+    }
+}
+
+/// A connection that is still being made is no failure.
+fn connect(fd: Fd, address: &Address) -> sys::Maybe<()> {
+    match socket::connect(fd, address) {
+        Err(error) if io_error(&error) == IoError::Failed => Err(error),
+        _ => Ok(()),
     }
 }
 
@@ -87,13 +99,8 @@ impl SystemIo {
             && socket::set_option(fd, libc::IPPROTO_TCP, libc::TCP_FASTOPEN_CONNECT, 1).is_ok();
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         let fast_open = false;
-        match socket::connect(fd, server).map_err(|error| io_error(&error)) {
-            Ok(()) | Err(IoError::WouldBlock) => Ok(fast_open),
-            Err(IoError::Failed) => Err(sys::Error::from_code(
-                sys::E::ECONNREFUSED,
-                sys::Tag::connect,
-            )),
-        }
+        connect(fd, server)?;
+        Ok(fast_open)
     }
 }
 
@@ -123,8 +130,7 @@ impl Io for SystemIo {
     }
 
     fn send(&mut self, socket: Socket, data: &[u8]) -> Result<usize, IoError> {
-        let socket = fd_of(socket);
-        match sys::send_non_block(socket, data) {
+        match sys::send_non_block(fd_of(socket), data) {
             Ok(0) => Err(IoError::Failed),
             Ok(sent) => Ok(sent),
             Err(error) => Err(io_error(&error)),
@@ -136,15 +142,13 @@ impl Io for SystemIo {
         socket: Socket,
         buffer: &mut [u8],
     ) -> Result<(usize, SocketAddr), IoError> {
-        let socket = fd_of(socket);
         let (received, from) =
-            socket::recv_from(socket, buffer).map_err(|error| io_error(&error))?;
+            socket::recv_from(fd_of(socket), buffer).map_err(|error| io_error(&error))?;
         Ok((received, from.to_socket_addr().ok_or(IoError::Failed)?))
     }
 
     fn recv(&mut self, socket: Socket, buffer: &mut [u8]) -> Result<usize, IoError> {
-        let socket = fd_of(socket);
-        match sys::recv_non_block(socket, buffer) {
+        match sys::recv_non_block(fd_of(socket), buffer) {
             Ok(0) => Err(IoError::Failed),
             Ok(received) => Ok(received),
             Err(error) => Err(io_error(&error)),
@@ -152,9 +156,8 @@ impl Io for SystemIo {
     }
 
     #[cfg(not(windows))]
-    fn watch(&mut self, socket: Socket, readable: bool, writable: bool) {
-        let socket = fd_of(socket);
-        let ctx = Async::posix_event_loop::get_vm_ctx(Async::AllocatorType::Js);
+    fn watch(&mut self, socket: Socket, writable: bool) {
+        let fd = fd_of(socket);
         let owner = Async::Owner::new(
             Async::posix_event_loop::poll_tag::DNS_RESOLVER,
             self.resolver.cast::<()>(),
@@ -163,63 +166,51 @@ impl Io for SystemIo {
         let loop_ = unsafe { &mut *self.vm.event_loop_handle.unwrap() };
         let poll = *self
             .polls
-            .entry(socket)
-            .or_insert_with(|| FilePoll::init(ctx, socket, Default::default(), owner));
+            .entry(fd)
+            .or_insert_with(|| FilePoll::init(js_event_loop_ctx(), fd, Default::default(), owner));
         // SAFETY: a live slot of the poll hive, freed only by `close`; JS thread.
         let poll = unsafe { &mut *poll };
 
-        let have_readable = poll.flags.contains(Async::PollFlag::PollReadable);
-        let have_writable = poll.flags.contains(Async::PollFlag::PollWritable);
         // `FilePoll` cannot drop one direction, and a writable one left armed spins once the socket connects.
-        if (have_readable && !readable) || (have_writable && !writable) {
+        if poll.flags.contains(Async::PollFlag::PollWritable) && !writable {
             let _ = poll.unregister(loop_, false);
-            if readable {
-                let _ = poll.register(loop_, Async::PollKind::Readable, false);
-            }
-            if writable {
-                let _ = poll.register(loop_, Async::PollKind::Writable, false);
-            }
-        } else {
-            if readable && !have_readable {
-                let _ = poll.register(loop_, Async::PollKind::Readable, false);
-            }
-            if writable && !have_writable {
-                let _ = poll.register(loop_, Async::PollKind::Writable, false);
-            }
+            let _ = poll.register(loop_, Async::PollKind::Readable, false);
+            return;
+        }
+        if !poll.flags.contains(Async::PollFlag::PollReadable) {
+            let _ = poll.register(loop_, Async::PollKind::Readable, false);
+        }
+        if writable && !poll.flags.contains(Async::PollFlag::PollWritable) {
+            let _ = poll.register(loop_, Async::PollKind::Writable, false);
         }
     }
 
     #[cfg(windows)]
-    fn watch(&mut self, socket: Socket, readable: bool, writable: bool) {
-        let socket = fd_of(socket);
+    fn watch(&mut self, socket: Socket, writable: bool) {
         use bun_sys::windows::libuv as uv;
-        let poll: *mut UvDnsPoll = match self.polls.get(&socket) {
+        let fd = fd_of(socket);
+        let poll: *mut UvDnsPoll = match self.polls.get(&fd) {
             Some(poll) => *poll,
             None => {
-                let poll = UvDnsPoll::new(self.resolver, socket);
+                let poll = UvDnsPoll::new(self.resolver, fd);
                 // SAFETY: the live loop of this thread, and a fresh allocation with a zeroed `uv_poll_t`.
                 if unsafe {
-                    uv::uv_poll_init_socket(
-                        self.vm.uv_loop(),
-                        &mut (*poll).poll,
-                        socket.native() as _,
-                    )
+                    uv::uv_poll_init_socket(self.vm.uv_loop(), &mut (*poll).poll, fd.native() as _)
                 } < 0
                 {
                     UvDnsPoll::destroy(poll);
                     return;
                 }
-                bun_core::handle_oom(self.polls.put(socket, poll));
+                bun_core::handle_oom(self.polls.put(fd, poll));
                 poll
             }
         };
-        let events = (if readable { uv::UV_READABLE } else { 0 })
-            | (if writable { uv::UV_WRITABLE } else { 0 });
+        let events = uv::UV_READABLE | (if writable { uv::UV_WRITABLE } else { 0 });
         // SAFETY: `poll` is the live entry of the map.
         if unsafe { uv::uv_poll_start(&mut (*poll).poll, events, Some(Resolver::on_dns_poll_uv)) }
             < 0
         {
-            let _ = self.polls.swap_remove(&socket);
+            let _ = self.polls.swap_remove(&fd);
             // SAFETY: the handle is initialized, so `uv_close` is how it goes; `on_close_uv` frees it.
             unsafe {
                 uv::uv_close(
@@ -231,14 +222,12 @@ impl Io for SystemIo {
     }
 
     fn close(&mut self, socket: Socket) {
-        let socket = fd_of(socket);
-        if let Some(poll) = self.polls.remove(&socket) {
+        let fd = fd_of(socket);
+        if let Some(poll) = self.polls.remove(&fd) {
             // SAFETY: the live poll `watch` made for this socket, which nothing refers to any more.
             #[cfg(not(windows))]
             unsafe {
-                (*poll).deinit_with_vm(Async::posix_event_loop::get_vm_ctx(
-                    Async::AllocatorType::Js,
-                ))
+                (*poll).deinit_with_vm(js_event_loop_ctx())
             };
             // SAFETY: libuv owns the handle until `on_close_uv` frees the allocation.
             #[cfg(windows)]
@@ -249,7 +238,7 @@ impl Io for SystemIo {
                 )
             };
         }
-        socket::close(socket);
+        socket::close(fd);
     }
 
     fn random(&mut self, bytes: &mut [u8]) {
@@ -257,9 +246,7 @@ impl Io for SystemIo {
     }
 
     fn unix_time(&mut self) -> i64 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map_or(0, |elapsed| elapsed.as_secs() as i64)
+        bun_core::time::timestamp()
     }
 
     fn read_file(&mut self, path: &[u8]) -> Result<Vec<u8>, FileError> {
@@ -269,16 +256,22 @@ impl Io for SystemIo {
         })
     }
 
-    fn modified_time(&mut self, path: &[u8]) -> Option<i64> {
+    fn file_identity(&mut self, path: &[u8]) -> Option<FileIdentity> {
         let stat = sys::stat(&bun_core::ZBox::from_bytes(path)).ok()?;
-        Some(sys::PosixStat::init(&stat).mtime().sec)
+        let stat = sys::PosixStat::init(&stat);
+        Some(FileIdentity {
+            modified_at: stat.mtime().sec,
+            size: stat.size,
+            inode: stat.ino,
+            device: stat.dev,
+        })
     }
 
-    fn env(&mut self, variable: Variable) -> Option<Vec<u8>> {
+    fn env(&mut self, variable: EnvVar) -> Option<Vec<u8>> {
         match variable {
-            Variable::LocalDomain => env_var::LOCALDOMAIN.get(),
-            Variable::ResOptions => env_var::RES_OPTIONS.get(),
-            Variable::HostAliases => env_var::HOSTALIASES.get(),
+            EnvVar::LocalDomain => env_var::LOCALDOMAIN.get(),
+            EnvVar::ResOptions => env_var::RES_OPTIONS.get(),
+            EnvVar::HostAliases => env_var::HOSTALIASES.get(),
         }
         .map(<[u8]>::to_vec)
     }
@@ -355,9 +348,7 @@ impl Io for SystemIo {
             Err(_) => return Err(IoError::Failed),
         };
         let _close = scopeguard::guard(fd, socket::close);
-        if let Err(IoError::Failed) =
-            socket::connect(fd, &destination).map_err(|error| io_error(&error))
-        {
+        if connect(fd, &destination).is_err() {
             return Ok(None);
         }
         let local = socket::local_address(fd).map_err(|_| IoError::Failed)?;

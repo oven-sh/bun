@@ -3,10 +3,8 @@
 use ::bstr::BStr;
 use bun_core as bstr;
 use bun_dns::Error;
-use bun_dns_resolver::addrinfo::AddrInfo;
-use bun_dns_resolver::reply::{
-    Address, Addresses, AnyReply, Caa, Kind, Mx, Naptr, Reply, Soa, Srv,
-};
+use bun_dns_resolver::addr_info::AddrInfo;
+use bun_dns_resolver::reply::{Address, Addresses, AnyReply, Caa, Mx, Naptr, Reply, Soa, Srv};
 use bun_dns_resolver::{Answer, Host, NameInfo};
 use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{JSGlobalObject, JSValue, JsResult, StringJsc, SystemError, bun_string_jsc};
@@ -51,7 +49,7 @@ fn caa_to_js(caa: &Caa, global: &JSGlobalObject) -> JsResult<JSValue> {
         b"critical",
         JSValue::js_number(f64::from(caa.critical)),
     );
-    let property = bstr::StringView::borrow_utf8(&caa.property);
+    let property = bstr::StringView::borrow_utf8(&caa.tag);
     object.put_may_be_index(global, &property, utf8_to_js(global, &caa.value)?)?;
     Ok(object)
 }
@@ -65,7 +63,7 @@ fn srv_to_js(srv: &Srv, global: &JSGlobalObject) -> JsResult<JSValue> {
     );
     object.put(global, b"weight", JSValue::js_number(f64::from(srv.weight)));
     object.put(global, b"port", JSValue::js_number(f64::from(srv.port)));
-    object.put(global, b"name", utf8_to_js(global, &srv.host)?);
+    object.put(global, b"name", utf8_to_js(global, &srv.target)?);
     Ok(object)
 }
 
@@ -74,9 +72,9 @@ fn mx_to_js(mx: &Mx, global: &JSGlobalObject) -> JsResult<JSValue> {
     object.put(
         global,
         b"priority",
-        JSValue::js_number(f64::from(mx.priority)),
+        JSValue::js_number(f64::from(mx.preference)),
     );
-    object.put(global, b"exchange", utf8_to_js(global, &mx.host)?);
+    object.put(global, b"exchange", utf8_to_js(global, &mx.exchange)?);
     Ok(object)
 }
 
@@ -191,12 +189,8 @@ fn any_to_js(any: &AnyReply, global: &JSGlobalObject) -> JsResult<JSValue> {
     Ok(records.array)
 }
 
-fn reply_to_js(kind: Kind, reply: &Reply, global: &JSGlobalObject) -> JsResult<JSValue> {
+fn reply_to_js(reply: &Reply, global: &JSGlobalObject) -> JsResult<JSValue> {
     match reply {
-        // A CNAME lookup has one answer, in an array like the others.
-        Reply::Addresses(addresses) if kind == Kind::Cname => {
-            names_to_js(addresses.name.as_slice(), global)
-        }
         Reply::Addresses(addresses) => array_of(global, &addresses.addresses, address_to_js),
         Reply::Any(any) => any_to_js(any, global),
         Reply::Caa(caa) => array_of(global, caa, caa_to_js),
@@ -248,14 +242,9 @@ pub(crate) fn is_empty(answer: &Answer) -> bool {
     }
 }
 
-/// `kind` is that of the query a [`Reply`] answers.
-pub(crate) fn answer_to_js(
-    kind: Option<Kind>,
-    answer: &Answer,
-    global: &JSGlobalObject,
-) -> JsResult<JSValue> {
+pub(crate) fn answer_to_js(answer: &Answer, global: &JSGlobalObject) -> JsResult<JSValue> {
     match answer {
-        Answer::Reply(reply) => reply_to_js(kind.unwrap_or(Kind::A), reply, global),
+        Answer::Reply(reply) => reply_to_js(reply, global),
         Answer::AddrInfo(info) => addr_info_to_js(info, global),
         Answer::Host(Host { aliases, .. }) => names_to_js(aliases, global),
         Answer::NameInfo(info) => name_info_to_js(info, global),
@@ -325,7 +314,7 @@ impl ErrorDeferred {
 
     /// `context` is the context of the script that asked. Once it has stopped the
     /// error is not reported: closing a resolver's channel fails every pending
-    /// query with `ARES_EDESTRUCTION`, and that is how a `Bun.ModuleGraph`'s
+    /// query with `EDESTRUCTION`, and that is how a `Bun.ModuleGraph`'s
     /// resolver goes when the graph is disposed.
     pub(crate) fn reject_later(
         self: Box<Self>,

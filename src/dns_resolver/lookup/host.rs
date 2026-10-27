@@ -6,10 +6,10 @@ use std::io::Write as _;
 use bun_core::strings;
 
 use super::{Host, NameInfo};
-use crate::channel::{Answer, Channel, LookupId, Owner, Status, Token};
+use crate::channel::{Answer, Channel, LookupId, Owner, Token};
 use crate::io::Time;
-use crate::record::{Record, rr_type};
-use crate::sysconfig::{Source, load_etc_file};
+use crate::message::{Message, rr_type};
+use crate::system_config::{Source, load_etc_file};
 use crate::text::{take_while, trim_start, word};
 use crate::{Error, Result, reply};
 
@@ -26,7 +26,6 @@ pub(crate) struct HostLookup {
     token: Token,
     wanted: Wanted,
     address: IpAddr,
-    sources: Vec<Source>,
     next_source: usize,
 }
 
@@ -50,8 +49,8 @@ fn reverse_name(address: IpAddr) -> Vec<u8> {
     name
 }
 
-/// `strtoul(text, &rest, 0)` cut to 32 bits, as glibc reads a number in its databases. `None` without a digit.
-fn strtoul(text: &[u8]) -> Option<(u32, &[u8])> {
+/// `strtoul(text, &rest, 0)` with `u32::MAX` for anything above it, as glibc reads a number in its databases. `None` without a digit.
+fn strtou32(text: &[u8]) -> Option<(u32, &[u8])> {
     let text = trim_start(text);
     let (negative, text) = match text {
         [b'-', rest @ ..] => (true, rest),
@@ -91,38 +90,32 @@ fn tcp_service_name(services: &[u8], port: u16) -> Option<&[u8]> {
             None => line,
         };
         let (name, rest) = word(trim_start(line));
-        let (number, rest) = strtoul(rest)?;
+        let (number, rest) = strtou32(rest)?;
         let (slashes, rest) = take_while(rest, |byte| byte == b'/');
         let (protocol, _) = word(rest);
-        let is_it = !name.is_empty()
-            && (!slashes.is_empty() || rest.is_empty())
-            && number as u16 == port
-            && protocol == b"tcp";
-        is_it.then_some(name)
+        (!slashes.is_empty() && number as u16 == port && protocol == b"tcp").then_some(name)
     })
 }
 
 impl Channel {
     /// `dns.reverse()`.
-    pub fn host_of_address(&mut self, now: Time, address: IpAddr, token: Token) {
+    pub fn reverse(&mut self, now: Time, address: IpAddr, token: Token) {
         self.start_host_lookup(now, address, Wanted::Host, token);
     }
 
     /// `dns.lookupService()`: fails if the address has no name.
-    pub fn name_info(&mut self, now: Time, address: SocketAddr, token: Token) {
+    pub fn lookup_service(&mut self, now: Time, address: SocketAddr, token: Token) {
         self.start_host_lookup(now, address.ip(), Wanted::NameInfo(address.port()), token);
     }
 
     fn start_host_lookup(&mut self, now: Time, address: IpAddr, wanted: Wanted, token: Token) {
-        self.next_lookup_id += 1;
-        let id = self.next_lookup_id;
+        let id = self.new_lookup_id();
         self.host_lookups.insert(
             id,
             HostLookup {
                 token,
                 wanted,
                 address,
-                sources: self.sources.clone(),
                 next_source: 0,
             },
         );
@@ -135,19 +128,19 @@ impl Channel {
                 return;
             };
             let address = lookup.address;
-            let source = lookup.sources.get(lookup.next_source).copied();
+            let source = self.sources.get(lookup.next_source).copied();
             lookup.next_source += 1;
             match source {
                 Some(Source::Dns) => {
                     let owner = Owner::Host { lookup: id };
-                    self.send_question(now, &reverse_name(address), rr_type::PTR, owner);
+                    self.ask(now, &reverse_name(address), rr_type::PTR, owner);
                     return;
                 }
                 Some(Source::Files) => {
                     let host = self
                         .hosts_file()
                         .ok()
-                        .and_then(|file| file.by_address(address)?.to_host());
+                        .and_then(|file| file.host_at(address));
                     if let Some(host) = host {
                         return self.end_host_lookup(id, Ok(host));
                     }
@@ -157,16 +150,15 @@ impl Channel {
         }
     }
 
-    pub(crate) fn host_answered(
+    pub(crate) fn host_lookup_answered(
         &mut self,
         now: Time,
         id: LookupId,
-        status: Status,
-        answer: Option<&Record>,
+        result: Result<&Message>,
     ) {
-        match (status, answer) {
-            (Ok(()), Some(answer)) => {
-                let host = reply::ptr(answer).and_then(|names| {
+        match result {
+            Ok(response) => {
+                let host = reply::ptr(response).and_then(|names| {
                     Ok(Host {
                         name: names.last().ok_or(Error::ENODATA)?.clone(),
                         aliases: names,
@@ -174,10 +166,10 @@ impl Channel {
                 });
                 self.end_host_lookup(id, host);
             }
-            (Err(error @ (Error::EDESTRUCTION | Error::ECANCELLED)), _) => {
+            Err(error @ (Error::EDESTRUCTION | Error::ECANCELLED)) => {
                 self.end_host_lookup(id, Err(error));
             }
-            _ => self.host_lookup_next(now, id),
+            Err(_) => self.host_lookup_next(now, id),
         }
     }
 
@@ -203,6 +195,7 @@ impl Channel {
             .ok()
             .and_then(|services| tcp_service_name(&services, port).map(<[u8]>::to_vec))
             .unwrap_or_else(|| port.to_string().into_bytes());
+        // c-ares copies a name that does not fit as the empty string.
         Some(if name.len() < SERVICE_NAME_SIZE {
             name
         } else {

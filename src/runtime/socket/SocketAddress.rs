@@ -341,14 +341,11 @@ impl SocketAddress {
                 if let Some(address_str) = options.address {
                     let text = address_str.to_utf8();
                     // As in libuv's `uv_inet_pton`, the address ends at a zone id.
-                    let octets = match strings::split_once_char(&text, b'%') {
-                        Some((address, _)) => parse_ares_v6(address),
-                        None => parse_ares_v6(&text),
-                    };
-                    let has_zone = strings::contains_char(&text, b'%');
-                    sin6.addr = octets.ok_or_else(|| invalid_address(global))?;
+                    let zone_at = strings::index_of_char_usize(&text, b'%');
+                    sin6.addr = parse_ares_v6(&text[..zone_at.unwrap_or(text.len())])
+                        .ok_or_else(|| invalid_address(global))?;
                     drop(text);
-                    presentation = if has_zone {
+                    presentation = if zone_at.is_some() {
                         BunString::DEAD
                     } else {
                         address_str

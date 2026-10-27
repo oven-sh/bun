@@ -5,39 +5,48 @@ use core::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use bun_core::ip_address::parse_ares;
 use bun_core::strings;
 
-use crate::buf::all_print;
 use crate::channel::ServerConfig;
-use crate::io::{FileError, Io, MacResolver, Settings, Variable, WindowsSettings};
-use crate::text::{fits, parse_uint, split, take_while, trim, trim_start, word};
+use crate::io::{EnvVar, FileError, Io, MacResolver, Settings, WindowsSettings};
+use crate::lookup::is_site_local;
+use crate::text::{
+    ADDRESS_SIZE, all_print, fields, is_print, key_and_value, parse_uint, printable_within,
+    take_while, trim, trim_start, word,
+};
 use crate::{Error, Result};
+
+// c-ares's buffers, with their NUL.
+const KEYWORD_SIZE: usize = 32;
+const VALUE_SIZE: usize = 512;
+const PORT_SIZE: usize = 6;
+/// `IF_NAMESIZE` wherever servers are read from text.
+const INTERFACE_NAME_SIZE: usize = 16;
 
 /// Where a host's addresses, or an address's host, are looked up.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Source {
+pub(crate) enum Source {
     /// hosts(5).
     Files,
     Dns,
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub struct SysConfig {
-    pub servers: Vec<ServerConfig>,
-    /// The search list.
-    pub domains: Vec<Vec<u8>>,
-    pub sources: Option<Vec<Source>>,
-    pub ndots: usize,
-    pub tries: Option<u32>,
-    pub timeout_ms: Option<u32>,
-    pub rotate: bool,
-    pub use_tcp: bool,
+pub(crate) struct SystemConfig {
+    pub(crate) servers: Vec<ServerConfig>,
+    pub(crate) search_domains: Vec<Vec<u8>>,
+    pub(crate) sources: Vec<Source>,
+    pub(crate) ndots: usize,
+    pub(crate) tries: Option<u32>,
+    pub(crate) timeout_ms: Option<u32>,
+    pub(crate) rotate: bool,
+    pub(crate) use_tcp: bool,
 }
 
-impl Default for SysConfig {
-    fn default() -> SysConfig {
-        SysConfig {
+impl Default for SystemConfig {
+    fn default() -> SystemConfig {
+        SystemConfig {
             servers: Vec::new(),
-            domains: Vec::new(),
-            sources: None,
+            search_domains: Vec::new(),
+            sources: vec![Source::Files, Source::Dns],
             ndots: 1,
             tries: None,
             timeout_ms: None,
@@ -59,32 +68,33 @@ pub(crate) fn load_etc_file(io: &mut dyn Io, name: &str) -> Result<Vec<u8>> {
     load_file(io, &path)
 }
 
-pub(crate) fn read(io: &mut dyn Io) -> Result<SysConfig> {
-    let mut config = SysConfig::default();
+/// `None`: the system has a configuration and it cannot be read.
+pub(crate) fn read(io: &mut dyn Io) -> Option<SystemConfig> {
+    let mut config = SystemConfig::default();
     match io.settings() {
         Settings::Files => config.read_files(io)?,
         Settings::Windows(settings) => config.read_windows(io, settings),
         Settings::Mac(resolvers) => {
-            for resolver in resolvers.ok_or(Error::ESERVFAIL)? {
+            for resolver in resolvers? {
                 config.read_mac_resolver(io, &resolver);
             }
         }
         Settings::Android(properties) => {
             if properties.is_empty() {
-                return Err(Error::EFILE);
+                return None;
             }
             for servers in properties {
                 config.add_servers(io, &servers);
             }
         }
     }
-    if let Some(domain) = io.env(Variable::LocalDomain) {
-        config.set_search(&domain, Some(1));
+    if let Some(domain) = io.env(EnvVar::LocalDomain) {
+        config.set_search_domains(&domain, Some(1));
     }
-    if let Some(options) = io.env(Variable::ResOptions) {
+    if let Some(options) = io.env(EnvVar::ResOptions) {
         config.set_options(&options);
     }
-    Ok(config)
+    Some(config)
 }
 
 /// The search list of a system that configures none.
@@ -94,33 +104,31 @@ pub(crate) fn domain_of_hostname(io: &mut dyn Io) -> Option<Vec<u8>> {
     Some(domain.to_vec())
 }
 
-impl SysConfig {
-    /// A file that is there and cannot be read is an error. One that is not there says nothing.
-    fn read_files(&mut self, io: &mut dyn Io) -> Result<()> {
-        type ParseLine = fn(&mut SysConfig, &mut dyn Io, &[u8]);
-        let files: [(&str, ParseLine); 2] = [
-            ("resolv.conf", SysConfig::parse_resolv_conf_line),
-            ("nsswitch.conf", SysConfig::parse_nsswitch_line),
-        ];
-        for (name, parse_line) in files {
-            match load_etc_file(io, name) {
-                Ok(text) => {
-                    for line in split(&text, b"\n", true, None) {
-                        parse_line(self, io, line);
-                    }
+impl SystemConfig {
+    /// A resolv.conf that is there and cannot be read is an error. Without nsswitch.conf only the order of sources is unknown.
+    fn read_files(&mut self, io: &mut dyn Io) -> Option<()> {
+        match load_etc_file(io, "resolv.conf") {
+            Ok(text) => {
+                for line in fields(&text, b"\n") {
+                    self.parse_resolv_conf_line(io, line);
                 }
-                Err(Error::ENOTFOUND) => {}
-                Err(error) => return Err(error),
+            }
+            Err(Error::ENOTFOUND) => {}
+            Err(_) => return None,
+        }
+        if let Ok(text) = load_etc_file(io, "nsswitch.conf") {
+            for line in fields(&text, b"\n") {
+                self.parse_nsswitch_line(line);
             }
         }
-        Ok(())
+        Some(())
     }
 
     fn read_windows(&mut self, io: &mut dyn Io, settings: WindowsSettings) {
         // Windows routes packets by these metrics and does not order the servers by them.
         let mut servers: Vec<(u32, SocketAddr, u32)> = Vec::new();
         for server in settings.servers {
-            let scope = match server.address.ip() {
+            let interface = match server.address.ip() {
                 IpAddr::V4(Ipv4Addr::UNSPECIFIED | Ipv4Addr::BROADCAST) => continue,
                 IpAddr::V6(Ipv6Addr::UNSPECIFIED) => continue,
                 IpAddr::V6(v6) if v6.is_unicast_link_local() => server.ipv6_interface,
@@ -131,15 +139,15 @@ impl SysConfig {
                 .filter(|&metric| metric != u32::MAX)
                 .and_then(|metric| metric.checked_add(server.interface_metric))
                 .unwrap_or(u32::MAX);
-            servers.push((metric, server.address, scope));
+            servers.push((metric, server.address, interface));
         }
         servers.sort_by_key(|(metric, ..)| *metric);
         let mut seen: Vec<(IpAddr, u16, u32)> = Vec::new();
-        for (_, address, scope) in servers {
-            let server = (address.ip(), address.port(), scope);
+        for (_, address, interface) in servers {
+            let server = (address.ip(), address.port(), interface);
             if !seen.contains(&server) {
                 seen.push(server);
-                self.add_server(io, address.ip(), address.port(), Some(scope));
+                self.add_server(io, address.ip(), address.port(), Some(interface));
             }
         }
 
@@ -150,7 +158,7 @@ impl SysConfig {
             .filter(|suffix| !suffix.is_empty() && all_print(suffix))
             .collect();
         if !suffixes.is_empty() {
-            self.set_search(&suffixes.join(&b','), None);
+            self.set_search_domains(&suffixes.join(&b','), None);
         }
     }
 
@@ -164,13 +172,7 @@ impl SysConfig {
             return;
         }
         for domain in &resolver.search {
-            if !self
-                .domains
-                .iter()
-                .any(|it| it.eq_ignore_ascii_case(domain))
-            {
-                self.domains.push(domain.clone());
-            }
+            self.add_search_domain(domain);
         }
         if let Some(options) = &resolver.options {
             self.set_options(options);
@@ -184,23 +186,26 @@ impl SysConfig {
         }
     }
 
-    fn set_search(&mut self, list: &[u8], max: Option<usize>) {
-        self.domains.clear();
-        for domain in split(list, b", ", false, None) {
-            let is_new = !self
-                .domains
-                .iter()
-                .any(|it| it.eq_ignore_ascii_case(domain));
-            if is_new && all_print(domain) {
-                self.domains.push(domain.to_vec());
-            }
+    fn add_search_domain(&mut self, domain: &[u8]) {
+        let mut known = self.search_domains.iter();
+        if !known.any(|it| it.eq_ignore_ascii_case(domain)) {
+            self.search_domains.push(domain.to_vec());
         }
-        self.domains.truncate(max.unwrap_or(usize::MAX));
     }
 
-    fn set_sources(&mut self, list: &[u8], delimiters: &[u8]) {
+    fn set_search_domains(&mut self, list: &[u8], max: Option<usize>) {
+        self.search_domains.clear();
+        for domain in strings::tokenize_any(list, b", \t") {
+            if all_print(domain) {
+                self.add_search_domain(domain);
+            }
+        }
+        self.search_domains.truncate(max.unwrap_or(usize::MAX));
+    }
+
+    fn set_sources(&mut self, list: &[u8]) {
         let mut sources = Vec::new();
-        for word in split(list, delimiters, true, None) {
+        for word in fields(list, b" \t") {
             if !all_print(word) {
                 return;
             }
@@ -217,21 +222,20 @@ impl SysConfig {
             }
         }
         if !sources.is_empty() {
-            self.sources = Some(sources);
+            self.sources = sources;
         }
     }
 
     fn set_option(&mut self, option: &[u8]) {
-        let (key, value) = match split(option, b":", true, Some(2)).as_slice() {
-            [key] => (*key, 0),
-            [key, value] => match parse_uint(value, u32::MAX) {
-                Some(value) => (*key, value),
-                None => return,
-            },
-            _ => return,
+        let Some((key, value)) = key_and_value(option, b':') else {
+            return;
+        };
+        let Some(value) = value.map_or(Some(0), parse_uint) else {
+            return;
         };
         match key {
             b"ndots" => self.ndots = value as usize,
+            // c-ares multiplies in an `unsigned int` and takes 0 for "not set".
             b"retrans" | b"timeout" if value != 0 => {
                 self.timeout_ms = Some(value.wrapping_mul(1000)).filter(|&ms| ms != 0);
             }
@@ -243,15 +247,15 @@ impl SysConfig {
     }
 
     fn set_options(&mut self, options: &[u8]) {
-        for option in split(options, b" \t", true, None) {
+        for option in fields(options, b" \t") {
             self.set_option(option);
         }
     }
 
     fn add_servers(&mut self, io: &mut dyn Io, list: &[u8]) {
-        for text in split(list, b" ,", false, None) {
+        for text in strings::tokenize_any(list, b" ,\t") {
             if let Some((address, port, interface)) = parse_server(text) {
-                let interface = interface_index(io, interface);
+                let interface = interface.and_then(|name| interface_index(io, name));
                 self.add_server(io, address, port, interface);
             }
         }
@@ -259,18 +263,17 @@ impl SysConfig {
 
     /// `interface` matters to a link-local address only, which is of no use without one.
     fn add_server(&mut self, io: &mut dyn Io, address: IpAddr, port: u16, interface: Option<u32>) {
-        let mut scope_id = 0;
-        if let IpAddr::V6(v6) = address {
-            match v6.segments() {
-                // Site-local, deprecated by RFC 3879. Windows and Android are known to list such servers; none exists.
-                [0xfec0..=0xfeff, ..] => return,
-                [0xfe80..=0xfebf, ..] => match interface.filter(|&index| io.has_interface(index)) {
-                    Some(index) => scope_id = index,
+        let scope_id = match address {
+            // Deprecated by RFC 3879. Windows and Android are known to list such servers; none exists.
+            IpAddr::V6(v6) if is_site_local(&v6) => return,
+            IpAddr::V6(v6) if v6.is_unicast_link_local() => {
+                match interface.filter(|&index| io.has_interface(index)) {
+                    Some(index) => index,
                     None => return,
-                },
-                _ => {}
+                }
             }
-        }
+            _ => 0,
+        };
         self.servers.push(ServerConfig {
             address,
             udp_port: port,
@@ -289,46 +292,44 @@ impl SysConfig {
             Some(comment) => rest.get(..comment).unwrap_or_default(),
             None => rest,
         };
-        let (Some(keyword), Some(value)) = (fits(keyword, 32), fits(value, 512)) else {
+        let is_text = |&byte: &u8| is_print(byte) || byte == b'\t';
+        let Some(keyword) = printable_within(keyword, KEYWORD_SIZE) else {
             return;
         };
+        if value.len() >= VALUE_SIZE || !value.iter().all(is_text) {
+            return;
+        }
         let value = trim(value);
         if value.is_empty() {
             return;
         }
         match keyword {
-            // Obsolete, so it yields to `search`.
-            b"domain" if self.domains.is_empty() => self.set_search(value, Some(1)),
-            b"lookup" | b"hostresorder" => self.set_sources(value, b" \t"),
-            b"search" => self.set_search(value, None),
+            b"domain" => self.set_search_domains(value, Some(1)),
+            b"lookup" | b"hostresorder" => self.set_sources(value),
+            b"search" => self.set_search_domains(value, None),
             b"nameserver" => self.add_servers(io, value),
             b"options" => self.set_options(value),
             _ => {}
         }
     }
 
-    fn parse_nsswitch_line(&mut self, _: &mut dyn Io, line: &[u8]) {
-        if let [b"hosts", sources] = split(line, b":", true, Some(2)).as_slice() {
-            self.set_sources(sources, b" \t");
+    fn parse_nsswitch_line(&mut self, line: &[u8]) {
+        let line = strings::split_once_char(line, b'#').map_or(line, |(before, _)| before);
+        if let Some((b"hosts", Some(sources))) = key_and_value(line, b':') {
+            self.set_sources(sources);
         }
     }
 }
 
 fn interface_index(io: &mut dyn Io, interface: &[u8]) -> Option<u32> {
-    if interface.is_empty() {
-        return None;
-    }
     if interface.iter().all(u8::is_ascii_digit) {
-        return parse_uint(interface, u32::MAX);
+        return parse_uint(interface);
     }
     io.interface_index(interface)
 }
 
-/// `IF_NAMESIZE` wherever servers are read from text.
-const INTERFACE_NAME_SIZE: usize = 16;
-
 /// `address`, `v4:port`, `[address]` or `[address]:port`, then `%interface` if any. No port is 0.
-fn parse_server(text: &[u8]) -> Option<(IpAddr, u16, &[u8])> {
+fn parse_server(text: &[u8]) -> Option<(IpAddr, u16, Option<&[u8]>)> {
     let text = trim_start(text);
     let (address, mut rest) = match text {
         [b'[', inside @ ..] => strings::split_once_char(inside, b']')?,
@@ -340,21 +341,21 @@ fn parse_server(text: &[u8]) -> Option<(IpAddr, u16, &[u8])> {
             }),
         },
     };
-    let address = parse_ares(fits(address, 46).filter(|it| !it.is_empty())?)?;
+    let address = parse_ares(printable_within(address, ADDRESS_SIZE).filter(|it| !it.is_empty())?)?;
 
     let mut port = 0;
     if let [b':', after @ ..] = rest {
         let (digits, after) = take_while(after, |byte| byte.is_ascii_digit());
-        port = u16::try_from(parse_uint(fits(digits, 6)?, 65535)?).ok()?;
+        port = u16::try_from(parse_uint(printable_within(digits, PORT_SIZE)?)?).ok()?;
         rest = after;
     }
-    let mut interface: &[u8] = &[];
+    let mut interface = None;
     if let [b'%', after @ ..] = rest {
         let (name, after) = take_while(after, |byte| {
             byte.is_ascii_alphanumeric()
                 || matches!(byte, b'.' | b'-' | b'_' | b'\\' | b':' | b'{' | b'}')
         });
-        interface = fits(name, INTERFACE_NAME_SIZE).filter(|it| !it.is_empty())?;
+        interface = Some(printable_within(name, INTERFACE_NAME_SIZE).filter(|it| !it.is_empty())?);
         rest = after;
     }
     trim_start(rest)

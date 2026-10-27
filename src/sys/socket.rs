@@ -249,6 +249,7 @@ mod imp {
 pub use imp::connect;
 /// The address the system gave the socket, or it was bound to.
 pub use imp::local_address;
-/// A non-blocking socket of `peer`'s family that child processes do not inherit and that raises no `SIGPIPE`.
+/// A non-blocking socket of `peer`'s family that child processes do not inherit. Only on macOS is it the socket that
+/// raises no `SIGPIPE`: elsewhere write with [`crate::send_non_block`].
 pub use imp::open;
 pub use imp::{IPPROTO_TCP, TCP_NODELAY, bind, close, recv_from, set_option};

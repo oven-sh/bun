@@ -349,11 +349,8 @@ pub fn address_to_string(address: &Address) -> BunString {
     match address.family() {
         sock::AF_INET => {
             let v4 = address.as_in4().unwrap(); // family() just checked
-            let bytes: [u8; 4] = v4.sin_addr.s_addr.to_ne_bytes();
-            BunString::create_format(format_args!(
-                "{}.{}.{}.{}",
-                bytes[0], bytes[1], bytes[2], bytes[3]
-            ))
+            let octets = v4.sin_addr.s_addr.to_ne_bytes();
+            BunString::clone_latin1(&bun_core::ip_address::format_v4(octets))
         }
         sock::AF_INET6 => {
             let v6 = address.as_in6().unwrap(); // family() just checked
@@ -438,7 +435,7 @@ impl Order {
 }
 
 /// A numeric address, or a host name within the RFC 1035 limits made of the bytes
-/// c-ares allows in one (`ares_is_hostnamech`) or of non-ASCII bytes (UTF-8 mDNS names).
+/// `bun_dns_resolver` allows in one (`is_hostname_byte`) or of non-ASCII bytes (UTF-8 mDNS names).
 pub fn is_valid_hostname(name: &[u8]) -> bool {
     fn is_hostname_byte(b: u8) -> bool {
         b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'/' | b'*') || !b.is_ascii()
@@ -458,7 +455,7 @@ pub fn is_valid_hostname(name: &[u8]) -> bool {
 }
 
 /// The process-wide DNS
-/// cache lives in `bun_runtime` (it owns libinfo/libuv worker threads + JSC
+/// cache lives in `bun_runtime` (it owns dns_sd/libuv worker threads + JSC
 /// stat counters). Lower-tier crates (`bun_http`, `bun_install`) reach it via
 /// the link-time `Bun__addrinfo_*` family — same mechanism usockets C uses —
 /// rather than a `bun_runtime` crate dep, which would cycle.

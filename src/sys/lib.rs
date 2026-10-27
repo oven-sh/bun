@@ -8189,13 +8189,13 @@ pub mod posix {
     }
 }
 
+pub mod socket;
+
 // ──────────────────────────────────────────────────────────────────────────
 // Socket address
 // (just the sockaddr union + a couple of constructors; full resolver lives in
 // `bun_dns`). Dependents only need the data shape + Display.
 // ──────────────────────────────────────────────────────────────────────────
-pub mod socket;
-
 pub mod net {
     use core::fmt;
 
@@ -8354,17 +8354,13 @@ pub mod net {
         /// `None` unless the family is IPv4 or IPv6.
         pub fn to_socket_addr(&self) -> Option<core::net::SocketAddr> {
             if let Some(v4) = self.as_in4() {
-                // SAFETY: `sin_addr` is 4 bytes of POD on every target.
-                let octets: [u8; 4] =
-                    unsafe { *core::ptr::addr_of!(v4.sin_addr).cast::<[u8; 4]>() };
+                let octets = v4.sin_addr.s_addr.to_ne_bytes();
                 return Some((octets, u16::from_be(v4.sin_port)).into());
             }
             let v6 = self.as_in6()?;
-            // SAFETY: `sin6_addr` is 16 bytes of POD on every target.
-            let octets: [u8; 16] = unsafe { *core::ptr::addr_of!(v6.sin6_addr).cast::<[u8; 16]>() };
             Some(
                 core::net::SocketAddrV6::new(
-                    octets.into(),
+                    v6.sin6_addr.s6_addr.into(),
                     u16::from_be(v6.sin6_port),
                     u32::from_be(v6.sin6_flowinfo),
                     v6.sin6_scope_id,

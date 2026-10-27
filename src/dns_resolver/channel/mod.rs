@@ -1,38 +1,39 @@
 //! A resolver's state: its configuration, servers, connections, and the queries in flight.
 
-mod conn;
-mod process;
-mod qcache;
+mod connection;
+mod exchange;
+mod query_cache;
 mod server;
 
 use core::cmp::Reverse;
-use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use core::net::{Ipv4Addr, Ipv6Addr};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
-use conn::{Conn, ConnId};
-use qcache::QueryCache;
+use connection::{Connection, ConnectionId};
+use query_cache::QueryCache;
 pub use server::ServerConfig;
 use server::{Server, ServerId};
 
-use crate::addrinfo::{AddrInfo, Family};
+use crate::addr_info::AddrInfo;
 use crate::hosts::HostsFile;
-use crate::io::{Io, Time};
+use crate::io::{Io, Time, Transport};
 use crate::lookup::{AddrInfoLookup, Host, HostLookup, NameInfo};
-use crate::record::{Record, rcode};
-use crate::reply::{Kind, Reply};
-use crate::sysconfig::{self, Source};
+use crate::message::{Message, rcode};
+use crate::reply::{RecordType, Reply};
+use crate::system_config::{self, Source};
 use crate::{Error, Result};
 
 /// Counts the queries of a channel. Unlike the 16 bits on the wire, never used twice.
-pub(crate) type Serial = u64;
-pub(crate) type LookupId = u64;
-pub(crate) type Status = Result<()>;
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct Serial(u64);
+
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct LookupId(u64);
 
 const DEFAULT_TIMEOUT_MS: u64 = 2000;
+/// c-ares's. `node:dns` asks for Node's 4 unless it is told otherwise.
 const DEFAULT_TRIES: usize = 3;
-/// How long a server that failed is left alone before a query may be copied to it to see whether it is back.
-const SERVER_RETRY_DELAY_MS: u64 = 5000;
-/// One query in this many is so copied.
+/// One query in this many is copied to a server that failed, to see whether it is back.
 const SERVER_RETRY_CHANCE: u16 = 10;
 
 /// `None` leaves it to the system's configuration, then to the default.
@@ -65,47 +66,41 @@ pub struct Completion {
 #[derive(Clone, Copy)]
 pub(crate) enum Owner {
     Caller {
-        kind: Kind,
+        record_type: RecordType,
         token: Token,
     },
     AddrInfo {
         lookup: LookupId,
-        family: Family,
     },
     Host {
         lookup: LookupId,
     },
-    /// A copy of another query, sent to a server that failed. What becomes of it is that server's record.
+    /// A copy of another query, sent to a server that failed. Nobody waits for it: its outcome
+    /// only updates the server's failure count.
     Probe {
         server: ServerId,
     },
 }
 
-pub(crate) struct Query {
-    qid: u16,
-    record: Record,
+struct Query {
+    message: Message,
     cache_key: Vec<u8>,
     owner: Owner,
-    using_tcp: bool,
-    pub(crate) no_retries: bool,
+    transport: Transport,
+    no_retries: bool,
     try_count: usize,
-    /// Why the last try failed.
-    error_status: Status,
+    /// Why the last try that gave a reason failed.
+    last_error: Option<Error>,
     sent_at: Time,
-    /// With `send_order`, its place in `Channel::timeouts`.
-    timeout: Option<Time>,
-    sent_on: Option<(ConnId, ServerId)>,
-    /// Its place in `Conn::queries`.
+    /// With `send_order`, its place in `Channel::deadlines`.
+    deadline: Option<Time>,
+    sent_on: Option<(ConnectionId, ServerId)>,
+    /// Its place in `Connection::queries`.
     send_order: u64,
 }
 
-#[derive(Clone, Copy, Default)]
-pub(crate) struct SendFlags {
-    no_cache: bool,
-    no_retry: bool,
-}
-
-/// Nothing here calls the caller. A request that ends, even before the method that made it returns, waits in a queue for [`Channel::next_completion`].
+/// Nothing here calls the caller. A request that ends, even before the method that made it
+/// returns, waits in a queue for [`Channel::next_completion`].
 pub struct Channel {
     pub(crate) io: Box<dyn Io>,
 
@@ -114,7 +109,7 @@ pub struct Channel {
     pub(crate) ndots: usize,
     rotate: bool,
     use_tcp: bool,
-    pub(crate) domains: Vec<Vec<u8>>,
+    pub(crate) search_domains: Vec<Vec<u8>>,
     pub(crate) sources: Vec<Source>,
     local_v4: Option<Ipv4Addr>,
     local_v6: Option<Ipv6Addr>,
@@ -122,75 +117,70 @@ pub struct Channel {
     shut_down: bool,
     /// Best first: [`Server::sort_key`].
     servers: Vec<Server>,
-    next_server_id: u64,
-    server_keys_set: u64,
-    conns: BTreeMap<ConnId, Conn>,
-    next_conn_id: u64,
-    sends: u64,
-    pub(crate) queries: BTreeMap<Serial, Query>,
-    next_serial: Serial,
-    serial_of_qid: BTreeMap<u16, Serial>,
+    last_server_id: u64,
+    /// How often a server was given a place in `servers`.
+    placements: u64,
+    connections: BTreeMap<ConnectionId, Connection>,
+    last_connection_id: u64,
+    last_send_order: u64,
+    queries: BTreeMap<Serial, Query>,
+    last_serial: u64,
+    serial_of_id: BTreeMap<u16, Serial>,
     /// Of those due at one time, the one sent last comes first, as in c-ares's skip list.
-    timeouts: BTreeSet<(Time, Reverse<u64>, Serial)>,
+    deadlines: BTreeSet<(Time, Reverse<u64>, Serial)>,
     cache: QueryCache,
     read_buffer: Vec<u8>,
 
     pub(crate) hosts: Option<HostsFile>,
     pub(crate) addr_info_lookups: BTreeMap<LookupId, AddrInfoLookup>,
     pub(crate) host_lookups: BTreeMap<LookupId, HostLookup>,
-    pub(crate) next_lookup_id: LookupId,
+    last_lookup_id: u64,
 
     completed: VecDeque<Completion>,
 }
 
 impl Channel {
     pub fn new(mut io: Box<dyn Io>, options: Options) -> Self {
-        let system = sysconfig::read(&mut *io).unwrap_or_default();
-        let or_system = |option: Option<u32>, system: Option<u32>| option.or(system);
+        // As c-ares: a configuration that cannot be read is no reason not to resolve.
+        let system = system_config::read(&mut *io).unwrap_or_default();
+        let timeout_ms = options.timeout_ms.or(system.timeout_ms);
+        let tries = options.tries.or(system.tries);
         let mut channel = Channel {
-            timeout_ms: or_system(options.timeout_ms, system.timeout_ms)
-                .map_or(DEFAULT_TIMEOUT_MS, u64::from),
-            tries: or_system(options.tries, system.tries).map_or(DEFAULT_TRIES, |it| it as usize),
+            timeout_ms: timeout_ms.map_or(DEFAULT_TIMEOUT_MS, u64::from),
+            tries: tries.map_or(DEFAULT_TRIES, |it| it as usize),
             ndots: system.ndots,
             rotate: system.rotate,
             use_tcp: system.use_tcp,
-            domains: system.domains,
-            sources: system
-                .sources
-                .unwrap_or_else(|| vec![Source::Files, Source::Dns]),
+            search_domains: system.search_domains,
+            sources: system.sources,
             local_v4: None,
             local_v6: None,
             shut_down: false,
             servers: Vec::new(),
-            next_server_id: 0,
-            server_keys_set: 0,
-            conns: BTreeMap::new(),
-            next_conn_id: 0,
-            sends: 0,
+            last_server_id: 0,
+            placements: 0,
+            connections: BTreeMap::new(),
+            last_connection_id: 0,
+            last_send_order: 0,
             queries: BTreeMap::new(),
-            next_serial: 0,
-            serial_of_qid: BTreeMap::new(),
-            timeouts: BTreeSet::new(),
+            last_serial: 0,
+            serial_of_id: BTreeMap::new(),
+            deadlines: BTreeSet::new(),
             cache: QueryCache::default(),
             read_buffer: Vec::new(),
             hosts: None,
             addr_info_lookups: BTreeMap::new(),
             host_lookups: BTreeMap::new(),
-            next_lookup_id: 0,
+            last_lookup_id: 0,
             completed: VecDeque::new(),
             io,
         };
-        if channel.domains.is_empty() {
+        if channel.search_domains.is_empty() {
             channel
-                .domains
-                .extend(sysconfig::domain_of_hostname(&mut *channel.io));
+                .search_domains
+                .extend(system_config::domain_of_hostname(&mut *channel.io));
         }
-        let loopback = [ServerConfig {
-            address: Ipv4Addr::LOCALHOST.into(),
-            udp_port: 0,
-            tcp_port: 0,
-            scope_id: 0,
-        }];
+        let loopback = [ServerConfig::at(Ipv4Addr::LOCALHOST.into())];
         channel.set_servers(
             Time::ZERO,
             match system.servers.as_slice() {
@@ -206,7 +196,8 @@ impl Channel {
         self.completed.pop_front()
     }
 
-    /// Ends a request that is found wanting before it gets here, in its turn.
+    /// Fails a request the caller rejected itself, through the same queue so that completions keep
+    /// their order.
     pub fn fail(&mut self, token: Token, error: Error) {
         self.complete(token, Err(error));
     }
@@ -215,14 +206,14 @@ impl Channel {
         self.completed.push_back(Completion { token, result });
     }
 
-    /// When [`Channel::process`] is next to be called even if no socket is ready.
-    pub fn next_timeout(&self) -> Option<Time> {
-        self.timeouts.first().map(|(time, ..)| *time)
+    pub(crate) fn new_lookup_id(&mut self) -> LookupId {
+        self.last_lookup_id += 1;
+        LookupId(self.last_lookup_id)
     }
 
-    /// Queries waiting for a server, those a lookup makes among them.
-    pub fn active_queries(&self) -> usize {
-        self.queries.len()
+    /// When [`Channel::check_timeouts`] is next to be called.
+    pub fn next_deadline(&self) -> Option<Time> {
+        self.deadlines.first().map(|(time, ..)| *time)
     }
 
     /// An unspecified address undoes it.
@@ -245,40 +236,35 @@ impl Channel {
 
     /// After a change to the `sort_key` of `changed`.
     fn sort_servers(&mut self, changed: ServerId) {
-        self.server_keys_set += 1;
-        let keyed = self.server_keys_set;
+        self.placements += 1;
+        let placed = self.placements;
         if let Some(server) = self.server_mut(changed) {
-            server.keyed = keyed;
+            server.placed = placed;
         }
         self.servers.sort_by_key(Server::sort_key);
     }
 
     /// Best first, which is the order they were given in until one fails.
     pub fn servers(&self) -> Vec<ServerConfig> {
-        let config = |server: &Server| ServerConfig {
-            address: server.address,
-            udp_port: server.udp_port,
-            tcp_port: server.tcp_port,
-            scope_id: server.scope_id,
-        };
-        self.servers.iter().map(config).collect()
+        self.servers.iter().map(|server| server.config).collect()
     }
 
-    /// A server that stays keeps its record and connections. The queries of one that goes move to the others.
+    /// A server that stays keeps its failure count, latencies and connections. The queries of one
+    /// that goes move to the others.
     pub fn set_servers(&mut self, now: Time, list: &[ServerConfig]) {
         let mut changed = false;
-        let mut index = 0;
-        for (position, config) in list.iter().enumerate() {
-            let same = |other: &ServerConfig| {
-                other.address == config.address && other.ports() == config.ports()
-            };
-            if list.iter().take(position).any(same) {
+        let mut seen: Vec<&ServerConfig> = Vec::with_capacity(list.len());
+        for config in list {
+            if seen.iter().any(|other| other.is_same_server(config)) {
                 continue;
             }
-            match self.servers.iter_mut().find(|server| server.is(config)) {
+            let index = seen.len();
+            seen.push(config);
+            let mut known = self.servers.iter_mut();
+            match known.find(|server| server.config.is_same_server(config)) {
                 Some(server) => {
                     if config.scope_id != 0 {
-                        server.scope_id = config.scope_id;
+                        server.config.scope_id = config.scope_id;
                     }
                     if server.index != index {
                         server.index = index;
@@ -287,21 +273,20 @@ impl Channel {
                     }
                 }
                 None => {
-                    self.next_server_id += 1;
-                    let id = ServerId(self.next_server_id);
+                    self.last_server_id += 1;
+                    let id = ServerId(self.last_server_id);
                     self.servers.push(Server::new(id, index, config));
                     self.sort_servers(id);
                     changed = true;
                 }
             }
-            index += 1;
         }
 
-        let is_stale = |server: &Server| !list.iter().any(|config| server.is(config));
+        let is_stale = |server: &Server| !seen.iter().any(|it| server.config.is_same_server(it));
         while let Some(position) = self.servers.iter().position(is_stale) {
             let server = self.servers.remove(position);
             for id in server.connections {
-                self.close_connection(now, id, Ok(()));
+                self.close_connection(now, id, None);
             }
             changed = true;
         }
@@ -312,12 +297,12 @@ impl Channel {
 
     fn count_server_failure(&mut self, now: Time, id: ServerId) {
         if let Some(server) = self.server_mut(id) {
-            server.count_failure(now, SERVER_RETRY_DELAY_MS);
+            server.count_failure(now);
             self.sort_servers(id);
         }
     }
 
-    fn server_is_good(&mut self, id: ServerId) {
+    fn clear_server_failures(&mut self, id: ServerId) {
         if let Some(server) = self.server_mut(id)
             && server.consecutive_failures > 0
         {
@@ -333,13 +318,16 @@ impl Channel {
         u16::from_ne_bytes(bytes)
     }
 
-    /// `dns.resolve*()`: asks the servers for `name` as it is, without the search list or the hosts file.
-    pub fn query(&mut self, now: Time, kind: Kind, name: &[u8], token: Token) {
-        self.send_question(now, name, kind.rr_type(), Owner::Caller { kind, token });
+    /// `dns.resolve*()`: asks the servers for `name` as it is, without the search list or the
+    /// hosts file.
+    pub fn resolve(&mut self, now: Time, record_type: RecordType, name: &[u8], token: Token) {
+        let owner = Owner::Caller { record_type, token };
+        self.ask(now, name, record_type.rr_type(), owner);
     }
 
-    /// The serial is of a query now waiting for a server. Otherwise `owner` has been told how it ended.
-    pub(crate) fn send_question(
+    /// The serial is of a query now waiting for a server. Otherwise `owner` has been told how it
+    /// ended.
+    pub(crate) fn ask(
         &mut self,
         now: Time,
         name: &[u8],
@@ -348,30 +336,23 @@ impl Channel {
     ) -> Option<Serial> {
         // RFC 7686.
         if crate::lookup::is_onion_domain(name) {
-            self.finish(now, owner, Err(Error::ENOTFOUND), None);
+            self.finish(now, owner, Err(Error::ENOTFOUND));
             return None;
         }
-        let request = Record::query(name, qtype);
-        self.send(now, None, SendFlags::default(), &request, owner)
+        self.start_query(now, &Message::query(name, qtype), owner)
     }
 
-    fn send(
-        &mut self,
-        now: Time,
-        server: Option<ServerId>,
-        flags: SendFlags,
-        request: &Record,
-        owner: Owner,
-    ) -> Option<Serial> {
-        if self.serial_of_qid.len() > usize::from(u16::MAX) {
-            self.finish(now, owner, Err(Error::ENOMEM), None);
+    /// As [`Channel::ask`].
+    fn start_query(&mut self, now: Time, message: &Message, owner: Owner) -> Option<Serial> {
+        if self.serial_of_id.len() > usize::from(u16::MAX) {
+            self.finish(now, owner, Err(Error::ENOMEM));
             return None;
         }
         // Before anything else, as in c-ares, so that the same random bytes make the same choices.
-        let qid = loop {
-            let qid = self.random_u16();
-            if !self.serial_of_qid.contains_key(&qid) {
-                break qid;
+        let id = loop {
+            let id = self.random_u16();
+            if !self.serial_of_id.contains_key(&id) {
+                break id;
             }
         };
         let refusal = if self.shut_down {
@@ -382,80 +363,96 @@ impl Channel {
             None
         };
         if let Some(error) = refusal {
-            self.finish(now, owner, Err(error), None);
+            self.finish(now, owner, Err(error));
             return None;
         }
 
-        let cache_key = qcache::key_of(request);
-        if !flags.no_cache
-            && let Some(answer) = self.cache.fetch(now, &cache_key)
+        let probed = match owner {
+            Owner::Probe { server } => Some(server),
+            _ => None,
+        };
+        let cache_key = query_cache::key_of(message);
+        if probed.is_none()
+            && let Some(response) = self.cache.fetch(now, &cache_key)
         {
-            self.finish(now, owner, Ok(()), Some(answer));
+            self.finish(now, owner, Ok(response));
             return None;
         }
 
-        let mut record = match request.rewritten(0) {
-            Ok(record) => record,
+        let mut message = match message.rewritten(0) {
+            Ok(message) => message,
             Err(error) => {
                 let error = match error {
                     Error::EBADRESP => Error::EBADQUERY,
                     other => other,
                 };
-                self.finish(now, owner, Err(error), None);
+                self.finish(now, owner, Err(error));
                 return None;
             }
         };
-        record.id = qid;
+        message.id = id;
 
-        self.next_serial += 1;
-        let serial = self.next_serial;
-        self.serial_of_qid.insert(qid, serial);
+        self.last_serial += 1;
+        let serial = Serial(self.last_serial);
+        self.serial_of_id.insert(id, serial);
         self.queries.insert(
             serial,
             Query {
-                qid,
-                record,
+                message,
                 cache_key,
                 owner,
-                using_tcp: self.use_tcp,
-                no_retries: flags.no_retry,
+                transport: if self.use_tcp {
+                    Transport::Tcp
+                } else {
+                    Transport::Udp
+                },
+                no_retries: probed.is_some(),
                 try_count: 0,
-                error_status: Ok(()),
+                last_error: None,
                 sent_at: now,
-                timeout: None,
+                deadline: None,
                 sent_on: None,
                 send_order: 0,
             },
         );
-        self.send_query(now, server, serial).ok().map(|()| serial)
+        self.send_query(now, probed, serial);
+        self.queries.contains_key(&serial).then_some(serial)
     }
 
-    /// Tells `owner` how its query ended. `answer` is there if `status` is `Ok`, and with some errors.
-    fn finish(&mut self, now: Time, owner: Owner, status: Status, answer: Option<Record>) {
-        let status = status.and_then(|()| match &answer {
-            Some(answer) => status_of_answer(answer),
-            None => Err(Error::EBADRESP),
-        });
+    /// The try under way is the query's last.
+    pub(crate) fn stop_retrying(&mut self, serial: Serial) {
+        if let Some(query) = self.queries.get_mut(&serial) {
+            query.no_retries = true;
+        }
+    }
+
+    /// Tells `owner` how its query ended.
+    fn finish(&mut self, now: Time, owner: Owner, result: Result<Message>) {
         match owner {
-            // Also one that never got as far as a connection, which no server is told of.
+            // `end_query` does this for a probe that was sent. This is for one that was not.
             Owner::Probe { server } => {
                 if let Some(server) = self.server_mut(server) {
                     server.probe_pending = false;
                 }
             }
-            Owner::Caller { kind, token } => {
-                // c-ares hands an answer over as a message. One it cannot write is an error, whatever else is.
-                let message = answer.map(|answer| answer.write(0)).transpose();
-                let reply = message.and_then(|message| {
-                    status?;
-                    Reply::parse(kind, &message.unwrap_or_default())
+            Owner::Caller { record_type, token } => {
+                let reply = result.and_then(|response| {
+                    // c-ares hands a response over as bytes. One it cannot write is an error,
+                    // whatever its RCODE.
+                    let bytes = response.write(0)?;
+                    check_rcode(&response)?;
+                    Reply::parse(record_type, &bytes)
                 });
                 self.complete(token, reply.map(Answer::Reply));
             }
-            Owner::AddrInfo { lookup, family } => {
-                self.addr_info_answered(now, lookup, family, status, answer.as_ref());
+            Owner::AddrInfo { lookup } => {
+                let result = result.and_then(|it| check_rcode(&it).map(|()| it));
+                self.addr_info_lookup_answered(now, lookup, result.as_ref().map_err(|it| *it));
             }
-            Owner::Host { lookup } => self.host_answered(now, lookup, status, answer.as_ref()),
+            Owner::Host { lookup } => {
+                let result = result.and_then(|it| check_rcode(&it).map(|()| it));
+                self.host_lookup_answered(now, lookup, result.as_ref().map_err(|it| *it));
+            }
         }
     }
 
@@ -471,44 +468,34 @@ impl Channel {
         self.end_all(now, Error::EDESTRUCTION);
         for server in core::mem::take(&mut self.servers) {
             for id in server.connections {
-                self.close_connection(now, id, Ok(()));
+                self.close_connection(now, id, None);
             }
         }
     }
 
     fn end_all(&mut self, now: Time, error: Error) {
         // A query made by the end of one of these is not one of these.
-        let last = self.next_serial;
+        let last = Serial(self.last_serial);
         while let Some(entry) = self.queries.first_entry()
             && *entry.key() <= last
         {
             let serial = *entry.key();
             if let Some(query) = self.detach_query(serial) {
-                self.finish(now, query.owner, Err(error), None);
+                self.finish(now, query.owner, Err(error));
             }
         }
     }
 }
 
-fn status_of_answer(answer: &Record) -> Status {
-    match answer.rcode {
-        rcode::NOERROR if answer.answer.is_empty() => Err(Error::ENODATA),
+/// The error a response stands for, if it does.
+fn check_rcode(response: &Message) -> Result<()> {
+    match response.rcode {
+        rcode::NOERROR if response.answer.is_empty() => Err(Error::ENODATA),
         rcode::FORMERR => Err(Error::EFORMERR),
         rcode::SERVFAIL => Err(Error::ESERVFAIL),
         rcode::NXDOMAIN => Err(Error::ENOTFOUND),
         rcode::NOTIMP => Err(Error::ENOTIMP),
         rcode::REFUSED => Err(Error::EREFUSED),
         _ => Ok(()),
-    }
-}
-
-impl From<IpAddr> for ServerConfig {
-    fn from(address: IpAddr) -> Self {
-        ServerConfig {
-            address,
-            udp_port: 0,
-            tcp_port: 0,
-            scope_id: 0,
-        }
     }
 }

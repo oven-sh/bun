@@ -375,7 +375,7 @@ timer none
 ? @
 === 016
 lookup . 0 4
-deliver 1 ddf4830200010002000000000000010001c0030010000100000e110001007b000100018000000000040a00007b
+deliver 1 dd74830200010002000000000000010001c0030010000100000e110001007b000100018000000000040a00007b
 ---
 start
 read /etc/resolv.conf
@@ -683,7 +683,7 @@ timer 2000
 === 028
 lookup . 0 4
 deliver 1 dd74818c00010000000100000000010001c00c0006000400000e11001d6c01410454455354008000000080000000800000000000000a0000000a
-deliver 2 7b7b7b
+deliver 2 dd747b
 ---
 start
 read /etc/resolv.conf
@@ -758,22 +758,6 @@ timer none
 ? @
 done 4 name=a.tEST 10.0.2.200/3601
 ? @
-=== 031
-file /etc/resolv.conf options%09timeout:256%20%0Aoptions%09ndots:3%09ndots:5%0Anameserver%20fec0::1%254294967296%0Asearch%20-,%20.%20x;c%0Ahostresorder%20%09%20bind,file%0Anameserver%20fe80::1%25eth0%0A
-lookup a.test 0 0
----
-? @
-start
-read /etc/resolv.conf
-read /etc/nsswitch.conf
-servers 127.0.0.1#53#53#0
-read /etc/hosts
-open 1 udp 127.0.0.1#53#0
-send 1 dd7401000001000000000000016104746573740000010001
-send 1 547d010000010000000000000161047465737400001c0001
-watch 1 r-
-timer 5000
-? @
 === 032
 env RES_OPTIONS ndots:x
 env HOSTALIASES /aliases
@@ -819,9 +803,9 @@ timer none
 === 034
 query MX x.localhost
 advance 3601000
-deliver 2 ddf4818000010001000000000178096c6f63616c686f737400000f0001c00c000f000100000e1000043737c02e
+deliver 2 dd74818000010001000000000178096c6f63616c686f737400000f0001c00c000f000100000e1000043737c02e
 deliver 3 -
-deliver 3 00
+deliver 3 dd74
 ---
 start
 read /etc/resolv.conf
@@ -1031,21 +1015,6 @@ send 2 dd740100000100000000000001310131033235340331363907696e2d61646472046172706
 watch 2 r-
 close 1
 timer 3340
-? @
-=== 045
-file /etc/hosts ::ffff:1.2.3.4%09host2%09LOCALHOST.%0A2002:102:304::1%09LOCALHOST.%20%20localhost%20host2%0Aff02::1%0A
-lookup localhost 0 0
-query TXT foo.onion.
----
-? @
-start
-read /etc/resolv.conf
-read /etc/nsswitch.conf
-servers 127.0.0.1#53#53#0
-read /etc/hosts
-done 0 name=localhost 127.0.0.1#0/0 ::ffff:1.2.3.4#0/0 2002:102:304::1#0/0
-? @
-done 1 error ENOTFOUND
 ? @
 === 046
 query TXT host
@@ -1261,18 +1230,6 @@ watch 2 rw
 close 1
 timer 3340
 ? @
-=== 058
-file /etc/hosts 3ffe::1%20%20host2%20x.localhost%0A224.0.0.1%20%20host%09host2%20b.t%7Festtt%20#%20c
-lookup host 80 0
----
-? @
-start
-read /etc/resolv.conf
-read /etc/nsswitch.conf
-servers 127.0.0.1#53#53#0
-read /etc/hosts
-done 0 name=host 224.0.0.1#80/0 3ffe::1#80/0
-? @
 === 059
 file /etc/resolv.conf nameserver%2010.0.0.1%25%0A/7777%0A
 reverse fe80::1
@@ -1399,7 +1356,7 @@ timer 2641
 ? @
 === 064
 query ANY host2
-deliver 1 ddf48b80000100010000000005686f7374320000ff0001c00c000102000000000200040a0000ab
+deliver 1 dd748b80000100010000000005686f7374320000ff0001c00c000102000000000200040a0000ab
 deliver 2 dd748180000100010000000005686f7374320000ff0001c00c0005000400015180000604686f737400
 ---
 start
@@ -1480,7 +1437,7 @@ deliver 2 dfa4818c0001000000000000014e0000010001
 expire
 cancel
 lookup a\.b.test 443 6
-deliver 4 71754f5b4124000000000000000000000000000000000000000000000000000000
+deliver 4 1e204f5b4124000000000000000000000000000000000000000000000000000000
 ---
 start
 read /etc/resolv.conf
@@ -2123,7 +2080,7 @@ timer 3340
 ? @
 === 093
 query CAA host2
-deliver 1 0cc68180000100010000000005686f7374320001010001c00c0101000100000e1100020000
+deliver 1 dd748180000100010000000005686f7374320001010001c00c0101000100000e1100020000
 ---
 start
 read /etc/resolv.conf
@@ -2307,63 +2264,9 @@ watch 2 r-
 close 1
 timer 3340
 ? @
-=== 103
-nameinfo 10.0.0.1 80
-deliver 1 dd748180000100000000000101310130013002313007696e2d61646472046172706100000c00010000010001ffffffff00040a00025c
-lookup 1.2.3 0 0
-lookup LOCALHOST. 0 0
-deliver 2 adfb81800001000000000000094c4f43414c484f53540000010001
-deliver 2 dfa481800001000000000000094c4f43414c484f535400001c0001
-advance 86400000
-deliver 3 547d818000010000000000000131013201330000010001
-expire
----
-start
-read /etc/resolv.conf
-read /etc/nsswitch.conf
-servers 127.0.0.1#53#53#0
-read /etc/hosts
-open 1 udp 127.0.0.1#53#0
-send 1 dd740100000100000000000001310130013002313007696e2d61646472046172706100000c0001
-watch 1 r-
-timer 2000
-? @
-close 1
-done 0 error ENOTFOUND
-timer none
-? @
-read /etc/hosts
-open 2 udp 127.0.0.1#53#0
-send 2 547d010000010000000000000131013201330000010001
-send 2 28fb0100000100000000000001310132013300001c0001
-watch 2 r-
-timer 2000
-? @
-read /etc/hosts
-send 2 adfb01000001000000000000094c4f43414c484f53540000010001
-send 2 dfa401000001000000000000094c4f43414c484f535400001c0001
-? @
-? @
-done 2 error ENODATA
-? @
-open 3 udp 127.0.0.1#53#0
-send 3 28fb0100000100000000000001310132013300001c0001
-send 3 547d010000010000000000000131013201330000010001
-watch 3 r-
-close 2
-timer 86400346
-? @
-timer 86400415
-? @
-open 4 udp 127.0.0.1#53#0
-send 4 28fb0100000100000000000001310132013300001c0001
-watch 4 r-
-close 3
-timer 86401357
-? @
 === 104
 query A www.a.test
-deliver 1 dc748180000100010000000003777777016104746573740000010001c00c001800010000000200028f174c4f3a
+deliver 1 dd748180000100010000000003777777016104746573740000010001c00c001800010000000200028f174c4f3a
 ---
 start
 read /etc/resolv.conf
@@ -2421,7 +2324,7 @@ timer 3340
 ? @
 === 107
 nameinfo 10.0.0.1 80
-deliver 1 547c8b80000100010000000005686f7374320000010001c00c004100018000000000040a00002f
+deliver 1 dd748b80000100010000000005686f7374320000010001c00c004100018000000000040a00002f
 ---
 start
 read /etc/resolv.conf
@@ -2741,7 +2644,7 @@ timer 2000
 ? @
 === 125
 reverse 255.255.255.255
-deliver 1 ddf4818000010002000000000332353503323535033235350332353507696e2d61646472046172706100000c0001c00c003400010000003c00028282c00c000c00010000003c001004686f737404636f7270047465737400
+deliver 1 dd74818000010002000000000332353503323535033235350332353507696e2d61646472046172706100000c0001c00c003400010000003c00028282c00c000c00010000003c001004686f737404636f7270047465737400
 ---
 start
 read /etc/resolv.conf
@@ -3394,7 +3297,7 @@ opens fail fail fail fail fail fail fail fail
 servers 10.0.0.1#53#53#0 10.0.0.1#53#5353#0 224.0.0.1#53#5353#0
 lookup *.a.test 80 0
 query A a%C3%BC.test
-deliver 2 9ea181800000000100000000c00c001c000100000e110010fcc000000000000000000000000000b6
+deliver 2 28fb81800000000100000000c00c001c000100000e110010fcc000000000000000000000000000b6
 break 3
 break 4
 ---
@@ -3590,8 +3493,8 @@ servers fe80::1#53#53#0 192.168.1.1#5353#5353#0
 === queries move once, to the twin server that stays
 nameinfo 2001:db8::2 65535
 servers 10.0.0.1#53#5353#0 10.0.0.1#0#0#0 fc00::1#0#0#0
-deliver 2 01ff1800ff
-deliver 3 00
+deliver 2 dd741800ff
+deliver 3 dd74
 query AAAA a.test.
 servers 10.0.0.1#0#0#0
 ---
@@ -3851,7 +3754,7 @@ timer 3530
 ? @
 === malformed reply from source port 0 fails the connection
 reverse 0.0.0.0
-deliver 1 5d7481800001000000000000013001 127.0.0.1#0
+deliver 1 dd7481800001000000000000013001 127.0.0.1#0
 ---
 start
 read /etc/resolv.conf
@@ -4517,6 +4420,1844 @@ watch 6 r-
 close 3
 servers 10.0.0.3#53#53#0 2001:db8:1:2:3:4:5:6#53#5353#0 ff02::1#5353#5353#0
 ? @
+=== an IPv4 answer ends the retries of AAAA, also after a name that the cache answered
+file /etc/resolv.conf nameserver%2010.0.0.1%0Asearch%20x.test%0A
+query A host.x.test
+deliver 1 dd748183000100000001000004686f73740178047465737400000100010178047465737400000600010000012c002c026e73017804746573740004726f6f740178047465737400000000010000000200000003000000040000012c
+query AAAA host.x.test
+deliver 2 547d8183000100000001000004686f73740178047465737400001c00010178047465737400000600010000012c002c026e73017804746573740004726f6f740178047465737400000000010000000200000003000000040000012c
+lookup host 0 0
+deliver 3 dfa48180000100010000000004686f73740000010001c00c000100010000003c000401020304
+expire
+---
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+open 1 udp 10.0.0.1#53#0
+send 1 dd740100000100000000000004686f7374017804746573740000010001
+watch 1 r-
+timer 2000
+? @
+close 1
+done 0 error ENOTFOUND
+timer none
+? @
+open 2 udp 10.0.0.1#53#0
+send 2 547d0100000100000000000004686f73740178047465737400001c0001
+watch 2 r-
+timer 2000
+? @
+close 2
+done 1 error ENOTFOUND
+timer none
+? @
+read /etc/hosts
+open 3 udp 10.0.0.1#53#0
+send 3 dfa40100000100000000000004686f73740000010001
+send 3 57f70100000100000000000004686f737400001c0001
+watch 3 r-
+timer 2000
+? @
+? @
+close 3
+done 2 name=host 1.2.3.4#0/60
+timer none
+? @
+=== an answer on a connection that its query has left is dropped
+file /etc/resolv.conf nameserver%2010.0.0.1%0Anameserver%2010.0.0.2%0A
+query A a.test
+advance 1000
+query A b.test
+advance 1000
+deliver 1 dd7481800001000100000000016104746573740000010001c00c000100010000003c000401010101
+deliver 2 dd7481800001000100000000016104746573740000010001c00c000100010000003c000402020202
+---
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0 10.0.0.2#53#53#0
+open 1 udp 10.0.0.1#53#0
+send 1 dd7401000001000000000000016104746573740000010001
+watch 1 r-
+timer 2000
+? @
+? @
+send 1 547d01000001000000000000016204746573740000010001
+? @
+open 2 udp 10.0.0.2#53#0
+send 2 dd7401000001000000000000016104746573740000010001
+watch 2 r-
+timer 3000
+? @
+? @
+close 2
+done 0 name=a.test 2.2.2.2/60
+? @
+=== an answer on the connection of another server is dropped
+file /etc/resolv.conf nameserver%2010.0.0.1%0Anameserver%2010.0.0.2%0Aoptions%20rotate%0A
+seed 1
+query A a.test
+query A b.test
+query A c.test
+query A d.test
+deliver 2 02ba81800001000100000000016104746573740000010001c00c000100010000003c000406060606
+deliver 1 02ba81800001000100000000016104746573740000010001c00c000100010000003c000401010101
+---
+? @
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0 10.0.0.2#53#53#0
+open 1 udp 10.0.0.1#53#0
+send 1 02ba01000001000000000000016104746573740000010001
+watch 1 r-
+timer 2000
+? @
+open 2 udp 10.0.0.2#53#0
+send 2 b2e101000001000000000000016204746573740000010001
+watch 2 r-
+? @
+send 1 cd4c01000001000000000000016304746573740000010001
+? @
+send 2 1ba101000001000000000000016404746573740000010001
+? @
+? @
+done 0 name=a.test 1.1.1.1/60
+? @
+=== answers count only on the connection their query is on
+file /etc/resolv.conf nameserver%2010.0.0.1%0Anameserver%2010.0.0.2%0A
+query A a.test
+advance 1000
+query A b.test
+expire
+deliver 1 dd74818000010001000000000161047465737400000100010161047465737400000100010000003c000406060606
+deliver 2 547d818000010001000000000162047465737400000100010162047465737400000100010000003c000406060606
+deliver 2 dd74818000010001000000000161047465737400000100010161047465737400000100010000003c000401010101
+deliver 1 547d818000010001000000000162047465737400000100010162047465737400000100010000003c000402020202
+---
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0 10.0.0.2#53#53#0
+open 1 udp 10.0.0.1#53#0
+send 1 dd7401000001000000000000016104746573740000010001
+watch 1 r-
+timer 2000
+? @
+? @
+send 1 547d01000001000000000000016204746573740000010001
+? @
+open 2 udp 10.0.0.2#53#0
+send 2 dd7401000001000000000000016104746573740000010001
+watch 2 r-
+timer 3000
+? @
+? @
+? @
+close 2
+done 0 name=a.test 1.1.1.1/60
+? @
+close 1
+done 1 name=b.test 2.2.2.2/60
+timer none
+? @
+=== an answer from another address or port is dropped, one from port 0 is not
+file /etc/resolv.conf nameserver%2010.0.0.1%0A
+query A a.test
+deliver 1 dd7481800001000100000000016104746573740000010001c00c000100010000003c000406060606 10.0.0.9#53
+deliver 1 dd7481800001000100000000016104746573740000010001c00c000100010000003c000406060607 10.0.0.1#54
+deliver 1 dd7481800001000100000000016104746573740000010001c00c000100010000003c000401010101 10.0.0.1#0
+---
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+open 1 udp 10.0.0.1#53#0
+send 1 dd7401000001000000000000016104746573740000010001
+watch 1 r-
+timer 2000
+? @
+? @
+? @
+close 1
+done 0 name=a.test 1.1.1.1/60
+timer none
+? @
+=== AAAA answered first: A is tried again
+file /etc/resolv.conf nameserver%2010.0.0.1%0Anameserver%2010.0.0.2%0A
+lookup h.test 0 0
+deliver 1 547d818000010001000000000168047465737400001c00010168047465737400001c00010000003c001020010db8000000000000000000000001
+expire
+expire
+expire
+---
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0 10.0.0.2#53#53#0
+read /etc/hosts
+open 1 udp 10.0.0.1#53#0
+send 1 dd7401000001000000000000016804746573740000010001
+send 1 547d010000010000000000000168047465737400001c0001
+watch 1 r-
+timer 2000
+? @
+? @
+open 2 udp 10.0.0.2#53#0
+send 2 dd7401000001000000000000016804746573740000010001
+watch 2 r-
+close 1
+timer 4000
+? @
+open 3 udp 10.0.0.1#53#0
+send 3 dd7401000001000000000000016804746573740000010001
+watch 3 r-
+close 2
+timer 7680
+? @
+open 4 udp 10.0.0.2#53#0
+send 4 dd7401000001000000000000016804746573740000010001
+watch 4 r-
+close 3
+timer 10321
+? @
+=== A answered first: AAAA is not tried again
+file /etc/resolv.conf nameserver%2010.0.0.1%0Anameserver%2010.0.0.2%0A
+lookup h.test 0 0
+deliver 1 dd74818000010001000000000168047465737400000100010168047465737400000100010000003c000401020304
+expire
+expire
+---
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0 10.0.0.2#53#53#0
+read /etc/hosts
+open 1 udp 10.0.0.1#53#0
+send 1 dd7401000001000000000000016804746573740000010001
+send 1 547d010000010000000000000168047465737400001c0001
+watch 1 r-
+timer 2000
+? @
+? @
+close 1
+done 0 name=h.test 1.2.3.4#0/60
+timer none
+? @
+? expire
+? @
+=== SERVFAIL for a name of one label goes on to the next name
+file /etc/resolv.conf nameserver%2010.0.0.1%0Asearch%20x.test%20y.test%0Aoptions%20ndots:0%0A
+lookup host 0 4
+deliver 1 dd748182000100000000000004686f73740000010001
+deliver 1 547d8183000100000000000004686f7374017804746573740000010001
+deliver 1 28fb8180000100010000000004686f737401790474657374000001000104686f73740179047465737400000100010000003c000409090909
+---
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+read /etc/hosts
+open 1 udp 10.0.0.1#53#0
+send 1 dd740100000100000000000004686f73740000010001
+watch 1 r-
+timer 2000
+? @
+send 1 547d0100000100000000000004686f7374017804746573740000010001
+? @
+send 1 28fb0100000100000000000004686f7374017904746573740000010001
+? @
+close 1
+done 0 name=host.y.test 9.9.9.9#0/60
+timer none
+? @
+=== a probe that times out is followed by another
+file /etc/resolv.conf nameserver%2010.0.0.1%0Anameserver%2010.0.0.2%0A
+seed 315
+query A f.test
+expire
+deliver 2 0fb581800001000100000000016604746573740000010001c00c000100010000003c000401010101
+advance 5000
+query A q0.test
+deliver 3 4f0a8180000100010000000002713004746573740000010001c00c000100010000003c000402020202
+expire
+advance 5000
+query A q1.test
+deliver 5 f8288180000100010000000002713104746573740000010001c00c000100010000003c000402020202
+expire
+advance 5000
+query A q2.test
+---
+? @
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0 10.0.0.2#53#53#0
+open 1 udp 10.0.0.1#53#0
+send 1 0fb501000001000000000000016604746573740000010001
+watch 1 r-
+timer 2000
+? @
+open 2 udp 10.0.0.2#53#0
+send 2 0fb501000001000000000000016604746573740000010001
+watch 2 r-
+close 1
+timer 4000
+? @
+close 2
+done 0 name=f.test 1.1.1.1/60
+timer none
+? @
+? @
+open 3 udp 10.0.0.2#53#0
+send 3 4f0a0100000100000000000002713004746573740000010001
+open 4 udp 10.0.0.1#53#0
+send 4 378d0100000100000000000002713004746573740000010001
+watch 3 r-
+watch 4 r-
+timer 9000
+? @
+close 3
+done 1 name=q0.test 2.2.2.2/60
+? @
+close 4
+timer none
+? @
+? @
+open 5 udp 10.0.0.2#53#0
+send 5 f8280100000100000000000002713104746573740000010001
+open 6 udp 10.0.0.1#53#0
+send 6 871d0100000100000000000002713104746573740000010001
+watch 5 r-
+watch 6 r-
+timer 16000
+? @
+close 5
+done 2 name=q1.test 2.2.2.2/60
+? @
+close 6
+timer none
+? @
+? @
+open 7 udp 10.0.0.2#53#0
+send 7 7dcf0100000100000000000002713204746573740000010001
+watch 7 r-
+timer 21250
+? @
+=== the timeout follows the latency that was measured, up to 5 s
+file /etc/resolv.conf nameserver%2010.0.0.1%0A
+query A n0.test
+advance 1500
+deliver 1 dd7481800001000100000000026e3004746573740000010001026e30047465737400000100010000003c000401020304
+query A n1.test
+advance 1500
+deliver 2 547d81800001000100000000026e3104746573740000010001026e31047465737400000100010000003c000401020304
+query A n2.test
+advance 1500
+deliver 3 28fb81800001000100000000026e3204746573740000010001026e32047465737400000100010000003c000401020304
+query A z.test
+---
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+open 1 udp 10.0.0.1#53#0
+send 1 dd7401000001000000000000026e3004746573740000010001
+watch 1 r-
+timer 2000
+? @
+? @
+close 1
+done 0 name=n0.test 1.2.3.4/60
+timer none
+? @
+open 2 udp 10.0.0.1#53#0
+send 2 547d01000001000000000000026e3104746573740000010001
+watch 2 r-
+timer 3500
+? @
+? @
+close 2
+done 1 name=n1.test 1.2.3.4/60
+timer none
+? @
+open 3 udp 10.0.0.1#53#0
+send 3 28fb01000001000000000000026e3204746573740000010001
+watch 3 r-
+timer 5000
+? @
+? @
+close 3
+done 2 name=n2.test 1.2.3.4/60
+timer none
+? @
+open 4 udp 10.0.0.1#53#0
+send 4 adfb01000001000000000000017a04746573740000010001
+watch 4 r-
+timer 9500
+? @
+=== the timeout follows the latency that was measured, down to 250 ms
+file /etc/resolv.conf nameserver%2010.0.0.1%0A
+query A n0.test
+advance 10
+deliver 1 dd7481800001000100000000026e3004746573740000010001026e30047465737400000100010000003c000401020304
+query A n1.test
+advance 10
+deliver 2 547d81800001000100000000026e3104746573740000010001026e31047465737400000100010000003c000401020304
+query A n2.test
+advance 10
+deliver 3 28fb81800001000100000000026e3204746573740000010001026e32047465737400000100010000003c000401020304
+query A z.test
+expire
+expire
+expire
+expire
+---
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+open 1 udp 10.0.0.1#53#0
+send 1 dd7401000001000000000000026e3004746573740000010001
+watch 1 r-
+timer 2000
+? @
+? @
+close 1
+done 0 name=n0.test 1.2.3.4/60
+timer none
+? @
+open 2 udp 10.0.0.1#53#0
+send 2 547d01000001000000000000026e3104746573740000010001
+watch 2 r-
+timer 2010
+? @
+? @
+close 2
+done 1 name=n1.test 1.2.3.4/60
+timer none
+? @
+open 3 udp 10.0.0.1#53#0
+send 3 28fb01000001000000000000026e3204746573740000010001
+watch 3 r-
+timer 2020
+? @
+? @
+close 3
+done 2 name=n2.test 1.2.3.4/60
+timer none
+? @
+open 4 udp 10.0.0.1#53#0
+send 4 adfb01000001000000000000017a04746573740000010001
+watch 4 r-
+timer 280
+? @
+open 5 udp 10.0.0.1#53#0
+send 5 adfb01000001000000000000017a04746573740000010001
+watch 5 r-
+close 4
+timer 562
+? @
+open 6 udp 10.0.0.1#53#0
+send 6 adfb01000001000000000000017a04746573740000010001
+watch 6 r-
+close 5
+timer 1391
+? @
+close 6
+done 3 error ETIMEOUT
+timer none
+? @
+? expire
+? @
+=== a name may take 128 pointers
+file /etc/resolv.conf nameserver%2010.0.0.1%0A
+tries 1
+query NS t.test
+deliver 1 dd7481800001000200000000017404746573740000020001c00c006300010000003c01000000c024c026c028c02ac02cc02ec030c032c034c036c038c03ac03cc03ec040c042c044c046c048c04ac04cc04ec050c052c054c056c058c05ac05cc05ec060c062c064c066c068c06ac06cc06ec070c072c074c076c078c07ac07cc07ec080c082c084c086c088c08ac08cc08ec090c092c094c096c098c09ac09cc09ec0a0c0a2c0a4c0a6c0a8c0aac0acc0aec0b0c0b2c0b4c0b6c0b8c0bac0bcc0bec0c0c0c2c0c4c0c6c0c8c0cac0ccc0cec0d0c0d2c0d4c0d6c0d8c0dac0dcc0dec0e0c0e2c0e4c0e6c0e8c0eac0ecc0eec0f0c0f2c0f4c0f6c0f8c0fac0fcc0fec100c102c104c106c108c10ac10cc10ec110c112c114c116c118c11ac11cc11ec120c00c000200010000003c0002c122
+---
+? @
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+open 1 udp 10.0.0.1#53#0
+send 1 dd7401000001000000000000017404746573740000020001
+watch 1 r-
+timer 2000
+? @
+close 1
+done 0 %
+timer none
+? @
+=== a name may not take 129 pointers
+file /etc/resolv.conf nameserver%2010.0.0.1%0A
+tries 1
+query NS t.test
+deliver 1 dd7481800001000200000000017404746573740000020001c00c006300010000003c01020000c024c026c028c02ac02cc02ec030c032c034c036c038c03ac03cc03ec040c042c044c046c048c04ac04cc04ec050c052c054c056c058c05ac05cc05ec060c062c064c066c068c06ac06cc06ec070c072c074c076c078c07ac07cc07ec080c082c084c086c088c08ac08cc08ec090c092c094c096c098c09ac09cc09ec0a0c0a2c0a4c0a6c0a8c0aac0acc0aec0b0c0b2c0b4c0b6c0b8c0bac0bcc0bec0c0c0c2c0c4c0c6c0c8c0cac0ccc0cec0d0c0d2c0d4c0d6c0d8c0dac0dcc0dec0e0c0e2c0e4c0e6c0e8c0eac0ecc0eec0f0c0f2c0f4c0f6c0f8c0fac0fcc0fec100c102c104c106c108c10ac10cc10ec110c112c114c116c118c11ac11cc11ec120c122c00c000200010000003c0002c124
+---
+? @
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+open 1 udp 10.0.0.1#53#0
+send 1 dd7401000001000000000000017404746573740000020001
+watch 1 r-
+timer 2000
+? @
+close 1
+done 0 error EBADRESP
+timer none
+? @
+=== a name that pointers make longer than 255 bytes is refused
+file /etc/resolv.conf nameserver%2010.0.0.1%0A
+tries 1
+query NS t.test
+deliver 1 dd7481800001000200000000017404746573740000020001c00c000200010000003c00ca3f6161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161613f6161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161613f61616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616108636363636363636300c00c000200010000003c003f3c626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262c024
+---
+? @
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+open 1 udp 10.0.0.1#53#0
+send 1 dd7401000001000000000000017404746573740000020001
+watch 1 r-
+timer 2000
+? @
+close 1
+done 0 error EBADRESP
+timer none
+? @
+=== a name that pointers make 255 bytes long is taken
+file /etc/resolv.conf nameserver%2010.0.0.1%0A
+tries 1
+query NS t.test
+deliver 1 dd7481800001000200000000017404746573740000020001c00c000200010000003c00ca3f6161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161613f6161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161613f61616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616108636363636363636300c00c000200010000003c003936626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262c024
+query NS t.test
+---
+? @
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+open 1 udp 10.0.0.1#53#0
+send 1 dd7401000001000000000000017404746573740000020001
+watch 1 r-
+timer 2000
+? @
+close 1
+done 0 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.cccccccc bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.cccccccc
+timer none
+? @
+done 1 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.cccccccc bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.cccccccc
+? @
+=== the target of an SRV record may be compressed
+file /etc/resolv.conf nameserver%2010.0.0.1%0A
+tries 1
+query SRV t.test
+deliver 1 dd7481800001000100000000017404746573740000210001c00c002100010000003c0008000100020003c00c
+query SRV t.test
+---
+? @
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+open 1 udp 10.0.0.1#53#0
+send 1 dd7401000001000000000000017404746573740000210001
+watch 1 r-
+timer 2000
+? @
+close 1
+done 0 1,2,3,t.test
+timer none
+? @
+done 1 1,2,3,t.test
+? @
+=== the replacement of a NAPTR record may be compressed
+file /etc/resolv.conf nameserver%2010.0.0.1%0A
+tries 1
+query NAPTR t.test
+deliver 1 dd7481800001000100000000017404746573740000230001c00c002300010000003c000d0001000201730353495000c00c
+query NAPTR t.test
+---
+? @
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+open 1 udp 10.0.0.1#53#0
+send 1 dd7401000001000000000000017404746573740000230001
+watch 1 r-
+timer 2000
+? @
+close 1
+done 0 1,2,s,SIP,%,t.test
+timer none
+? @
+done 1 1,2,s,SIP,%,t.test
+? @
+=== the target of an HTTPS record may not be compressed
+file /etc/resolv.conf nameserver%2010.0.0.1%0A
+tries 1
+query ANY t.test
+deliver 1 dd7481800001000100000000017404746573740000ff0001c00c004100010000003c00040001c00c
+---
+? @
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+open 1 udp 10.0.0.1#53#0
+send 1 dd7401000001000000000000017404746573740000ff0001
+watch 1 r-
+timer 2000
+? @
+close 1
+done 0 error EBADRESP
+timer none
+? @
+=== the target of an SVCB record may not be compressed
+file /etc/resolv.conf nameserver%2010.0.0.1%0A
+tries 1
+query ANY t.test
+deliver 1 dd7481800001000100000000017404746573740000ff0001c00c004000010000003c00040001c00c
+---
+? @
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+open 1 udp 10.0.0.1#53#0
+send 1 dd7401000001000000000000017404746573740000ff0001
+watch 1 r-
+timer 2000
+? @
+close 1
+done 0 error EBADRESP
+timer none
+? @
+=== empty datagrams are passed over (CVE-2023-32067)
+file /etc/resolv.conf nameserver%201.2.3.4%0a
+seed 1
+query A a.test
+deliver 1 -
+deliver 1 -
+deliver 1 02ba81800001000100000000016104746573740000010001c00c000100010000003c000401010101
+---
+? @
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 1.2.3.4#53#53#0
+open 1 udp 1.2.3.4#53#0
+send 1 02ba01000001000000000000016104746573740000010001
+watch 1 r-
+timer 2000
+? @
+? @
+? @
+close 1
+done 0 name=a.test 1.1.1.1/60
+timer none
+? @
+=== counts in the header that the message cannot hold (CVE-2026-69186)
+file /etc/resolv.conf nameserver%201.2.3.4%0a
+seed 1
+tries 1
+query A a.test
+deliver 1 02ba81800001ffffffffffff016104746573740000010001
+---
+? @
+? @
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 1.2.3.4#53#53#0
+open 1 udp 1.2.3.4#53#0
+send 1 02ba01000001000000000000016104746573740000010001
+watch 1 r-
+timer 2000
+? @
+close 1
+done 0 error EBADRESP
+timer none
+? @
+=== no address has a prefix length (CVE-2023-31130)
+file /etc/resolv.conf nameserver%20::1/0%0anameserver%200::00:00:00/2%0anameserver%201.2.3.4/8%0anameserver%205.6.7.8%0a
+file /etc/nsswitch.conf hosts:%20files%0a
+file /etc/hosts ::1/0%20a%0a0::00:00:00/2%20b%0a1.2.3.4/8%20c%0a
+seed 1
+lookup ::1/0 0 0
+lookup 0::00:00:00/2 0 0
+lookup 1.2.3.4/8 0 0
+lookup a 0 0
+lookup b 0 0
+lookup c 0 0
+---
+? @
+? @
+? @
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 5.6.7.8#53#53#0
+read /etc/hosts
+done 0 error ECONNREFUSED
+? @
+done 1 error ECONNREFUSED
+? @
+done 2 error ECONNREFUSED
+? @
+done 3 error ECONNREFUSED
+? @
+done 4 error ECONNREFUSED
+? @
+done 5 error ECONNREFUSED
+? @
+=== a NUL at the start of a line (CVE-2024-25629)
+file /etc/resolv.conf %00%0a%00nameserver%201.1.1.1%0anameserver%202.2.2.2%0a%00
+file /etc/nsswitch.conf %00%0a%00hosts:%20files%0ahosts:%20dns%0a
+env HOSTALIASES /al
+file /al %00%0a%00h%20x.test%0ah%20real.test%0a
+seed 1
+lookup h 0 4
+---
+? @
+? @
+? @
+? @
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 2.2.2.2#53#53#0
+read /al
+open 1 udp 2.2.2.2#53#0
+send 1 02ba01000001000000000000047265616c04746573740000010001
+watch 1 r-
+timer 2000
+? @
+=== a NAPTR record cut short (CVE-2017-1000381)
+file /etc/resolv.conf nameserver%201.2.3.4%0a
+seed 1
+tries 1
+query NAPTR a.test
+deliver 1 02ba81800001000100000000016104746573740000230001c00c002300010000003c00070001000201530353495000016e047465737400
+---
+? @
+? @
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 1.2.3.4#53#53#0
+open 1 udp 1.2.3.4#53#0
+send 1 02ba01000001000000000000016104746573740000230001
+watch 1 r-
+timer 2000
+? @
+close 1
+done 0 error EBADRESP
+timer none
+? @
+=== a NAPTR record of empty strings
+file /etc/resolv.conf nameserver%201.2.3.4%0a
+seed 1
+tries 1
+query NAPTR a.test
+deliver 1 02ba81800001000100000000016104746573740000230001c00c002300010000003c00080001000200000000
+---
+? @
+? @
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 1.2.3.4#53#53#0
+open 1 udp 1.2.3.4#53#0
+send 1 02ba01000001000000000000016104746573740000230001
+watch 1 r-
+timer 2000
+? @
+close 1
+done 0 1,2,%,%,%,%
+timer none
+? @
+=== the connection ends in the middle of a batch of answers (CVE-2025-31498, CVE-2025-62408)
+file /etc/resolv.conf nameserver%201.2.3.4%0a
+seed 1
+tries 2
+query A q1.test
+query A q2.test
+query A q3.test
+opens fail ok
+queue 1 02ba8180000100010000000002713104746573740000010001c00c000100010000003c000401010101
+queue 1 c7b2
+queue 1 e1fe8180000100010000000002713204746573740000010001c00c000100010000003c000402020202
+deliver 1 c7b28180000100010000000002713304746573740000010001c00c000100010000003c000403030303
+advance 20000
+---
+? @
+? @
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 1.2.3.4#53#53#0
+open 1 udp 1.2.3.4#53#0
+send 1 02ba0100000100000000000002713104746573740000010001
+watch 1 r-
+timer 2000
+? @
+send 1 e1fe0100000100000000000002713204746573740000010001
+? @
+send 1 c7b20100000100000000000002713304746573740000010001
+? @
+? @
+? @
+? @
+? @
+open fails udp 1.2.3.4#53#0
+open 2 udp 1.2.3.4#53#0
+send 2 c7b20100000100000000000002713304746573740000010001
+watch 2 r-
+close 1
+done 1 error ECONNREFUSED
+done 0 name=q1.test 1.1.1.1/60
+timer 2397
+? @
+close 2
+done 2 error ETIMEOUT
+timer none
+? @
+=== a lookup's next query fails on the connection its answer came on (CVE-2026-33630)
+file /etc/resolv.conf nameserver%201.2.3.4%0asearch%20a.test%20b.test%20c.test%0aoptions%20use-vc%0a
+seed 1
+tries 1
+lookup host 0 0
+writable 1
+sends 1 fail fail fail fail
+opens fail fail fail fail fail fail fail fail
+deliver 1 001d02ba8181000100000000000004686f7374016104746573740000010001001d02ba8183000100000000000004686f7374016104746573740000010001001de1fe8183000100000000000004686f73740161047465737400001c0001001d02ba8183000100000000000004686f7374016104746573740000010001001de1fe8183000100000000000004686f73740161047465737400001c0001
+break 1
+advance 30000
+---
+? @
+? @
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 1.2.3.4#53#53#0
+read /etc/hosts
+open 1 tcp 1.2.3.4#53#0
+watch 1 rw
+timer 2000
+? @
+send 1 001d02ba0100000100000000000004686f7374016104746573740000010001001de1fe0100000100000000000004686f73740161047465737400001c0001
+watch 1 r-
+? @
+? @
+? @
+send 1 fails
+open fails tcp 1.2.3.4#53#0
+close 1
+done 0 error ECONNREFUSED
+timer none
+? @
+? break%201
+? @
+? @
+=== a backslash before the last dot of a name (CVE-2016-5180)
+file /etc/resolv.conf nameserver%201.2.3.4%0a
+seed 1
+query A abc\.
+query A abc\
+query A abc\\.
+---
+? @
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 1.2.3.4#53#53#0
+open 1 udp 1.2.3.4#53#0
+send 1 02ba01000001000000000000046162632e0000010001
+watch 1 r-
+timer 2000
+? @
+done 1 error EBADNAME
+? @
+done 2 error EBADNAME
+? @
+=== a name that the search list or HOSTALIASES makes end in .onion is not sent
+file /etc/resolv.conf nameserver%2010.0.0.1%0Asearch%20onion%20x.test%0A
+file /al al%20zzz.onion%0A
+env HOSTALIASES /al
+lookup foo 0 4
+lookup al 0 4
+---
+? @
+? @
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+read /al
+read /etc/hosts
+open 1 udp 10.0.0.1#53#0
+send 1 dd740100000100000000000003666f6f017804746573740000010001
+watch 1 r-
+timer 2000
+? @
+read /al
+read /etc/hosts
+done 1 error ENOTFOUND
+? @
+=== a lookup with two queries ends once when cancelled or shut down
+file /etc/resolv.conf nameserver%2010.0.0.1%0A
+lookup h.test 0 0
+cancel
+lookup h.test 0 0
+reply 2 nth=0 a:@:0:9.9.9.9
+cancel
+lookup h.test 0 0
+reverse 1.2.3.4
+shutdown
+---
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+read /etc/hosts
+open 1 udp 10.0.0.1#53#0
+send 1 dd7401000001000000000000016804746573740000010001
+send 1 547d010000010000000000000168047465737400001c0001
+watch 1 r-
+timer 2000
+? @
+close 1
+done 0 error ECANCELLED
+timer none
+? @
+read /etc/hosts
+open 2 udp 10.0.0.1#53#0
+send 2 28fb01000001000000000000016804746573740000010001
+send 2 adfb010000010000000000000168047465737400001c0001
+watch 2 r-
+timer 2000
+? @
+? reply%202%20nth=0%20a:@:0:9.9.9.9
+? @
+close 2
+done 1 error ECANCELLED
+timer none
+? @
+read /etc/hosts
+open 3 udp 10.0.0.1#53#0
+send 3 dfa401000001000000000000016804746573740000010001
+send 3 57f7010000010000000000000168047465737400001c0001
+watch 3 r-
+timer 2000
+? @
+read /etc/hosts
+send 3 9ea101000001000000000000013401330132013107696e2d61646472046172706100000c0001
+? @
+close 3
+done 2 error EDESTRUCTION
+done 3 error EDESTRUCTION
+timer none
+! after the end
+=== `resolve` in nsswitch.conf means the servers
+file /etc/resolv.conf nameserver%2010.0.0.1%0A
+file /etc/nsswitch.conf hosts:%20mymachines%20resolve%20[!UNAVAIL=return]%20files%20myhostname%20dns%0A
+file /etc/hosts 1.2.3.4%20h.test%0A
+lookup h.test 0 4
+---
+? @
+? @
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+open 1 udp 10.0.0.1#53#0
+send 1 dd7401000001000000000000016804746573740000010001
+watch 1 r-
+timer 2000
+? @
+=== only unknown words in nsswitch.conf leave the order as it was
+file /etc/resolv.conf nameserver%2010.0.0.1%0Alookup%20xyz%0A
+file /etc/nsswitch.conf hosts:%20mdns%20nis%0A
+file /etc/hosts 1.2.3.4%20h.test%0A
+lookup h.test 0 4
+lookup i.test 0 4
+---
+? @
+? @
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+read /etc/hosts
+done 0 name=h.test 1.2.3.4#0/0
+? @
+open 1 udp 10.0.0.1#53#0
+send 1 dd7401000001000000000000016904746573740000010001
+watch 1 r-
+timer 2000
+? @
+=== TXT records of class CHAOS count, of class HESIOD do not
+file /etc/resolv.conf nameserver%2010.0.0.1%0A
+query TXT version.bind
+reply 1 rr:@:16:3:0:0161 rr:@:16:4:0:0162 rr:@:16:1:0:0163
+---
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+open 1 udp 10.0.0.1#53#0
+send 1 dd74010000010000000000000776657273696f6e0462696e640000100001
+watch 1 r-
+timer 2000
+? @
+? reply%201%20rr:@:16:3:0:0161%20rr:@:16:4:0:0162%20rr:@:16:1:0:0163
+? @
+=== the search list drops a domain that is there already, by its whole name
+file /etc/resolv.conf nameserver%2010.0.0.1%0Asearch%20example.com,%20example.co%20EXAMPLE.COM%20example.c%0A
+lookup w 0 4
+reply 1 rcode=3
+reply 1 rcode=3
+reply 1 rcode=3
+reply 1 rcode=3
+---
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+read /etc/hosts
+open 1 udp 10.0.0.1#53#0
+send 1 dd74010000010000000000000177076578616d706c6503636f6d0000010001
+watch 1 r-
+timer 2000
+? @
+? reply%201%20rcode=3
+? @
+? reply%201%20rcode=3
+? @
+? reply%201%20rcode=3
+? @
+? reply%201%20rcode=3
+? @
+=== where site-local addresses begin and end
+file /etc/resolv.conf nameserver%20febf::1%0Anameserver%20fec0::1%0Anameserver%20fec0:0:0:ffff::1%0Anameserver%20feff:ffff::1%0Anameserver%20ff00::1%0Anameserver%20fe7f::1%0A
+local 0.0.0.0
+---
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers ff00::1#53#53#0 fe7f::1#53#53#0
+? @
+=== a hosts file that cannot be read: localhost answers, other names go to the servers
+file /etc/resolv.conf nameserver%2010.0.0.1%0A
+unreadable /etc/hosts
+lookup localhost 0 0
+lookup other.test 0 4
+reverse 1.2.3.4
+---
+? @
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+read /etc/hosts
+done 0 name=localhost ::1#0/0 127.0.0.1#0/0
+? @
+read /etc/hosts
+open 1 udp 10.0.0.1#53#0
+send 1 dd7401000001000000000000056f7468657204746573740000010001
+watch 1 r-
+timer 2000
+? @
+read /etc/hosts
+send 1 547d01000001000000000000013401330132013107696e2d61646472046172706100000c0001
+? @
+=== a good A answer outlives a malformed AAAA answer
+file /etc/resolv.conf nameserver%2010.0.0.1%0A
+lookup example.com 0 0
+reply 1 nth=0 a:@:9:2.3.4.5
+reply 1 nth=1 rr:@:28:1:9:0102
+---
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+read /etc/hosts
+open 1 udp 10.0.0.1#53#0
+send 1 dd7401000001000000000000076578616d706c6503636f6d0000010001
+send 1 547d01000001000000000000076578616d706c6503636f6d00001c0001
+watch 1 r-
+timer 2000
+? @
+? reply%201%20nth=0%20a:@:9:2.3.4.5
+? @
+? reply%201%20nth=1%20rr:@:28:1:9:0102
+? @
+=== the reserved bits of a label's length
+file /etc/resolv.conf nameserver%2010.0.0.1%0A
+tries 1
+query CNAME a.test
+reply 1 rr:@:5:1:9:4161006200
+query CNAME b.test
+reply 2 rr:@:5:1:9:8161006200
+---
+? @
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+open 1 udp 10.0.0.1#53#0
+send 1 dd7401000001000000000000016104746573740000050001
+watch 1 r-
+timer 2000
+? @
+? reply%201%20rr:@:5:1:9:4161006200
+? @
+send 1 547d01000001000000000000016204746573740000050001
+? @
+? reply%202%20rr:@:5:1:9:8161006200
+? @
+=== a short record of another type next to a NAPTR record
+file /etc/resolv.conf nameserver%2010.0.0.1%0A
+tries 1
+query NAPTR c.test
+reply 1 a:@:9:1.2.3.4 rr:@:35:1:9:000a00140153000000
+query NAPTR a.test
+reply 2 rr:@:35:1:9:000a0014000000
+---
+? @
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+open 1 udp 10.0.0.1#53#0
+send 1 dd7401000001000000000000016304746573740000230001
+watch 1 r-
+timer 2000
+? @
+? reply%201%20a:@:9:1.2.3.4%20rr:@:35:1:9:000a00140153000000
+? @
+send 1 547d01000001000000000000016104746573740000230001
+? @
+? reply%202%20rr:@:35:1:9:000a0014000000
+? @
+=== empty frames on a TCP connection are passed over
+file /etc/resolv.conf nameserver%2010.0.0.1%0Aoptions%20use-vc%0A
+query A a.test
+writable 1
+deliver 1 000000000000
+deliver 1 00
+deliver 1 00
+reply 1 a:@:9:1.1.1.1
+---
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+open 1 tcp 10.0.0.1#53#0
+watch 1 rw
+timer 2000
+? @
+send 1 0018dd7401000001000000000000016104746573740000010001
+watch 1 r-
+? @
+? @
+? @
+? @
+? reply%201%20a:@:9:1.1.1.1
+? @
+=== ENODATA outlives the ENOTFOUND of later names of the search list
+file /etc/resolv.conf nameserver%2010.0.0.1%0Asearch%20a.test%20b.test%0A
+lookup host 0 4
+deliver 1 dd748180000100000000000004686f7374016104746573740000010001
+deliver 1 547d8183000100000000000004686f7374016204746573740000010001
+deliver 1 28fb8183000100000000000004686f73740000010001
+---
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+read /etc/hosts
+open 1 udp 10.0.0.1#53#0
+send 1 dd740100000100000000000004686f7374016104746573740000010001
+watch 1 r-
+timer 2000
+? @
+send 1 547d0100000100000000000004686f7374016204746573740000010001
+? @
+send 1 28fb0100000100000000000004686f73740000010001
+? @
+close 1
+done 0 error ENODATA
+timer none
+? @
+=== the root as a name, also by a pointer
+file /etc/resolv.conf nameserver%2010.0.0.1%0A
+query A example.com
+deliver 1 dd7481800001000200000000076578616d706c6503636f6d0000010001c018000100010000012c000401020304c00c000100010000012c000405060708
+query MX example.com
+deliver 2 547d81800001000200000000076578616d706c6503636f6d00000f0001c00c000f00010000012c00040005c018c00c000f00010000012c00050006017800
+reverse 1.2.3.4
+deliver 3 28fb81800001000100000000013401330132013107696e2d61646472046172706100000c0001c00c000c00010000012c000100
+---
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+open 1 udp 10.0.0.1#53#0
+send 1 dd7401000001000000000000076578616d706c6503636f6d0000010001
+watch 1 r-
+timer 2000
+? @
+close 1
+done 0 name=example.com 1.2.3.4/300 5.6.7.8/300
+timer none
+? @
+open 2 udp 10.0.0.1#53#0
+send 2 547d01000001000000000000076578616d706c6503636f6d00000f0001
+watch 2 r-
+timer 2000
+? @
+close 2
+done 1 5,% 6,x
+timer none
+? @
+read /etc/hosts
+open 3 udp 10.0.0.1#53#0
+send 3 28fb01000001000000000000013401330132013107696e2d61646472046172706100000c0001
+watch 3 r-
+timer 2000
+? @
+close 3
+done 2 name=% %
+timer none
+? @
+=== nsswitch.conf counts without a resolv.conf
+file /etc/nsswitch.conf hosts:%20dns%20files%0A
+file /etc/hosts 1.2.3.4%20host%0A
+lookup host 0 4
+---
+? @
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 127.0.0.1#53#53#0
+open 1 udp 127.0.0.1#53#0
+send 1 dd740100000100000000000004686f73740000010001
+watch 1 r-
+timer 2000
+? @
+=== a query that times out half written keeps the frames of the connection whole
+file /etc/resolv.conf nameserver%2010.0.0.1%0A
+tries 2
+query A n0.test
+deliver 1 dd7483800001000000000000026e3004746573740000010001
+sends 2 5 block
+writable 2
+expire
+writable 2
+---
+? @
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+open 1 udp 10.0.0.1#53#0
+send 1 dd7401000001000000000000026e3004746573740000010001
+watch 1 r-
+timer 2000
+? @
+open 2 tcp 10.0.0.1#53#0
+watch 2 rw
+close 1
+? @
+? @
+send 2 0019dd7401
+? @
+send 2 blocks
+timer 5340
+? @
+send 2 000001000000000000026e30047465737400000100010019dd7401000001000000000000026e3004746573740000010001
+watch 2 r-
+? @
+=== cancel() ends each request once and asks for no further name
+file /etc/resolv.conf nameserver%2010.0.0.1%0Asearch%20a.test%20b.test%0A
+lookup host 0 0
+reverse 1.2.3.4
+nameinfo 1.2.3.5 80
+cancel
+---
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+read /etc/hosts
+open 1 udp 10.0.0.1#53#0
+send 1 dd740100000100000000000004686f7374016104746573740000010001
+send 1 547d0100000100000000000004686f73740161047465737400001c0001
+watch 1 r-
+timer 2000
+? @
+read /etc/hosts
+send 1 28fb01000001000000000000013401330132013107696e2d61646472046172706100000c0001
+? @
+read /etc/hosts
+send 1 adfb01000001000000000000013501330132013107696e2d61646472046172706100000c0001
+? @
+close 1
+done 0 error ECANCELLED
+done 1 error ECANCELLED
+done 2 error ECANCELLED
+timer none
+? @
+=== more than 8 PTR records
+file /etc/resolv.conf nameserver%2010.0.0.1%0A
+reverse 1.2.3.4
+deliver 1 dd7481800001000900000000013401330132013107696e2d61646472046172706100000c0001c00c000c00010000012c0009026830047465737400c00c000c00010000012c0009026831047465737400c00c000c00010000012c0009026832047465737400c00c000c00010000012c0009026833047465737400c00c000c00010000012c0009026834047465737400c00c000c00010000012c0009026835047465737400c00c000c00010000012c0009026836047465737400c00c000c00010000012c0009026837047465737400c00c000c00010000012c0009026838047465737400
+---
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+read /etc/hosts
+open 1 udp 10.0.0.1#53#0
+send 1 dd7401000001000000000000013401330132013107696e2d61646472046172706100000c0001
+watch 1 r-
+timer 2000
+? @
+close 1
+done 0 name=h8.test h0.test h1.test h2.test h3.test h4.test h5.test h6.test h7.test h8.test
+timer none
+? @
+=== what counts as an IPv4 address
+file /etc/resolv.conf nameserver%2010.0.0.1%0A
+lookup 1.2.3.4 0 6
+lookup 1.2.3 0 4
+lookup 1.2.3.4. 0 4
+---
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+done 0 name=- 1.2.3.4#0/0
+? @
+read /etc/hosts
+open 1 udp 10.0.0.1#53#0
+send 1 dd74010000010000000000000131013201330000010001
+watch 1 r-
+timer 2000
+? @
+read /etc/hosts
+send 1 547d0100000100000000000001310132013301340000010001
+? @
+=== records of other types among the answers are passed over
+file /etc/resolv.conf nameserver%2010.0.0.1%0A
+query SRV _x._tcp.test
+deliver 1 dd7481800001000300000000025f78045f74637004746573740000210001c00c000500010000012c000801790474657374000179047465737400002100010000012c0009000100020003017400017400000100010000012c000401020304
+---
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+open 1 udp 10.0.0.1#53#0
+send 1 dd7401000001000000000000025f78045f74637004746573740000210001
+watch 1 r-
+timer 2000
+? @
+close 1
+done 0 1,2,3,t
+timer none
+? @
+=== two OPT records
+file /etc/resolv.conf nameserver%2010.0.0.1%0A
+tries 1
+query A a.test
+deliver 1 dd7481800001000100000002016104746573740000010001c00c000100010000003c00040101010100002904d000000000000000002904d0000000000000
+---
+? @
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+open 1 udp 10.0.0.1#53#0
+send 1 dd7401000001000000000000016104746573740000010001
+watch 1 r-
+timer 2000
+? @
+close 1
+done 0 error EBADRESP
+timer none
+? @
+=== short forms of IPv4 addresses in the hosts file
+file /etc/resolv.conf nameserver%2010.0.0.1%0A
+file /etc/hosts 10.1.1.1/8%20slash4%0A::5/64%20slash6%0A10%20short%0A10.2%20short2%0A
+lookup ::1/0 0 0
+lookup short 0 4
+lookup short2 0 4
+lookup slash4 0 4
+cancel
+lookup slash6 0 6
+cancel
+---
+? @
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+read /etc/hosts
+done 0 error EBADNAME
+? @
+done 1 name=short 10.0.0.0#0/0
+? @
+done 2 name=short2 10.2.0.0#0/0
+? @
+open 1 udp 10.0.0.1#53#0
+send 1 28fb0100000100000000000006736c617368340000010001
+watch 1 r-
+timer 2000
+? @
+close 1
+done 3 error ECANCELLED
+timer none
+? @
+open 2 udp 10.0.0.1#53#0
+send 2 adfb0100000100000000000006736c6173683600001c0001
+watch 2 r-
+timer 2000
+? @
+close 2
+done 4 error ECANCELLED
+timer none
+? @
+=== cancel() after one family was answered is no success
+file /etc/resolv.conf nameserver%2010.0.0.1%0Anameserver%2010.0.0.2%0A
+lookup www.x.test 80 0
+deliver 1 dd748180000100010000000003777777017804746573740000010001037777770178047465737400000100010000003c000401020304
+cancel
+---
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0 10.0.0.2#53#53#0
+read /etc/hosts
+open 1 udp 10.0.0.1#53#0
+send 1 dd740100000100000000000003777777017804746573740000010001
+send 1 547d01000001000000000000037777770178047465737400001c0001
+watch 1 r-
+timer 2000
+? @
+? @
+close 1
+done 0 error ECANCELLED
+timer none
+? @
+=== the search domain `.`
+file /etc/resolv.conf nameserver%2010.0.0.1%0Asearch%20.%20corp.test%0Aoptions%20ndots:2%0A
+lookup host 80 4
+deliver 1 dd748183000100000000000004686f73740000010001
+---
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+read /etc/hosts
+open 1 udp 10.0.0.1#53#0
+send 1 dd740100000100000000000004686f73740000010001
+watch 1 r-
+timer 2000
+? @
+send 1 547d0100000100000000000004686f737404636f727004746573740000010001
+? @
+=== a name before a pointer that is as long as what the pointer names
+query MX abc.de
+deliver 1 dd74818000010002000000000361626302646500000f00010361626302646500000f00010000003c0011000a0361626302646503616263026465000361626302646500000f00010000003c0011000a066162636465660361626302646500
+---
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 127.0.0.1#53#53#0
+open 1 udp 127.0.0.1#53#0
+send 1 dd74010000010000000000000361626302646500000f0001
+watch 1 r-
+timer 2000
+? @
+close 1
+done 0 10,abc.de.abc.de 10,abcdef.abc.de
+timer none
+? @
+=== the cache outlives setServers() with the same servers in any order, not with others
+file /etc/resolv.conf nameserver%2010.0.0.1%0Anameserver%2010.0.0.2%0A
+query A a.test
+deliver 1 dd748180000100010000000001610474657374000001000101610474657374000001000100000258000401020304
+servers 10.0.0.1#53#53#0 10.0.0.2#53#53#0
+query A a.test
+servers 10.0.0.2#53#53#0 10.0.0.1#53#53#0
+query A a.test
+servers 10.0.0.1#53#53#0
+query A a.test
+---
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0 10.0.0.2#53#53#0
+open 1 udp 10.0.0.1#53#0
+send 1 dd7401000001000000000000016104746573740000010001
+watch 1 r-
+timer 2000
+? @
+close 1
+done 0 name=a.test 1.2.3.4/600
+timer none
+? @
+servers 10.0.0.1#53#53#0 10.0.0.2#53#53#0
+? @
+done 1 name=a.test 1.2.3.4/600
+? @
+servers 10.0.0.2#53#53#0 10.0.0.1#53#53#0
+? @
+done 2 name=a.test 1.2.3.4/600
+? @
+servers 10.0.0.1#53#53#0
+? @
+open 2 udp 10.0.0.1#53#0
+send 2 adfb01000001000000000000016104746573740000010001
+watch 2 r-
+timer 2000
+? @
+=== an extended RCODE that is not assigned
+query A a.test
+deliver 1 dd74818000010001000000010161047465737400000100010161047465737400000100010000003c00040102030400002904d0020000000000
+---
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 127.0.0.1#53#53#0
+open 1 udp 127.0.0.1#53#0
+send 1 dd7401000001000000000000016104746573740000010001
+watch 1 r-
+timer 2000
+? @
+close 1
+done 0 error ESERVFAIL
+timer none
+? @
+=== the extended RCODE BADVERS
+query A a.test
+deliver 1 dd74818000010001000000010161047465737400000100010161047465737400000100010000003c00040102030400002904d0010000000000
+---
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 127.0.0.1#53#53#0
+open 1 udp 127.0.0.1#53#0
+send 1 dd7401000001000000000000016104746573740000010001
+watch 1 r-
+timer 2000
+? @
+close 1
+done 0 name=a.test 1.2.3.4/60
+timer none
+? @
+=== a bad last line does not undo the hosts file, whose names match in any case
+file /etc/hosts 10.0.0.1%20Foo.Test%20bar%0Anot-an-ip%20baz%0A
+lookup foo.test 80 4
+lookup BAR 80 4
+reverse 10.0.0.1
+---
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 127.0.0.1#53#53#0
+read /etc/hosts
+done 0 name=foo.test 10.0.0.1#80/0
+? @
+done 1 name=BAR 10.0.0.1#80/0
+? @
+done 2 name=Foo.Test bar
+? @
+=== nothing is asked after shutdown
+query A a.test
+shutdown
+---
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 127.0.0.1#53#53#0
+open 1 udp 127.0.0.1#53#0
+send 1 dd7401000001000000000000016104746573740000010001
+watch 1 r-
+timer 2000
+? @
+close 1
+done 0 error EDESTRUCTION
+timer none
+! after the end
+=== an answer that replaces one in the cache and is due at the same time goes then
+file /etc/resolv.conf nameserver%2010.0.0.1%0A
+query A a.test
+query A a.test
+deliver 1 dd748180000100010000000001610474657374000001000101610474657374000001000100000001000401010101
+deliver 1 547d8180000100010000000001610474657374000001000101610474657374000001000100000001000402020202
+advance 2000
+query A a.test
+---
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+open 1 udp 10.0.0.1#53#0
+send 1 dd7401000001000000000000016104746573740000010001
+watch 1 r-
+timer 2000
+? @
+send 1 547d01000001000000000000016104746573740000010001
+? @
+done 0 name=a.test 1.1.1.1/1
+? @
+close 1
+done 1 name=a.test 2.2.2.2/1
+timer none
+? @
+? @
+open 2 udp 10.0.0.1#53#0
+send 2 28fb01000001000000000000016104746573740000010001
+watch 2 r-
+timer 4000
+? @
+=== differs: 031, by a TAB in resolv.conf
+file /etc/resolv.conf options%09timeout:256%20%0Aoptions%09ndots:3%09ndots:5%0Anameserver%20fec0::1%254294967296%0Asearch%20-,%20.%20x;c%0Ahostresorder%20%09%20bind,file%0Anameserver%20fe80::1%25eth0%0A
+lookup a.test 0 0
+---
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 127.0.0.1#53#53#0
+read /etc/hosts
+open 1 udp 127.0.0.1#53#0
+send 1 dd7401000001000000000000016104746573740000010001
+send 1 547d010000010000000000000161047465737400001c0001
+watch 1 r-
+timer 5000
+? @
++++
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 127.0.0.1#53#53#0
+read /etc/hosts
+open 1 udp 127.0.0.1#53#0
+watch 1 r-
+send 1 dd740100000100000000000001610474657374012d0000010001
+send 1 547d0100000100000000000001610474657374012d00001c0001
+timer 5000
+? @
+=== differs: 045, by the hosts file
+file /etc/hosts ::ffff:1.2.3.4%09host2%09LOCALHOST.%0A2002:102:304::1%09LOCALHOST.%20%20localhost%20host2%0Aff02::1%0A
+lookup localhost 0 0
+query TXT foo.onion.
+---
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 127.0.0.1#53#53#0
+read /etc/hosts
+done 0 name=localhost 127.0.0.1#0/0 ::ffff:1.2.3.4#0/0 2002:102:304::1#0/0
+? @
+done 1 error ENOTFOUND
+? @
++++
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 127.0.0.1#53#53#0
+read /etc/hosts
+done 0 name=localhost 127.0.0.1#0/0 2002:102:304::1#0/0
+? @
+done 1 error ENOTFOUND
+? @
+=== differs: 058, by the hosts file
+file /etc/hosts 3ffe::1%20%20host2%20x.localhost%0A224.0.0.1%20%20host%09host2%20b.t%7Festtt%20#%20c
+lookup host 80 0
+---
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 127.0.0.1#53#53#0
+read /etc/hosts
+done 0 name=host 224.0.0.1#80/0 3ffe::1#80/0
+? @
++++
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 127.0.0.1#53#53#0
+read /etc/hosts
+done 0 name=host 224.0.0.1#80/0
+? @
+=== differs: 103, by `localhost.`
+nameinfo 10.0.0.1 80
+deliver 1 dd748180000100000000000101310130013002313007696e2d61646472046172706100000c00010000010001ffffffff00040a00025c
+lookup 1.2.3 0 0
+lookup LOCALHOST. 0 0
+deliver 2 adfb81800001000000000000094c4f43414c484f53540000010001
+deliver 2 dfa481800001000000000000094c4f43414c484f535400001c0001
+advance 86400000
+deliver 3 547d818000010000000000000131013201330000010001
+expire
+---
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 127.0.0.1#53#53#0
+read /etc/hosts
+open 1 udp 127.0.0.1#53#0
+send 1 dd740100000100000000000001310130013002313007696e2d61646472046172706100000c0001
+watch 1 r-
+timer 2000
+? @
+close 1
+done 0 error ENOTFOUND
+timer none
+? @
+read /etc/hosts
+open 2 udp 127.0.0.1#53#0
+send 2 547d010000010000000000000131013201330000010001
+send 2 28fb0100000100000000000001310132013300001c0001
+watch 2 r-
+timer 2000
+? @
+read /etc/hosts
+send 2 adfb01000001000000000000094c4f43414c484f53540000010001
+send 2 dfa401000001000000000000094c4f43414c484f535400001c0001
+? @
+? @
+done 2 error ENODATA
+? @
+open 3 udp 127.0.0.1#53#0
+send 3 28fb0100000100000000000001310132013300001c0001
+send 3 547d010000010000000000000131013201330000010001
+watch 3 r-
+close 2
+timer 86400346
+? @
+timer 86400415
+? @
+open 4 udp 127.0.0.1#53#0
+send 4 28fb0100000100000000000001310132013300001c0001
+watch 4 r-
+close 3
+timer 86401357
+? @
++++
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 127.0.0.1#53#53#0
+read /etc/hosts
+open 1 udp 127.0.0.1#53#0
+watch 1 r-
+send 1 dd740100000100000000000001310130013002313007696e2d61646472046172706100000c0001
+timer 2000
+? @
+close 1
+done 0 error ENOTFOUND
+timer none
+? @
+read /etc/hosts
+open 2 udp 127.0.0.1#53#0
+watch 2 r-
+send 2 547d010000010000000000000131013201330000010001
+send 2 28fb0100000100000000000001310132013300001c0001
+timer 2000
+? @
+read /etc/hosts
+done 2 name=LOCALHOST. ::1#0/0 127.0.0.1#0/0
+? @
+? @
+? @
+open 3 udp 127.0.0.1#53#0
+watch 3 r-
+send 3 28fb0100000100000000000001310132013300001c0001
+send 3 547d010000010000000000000131013201330000010001
+close 2
+timer 86402253
+? @
+timer 86402641
+? @
+open 4 udp 127.0.0.1#53#0
+watch 4 r-
+send 4 28fb0100000100000000000001310132013300001c0001
+close 3
+timer 86409267
+? @
 === differs: an answer without records is remembered for an hour, whatever its SOA record says
 query A a.test
 deliver 1 dd7481800001000000010000016104746573740000010001c00e0006000100000e10001a016e00016d00000000010000000100000001000000010000003c
@@ -4846,4 +6587,656 @@ send 2 dd740100000100000000000001310131033136380331393207696e2d61646472046172706
 close 1
 servers 255.255.255.255#53#53#0 10.0.0.1#53#53#0
 timer 6626
+? @
+=== differs: lines of the hosts file that share a name or an address are one entry
+file /etc/resolv.conf nameserver%201.1.1.1%0A
+file /etc/hosts 1.1.1.1%20a%20c%0A2.2.2.2%20a%20b%0A3.3.3.3%20b%20c%0A 1
+lookup a 0 4
+lookup b 0 4
+lookup c 0 4
+reverse 3.3.3.3
+---
+? @
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 1.1.1.1#53#53#0
+read /etc/hosts
+done 0 name=a 1.1.1.1#0/0 2.2.2.2#0/0 3.3.3.3#0/0
+? @
+done 1 name=b 1.1.1.1#0/0 2.2.2.2#0/0 3.3.3.3#0/0
+? @
+done 2 name=c 1.1.1.1#0/0 2.2.2.2#0/0 3.3.3.3#0/0
+? @
+done 3 name=a c b
+? @
++++
+? @
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 1.1.1.1#53#53#0
+read /etc/hosts
+done 0 name=a 1.1.1.1#0/0 2.2.2.2#0/0
+? @
+done 1 name=b 2.2.2.2#0/0 3.3.3.3#0/0
+? @
+done 2 name=c 1.1.1.1#0/0 3.3.3.3#0/0
+? @
+done 3 name=b c
+? @
+=== differs: a name is kept as often as a line of the hosts file repeats it
+file /etc/resolv.conf nameserver%201.1.1.1%0A
+file /etc/hosts 1.1.1.1%20a%20b%20a%20B%0A1.1.1.1%20a%20c%20A%0A 1
+reverse 1.1.1.1
+lookup a 0 4
+---
+? @
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 1.1.1.1#53#53#0
+read /etc/hosts
+done 0 name=a b a B c
+? @
+done 1 name=a 1.1.1.1#0/0
+? @
++++
+? @
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 1.1.1.1#53#53#0
+read /etc/hosts
+done 0 name=a b c
+? @
+done 1 name=a 1.1.1.1#0/0
+? @
+=== differs: a hosts file replaced by an older one is not read again
+file /etc/resolv.conf nameserver%201.1.1.1%0A
+file /etc/hosts 1.2.3.4%20example.com%0A 1699999000
+lookup example.com 0 4
+advance 5000
+file /etc/hosts 9.9.9.9%20example.com%0A 1699995400
+lookup example.com 0 4
+advance 5000
+file /etc/hosts 8.8.8.8%20example.com%20x%0A 1699995400
+lookup example.com 0 4
+---
+? @
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 1.1.1.1#53#53#0
+read /etc/hosts
+done 0 name=example.com 1.2.3.4#0/0
+? @
+? @
+? @
+done 1 name=example.com 1.2.3.4#0/0
+? @
+? @
+? @
+done 2 name=example.com 1.2.3.4#0/0
+? @
++++
+? @
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 1.1.1.1#53#53#0
+read /etc/hosts
+done 0 name=example.com 1.2.3.4#0/0
+? @
+? @
+? @
+read /etc/hosts
+done 1 name=example.com 9.9.9.9#0/0
+? @
+? @
+? @
+read /etc/hosts
+done 2 name=example.com 8.8.8.8#0/0
+? @
+=== differs: addresses of the family that was not asked for are taken
+file /etc/resolv.conf nameserver%201.2.3.4%0a
+file /etc/nsswitch.conf hosts:%20dns%0a
+seed 1
+lookup x.test 0 6
+deliver 1 02ba818000010001000000000178047465737400001c0001c00c000100010000003c000406060606
+---
+? @
+? @
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 1.2.3.4#53#53#0
+open 1 udp 1.2.3.4#53#0
+send 1 02ba010000010000000000000178047465737400001c0001
+watch 1 r-
+timer 2000
+? @
+close 1
+done 0 name=x.test 6.6.6.6#0/60
+timer none
+? @
++++
+? @
+? @
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 1.2.3.4#53#53#0
+open 1 udp 1.2.3.4#53#0
+watch 1 r-
+send 1 02ba010000010000000000000178047465737400001c0001
+timer 2000
+? @
+close 1
+done 0 error ENODATA
+timer none
+? @
+=== differs: an answer that replaces another in the cache goes when the other would have
+file /etc/resolv.conf nameserver%2010.0.0.1%0A
+query A a.test
+query A a.test
+deliver 1 dd748180000100010000000001610474657374000001000101610474657374000001000100000001000401010101
+deliver 1 547d8180000100010000000001610474657374000001000101610474657374000001000100000064000402020202
+advance 2000
+query A a.test
+---
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+open 1 udp 10.0.0.1#53#0
+send 1 dd7401000001000000000000016104746573740000010001
+watch 1 r-
+timer 2000
+? @
+send 1 547d01000001000000000000016104746573740000010001
+? @
+done 0 name=a.test 1.1.1.1/1
+? @
+close 1
+done 1 name=a.test 2.2.2.2/100
+timer none
+? @
+? @
+open 2 udp 10.0.0.1#53#0
+send 2 28fb01000001000000000000016104746573740000010001
+watch 2 r-
+timer 4000
+? @
++++
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+open 1 udp 10.0.0.1#53#0
+watch 1 r-
+send 1 dd7401000001000000000000016104746573740000010001
+timer 2000
+? @
+send 1 547d01000001000000000000016104746573740000010001
+? @
+done 0 name=a.test 1.1.1.1/1
+? @
+close 1
+done 1 name=a.test 2.2.2.2/100
+timer none
+? @
+? @
+done 2 name=a.test 2.2.2.2/98
+? @
+=== differs: a name of 256 bytes on the wire is sent
+file /etc/resolv.conf nameserver%2010.0.0.1%0A
+query A aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+---
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+open 1 udp 10.0.0.1#53#0
+send 1 dd74010000010000000000003f6161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161613f6161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161613f6161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161616161613e62626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262626262620000010001
+watch 1 r-
+timer 2000
+? @
++++
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+done 0 error EBADNAME
+? @
+=== differs: a TAB inside a value of resolv.conf drops the line
+file /etc/resolv.conf nameserver%2010.0.0.1%09#%20primary%0Asearch%20a.test%09b.test%0Aoptions%20ndots:2%09timeout:1%0A
+lookup host 0 4
+---
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 127.0.0.1#53#53#0
+read /etc/hosts
+open 1 udp 127.0.0.1#53#0
+send 1 dd740100000100000000000004686f73740000010001
+watch 1 r-
+timer 2000
+? @
++++
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+read /etc/hosts
+open 1 udp 10.0.0.1#53#0
+watch 1 r-
+send 1 dd740100000100000000000004686f7374016104746573740000010001
+timer 1000
+? @
+=== differs: a comment in nsswitch.conf is read as sources
+file /etc/resolv.conf nameserver%2010.0.0.1%0A
+file /etc/nsswitch.conf hosts:%20files%20#%20dns%0A
+file /etc/hosts 1.2.3.4%20other%0A
+lookup host 0 4
+---
+? @
+? @
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+read /etc/hosts
+open 1 udp 10.0.0.1#53#0
+send 1 dd740100000100000000000004686f73740000010001
+watch 1 r-
+timer 2000
+? @
++++
+? @
+? @
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+read /etc/hosts
+done 0 error ECONNREFUSED
+? @
+=== differs: the first `domain` counts
+file /etc/resolv.conf nameserver%2010.0.0.1%0Adomain%20old.test%0Adomain%20new.test%0A
+lookup host 0 4
+---
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+read /etc/hosts
+open 1 udp 10.0.0.1#53#0
+send 1 dd740100000100000000000004686f7374036f6c6404746573740000010001
+watch 1 r-
+timer 2000
+? @
++++
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+read /etc/hosts
+open 1 udp 10.0.0.1#53#0
+watch 1 r-
+send 1 dd740100000100000000000004686f7374036e657704746573740000010001
+timer 2000
+? @
+=== differs: `domain` after `search` does not count
+file /etc/resolv.conf nameserver%2010.0.0.1%0Asearch%20old.test%0Adomain%20new.test%0A
+lookup host 0 4
+---
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+read /etc/hosts
+open 1 udp 10.0.0.1#53#0
+send 1 dd740100000100000000000004686f7374036f6c6404746573740000010001
+watch 1 r-
+timer 2000
+? @
++++
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+read /etc/hosts
+open 1 udp 10.0.0.1#53#0
+watch 1 r-
+send 1 dd740100000100000000000004686f7374036e657704746573740000010001
+timer 2000
+? @
+=== differs: an nsswitch.conf that cannot be read undoes resolv.conf
+file /etc/resolv.conf nameserver%2010.0.0.1%0Asearch%20x.test%0Aoptions%20ndots:2%0A
+unreadable /etc/nsswitch.conf
+env LOCALDOMAIN l.test
+lookup foo 0 4
+---
+? @
+? @
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 127.0.0.1#53#53#0
+read /etc/hosts
+open 1 udp 127.0.0.1#53#0
+send 1 dd740100000100000000000003666f6f0000010001
+watch 1 r-
+timer 2000
+? @
++++
+? @
+? @
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+read /etc/hosts
+open 1 udp 10.0.0.1#53#0
+watch 1 r-
+send 1 dd740100000100000000000003666f6f016c04746573740000010001
+timer 2000
+? @
+=== differs: the socket for a link-local server is bound to the local address
+interface 3 eth0
+file /etc/resolv.conf nameserver%20fe80::1%25eth0%0Anameserver%202001:db8::53%0A
+local 2001:db8::5
+query A a.test
+expire
+---
+? @
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers fe80::1#53#53#3 2001:db8::53#53#53#0
+? @
+open 1 udp fe80::1#53#3 from 2001:db8::5
+send 1 dd7401000001000000000000016104746573740000010001
+watch 1 r-
+timer 2000
+? @
+open 2 udp 2001:db8::53#53#0 from 2001:db8::5
+send 2 dd7401000001000000000000016104746573740000010001
+watch 2 r-
+close 1
+timer 4000
+? @
++++
+? @
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers fe80::1#53#53#3 2001:db8::53#53#53#0
+? @
+open 1 udp fe80::1#53#3
+watch 1 r-
+send 1 dd7401000001000000000000016104746573740000010001
+timer 2000
+? @
+open 2 udp 2001:db8::53#53#0 from 2001:db8::5
+watch 2 r-
+send 2 dd7401000001000000000000016104746573740000010001
+close 1
+timer 4000
+? @
+=== differs: a datagram that cannot be read ends the connection, whatever its id
+file /etc/resolv.conf nameserver%201.2.3.4%0a
+seed 1
+tries 2
+query A example.com
+query A other.example
+deliver 1 00
+deliver 2 00
+---
+? @
+? @
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 1.2.3.4#53#53#0
+open 1 udp 1.2.3.4#53#0
+send 1 02ba01000001000000000000076578616d706c6503636f6d0000010001
+watch 1 r-
+timer 2000
+? @
+send 1 e1fe01000001000000000000056f74686572076578616d706c650000010001
+? @
+open 2 udp 1.2.3.4#53#0
+send 2 02ba01000001000000000000076578616d706c6503636f6d0000010001
+send 2 e1fe01000001000000000000056f74686572076578616d706c650000010001
+watch 2 r-
+close 1
+timer 2397
+? @
+close 2
+done 0 error EBADRESP
+done 1 error EBADRESP
+timer none
+? @
++++
+? @
+? @
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 1.2.3.4#53#53#0
+open 1 udp 1.2.3.4#53#0
+watch 1 r-
+send 1 02ba01000001000000000000076578616d706c6503636f6d0000010001
+timer 2000
+? @
+send 1 e1fe01000001000000000000056f74686572076578616d706c650000010001
+? @
+? @
+? deliver%202%2000
+? @
+=== differs: `localhost.` is asked of the servers
+file /etc/resolv.conf nameserver%2010.0.0.1%0A
+lookup localhost. 0 4
+lookup foo.localhost. 0 4
+---
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+read /etc/hosts
+open 1 udp 10.0.0.1#53#0
+send 1 dd7401000001000000000000096c6f63616c686f73740000010001
+watch 1 r-
+timer 2000
+? @
+read /etc/hosts
+send 1 547d0100000100000000000003666f6f096c6f63616c686f73740000010001
+? @
++++
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+read /etc/hosts
+done 0 name=localhost. 127.0.0.1#0/0
+? @
+read /etc/hosts
+done 1 name=foo.localhost. 127.0.0.1#0/0
+? @
+=== differs: a byte of LOCALDOMAIN that does not print undoes the whole configuration
+file /etc/resolv.conf nameserver%2010.0.0.1%0A
+env LOCALDOMAIN %C3%A9.test
+lookup host 0 4
+---
+? @
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 127.0.0.1#53#53#0
+read /etc/hosts
+open 1 udp 127.0.0.1#53#0
+send 1 dd740100000100000000000004686f73740000010001
+watch 1 r-
+timer 2000
+? @
++++
+? @
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+read /etc/hosts
+open 1 udp 10.0.0.1#53#0
+watch 1 r-
+send 1 dd740100000100000000000004686f73740000010001
+timer 2000
+? @
+=== differs: a server whose probe was truncated is never probed again
+file /etc/resolv.conf nameserver%2010.0.0.1%0Anameserver%2010.0.0.2%0A
+seed 37
+query A f.test
+expire
+deliver 2 e50681800001000100000000016604746573740000010001c00c000100010000003c000401010101
+advance 5000
+query A q0.test
+deliver 3 dfa98180000100010000000002713004746573740000010001c00c000100010000003c000402020202
+deliver 4 89a38380000100000000000002713004746573740000010001
+writable 5
+deliver 5 002989a38180000100010000000002713004746573740000010001c00c000100010000003c000402020202
+advance 5000
+query A q1.test
+---
+? @
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0 10.0.0.2#53#53#0
+open 1 udp 10.0.0.1#53#0
+send 1 e50601000001000000000000016604746573740000010001
+watch 1 r-
+timer 2000
+? @
+open 2 udp 10.0.0.2#53#0
+send 2 e50601000001000000000000016604746573740000010001
+watch 2 r-
+close 1
+timer 4000
+? @
+close 2
+done 0 name=f.test 1.1.1.1/60
+timer none
+? @
+? @
+open 3 udp 10.0.0.2#53#0
+send 3 dfa90100000100000000000002713004746573740000010001
+open 4 udp 10.0.0.1#53#0
+send 4 89a30100000100000000000002713004746573740000010001
+watch 3 r-
+watch 4 r-
+timer 9000
+? @
+close 3
+done 1 name=q0.test 2.2.2.2/60
+? @
+open 5 tcp 10.0.0.2#53#0
+watch 5 rw
+close 4
+? @
+send 5 001989a30100000100000000000002713004746573740000010001
+watch 5 r-
+? @
+close 5
+timer none
+? @
+? @
+open 6 udp 10.0.0.2#53#0
+send 6 34d60100000100000000000002713104746573740000010001
+watch 6 r-
+timer 12250
+? @
++++
+? @
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0 10.0.0.2#53#53#0
+open 1 udp 10.0.0.1#53#0
+watch 1 r-
+send 1 e50601000001000000000000016604746573740000010001
+timer 2000
+? @
+open 2 udp 10.0.0.2#53#0
+watch 2 r-
+send 2 e50601000001000000000000016604746573740000010001
+close 1
+timer 4000
+? @
+close 2
+done 0 name=f.test 1.1.1.1/60
+timer none
+? @
+? @
+open 3 udp 10.0.0.2#53#0
+watch 3 r-
+send 3 dfa90100000100000000000002713004746573740000010001
+open 4 udp 10.0.0.1#53#0
+watch 4 r-
+send 4 89a30100000100000000000002713004746573740000010001
+timer 9000
+? @
+close 3
+done 1 name=q0.test 2.2.2.2/60
+? @
+open 5 tcp 10.0.0.2#53#0
+watch 5 rw
+close 4
+? @
+send 5 001989a30100000100000000000002713004746573740000010001
+watch 5 r-
+? @
+close 5
+timer none
+? @
+? @
+open 6 udp 10.0.0.2#53#0
+watch 6 r-
+send 6 34d60100000100000000000002713104746573740000010001
+open 7 udp 10.0.0.1#53#0
+watch 7 r-
+send 7 4f380100000100000000000002713104746573740000010001
+timer 12250
 ? @

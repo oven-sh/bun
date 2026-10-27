@@ -113,10 +113,21 @@ describe("where the servers come from", () => {
     expect(servers()).toBe("servers 127.0.0.1#53#53#0");
     expect(servers(file("/etc/resolv.conf", "search corp.test\n"))).toBe("servers 127.0.0.1#53#53#0");
     expect(servers("unreadable /etc/resolv.conf")).toBe("servers 127.0.0.1#53#53#0");
-    // All of the configuration is given up, also what could be read.
+  });
+
+  test("an nsswitch.conf that cannot be read takes nothing from resolv.conf", () => {
     expect(servers(file("/etc/resolv.conf", "nameserver 10.0.0.1\n"), "unreadable /etc/nsswitch.conf")).toBe(
-      "servers 127.0.0.1#53#53#0",
+      "servers 10.0.0.1#53#53#0",
     );
+  });
+
+  test("a TAB is a blank in resolv.conf", () => {
+    const it = new World(
+      file("/etc/resolv.conf", "nameserver 10.0.0.1\t# first\nnameserver\t10.0.0.2\t10.0.0.3\nsearch a.test\tb.test\n"),
+    );
+    expect(it.run("lookup host 0 4")).toContain("servers 10.0.0.1#53#53#0 10.0.0.2#53#53#0 10.0.0.3#53#53#0");
+    it.reply(1, { rcode: RCODE.NXDOMAIN });
+    expect(it.questions()).toEqual(["1 1 host.a.test", "1 1 host.b.test"]);
   });
 
   test("Windows: the adapters' servers by the metric of the route to them", () => {
@@ -174,6 +185,7 @@ describe("where the servers come from", () => {
     expect(servers("settings android", "android-property 10.0.0.1", "android-property 2001:db8::1,10.0.0.2")).toBe(
       "servers 10.0.0.1#53#53#0 2001:db8::1#53#53#0 10.0.0.2#53#53#0",
     );
+    expect(servers("settings android", "android-property 10.0.0.7")).toBe("servers 10.0.0.7#53#53#0");
     expect(servers("settings android")).toBe("servers 127.0.0.1#53#53#0");
   });
 });
@@ -212,10 +224,11 @@ describe("the search list", () => {
     expect(searched("host", resolvConf("search one.test", "options ndots:0"))).toEqual(["host", "host.one.test"]);
   });
 
-  test("the last `search` counts, `domain` only if there is none before it", () => {
+  test("the last `search` or `domain` counts", () => {
     expect(searched("host", resolvConf("search one.test", "search two.test"))).toEqual(["host.two.test", "host"]);
     expect(searched("host", resolvConf("domain one.test two.test"))).toEqual(["host.one.test", "host"]);
-    expect(searched("host", resolvConf("search one.test", "domain two.test"))).toEqual(["host.one.test", "host"]);
+    expect(searched("host", resolvConf("search one.test", "domain two.test"))).toEqual(["host.two.test", "host"]);
+    expect(searched("host", resolvConf("domain one.test", "domain two.test"))).toEqual(["host.two.test", "host"]);
     expect(searched("host", resolvConf("domain two.test", "search one.test"))).toEqual(["host.one.test", "host"]);
     expect(searched("host", resolvConf("search one.test, ONE.test,two.test"))).toEqual([
       "host.one.test",
@@ -255,6 +268,7 @@ describe("the search list", () => {
         `windows-suffix ${text("one.test,two.test")}`,
         "windows-suffix three.test",
         `windows-suffix ${text("caf\u00e9.test")}`,
+        `windows-suffix ${text("caf\u00e9.test gone.test")}`,
         "windows-suffix %",
         "windows-suffix ONE.test",
         `windows-suffix ${text("four.test five.test")}`,
@@ -325,7 +339,7 @@ describe("the hosts file", () => {
     "  10.1.1.5\tindented",
   ].join("\n");
 
-  test("names and addresses of lines that share either are one entry", () => {
+  test("a name has the addresses of its own lines, and an address the names of its own", () => {
     const it = new World(oneServer, file("/etc/hosts", hosts));
     expect(
       it.run(
@@ -348,16 +362,16 @@ describe("the hosts file", () => {
         "read /etc/nsswitch.conf",
         "servers 10.0.0.1#53#53#0",
         "read /etc/hosts",
-        "done 0 name=box 2001:db8::1#80/0 10.1.1.1#80/0 10.1.1.2#80/0",
+        "done 0 name=box 2001:db8::1#80/0 10.1.1.1#80/0",
         "done 1 name=BOX.corp.test 10.1.1.1#80/0 10.1.1.2#80/0",
         "done 2 name=box 2001:db8::1#80/0",
-        "done 3 name=other 2001:db8::1#0/0 10.1.1.1#0/0 10.1.1.2#0/0",
-        "done 4 name=again 10.1.1.1#0/0 10.1.1.2#0/0",
+        "done 3 name=other 10.1.1.2#0/0",
+        "done 4 name=again 10.1.1.1#0/0",
         "done 5 name=good 10.1.1.4#0/0",
         "done 6 name=indented 10.1.1.5#0/0",
-        "done 7 name=box.corp.test box BOX2 other again",
-        "done 8 name=box.corp.test box BOX2 other again",
-        "done 9 name=box.corp.test box BOX2 other again",
+        "done 7 name=box.corp.test box BOX2 again",
+        "done 8 name=box.corp.test other",
+        "done 9 name=box",
         "done 10 name=good",
       ]
     `);
@@ -378,6 +392,16 @@ describe("the hosts file", () => {
       "read /etc/hosts",
       "done 2 name=box 10.1.1.2#0/0",
     ]);
+    // A copy that kept its time, or a backup.
+    expect(it.run("advance 5000", file("/etc/hosts", "10.1.1.3 box\n", 1_500_000_000), "lookup box 0 4")).toEqual([
+      "read /etc/hosts",
+      "done 3 name=box 10.1.1.3#0/0",
+    ]);
+    expect(it.run(file("/etc/hosts", "10.1.1.44 box\n", 1_500_000_000), "lookup box 0 4")).toEqual([
+      "read /etc/hosts",
+      "done 4 name=box 10.1.1.44#0/0",
+    ]);
+    expect(it.run("lookup box 0 4")).toEqual(["done 5 name=box 10.1.1.44#0/0"]);
   });
 
   test("nsswitch.conf says whether it comes before the servers", () => {
@@ -405,6 +429,11 @@ describe("the hosts file", () => {
       "done 1 name=a.LOCALHOST 127.0.0.1#0/0",
       "done 2 name=localhost ::1#0/0",
     ]);
+    const withDots = new World(oneServer).run("lookup localhost. 0 4", "lookup a.localhost. 0 6");
+    expect(withDots.filter(line => /^(done|open)/.test(line))).toEqual([
+      "done 0 name=localhost. 127.0.0.1#0/0",
+      "done 1 name=a.localhost. ::1#0/0",
+    ]);
     expect(
       new World(oneServer, file("/etc/hosts", "127.0.0.2 localhost\n"))
         .run(...lookups)
@@ -424,6 +453,9 @@ describe("the hosts file", () => {
       "done 1 name=a.LOCALHOST 127.0.0.1#0/0",
       "done 2 name=localhost ::1#0/0",
     ]);
+    expect(new World(oneServer, "loopback 127.0.0.2 127.0.0.3 ::2 ::3").run("lookup localhost 0 0").at(-1)).toBe(
+      "done 0 name=localhost 127.0.0.2#0/0 ::2#0/0",
+    );
   });
 });
 
@@ -592,6 +624,40 @@ describe("timeouts and servers", () => {
       it.run("query A a.test");
       expect(it.reply(1, answer(cookie(length)))).toContain("done 0 name=a.test 1.2.3.4/60");
     }
+  });
+
+  test("a datagram that cannot be read ends the connection only if it has the id of a query on it", () => {
+    const it = new World(oneServer);
+    it.run("query A a.test");
+    const id = it.sent(1).id;
+    for (const stray of ["00", "ff".repeat(40), u16(id ^ 1).toString("hex"), u16(id ^ 1).toString("hex") + "8180"]) {
+      expect(it.run(`deliver 1 ${stray}`)).toEqual([]);
+    }
+    expect(it.run(`deliver 1 ${u16(id).toString("hex")}8180`)).toContain("close 1");
+    expect(it.reply(2, { answers: [a("a.test", 60, "1.2.3.4")] })).toContain("done 0 name=a.test 1.2.3.4/60");
+  });
+
+  test("a link-local server is not asked from the local address", () => {
+    const it = new World(
+      file("/etc/resolv.conf", "nameserver fe80::1%eth0\nnameserver 2001:db8::53\n"),
+      "interface 3 eth0",
+    );
+    expect(it.run("local 2001:db8::5", "query A a.test", "expire").filter(line => line.startsWith("open"))).toEqual([
+      "open 1 udp fe80::1#53#3",
+      "open 2 udp 2001:db8::53#53#0 from 2001:db8::5",
+    ]);
+  });
+
+  test("after shutdown every request ends at once", () => {
+    const it = new World(oneServer);
+    it.run("query A a.test", "shutdown");
+    const after = it.run("query A b.test", "lookup c.test 0 4", "reverse 10.0.0.1", "nameinfo 10.0.0.1 80");
+    expect(after.filter(line => line !== "read /etc/hosts")).toEqual([
+      "done 1 error EDESTRUCTION",
+      "done 2 error EDESTRUCTION",
+      "done 3 error EDESTRUCTION",
+      "done 4 error EDESTRUCTION",
+    ]);
   });
 
   test("`options rotate` starts with a server at random", () => {
@@ -786,6 +852,35 @@ describe("TCP", () => {
   test("`options use-vc` never uses UDP", () => {
     const it = new World(file("/etc/resolv.conf", "nameserver 10.0.0.1\noptions use-vc\n"));
     expect(it.run("query A a.test").slice(4, 6)).toEqual(["open 1 tcp 10.0.0.1#53#0", "watch 1 rw"]);
+  });
+});
+
+describe("lookup()", () => {
+  test("takes the addresses of the type it asked for only", () => {
+    const both = [a("a.test", 60, "1.2.3.4"), aaaa("a.test", 60, "20010db8000000000000000000000001")];
+    const answered = (family: number) => {
+      const it = new World(oneServer);
+      it.run(`lookup a.test 0 ${family}`);
+      const log = it.reply(1, { answers: both });
+      return (family === 0 ? it.reply(1, { answers: both }) : log).find(line => line.startsWith("done"));
+    };
+    expect(answered(4)).toBe("done 0 name=a.test 1.2.3.4#0/60");
+    expect(answered(6)).toBe("done 0 name=a.test 2001:db8::1#0/60");
+    const it = new World(oneServer);
+    it.run("lookup a.test 0 4");
+    expect(it.reply(1, { answers: both.slice(1) })).toContain("done 0 error ENODATA");
+  });
+
+  test("a name is at most 255 bytes on the wire", () => {
+    const label = Buffer.alloc(63, "a").toString();
+    const name = (last: number) => `${label}.${label}.${label}.${Buffer.alloc(last, "b")}`;
+    const it = new World(oneServer);
+    expect(it.run(`query A ${name(61)}`).some(line => line.startsWith("send 1 "))).toBe(true);
+    expect(it.run(`query A ${name(62)}`, `lookup ${name(62)}. 0 4`)).toEqual([
+      "done 1 error EBADNAME",
+      "read /etc/hosts",
+      "done 2 error EBADNAME",
+    ]);
   });
 });
 

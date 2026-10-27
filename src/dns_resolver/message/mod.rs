@@ -1,32 +1,34 @@
 //! DNS messages (RFC 1035 section 4) as values.
 
-pub(crate) mod name;
+mod name;
 mod parse;
 mod write;
 
-/// A domain name in presentation form: labels joined by `.`, with `\` before `".;\()@$` and `\DDD` for a byte that does not print. No trailing dot; the root is empty.
-pub type Name = Vec<u8>;
+const MAX_MESSAGE_LEN: usize = 0xffff;
 
-pub mod rr_type {
-    pub const A: u16 = 1;
-    pub const NS: u16 = 2;
-    pub const CNAME: u16 = 5;
-    pub const SOA: u16 = 6;
-    pub const PTR: u16 = 12;
-    pub const HINFO: u16 = 13;
-    pub const MX: u16 = 15;
-    pub const TXT: u16 = 16;
-    pub const SIG: u16 = 24;
-    pub const AAAA: u16 = 28;
-    pub const SRV: u16 = 33;
-    pub const NAPTR: u16 = 35;
-    pub const OPT: u16 = 41;
-    pub const TLSA: u16 = 52;
-    pub const SVCB: u16 = 64;
-    pub const HTTPS: u16 = 65;
-    pub const ANY: u16 = 255;
-    pub const URI: u16 = 256;
-    pub const CAA: u16 = 257;
+/// A domain name in presentation form: labels joined by `.`, with `\` before `".;\()@$` and `\DDD` for a byte that does not print. No trailing dot; the root is empty.
+pub(crate) type Name = Vec<u8>;
+
+pub(crate) mod rr_type {
+    pub(crate) const A: u16 = 1;
+    pub(crate) const NS: u16 = 2;
+    pub(crate) const CNAME: u16 = 5;
+    pub(crate) const SOA: u16 = 6;
+    pub(crate) const PTR: u16 = 12;
+    pub(crate) const HINFO: u16 = 13;
+    pub(crate) const MX: u16 = 15;
+    pub(crate) const TXT: u16 = 16;
+    pub(crate) const SIG: u16 = 24;
+    pub(crate) const AAAA: u16 = 28;
+    pub(crate) const SRV: u16 = 33;
+    pub(crate) const NAPTR: u16 = 35;
+    pub(crate) const OPT: u16 = 41;
+    pub(crate) const TLSA: u16 = 52;
+    pub(crate) const SVCB: u16 = 64;
+    pub(crate) const HTTPS: u16 = 65;
+    pub(crate) const ANY: u16 = 255;
+    pub(crate) const URI: u16 = 256;
+    pub(crate) const CAA: u16 = 257;
 }
 
 pub(crate) mod class {
@@ -63,16 +65,37 @@ pub(crate) mod flag {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Question {
-    pub name: Name,
-    pub qtype: u16,
-    pub qclass: u16,
+pub(crate) struct Question {
+    pub(crate) name: Name,
+    pub(crate) qtype: u16,
+    pub(crate) qclass: u16,
 }
 
 /// One EDNS option or SVCB parameter.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct OptionValue {
-    pub id: u16,
+pub(crate) struct OptionValue {
+    pub(crate) id: u16,
+    pub(crate) value: Vec<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Mx {
+    pub preference: u16,
+    pub exchange: Name,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Srv {
+    pub priority: u16,
+    pub weight: u16,
+    pub port: u16,
+    pub target: Name,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Caa {
+    pub critical: u8,
+    pub tag: Vec<u8>,
     pub value: Vec<u8>,
 }
 
@@ -88,16 +111,16 @@ pub struct Soa {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Sig {
-    pub type_covered: u16,
-    pub algorithm: u8,
-    pub labels: u8,
-    pub original_ttl: u32,
-    pub expiration: u32,
-    pub inception: u32,
-    pub key_tag: u16,
-    pub signers_name: Name,
-    pub signature: Vec<u8>,
+pub(crate) struct Sig {
+    pub(crate) type_covered: u16,
+    pub(crate) algorithm: u8,
+    pub(crate) labels: u8,
+    pub(crate) original_ttl: u32,
+    pub(crate) expiration: u32,
+    pub(crate) inception: u32,
+    pub(crate) key_tag: u16,
+    pub(crate) signers_name: Name,
+    pub(crate) signature: Vec<u8>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -112,14 +135,14 @@ pub struct Naptr {
 
 /// SVCB and HTTPS have one shape.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Svcb {
-    pub priority: u16,
-    pub target: Name,
-    pub params: Vec<OptionValue>,
+pub(crate) struct Svcb {
+    pub(crate) priority: u16,
+    pub(crate) target: Name,
+    pub(crate) params: Vec<OptionValue>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum RData {
+pub(crate) enum RData {
     A([u8; 4]),
     Ns(Name),
     Cname(Name),
@@ -129,20 +152,12 @@ pub enum RData {
         cpu: Vec<u8>,
         os: Vec<u8>,
     },
-    Mx {
-        preference: u16,
-        exchange: Name,
-    },
+    Mx(Mx),
     /// The character-strings of the record, at least one.
     Txt(Vec<Vec<u8>>),
     Sig(Sig),
     Aaaa([u8; 16]),
-    Srv {
-        priority: u16,
-        weight: u16,
-        port: u16,
-        target: Name,
-    },
+    Srv(Srv),
     Naptr(Naptr),
     Opt {
         udp_size: u16,
@@ -163,20 +178,16 @@ pub enum RData {
         weight: u16,
         target: Vec<u8>,
     },
-    Caa {
-        critical: u8,
-        tag: Vec<u8>,
-        value: Vec<u8>,
-    },
-    /// A type this crate does not read. `None` is RDATA of no bytes, which [`Record::write`] refuses as c-ares does.
+    Caa(Caa),
+    /// A type this crate does not read. [`Message::write`] refuses RDATA of no bytes, as c-ares does.
     Raw {
-        rtype: u16,
-        data: Option<Vec<u8>>,
+        rr_type: u16,
+        data: Vec<u8>,
     },
 }
 
 impl RData {
-    pub fn rtype(&self) -> u16 {
+    pub(crate) fn rr_type(&self) -> u16 {
         match self {
             RData::A(_) => rr_type::A,
             RData::Ns(_) => rr_type::NS,
@@ -184,58 +195,64 @@ impl RData {
             RData::Soa(_) => rr_type::SOA,
             RData::Ptr(_) => rr_type::PTR,
             RData::Hinfo { .. } => rr_type::HINFO,
-            RData::Mx { .. } => rr_type::MX,
+            RData::Mx(_) => rr_type::MX,
             RData::Txt(_) => rr_type::TXT,
             RData::Sig(_) => rr_type::SIG,
             RData::Aaaa(_) => rr_type::AAAA,
-            RData::Srv { .. } => rr_type::SRV,
+            RData::Srv(_) => rr_type::SRV,
             RData::Naptr(_) => rr_type::NAPTR,
             RData::Opt { .. } => rr_type::OPT,
             RData::Tlsa { .. } => rr_type::TLSA,
             RData::Svcb(_) => rr_type::SVCB,
             RData::Https(_) => rr_type::HTTPS,
             RData::Uri { .. } => rr_type::URI,
-            RData::Caa { .. } => rr_type::CAA,
-            RData::Raw { rtype, .. } => *rtype,
+            RData::Caa(_) => rr_type::CAA,
+            RData::Raw { rr_type, .. } => *rr_type,
         }
     }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Rr {
-    pub name: Name,
-    pub class: u16,
-    pub ttl: u32,
-    pub data: RData,
+pub(crate) struct Rr {
+    pub(crate) name: Name,
+    pub(crate) class: u16,
+    pub(crate) ttl: u32,
+    pub(crate) data: RData,
+}
+
+impl Rr {
+    fn is_opt(&self) -> bool {
+        matches!(self.data, RData::Opt { .. })
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Record {
-    pub id: u16,
+pub(crate) struct Message {
+    pub(crate) id: u16,
     /// Bits of [`flag`].
     pub(crate) flags: u16,
     pub(crate) opcode: u8,
     /// With the eight high bits an OPT record adds. One that is not assigned reads as SERVFAIL.
     pub(crate) rcode: u16,
-    pub question: Vec<Question>,
-    pub answer: Vec<Rr>,
-    pub authority: Vec<Rr>,
-    pub additional: Vec<Rr>,
+    pub(crate) question: Question,
+    pub(crate) answer: Vec<Rr>,
+    pub(crate) authority: Vec<Rr>,
+    pub(crate) additional: Vec<Rr>,
 }
 
-impl Record {
+impl Message {
     /// A recursive query for one name.
-    pub(crate) fn query(name: &[u8], qtype: u16) -> Record {
-        Record {
+    pub(crate) fn query(name: &[u8], qtype: u16) -> Message {
+        Message {
             id: 0,
             flags: flag::RD,
             opcode: 0,
             rcode: rcode::NOERROR,
-            question: vec![Question {
+            question: Question {
                 name: name.to_vec(),
                 qtype,
                 qclass: class::IN,
-            }],
+            },
             answer: Vec::new(),
             authority: Vec::new(),
             additional: Vec::new(),
@@ -243,17 +260,15 @@ impl Record {
     }
 
     pub(crate) fn opt(&self) -> Option<&Rr> {
-        self.additional
-            .iter()
-            .find(|rr| matches!(rr.data, RData::Opt { .. }))
+        self.additional.iter().find(|rr| rr.is_opt())
     }
 
     pub(crate) fn sections(&self) -> [&[Rr]; 3] {
         [&self.answer, &self.authority, &self.additional]
     }
 
-    /// What `parse(write(self))` gives, which is not always `self`: see [`Record::write`].
-    pub(crate) fn rewritten(&self, ttl_decrement: u32) -> crate::Result<Record> {
-        Record::parse(&self.write(ttl_decrement)?)
+    /// What `parse(write(self))` gives, which is not always `self`: see [`Message::write`].
+    pub(crate) fn rewritten(&self, ttl_decrement: u32) -> crate::Result<Message> {
+        Message::parse(&self.write(ttl_decrement)?)
     }
 }

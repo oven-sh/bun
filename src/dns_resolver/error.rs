@@ -27,8 +27,6 @@ pub enum Error {
     ECONNREFUSED = 11,
     #[error("Timeout while contacting DNS servers")]
     ETIMEOUT = 12,
-    #[error("End of file")]
-    EOF = 13,
     #[error("Error reading file")]
     EFILE = 14,
     #[error("Out of memory")]
@@ -39,16 +37,8 @@ pub enum Error {
     EBADSTR = 17,
     #[error("Illegal flags specified")]
     EBADFLAGS = 18,
-    #[error("Given hostname is not numeric")]
-    ENONAME = 19,
     #[error("Illegal hints flags specified")]
     EBADHINTS = 20,
-    #[error("Library initialization not yet performed")]
-    ENOTINITIALIZED = 21,
-    #[error("Error loading iphlpapi.dll")]
-    ELOADIPHLPAPI = 22,
-    #[error("Could not find GetNetworkParams function")]
-    EADDRGETNETWORKPARAMS = 23,
     #[error("DNS query cancelled")]
     ECANCELLED = 24,
     #[error("Service not available")]
@@ -75,7 +65,7 @@ impl Error {
     /// https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/errors.js#L807-L815
     pub fn as_node_reports_it(self) -> Error {
         match self {
-            Error::ENODATA | Error::ENONAME => Error::ENOTFOUND,
+            Error::ENODATA => Error::ENOTFOUND,
             other => other,
         }
     }
@@ -94,17 +84,12 @@ impl Error {
             Error::EBADRESP => "DNS_EBADRESP",
             Error::ECONNREFUSED => "DNS_ECONNREFUSED",
             Error::ETIMEOUT => "DNS_ETIMEOUT",
-            Error::EOF => "DNS_EOF",
             Error::EFILE => "DNS_EFILE",
             Error::ENOMEM => "DNS_ENOMEM",
             Error::EDESTRUCTION => "DNS_EDESTRUCTION",
             Error::EBADSTR => "DNS_EBADSTR",
             Error::EBADFLAGS => "DNS_EBADFLAGS",
-            Error::ENONAME => "DNS_ENOTFOUND",
             Error::EBADHINTS => "DNS_EBADHINTS",
-            Error::ENOTINITIALIZED => "DNS_ENOTINITIALIZED",
-            Error::ELOADIPHLPAPI => "DNS_ELOADIPHLPAPI",
-            Error::EADDRGETNETWORKPARAMS => "DNS_EADDRGETNETWORKPARAMS",
             Error::ECANCELLED => "DNS_ECANCELLED",
             Error::ESERVICE => "DNS_ESERVICE",
             Error::ENOSERVER => "DNS_ENOSERVER",

@@ -1,3 +1,21 @@
+// `format_v6` and the `parse_ares*` functions are derived from c-ares's inet_ntop.c and inet_net_pton.c:
+//
+// Copyright (c) 2012 by Gilles Chehade <gilles@openbsd.org>
+// Copyright (c) 2004 by Internet Systems Consortium, Inc. ("ISC")
+// Copyright (c) 1996-1999 by Internet Software Consortium.
+//
+// Permission to use, copy, modify, and distribute this software for any
+// purpose with or without fee is hereby granted, provided that the above
+// copyright notice and this permission notice appear in all copies.
+//
+// THE SOFTWARE IS PROVIDED "AS IS" AND ISC DISCLAIMS ALL WARRANTIES
+// WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+// MERCHANTABILITY AND FITNESS.  IN NO EVENT SHALL ISC BE LIABLE FOR
+// ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+// WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+// ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT
+// OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+
 //! IP-address parsing shared by URL/host handling and the DNS backends.
 
 #[cfg(not(windows))]
@@ -31,7 +49,7 @@ pub fn is_ipv6_address(input: &[u8]) -> bool {
     parse_strict_v6(input).is_some()
 }
 
-/// A dotted quad or an IPv6 address and nothing else, the same on every platform. This is `core::net`'s parser and not `ares_inet_pton`, which is `inet_net_pton` underneath: it also takes `10` (as 10.0.0.0), `127.1` (as 127.1.0.0), `0x7f000001`, zero-padded octets, a trailing `/bits`, and stops at a NUL.
+/// A dotted quad or an IPv6 address and nothing else, the same on every platform. This is `core::net`'s parser and not [`parse_ares`], which also takes `10` (as 10.0.0.0), `127.1` (as 127.1.0.0), `0x7f000001`, zero-padded octets, and stops at a NUL.
 #[inline(never)]
 pub fn parse_strict(input: &[u8]) -> Option<IpAddr> {
     // The longest literal is "ffff:ffff:ffff:ffff:ffff:ffff:255.255.255.255", so a longer host is never scanned.
@@ -260,13 +278,7 @@ fn c_char_at(src: &[u8], index: usize) -> u8 {
 
 /// c-ares's `ares_inet_pton(AF_INET)`, which reads more than a dotted quad: one to four octets with the rest zero (`10`, `127.1` is 127.1.0.0), leading zeros (`010` is ten) and `0x` followed by up to eight hex digits.
 pub fn parse_ares_v4(src: &[u8]) -> Option<[u8; 4]> {
-    let mut octets = [0u8; 4];
-    parse_ares_v4_into(src, &mut octets)?;
-    Some(octets)
-}
-
-/// Octets the text does not name are left as they were.
-fn parse_ares_v4_into(src: &[u8], dst: &mut [u8; 4]) -> Option<()> {
+    let mut dst = [0u8; 4];
     let mut written = 0usize;
     let mut at = 0usize;
     let mut next = || {
@@ -331,7 +343,7 @@ fn parse_ares_v4_into(src: &[u8], dst: &mut [u8; 4]) -> Option<()> {
     } else {
         return None;
     }
-    (ch == 0).then_some(())
+    (ch == 0).then_some(dst)
 }
 
 /// c-ares's `ares_inet_pton(AF_INET6)`. No zone id. A dotted quad at the end is read by [`parse_ares_v4`], so `::1.2` is `::1.2.0.0`.
@@ -389,8 +401,7 @@ pub fn parse_ares_v6(src: &[u8]) -> Option<[u8; 16]> {
             continue;
         }
         if ch == b'.' && written + 4 <= octets.len() {
-            let mut quad = [0u8; 4];
-            parse_ares_v4_into(src.get(group_start..)?, &mut quad)?;
+            let quad = parse_ares_v4(src.get(group_start..)?)?;
             octets.get_mut(written..written + 4)?.copy_from_slice(&quad);
             written += 4;
             digits = 0;

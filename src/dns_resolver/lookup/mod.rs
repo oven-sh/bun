@@ -7,13 +7,14 @@ mod sort;
 
 pub(crate) use addr_info::AddrInfoLookup;
 pub(crate) use host::HostLookup;
+pub(crate) use sort::is_site_local;
 
-use crate::record::Name;
+use crate::message::Name;
 
 /// What a `struct hostent` says of an address.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Host {
-    pub name: Name,
+    pub(crate) name: Name,
     /// From DNS, every name of the address, `name` among them. From the hosts file, the names after `name`.
     pub aliases: Vec<Name>,
 }
@@ -39,5 +40,6 @@ pub(crate) fn is_onion_domain(name: &[u8]) -> bool {
 
 /// RFC 6761 section 6.3.
 fn is_localhost(name: &[u8]) -> bool {
+    let name = name.strip_suffix(b".").unwrap_or(name);
     name.eq_ignore_ascii_case(b"localhost") || ends_with_ignore_case(name, b".localhost")
 }

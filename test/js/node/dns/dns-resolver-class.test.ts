@@ -125,9 +125,10 @@ describe.concurrent("a resolver and a local server", () => {
     const resolver = resolverFor(server);
     expect({
       A: await resolver.resolve4("a.test"),
-      "A with ttl": await resolver.resolve4("a.test", { ttl: true }),
+      // Another name: an answer from the cache has had its age taken off its TTLs.
+      "A with ttl": await resolver.resolve4("ttl.test", { ttl: true }),
       AAAA: await resolver.resolve6("a.test"),
-      "AAAA with ttl": await resolver.resolve6("a.test", { ttl: true }),
+      "AAAA with ttl": await resolver.resolve6("ttl.test", { ttl: true }),
       MX: await resolver.resolveMx("a.test"),
       TXT: await resolver.resolveTxt("a.test"),
       NS: await resolver.resolveNs("a.test"),

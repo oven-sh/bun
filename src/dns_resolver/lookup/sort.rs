@@ -1,9 +1,40 @@
+// Portions of this file are derived from c-ares's ares_sortaddrinfo.c, under the BSD 3-Clause License:
+//
+// Copyright (C) 1995, 1996, 1997, and 1998 WIDE Project.
+// Copyright (C) 2018 The Android Open Source Project
+// Copyright (C) 2019 Andrew Selivanov
+// All rights reserved.
+//
+// Redistribution and use in source and binary forms, with or without
+// modification, are permitted provided that the following conditions
+// are met:
+// 1. Redistributions of source code must retain the above copyright
+//    notice, this list of conditions and the following disclaimer.
+// 2. Redistributions in binary form must reproduce the above copyright
+//    notice, this list of conditions and the following disclaimer in the
+//    documentation and/or other materials provided with the distribution.
+// 3. Neither the name of the project nor the names of its contributors
+//    may be used to endorse or promote products derived from this software
+//    without specific prior written permission.
+//
+// THIS SOFTWARE IS PROVIDED BY THE PROJECT AND CONTRIBUTORS ``AS IS'' AND
+// ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+// IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+// ARE DISCLAIMED.  IN NO EVENT SHALL THE PROJECT OR CONTRIBUTORS BE LIABLE
+// FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+// DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+// OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+// HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+// LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+// OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+// SUCH DAMAGE.
+
 //! RFC 6724 section 6: which of a host's addresses to try first.
 
 use core::cmp::Ordering;
 use core::net::{IpAddr, Ipv6Addr, SocketAddr};
 
-use crate::addrinfo::Node;
+use crate::addr_info::Node;
 use crate::io::Io;
 
 const SCOPE_NODE_LOCAL: u8 = 0x01;
@@ -11,7 +42,7 @@ const SCOPE_LINK_LOCAL: u8 = 0x02;
 const SCOPE_SITE_LOCAL: u8 = 0x05;
 const SCOPE_GLOBAL: u8 = 0x0e;
 
-fn is_site_local(address: &Ipv6Addr) -> bool {
+pub(crate) fn is_site_local(address: &Ipv6Addr) -> bool {
     matches!(address.segments(), [0xfec0..=0xfeff, ..])
 }
 
@@ -31,22 +62,31 @@ fn scope(address: &IpAddr) -> u8 {
     }
 }
 
-/// (label, precedence) in the policy table of RFC 6724 section 2.1.
-fn policy(address: &IpAddr) -> (u8, u8) {
-    let IpAddr::V6(v6) = address else {
-        return (4, 35);
+/// The label of `::/0`.
+const DEFAULT_LABEL: u8 = 1;
+
+/// A row of the policy table of RFC 6724 section 2.1.
+struct Policy {
+    label: u8,
+    precedence: u8,
+}
+
+fn policy(address: &IpAddr) -> Policy {
+    let (label, precedence) = match address {
+        IpAddr::V4(_) => (4, 35),
+        IpAddr::V6(v6) => match v6.segments() {
+            _ if v6.is_loopback() => (0, 50),
+            [0, 0, 0, 0, 0, 0xffff, ..] => (4, 35),
+            [0x2002, ..] => (2, 30),
+            [0x2001, 0, ..] => (5, 5),
+            [0xfc00..=0xfdff, ..] => (13, 3),
+            _ if is_v4_compatible(v6) => (3, 1),
+            _ if is_site_local(v6) => (11, 1),
+            [0x3ffe, ..] => (12, 1),
+            _ => (DEFAULT_LABEL, 40),
+        },
     };
-    match v6.segments() {
-        _ if v6.is_loopback() => (0, 50),
-        [0, 0, 0, 0, 0, 0xffff, ..] => (4, 35),
-        [0x2002, ..] => (2, 30),
-        [0x2001, 0, ..] => (5, 5),
-        [0xfc00..=0xfdff, ..] => (13, 3),
-        _ if is_v4_compatible(v6) => (3, 1),
-        _ if is_site_local(v6) => (11, 1),
-        [0x3ffe, ..] => (12, 1),
-        _ => (1, 40),
-    }
+    Policy { label, precedence }
 }
 
 struct Candidate {
@@ -64,8 +104,10 @@ fn compare(a: &Candidate, b: &Candidate) -> Ordering {
         it.source.as_ref().map_or(SCOPE_NODE_LOCAL, scope) == scope(&it.node.address)
     };
     let label_matches = |it: &Candidate| {
-        it.source.as_ref().map_or(1, |it| policy(it).0) == policy(&it.node.address).0
+        let source_label = (it.source.as_ref()).map_or(DEFAULT_LABEL, |it| policy(it).label);
+        source_label == policy(&it.node.address).label
     };
+    let precedence = |it: &Candidate| policy(&it.node.address).precedence;
     let prefix_len = |it: &Candidate| match (it.source, it.node.address) {
         (Some(IpAddr::V6(source)), IpAddr::V6(destination)) => {
             Some(common_prefix_len(&source, &destination))
@@ -77,7 +119,7 @@ fn compare(a: &Candidate, b: &Candidate) -> Ordering {
         .then_with(|| b.source.is_some().cmp(&a.source.is_some()))
         .then_with(|| scope_matches(b).cmp(&scope_matches(a)))
         .then_with(|| label_matches(b).cmp(&label_matches(a)))
-        .then_with(|| policy(&b.node.address).1.cmp(&policy(&a.node.address).1))
+        .then_with(|| precedence(b).cmp(&precedence(a)))
         .then_with(|| scope(&a.node.address).cmp(&scope(&b.node.address)))
         .then_with(|| match (prefix_len(a), prefix_len(b)) {
             (Some(a), Some(b)) => b.cmp(&a),
@@ -85,7 +127,8 @@ fn compare(a: &Candidate, b: &Candidate) -> Ordering {
         })
 }
 
-/// A stable merge sort. Rule 9 compares only some pairs, so an answer can make `compare` no total order, which `sort_by` may panic on.
+/// Rule 9 compares only some pairs, so an answer can make `compare` no total order, which `sort_by` may panic on.
+/// Halves and merges as glibc's `qsort()` does, so the order of such an answer is the one c-ares gave too.
 fn merge_sort(list: Vec<Candidate>) -> Vec<Candidate> {
     if list.len() < 2 {
         return list;

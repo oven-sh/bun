@@ -43,7 +43,7 @@ pub(super) fn read() -> Settings {
 /// <https://github.com/apple-oss-distributions/configd/blob/main/dnsinfo/dnsinfo.h>
 #[cfg(target_os = "macos")]
 mod mac {
-    use core::ffi::{CStr, c_char, c_void};
+    use core::ffi::{c_char, c_void};
 
     use bun_dns_resolver::io::MacResolver;
     use bun_sys::net::Address;
@@ -90,7 +90,7 @@ mod mac {
     /// `text` is null or NUL-terminated.
     unsafe fn bytes(text: *const c_char) -> Option<Vec<u8>> {
         // SAFETY: not null, so NUL-terminated by the caller's word.
-        (!text.is_null()).then(|| unsafe { CStr::from_ptr(text) }.to_bytes().to_vec())
+        (!text.is_null()).then(|| unsafe { bun_core::ffi::cstr(text) }.to_bytes().to_vec())
     }
 
     pub(super) fn resolvers() -> Option<Vec<MacResolver>> {
@@ -290,7 +290,7 @@ mod windows {
         }
         let mut from = SOCKADDR_INET([0; 7]);
         // SAFETY: all-zero is a valid value of a struct of integers.
-        let mut route: iphlpapi::MIB_IPFORWARD_ROW2 = unsafe { core::mem::zeroed() };
+        let mut route: iphlpapi::MIB_IPFORWARD_ROW2 = unsafe { bun_core::ffi::zeroed_unchecked() };
         // SAFETY: the index is ignored beside a LUID, no source address is asked for, and the last two are written.
         let status = unsafe {
             iphlpapi::GetBestRoute2(&mut adapter, 0, null(), &to, 0, &mut route, &mut from)

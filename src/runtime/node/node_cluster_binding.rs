@@ -578,11 +578,9 @@ pub(crate) fn cluster_raw_bind<'a>(
             } else {
                 bun_core::ip_address::parse_ares_v4(addr_bytes).map(Into::into)
             };
-            let parsed = literal.is_some();
             if let Some(ip) = literal {
                 ss = bun_sys::net::Address::from_ip(ip, port as u16).into_storage();
-            }
-            if !parsed {
+            } else {
                 // SAFETY: addrinfo is plain C data; all-zero is a valid hints value.
                 let mut hints: libc::addrinfo = unsafe { bun_core::ffi::zeroed_unchecked() };
                 hints.ai_family = family;

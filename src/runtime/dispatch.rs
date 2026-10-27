@@ -1197,8 +1197,8 @@ pub(crate) unsafe fn __bun_fire_timer(
         }
         // R-2: shared deref, as for `on_dns_poll`.
         EventLoopTimerTag::DNSResolver => {
-            timer_arm!(DNSResolver, event_loop_timer, |c, now, vm| {
-                (&*c.cast_const()).check_timeouts(&*now, &*vm)
+            timer_arm!(DNSResolver, event_loop_timer, |c, _now, _vm| {
+                (&*c.cast_const()).check_timeouts()
             })
         }
         EventLoopTimerTag::WindowsNamedPipe => {

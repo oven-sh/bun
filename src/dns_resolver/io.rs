@@ -3,17 +3,17 @@
 use core::net::{IpAddr, SocketAddr};
 
 /// A reading of a clock that never goes back.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub struct Time {
     pub sec: i64,
     pub usec: u32,
 }
 
 impl Time {
-    pub const ZERO: Time = Time { sec: 0, usec: 0 };
+    pub(crate) const ZERO: Time = Time { sec: 0, usec: 0 };
 
     #[must_use]
-    pub fn plus_ms(self, ms: u64) -> Time {
+    pub(crate) fn plus_ms(self, ms: u64) -> Time {
         let usec = u64::from(self.usec) + ms % 1000 * 1000;
         Time {
             sec: self
@@ -24,7 +24,7 @@ impl Time {
     }
 
     /// Whole milliseconds from `earlier` to `self`; zero if `earlier` is later.
-    pub fn ms_since(self, earlier: Time) -> u64 {
+    pub(crate) fn ms_since(self, earlier: Time) -> u64 {
         let usec = (self.sec.saturating_sub(earlier.sec))
             .saturating_mul(1_000_000)
             .saturating_add(i64::from(self.usec) - i64::from(earlier.usec));
@@ -59,6 +59,16 @@ pub struct Opened {
 pub enum FileError {
     NotFound,
     Other,
+}
+
+/// stat(2) of a file, to tell that it was changed or replaced by another.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct FileIdentity {
+    /// Seconds since the epoch.
+    pub modified_at: i64,
+    pub size: u64,
+    pub inode: u64,
+    pub device: u64,
 }
 
 /// What the system says of its resolver, as the system says it.
@@ -107,9 +117,8 @@ pub struct MacResolver {
     pub interface: u32,
 }
 
-/// An environment variable.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Variable {
+pub enum EnvVar {
     /// `LOCALDOMAIN`, in place of the search list.
     LocalDomain,
     /// `RES_OPTIONS`, on top of the `options` of resolv.conf(5).
@@ -135,8 +144,8 @@ pub trait Io {
     ) -> Result<(usize, SocketAddr), IoError>;
     /// Bytes of a TCP stream, whose end is `Failed`.
     fn recv(&mut self, socket: Socket, buffer: &mut [u8]) -> Result<usize, IoError>;
-    /// Which events [`crate::Channel::process`] is to be called for from now on.
-    fn watch(&mut self, socket: Socket, readable: bool, writable: bool);
+    /// From now on [`crate::Channel::socket_ready`] is to be called when the socket is readable, and if `writable` when it is writable.
+    fn watch(&mut self, socket: Socket, writable: bool);
     /// Also ends the watch.
     fn close(&mut self, socket: Socket);
 
@@ -145,9 +154,8 @@ pub trait Io {
     fn unix_time(&mut self) -> i64;
 
     fn read_file(&mut self, path: &[u8]) -> Result<Vec<u8>, FileError>;
-    /// Seconds since the epoch.
-    fn modified_time(&mut self, path: &[u8]) -> Option<i64>;
-    fn env(&mut self, variable: Variable) -> Option<Vec<u8>>;
+    fn file_identity(&mut self, path: &[u8]) -> Option<FileIdentity>;
+    fn env(&mut self, variable: EnvVar) -> Option<Vec<u8>>;
     fn hostname(&mut self) -> Option<Vec<u8>>;
     fn settings(&mut self) -> Settings;
     /// Where the system keeps `hosts`, `services` and the like: `/etc/{name}`, except on Windows.

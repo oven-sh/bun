@@ -34,7 +34,7 @@ Bun statically links these libraries:
 | [`tinycc`](https://github.com/tinycc/tinycc) | LGPL v2.1 |
 | [`uSockets`](https://github.com/uNetworking/uSockets) | Apache 2.0 |
 | [`zlib-ng`](https://github.com/zlib-ng/zlib-ng) | zlib |
-| [`c-ares`](https://github.com/c-ares/c-ares) (not linked: `src/dns_resolver` is derived from parts of it) | MIT licensed |
+| [`c-ares`](https://github.com/c-ares/c-ares) (not linked: `src/dns_resolver` and `src/bun_core/ip_address.rs` are derived from parts of it) | MIT licensed |
 | [`libicu`](https://github.com/unicode-org/icu) 78 | [license here](https://github.com/unicode-org/icu/blob/main/icu4c/LICENSE) |
 | [`libbase64`](https://github.com/aklomp/base64/blob/master/LICENSE) | BSD 2-Clause |
 | [`libuv`](https://github.com/libuv/libuv) (on Windows) | MIT |

@@ -2,7 +2,7 @@
 //!
 //! The full body — `Resolver` with its
 //! `bun_dns_resolver` channel, all `resolve*`/`reverse`/`getServers`/`setServers` host
-//! functions, libinfo/libuv/system getaddrinfo backends, and the process-wide
+//! functions, dns_sd/libuv/system getaddrinfo backends, and the process-wide
 //! `internal` cache used by the usockets connect path — lives in `dns.rs`
 //! (mounted here as `dns_body`). This module is the public surface: it
 //! re-exports the real types and methods so callers (`dispatch.rs`,

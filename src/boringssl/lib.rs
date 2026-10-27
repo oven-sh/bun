@@ -413,7 +413,7 @@ fn is_hostname(host: &[u8]) -> bool {
 }
 
 pub fn check_x509_server_identity(x509: &mut boring::X509, hostname: &[u8]) -> bool {
-    // As in Node.js, a host is an IP address only as typed, and only in the strict form of `net.isIP`: `ares_inet_pton` reads "127.1" as 127.1.0.0 and takes "1.2.3.4/8".
+    // As in Node.js, a host is an IP address only as typed, and only in the strict form of `net.isIP`: `parse_ares` reads "127.1" as 127.1.0.0.
     let typed = unfqdn(hostname);
     let mut host_ip = bun_core::ip_address::parse_strict(typed);
     let ascii_hostname;

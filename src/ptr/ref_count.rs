@@ -207,6 +207,14 @@ impl<T: RefCounted> RefCount<T> {
         }
     }
 
+    /// Releases a ref while another is held, so it frees nothing.
+    pub fn release_not_last(&self) {
+        self.assert_valid();
+        self.assert_single_threaded();
+        debug_assert!(self.raw_count.get() > 1);
+        self.raw_count.set(self.raw_count.get() - 1);
+    }
+
     // utility functions
 
     pub fn has_one_ref(&self) -> bool {

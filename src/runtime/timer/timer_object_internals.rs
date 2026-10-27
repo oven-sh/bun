@@ -1,7 +1,7 @@
 //! `TimerObjectInternals` — what `TimeoutObject` / `ImmediateObject` wrap.
 //!
 //! Struct + `Flags` packed-u32 state machine. `run_immediate_task()` +
-//! helpers (`event_loop_timer`/`ref_`/`deref_`/
+//! helpers (`event_loop_timer`/`ref_`/`deref`/
 //! `set_enable_keeping_event_loop_alive`/`run`) drive the
 //! `__bun_run_immediate_task` dispatch path. `fire()` + `reschedule()`/
 //! `should_reschedule_timer()`/`convert_to_interval()` drive the
@@ -135,17 +135,26 @@ impl TimerObjectInternals {
     /// # Safety
     /// `this` is live, with the ref of `reschedule()` still to be released. This call may free it.
     pub(crate) unsafe fn release_heap_pin(this: core::ptr::NonNull<Self>, vm: &VirtualMachine) {
-        // SAFETY: fn contract.
-        let internals = unsafe { this.as_ref() };
-        internals.cancel(vm);
-        internals.deref();
+        // SAFETY: fn contract. The ref still to be released keeps `this` live across `cancel`.
+        unsafe {
+            this.as_ref().cancel(vm);
+            Self::deref(this.as_ptr());
+        }
     }
 
-    /// Decrement the intrusive refcount; frees on 0.
-    /// After this returns, `self` may be dangling — do not touch.
-    fn deref(&self) {
-        // SAFETY: `self` is live, and the box of `alloc` (see the type).
-        unsafe { bun_ptr::RefCount::<Self>::deref(core::ptr::from_ref(self).cast_mut()) }
+    /// Releases a ref, and frees `this` if it was the last.
+    ///
+    /// # Safety
+    /// `this` is live and the ref is the caller's to release. No reference to `*this` is used
+    /// afterwards.
+    unsafe fn deref(this: *mut Self) {
+        // SAFETY: fn contract; `this` is the box of `alloc` (see the type).
+        unsafe { bun_ptr::RefCount::<Self>::deref(this) }
+    }
+
+    /// Releases a ref while the caller holds another.
+    fn deref_pinned(&self) {
+        self.ref_count.release_not_last();
     }
 
     #[inline]
@@ -269,9 +278,10 @@ impl TimerObjectInternals {
     /// `this` points at the live `TimerObjectInternals` of an `ImmediateObject`, which this call
     /// may free.
     pub(crate) unsafe fn run_immediate_task(this: *mut Self, vm: &VirtualMachine) -> bool {
-        // SAFETY: per fn contract. Last use of `s` is the final `s.deref()`
-        // below; `*this` may be freed only after that point.
+        // SAFETY: per fn contract. `s` is not used after a `release()`.
         let s = unsafe { &*this };
+        // SAFETY: per fn contract; the queued task's ref is this call's to release.
+        let release = || unsafe { Self::deref(this) };
         let cleared = s.flags.get().has_cleared_timer()
             // The VM's stop was requested: nothing more enters script (as `fire`).
             || vm.script_execution_status() != ScriptExecutionStatus::Running
@@ -283,7 +293,7 @@ impl TimerObjectInternals {
         if cleared {
             s.set_enable_keeping_event_loop_alive(vm, false);
             s.this_value.with_mut(|r| r.downgrade());
-            s.deref();
+            release();
             return false;
         }
 
@@ -293,7 +303,7 @@ impl TimerObjectInternals {
             #[cfg(not(debug_assertions))]
             {
                 s.set_enable_keeping_event_loop_alive(vm, false);
-                s.deref();
+                release();
                 return false;
             }
         };
@@ -313,15 +323,12 @@ impl TimerObjectInternals {
             s.ref_();
             let async_id = s.async_id();
             let result = s.run(global_this, timer, callback, arguments, async_id, vm);
-            // `Self::run` has no early return so the deref ordering below is
-            // preserved. After the second `deref()` `*this` may be
-            // freed; do not touch it past this block.
             // Fresh read: re-entrant `cancel()`/`refresh()` may have changed
             // `state` (`ref_()` above pins the parent).
             if s.event_loop_timer_state() == EventLoopTimerState::FIRED {
-                s.deref();
+                s.deref_pinned();
             }
-            s.deref();
+            release();
             result
         };
         // --- after this point, the timer is no longer guaranteed to be alive ---
@@ -344,7 +351,8 @@ impl TimerObjectInternals {
         let s = unsafe { &*this };
         s.set_enable_keeping_event_loop_alive(vm, false);
         s.this_value.with_mut(|r| r.downgrade());
-        s.deref();
+        // SAFETY: the queue's ref is this call's to release, and `s` is not used again.
+        unsafe { Self::deref(this) };
     }
 
     /// `EventLoopTimer.fire` dispatch
@@ -356,9 +364,10 @@ impl TimerObjectInternals {
     /// `this` points at a live `TimerObjectInternals`, which this call may free, and the timer
     /// heap has just popped its node.
     pub(crate) unsafe fn fire(this: *mut Self, _now: &ElTimespec, vm: &VirtualMachine) {
-        // SAFETY: per fn contract. Last use of `s` is the final `s.deref()` at the end of
-        // the pinned block; `*this` may be freed only after that point.
+        // SAFETY: per fn contract. `s` is not used after a `release()`.
         let s = unsafe { &*this };
+        // SAFETY: per fn contract; the popped node's ref is this call's to release.
+        let release = || unsafe { Self::deref(this) };
         let id = s.id;
         let kind: KindBig = s.flags.get().kind().into();
         let async_id = ID { id, kind };
@@ -374,7 +383,7 @@ impl TimerObjectInternals {
             s.set_enable_keeping_event_loop_alive(vm, false);
             s.update_flags(|f| f.set_has_cleared_timer(true));
             s.this_value.with_mut(|r| r.downgrade());
-            s.deref();
+            release();
             return;
         };
 
@@ -412,7 +421,7 @@ impl TimerObjectInternals {
             s.set_enable_keeping_event_loop_alive(vm, false);
             s.update_flags(|f| f.set_has_cleared_timer(true));
             s.this_value.with_mut(|r| r.downgrade());
-            s.deref();
+            release();
             return;
         }
 
@@ -433,9 +442,9 @@ impl TimerObjectInternals {
         {
             // Ensure it stays alive for this scope.
             s.ref_();
-            // The matching `deref()` is at the end of this
+            // The matching `release()` is at the end of this
             // block. Every path through the labelled-block + `is_timer_done`
-            // tail reaches it (no `return` between here and the deref).
+            // tail reaches it (no `return` between here and there).
 
             let _ = s.run(
                 global_this,
@@ -483,7 +492,7 @@ impl TimerObjectInternals {
 
                             // Balance out the ref count.
                             // the transition from "FIRED" -> "ACTIVE" caused it to increment.
-                            s.deref();
+                            s.deref_pinned();
                         }
                         _ => {
                             break 'is_timer_done true;
@@ -511,7 +520,7 @@ impl TimerObjectInternals {
                             // or the timer was converted to an interval via t._repeat. Balance out
                             // the ref count: the transition from "FIRED" -> "ACTIVE" via
                             // reschedule() caused it to increment.
-                            s.deref();
+                            s.deref_pinned();
                         }
                         _ => {
                             // The developer called clearTimeout() synchronously in the callback.
@@ -528,12 +537,12 @@ impl TimerObjectInternals {
             if is_timer_done {
                 s.set_enable_keeping_event_loop_alive(vm, false);
                 // The timer will not be re-entered into the event loop at this point.
-                s.deref();
+                s.deref_pinned();
             }
 
             // End of pinned scope. After
             // this `*this` may be freed; do not touch past this block.
-            s.deref();
+            release();
         }
         // --- after this point, the timer is no longer guaranteed to be alive ---
 
@@ -818,9 +827,30 @@ impl TimerObjectInternals {
         self.this_value.with_mut(|r| r.finalize());
     }
 
-    /// `clearTimeout`/`clearInterval`
-    /// / `clearImmediate` / `Timeout#[Symbol.dispose]` body.
+    /// `clearTimeout`/`clearInterval` / `clearImmediate` / `Timeout#[Symbol.dispose]`, for a
+    /// caller that holds a ref of its own, or borrows through the JS object, which does.
     pub(crate) fn cancel(&self, vm: &VirtualMachine) {
+        if self.stop(vm) {
+            self.deref_pinned();
+        }
+    }
+
+    /// [`Self::cancel`] for a caller that found the timer in the heap or in a map.
+    ///
+    /// # Safety
+    /// `this` is live. This call may free it.
+    pub(crate) unsafe fn cancel_unpinned(this: *mut Self, vm: &VirtualMachine) {
+        // SAFETY: fn contract. `stop` returns the ref of the node it unlinked.
+        unsafe {
+            if (*this).stop(vm) {
+                Self::deref(this);
+            }
+        }
+    }
+
+    /// Returns whether it unlinked the node, whose ref is then the caller's to release.
+    #[must_use]
+    fn stop(&self, vm: &VirtualMachine) -> bool {
         self.set_enable_keeping_event_loop_alive(vm, false);
         self.update_flags(|f| f.set_has_cleared_timer(true));
 
@@ -829,7 +859,7 @@ impl TimerObjectInternals {
             // The immediate task is still in the event loop queue and will be skipped
             // by runImmediateTask when it sees has_cleared_timer == true.
             self.this_value.with_mut(|r| r.downgrade());
-            return;
+            return false;
         }
 
         let was_active = self.event_loop_timer_state() == EventLoopTimerState::ACTIVE;
@@ -839,7 +869,7 @@ impl TimerObjectInternals {
         if was_active {
             // SAFETY: it was `ACTIVE`, which is linked (see `reschedule`).
             unsafe { timer_all().remove(self.event_loop_timer()) };
-            self.deref();
         }
+        was_active
     }
 }

@@ -1137,7 +1137,7 @@ impl All {
     /// [`Self::cancel_all_timeout_objects`], limited to `hot_run` if given.
     pub(crate) fn cancel_timeout_objects(&self, vm: &VirtualMachine, hot_run: Option<&HotRun>) {
         let first_id = self.first_id_of_hot_run.get();
-        let mut to_cancel: Vec<*const TimerObjectInternals> = Vec::new();
+        let mut to_cancel: Vec<*mut TimerObjectInternals> = Vec::new();
         let mut signal_timeouts: Vec<*mut AbortSignalTimeout> = Vec::new();
         let mut stack: Vec<*mut EventLoopTimer> = Vec::new();
 
@@ -1164,14 +1164,14 @@ impl All {
                     let parent = unsafe { TimeoutObject::from_timer_ptr(node) };
                     // SAFETY: `parent` points at the live `TimeoutObject` recovered
                     // above; `addr_of!` projects the in-bounds `internals` field.
-                    to_cancel.push(unsafe { core::ptr::addr_of!((*parent).internals) });
+                    to_cancel.push(unsafe { core::ptr::addr_of_mut!((*parent).internals) });
                 }
                 EventLoopTimerTag::ImmediateObject => {
                     // SAFETY: tag invariant — see above.
                     let parent = unsafe { ImmediateObject::from_timer_ptr(node) };
                     // SAFETY: `parent` points at the live `ImmediateObject` recovered
                     // above; `addr_of!` projects the in-bounds `internals` field.
-                    to_cancel.push(unsafe { core::ptr::addr_of!((*parent).internals) });
+                    to_cancel.push(unsafe { core::ptr::addr_of_mut!((*parent).internals) });
                 }
                 EventLoopTimerTag::AbortSignalTimeout => {
                     // SAFETY: tag invariant — `node` IS the `event_loop_timer`
@@ -1193,7 +1193,7 @@ impl All {
                         && (!run.only_intervals
                             || (*internals).flags.get().kind() == Kind::SetInterval)
                 }) {
-                    (*internals).cancel(vm);
+                    TimerObjectInternals::cancel_unpinned(internals, vm);
                 }
             }
         }

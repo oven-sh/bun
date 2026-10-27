@@ -1356,7 +1356,7 @@ fn cancel_timers(vm: &VirtualMachine, only: Option<bun_jsc::ContextId>) {
             unsafe {
                 match kind {
                     bun_jsc::ContextTimer::Object => {
-                        (*timer.cast::<crate::timer::TimerObjectInternals>()).cancel(vm)
+                        crate::timer::TimerObjectInternals::cancel_unpinned(timer.cast(), vm)
                     }
                     bun_jsc::ContextTimer::AbortSignal => {
                         bun_jsc::abort_signal::Timeout::discard(timer.cast())

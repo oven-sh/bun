@@ -397,7 +397,7 @@ impl All {
 
         let Some(timer) = timer else { return Ok(()) };
         // SAFETY: timer points to a live TimerObjectInternals
-        unsafe { (*timer).cancel(vm) };
+        unsafe { TimerObjectInternals::cancel_unpinned(timer, vm) };
         Ok(())
     }
 

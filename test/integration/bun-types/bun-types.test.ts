@@ -310,6 +310,7 @@ function checkForEmptyInterfaces(program: ts.Program) {
  */
 const PUBLISHED_AS: Record<string, string | null> = {
   "Archive.bind.ts": "typeof Bun",
+  "ArchiveInternals.bind.ts": null,
   "Blob.bind.ts": "typeof Bun & { Blob: Class<Bun.BunFile> }",
   "BlockList.bind.ts": null,
   "BunObject.bind.ts":
@@ -397,6 +398,7 @@ const PUBLISHED_AS: Record<string, string | null> = {
   "fmt_jsc.bind.ts": null,
   "h2_frame_parser.bind.ts": null,
   "headers_jsc.bind.ts": null,
+  "histogram.bind.ts": null,
   "hosted_git_info_jsc.bind.ts": null,
   "html_rewriter.bind.ts": "{ HTMLRewriter: typeof HTMLRewriter }",
   "html_rewriter_internals.bind.ts": null,

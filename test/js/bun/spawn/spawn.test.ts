@@ -2512,6 +2512,10 @@ it.if(isLinux && (process.arch === "x64" || process.arch === "arm64"))(
         });
         const seccomp = symbols.deny_openat_with_creat();
         const result: Record<string, unknown> = { seccomp };
+        if (seccomp !== 0) {
+          console.log(JSON.stringify(result));
+          process.exit(0);
+        }
         try {
           result.bun = Bun.spawnSync({
             cmd: [process.execPath, "-e", "process.exit(7)"],
@@ -2534,7 +2538,13 @@ it.if(isLinux && (process.arch === "x64" || process.arch === "arm64"))(
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual({ seccomp: 0, bun: 7, node: 8 });
+    const result = JSON.parse(stdout);
+    if (result.seccomp !== 0) {
+      // bun:test has no runtime skip. Say so, to tell this apart from a pass.
+      console.warn("SKIP stdio ignore without O_CREAT: seccomp filter not permitted here (" + result.seccomp + ")");
+      return;
+    }
+    expect(result).toEqual({ seccomp: 0, bun: 7, node: 8 });
     expect(exitCode).toBe(0);
   },
 );

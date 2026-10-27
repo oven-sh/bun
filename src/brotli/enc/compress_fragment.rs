@@ -12,7 +12,7 @@ use super::hash::HASH_MUL_32;
 use crate::common::constants::{
     NUM_COMMAND_SYMBOLS, NUM_LITERAL_SYMBOLS, WINDOW_GAP, max_backward_limit,
 };
-use crate::util::{Bug, Checked, SliceExt, load_u64_le};
+use crate::util::{Bug, Checked, OutOfMemory, SliceExt, load_u64_le, try_box};
 
 const MAX_DISTANCE: usize = max_backward_limit(18);
 
@@ -42,8 +42,8 @@ pub(crate) struct OnePassArena {
 }
 
 impl OnePassArena {
-    pub(crate) fn new() -> Box<Self> {
-        Box::new(Self {
+    pub(crate) fn new() -> Result<Box<Self>, OutOfMemory> {
+        try_box(Self {
             lit_depth: [0; 256],
             lit_bits: [0; 256],
             cmd_depth: [0; 128],

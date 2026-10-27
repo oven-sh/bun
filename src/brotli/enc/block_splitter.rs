@@ -12,7 +12,7 @@ use super::quality::HQ_ZOPFLIFICATION_QUALITY;
 use crate::common::constants::{
     MAX_NUMBER_OF_BLOCK_TYPES, NUM_COMMAND_SYMBOLS, NUM_LITERAL_SYMBOLS,
 };
-use crate::util::{Bug, Checked, OutOfMemory, SliceExt, try_vec, try_zeroed};
+use crate::util::{Bug, Checked, OutOfMemory, SliceExt, try_box, try_vec, try_zeroed};
 
 const MAX_LITERAL_HISTOGRAMS: usize = 100;
 const MAX_COMMAND_HISTOGRAMS: usize = 50;
@@ -352,8 +352,8 @@ fn cluster_blocks<T: Copy + Into<usize>, const N: usize>(
     let mut histograms = try_vec(Histogram::<N>::new(), num_blocks.min(HISTOGRAMS_PER_BATCH))?;
     let mut max_num_pairs = HISTOGRAMS_PER_BATCH * HISTOGRAMS_PER_BATCH / 2;
     let mut pairs = try_vec(HistogramPair::default(), max_num_pairs + 1)?;
-    let mut tmp = Box::new(Histogram::<N>::new());
-    let mut tmp2 = Box::new(Histogram::<N>::new());
+    let mut tmp = try_box(Histogram::<N>::new())?;
+    let mut tmp2 = try_box(Histogram::<N>::new())?;
 
     {
         let mut block_idx = 0usize;

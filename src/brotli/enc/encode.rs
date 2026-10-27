@@ -830,7 +830,7 @@ impl Encoder {
         block_size - delta as usize
     }
 
-    fn ensure_initialized(&mut self) -> Checked {
+    fn ensure_initialized(&mut self) -> Fallible {
         if self.is_initialized {
             return Ok(());
         }
@@ -871,11 +871,11 @@ impl Encoder {
         }
 
         if self.params.quality == FAST_ONE_PASS_COMPRESSION_QUALITY {
-            let mut arena = OnePassArena::new();
+            let mut arena = OnePassArena::new()?;
             init_command_prefix_codes(&mut arena)?;
             self.one_pass_arena = Some(arena);
         } else if self.params.quality == FAST_TWO_PASS_COMPRESSION_QUALITY {
-            self.two_pass_arena = Some(TwoPassArena::new());
+            self.two_pass_arena = Some(TwoPassArena::new()?);
         }
 
         self.is_initialized = true;

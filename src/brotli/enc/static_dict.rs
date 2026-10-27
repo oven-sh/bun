@@ -3,7 +3,6 @@
 use super::find_match_length::find_match_length_with_limit;
 use super::static_dict_lut::{
     DictWord, StaticDictionaryLut, TRANSFORM_IDENTITY, TRANSFORM_UPPERCASE_FIRST, hash15,
-    static_dictionary_lut,
 };
 use crate::common::dictionary::{DATA, OFFSETS_BY_LENGTH, SIZE_BITS_BY_LENGTH};
 use crate::common::transform::CUT_OFF_TRANSFORMS;
@@ -96,12 +95,12 @@ fn bucket<'a>(
 /// `l` bytes of `data`, unless it is smaller already. `distance` is 0 for the first word of a length as it is. Only
 /// lengths up to `max_length` are found, and not all of those below `min_length`. Returns whether there was any.
 pub(crate) fn find_all_static_dictionary_matches(
+    lut: &StaticDictionaryLut,
     data: &[u8],
     min_length: usize,
     max_length: usize,
     matches: &mut Matches,
 ) -> Checked<bool> {
-    let lut = static_dictionary_lut();
     let mut has_found_match = false;
 
     for w in bucket(lut, data, 0)? {

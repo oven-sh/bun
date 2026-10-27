@@ -1,6 +1,8 @@
 //! Turns the input into commands, greedily with a little lookahead (qualities 2 to 9).
 
+use super::Fallible;
 use super::command::Command;
+use super::dictionary_hash::{DictionaryHash, dictionary_hash};
 use super::hash::{
     Hasher, HasherCommon, HasherImpl, HasherKind, HasherSearchResult, SCORE_BASE,
     StaticDictionarySearch, lookup_compound_dictionary_match,
@@ -45,12 +47,13 @@ fn create_backward_references_with<H: HasherImpl, const COMPOUND: bool>(
     params: &EncoderParams,
     hasher: &mut H,
     common: &mut HasherCommon,
+    dictionary_hash: &'static DictionaryHash,
     dist_cache: &mut [i32; 16],
     last_insert_len: &mut usize,
     commands: &mut Vec<Command>,
     num_literals: &mut usize,
 ) -> Checked {
-    let mut dictionary = StaticDictionarySearch::new(common);
+    let mut dictionary = StaticDictionarySearch::new(common, dictionary_hash);
     // 9.1. The largest distance.
     let max_backward_limit = max_backward_limit(params.lgwin as u32);
     let position_offset = params.stream_offset;
@@ -242,8 +245,9 @@ pub(crate) fn create_backward_references(
     last_insert_len: &mut usize,
     commands: &mut Vec<Command>,
     num_literals: &mut usize,
-) -> Checked {
+) -> Fallible {
     let common = &mut hasher.common;
+    let dictionary_hash = dictionary_hash()?;
     macro_rules! run {
         ($hasher:expr, $compound:literal) => {
             create_backward_references_with::<_, $compound>(
@@ -254,11 +258,13 @@ pub(crate) fn create_backward_references(
                 params,
                 $hasher,
                 common,
+                dictionary_hash,
                 dist_cache,
                 last_insert_len,
                 commands,
                 num_literals,
             )
+            .map_err(Into::into)
         };
     }
     if !params.dictionary.chunks.is_empty() {
@@ -299,6 +305,6 @@ pub(crate) fn create_backward_references(
         HasherKind::H35(h) => run!(h, false),
         HasherKind::H55(h) => run!(h, false),
         HasherKind::H65(h) => run!(h, false),
-        HasherKind::H10(_) | HasherKind::NotSetUp => Err(Bug),
+        HasherKind::H10(_) | HasherKind::NotSetUp => Err(Bug.into()),
     }
 }

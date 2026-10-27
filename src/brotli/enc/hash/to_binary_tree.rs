@@ -12,6 +12,7 @@ use crate::enc::quality::HQ_ZOPFLIFICATION_QUALITY;
 use crate::enc::static_dict::{
     INVALID_MATCH, MAX_STATIC_DICTIONARY_MATCH_LEN, find_all_static_dictionary_matches,
 };
+use crate::enc::static_dict_lut::{StaticDictionaryLut, static_dictionary_lut};
 use crate::util::{Checked, SliceExt, load_u32_le, try_zeroed};
 
 const BUCKET_BITS: u32 = 17;
@@ -31,6 +32,7 @@ pub(crate) struct H10 {
     invalid_pos: u32,
     /// The children of the sequence at `pos` are at `2 * pos` (left) and `2 * pos + 1` (right).
     forest: Vec<u32>,
+    static_dictionary: &'static StaticDictionaryLut,
 }
 
 #[inline(always)]
@@ -53,6 +55,7 @@ impl H10 {
             buckets: try_zeroed(BUCKET_SIZE)?,
             invalid_pos: 0usize.wrapping_sub(window_mask) as u32,
             forest: try_zeroed(2 * num_nodes)?,
+            static_dictionary: static_dictionary_lut()?,
         })
     }
 
@@ -225,6 +228,7 @@ impl H10 {
         let mut dict_matches = [INVALID_MATCH; MAX_STATIC_DICTIONARY_MATCH_LEN + 1];
         let minlen = (best_len + 1).max(4);
         if find_all_static_dictionary_matches(
+            self.static_dictionary,
             data.sub(cur_ix_masked..)?,
             minlen,
             max_length,

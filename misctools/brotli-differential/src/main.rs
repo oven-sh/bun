@@ -292,6 +292,27 @@ fn bench_enc(path: &str, quality: u32, lgwin: u32, reps: usize) {
     println!("{path} q{quality} w{lgwin}: {} -> C {} Rust {}; C {:.1} MB/s, Rust {:.1} MB/s ({:.0}%)", data.len(), sizes[0], sizes[1], mb / best[0], mb / best[1], 100.0 * best[0] / best[1]);
 }
 
+/// The first calls in a process, one by one: what building tables on first use costs. ONLY=c or ONLY=rust chooses.
+fn bench_first(path: &str, len: usize, quality: u32) {
+    let data = std::fs::read(path).unwrap();
+    let data = &data[..len.min(data.len())];
+    let cap = bun_brotli::max_compressed_size(data.len());
+    let mut out = vec![0u8; cap];
+    let rust = std::env::var("ONLY").unwrap_or_default() != "c";
+    let mut times = Vec::new();
+    for _ in 0..4 {
+        let t = std::time::Instant::now();
+        if rust {
+            bun_brotli::compress(quality as i32, 22, bun_brotli::EncoderMode::Generic, data, &mut out).unwrap();
+        } else {
+            let mut n = cap;
+            assert!(unsafe { ffi::BrotliEncoderCompress(quality as i32, 22, 0, data.len(), data.as_ptr(), &mut n, out.as_mut_ptr()) } != 0);
+        }
+        times.push(format!("{:.0}", t.elapsed().as_secs_f64() * 1e6));
+    }
+    println!("{} q{quality} {len} bytes, us: {}", if rust { "Rust" } else { "C" }, times.join(" "));
+}
+
 /// Many compressions (and decompressions) of the first `len` bytes of a file: what setting up costs.
 fn bench_small(path: &str, len: usize, quality: u32, lgwin: u32, reps: usize) {
     let data = std::fs::read(path).unwrap();
@@ -392,6 +413,7 @@ fn main() {
         Some("enc-hash") => ring::run_hash(num(2, 1), num(3, 1000), num(4, 1 << 22) as usize, num(5, 0x3E0), &r#gen::Corpus::load(CORPUS_DIRS, 4 << 20)),
         Some("enc-files") => enc_files(num(2, 0xFFF), num(3, 22) as u32),
         Some("bench-small") => bench_small(&args[2], num(3, 1000) as usize, num(4, 5) as u32, num(5, 22) as u32, num(6, 1000) as usize),
+        Some("bench-first") => bench_first(&args[2], num(3, 260) as usize, num(4, 11) as u32),
         Some("enc-one") => enc_one(&args[2], &args[3..]),
         Some("bench-enc") => bench_enc(&args[2], num(3, 5) as u32, num(4, 22) as u32, num(5, 5) as usize),
         _ => eprintln!("usage: harness testdata | dec-fuzz seed iters maxlen | dec-garbage seed iters"),

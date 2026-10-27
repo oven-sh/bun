@@ -1,13 +1,14 @@
 //! A lookup table from the first 4 bytes of a word of the static dictionary, as it is or in upper case, to the word.
 
-use std::sync::LazyLock;
+use std::sync::OnceLock;
 
+use super::Fallible;
 use super::hash::HASH_MUL_32;
 use crate::common::dictionary::{
     DATA, MAX_DICTIONARY_WORD_LENGTH, MIN_DICTIONARY_WORD_LENGTH, OFFSETS_BY_LENGTH,
     SIZE_BITS_BY_LENGTH,
 };
-use crate::util::{Bug, Checked, SliceExt, load_u32_le};
+use crate::util::{Bug, Checked, SliceExt, load_u32_le, try_vec, try_with_capacity, try_zeroed};
 
 /// The values of [`DictWord::transform`].
 pub(crate) const TRANSFORM_IDENTITY: u8 = 0;
@@ -89,12 +90,12 @@ impl Chains {
     }
 }
 
-fn build() -> Checked<StaticDictionaryLut> {
+fn build() -> Fallible<StaticDictionaryLut> {
     let mut chains = Chains {
-        slots: Vec::with_capacity(NUM_ITEMS),
-        prev: Vec::with_capacity(NUM_ITEMS),
-        heads: vec![0; NUM_BUCKETS],
-        counts: vec![0; NUM_BUCKETS],
+        slots: try_with_capacity(NUM_ITEMS)?,
+        prev: try_with_capacity(NUM_ITEMS)?,
+        heads: try_zeroed(NUM_BUCKETS)?,
+        counts: try_zeroed(NUM_BUCKETS)?,
     };
     let mut transformed = [0u8; MAX_DICTIONARY_WORD_LENGTH];
 
@@ -159,12 +160,12 @@ fn build() -> Checked<StaticDictionaryLut> {
         }
     }
     if chains.slots.len() != NUM_ITEMS - 1 {
-        return Err(Bug);
+        return Err(Bug.into());
     }
 
     // Item 0 is not used, so that no bucket starts at 0.
-    let mut buckets = vec![0u16; NUM_BUCKETS];
-    let mut words = vec![DictWord::default(); NUM_ITEMS];
+    let mut buckets = try_zeroed::<u16>(NUM_BUCKETS)?;
+    let mut words = try_vec(DictWord::default(), NUM_ITEMS)?;
     let mut pos = 1usize;
     for ((bucket, &head), &count) in buckets.iter_mut().zip(&chains.heads).zip(&chains.counts) {
         if count == 0 {
@@ -191,15 +192,13 @@ fn build() -> Checked<StaticDictionaryLut> {
 }
 
 /// Built on first use.
-pub(crate) fn static_dictionary_lut() -> &'static StaticDictionaryLut {
-    static LUT: LazyLock<StaticDictionaryLut> = LazyLock::new(|| {
-        // It cannot fail. A table without words is valid too.
-        build().unwrap_or_else(|_| StaticDictionaryLut {
-            buckets: vec![0; NUM_BUCKETS].into(),
-            words: vec![DictWord::default()].into(),
-        })
-    });
-    &LUT
+pub(crate) fn static_dictionary_lut() -> Fallible<&'static StaticDictionaryLut> {
+    static LUT: OnceLock<StaticDictionaryLut> = OnceLock::new();
+    if let Some(lut) = LUT.get() {
+        return Ok(lut);
+    }
+    let lut = build()?;
+    Ok(LUT.get_or_init(|| lut))
 }
 
 #[cfg(test)]
@@ -214,8 +213,8 @@ mod tests {
 
     /// The checksums are those of the tables that the reference encoder embeds.
     #[test]
-    fn same_as_reference_tables() {
-        let lut = static_dictionary_lut();
+    fn same_as_reference_tables() -> Fallible {
+        let lut = static_dictionary_lut()?;
         assert_eq!(lut.buckets.len(), 32768);
         assert_eq!(lut.words.len(), 31705);
         assert_eq!(
@@ -227,5 +226,6 @@ mod tests {
             [w.len, w.transform, lo, hi]
         });
         assert_eq!(fnv1a(words), 0x5036_1663_D08A_3EB3);
+        Ok(())
     }
 }

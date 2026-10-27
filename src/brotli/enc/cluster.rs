@@ -4,7 +4,7 @@ use super::Fallible;
 use super::bit_cost::population_cost;
 use super::fast_log::fast_log2;
 use super::histogram::Histogram;
-use crate::util::{Bug, Checked, OutOfMemory, SliceExt, try_vec, try_zeroed};
+use crate::util::{Bug, Checked, OutOfMemory, SliceExt, try_box, try_vec, try_zeroed};
 
 /// Two clusters that could be merged.
 #[derive(Clone, Copy, Default)]
@@ -318,7 +318,7 @@ pub(crate) fn cluster_histograms<const N: usize>(
     // In the first pass all pairs are allowed.
     let pairs_capacity = MAX_INPUT_HISTOGRAMS * MAX_INPUT_HISTOGRAMS / 2;
     let mut pairs = try_vec(HistogramPair::default(), pairs_capacity + 1)?;
-    let mut tmp = Box::new(Histogram::new());
+    let mut tmp = try_box(Histogram::new())?;
 
     let mut out = Vec::new();
     out.try_reserve_exact(in_size).map_err(|_| OutOfMemory)?;

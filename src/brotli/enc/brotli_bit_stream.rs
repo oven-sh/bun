@@ -1,5 +1,6 @@
 //! Writes meta-blocks.
 
+use super::Fallible;
 use super::bit_writer::BitWriter;
 use super::command::{
     Command, get_copy_base, get_copy_extra, get_copy_length_code, get_insert_base,
@@ -26,7 +27,7 @@ use crate::common::constants::{
     distance_alphabet_size,
 };
 use crate::common::context::{ContextType, context_lut};
-use crate::util::{Bug, Checked, SliceExt};
+use crate::util::{Bug, Checked, OutOfMemory, SliceExt, try_box, try_vec, try_zeroed};
 
 pub(crate) const MAX_HUFFMAN_TREE_SIZE: usize = 2 * NUM_COMMAND_SYMBOLS + 1;
 
@@ -558,14 +559,14 @@ fn encode_context_map(
     num_clusters: usize,
     tree: &mut [HuffmanTree],
     bw: &mut BitWriter<'_>,
-) -> Checked {
+) -> Fallible {
     store_var_len_uint8(num_clusters - 1, bw)?;
 
     if num_clusters == 1 {
         return Ok(());
     }
 
-    let mut rle_symbols = vec![0u32; context_map.len()];
+    let mut rle_symbols = try_zeroed::<u32>(context_map.len())?;
     move_to_front_transform(context_map, &mut rle_symbols)?;
     let (num_rle_symbols, max_run_length_prefix) = run_length_code_zeros(&mut rle_symbols, 6)?;
     let rle_symbols = rle_symbols.sub(..num_rle_symbols)?;
@@ -599,7 +600,8 @@ fn encode_context_map(
         }
     }
     // IMTF
-    bw.write_bits(1, 1)
+    bw.write_bits(1, 1)?;
+    Ok(())
 }
 
 impl BlockSplitCode {
@@ -827,10 +829,10 @@ impl<'a> BlockEncoder<'a> {
         alphabet_size: usize,
         tree: &mut [HuffmanTree],
         bw: &mut BitWriter<'_>,
-    ) -> Checked {
+    ) -> Fallible {
         let table_size = histograms.len() * self.histogram_length;
-        self.depths = vec![0; table_size];
-        self.bits = vec![0; table_size];
+        self.depths = try_zeroed(table_size)?;
+        self.bits = try_zeroed(table_size)?;
         for (i, histogram) in histograms.iter().enumerate() {
             let ix = i * self.histogram_length;
             build_and_store_huffman_tree(
@@ -860,7 +862,7 @@ pub(crate) fn store_meta_block(
     commands: &[Command],
     mb: &MetaBlockSplit,
     bw: &mut BitWriter<'_>,
-) -> Checked {
+) -> Fallible {
     let mut pos = start_pos;
     let num_distance_symbols = dist.alphabet_size_max as usize;
     let num_effective_distance_symbols = dist.alphabet_size_limit as usize;
@@ -868,7 +870,7 @@ pub(crate) fn store_meta_block(
 
     store_compressed_meta_block_header(is_last, length, bw)?;
 
-    let mut tree = vec![HuffmanTree::default(); MAX_HUFFMAN_TREE_SIZE];
+    let mut tree = try_vec(HuffmanTree::default(), MAX_HUFFMAN_TREE_SIZE)?;
     let mut context_map_arena = EncodeContextMapArena {
         histogram: [0; MAX_CONTEXT_MAP_SYMBOLS],
         depths: [0; MAX_CONTEXT_MAP_SYMBOLS],
@@ -1103,8 +1105,8 @@ struct MetablockArena {
 }
 
 impl MetablockArena {
-    fn new() -> Box<Self> {
-        Box::new(Self {
+    fn new() -> Result<Box<Self>, OutOfMemory> {
+        try_box(Self {
             lit_histo: Histogram::new(),
             cmd_histo: Histogram::new(),
             dist_histo: Histogram::new(),
@@ -1129,8 +1131,8 @@ pub(crate) fn store_meta_block_trivial(
     dist: &DistanceParams,
     commands: &[Command],
     bw: &mut BitWriter<'_>,
-) -> Checked {
-    let arena = &mut *MetablockArena::new();
+) -> Fallible {
+    let arena = &mut *MetablockArena::new()?;
     let num_distance_symbols = dist.alphabet_size_max as usize;
 
     store_compressed_meta_block_header(is_last, length, bw)?;
@@ -1204,8 +1206,8 @@ pub(crate) fn store_meta_block_fast(
     dist: &DistanceParams,
     commands: &[Command],
     bw: &mut BitWriter<'_>,
-) -> Checked {
-    let arena = &mut *MetablockArena::new();
+) -> Fallible {
+    let arena = &mut *MetablockArena::new()?;
     let num_distance_symbols = dist.alphabet_size_max as usize;
     let distance_alphabet_bits = log2_floor_nonzero(num_distance_symbols - 1) as usize + 1;
 

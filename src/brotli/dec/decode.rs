@@ -20,7 +20,7 @@ use crate::common::context::{ContextLut, ContextType, context_lut};
 use crate::common::dictionary::{self, MAX_DICTIONARY_WORD_LENGTH, MIN_DICTIONARY_WORD_LENGTH};
 use crate::common::transform::{NUM_TRANSFORMS, transform_dictionary_word};
 use crate::io::Output;
-use crate::util::{Bug, Checked, SliceExt, try_vec, try_zeroed};
+use crate::util::{Bug, Checked, SliceExt, try_box, try_vec, try_with_capacity, try_zeroed};
 
 /// `Err` is everything that interrupts decoding: an error, or the need for more input or more room for output.
 type Step<T = ()> = Result<T, E>;
@@ -1048,9 +1048,12 @@ impl Decoder {
         if self.state != State::Uninited {
             return false;
         }
-        let addon = self.compound_dictionary.get_or_insert_with(|| {
-            Box::new(CompoundDictionary {
-                chunks: Vec::new(),
+        if self.compound_dictionary.is_none() {
+            let Ok(chunks) = try_with_capacity(MAX_COMPOUND_DICTIONARY_CHUNKS) else {
+                return false;
+            };
+            self.compound_dictionary = try_box(CompoundDictionary {
+                chunks,
                 chunk_offsets: [0; MAX_COMPOUND_DICTIONARY_CHUNKS + 1],
                 total_size: 0,
                 br_index: 0,
@@ -1060,7 +1063,11 @@ impl Decoder {
                 block_bits: -1,
                 block_map: [0; 256],
             })
-        });
+            .ok();
+        }
+        let Some(addon) = &mut self.compound_dictionary else {
+            return false;
+        };
         if addon.chunks.len() == MAX_COMPOUND_DICTIONARY_CHUNKS {
             return false;
         }

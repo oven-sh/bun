@@ -1,13 +1,14 @@
 //! A hash table on the first 4 bytes of the words of the static dictionary.
 
-use std::sync::LazyLock;
+use std::sync::OnceLock;
 
+use super::Fallible;
 use super::hash::HASH_MUL_32;
 use crate::common::dictionary::{
     DATA, MAX_DICTIONARY_WORD_LENGTH, MIN_DICTIONARY_WORD_LENGTH, OFFSETS_BY_LENGTH,
     SIZE_BITS_BY_LENGTH,
 };
-use crate::util::{Checked, SliceExt, load_u32_le};
+use crate::util::{SliceExt, load_u32_le, try_zeroed};
 
 const NUM_HASH_BUCKETS: usize = 32768;
 
@@ -76,10 +77,10 @@ static FROZEN: [u8; 1688] = [
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
 ];
 
-fn build() -> Checked<DictionaryHash> {
+fn build() -> Fallible<DictionaryHash> {
     const KEEPS_BUCKET: u8 = 0x80;
-    let mut words = vec![0u16; NUM_HASH_BUCKETS];
-    let mut lengths = vec![0u8; NUM_HASH_BUCKETS];
+    let mut words = try_zeroed::<u16>(NUM_HASH_BUCKETS)?;
+    let mut lengths = try_zeroed::<u8>(NUM_HASH_BUCKETS)?;
     let mut global_idx = 0usize;
     for len in (MIN_DICTIONARY_WORD_LENGTH..=MAX_DICTIONARY_WORD_LENGTH).rev() {
         let n = 1usize << SIZE_BITS_BY_LENGTH.at(len)?;
@@ -105,15 +106,13 @@ fn build() -> Checked<DictionaryHash> {
 }
 
 /// Built on first use.
-pub(crate) fn dictionary_hash() -> &'static DictionaryHash {
-    static HASH: LazyLock<DictionaryHash> = LazyLock::new(|| {
-        // It cannot fail. A table without words is valid too.
-        build().unwrap_or_else(|_| DictionaryHash {
-            words: vec![0; NUM_HASH_BUCKETS].into(),
-            lengths: vec![0; NUM_HASH_BUCKETS].into(),
-        })
-    });
-    &HASH
+pub(crate) fn dictionary_hash() -> Fallible<&'static DictionaryHash> {
+    static HASH: OnceLock<DictionaryHash> = OnceLock::new();
+    if let Some(hash) = HASH.get() {
+        return Ok(hash);
+    }
+    let hash = build()?;
+    Ok(HASH.get_or_init(|| hash))
 }
 
 #[cfg(test)]
@@ -128,8 +127,8 @@ mod tests {
 
     /// The checksums are those of the tables that the reference encoder embeds.
     #[test]
-    fn same_as_reference_tables() {
-        let hash = dictionary_hash();
+    fn same_as_reference_tables() -> Fallible {
+        let hash = dictionary_hash()?;
         assert_eq!(hash.words.len(), 32768);
         assert_eq!(hash.lengths.len(), 32768);
         assert_eq!(
@@ -137,5 +136,6 @@ mod tests {
             0x56B3_EF6F_DF1A_DAE6
         );
         assert_eq!(fnv1a(hash.lengths.iter().copied()), 0x73C5_B120_8746_1AAA);
+        Ok(())
     }
 }

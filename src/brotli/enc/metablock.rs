@@ -16,7 +16,7 @@ use crate::common::constants::{
     NUM_LITERAL_SYMBOLS, calculate_distance_code_limit, distance_alphabet_size,
 };
 use crate::common::context::{ContextLut, ContextType};
-use crate::util::{Bug, Checked, SliceExt, try_vec, try_zeroed};
+use crate::util::{Bug, Checked, SliceExt, try_box, try_vec, try_zeroed};
 
 pub(crate) const MAX_STATIC_CONTEXTS: usize = 13;
 
@@ -146,7 +146,7 @@ pub(crate) fn build_meta_block(
     let orig_params = *dist;
     let mut new_params = *dist;
     {
-        let mut tmp = Box::new(HistogramDistance::new());
+        let mut tmp = try_box(HistogramDistance::new())?;
         for npostfix in 0..=MAX_NPOSTFIX {
             while ndirect_msb < 16 {
                 let ndirect = ndirect_msb << npostfix;
@@ -301,7 +301,7 @@ impl<'a, const N: usize> BlockSplitter<'a, N> {
             num_blocks: 0,
             split,
             histograms,
-            combined_histo: Box::new([Histogram::new(), Histogram::new()]),
+            combined_histo: try_box([Histogram::new(), Histogram::new()])?,
             target_block_size: min_block_size,
             block_size: 0,
             curr_histogram_ix: 0,

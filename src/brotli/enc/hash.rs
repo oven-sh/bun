@@ -20,12 +20,12 @@ use super::Fallible;
 use super::compound_dictionary::{
     CompoundDictionary, PREPARED_DICTIONARY_HASH_MUL_64_LONG, PreparedDictionary,
 };
-use super::dictionary_hash::{DictionaryHash, dictionary_hash};
+use super::dictionary_hash::DictionaryHash;
 use super::fast_log::log2_floor_nonzero;
 use super::find_match_length::find_match_length_with_limit;
 use super::params::EncoderParams;
 use crate::common::dictionary::{DATA, OFFSETS_BY_LENGTH, SIZE_BITS_BY_LENGTH};
-use crate::util::{Bug, Checked, SliceExt, load_u32_le, load_u64_le};
+use crate::util::{Bug, Checked, SliceExt, load_u32_le, load_u64_le, try_box};
 
 /// Odd, so that the highest bit is not lost, without long runs of ones or zeros, and tuned against benchmarks.
 pub(crate) const HASH_MUL_32: u32 = 0x1E35_A7BD;
@@ -112,11 +112,8 @@ pub(crate) struct StaticDictionarySearch<'a> {
 }
 
 impl<'a> StaticDictionarySearch<'a> {
-    pub(crate) fn new(common: &'a mut HasherCommon) -> Self {
-        Self {
-            common,
-            hash: dictionary_hash(),
-        }
+    pub(crate) fn new(common: &'a mut HasherCommon, hash: &'static DictionaryHash) -> Self {
+        Self { common, hash }
     }
 }
 
@@ -470,9 +467,9 @@ impl Hasher {
                 6 => HasherKind::H6(H6::new(params)?),
                 10 => HasherKind::H10(H10::new(params, one_shot, input_size)?),
                 35 => HasherKind::H35(H35::new(H3::new()?, HashRolling::new()?)),
-                40 => HasherKind::H40(Box::new(H40::new(params)?)),
-                41 => HasherKind::H41(Box::new(H41::new(params)?)),
-                42 => HasherKind::H42(Box::new(H42::new(params)?)),
+                40 => HasherKind::H40(try_box(H40::new(params)?)?),
+                41 => HasherKind::H41(try_box(H41::new(params)?)?),
+                42 => HasherKind::H42(try_box(H42::new(params)?)?),
                 54 => HasherKind::H54(H54::new()?),
                 55 => HasherKind::H55(H55::new(H54::new()?, HashRolling::new()?)),
                 58 if params.hasher.block_bits == 4 => {

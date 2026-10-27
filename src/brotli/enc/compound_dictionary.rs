@@ -160,9 +160,9 @@ pub(crate) struct CompoundDictionary {
 }
 
 impl CompoundDictionary {
-    /// `false` if there are too many already.
+    /// `false` if there are too many already, or if memory runs out.
     pub(crate) fn attach(&mut self, dictionary: PreparedDictionary) -> bool {
-        if self.chunks.len() == MAX_COMPOUND_DICTS {
+        if self.chunks.len() == MAX_COMPOUND_DICTS || self.chunks.try_reserve(1).is_err() {
             return false;
         }
         self.total_size += dictionary.source.len();

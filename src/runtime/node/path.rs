@@ -33,8 +33,7 @@ fn create_js_string_t<T: PathCharCwd>(global: &JSGlobalObject, s: &[T]) -> JsRes
 /// Pooled path scratch carved from the per-VM [`RarePathBuf`].
 ///
 /// JS is single-threaded, so re-using the lazily-allocated tier across calls is
-/// sound. When the request exceeds the largest tier (32 × `MAX_PATH_BYTES`) —
-/// or when `T = u16`, since the pool is byte-typed — we spill to a one-shot
+/// sound. When the request exceeds the largest tier (32 × `MAX_PATH_BYTES`) we spill to a one-shot
 /// zeroed heap slab instead (`T: Pod`, so the zero-fill is the cost of handing
 /// out a safe `&mut [T]`; consumers are write-before-read so the zeros are
 /// never observed).
@@ -49,13 +48,13 @@ impl<'a, T: PathCharCwd> PathScratch<'a, T> {
 
     #[inline]
     fn new(pool: &'a mut RarePathBuf, len: usize) -> Self {
-        if !T::IS_U16
-            && len <= Self::POOL_MAX
-            && let Some(pooled) = T::from_bytes_mut(&mut pool.get(len)[..len])
+        let bytes = len * size_of::<T>();
+        if bytes <= Self::POOL_MAX
+            && let Some(pooled) = bun_core::try_cast_slice_mut(&mut pool.get(bytes)[..bytes])
         {
             return Self::Pooled(pooled);
         }
-        // Spill is rare (u8 over 128 KB) or path-sized (u16), so the zero-fill is negligible.
+        // Spill is rare (over 128 KB), so the zero-fill is negligible.
         Self::Spill(vec![T::default(); len].into_boxed_slice())
     }
 

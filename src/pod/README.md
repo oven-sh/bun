@@ -110,6 +110,21 @@ enum Tag { A = 1, B = 2 }
 bun_pod::impl_zeroable!(Tag);
 ```
 
+# What the proof leaves to you
+
+The macros prove that the cast is sound. Two things are outside that:
+
+- **Field order.** rustc orders the fields of a `repr(Rust)` struct as it likes,
+  and such a struct passes when the order it picked leaves no padding. Its bytes
+  follow that order, which the next compiler may change. Give every type a
+  `#[repr(C)]`, `#[repr(transparent)]` or `#[repr(u8)]`-style attribute.
+  `test/internal/source-lints/pod-impl-repr.test.ts` rejects one without.
+- **Invariants.** `AnyBitPattern` lets safe code make any value of the type
+  without going through its constructors. rustc knows that a `bool` is 0 or 1. It
+  does not know that an index is meant to be in range, in this type or in the
+  private fields of a field's type, even one from another crate. Do not implement
+  it for a type, or a wrapper around one, whose fields `unsafe` code trusts.
+
 # When to write `unsafe impl`
 
 Only for what the analysis cannot do, each of which is a compile error from the

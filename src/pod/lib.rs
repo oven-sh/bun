@@ -43,7 +43,7 @@ pub mod proof {
         size_of::<T>()
     }
 
-    // `Assume::SAFETY` waives library invariants only; the orphan rule keeps the macros to the type's own crate.
+    // `Assume::SAFETY` waives library invariants, which rustc cannot see: README, "What the proof leaves to you".
     pub const fn no_uninit<T, Bytes>()
     where
         Bytes: TransmuteFrom<T, { Assume::SAFETY }>,

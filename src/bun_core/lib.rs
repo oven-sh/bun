@@ -1202,7 +1202,7 @@ pub use crate::string::immutable::{
     format_escapes, has_prefix, has_prefix_case_insensitive, has_prefix_comptime,
     has_prefix_comptime_utf16, has_suffix_comptime, index_of, index_of_scalar, is_all_whitespace,
     is_npm_package_name, is_npm_package_name_ignore_length, is_on_char_boundary,
-    is_utf8_char_boundary, is_valid_utf8, last_index_of, last_index_of_t,
+    is_utf8_char_boundary, is_valid_utf8, last_index_of, last_index_of_utf16,
     length_of_leading_whitespace_ascii, memmem, order, order_t, percent_encode_write, sort_asc,
     sort_desc, split, starts_with_case_insensitive_ascii, starts_with_char, str_utf8,
     to_ascii_hex_value, to_utf16_alloc, trim_leading_char, trim_prefix, trim_prefix_comptime,
@@ -2250,8 +2250,8 @@ pub(crate) mod strings_impl {
         /// `s` as the concrete slice it is, for code with a different kernel per width.
         fn units(s: &[Self]) -> CodeUnits<'_>;
         fn units_mut(s: &mut [Self]) -> CodeUnitsMut<'_>;
-        /// `bytes` itself when `Self` is `u8`.
-        fn from_bytes_mut(bytes: &mut [u8]) -> Option<&mut [Self]>;
+        fn index_of_unit(s: &[Self], unit: Self) -> Option<usize>;
+        fn last_index_of_unit(s: &[Self], unit: Self) -> Option<usize>;
     }
     pub enum CodeUnits<'a> {
         U8(&'a [u8]),
@@ -2275,8 +2275,12 @@ pub(crate) mod strings_impl {
             CodeUnitsMut::U8(s)
         }
         #[inline(always)]
-        fn from_bytes_mut(bytes: &mut [u8]) -> Option<&mut [u8]> {
-            Some(bytes)
+        fn index_of_unit(s: &[u8], unit: u8) -> Option<usize> {
+            bun_highway::index_of_char(s, unit)
+        }
+        #[inline(always)]
+        fn last_index_of_unit(s: &[u8], unit: u8) -> Option<usize> {
+            bun_highway::last_index_of_char(s, unit)
         }
     }
     impl PathByte for u16 {
@@ -2293,8 +2297,12 @@ pub(crate) mod strings_impl {
             CodeUnitsMut::U16(s)
         }
         #[inline(always)]
-        fn from_bytes_mut(_: &mut [u8]) -> Option<&mut [u16]> {
-            None
+        fn index_of_unit(s: &[u16], unit: u16) -> Option<usize> {
+            bun_highway::memmem16(s, &[unit])
+        }
+        #[inline(always)]
+        fn last_index_of_unit(s: &[u16], unit: u16) -> Option<usize> {
+            bun_highway::memrmem16(s, &[unit])
         }
     }
 

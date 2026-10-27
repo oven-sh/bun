@@ -313,7 +313,8 @@ correctness in arena-backed code.
 Viewing a value as bytes, or bytes as a value, is safe code. Four marker traits
 say which types allow it, and `impl_*!` macros implement them only if rustc can
 prove the claim from the type's layout (padding, a `bool`, an enum or a pointer
-in the wrong place is a compile error at the macro call):
+in the wrong place is a compile error at the macro call). The `#[repr(..)]` is
+required: without one rustc picks the field order, and so the byte order:
 
 ```rust
 #[repr(C)]

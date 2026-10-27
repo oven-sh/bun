@@ -287,7 +287,7 @@ it("BigIntArray", () => {
   }
 });
 
-it("TypedArray over an ArrayBuffer at an odd address prints", async () => {
+it.concurrent("TypedArray over an ArrayBuffer at an odd address prints", async () => {
   const types = [
     ["Int16Array", "getInt16", ""],
     ["Uint16Array", "getUint16", ""],

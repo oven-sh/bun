@@ -1,6 +1,6 @@
 //! Mach-O type definitions needed by `macho.rs`. All structs are `#[repr(C)]`
 //! POD matching the on-disk Mach-O format so they can be read/written via
-//! unaligned `ptr::{read,write}_unaligned`.
+//! `read_struct` / `write_struct` at any alignment.
 
 #![allow(non_snake_case)]
 

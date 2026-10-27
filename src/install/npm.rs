@@ -1062,7 +1062,7 @@ pub struct NpmPackage {
     /// "modified" in the JSON
     pub(crate) modified: SemverString,
     pub(crate) public_max_age: u32,
-    // Explicit, because `impl_no_uninit!` below rejects implicit padding.
+    // Explicit, because `impl_pod!` below rejects implicit padding.
     pub(crate) _padding_after_max_age: [u8; 4],
 
     pub(crate) name: ExternalString,

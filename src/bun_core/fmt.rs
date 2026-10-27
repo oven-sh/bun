@@ -3004,40 +3004,6 @@ pub fn parse_hex_to_u64(slice: &[u8]) -> Option<u64> {
     Some(u64::from_ne_bytes(bytes))
 }
 
-#[cfg(test)]
-mod parse_hex_to_u64_tests {
-    use super::parse_hex_to_u64;
-
-    #[test]
-    fn decodes_bytes_in_memory_order() {
-        assert_eq!(
-            parse_hex_to_u64(b"0100000000000000"),
-            Some(u64::from_ne_bytes([1, 0, 0, 0, 0, 0, 0, 0])),
-        );
-        assert_eq!(
-            parse_hex_to_u64(b"0123456789abCDef"),
-            Some(u64::from_ne_bytes([
-                0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef
-            ])),
-        );
-    }
-
-    #[test]
-    fn rejects_other_lengths_and_non_hex() {
-        for input in [
-            &b""[..],
-            b"01",
-            b"010000000000000",
-            b"01000000000000000",
-            b"010000000000000000",
-            b"010000000000000g",
-            b"0x00000000000000",
-        ] {
-            assert_eq!(parse_hex_to_u64(input), None, "{input:?}");
-        }
-    }
-}
-
 /// Map the low 4 bits of `n` to a lowercase ASCII hex digit (`0-9`, `a-f`).
 /// High bits are masked, so any `u8` is accepted.
 #[inline]

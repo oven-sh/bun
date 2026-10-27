@@ -1070,7 +1070,7 @@ describe("dictionary buffer lifetime", () => {
   });
 });
 
-it("native streams take a write state and params at an odd address", async () => {
+it.concurrent("native streams take a write state and params at an odd address", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),

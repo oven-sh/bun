@@ -43,7 +43,7 @@ it("arrayBufferToString u16", () => {
   gc(true);
 });
 
-it("arrayBufferToString u16 at an odd address", async () => {
+it.concurrent("arrayBufferToString u16 at an odd address", async () => {
   const texts = ["hello world", "h\u00e9llo w\u2603rld"];
   await using proc = Bun.spawn({
     cmd: [

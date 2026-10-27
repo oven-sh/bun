@@ -535,11 +535,7 @@ pub fn last_index_of_char(self_: &[u8], char: u8) -> Option<usize> {
 /// Width-generic [`last_index_of_char`].
 #[inline]
 pub fn last_index_of_char_t<T: PathByte>(self_: &[T], char: T) -> Option<usize> {
-    match (T::units(self_), T::units(core::slice::from_ref(&char))) {
-        (CodeUnits::U8(s), CodeUnits::U8(c)) => last_index_of_char(s, c[0]),
-        (CodeUnits::U16(s), CodeUnits::U16(c)) => highway::memrmem16(s, c),
-        _ => unreachable!(),
-    }
+    T::last_index_of_unit(self_, char)
 }
 
 /// Start index of the last occurrence of `str`. Empty needle → `Some(len)`.
@@ -548,14 +544,10 @@ pub fn last_index_of(self_: &[u8], str: &[u8]) -> Option<usize> {
     highway::memrmem(self_, str)
 }
 
-/// Width-generic reverse substring search (last occurrence of `needle`).
-/// Empty needle → `Some(len)`.
-pub fn last_index_of_t<T: PathByte>(haystack: &[T], needle: &[T]) -> Option<usize> {
-    match (T::units(haystack), T::units(needle)) {
-        (CodeUnits::U8(h), CodeUnits::U8(n)) => last_index_of(h, n),
-        (CodeUnits::U16(h), CodeUnits::U16(n)) => highway::memrmem16(h, n),
-        _ => unreachable!(),
-    }
+/// [`last_index_of`] over UTF-16 code units.
+#[inline]
+pub fn last_index_of_utf16(haystack: &[u16], needle: &[u16]) -> Option<usize> {
+    highway::memrmem16(haystack, needle)
 }
 
 pub fn index_of(self_: &[u8], str: &[u8]) -> Option<usize> {
@@ -2131,11 +2123,7 @@ impl core::fmt::Display for QuoteEscapeFormat<'_> {
 /// Width-generic [`index_of_char_usize`].
 #[inline]
 pub fn index_of_scalar<T: PathByte>(input: &[T], scalar: T) -> Option<usize> {
-    match (T::units(input), T::units(core::slice::from_ref(&scalar))) {
-        (CodeUnits::U8(s), CodeUnits::U8(c)) => index_of_char_usize(s, c[0]),
-        (CodeUnits::U16(s), CodeUnits::U16(c)) => highway::memmem16(s, c),
-        _ => unreachable!(),
-    }
+    T::index_of_unit(input, scalar)
 }
 
 pub fn without_suffix_comptime<'a>(input: &'a [u8], suffix: &'static [u8]) -> &'a [u8] {

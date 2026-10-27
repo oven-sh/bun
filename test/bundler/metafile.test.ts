@@ -1762,10 +1762,10 @@ describe("metafile of a build with more than one graph", () => {
     return { ...(await run(dir, cmd, "meta.json")), markdown: await Bun.file(`${dir}/meta.md`).text() };
   }
 
-  // `build.ts` in a fixture: `Bun.build` of server.ts with a plugin. It writes dist/meta.json.
-  const buildScript = (setup: string) => `
+  // `build.ts` in a fixture: `Bun.build` with a plugin. It writes dist/meta.json.
+  const buildScript = (setup: string, entrypoints = ["./server.ts"]) => `
     await Bun.build({
-      entrypoints: ["./server.ts"],
+      entrypoints: ${JSON.stringify(entrypoints)},
       outdir: "./dist",
       target: "bun",
       metafile: "meta.json",
@@ -1977,6 +1977,53 @@ describe("metafile of a build with more than one graph", () => {
     },
   );
 
+  // A plugin holds server.ts until the browser's code has loaded index.html, through an import()
+  // that tree shaking removes. That module of index.html has no record and is not built as a page,
+  // so the stub is not listed under it: the stub has a record of its own.
+  test.concurrent("a stub has a record when its page has none", async () => {
+    using dir = tempDir("metafile-two-graphs-stub-record", {
+      "server.ts": `import page from "./index.html";\nconsole.log(page);\n`,
+      "index.html": page("client.ts"),
+      "client.ts": `console.log("client");\n`,
+      "other.html": page("other.ts"),
+      "other.ts": `import { used } from "./lib.js";\nconsole.log(used);\n`,
+      "lib.js": `export const used = "used";\nexport const openPage = () => import("./index.html");\n`,
+      "build.ts": `
+        const loads: string[] = [];
+        const pageIsLoaded = Promise.withResolvers<void>();
+        ${buildScript(
+          `
+            build.onLoad({ filter: /index\\.html$/ }, () => {
+              loads.push("index.html");
+              pageIsLoaded.resolve();
+              return undefined;
+            });
+            build.onLoad({ filter: /server\\.ts$/ }, async ({ path }) => {
+              await pageIsLoaded.promise;
+              loads.push("server.ts");
+              return { contents: await Bun.file(path).text(), loader: "ts" };
+            });
+          `,
+          ["./other.html", "./server.ts"],
+        )}
+        console.log(JSON.stringify(loads));
+      `,
+    });
+    const { inputs, withoutRecord, stdout } = await run(String(dir), ["build.ts"], "dist/meta.json");
+
+    expect({
+      loads: JSON.parse(stdout),
+      "server.ts": importsOf(inputs["server.ts"]),
+      hasRecord: "index.html" in inputs,
+      withoutRecord,
+    }).toEqual({
+      loads: ["index.html", "server.ts"],
+      "server.ts": ["index.html"],
+      hasRecord: true,
+      withoutRecord: [],
+    });
+  });
+
   test.concurrent("a split import() names the module that its chunk holds", async () => {
     using dir = tempDir("metafile-two-graphs-splitting", {
       "server.ts": `import page from "./index.html";\nconsole.log(page, await import("./lazy.js"));\n`,
@@ -2124,8 +2171,8 @@ describe("metafile of a build with more than one graph", () => {
     });
   });
 
-  // An entry point that starts with `#!/usr/bin/env bun` is bundled for Bun whatever the target of the
-  // build is, and the files that it imports are a graph of their own (#25767). One output can then hold
+  // A first entry point that starts with `#!/usr/bin/env bun` is bundled for Bun whatever the target
+  // of the build is, and the files that it imports are a graph of their own. One output can then hold
   // a file two times, or two stubs of one page, or a stub and its page.
   test.concurrent.each([
     {
@@ -2162,6 +2209,32 @@ describe("metafile of a build with more than one graph", () => {
     const { withoutRecord } = await build(String(dir), args);
 
     expect(withoutRecord).toEqual([]);
+  });
+
+  // The imports of the entry point are a second server graph here. The suffix is still on the
+  // browser's module.
+  test.concurrent("an entry point with a Bun hashbang: the server's module keeps the path", async () => {
+    using dir = tempDir("metafile-two-graphs-hashbang-page", {
+      ...shared,
+      "cli.js": `#!/usr/bin/env bun\nimport page from "./index.html";\nimport { shared } from "./shared.js";\nconsole.log(page, shared);\n`,
+      "index.html": page("client.ts"),
+      "client.ts": `import { shared } from "./shared.js";\nconsole.log("client", shared);\n`,
+    });
+    const { inputs, withoutRecord } = await build(String(dir), ["cli.js", "--target=node", "--outdir=dist"]);
+
+    expect({
+      records: Object.keys(inputs)
+        .filter(key => key.startsWith("shared.js"))
+        .sort(),
+      "shared.js": importsOf(inputs["shared.js"]),
+      "shared.js (browser)": importsOf(inputs["shared.js (browser)"]),
+      withoutRecord,
+    }).toEqual({
+      records: ["shared.js", "shared.js (browser)"],
+      "shared.js": ["node_modules/pkg/server.js"],
+      "shared.js (browser)": ["node_modules/pkg/browser.js"],
+      withoutRecord: [],
+    });
   });
 
   test("a build with one graph has the same text as before", async () => {

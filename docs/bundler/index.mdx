@@ -1584,9 +1584,9 @@ A build for `target: "bun"` or `"node"` bundles an HTML file for the browser: a 
 
 - The server's module has the file path as its key.
 - The browser's module has the key `<path> (browser)`, for example `shared.ts (browser)`.
-- `imports[].path`, `imports[].entryPoint`, `outputs[...].inputs`, and `outputs[...].entryPoint` name a module by its key.
+- Where `imports[].path`, `imports[].entryPoint`, `outputs[...].inputs`, or `outputs[...].entryPoint` names an input, it has the key of that input.
 
-A module that tree shaking removes has no record. The other module of its file then has the file path as its key. The manifest that the server bundle holds in place of an imported HTML file has no record either: `outputs[...].inputs` lists the manifest under the key of the HTML file.
+A module that the bundler drops as unused has no record, for example an unused import from a package with `"sideEffects": false`. The other module of its file then has the file path as its key, and an import of the dropped module has that path too. The manifest that the server bundle holds in place of an imported HTML file has no record either: `outputs[...].inputs` lists the manifest under the key of the HTML file.
 
 ## Outputs
 

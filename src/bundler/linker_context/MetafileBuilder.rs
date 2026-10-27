@@ -89,47 +89,55 @@ impl<'a> InputKeys<'a> {
             return Ok(keys);
         }
         keys.has_unique_keys = true;
-        // Each graph, with the suffix of a copy in it. The graph of the build's target is first.
+        // The graphs in the order of their claims: the build's target, then the other server
+        // targets, then the browser.
         let main = c.options.target;
-        let others = build_graphs.iter().filter(|&(target, _)| target != main);
-        let graphs: Vec<(Vec<u8>, &PathToSourceIndexMap)> =
-            core::iter::once((main, &build_graphs[main]))
-                .chain(others)
+        let used = || {
+            build_graphs
+                .iter()
                 .filter(is_used)
-                .map(|(target, modules)| {
-                    let suffix = [b" (", target.naming_placeholder(), b")"].concat();
-                    (suffix, modules)
-                })
-                .collect();
+                .map(|(target, _)| target)
+        };
+        let others = || used().filter(|&target| target != main);
+        let order: Vec<Target> = used()
+            .filter(|&target| target == main)
+            .chain(others().filter(|&target| target != Target::Browser))
+            .chain(others().filter(|&target| target == Target::Browser))
+            .collect();
         // The graph of each module: the first one that holds it.
-        let mut graph_of = vec![0u8; sources.len()];
-        for (graph, (_, modules)) in graphs.iter().enumerate().rev() {
-            for &module in modules.map.values() {
-                graph_of[module as usize] = graph as u8;
+        let mut target_of = vec![order[0]; sources.len()];
+        for &target in order.iter().rev() {
+            for &module in build_graphs[target].map.values() {
+                target_of[module as usize] = target;
             }
         }
 
         let html = &graph.html_imports;
         if !html.server_source_indices.is_empty() {
-            keys.record_of = (0..sources.len() as u32).collect();
+            let loaders = graph.input_files.items_loader();
+            keys.record_of = (0..u32::try_from(sources.len()).expect("int cast")).collect();
             let stubs = html.server_source_indices.iter();
             for (&stub, &page) in stubs.zip(&html.html_source_indices) {
-                keys.record_of[stub as usize] = page;
+                // Browser code can load the file first, as a module that is not built as a
+                // page. The stub then keeps its own record.
+                if has_record.is_set(page as usize) && loaders[page as usize] == Loader::Html {
+                    keys.record_of[stub as usize] = page;
+                }
             }
         }
 
-        // Graph by graph, each module that has a record claims its pretty path. A module with
-        // every part tree-shaken has none: a file with one record keeps its path as the key.
+        // Graph by graph, each module that has a record claims its pretty path. A module that
+        // tree shaking dropped has none: a file with one record keeps its path as the key.
         let reachable = c.graph.reachable_files.slice();
         let mut claimed: ArrayHashMap<&[u8], ()> = ArrayHashMap::new();
         claimed.ensure_total_capacity(reachable.len())?;
         let mut copies: Vec<u32> = Vec::new();
-        for graph in 0..graphs.len() as u8 {
+        for &target in &order {
             for source_index in reachable {
                 let i = source_index.get();
                 if i == Index::RUNTIME.get()
                     || !has_record.is_set(i as usize)
-                    || graph_of[i as usize] != graph
+                    || target_of[i as usize] != target
                     || keys.record_of(i) != i
                 {
                     continue;
@@ -142,14 +150,14 @@ impl<'a> InputKeys<'a> {
                 }
             }
         }
-        // A module whose path is claimed is a copy. It takes the suffix of its graph, and takes
-        // it again while a module has that key (a file can be named `a.js (browser)`).
+        // A record whose path is claimed is a copy. It takes the suffix of its graph, and takes
+        // it again while a record has that key (a file can be named `a.js (browser)`).
         let mut suffixed: StringHashMap<()> = StringHashMap::default();
         for i in copies {
-            let suffix = &graphs[graph_of[i as usize] as usize].0;
-            let mut key = [sources[i as usize].path.pretty, suffix].concat();
+            let graph = target_of[i as usize].naming_placeholder();
+            let mut key = [sources[i as usize].path.pretty, b" (", graph, b")"].concat();
             while claimed.contains(&key.as_slice()) || suffixed.contains_key(key.as_slice()) {
-                key.extend_from_slice(suffix);
+                key = [key.as_slice(), b" (", graph, b")"].concat();
             }
             suffixed.put(&key, ())?;
             keys.rename(i, key);
@@ -260,16 +268,16 @@ fn generate_chunk_json(
             continue;
         }
 
-        // A page and its stubs are one member, with the sum of their bytes. Only an entry
-        // point with a Bun hashbang puts two of them in one chunk (#25767).
+        // A page and its stubs are one member, with the sum of their bytes. A chunk holds more
+        // than one of them only when a Bun hashbang gives the server code a second graph.
         let record = keys.record_of(file_source_index);
         if stub_records.contains(&record) {
-            let has_record = |&other: &u32| keys.record_of(other) == record;
-            if chunk_keys[..member].iter().any(has_record) {
+            let is_same_member = |&other: &u32| keys.record_of(other) == record;
+            if chunk_keys[..member].iter().any(is_same_member) {
                 continue;
             }
             for later in member + 1..chunk_keys.len() {
-                if has_record(&chunk_keys[later]) {
+                if is_same_member(&chunk_keys[later]) {
                     bytes_in_output += bytes_of(later);
                 }
             }

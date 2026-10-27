@@ -163,11 +163,11 @@ test("the prototypes of a histogram can be printed", () => {
     }
   }
   expect(printed).toEqual([
-    "{   p: RecordableHistogram {     record: [Function: record],",
     // As for every native class: the getter throws for a prototype.
-    "{   p: Histogram {     count: undefined,",
-    "{   p: ELDHistogram {     enable: [Function: enable],",
-    "{   p: Histogram {     count: undefined,",
+    "{   p: RecordableHistogram {     count: undefined,",
+    "{   p: Histogram {}, }",
+    "{   p: ELDHistogram {     count: undefined,",
+    "{   p: Histogram {}, }",
   ]);
 });
 

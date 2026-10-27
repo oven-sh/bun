@@ -1632,9 +1632,9 @@ impl<'a> BundleOptions<'a> {
     /// The target whose CSS feature set stylesheets are minified and printed
     /// for. Bake builds emit every stylesheet into the client bundle, so CSS
     /// compiles for the browser even when the importing graph is a server
-    /// one. Minify and print must both resolve targets here: the
-    /// `light-dark()` polyfill injects definitions at minify and rewrites
-    /// references at print, and either half alone is broken.
+    /// one. Minify and print must both resolve targets here: minify assigns
+    /// vendor prefixes and fallbacks, print compiles nesting and media
+    /// ranges, and a sheet that gets one half is only partly lowered.
     #[inline]
     pub(crate) fn css_target(&self) -> Target {
         if self.is_bake_build() {

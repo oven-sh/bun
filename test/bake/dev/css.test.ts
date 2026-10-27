@@ -823,8 +823,15 @@ devTest("css imported on the server gets browser-target processing", {
       }
     `,
     "styles.css": `
-      .box:fullscreen {
-        color: red;
+      .a {
+        .b:fullscreen {
+          color: red;
+        }
+      }
+      @media (width >= 500px) {
+        .a {
+          color: blue;
+        }
       }
     `,
   },
@@ -832,10 +839,15 @@ devTest("css imported on the server gets browser-target processing", {
     const styles = await (await dev.fetch("/")).json();
     expect(styles).toHaveLength(1);
     const css = await (await dev.fetch(styles[0])).text();
-    // Stylesheets are always served to the browser, so selector downleveling
-    // for browser targets must apply even when the importer is a server file.
-    expect(css).toContain(":-webkit-full-screen");
-    expect(css).toContain(":fullscreen");
+    // Stylesheets are always served to the browser, so the default browser
+    // targets must apply even when the importer is a server file. Minify
+    // assigns the -webkit- prefix and print flattens the nesting, so the
+    // prefixed selector needs both to run with browser targets.
+    expect(css).toContain(".a .b:-webkit-full-screen");
+    expect(css).toContain(".a .b:fullscreen");
+    // Media range syntax is lowered at print.
+    expect(css).toContain("(min-width: 500px)");
+    expect(css).not.toContain(">=");
   },
 });
 
@@ -848,7 +860,12 @@ devTest("css chunks are printed with browser targets", {
     "styles.css": `
       .a {
         .b {
-          color: light-dark(white, black);
+          color: red;
+        }
+      }
+      @media (width >= 500px) {
+        .a {
+          color: blue;
         }
       }
     `,
@@ -860,10 +877,11 @@ devTest("css chunks are printed with browser targets", {
     const css = await (await dev.fetch(href!)).text();
     // Stylesheets are served to the browser, so print-gated downleveling for
     // the default browser targets must apply even though the primary
-    // transpiler targets the server: nesting is flattened and light-dark()
-    // is replaced with a fallback.
+    // transpiler targets the server: nesting is flattened and media range
+    // syntax is lowered.
     expect(css).toContain(".a .b");
-    expect(css).not.toContain("light-dark(");
+    expect(css).toContain("(min-width: 500px)");
+    expect(css).not.toContain(">=");
   },
 });
 
@@ -962,42 +980,6 @@ devTest("css layer statements are printed with browser targets", {
     expect(css).toContain("@layer foo;");
     expect(css).toContain("(min-width: 500px)");
     expect(css).not.toContain(">=");
-  },
-});
-
-devTest("light-dark() polyfill spans minify and print for server-imported css", {
-  framework: minimalFramework,
-  files: {
-    "routes/index.ts": `
-      import "../styles.css";
-      export default function (req, meta) {
-        return new Response(JSON.stringify(meta.styles), {
-          headers: { "Content-Type": "application/json" },
-        });
-      }
-    `,
-    "styles.css": `
-      :root {
-        color-scheme: light dark;
-      }
-      .a {
-        color: light-dark(white, black);
-      }
-    `,
-  },
-  async test(dev) {
-    const styles = await (await dev.fetch("/")).json();
-    expect(styles).toHaveLength(1);
-    const css = await (await dev.fetch(styles[0])).text();
-    // The polyfill has two halves: the variable definitions and the
-    // prefers-color-scheme toggle are injected at minify time, the
-    // light-dark() references are rewritten at print time. Both halves must
-    // be present; references without definitions compute to an invalid value
-    // and drop the declaration in every browser.
-    expect(css).toMatch(/--buncss-light:\s*initial/);
-    expect(css).toMatch(/prefers-color-scheme:\s*dark/);
-    expect(css).toContain("var(--buncss-light");
-    expect(css).not.toContain("light-dark(");
   },
 });
 

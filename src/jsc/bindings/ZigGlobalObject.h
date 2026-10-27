@@ -488,9 +488,6 @@ public:
     V(private, ThenablesArray, m_thenables)                                                                  \
     V(private, NativeModuleDefaultsArray, m_nativeModuleDefaults)                                            \
                                                                                                              \
-    /* Error.prepareStackTrace */                                                                            \
-    V(public, WriteBarrier<JSC::Unknown>, m_errorConstructorPrepareStackTraceValue)                          \
-                                                                                                             \
     /* The innermost open handle scope (Node-API or V8), where new napi_values and V8 handles are */         \
     /* created. You must not pass any napi_values back to a NAPI function without putting them in the */     \
     /* handle scope, as the NAPI function may move them off the stack, and they would then be collected. */  \
@@ -507,11 +504,7 @@ public:
     V(private, WriteBarrier<JSObject>, m_nodeWorkerStdioPorts)                                               \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_moduleGraphFrameStructure)                           \
                                                                                                              \
-    /* The original, unmodified Error.prepareStackTrace. */                                                  \
-    /* */                                                                                                    \
-    /* We set a default value for this to mimic Node.js behavior It is a */                                  \
-    /* separate from the user-facing value so that we can tell if the user */                                \
-    /* really set it or if it's just the default value. */                                                   \
+    /* The default Error.prepareStackTrace, as Node.js has one. Native code formats its stacks. */           \
     V(public, LazyPropertyOfGlobalObject<JSC::JSFunction>, m_errorConstructorPrepareStackTraceInternalValue) \
                                                                                                              \
     V(private, LazyPropertyOfGlobalObject<JSObject>, m_nodeErrorCache)                                       \

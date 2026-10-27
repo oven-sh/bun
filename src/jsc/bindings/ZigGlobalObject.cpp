@@ -1266,27 +1266,7 @@ JSC_DEFINE_CUSTOM_GETTER(errorConstructorPrepareStackTraceGetter,
         JSC::PropertyName))
 {
     Zig::GlobalObject* thisObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
-    if (thisObject->m_errorConstructorPrepareStackTraceValue) {
-        return JSValue::encode(thisObject->m_errorConstructorPrepareStackTraceValue.get());
-    }
-
     return JSValue::encode(thisObject->m_errorConstructorPrepareStackTraceInternalValue.get(thisObject));
-}
-
-JSC_DEFINE_CUSTOM_SETTER(errorConstructorPrepareStackTraceSetter,
-    (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue,
-        JSC::EncodedJSValue encodedValue, JSC::PropertyName property))
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    Zig::GlobalObject* thisObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
-    JSValue value = JSValue::decode(encodedValue);
-    if (value == thisObject->m_errorConstructorPrepareStackTraceInternalValue.get(thisObject)) {
-        thisObject->m_errorConstructorPrepareStackTraceValue.clear();
-    } else {
-        thisObject->m_errorConstructorPrepareStackTraceValue.set(vm, thisObject, value);
-    }
-
-    return true;
 }
 
 #pragma mark - Globals
@@ -3069,7 +3049,8 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     JSC::JSObject* errorConstructor = this->errorConstructor();
     errorConstructor->putDirectNativeFunction(vm, this, JSC::Identifier::fromString(vm, "captureStackTrace"_s), 2, errorConstructorFuncCaptureStackTrace, ImplementationVisibility::Public, JSC::NoIntrinsic, PropertyAttribute::DontEnum | 0);
     errorConstructor->putDirectNativeFunction(vm, this, JSC::Identifier::fromString(vm, "appendStackTrace"_s), 2, errorConstructorFuncAppendStackTrace, ImplementationVisibility::Private, JSC::NoIntrinsic, PropertyAttribute::DontEnum | 0);
-    errorConstructor->putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "prepareStackTrace"_s), JSC::CustomGetterSetter::create(vm, errorConstructorPrepareStackTraceGetter, errorConstructorPrepareStackTraceSetter), PropertyAttribute::DontEnum | PropertyAttribute::CustomValue);
+    // No setter: the first write makes this an ordinary data property, and the formatter reads the property itself.
+    errorConstructor->putDirectCustomAccessor(vm, builtinNames.prepareStackTracePublicName(), JSC::CustomGetterSetter::create(vm, errorConstructorPrepareStackTraceGetter, nullptr), PropertyAttribute::DontEnum | PropertyAttribute::CustomValue);
 
     JSC::JSObject* consoleObject = this->get(this, JSC::Identifier::fromString(vm, "console"_s)).getObject();
     scope.assertNoExceptionExceptTermination();

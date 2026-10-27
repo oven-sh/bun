@@ -29,7 +29,7 @@ use super::stream::EndDirective;
 use crate::common::ZSTD_BLOCKSIZE_MAX;
 use crate::common::xxhash::Xxh64;
 use crate::error::{ErrorCode, Result};
-use crate::util::{SliceExt, try_copy};
+use crate::util::{BUG, SliceExt, try_copy};
 use crate::{InBuffer, OutBuffer};
 
 /// `SerialState`: what has to see the input in order.
@@ -39,7 +39,7 @@ struct SerialState {
     ldm_state: LdmState,
     xxh_state: Xxh64,
     /// The input, where the C code has it in its round buffer: long distance matches reach further back than the
-    /// prefix of a job.
+    /// prefix of a job. It is as long as it has been written to.
     round_buff: Vec<u8>,
 }
 
@@ -74,7 +74,9 @@ impl SerialState {
             )?;
             reset_table(&mut self.ldm_state.bucket_offsets, 1 << bucket_log, true)?;
             self.ldm_state.loaded_dict_end = 0;
-            reset_table(&mut self.round_buff, round_buff_capacity, false)?;
+            self.round_buff.clear();
+            (self.round_buff.try_reserve_exact(round_buff_capacity))
+                .map_err(|_| ErrorCode::MemoryAllocation)?;
         } else {
             self.ldm_state = LdmState::new();
             self.round_buff = Vec::new();
@@ -92,7 +94,11 @@ impl SerialState {
         round_pos: usize,
     ) -> Result<()> {
         if self.ldm_params.enable_ldm == ParamSwitch::Enable {
-            self.round_buff.write_at(round_pos, src)?;
+            let written = self.round_buff.get_mut(round_pos..).ok_or(BUG)?;
+            let (over, beyond) = src.split_at(written.len().min(src.len()));
+            written.write_at(0, over)?;
+            (self.round_buff.try_reserve(beyond.len())).map_err(|_| ErrorCode::MemoryAllocation)?;
+            self.round_buff.extend_from_slice(beyond);
             (self.ldm_state.window).update(
                 BufId::InBuff.start() + round_pos,
                 BufId::InBuff,
@@ -158,6 +164,15 @@ struct WorkerState {
 
 const CHUNK_SIZE: usize = 4 * ZSTD_BLOCKSIZE_MAX;
 
+/// Makes `seq` `len` long, in the allocation that it has if that is large enough.
+fn resize_in_place(seq: &mut Vec<RawSeq>, len: usize) -> Result<()> {
+    seq.clear();
+    seq.try_reserve(len)
+        .map_err(|_| ErrorCode::MemoryAllocation)?;
+    seq.resize(len, RawSeq::default());
+    Ok(())
+}
+
 /// `ZSTDMT_compressionJob`
 fn compression_job(state: &mut WorkerState, job: &Job, cancelled: &AtomicBool) -> Result<()> {
     let mut job_params = job.params;
@@ -176,7 +191,7 @@ fn compression_job(state: &mut WorkerState, job: &Job, cancelled: &AtomicBool) -
     let generated = if cancelled.load(Ordering::SeqCst) {
         Err(ErrorCode::Generic)
     } else {
-        reset_struct_table(&mut raw_seq_store.seq, job.nb_seq_bound, false)
+        resize_in_place(&mut raw_seq_store.seq, job.nb_seq_bound)
             .and_then(|()| serial.gen_sequences(&mut raw_seq_store, src, job.round_pos))
     };
     // The receiver is gone if the frame is given up.
@@ -312,8 +327,6 @@ struct PendingJob {
     flushed: usize,
     /// How many bytes there are in `output` beyond `flushed`.
     to_flush: usize,
-    /// How many bytes were received in all.
-    c_size: usize,
     consumed: usize,
     src_size: usize,
     frame_checksum_needed: bool,
@@ -324,7 +337,6 @@ impl PendingJob {
     fn take(&mut self, progress: Progress) {
         match progress {
             Progress::Output { data, consumed } => {
-                self.c_size += data.len();
                 self.to_flush += data.len();
                 self.consumed = consumed;
                 if !data.is_empty() {
@@ -604,7 +616,6 @@ impl MtCtx {
             output: VecDeque::new(),
             flushed: 0,
             to_flush: 0,
-            c_size: 0,
             consumed: 0,
             src_size,
             frame_checksum_needed,

@@ -1,6 +1,8 @@
 //! The state machine that turns a brotli stream back into bytes. It can stop wherever the input or the room for output
 //! ends, and go on from there in the next call.
 
+use bun_core::AllocError;
+
 use super::bit_reader::{BitReader, bit_mask};
 use super::command_lut::COMMAND_LUT;
 use super::huffman::{
@@ -23,7 +25,6 @@ use crate::common::dictionary::{self, MAX_DICTIONARY_WORD_LENGTH, MIN_DICTIONARY
 use crate::common::transform::{MAX_TRANSFORMED_LENGTH, NUM_TRANSFORMS, transform_dictionary_word};
 use crate::io::Output;
 use crate::util::{Bug, Checked, SliceExt, try_box, try_vec, try_with_capacity, try_zeroed};
-use bun_core::AllocError;
 
 /// `Err` is everything that interrupts decoding: an error, or the need for more input or more room for output.
 type Step<T = ()> = Result<T, E>;
@@ -45,6 +46,7 @@ const MAX_DISTANCE_SYMBOLS: usize = calculate_distance_code_limit(
 )
 .max_alphabet_size as usize;
 
+/// As many as `BrotliDecoderAttachDictionary` takes.
 const MAX_COMPOUND_DICTIONARY_CHUNKS: usize = 15;
 
 /// 2. The block categories, as indices.
@@ -150,8 +152,9 @@ struct CompoundDictionary {
     copy_offset: i32,
     copy_length: i32,
     copied: i32,
-    /// `block_map[address >> block_bits]` is a chunk at or before the one that holds `address`. -1 until it is filled.
-    block_bits: i32,
+    /// `block_map[address >> block_bits]` is a chunk at or before the one that holds `address`. The first copy fills
+    /// them in.
+    block_bits: Option<u32>,
     block_map: [u8; 256],
 }
 
@@ -165,7 +168,7 @@ impl CompoundDictionary {
             copy_offset: 0,
             copy_length: 0,
             copied: 0,
-            block_bits: -1,
+            block_bits: None,
             block_map: [0; 256],
         })
     }
@@ -188,16 +191,16 @@ impl CompoundDictionary {
             .is_ok()
     }
 
-    fn ensure_initialized(&mut self) -> Checked {
-        if self.block_bits != -1 {
-            return Ok(());
+    fn block_bits(&mut self) -> Checked<u32> {
+        if let Some(block_bits) = self.block_bits {
+            return Ok(block_bits);
         }
         let mut block_bits = 8;
         while ((self.total_size - 1) >> block_bits) != 0 {
             block_bits += 1;
         }
         block_bits -= 8;
-        self.block_bits = block_bits;
+        self.block_bits = Some(block_bits);
         let mut cursor = 0i32;
         let mut index = 0usize;
         while cursor < self.total_size {
@@ -212,13 +215,13 @@ impl CompoundDictionary {
             };
             cursor = next;
         }
-        Ok(())
+        Ok(block_bits)
     }
 
     /// Starts a copy of `length` bytes from `address`, which is inside.
     fn start_copy(&mut self, address: i32, length: i32) -> Step {
-        self.ensure_initialized()?;
-        let mut chunk = usize::from(self.block_map.at((address >> self.block_bits) as usize)?);
+        let block_bits = self.block_bits()?;
+        let mut chunk = usize::from(self.block_map.at((address >> block_bits) as usize)?);
         while address >= self.chunk_offsets.at(chunk + 1)? {
             chunk += 1;
         }
@@ -303,12 +306,20 @@ struct HeaderReader {
     max_run_length_prefix: u32,
 }
 
-#[derive(Clone, Copy, Default)]
-struct DistanceSymbol {
-    /// How many extra bits follow the symbol.
-    extra_bits: u8,
+/// 4. What the distance symbols stand for. It depends on `NPOSTFIX` and `NDIRECT`, which are the same for a whole
+/// meta-block.
+struct DistanceSymbols {
+    /// How many extra bits follow each symbol.
+    extra_bits: [u8; MAX_DISTANCE_SYMBOLS],
     /// The distance if they are all 0.
-    offset: u32,
+    offset: [u32; MAX_DISTANCE_SYMBOLS],
+}
+
+impl DistanceSymbols {
+    fn set(&mut self, symbol: usize, extra_bits: u32, offset: u32) -> Checked {
+        self.extra_bits.put(symbol, extra_bits as u8)?;
+        self.offset.put(symbol, offset)
+    }
 }
 
 pub struct Decoder {
@@ -328,9 +339,10 @@ pub struct Decoder {
     max_distance: i32,
     ringbuffer_size: i32,
     ringbuffer_mask: i32,
-    last_distances_pos: i32,
     /// The last four distances.
     last_distances: [i32; 4],
+    /// Where in `last_distances` the next one goes, modulo 4.
+    last_distances_pos: i32,
     error_code: E,
     meta_block_remaining_len: i32,
 
@@ -345,9 +357,10 @@ pub struct Decoder {
     literal_trees: HuffmanTreeGroup,
     command_trees: HuffmanTreeGroup,
     distance_trees: HuffmanTreeGroup,
-    /// Three tables of [`HUFFMAN_MAX_SIZE_258`] entries. Empty until a meta-block has more than one block type.
+    /// A table of [`HUFFMAN_MAX_SIZE_258`] entries for each category. Empty until a meta-block has more than one block
+    /// type.
     block_type_trees: Vec<HuffmanCode>,
-    /// Three tables of [`HUFFMAN_MAX_SIZE_26`] entries, allocated with `block_type_trees`.
+    /// A table of [`HUFFMAN_MAX_SIZE_26`] entries for each category, allocated with `block_type_trees`.
     block_length_trees: Vec<HuffmanCode>,
     /// All contexts of the current literal block type use the same tree, so the context need not be computed.
     trivial_literal_context: bool,
@@ -408,7 +421,7 @@ pub struct Decoder {
     /// The code that a context map is written in.
     context_map_table: [HuffmanCode; HUFFMAN_MAX_SIZE_272],
 
-    distance_symbols: [DistanceSymbol; MAX_DISTANCE_SYMBOLS],
+    distance_symbols: DistanceSymbols,
 }
 
 impl Default for Decoder {
@@ -594,37 +607,6 @@ fn bit_width(x: u32) -> u32 {
     32 - x.leading_zeros()
 }
 
-/// Reads a number from 0 to 255, which takes 1 to 11 bits. `value` holds an intermediate result between calls.
-fn decode_var_len_uint8(
-    substate: &mut DecodeUint8State,
-    br: &mut BitReader,
-    input: &[u8],
-    value: &mut u32,
-) -> Step {
-    if *substate == DecodeUint8State::None {
-        let bits = br.safe_read_bits(input, 1).ok_or(E::NeedsMoreInput)?;
-        if bits == 0 {
-            *value = 0;
-            return Ok(());
-        }
-        *substate = DecodeUint8State::Short;
-    }
-    if *substate == DecodeUint8State::Short {
-        let bits = br.safe_read_bits(input, 3).ok_or(E::NeedsMoreInput)?;
-        if bits == 0 {
-            *value = 1;
-            *substate = DecodeUint8State::None;
-            return Ok(());
-        }
-        *value = bits as u32;
-        *substate = DecodeUint8State::Long;
-    }
-    let bits = br.safe_read_bits(input, *value).ok_or(E::NeedsMoreInput)?;
-    *value = (1 << *value) + bits as u32;
-    *substate = DecodeUint8State::None;
-    Ok(())
-}
-
 impl HeaderReader {
     fn new() -> Self {
         Self {
@@ -647,6 +629,32 @@ impl HeaderReader {
             next_start: 0,
             max_run_length_prefix: 0,
         }
+    }
+
+    /// Reads a number from 0 to 255, which takes 1 to 11 bits. `value` holds an intermediate result between calls.
+    fn decode_var_len_uint8(&mut self, br: &mut BitReader, input: &[u8], value: &mut u32) -> Step {
+        if self.substate_decode_uint8 == DecodeUint8State::None {
+            let bits = br.safe_read_bits(input, 1).ok_or(E::NeedsMoreInput)?;
+            if bits == 0 {
+                *value = 0;
+                return Ok(());
+            }
+            self.substate_decode_uint8 = DecodeUint8State::Short;
+        }
+        if self.substate_decode_uint8 == DecodeUint8State::Short {
+            let bits = br.safe_read_bits(input, 3).ok_or(E::NeedsMoreInput)?;
+            if bits == 0 {
+                *value = 1;
+                self.substate_decode_uint8 = DecodeUint8State::None;
+                return Ok(());
+            }
+            *value = bits as u32;
+            self.substate_decode_uint8 = DecodeUint8State::Long;
+        }
+        let bits = br.safe_read_bits(input, *value).ok_or(E::NeedsMoreInput)?;
+        *value = (1 << *value) + bits as u32;
+        self.substate_decode_uint8 = DecodeUint8State::None;
+        Ok(())
     }
 
     /// Reads the `self.symbol + 1` symbols of a simple prefix code, which have to differ.
@@ -1015,7 +1023,7 @@ impl HeaderReader {
         loop {
             match self.substate_context_map {
                 ContextMapState::None => {
-                    decode_var_len_uint8(&mut self.substate_decode_uint8, br, input, num_trees)?;
+                    self.decode_var_len_uint8(br, input, num_trees)?;
                     *num_trees += 1;
                     *context_map =
                         try_zeroed(context_map_size as usize).map_err(|_| E::AllocContextMap)?;
@@ -1185,8 +1193,8 @@ impl Decoder {
             max_distance: 0,
             ringbuffer_size: 0,
             ringbuffer_mask: 0,
-            last_distances_pos: 0,
             last_distances: [16, 15, 11, 4],
+            last_distances_pos: 0,
             error_code: E::NoError,
             meta_block_remaining_len: 0,
             ringbuffer: Vec::new(),
@@ -1234,7 +1242,10 @@ impl Decoder {
             trivial_literal_contexts: [0; 8],
             header: HeaderReader::new(),
             context_map_table: [HuffmanCode::default(); HUFFMAN_MAX_SIZE_272],
-            distance_symbols: [DistanceSymbol::default(); MAX_DISTANCE_SYMBOLS],
+            distance_symbols: DistanceSymbols {
+                extra_bits: [0; MAX_DISTANCE_SYMBOLS],
+                offset: [0; MAX_DISTANCE_SYMBOLS],
+            },
         }
     }
 
@@ -1732,8 +1743,6 @@ impl Decoder {
         Ok(())
     }
 
-    /// 4. For each distance symbol, the number of extra bits and the first distance. They depend on `NPOSTFIX` and
-    /// `NDIRECT`, which are the same for a whole meta-block.
     fn calculate_distance_lut(&mut self) -> Checked {
         let npostfix = self.distance_postfix_bits;
         let ndirect = self.num_direct_distance_codes;
@@ -1745,26 +1754,14 @@ impl Decoder {
         let mut i = NUM_DISTANCE_SHORT_CODES as usize;
 
         for j in 0..ndirect {
-            self.distance_symbols.put(
-                i,
-                DistanceSymbol {
-                    extra_bits: 0,
-                    offset: j + 1,
-                },
-            )?;
+            self.distance_symbols.set(i, 0, j + 1)?;
             i += 1;
         }
 
         while i < alphabet_size_limit {
             let base = ndirect + ((((2 + half) << bits) - 4) << npostfix) + 1;
             for j in 0..postfix {
-                self.distance_symbols.put(
-                    i,
-                    DistanceSymbol {
-                        extra_bits: bits as u8,
-                        offset: base + j,
-                    },
-                )?;
+                self.distance_symbols.set(i, bits, base + j)?;
                 i += 1;
             }
             bits += half;
@@ -1785,8 +1782,8 @@ impl Decoder {
             self.take_last_distance(code as i32)?;
             return Ok(());
         }
-        let symbol = self.distance_symbols.at(code as usize)?;
-        let nbits = u32::from(symbol.extra_bits);
+        let nbits = u32::from(self.distance_symbols.extra_bits.at(code as usize)?);
+        let offset = u64::from(self.distance_symbols.offset.at(code as usize)?);
         let bits = if !SAFE {
             br.read_bits(input, nbits)?
         } else {
@@ -1797,7 +1794,6 @@ impl Decoder {
             };
             bits
         };
-        let offset = u64::from(symbol.offset);
         self.distance = (offset + (bits << self.distance_postfix_bits)) as i32;
         Ok(())
     }
@@ -2387,12 +2383,8 @@ impl Decoder {
                     return Ok(Flow::Continue);
                 }
                 let num_block_types = self.num_block_types.at_mut(self.loop_counter as usize)?;
-                decode_var_len_uint8(
-                    &mut self.header.substate_decode_uint8,
-                    &mut self.br,
-                    input,
-                    num_block_types,
-                )?;
+                self.header
+                    .decode_var_len_uint8(&mut self.br, input, num_block_types)?;
                 *num_block_types += 1;
                 if *num_block_types < 2 {
                     self.loop_counter += 1;

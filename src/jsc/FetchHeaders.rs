@@ -240,8 +240,6 @@ impl FetchHeaders {
     }
 
     pub fn cast(value: JSValue) -> Option<NonNull<FetchHeaders>> {
-        // SAFETY: `VirtualMachine::get()` is only called from the JS thread, where
-        // `global` is a live non-null JSGlobalObject for the VM's lifetime.
         let global = VirtualMachine::get().global();
         Self::cast_(value, global.vm())
     }

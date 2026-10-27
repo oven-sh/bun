@@ -41,7 +41,6 @@ pub enum AbortCause {
 /// [`AbortCause::ContextStopped`].
 type AbortFn = unsafe fn(handle: *mut AbortHandle, cause: AbortCause);
 
-/// Zero-valid.
 pub struct ScriptExecutionContext {
     id: Cell<ContextId>,
     /// Armed handles, oldest first.
@@ -176,7 +175,11 @@ impl ScriptExecutionContext {
     }
 
     /// A timer script of this (graph's) context set exists from here.
-    pub fn track_timer(&self, timer: *mut core::ffi::c_void, kind: ContextTimer) {
+    ///
+    /// # Safety
+    /// `timer` points at what `kind` says, which is live until it is passed to
+    /// [`untrack_timer`](Self::untrack_timer) or the context's stop has cancelled it.
+    pub unsafe fn track_timer(&self, timer: *mut core::ffi::c_void, kind: ContextTimer) {
         // SAFETY: see the field.
         bun_core::handle_oom(unsafe { &mut *self.timers.get() }.put(timer, kind));
         if self.is_stopped() {

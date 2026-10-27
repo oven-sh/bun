@@ -123,10 +123,7 @@ struct WorkerVmInit {
 /// points into, until `shutdown()` empties it.
 #[derive(Default)]
 struct ThreadState {
-    // The VM's allocator IS this arena.
-    arena: Option<bun_alloc::Arena>,
-    /// Cloned env for the worker VM; boxed on the global heap because the arena
-    /// does not run `Drop`. Reclaimed in `shutdown()`.
+    /// Cloned env for the worker VM. Reclaimed in `shutdown()`.
     env_loader: Option<NonNull<bun_dotenv::Loader>>,
 }
 
@@ -288,14 +285,14 @@ impl WebWorker {
         let spec_slice = specifier_str.to_utf8();
         let mut temp_log = bun_ast::Log::default();
         let temp_log = NonNull::from(&mut temp_log);
-        let prev_log = parent.transpiler().log;
-        // SAFETY: `new Worker()` in script got us here, and no borrow of the transpiler is held
-        // across a call into script. This one ends with the statement.
-        unsafe { parent.transpiler_mut() }.set_log(temp_log.as_ptr());
+        let prev_log = parent.transpiler().log_ptr();
+        // SAFETY: `_restore` takes the pointer out again before the log drops, and the log is
+        // read below only once the resolver has returned.
+        unsafe { parent.transpiler().set_log(temp_log.as_ptr()) };
         // Declared after the log, so every return path restores the pointer before the log drops.
         let _restore = scopeguard::guard((), |()| {
-            // SAFETY: as above; the borrows taken below have ended.
-            unsafe { parent.transpiler_mut() }.set_log(prev_log);
+            // SAFETY: it was in use when this function was called, and its owner has not returned.
+            unsafe { parent.transpiler().set_log(prev_log) };
         });
 
         // SAFETY: caller passed valid (ptr,len) (or `(null,0)`); slice borrowed from C++.
@@ -582,6 +579,16 @@ impl WebWorker {
         self.mini
     }
 
+    /// `init_worker` publishes as soon as the VM exists (rather than at the end of startVM) so that:
+    ///   - a concurrent request_termination() (parent, or an exiting ancestor) can
+    ///     wake us once JS starts running, and
+    ///   - early returns of startVM reach spin()/shutdown() with the handle
+    ///     published, so teardownJSCVM/vm.deinit() run and the just-built
+    ///     JSC::VM heap is not leaked.
+    pub(crate) fn publish_vm_handle(&self, handle: crate::VmHandle) {
+        *self.vm_handle.lock() = Some(handle);
+    }
+
     // =========================================================================
     // Worker thread
     // =========================================================================
@@ -647,8 +654,6 @@ impl WebWorker {
             proxy_env_slots,
         } = init;
 
-        let arena = NonNull::from(state.arena.insert(bun_alloc::Arena::new()));
-
         // Stashed in `state` so `shutdown()` step 5 reclaims it on every path —
         // including the early-terminate checkpoint below, which calls
         // `shutdown()` before the VM exists.
@@ -663,6 +668,8 @@ impl WebWorker {
             return Ok(None);
         }
 
+        // `None`: terminated before `configure_defines`, which did not run.
+        let mut defines_loaded = None;
         let vm = VirtualMachine::init_worker(
             self,
             virtual_machine::Options {
@@ -671,55 +678,45 @@ impl WebWorker {
                 graph: crate::virtual_machine::standalone_module_graph(),
                 ..Default::default()
             },
+            &mut |b| {
+                b.resolver.env_loader.set(NonNull::new(b.env));
+                b.options.env.behavior =
+                    bun_options_types::schema::api::DotEnvBehavior::LoadAllWithoutInlining;
+
+                if let Some(graph) = crate::virtual_machine::standalone_module_graph() {
+                    // SAFETY: the process's one graph, which is a `bun_standalone_graph::Graph`.
+                    unsafe { (hooks.apply_standalone_runtime_flags)(b, graph) };
+                }
+
+                // Second checkpoint: initWorker just spent the bulk of startup time;
+                // if terminate arrived during it, skip configureDefines() (which
+                // walks the resolver's global dir_cache) and entry-point loading.
+                // spin() will observe the flag and shutdown() under the API lock.
+                if !self.has_requested_terminate() {
+                    defines_loaded = Some(b.configure_defines().is_ok());
+                }
+            },
         )?;
-        vm.arena.set(Some(arena));
         *vm.proxy_env_storage.lock() = proxy_env_slots;
         vm.is_main_thread.set(false);
         VirtualMachine::set_is_main_thread_vm(false);
         vm.on_unhandled_rejection.set(on_unhandled_rejection);
 
-        // Publish now (rather than at the end of startVM) so that:
-        //   - a concurrent request_termination() (parent, or an exiting ancestor) can
-        //     wake us once JS starts running, and
-        //   - early returns below reach spin()/shutdown() with the handle
-        //     published, so teardownJSCVM/vm.deinit() run and the just-built
-        //     JSC::VM heap is not leaked.
         // We do NOT call shutdown() directly from here: shutdown() with a
         // VM runs vm.onExit() (JS), which requires holdAPILock.
         // Instead we return; threadMain enters holdAPILock(spin) and spin()'s
         // first check observes requested_terminate.
-        *self.vm_handle.lock() = Some(vm.handle());
-
-        // SAFETY: no script has run in this VM yet and this frame's callers hold no borrow of
-        // the transpiler; nothing called before `b`'s last use reaches it through the VM.
-        let b = unsafe { vm.transpiler_mut() };
-        b.resolver.env_loader = NonNull::new(b.env);
-        b.options.env.behavior =
-            bun_options_types::schema::api::DotEnvBehavior::LoadAllWithoutInlining;
-
-        if let Some(graph) = crate::virtual_machine::standalone_module_graph() {
-            // SAFETY: `b` is the worker's live transpiler.
-            unsafe { (hooks.apply_standalone_runtime_flags)(b, graph) };
+        match defines_loaded {
+            None => {}
+            Some(false) => {
+                // Fall through to spin() → shutdown() for full teardown under
+                // the API lock (flushLogs runs JS). Set terminate so spin()
+                // bails immediately; vm.log carries the error for flushLogs.
+                vm.exit_handler.exit_code.set(1);
+                let _ = self.set_requested_terminate();
+            }
+            Some(true) => vm.load_extra_env_and_source_code_printer(),
         }
-
-        // Second checkpoint: initWorker just spent the bulk of startup time;
-        // if terminate arrived during it, skip configureDefines() (which
-        // walks the resolver's global dir_cache) and entry-point loading.
-        // spin() will observe the flag and shutdown() under the API lock.
-        if self.has_requested_terminate() {
-            return Ok(Some(vm));
-        }
-
-        if b.configure_defines().is_err() {
-            // Fall through to spin() → shutdown() for full teardown under
-            // the API lock (flushLogs runs JS). Set terminate so spin()
-            // bails immediately; vm.log carries the error for flushLogs.
-            vm.exit_handler.exit_code.set(1);
-            let _ = self.set_requested_terminate();
-            return Ok(Some(vm));
-        }
-
-        vm.load_extra_env_and_source_code_printer();
         Ok(Some(vm))
     }
 
@@ -749,7 +746,7 @@ impl WebWorker {
 
         // `preloads` is owned by `self` (heap `WebWorker` outlives the VM).
         // Clone the boxes (cheap, ≤handful).
-        vm.preload.replace(self.preloads.clone());
+        vm.preload.set(self.preloads.clone());
 
         // Resolve the entry point on the worker thread (the parent only stored
         // the raw specifier). The returned slice is BORROWED — every exit from
@@ -811,8 +808,8 @@ impl WebWorker {
 
         // SAFETY: `path` borrows the resolver's process-lifetime string store, the
         // standalone module graph, `self.unresolved_specifier` or `dot_slash`. The VM keeps
-        // it as its `main`, and every return below frees the VM (`shutdown()`) inside this
-        // frame, so the last two outlive the VM; no reader of `vm.main()` keeps it longer.
+        // it as its `main`, which it lends for no longer than it lives itself, and every return
+        // below frees the VM (`shutdown()`) inside this frame, so the last two outlive the VM.
         let path: &'static [u8] = unsafe { &*core::ptr::from_ref(path) };
         let promise = match vm.load_entry_point_for_web_worker(path) {
             Ok(p) => p,
@@ -971,8 +968,9 @@ impl WebWorker {
         if has_vm {
             // SAFETY: this thread has a VM, whose API lock `thread_main` took; no other
             // thread holds a pointer to it (they only ever held its handle), and the
-            // `&VirtualMachine` in the frames above are not used again;
-            // `init_worker` always passes `log: None`.
+            // `&VirtualMachine` in the frames above are not used again. The ones that native
+            // objects keep go with their owners: teardown closes or finalizes each before the
+            // VM's storage goes. `init_worker` always passes `log: None`.
             exit_code = i32::from(unsafe { VirtualMachine::exit_and_free() });
         }
         log!(
@@ -989,7 +987,6 @@ impl WebWorker {
         // before the process exits, so free the HPACK scratch buffer that any
         // http2 session on this thread allocated.
         Bun__freeSharedHeaderBufferForThreadExit();
-        drop(state.arena.take());
         log!(
             "[{}] shutdown: thread state freed",
             self.execution_context_id
@@ -1193,8 +1190,8 @@ fn on_unhandled_rejection(
 /// free it.
 ///
 /// # Safety
-/// `log` is the live log `parent`'s transpiler writes to, and no borrow of it or of the
-/// transpiler is live during the call.
+/// `log` is the live log `parent`'s transpiler writes to, and no borrow of it is live during the
+/// call.
 unsafe fn resolve_entry_point_specifier<'s>(
     parent: &VirtualMachine,
     str: &'s [u8],
@@ -1233,11 +1230,7 @@ unsafe fn resolve_entry_point_specifier<'s>(
         }
     }
 
-    // SAFETY: fn contract. An entry point is resolved without auto-install, so no script runs
-    // under the borrow, which ends with the statement.
-    let resolved_entry_point = match unsafe { parent.transpiler_mut() }
-        .resolve_entry_point(str, dot_slash)
-    {
+    let resolved_entry_point = match parent.transpiler().resolve_entry_point(str, dot_slash) {
         Ok(r) => r,
         Err(_) => {
             let global = parent.global();

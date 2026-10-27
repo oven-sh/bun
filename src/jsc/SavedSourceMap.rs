@@ -1,6 +1,7 @@
 #![warn(unused_must_use)]
 
 use core::ffi::c_void;
+use core::marker::PhantomData;
 use std::sync::Arc;
 
 use bun_collections::{HashMap, IdentityContext, TaggedPtrUnion};
@@ -20,13 +21,13 @@ pub struct SavedSourceMap {
     map: Guarded<HashTable>,
 }
 
-const _: fn() = || {
-    fn assert_sync<T: Sync>() {}
+const _: () = {
+    const fn assert_sync<T: Sync>() {}
     assert_sync::<SavedSourceMap>();
 };
 
 /// `InternalSourceMap` is the storage for runtime-transpiled modules.
-/// `AnySourceProvider` (boxed — the box is table-owned, the provider FFI
+/// `RegisteredProvider` (boxed — the box is table-owned, the provider FFI
 /// handle inside it borrowed) is a registered lazy external source provider.
 /// `ParsedSourceMap` is materialized lazily from such a provider for sources
 /// that ship their own external `.map`.
@@ -36,13 +37,21 @@ type Value = TaggedPtrUnion<ValueTypes>;
 /// rules — `bun_ptr::impl_tagged_ptr_union!` would impl on a tuple of foreign
 /// types (all three members live in `bun_sourcemap`), which the coherence
 /// checker rejects from this crate. Tags are `1024 - i`.
-struct ValueTypes;
+///
+/// A tagged pointer is an integer to the compiler. The field names what a `Value` owns, so that
+/// whether the table may cross threads is derived from that.
+struct ValueTypes(PhantomData<(Arc<ParsedSourceMap>, Box<RegisteredProvider>, Box<[u8]>)>);
+
+#[derive(Clone, Copy)]
+struct RegisteredProvider(AnySourceProvider);
+// SAFETY: `put_source_provider`'s contract.
+unsafe impl Send for RegisteredProvider {}
 
 impl bun_ptr::tagged_pointer::TypeList for ValueTypes {}
 impl bun_ptr::tagged_pointer::UnionMember<ValueTypes> for ParsedSourceMap {
     const TAG: TagType = 1024;
 }
-impl bun_ptr::tagged_pointer::UnionMember<ValueTypes> for AnySourceProvider {
+impl bun_ptr::tagged_pointer::UnionMember<ValueTypes> for RegisteredProvider {
     const TAG: TagType = 1023;
 }
 impl bun_ptr::tagged_pointer::UnionMember<ValueTypes> for InternalSourceMap {
@@ -52,7 +61,7 @@ impl bun_ptr::tagged_pointer::UnionMember<ValueTypes> for InternalSourceMap {
 impl SavedSourceMap {
     /// Releases whatever ownership a table value carries: the table's strong
     /// ref for a `ParsedSourceMap`, the blob for an `InternalSourceMap`, or
-    /// the box for an `AnySourceProvider` (whose provider FFI handle is
+    /// the box for a `RegisteredProvider` (whose provider FFI handle is
     /// borrowed and stays with its owner; see [`Self::put_source_provider`]).
     ///
     /// # Safety
@@ -70,7 +79,7 @@ impl SavedSourceMap {
                 data: ism as *const u8,
             })
             .free_owned();
-        } else if let Some(provider) = value.get::<AnySourceProvider>() {
+        } else if let Some(provider) = value.get::<RegisteredProvider>() {
             // SAFETY: the box was allocated by `put_source_provider`.
             unsafe { bun_core::heap::destroy(provider) };
         }
@@ -93,8 +102,12 @@ impl SavedSourceMap {
     /// unregisters it via [`Self::remove_source_provider`] before freeing it —
     /// while the box holding the erased pair is owned by the table and freed
     /// by [`Self::release_value`] on replace / remove / drop.
-    pub fn put_source_provider(&self, provider: AnySourceProvider, path: &[u8]) {
-        let boxed = bun_core::heap::into_raw(Box::new(provider));
+    ///
+    /// # Safety
+    /// Any thread may call `provider.get_source_map`, until `remove_source_provider` has returned
+    /// for it and the lookups that other threads had under way have returned too.
+    pub unsafe fn put_source_provider(&self, provider: AnySourceProvider, path: &[u8]) {
+        let boxed = bun_core::heap::into_raw(Box::new(RegisteredProvider(provider)));
         // SAFETY: the table takes the box.
         unsafe { self.put_value(path, Value::init(boxed)) };
     }
@@ -114,10 +127,10 @@ impl SavedSourceMap {
         let Some(&old_value) = map.get(&key) else {
             return;
         };
-        let refers_to_provider = if let Some(provider) = old_value.get::<AnySourceProvider>() {
+        let refers_to_provider = if let Some(provider) = old_value.get::<RegisteredProvider>() {
             // SAFETY: the box was stored by `put_source_provider` and is live
             // while in the table.
-            core::ptr::eq(unsafe { (*provider).ptr() }, opaque_source_provider)
+            core::ptr::eq(unsafe { (*provider).0.ptr() }, opaque_source_provider)
         } else if let Some(parsed) = old_value.get::<ParsedSourceMap>() {
             // SAFETY: `parsed` was stored by us and is live while in the table.
             unsafe { (*parsed).underlying_provider }
@@ -263,18 +276,16 @@ impl SavedSourceMap {
                 map: Some(result),
                 ..Default::default()
             };
-        } else if let Some(provider) = tagged.get::<AnySourceProvider>() {
+        } else if let Some(provider) = tagged.get::<RegisteredProvider>() {
             // Copy the erased pair out while the lock is held: once unlocked,
             // a concurrent put/remove may free the box.
             // SAFETY: the box was stored by `put_source_provider` and is live
             // while in the table.
-            let provider = unsafe { *provider };
+            let RegisteredProvider(provider) = unsafe { *provider };
             drop(map);
 
             // Do not lock the mutex while we're parsing JSON!
-            // The provider FFI handle is kept alive by its owner (JSC / the
-            // registrar), which unregisters it before freeing; we did not
-            // hold a ref.
+            // No ref is held on the provider FFI handle: `put_source_provider`'s contract.
             if let Some(parse) = provider.get_source_map(path, Default::default(), hint) {
                 if let Some(ref parsed_map) = parse.map {
                     // The mutex is not locked. We have to check the hash table again.

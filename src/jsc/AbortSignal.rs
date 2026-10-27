@@ -280,7 +280,7 @@ bun_event_loop::impl_timer_owner!(Timeout; from_timer_ptr => event_loop_timer);
 
 impl Timeout {
     fn init(vm: &VirtualMachine, signal_: *mut AbortSignal, milliseconds: u64) -> *mut Timeout {
-        let milliseconds = milliseconds.max(u64::from(VirtualMachine::timer_min_delay_ms()));
+        let milliseconds = milliseconds.max(u64::from(vm.timer_min_delay_ms()));
         let deadline = bun_core::Timespec::now_allow_mocked_time()
             .add_ms(i64::try_from(milliseconds).expect("AbortSignal.timeout(ms) overflows i64"));
 
@@ -305,7 +305,8 @@ impl Timeout {
             hot_reload_counter: vm.hot_reload_counter.get(),
         }));
         if let Some(context) = graph_context {
-            context.track_timer(this.cast(), crate::ContextTimer::AbortSignal);
+            // SAFETY: just boxed, and `deinit`, which frees it, untracks it first.
+            unsafe { context.track_timer(this.cast(), crate::ContextTimer::AbortSignal) };
         }
 
         #[cfg(debug_assertions)]

@@ -292,7 +292,7 @@ where
     ) -> Option<*mut Self> {
         let vm = global.bun_vm();
 
-        debug_assert!(vm.event_loop_handle.get().is_some());
+        debug_assert!(vm.platform_loop_opt().is_some());
 
         let server_name_of = |config: Option<&SSLConfig>| -> Option<Box<[u8]>> {
             config

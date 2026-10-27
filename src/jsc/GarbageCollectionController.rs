@@ -49,19 +49,20 @@ impl GarbageCollectionController {
         unsafe { (*self.gc_repeating_timer.get()).state }
     }
 
-    /// Remove the timer from the heap if linked.
-    fn disarm(&self, vm: &VirtualMachine) {
-        if self.timer_state() == TimerState::ACTIVE {
+    /// Remove `vm`'s timer from the heap if linked.
+    fn disarm(vm: &VirtualMachine) {
+        let this = &vm.gc_controller;
+        if this.timer_state() == TimerState::ACTIVE {
             // SAFETY: the node is linked iff `ACTIVE`, and lives as long as `vm`, which embeds it.
-            unsafe { VirtualMachine::timer_remove(vm, self.gc_repeating_timer.get()) };
+            unsafe { VirtualMachine::timer_remove(vm, this.gc_repeating_timer.get()) };
         }
     }
 
-    /// Remove the timer from the heap if linked, set its deadline to `now + ms`, and
+    /// Remove `vm`'s timer from the heap if linked, set its deadline to `now + ms`, and
     /// insert. Real time, not the mocked clock: GC pacing is Bun's, not the test's.
-    fn arm(&self, vm: &VirtualMachine, ms: i32) {
-        self.disarm(vm);
-        let t = self.gc_repeating_timer.get();
+    fn arm(vm: &VirtualMachine, ms: i32) {
+        Self::disarm(vm);
+        let t = vm.gc_controller.gc_repeating_timer.get();
         // SAFETY: unlinked above, so nothing else reaches the node for the write; it lives as
         // long as `vm`, which embeds it.
         unsafe {
@@ -80,11 +81,14 @@ impl GarbageCollectionController {
     }
 
     pub(crate) fn init(&self, vm: &VirtualMachine) {
-        uws::Loop::get().internal_loop_data.jsc_vm.set(
-            vm.jsc_vm
-                .get()
-                .map_or(core::ptr::null(), |jsc_vm| jsc_vm.as_mut_ptr().cast()),
-        );
+        // SAFETY: nothing ticks the loop once `VirtualMachine::teardown` has destroyed the `JSC::VM`.
+        unsafe {
+            uws::Loop::get().internal_loop_data.set_jsc_vm(
+                vm.jsc_vm
+                    .get()
+                    .map_or(core::ptr::null(), |jsc_vm| jsc_vm.as_mut_ptr().cast()),
+            )
+        };
 
         self.gc_timer_interval.set(
             env_var::BUN_GC_TIMER_INTERVAL::get()
@@ -155,34 +159,33 @@ impl GarbageCollectionController {
     /// Idempotent. Must run before JSC teardown: `~RunLoop::Timer` frees the
     /// `WTFTimer` nodes sharing the heap, so an unlink afterwards walks freed
     /// siblings.
-    pub(crate) fn deinit(&self) {
-        self.disabled.set(true);
-        let Some(vm) = VirtualMachine::get_or_null() else {
-            return;
-        };
-        self.disarm(vm);
+    pub(crate) fn deinit(vm: &VirtualMachine) {
+        vm.gc_controller.disabled.set(true);
+        Self::disarm(vm);
     }
 
     /// Arms the idle timer on first call; kept at the event-loop call sites so the first deadline is in the poll that follows.
     #[inline]
-    pub(crate) fn process_gc_timer(&self) {
-        if self.disabled.get() || self.timer_state() != TimerState::PENDING {
+    pub(crate) fn process_gc_timer(vm: &VirtualMachine) {
+        let this = &vm.gc_controller;
+        if this.disabled.get() || this.timer_state() != TimerState::PENDING {
             return;
         }
-        self.arm(VirtualMachine::get(), self.repeat_interval());
+        Self::arm(vm, this.repeat_interval());
     }
 
-    pub(crate) fn perform_gc(&self, idle_full: bool) {
-        if self.disabled.get() {
+    pub(crate) fn perform_gc(vm: &VirtualMachine, idle_full: bool) {
+        let this = &vm.gc_controller;
+        if this.disabled.get() {
             return;
         }
-        let vm = VirtualMachine::get().jsc_vm();
+        let vm = vm.jsc_vm();
         if idle_full {
             vm.collect_async_idle();
         } else {
             vm.collect_async(false);
         }
-        self.gc_last_heap_size.set(vm.block_bytes_allocated());
+        this.gc_last_heap_size.set(vm.block_bytes_allocated());
     }
 
     /// `Tag::GcRepeating` fire body: `BUN_GC_TIMER_INTERVAL` (default 1 s) in fast mode, 30 s in slow mode; drops to slow after 30 fires without heap growth beyond the chatter slack, back to fast when it grows.
@@ -206,7 +209,7 @@ impl GarbageCollectionController {
         let prev_heap_size = this.gc_last_heap_size.get();
         let grew = vm.jsc_vm().block_bytes_allocated() > prev_heap_size + idle_growth_slack;
         let (full, idle_gc_due_in) = this.idle_tick(vm, grew, interval);
-        this.perform_gc(full);
+        Self::perform_gc(vm, full);
         // Growth is activity; a shrinking heap is a collection (possibly the one requested above) doing its job. Where the
         // event loop cannot let an idle collection finish while parked (Windows: Bun__JSC_onBeforeWait), it proceeds at
         // this timer's ticks instead, fast ones for the next 30.
@@ -230,12 +233,6 @@ impl GarbageCollectionController {
             Some(ms) => this.repeat_interval().min(ms.max(1000) as i32),
             None => this.repeat_interval(),
         };
-        this.arm(vm, interval);
-    }
-}
-
-impl Drop for GarbageCollectionController {
-    fn drop(&mut self) {
-        self.deinit();
+        Self::arm(vm, interval);
     }
 }

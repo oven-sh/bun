@@ -124,6 +124,17 @@ impl Optional {
         unsafe { Impl::destroy(r) };
     }
 
+    /// Takes over `other`'s handle and frees the one held.
+    pub fn adopt(&self, other: Optional) {
+        let handle = other.handle.take();
+        drop(other);
+        let Some(old) = self.handle.replace(handle) else {
+            return;
+        };
+        // SAFETY: `old` came from `Impl::init` and is consumed exactly once here.
+        unsafe { Impl::destroy(old) };
+    }
+
     pub fn set(&self, global: &JSGlobalObject, value: JSValue) {
         let Some(r) = self.handle.get() else {
             if value.is_empty() {
@@ -205,7 +216,7 @@ impl Impl {
         // slot release is the whole of teardown. The Rust VM TLS outlives ~VM.
         match crate::virtual_machine::VirtualMachine::get_or_null() {
             Some(vm) => {
-                if (*vm).is_shutting_down() {
+                if vm.is_shutting_down() {
                     return;
                 }
             }

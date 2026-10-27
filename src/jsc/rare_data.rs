@@ -58,8 +58,9 @@ use super::uuid::UUID;
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct HotMap {
-    /// Taken out for the length of one map operation, none of which comes back here.
-    _map: Cell<StringArrayHashMap<HotMapEntry>>,
+    /// Borrowed only inside the methods below. Each makes one map call, which hashes bytes and
+    /// moves `Copy` entries, so nothing it runs comes back here.
+    map: UnsafeCell<StringArrayHashMap<HotMapEntry>>,
 }
 
 /// Erased `(tag, ptr)` payload — concrete variant list lives in `bun_runtime`.
@@ -80,36 +81,27 @@ impl Default for HotMapEntry {
 impl HotMap {
     pub(crate) fn init() -> HotMap {
         HotMap {
-            _map: Cell::new(StringArrayHashMap::new()),
+            map: UnsafeCell::new(StringArrayHashMap::new()),
         }
     }
 
     pub fn get_entry(&self, key: &[u8]) -> Option<HotMapEntry> {
-        let map = self._map.replace(StringArrayHashMap::new());
-        let entry = map.get(key).copied();
-        self._map.set(map);
-        entry
+        // SAFETY: see `map`.
+        unsafe { &*self.map.get() }.get(key).copied()
     }
 
     pub fn insert_raw(&self, key: &[u8], entry: HotMapEntry) {
-        let mut map = self._map.replace(StringArrayHashMap::new());
-        let gop = bun_core::handle_oom(map.get_or_put(key));
+        // SAFETY: see `map`.
+        let gop = bun_core::handle_oom(unsafe { &mut *self.map.get() }.get_or_put(key));
         if gop.found_existing {
             panic!("HotMap already contains key");
         }
         *gop.value_ptr = entry;
-        self._map.set(map);
     }
 
     pub fn remove(&self, key: &[u8]) {
-        let mut map = self._map.replace(StringArrayHashMap::new());
-        if let Some(i) = map.get_index(key) {
-            let stored = &map.keys()[i];
-            let is_same_slice = stored.as_ptr() == key.as_ptr() && stored.len() == key.len();
-            debug_assert!(!is_same_slice);
-            map.swap_remove(key);
-        }
-        self._map.set(map);
+        // SAFETY: see `map`. No key is lent out, so `key` is not one of the map's own.
+        unsafe { &mut *self.map.get() }.swap_remove(key);
     }
 }
 
@@ -118,37 +110,37 @@ impl HotMap {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct EntropyCache {
-    pub(crate) cache: [u8; Self::SIZE],
-    pub(crate) index: usize,
-}
-impl Default for EntropyCache {
-    fn default() -> Self {
-        Self {
-            cache: [0u8; Self::SIZE],
-            index: 0,
-        }
-    }
+    /// Borrowed only inside [`copy_to`](Self::copy_to).
+    cache: UnsafeCell<[u8; Self::SIZE]>,
+    index: Cell<usize>,
 }
 impl EntropyCache {
-    pub(crate) const BUFFERED_UUIDS_COUNT: usize = 16;
+    const BUFFERED_UUIDS_COUNT: usize = 16;
     pub const SIZE: usize = Self::BUFFERED_UUIDS_COUNT * 128;
 
-    pub(crate) fn fill(&mut self) {
-        bun_boringssl::rand_bytes(&mut self.cache);
-        self.index = 0;
+    /// Used up, so the first draw fills it.
+    fn new() -> Box<Self> {
+        Box::new(Self {
+            cache: UnsafeCell::new([0u8; Self::SIZE]),
+            index: Cell::new(Self::SIZE),
+        })
     }
-    /// `false`, with `out` untouched, if `out` is longer than the cache.
-    fn copy_to(&mut self, out: &mut [u8]) -> bool {
+
+    #[inline]
+    fn copy_to(&self, out: &mut [u8]) {
         let len = out.len();
-        if len > self.cache.len() {
-            return false;
+        if len > Self::SIZE {
+            return bun_boringssl::rand_bytes(out);
         }
-        if self.index + len > self.cache.len() {
-            self.fill();
+        // SAFETY: the only borrow of `cache`; `rand_bytes` and the copy do not come back here.
+        let cache = unsafe { &mut *self.cache.get() };
+        let mut index = self.index.get();
+        if index + len > Self::SIZE {
+            bun_boringssl::rand_bytes(cache);
+            index = 0;
         }
-        out.copy_from_slice(&self.cache[self.index..self.index + len]);
-        self.index += len;
-        true
+        out.copy_from_slice(&cache[index..index + len]);
+        self.index.set(index + len);
     }
 }
 
@@ -197,14 +189,14 @@ pub struct RareData {
     /// side). Constructed via `__bun_stdio_blob_store_new`; high tier casts back.
     /// `mode` is cached so [`Bun__Process__getStdinFdType`] doesn't have to
     /// re-stat.
-    pub stderr_store: Cell<Option<NonNull<c_void>>>,
-    pub(crate) stderr_mode: Cell<Mode>,
-    pub stdin_store: Cell<Option<NonNull<c_void>>>,
-    pub(crate) stdin_mode: Cell<Mode>,
-    pub stdout_store: Cell<Option<NonNull<c_void>>>,
-    pub(crate) stdout_mode: Cell<Mode>,
+    stderr_store: Cell<Option<NonNull<c_void>>>,
+    stderr_mode: Cell<Mode>,
+    stdin_store: Cell<Option<NonNull<c_void>>>,
+    stdin_mode: Cell<Mode>,
+    stdout_store: Cell<Option<NonNull<c_void>>>,
+    stdout_mode: Cell<Mode>,
 
-    pub(crate) entropy_cache: Cell<Option<Box<EntropyCache>>>,
+    entropy_cache: OnceCell<Box<EntropyCache>>,
 
     pub(crate) hot_map: OnceCell<HotMap>,
 
@@ -230,21 +222,16 @@ pub struct RareData {
     /// SHA-256 + map lookup. Ref owned here. Lazy-init body lives in
     /// `bun_runtime` (it calls `SSLContextCache::get_or_create_opts`).
     /// Held until `tls.DEFAULT_CIPHERS` is assigned so the weak-cache entry never tombstones.
-    pub default_client_ssl_ctx: Cell<Option<boring::OwnedSslCtx>>,
+    /// Null until built.
+    default_client_ssl_ctx: Cell<*mut boring::SSL_CTX>,
 
     /// `bun_runtime::node::StatWatcherScheduler` — erased `RefPtr` payload;
     /// lazy-init in `bun_runtime::node::node_fs_stat_watcher`.
-    pub(crate) node_fs_stat_watcher_scheduler: Cell<Option<NonNull<c_void>>>,
+    node_fs_stat_watcher_scheduler: ErasedSlot,
 
     /// `bun_runtime::node::memory_pressure::MemoryPressureWatcher` — erased
     /// `Box`; lazy-init on the first `process.on("memoryPressure", ...)` listener.
-    pub(crate) memory_pressure_watcher: Cell<Option<NonNull<c_void>>>,
-
-    /// Watch-mode restart needs to RST every listen socket so the new process
-    /// can rebind without `EADDRINUSE`. Written on the JS thread; drained on
-    /// the watcher thread — hence the mutex (PORTING.md §Concurrency: lock
-    /// owns the data, no sidecar `Mutex<()>`).
-    pub(crate) listening_sockets_for_watch_mode: Mutex<Vec<Fd>>,
+    memory_pressure_watcher: ErasedSlot,
 
     pub pipe_read_scratch: Box<bun_event_loop::PipeReadScratch>,
 
@@ -278,6 +265,29 @@ pub struct RareData {
 
 pub(crate) type FilePollStore = Async::file_poll::Store;
 
+/// Holds something only `bun_runtime` can name. Its readers there cast it back unchecked.
+#[derive(Default)]
+pub struct ErasedSlot(Cell<Option<NonNull<c_void>>>);
+
+impl ErasedSlot {
+    #[inline]
+    pub fn get(&self) -> Option<NonNull<c_void>> {
+        self.0.get()
+    }
+
+    #[inline]
+    pub fn take(&self) -> Option<NonNull<c_void>> {
+        self.0.take()
+    }
+
+    /// # Safety
+    /// `value` is what the readers of this slot cast it back to, and stays so while it is here.
+    #[inline]
+    pub unsafe fn set(&self, value: NonNull<c_void>) {
+        self.0.set(Some(value));
+    }
+}
+
 impl Default for RareData {
     fn default() -> Self {
         Self {
@@ -288,7 +298,7 @@ impl Default for RareData {
             stdin_mode: Cell::new(0),
             stdout_store: Cell::new(None),
             stdout_mode: Cell::new(0),
-            entropy_cache: Cell::new(None),
+            entropy_cache: OnceCell::new(),
             hot_map: OnceCell::new(),
             cleanup_hooks: Default::default(),
             cleanup_hooks_after_teardown_wait: Default::default(),
@@ -296,10 +306,9 @@ impl Default for RareData {
             spawn_ipc_group: SocketGroup::default(),
             test_parallel_ipc_group: SocketGroup::default(),
             socket_groups: SocketGroups::default(),
-            default_client_ssl_ctx: Cell::new(None),
-            node_fs_stat_watcher_scheduler: Cell::new(None),
-            memory_pressure_watcher: Cell::new(None),
-            listening_sockets_for_watch_mode: Mutex::new(Vec::new()),
+            default_client_ssl_ctx: Cell::new(core::ptr::null_mut()),
+            node_fs_stat_watcher_scheduler: ErasedSlot::default(),
+            memory_pressure_watcher: ErasedSlot::default(),
             pipe_read_scratch: Box::new(bun_event_loop::PipeReadScratch::new()),
             h2_padded_frame_buffer: Cell::new(None),
             compression_scratch: Cell::new(None),
@@ -323,52 +332,36 @@ impl Default for RareData {
 /// Three fixed-size tiers, lazily allocated on first use.
 #[derive(Default)]
 pub struct PathBuf {
-    tiers: [Cell<Option<Box<[u8]>>>; 3],
+    small: OnceCell<Box<PathBufTier<{ 2 * MAX_PATH_BYTES }>>>,
+    medium: OnceCell<Box<PathBufTier<{ 8 * MAX_PATH_BYTES }>>>,
+    large: OnceCell<Box<PathBufTier<{ 32 * MAX_PATH_BYTES }>>>,
 }
+
+#[repr(transparent)]
+struct PathBufTier<const N: usize>(UnsafeCell<[u8; N]>);
+// SAFETY: `repr(transparent)` down to bytes.
+unsafe impl<const N: usize> bun_core::Zeroable for PathBufTier<N> {}
 
 impl PathBuf {
-    const SIZES: [usize; 3] = [2 * MAX_PATH_BYTES, 8 * MAX_PATH_BYTES, 32 * MAX_PATH_BYTES];
-
-    /// Takes the smallest tier that fits `min_len` out of its slot, until the lease is dropped. A
-    /// caller that gets here meanwhile finds the slot empty and allocates its own.
+    /// The smallest tier that fits `min_len`.
+    ///
+    /// # Safety
+    /// No slice an earlier call returned is used after this call.
     // Revisit caller semantics for inputs exceeding the large tier.
-    pub fn take(&self, min_len: usize) -> PathBufLease<'_> {
-        let tier = Self::SIZES
-            .iter()
-            .position(|&size| min_len <= size)
-            .unwrap_or(Self::SIZES.len() - 1);
-        let slot = &self.tiers[tier];
-        let buf = slot
-            .take()
-            .unwrap_or_else(|| vec![0u8; Self::SIZES[tier]].into_boxed_slice());
-        PathBufLease { slot, buf }
-    }
-}
-
-pub struct PathBufLease<'a> {
-    slot: &'a Cell<Option<Box<[u8]>>>,
-    buf: Box<[u8]>,
-}
-
-impl core::ops::Deref for PathBufLease<'_> {
-    type Target = [u8];
-    #[inline]
-    fn deref(&self) -> &[u8] {
-        &self.buf
-    }
-}
-
-impl core::ops::DerefMut for PathBufLease<'_> {
-    #[inline]
-    fn deref_mut(&mut self) -> &mut [u8] {
-        &mut self.buf
-    }
-}
-
-impl Drop for PathBufLease<'_> {
-    #[inline]
-    fn drop(&mut self) {
-        self.slot.set(Some(core::mem::take(&mut self.buf)));
+    #[allow(clippy::mut_from_ref)]
+    pub unsafe fn get(&self, min_len: usize) -> &mut [u8] {
+        fn tier<const N: usize>(slot: &OnceCell<Box<PathBufTier<N>>>) -> *mut [u8] {
+            slot.get_or_init(bun_core::boxed_zeroed).0.get()
+        }
+        let tier = if min_len <= 2 * MAX_PATH_BYTES {
+            tier(&self.small)
+        } else if min_len <= 8 * MAX_PATH_BYTES {
+            tier(&self.medium)
+        } else {
+            tier(&self.large)
+        };
+        // SAFETY: fn contract.
+        unsafe { &mut *tier }
     }
 }
 
@@ -582,7 +575,7 @@ impl SocketGroups {
 
     #[inline]
     fn lazy<'a>(&'a self, g: &'a SocketGroup, loop_: &'static uws::Loop) -> &'a SocketGroup {
-        if g.loop_.get().is_null() {
+        if !g.is_initialized() {
             g.init(
                 loop_,
                 None,
@@ -658,7 +651,7 @@ impl SocketGroups {
 
     /// No socket is open, connecting or listening in any of these groups.
     pub(crate) fn is_empty(&self) -> bool {
-        self.each().into_iter().all(Self::group_is_empty)
+        self.each().into_iter().all(SocketGroup::is_empty)
     }
 
     /// Close every socket in these groups (JS thread), for a context that has stopped: nothing
@@ -666,17 +659,10 @@ impl SocketGroups {
     /// reach this set again ([`of`](Self::of)).
     pub(crate) fn close_all(&self) {
         for group in self.each() {
-            if !group.loop_.get().is_null() {
+            if group.is_initialized() {
                 group.close_all();
             }
         }
-    }
-
-    fn group_is_empty(g: &SocketGroup) -> bool {
-        g.head_sockets.get().is_null()
-            && g.head_connecting_sockets.get().is_null()
-            && g.head_listen_sockets.get().is_null()
-            && g.low_prio_count.get() == 0
     }
 
     /// Detach every group from the thread's uSockets loop (each is empty). Idempotent.
@@ -690,14 +676,13 @@ impl SocketGroups {
 /// Detach an embedded, emptied group from its loop. Idempotent.
 fn detach_group_from_loop(g: &SocketGroup) {
     // Groups whose lazy accessor was never called are still zero-initialised
-    // (`loop_ == null`, never `init`'d). The C `us_socket_group_deinit` happens
-    // to no-op on those, but `SocketGroup::destroy`'s safety contract requires a
-    // prior `init`, so honour it explicitly.
-    if !g.loop_.get().is_null() {
+    // (never `init`'d). The C `us_socket_group_deinit` happens to no-op on
+    // those, but `SocketGroup::reset`'s safety contract requires a prior
+    // `init`, so honour it explicitly.
+    if g.is_initialized() {
         // SAFETY: embedded by-value group, previously `init`'d and emptied by
-        // its owner, so destroy reduces to the empty-list debug asserts.
-        unsafe { SocketGroup::destroy(g.as_ptr()) };
-        g.loop_.set(core::ptr::null_mut());
+        // its owner, so this reduces to the empty-list debug asserts.
+        unsafe { g.reset() };
     }
 }
 
@@ -718,13 +703,13 @@ impl RareData {
     /// Raw slot — lazy-init body lives in `bun_runtime::node::node_fs_stat_watcher`
     /// (`StatWatcherScheduler::init` is higher-tier).
     #[inline]
-    pub fn node_fs_stat_watcher_scheduler_slot(&self) -> &Cell<Option<NonNull<c_void>>> {
+    pub fn node_fs_stat_watcher_scheduler_slot(&self) -> &ErasedSlot {
         &self.node_fs_stat_watcher_scheduler
     }
 
     /// Raw slot — lazy-init body lives in `bun_runtime::node::memory_pressure`.
     #[inline]
-    pub fn memory_pressure_watcher_slot(&self) -> &Cell<Option<NonNull<c_void>>> {
+    pub fn memory_pressure_watcher_slot(&self) -> &ErasedSlot {
         &self.memory_pressure_watcher
     }
 
@@ -742,20 +727,15 @@ impl RareData {
 
     // ── lazy-init: entropy ─────────────────────────────────────────────────
 
-    /// Random bytes from the cache. `false`, with `out` untouched, if `out` is longer than
-    /// [`EntropyCache::SIZE`].
-    pub fn fill_entropy(&self, out: &mut [u8]) -> bool {
-        let mut cache = self.entropy_cache.take().unwrap_or_else(|| {
-            let mut c = Box::new(EntropyCache::default());
-            c.fill();
-            c
-        });
-        let filled = cache.copy_to(out);
-        self.entropy_cache.set(Some(cache));
-        filled
+    /// Random bytes, out of the cache unless `out` is longer than [`EntropyCache::SIZE`].
+    #[inline]
+    pub fn fill_entropy(&self, out: &mut [u8]) {
+        self.entropy_cache
+            .get_or_init(EntropyCache::new)
+            .copy_to(out);
     }
+    #[inline]
     pub fn entropy<const N: usize>(&self) -> [u8; N] {
-        const { assert!(N <= EntropyCache::SIZE) };
         let mut bytes = [0u8; N];
         self.fill_entropy(&mut bytes);
         bytes
@@ -849,16 +829,36 @@ impl RareData {
         })
     }
 
+    /// Null until [`set_default_client_ssl_ctx`](Self::set_default_client_ssl_ctx). The
+    /// reference stays here.
+    #[inline]
+    pub fn default_client_ssl_ctx(&self) -> *mut boring::SSL_CTX {
+        self.default_client_ssl_ctx.get()
+    }
+
+    pub fn set_default_client_ssl_ctx(&self, ctx: Option<boring::OwnedSslCtx>) {
+        let previous = self
+            .default_client_ssl_ctx
+            .replace(ctx.map_or(core::ptr::null_mut(), boring::OwnedSslCtx::into_raw));
+        // SAFETY: null, or the reference the `into_raw` of an earlier call left here.
+        drop(unsafe { boring::OwnedSslCtx::from_raw(previous) });
+    }
+
+    #[inline]
+    pub(crate) fn has_tls_default_ciphers(&self) -> bool {
+        // SAFETY: the borrow ends with the read of the tag.
+        unsafe { &*self.tls_default_ciphers.as_ptr() }.is_some()
+    }
+
     pub(crate) fn tls_default_ciphers(&self) -> Option<Rc<[u8]>> {
-        let ciphers = self.tls_default_ciphers.take();
-        self.tls_default_ciphers.set(ciphers.clone());
-        ciphers
+        // SAFETY: the borrow ends with `Rc::clone`, which only counts.
+        unsafe { &*self.tls_default_ciphers.as_ptr() }.clone()
     }
 
     pub(crate) fn set_tls_default_ciphers(&self, ciphers: &[u8]) {
         self.tls_default_ciphers.set(Some(Rc::from(ciphers)));
         // Built from the previous list. Open connections hold their own reference.
-        self.default_client_ssl_ctx.set(None);
+        self.set_default_client_ssl_ctx(None);
     }
 
     pub fn push_cleanup_hook(
@@ -894,22 +894,10 @@ impl RareData {
         self.existing_spawn_sync_event_loop()
     }
 
-    // ── watch-mode listen sockets ─────────────────────────────────────────
-    pub(crate) fn add_listening_socket_for_watch_mode(&self, socket: Fd) {
-        self.listening_sockets_for_watch_mode.lock().push(socket);
-    }
-
-    pub(crate) fn remove_listening_socket_for_watch_mode(&self, socket: Fd) {
-        let mut sockets = self.listening_sockets_for_watch_mode.lock();
-        if let Some(i) = sockets.iter().position(|s| *s == socket) {
-            sockets.swap_remove(i);
-        }
-    }
-
     // ── socket groups: lazy init ──────────────────────────────────────────
     #[inline]
     fn lazy_group<'a>(g: &'a SocketGroup, loop_: &'static uws::Loop) -> &'a SocketGroup {
-        if g.loop_.get().is_null() {
+        if !g.is_initialized() {
             g.init(loop_, None, core::ptr::null_mut());
         }
         g
@@ -983,6 +971,24 @@ impl RareData {
         // `bun_event_loop::MiniEventLoop` (all args by-value; allocates a
         // fresh `Store` with no caller-side precondition).
         __bun_stdio_blob_store_new(fd, is_atty, mode).cast()
+    }
+
+    /// What [`stderr`](Self::stderr) made, if it was called.
+    #[inline]
+    pub fn stderr_store(&self) -> Option<NonNull<c_void>> {
+        self.stderr_store.get()
+    }
+
+    /// What [`stdout`](Self::stdout) made, if it was called.
+    #[inline]
+    pub fn stdout_store(&self) -> Option<NonNull<c_void>> {
+        self.stdout_store.get()
+    }
+
+    /// What [`stdin`](Self::stdin) made, if it was called.
+    #[inline]
+    pub fn stdin_store(&self) -> Option<NonNull<c_void>> {
+        self.stdin_store.get()
     }
 
     /// Returns an erased `*mut webcore::blob::Store`. High-tier callers cast back.
@@ -1127,7 +1133,7 @@ impl Drop for RareData {
             unsafe { boring::ENGINE_free(engine) };
         }
 
-        self.default_client_ssl_ctx.set(None);
+        self.set_default_client_ssl_ctx(None);
         // After the default-ctx free so the tombstone callback still finds a live
         // map; ssl_ctx_cache itself lives in `RuntimeState` and is dropped there.
 

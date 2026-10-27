@@ -17,7 +17,7 @@ use bun_watcher::WatchItemColumns as _;
 use bun_watcher::{ChangedFilePath, Op as WatchOp, Watcher};
 
 use crate::Task as JscTask;
-use crate::event_loop::{ConcurrentTaskItem as ConcurrentTask, EventLoop};
+use crate::event_loop::ConcurrentTaskItem as ConcurrentTask;
 use crate::virtual_machine::VirtualMachine;
 use bun_event_loop::task_tag;
 
@@ -82,8 +82,8 @@ impl ImportWatcher {
     }
 }
 
-pub type HotReloader = NewHotReloader<VirtualMachine, EventLoop, false>;
-pub type WatchReloader = NewHotReloader<VirtualMachine, EventLoop, true>;
+pub type HotReloader = NewHotReloader<VirtualMachine, false>;
+pub type WatchReloader = NewHotReloader<VirtualMachine, true>;
 
 impl HotReloaderCtx for VirtualMachine {
     fn reload() {
@@ -91,13 +91,8 @@ impl HotReloaderCtx for VirtualMachine {
     }
 }
 
-impl<const RELOAD_IMMEDIATELY: bool> NewHotReloader<VirtualMachine, EventLoop, RELOAD_IMMEDIATELY> {
-    /// # Safety
-    /// No borrow of `vm`'s transpiler is live.
-    pub unsafe fn enable_hot_module_reloading(
-        vm: &VirtualMachine,
-        entry_path: Option<&'static [u8]>,
-    ) {
+impl<const RELOAD_IMMEDIATELY: bool> NewHotReloader<VirtualMachine, RELOAD_IMMEDIATELY> {
+    pub fn enable_hot_module_reloading(vm: &VirtualMachine, entry_path: Option<&'static [u8]>) {
         if vm.is_watcher_enabled() {
             return;
         }
@@ -127,12 +122,12 @@ impl<const RELOAD_IMMEDIATELY: bool> NewHotReloader<VirtualMachine, EventLoop, R
                 ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => &raw mut **w,
                 ImportWatcher::None => unreachable!(),
             };
-            vm.bun_watcher.set(bun_core::heap::into_raw(iw));
+            // SAFETY: the box is the VM's from here on.
+            unsafe { vm.set_bun_watcher(bun_core::heap::into_raw(iw)) };
 
             // SAFETY: just installed, and its thread has not started.
             let resolve_watcher = unsafe { (*watcher_ptr).get_resolve_watcher() };
-            // SAFETY: fn contract. The borrow ends with the statement.
-            unsafe { vm.transpiler_mut() }.resolver.watcher = Some(resolve_watcher);
+            vm.transpiler().resolver.watcher.set(Some(resolve_watcher));
 
             watcher_ptr
         };
@@ -145,10 +140,10 @@ impl<const RELOAD_IMMEDIATELY: bool> NewHotReloader<VirtualMachine, EventLoop, R
 /// The concrete `HotReloadTask` instance the JS event loop dispatches.
 /// The dyn trait below is the type-erased view used by
 /// `HotReloaderCtx::reload`.
-pub type HotReloadTask = Task<VirtualMachine, EventLoop, false>;
+pub type HotReloadTask = Task<VirtualMachine, false>;
 /// `bun run --watch` reload routed through the event loop (only when
 /// `--watch-kill-signal` listeners exist; see `Task::enqueue`).
-pub type WatchReloadTask = Task<VirtualMachine, EventLoop, true>;
+pub type WatchReloadTask = Task<VirtualMachine, true>;
 
 /// What a reloader reloads. The watcher thread never touches it: what that thread needs of it is
 /// copied into the reloader ([`Init`]) before the thread starts.
@@ -172,33 +167,11 @@ struct Init {
     clear_screen: bool,
 }
 
-/// When non-null, `on_file_update` records the absolute path of every file
-/// it sees change before triggering a reload. Used by `bun test --changed
-/// --watch` so the restarted process can narrow its changed-file set to
-/// what the watcher actually observed (instead of re-querying git, which
-/// would re-run every test affected by any uncommitted change, not just
-/// the one that was just edited).
-///
-/// Set by `ChangedFilesFilter` on the main thread before the watcher thread
-/// starts; after that point only the watcher thread touches it. Its
-/// contents are written to `watch_changed_trigger_file` immediately
-/// before `reload_process`; the new process reads and deletes that file.
-pub static WATCH_CHANGED_PATHS: std::sync::OnceLock<WatchChangedPaths> = std::sync::OnceLock::new();
-
-/// The set lives in the process-lifetime CLI arena.
-pub struct WatchChangedPaths(bun_threading::Guarded<&'static mut StringSet>);
-impl WatchChangedPaths {
-    #[inline]
-    pub fn new(set: &'static mut StringSet) -> Self {
-        Self(bun_threading::Guarded::new(set))
-    }
-}
-
 /// Absolute path of the temp file `flush_changed_paths_for_reload` writes
 /// the changed-path list into. The same path is exported via the
 /// `BUN_INTERNAL_TEST_CHANGED_TRIGGER_FILE` env var so the restarted
-/// process can find it. Set alongside `WATCH_CHANGED_PATHS` by
-/// `ChangedFilesFilter`; the string must outlive the process.
+/// process can find it. Set by `ChangedFilesFilter` before the reloader is
+/// enabled; the string must outlive the process.
 ///
 /// Init-once-then-read-only (main thread sets, watcher thread reads), so
 /// `OnceLock` per PORTING.md §Global mutable state. `&ZStr` is a fat pointer
@@ -206,36 +179,36 @@ impl WatchChangedPaths {
 pub static WATCH_CHANGED_TRIGGER_FILE: std::sync::OnceLock<&'static ZStr> =
     std::sync::OnceLock::new();
 
-fn record_changed_path(path: &[u8]) {
-    let Some(set) = WATCH_CHANGED_PATHS.get() else {
+fn record_changed_path(changed_paths: &mut Option<StringSet>, path: &[u8]) {
+    let Some(set) = changed_paths else {
         return;
     };
     if path.is_empty() {
         return;
     }
-    bun_core::handle_oom(set.0.lock().insert(path));
+    bun_core::handle_oom(set.insert(path));
 }
 
 /// Write the recorded changed paths to the trigger file so the next
 /// process (after exec()) can consume them. Best-effort: if the write
 /// fails, the new process falls back to querying git.
-fn flush_changed_paths_for_reload() {
+fn flush_changed_paths_for_reload(changed_paths: Option<&StringSet>) {
     // `WATCH_CHANGED_TRIGGER_FILE` is never set on Windows (see
     // `ChangedFilesFilter.initWatchTrigger`), so this body would be
     // dead there anyway; guarding lets us use POSIX path types below.
     #[cfg(windows)]
     {
+        let _ = changed_paths;
         return;
     }
     #[cfg(not(windows))]
     {
-        let Some(set) = WATCH_CHANGED_PATHS.get() else {
+        let Some(set) = changed_paths else {
             return;
         };
         let Some(&dest) = WATCH_CHANGED_TRIGGER_FILE.get() else {
             return;
         };
-        let set = set.0.lock();
         if set.count() == 0 {
             return;
         }
@@ -262,7 +235,7 @@ unsafe extern "C" {
 // before the watcher thread starts.
 static CLEAR_SCREEN: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
-pub struct NewHotReloader<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> {
+pub struct NewHotReloader<Ctx, const RELOAD_IMMEDIATELY: bool> {
     /// The watcher whose thread calls this reloader. Set before that thread starts.
     watcher: *mut Watcher,
     #[cfg(not(windows))]
@@ -272,10 +245,17 @@ pub struct NewHotReloader<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> {
 
     pub(crate) main: MainFile,
 
+    /// `bun test --changed --watch`: the absolute path of every file `on_file_update` has seen
+    /// change, so that the restarted process can narrow its changed-file set to what the watcher
+    /// observed (instead of re-querying git, which would re-run every test affected by any
+    /// uncommitted change). Written to `WATCH_CHANGED_TRIGGER_FILE` right before
+    /// `reload_process`; the new process reads and deletes that file.
+    changed_paths: Option<StringSet>,
+
     #[cfg(not(windows))]
     pub(crate) tombstones: StringHashMap<*mut Fs::DirEntry>,
 
-    _ctx: PhantomData<(*mut Ctx, *mut EventLoopType)>,
+    _ctx: PhantomData<*mut Ctx>,
 }
 
 /// What a reloader's `Task`s use of it, on the watcher thread and on the context's, while the
@@ -285,6 +265,11 @@ struct Shared {
     /// See [`Init::reload_handle`].
     reload_handle: Option<crate::VmHandle>,
 }
+
+const _: () = {
+    const fn assert_sync<T: Sync>() {}
+    assert_sync::<Shared>();
+};
 
 pub struct MainFile {
     /// Includes a trailing "/"
@@ -346,21 +331,16 @@ impl MainFile {
     }
 }
 
-pub struct Task<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> {
+pub struct Task<Ctx, const RELOAD_IMMEDIATELY: bool> {
     pub(crate) count: u8,
     pub(crate) hashes: [u32; 8],
-    // Only meaningful for the DevServer Ctx, but Rust can't branch a field
-    // type on a generic parameter without specialization, so it is stored
-    // unconditionally (8 fat pointers of overhead for non-DevServer Ctx).
-    pub(crate) paths: [&'static [u8]; 8],
     /// Left `None` until [`Self::enqueue`] populates it on the heap copy.
     pub(crate) concurrent_task: Option<ConcurrentTask>,
     shared: &'static Shared,
-    _ctx: PhantomData<(*mut Ctx, *mut EventLoopType)>,
+    _ctx: PhantomData<*mut Ctx>,
 }
 
-impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool>
-    Task<Ctx, EventLoopType, RELOAD_IMMEDIATELY>
+impl<Ctx, const RELOAD_IMMEDIATELY: bool> Task<Ctx, RELOAD_IMMEDIATELY>
 where
     Ctx: HotReloaderCtx,
 {
@@ -369,16 +349,14 @@ where
             shared,
             _ctx: PhantomData,
             hashes: [0u32; 8],
-            // See the `paths` field comment for why this is unconditional.
-            paths: [b"".as_slice(); 8],
             count: 0,
             concurrent_task: None,
         }
     }
 
-    pub(crate) fn append(&mut self, id: u32) {
+    fn append(&mut self, id: u32, changed_paths: Option<&StringSet>) {
         if self.count == 8 {
-            self.enqueue();
+            self.enqueue(changed_paths);
             self.count = 0;
         }
 
@@ -398,8 +376,7 @@ where
     }
 }
 
-impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> bun_event_loop::Taskable
-    for Task<Ctx, EventLoopType, RELOAD_IMMEDIATELY>
+impl<Ctx, const RELOAD_IMMEDIATELY: bool> bun_event_loop::Taskable for Task<Ctx, RELOAD_IMMEDIATELY>
 where
     Ctx: HotReloaderCtx,
 {
@@ -419,8 +396,7 @@ where
     }
 }
 
-impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool>
-    Task<Ctx, EventLoopType, RELOAD_IMMEDIATELY>
+impl<Ctx, const RELOAD_IMMEDIATELY: bool> Task<Ctx, RELOAD_IMMEDIATELY>
 where
     Ctx: HotReloaderCtx,
 {
@@ -439,7 +415,8 @@ where
         }
     }
 
-    pub(crate) fn enqueue(&mut self) {
+    /// `changed_paths`: the reloader's.
+    fn enqueue(&mut self, changed_paths: Option<&StringSet>) {
         crate::mark_binding!();
         if self.count == 0 {
             return;
@@ -451,7 +428,7 @@ where
         if RELOAD_IMMEDIATELY && !crate::posix_signal_handle::watch_kill_signal_has_listeners() {
             crate::node_compile_cache::persist_now();
             Output::flush();
-            flush_changed_paths_for_reload();
+            flush_changed_paths_for_reload(changed_paths);
             bun_core::reload_process(
                 CLEAR_SCREEN.load(core::sync::atomic::Ordering::Relaxed),
                 false,
@@ -466,7 +443,6 @@ where
             shared: self.shared,
             _ctx: PhantomData,
             count: self.count,
-            paths: self.paths,
             hashes: self.hashes,
             concurrent_task: None,
         }));
@@ -566,8 +542,7 @@ fn arm_watch_reload_grace_timer() {
     }
 }
 
-impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool>
-    NewHotReloader<Ctx, EventLoopType, RELOAD_IMMEDIATELY>
+impl<Ctx, const RELOAD_IMMEDIATELY: bool> NewHotReloader<Ctx, RELOAD_IMMEDIATELY>
 where
     Ctx: HotReloaderCtx,
 {
@@ -592,6 +567,10 @@ where
                 reload_handle: init.reload_handle,
             })),
             main: MainFile::init(init.entry_path.unwrap_or(b"")),
+            changed_paths: WATCH_CHANGED_TRIGGER_FILE
+                .get()
+                .is_some()
+                .then(StringSet::new),
             #[cfg(not(windows))]
             tombstones: StringHashMap::default(),
             _ctx: PhantomData,
@@ -625,16 +604,6 @@ where
             Output::flush();
             bun_core::Global::exit(1);
         }
-    }
-
-    #[cfg(not(windows))]
-    fn put_tombstone(&mut self, key: &[u8], value: *mut Fs::DirEntry) {
-        self.tombstones.put(key, value).expect("unreachable");
-    }
-
-    #[cfg(not(windows))]
-    fn get_tombstone(&mut self, key: &[u8]) -> Option<*mut Fs::DirEntry> {
-        self.tombstones.get(key).copied()
     }
 
     /// Returns `key`'s cached listing, or `None` if it isn't cached or the cached result is a read error.
@@ -683,10 +652,9 @@ where
         let hashes = slice.items_hash();
         let parents = slice.items_parent_hash();
         let file_descriptors = slice.items_fd();
-        let ctx: *mut Watcher = self.watcher;
+        let watcher: *mut Watcher = self.watcher;
         // Wrap the Task itself in a guard so any exit path (including future
         // early-returns) flushes the buffered hashes via `enqueue()`.
-        // Dereferenced as `&mut *current_task` for the loop body below.
         //
         // Note: declared *before* `_flush` so `flush_evictions()` runs
         // **before** `enqueue()` on drop. The reverse order opens a window
@@ -697,14 +665,18 @@ where
         // load. Evicting first is side-effect-free: `enqueue` carries hashes
         // (not indices) and never reads the watchlist.
         let mut current_task = scopeguard::guard(
-            Task::<Ctx, EventLoopType, RELOAD_IMMEDIATELY>::init_empty(self.shared),
-            |mut t| t.enqueue(),
+            (
+                Task::<Ctx, RELOAD_IMMEDIATELY>::init_empty(self.shared),
+                &mut self.changed_paths,
+            ),
+            |(mut task, changed_paths)| task.enqueue(changed_paths.as_ref()),
         );
+        let (current_task, changed_paths) = &mut *current_task;
         // See the note above for why this drops *before* `current_task`.
-        let _flush = scopeguard::guard(ctx, |ctx| {
+        let _flush = scopeguard::guard(watcher, |watcher| {
             Output::flush();
             // SAFETY: the Watcher outlives this call (it owns the Reloader that calls us).
-            unsafe { (*ctx).flush_evictions() };
+            unsafe { (*watcher).flush_evictions() };
         });
         let fs: &mut FileSystem = FileSystem::instance();
         let top_level_dir = fs.top_level_dir();
@@ -740,7 +712,7 @@ where
                         // to this call so it never overlaps the watchlist
                         // column slices above.
                         unsafe {
-                            (*ctx).remove_at_index::<false>(
+                            (*watcher).remove_at_index::<false>(
                                 bun_watcher::Kind::File,
                                 event.index,
                                 0,
@@ -763,7 +735,7 @@ where
                         .op
                         .intersects(WatchOp::WRITE | WatchOp::DELETE | WatchOp::RENAME)
                     {
-                        record_changed_path(file_path);
+                        record_changed_path(changed_paths, file_path);
                         if IS_KQUEUE {
                             if event.op.contains(WatchOp::RENAME) {
                                 // Special case for entrypoint: defer reload until we get
@@ -783,7 +755,7 @@ where
                             }
                         }
 
-                        current_task.append(current_hash);
+                        current_task.append(current_hash, changed_paths.as_ref());
                     }
                 }
                 bun_watcher::Kind::Directory => {
@@ -812,9 +784,13 @@ where
                         let affected_len: usize = 'brk: {
                             if IS_KQUEUE {
                                 if let Some(existing) = Self::cached_dir_entry(rfs, file_path) {
-                                    self.put_tombstone(file_path, existing);
+                                    self.tombstones
+                                        .put(file_path, existing)
+                                        .expect("unreachable");
                                     entries_option = Some(existing);
-                                } else if let Some(existing) = self.get_tombstone(file_path) {
+                                } else if let Some(existing) =
+                                    self.tombstones.get(file_path).copied()
+                                {
                                     entries_option = Some(existing);
                                 }
 
@@ -848,8 +824,9 @@ where
                                         };
                                         if exists {
                                             self.main.is_waiting_for_dir_change = false;
-                                            record_changed_path(self.main.file);
-                                            current_task.append(self.main.hash);
+                                            record_changed_path(changed_paths, self.main.file);
+                                            current_task
+                                                .append(self.main.hash, changed_paths.as_ref());
                                         }
                                     }
                                 }
@@ -903,9 +880,11 @@ where
 
                         if affected_len > 0 && !IS_KQUEUE {
                             if let Some(existing) = Self::cached_dir_entry(rfs, file_path) {
-                                self.put_tombstone(file_path, existing);
+                                self.tombstones
+                                    .put(file_path, existing)
+                                    .expect("unreachable");
                                 entries_option = Some(existing);
-                            } else if let Some(existing) = self.get_tombstone(file_path) {
+                            } else if let Some(existing) = self.tombstones.get(file_path).copied() {
                                 entries_option = Some(existing);
                             }
                         }
@@ -955,8 +934,8 @@ where
                                     }
                                 };
                                 if main_exists {
-                                    record_changed_path(self.main.file);
-                                    current_task.append(self.main.hash);
+                                    record_changed_path(changed_paths, self.main.file);
+                                    current_task.append(self.main.hash, changed_paths.as_ref());
                                 }
                                 break;
                             }
@@ -1027,9 +1006,13 @@ where
                                                     if file_descriptors[entry_id].is_valid() {
                                                         if prev_entry_id != entry_id {
                                                             record_changed_path(
+                                                                changed_paths,
                                                                 path_string.as_bytes(),
                                                             );
-                                                            current_task.append(hashes[entry_id]);
+                                                            current_task.append(
+                                                                hashes[entry_id],
+                                                                changed_paths.as_ref(),
+                                                            );
                                                             if self.verbose {
                                                                 Self::debug(format_args!(
                                                                     "Removing file: {}",
@@ -1042,7 +1025,7 @@ where
                                                             // File-arm call
                                                             // above.
                                                             unsafe {
-                                                                (*ctx).remove_at_index::<false>(
+                                                                (*watcher).remove_at_index::<false>(
                                                                     bun_watcher::Kind::File,
                                                                     entry_id as bun_watcher::WatchItemIndex,
                                                                     0,
@@ -1129,15 +1112,15 @@ where
         }
 
         // Drop order (LIFO): `_flush` guard → Output::flush() +
-        // ctx.flush_evictions(), then `current_task` guard → enqueue(). See
+        // watcher.flush_evictions(), then `current_task` guard → enqueue(). See
         // the note on `current_task` above for why this order matters.
     }
 }
 
 /// `Watcher::init` stores the `NewHotReloader` as its opaque context and
 /// dispatches file-change/error callbacks through this trait.
-impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> bun_watcher::WatcherContext
-    for NewHotReloader<Ctx, EventLoopType, RELOAD_IMMEDIATELY>
+impl<Ctx, const RELOAD_IMMEDIATELY: bool> bun_watcher::WatcherContext
+    for NewHotReloader<Ctx, RELOAD_IMMEDIATELY>
 where
     Ctx: HotReloaderCtx,
 {
@@ -1171,8 +1154,7 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
 
 /// `'static` because the only caller (`bun build --watch`)
 /// allocates the transpiler from the process-lifetime CLI arena.
-type BundlerWatcher =
-    NewHotReloader<bun_bundler::BundleV2<'static>, bun_event_loop::AnyEventLoop, true>;
+type BundlerWatcher = NewHotReloader<bun_bundler::BundleV2<'static>, true>;
 
 /// CYCLEBREAK extern hook: called from `BundleV2::init` (T5) when
 /// `cli_watch_flag` is set. Defined here (not in
@@ -1208,7 +1190,8 @@ fn __bun_jsc_enable_hot_module_reloading_for_bundler(
         let watcher_ptr: *mut Watcher = watcher_nn.as_ptr();
         bv2.bun_watcher = Some(watcher_nn);
         // SAFETY: just leaked, and its thread has not started.
-        bv2.transpiler.resolver.watcher = Some(unsafe { (*watcher_ptr).get_resolve_watcher() });
+        let resolve_watcher = unsafe { (*watcher_ptr).get_resolve_watcher() };
+        bv2.transpiler.resolver.watcher.set(Some(resolve_watcher));
         watcher_ptr
     };
     // SAFETY: `install` leaks the watcher for the life of the process.

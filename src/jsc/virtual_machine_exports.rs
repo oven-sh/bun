@@ -252,21 +252,29 @@ pub fn get_verbose_fetch_value() -> i32 {
 // `bun_runtime::bake::source_provider_exports` (their callers are bake's C++
 // source providers; LAYERING).
 
+/// # Safety
+/// `opaque_source_provider` is a `Zig::SourceProvider`, and
+/// [`SavedSourceMap::put_source_provider`](crate::saved_source_map::SavedSourceMap::put_source_provider)'s
+/// contract holds for it.
+// FIXME: its destructor unregisters it, but waits for no lookup that another thread has under way.
 // HOST_EXPORT(Bun__addSourceProviderSourceMap, c)
-pub fn add_source_provider_source_map(
+pub unsafe fn add_source_provider_source_map(
     vm: &VirtualMachine,
     opaque_source_provider: *mut c_void,
     specifier: &BunString,
 ) {
     let slice = specifier.to_utf8();
-    vm.source_mappings.put_source_provider(
-        AnySourceProvider::new(
-            opaque_source_provider
-                .cast::<SourceProviderMap>()
-                .cast_const(),
-        ),
-        slice.slice(),
-    );
+    // SAFETY: fn contract.
+    unsafe {
+        vm.source_mappings.put_source_provider(
+            AnySourceProvider::new(
+                opaque_source_provider
+                    .cast::<SourceProviderMap>()
+                    .cast_const(),
+            ),
+            slice.slice(),
+        )
+    };
 }
 
 /// The destructor of each of the three C++ source providers calls this, on whichever thread

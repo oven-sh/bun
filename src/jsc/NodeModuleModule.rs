@@ -8,7 +8,7 @@ use bun_collections::StringArrayHashMap;
 use bun_core::{String as BunString, strings};
 use bun_options_types::LoaderExt as _;
 use bun_options_types::schema::api;
-use core::cell::Cell;
+use core::cell::UnsafeCell;
 
 // `bun.schema.api.Loader` — bindgen-emitted schema enum.
 // Mirrored as a transparent `u8` because the schema enum is *open*
@@ -138,41 +138,37 @@ impl Default for Registered {
 /// The extensions that exist in the `require.extensions` map.
 #[derive(Default)]
 pub struct CustomExtensions {
-    /// Out of the cell for the length of one operation, none of which runs JavaScript.
-    map: Cell<StringArrayHashMap<Registered>>,
+    /// Borrowed only inside the methods below. What runs under the borrow hashes bytes, allocates,
+    /// or makes, sets or frees a `Strong` (a slot of JSC's handle set): no script, and nothing
+    /// that comes back here.
+    map: UnsafeCell<StringArrayHashMap<Registered>>,
 }
 
 impl CustomExtensions {
-    fn with<R>(&self, operation: impl FnOnce(&mut StringArrayHashMap<Registered>) -> R) -> R {
-        let mut map = self.map.take();
-        let result = operation(&mut map);
-        self.map.set(map);
-        result
-    }
-
     pub fn is_empty(&self) -> bool {
-        self.with(|map| map.is_empty())
+        // SAFETY: see `map`.
+        unsafe { &*self.map.get() }.is_empty()
     }
 
     fn find_longest(&self, filename: &[u8]) -> Option<CustomLoader> {
         let basename = bun_paths::basename(filename);
-        self.with(|map| {
-            let mut next: usize = 0;
-            while let Some(i) = strings::index_of_char_pos(basename, b'.', next) {
-                next = i + 1;
-                if i == 0 {
-                    continue;
-                }
-                match map.get(&basename[i..]) {
-                    Some(Registered::Loader(loader)) => return Some(CustomLoader::Loader(*loader)),
-                    Some(Registered::Custom(strong)) => {
-                        return Some(CustomLoader::Custom(strong.get()));
-                    }
-                    None => {}
-                }
+        // SAFETY: see `map`.
+        let map = unsafe { &*self.map.get() };
+        let mut next: usize = 0;
+        while let Some(i) = strings::index_of_char_pos(basename, b'.', next) {
+            next = i + 1;
+            if i == 0 {
+                continue;
             }
-            None
-        })
+            match map.get(&basename[i..]) {
+                Some(Registered::Loader(loader)) => return Some(CustomLoader::Loader(*loader)),
+                Some(Registered::Custom(strong)) => {
+                    return Some(CustomLoader::Custom(strong.get()));
+                }
+                None => {}
+            }
+        }
+        None
     }
 
     /// Whether `ext` is new to the map.
@@ -183,45 +179,46 @@ impl CustomExtensions {
         loader: ApiLoader,
         value: JSValue,
     ) -> Result<bool, bun_alloc::AllocError> {
-        self.with(|map| {
-            let gop = map.get_or_put(ext)?;
-            if loader != ApiLoader::NONE {
-                // Drops any held `Strong`.
-                *gop.value_ptr = Registered::Loader(Loader::from_api(loader.to_schema()));
-            } else {
-                match gop.value_ptr {
-                    Registered::Loader(_) => {
-                        *gop.value_ptr = Registered::Custom(Strong::create(value, global));
-                    }
-                    Registered::Custom(strong) => strong.set(global, value),
+        // SAFETY: see `map`.
+        let gop = unsafe { &mut *self.map.get() }.get_or_put(ext)?;
+        if loader != ApiLoader::NONE {
+            // Drops any held `Strong`.
+            *gop.value_ptr = Registered::Loader(Loader::from_api(loader.to_schema()));
+        } else {
+            match gop.value_ptr {
+                Registered::Loader(_) => {
+                    *gop.value_ptr = Registered::Custom(Strong::create(value, global));
                 }
+                Registered::Custom(strong) => strong.set(global, value),
             }
-            Ok(!gop.found_existing)
-        })
+        }
+        Ok(!gop.found_existing)
     }
 
     /// Whether `ext` was in the map.
     fn remove(&self, ext: &[u8]) -> bool {
-        self.with(|map| map.fetch_swap_remove(ext)).is_some()
+        // SAFETY: see `map`.
+        unsafe { &mut *self.map.get() }
+            .fetch_swap_remove(ext)
+            .is_some()
     }
 
-    fn keys(&self) -> Box<[Box<[u8]>]> {
-        self.with(|map| map.keys().to_vec().into_boxed_slice())
+    fn keys(&self) -> Vec<Box<[u8]>> {
+        // SAFETY: see `map`.
+        unsafe { &*self.map.get() }.keys().to_vec()
     }
 }
 
 fn set_resolver_extensions(vm: &VirtualMachine) {
-    // PERF: the resolver's
-    // `extra_cjs_extensions` is owned `Box<[Box<[u8]>]>`, so we clone the keys.
+    // PERF: the resolver owns its `extra_cjs_extensions`, so we clone the keys.
     let extensions = vm.commonjs_custom_extensions.keys();
-    // SAFETY: script assigning to `require.extensions` got us here, and no borrow of the
-    // transpiler is held across a call into script. This one ends with the assignment.
-    // FIXME: a macro is the exception. It runs under the `&mut Transpiler` of the parse that
-    // called it.
-    unsafe { vm.transpiler_mut() }
-        .resolver
-        .opts
-        .extra_cjs_extensions = extensions;
+    drop(
+        vm.transpiler()
+            .resolver
+            .opts
+            .extra_cjs_extensions
+            .replace(extensions),
+    );
 }
 
 fn on_require_extension_modify(

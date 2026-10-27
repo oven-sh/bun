@@ -32,8 +32,6 @@ pub enum Error {
     MismatchedFeatureHash,
     #[error("WriteError")]
     WriteError,
-    #[error("TranspilerJobGenerationMismatch")]
-    TranspilerJobGenerationMismatch,
     #[error("ParseError")]
     ParseError,
     #[error("JSError")]
@@ -106,7 +104,6 @@ impl Error {
             Self::InvalidInputHash => "InvalidInputHash",
             Self::MismatchedFeatureHash => "MismatchedFeatureHash",
             Self::WriteError => "WriteError",
-            Self::TranspilerJobGenerationMismatch => "TranspilerJobGenerationMismatch",
             Self::ParseError => "ParseError",
             Self::JSError => "JSError",
             Self::TarballFailedToExtract => "TarballFailedToExtract",

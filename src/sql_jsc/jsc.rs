@@ -170,7 +170,7 @@ pub use bun_jsc::virtual_machine::VirtualMachine;
 // depends on this crate, so importing it would be a cycle. This crate defines the table of
 // function pointers, `bun_runtime::hw_exports::sql_hooks` the one instance.
 pub struct SqlRuntimeHooks {
-    /// `runtime_state().sql_rare` — this crate's [`RareData`] storage.
+    /// `RuntimeState.sql_rare` — this crate's [`RareData`] storage.
     pub sql_rare: fn(&VirtualMachine) -> &RareData,
     /// `SSLConfig::fromJS` — parse a JS TLS-options object. Returns a boxed
     /// `bun_runtime::socket::SSLConfig` (caller frees via `ssl_config_free`),

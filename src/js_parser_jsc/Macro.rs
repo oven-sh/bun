@@ -1,5 +1,5 @@
 use bun_collections::VecExt;
-use core::cell::Cell;
+use core::cell::{Cell, OnceCell};
 use core::ffi::c_void;
 use core::ptr::NonNull;
 use std::sync::Arc;
@@ -9,7 +9,7 @@ use bun_ast::{E, Expr, ExprData, ExprNodeList, G, ToJSError};
 use bun_ast::{Log, Range, Source};
 use bun_bundler::options::TransformOptions;
 use bun_bundler::{Transpiler, entry_points::MacroEntryPoint};
-use bun_collections::{ArrayHashMap, HashMap};
+use bun_collections::{ArrayHashMapCell, HashMap};
 use bun_core::Output;
 use bun_core::strings;
 use bun_dotenv::Loader as DotEnvLoader;
@@ -42,19 +42,19 @@ fn is_macro_path(str: &[u8]) -> bool {
 // MacroContext
 // ══════════════════════════════════════════════════════════════════════════
 
-// All three are modelled as raw pointers because the referents live
-// inside the owning `Transpiler` and are also reachable through other aliases
-// (`Transpiler.resolver`, `Transpiler.env`, `Transpiler.options`); a `&'a mut`
-// here would forbid that aliasing under stacked-borrows. The `'static`
+// `resolver`, `env` and `remap` are pointers because the referents live
+// inside the owning `Transpiler`. The `'static`
 // erasure on `Resolver`/`DotEnvLoader` matches the `Transpiler<'static>`
 // stored in `VirtualMachine` (the only producer of `MacroContext`).
+//
+// A macro's script can import a module whose parse reaches this context again,
+// so every method takes `&self`.
 pub(crate) struct MacroContext {
-    pub(crate) resolver: *mut Resolver<'static>,
+    pub(crate) resolver: *const Resolver<'static>,
     pub(crate) env: *mut DotEnvLoader,
     pub(crate) transform_options: Arc<TransformOptions>,
     pub(crate) macros: MacroMap,
     pub(crate) remap: bun_ptr::BackRef<MacroRemap>,
-    pub(crate) javascript_object: JSValue,
     /// The AST takes lifetime-erased `&[u8]` arena slices (property keys /
     /// UTF-16 string data / `from_blob` JSON sub-parse), so we own the backing arena here
     /// — `MacroContext` is stored in the long-lived `Transpiler` and outlives
@@ -69,10 +69,10 @@ pub(crate) struct MacroContext {
     /// avoids one `mi_heap_new`/`mi_heap_destroy` pair on every dynamic
     /// `import()` (require-cache.test.ts T040 — on macOS arm64 the per-iter
     /// heap churn fragments mimalloc's segment cache).
-    pub(crate) bump: Option<bun_alloc::Arena>,
+    pub(crate) bump: OnceCell<bun_alloc::Arena>,
 }
 
-pub(crate) type MacroMap = ArrayHashMap<i32, Macro>;
+pub(crate) type MacroMap = ArrayHashMapCell<i32, Macro>;
 
 impl MacroContext {
     pub(crate) fn get_remap(&self, path: &[u8]) -> Option<&MacroRemapEntry> {
@@ -87,21 +87,21 @@ impl MacroContext {
 }
 
 impl MacroContext {
-    pub(crate) fn init(transpiler: &mut Transpiler<'static>) -> MacroContext {
+    pub(crate) fn init(transpiler: &Transpiler<'static>) -> MacroContext {
         MacroContext {
-            macros: MacroMap::new(),
-            resolver: &raw mut transpiler.resolver,
+            macros: MacroMap::default(),
+            resolver: &raw const transpiler.resolver,
             env: transpiler.env,
             transform_options: Arc::clone(&transpiler.options.transform_options),
             remap: bun_ptr::BackRef::new(&transpiler.options.macro_remap),
-            javascript_object: JSValue::ZERO,
             // Deferred until `call()` — see field doc.
-            bump: None,
+            bump: OnceCell::new(),
         }
     }
 
     pub(crate) fn call(
-        &mut self,
+        &self,
+        javascript_object: JSValue,
         import_record_path: &[u8],
         source_dir: &[u8],
         log: &mut Log,
@@ -130,9 +130,8 @@ impl MacroContext {
 
         debug_assert!(!is_macro_path(import_record_path_without_macro_prefix));
 
-        // SAFETY: `resolver` outlives `self` (see struct comment); uniquely
-        // accessed for the duration of this resolve call.
-        let resolver = unsafe { &mut *self.resolver };
+        // SAFETY: `resolver` outlives `self` (see struct comment).
+        let resolver = unsafe { &*self.resolver };
 
         let input_specifier: &[u8] = 'brk: {
             if let Some(replacement) = ModuleLoader::HardcodedModule::Alias::get(
@@ -188,51 +187,44 @@ impl MacroContext {
             &mut specifier_buf_len,
         );
 
-        let macro_entry = self.macros.get_or_put(hash).expect("unreachable");
-        if !macro_entry.found_existing {
-            *macro_entry.value_ptr = match Macro::init(
-                input_specifier,
-                log,
-                self.env,
-                &self.transform_options,
-                function_name,
-                &specifier_buf[0..specifier_buf_len as usize],
-                hash,
-            ) {
-                Ok(m) => m,
-                Err(e) => {
-                    *macro_entry.value_ptr = Macro::disabled_sentinel();
-                    return Err(e);
-                }
-            };
-            Output::flush();
-        }
+        let macro_ = match self.macros.get(hash) {
+            Some(macro_) => macro_,
+            None => {
+                // What a call of the same macro finds while its module loads, and after a failed load.
+                self.macros
+                    .put(hash, Macro::disabled_sentinel())
+                    .expect("unreachable");
+                let macro_ = Macro::init(
+                    input_specifier,
+                    log,
+                    self.env,
+                    &self.transform_options,
+                    function_name,
+                    &specifier_buf[0..specifier_buf_len as usize],
+                    hash,
+                )?;
+                self.macros.put(hash, macro_).expect("unreachable");
+                Output::flush();
+                macro_
+            }
+        };
         let _flush_guard = Output::flush_guard();
 
-        let macro_: *const Macro = macro_entry.value_ptr;
-        let Some(vm) = macro_entry.value_ptr.vm else {
+        let Some(vm) = macro_.vm else {
             return Ok(caller);
         };
         // Enables macro mode now; disables on scope exit.
         let _mode_guard = MacroModeGuard::new(vm);
         vm.event_loop().ensure_waker();
 
-        let javascript_object = self.javascript_object;
-        // reshaped for borrowck — `self.bump` is shared-borrowed for
-        // the closure while `self.macros` was already released above; capture
-        // as a raw pointer so the closure does not extend `&mut self`.
         // Lazy-init the backing arena now that a macro is actually being
         // invoked (see field doc — avoids per-`import()` `mi_heap_new`).
-        let bump: *const bun_alloc::Arena =
-            &raw const *self.bump.get_or_insert_with(bun_alloc::Arena::new);
+        let bump = self.bump.get_or_init(bun_alloc::Arena::new);
         let ret = VirtualMachine::get().run_with_api_lock(|| {
-            // SAFETY: `macro_` points into `self.macros` which is not mutated
-            // for the duration of this closure; `bump` points into `*self`,
-            // which outlives the closure and is not otherwise borrowed.
             Runner::run(
-                unsafe { &*macro_ },
+                macro_,
                 log,
-                unsafe { &*bump },
+                bump,
                 function_name,
                 caller,
                 source,
@@ -256,18 +248,20 @@ impl MacroContext {
 // ══════════════════════════════════════════════════════════════════════════
 
 #[unsafe(no_mangle)]
-fn __bun_macro_context_init(transpiler: *mut core::ffi::c_void) -> js_parser::Macro::MacroContext {
+fn __bun_macro_context_init(
+    transpiler: *const core::ffi::c_void,
+) -> js_parser::Macro::MacroContext {
     // SAFETY: every caller of `js_parser::Macro::MacroContext::init<T>` passes a
-    // `&mut bun_bundler::Transpiler<'_>`; the lifetime parameter is erased at
+    // `&bun_bundler::Transpiler<'_>`; the lifetime parameter is erased at
     // runtime so reading it as `'static` is layout-identical. The boxed state
     // stays with the long-lived `vm.transpiler` instance — but callers that run on a
     // short-lived bytewise-cloned `Transpiler` (e.g.
     // `RuntimeTranspilerStore::TranspilerJob::run`) MUST pair this with
     // `__bun_macro_context_deinit` or the `Box<MacroContext>` (and, if a macro
     // was actually invoked, its lazily-created `bump` arena) leaks per
-    // iteration. `bump` is `None` on init, so this fn itself never calls
+    // iteration. `bump` is empty on init, so this fn itself never calls
     // `mi_heap_new()`.
-    let transpiler = unsafe { &mut *transpiler.cast::<Transpiler<'static>>() };
+    let transpiler = unsafe { &*transpiler.cast::<Transpiler<'static>>() };
     let data = bun_core::heap::into_raw(Box::new(MacroContext::init(transpiler)));
     js_parser::Macro::MacroContext {
         javascript_object: js_parser::Macro::MacroJSCtx::ZERO,
@@ -300,7 +294,7 @@ fn __bun_macro_collect_vm_garbage() {
 
 #[unsafe(no_mangle)]
 fn __bun_macro_context_call(
-    ctx: &mut js_parser::Macro::MacroContext,
+    ctx: js_parser::Macro::MacroContext,
     import_record_path: &[u8],
     source_dir: &[u8],
     log: &mut Log,
@@ -315,13 +309,13 @@ fn __bun_macro_context_call(
         !ctx.data.is_null(),
         "MacroContext.call reached without init"
     );
-    // SAFETY: `data` is the `Box<MacroContext>` allocated in `init` above; the
-    // lower-tier handle is uniquely borrowed for this call so no alias exists.
-    let inner = unsafe { &mut *ctx.data.cast::<MacroContext>() };
-    inner.javascript_object = JSValue::from_encoded(ctx.javascript_object.0 as usize);
+    // SAFETY: `data` is the `Box<MacroContext>` allocated in `init` above, which whoever calls
+    // `deinit` promises is not freed while a copy of the handle is in use.
+    let inner = unsafe { &*ctx.data.cast::<MacroContext>() };
     let caller_loc = caller.loc;
     inner
         .call(
+            JSValue::from_encoded(ctx.javascript_object.0 as usize),
             import_record_path,
             source_dir,
             log,
@@ -372,26 +366,21 @@ fn __bun_macro_context_get_remap(
 // Macro
 // ══════════════════════════════════════════════════════════════════════════
 
+#[derive(Clone, Copy)]
 pub struct Macro {
     /// `None` for a macro that failed to load, which `MacroContext::call` checks first.
     pub(crate) vm: Option<&'static VirtualMachine>,
 }
 
-impl Default for Macro {
-    fn default() -> Self {
-        Self::disabled_sentinel()
-    }
-}
-
 impl Macro {
-    /// Sentinel stored in the `MacroMap` when `Macro::init` fails, so subsequent
-    /// calls with the same hash short-circuit instead of retrying the load.
+    /// Stored in the `MacroMap` while `Macro::init` runs and after it fails, so calls with the
+    /// same hash short-circuit instead of retrying the load.
     fn disabled_sentinel() -> Self {
         Macro { vm: None }
     }
 
     #[inline]
-    pub(crate) fn vm(&self) -> &'static VirtualMachine {
+    pub(crate) fn vm(self) -> &'static VirtualMachine {
         self.vm.expect("Macro.vm accessed on disabled sentinel")
     }
 
@@ -404,8 +393,9 @@ impl Macro {
         specifier: &[u8],
         hash: i32,
     ) -> crate::Result<Macro> {
-        let (vm, is_new_vm) = if VirtualMachine::is_loaded() {
-            (VirtualMachine::get(), false)
+        let mut defines = Ok(());
+        let vm = if VirtualMachine::is_loaded() {
+            VirtualMachine::get()
         } else {
             let mut transform_options = transform_options.clone();
             // Build-only flags about the output bundle. The macro module's own
@@ -425,17 +415,29 @@ impl Macro {
                 None => None,
             };
 
-            let _vm = VirtualMachine::init(VirtualMachineInitOptions {
-                transform_options,
-                log: Some(NonNull::from(&mut *log)),
-                owned_env_loader,
-                is_main_thread: false,
-                ..Default::default()
-            })?;
-            (_vm, true)
+            VirtualMachine::init(
+                VirtualMachineInitOptions {
+                    transform_options,
+                    log: Some(NonNull::from(&mut *log)),
+                    owned_env_loader,
+                    is_main_thread: false,
+                    ..Default::default()
+                },
+                &mut |transpiler| {
+                    // What `MacroModeGuard` below sets: `configure_defines` reads them.
+                    transpiler.options.target.set(bun_ast::Target::BunMacro);
+                    transpiler
+                        .resolver
+                        .caches
+                        .fs
+                        .use_alternate_source_cache
+                        .set(true);
+                    defines = transpiler.configure_defines();
+                },
+            )?
         };
 
-        // Covers `configure_defines` (new-VM path) and `load_macro_entry_point`
+        // Covers `load_macro_entry_point`
         // (which runs the macro module's top-level JS via `wait_for_promise`) so
         // a top-level `Bun.Transpiler#transformSync` doesn't see
         // `macro_guard_depth == 0` and free the printer mid-init. Drops on every
@@ -443,11 +445,7 @@ impl Macro {
         // own `MacroModeGuard` re-enables for the actual macro call.
         let _init_guard = MacroModeGuard::new(vm);
         vm.event_loop().ensure_waker();
-        if is_new_vm {
-            // SAFETY: `vm` was made above and has run nothing yet, so nothing else borrows its
-            // transpiler, and `configure_defines` does not reach the VM.
-            unsafe { vm.transpiler_mut() }.configure_defines()?;
-        }
+        defines?;
 
         let loaded_result =
             vm.load_macro_entry_point(input_specifier, function_name, specifier, hash)?;
@@ -553,7 +551,7 @@ impl From<MacroError> for Error {
 
 pub(crate) struct Run<'a> {
     pub(crate) caller: Expr,
-    pub(crate) macro_: &'a Macro,
+    pub(crate) macro_: Macro,
     pub(crate) global: &'a JSGlobalObject,
     // The AST uses arena-owned slices (`EString::init` lifetime-erases its borrow), so
     // `coerce` needs a bump arena to back property keys / UTF-16 string data /
@@ -571,7 +569,7 @@ pub(crate) struct Run<'a> {
 
 impl<'a> Run<'a> {
     pub(crate) fn run_async(
-        macro_: &Macro,
+        macro_: Macro,
         log: &mut Log,
         bump: &bun_alloc::Arena,
         caller: Expr,
@@ -579,8 +577,7 @@ impl<'a> Run<'a> {
         source: &Source,
         id: i32,
     ) -> Result<Expr, MacroError> {
-        let _ = macro_.vm();
-        let vm = VirtualMachine::get();
+        let vm = macro_.vm();
         let Some(macro_callback) = vm.macros.get(id) else {
             return Ok(caller);
         };
@@ -596,7 +593,7 @@ impl<'a> Run<'a> {
             let mut runner = Run {
                 caller,
                 macro_,
-                global: VirtualMachine::get().global(),
+                global: vm.global(),
                 bump,
                 log,
                 source,
@@ -869,8 +866,7 @@ impl<'a> Run<'a> {
 
                 let promise = value.as_any_promise().expect("Unexpected promise type");
 
-                let _ = self.macro_.vm();
-                let vm = VirtualMachine::get();
+                let vm = self.macro_.vm();
                 // The VM stopped before the macro's promise settled: throw its termination and unwind.
                 vm.wait_for_promise(promise)
                     .map_err(|stopped| MacroError::Js(stopped.throw(self.global)))?;
@@ -919,7 +915,7 @@ impl<'a> Run<'a> {
 
 impl Runner {
     fn run(
-        macro_: &Macro,
+        macro_: Macro,
         log: &mut Log,
         bump: &bun_alloc::Arena,
         function_name: &[u8],
@@ -966,8 +962,6 @@ impl Runner {
             has_js_object: javascript_object != JSValue::ZERO,
         };
 
-        // SAFETY: `Runner::run` is only reached via `MacroContext::call` after
-        // `VirtualMachine::is_loaded()` / `Macro::init` guarantee a live VM.
         let global_object = VirtualMachine::get().global();
 
         match &caller.data {
@@ -1023,7 +1017,7 @@ impl Runner {
         }
 
         struct CallData<'c> {
-            macro_: &'c Macro,
+            macro_: Macro,
             log: &'c mut Log,
             bump: &'c bun_alloc::Arena,
             caller: Expr,

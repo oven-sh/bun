@@ -1133,7 +1133,6 @@ impl<'a> DynWriteAdapter<'a> {
 pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
     let mut source_code = bun_core::Utf8Bytes::EMPTY;
     let mut holder = crate::zig_exception::Holder::init();
-    // SAFETY: per-thread VM; `console.trace()` only runs on the JS thread.
     let vm = VirtualMachine::get();
 
     let err = global.create_error_instance(format_args!("trace output"));
@@ -3835,7 +3834,6 @@ pub mod formatter {
             value: JSValue,
         ) -> JsResult<()> {
             let mut adapter = DynWriteAdapter::new(&mut *writer_);
-            // SAFETY: per-thread VM.
             let vm = VirtualMachine::get();
             vm.print_errorlike_object(value, None, None, self, adapter.interface(), C, false);
             Ok(())

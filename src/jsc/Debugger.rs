@@ -403,14 +403,17 @@ impl Debugger {
         bun_core::scoped_log!(debugger, "startJSDebuggerThread");
         jsc::mark_binding();
 
-        let vm = VirtualMachine::init(crate::virtual_machine::InitOptions {
-            // Lives as long as the VM, which this thread never tears down.
-            env_loader: Some(bun_core::heap::alloc_nn(bun_dotenv::Loader::init_with_map(
-                env_map,
-            ))),
-            is_main_thread: false,
-            ..Default::default()
-        })
+        let vm = VirtualMachine::init(
+            crate::virtual_machine::InitOptions {
+                // Lives as long as the VM, which this thread never tears down.
+                env_loader: Some(bun_core::heap::alloc_nn(bun_dotenv::Loader::init_with_map(
+                    env_map,
+                ))),
+                is_main_thread: false,
+                ..Default::default()
+            },
+            &mut |_| {},
+        )
         .unwrap_or_else(|_| panic!("Failed to create Debugger VM"));
         vm.is_main_thread.set(false);
         vm.event_loop().ensure_waker();
@@ -522,15 +525,11 @@ pub fn start_node_inspector_server(url: &mut BunString, wait_for_connection: boo
     // reopen, so modules loaded between close() and a later open() must still
     // have unminified positions.
     crate::runtime_transpiler_cache::IS_DISABLED.store(true, Ordering::Relaxed);
-    {
-        // SAFETY: `inspector.open()` calls this from JavaScript, which holds no
-        // borrow of the transpiler, and nothing else runs before this one ends.
-        let opts = &mut unsafe { this.transpiler_mut() }.options;
-        opts.minify_identifiers = false;
-        opts.minify_syntax = false;
-        opts.minify_whitespace = false;
-        opts.debugger = true;
-    }
+    let opts = &this.transpiler().options;
+    opts.minify_identifiers.set(false);
+    opts.minify_syntax.set(false);
+    opts.minify_whitespace.set(false);
+    opts.debugger.set(true);
 
     // `vm.debugger` is set once, so only a debugger that started goes in.
     if dbg.create(this, this.global()).is_err() {

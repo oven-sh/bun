@@ -3,7 +3,7 @@
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::{self, NonNull};
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+use core::sync::atomic::{AtomicBool, Ordering};
 
 use bun_alloc::Arena;
 use bun_ast::Loader;
@@ -199,14 +199,12 @@ pub struct RuntimeTranspilerStore {
 
 /// The part of the store that pool threads use.
 struct Shared {
-    generation_number: AtomicU32,
     queue: Queue,
 }
 
 const _: () = {
     const fn assert_sync<T: Sync>() {}
     assert_sync::<Shared>();
-    assert_sync::<SavedSourceMap>();
 };
 
 pub type Queue = UnboundedQueue<TranspilerJob>;
@@ -215,7 +213,6 @@ impl Default for RuntimeTranspilerStore {
     fn default() -> Self {
         Self {
             shared: Shared {
-                generation_number: AtomicU32::new(0),
                 queue: Queue::new(),
             },
             store: TranspilerJobStore::init(),
@@ -370,7 +367,7 @@ impl RuntimeTranspilerStore {
                     store: &self.shared,
                     source_mappings: &vm.source_mappings,
                     transpiler: vm.transpiler_ptr(),
-                    import_watcher: vm.bun_watcher.get(),
+                    import_watcher: vm.bun_watcher_ptr(),
                     main: vm.main(),
                     main_hash: vm.main_hash.get(),
                     has_macro_remappings: !vm.macro_mode() && vm.has_any_macro_remappings.get(),
@@ -381,7 +378,7 @@ impl RuntimeTranspilerStore {
                     inline_source_map: vm.wants_inline_source_map(),
                     has_eval_source: vm.module_loader.eval_source().is_some(),
                     test_isolation_enabled: vm.test_isolation_enabled.get(),
-                    smol: vm.smol.get(),
+                    smol: vm.smol,
                 },
                 ticket: None,
                 log: bun_ast::Log::init(),
@@ -394,7 +391,6 @@ impl RuntimeTranspilerStore {
                 },
                 poll_ref: KeepAlive::default(),
                 resolved_source,
-                generation_number: self.shared.generation_number.load(Ordering::SeqCst),
                 parse_error: None,
                 work_task: WorkPoolTask {
                     node: Default::default(),
@@ -458,7 +454,6 @@ pub struct TranspilerJob {
     pub(crate) ticket: Option<crate::Ticket>,
     pub global_this: BackRef<JSGlobalObject>,
     pub(crate) poll_ref: KeepAlive,
-    pub(crate) generation_number: u32,
     pub(crate) log: bun_ast::Log,
     pub(crate) parse_error: Option<crate::CrateError>,
     /// Moved out by `run_from_js_thread`; dropped with the slot otherwise.
@@ -534,8 +529,7 @@ fn tls_get_or_leak<T>(
 
 impl TranspilerJob {
     /// Kept as a private inherent fn (not `impl Drop`) because the
-    /// slot is recycled into the HiveArray via `store.put(this)`. Only caller is
-    /// `run_from_js_thread`.
+    /// slot is recycled into the HiveArray via `store.put(this)`.
     ///
     /// Note: `HiveArrayFallback::put` runs `drop_in_place` on the slot (see
     /// hive_array.rs note), so the Drop-carrying fields — `bun_core::String` ×2,
@@ -696,11 +690,6 @@ impl TranspilerJob {
 
         let vm = self.vm;
 
-        if self.generation_number != vm.store.generation_number.load(Ordering::Relaxed) {
-            self.parse_error = Some(crate::CrateError::TranspilerJobGenerationMismatch);
-            return;
-        }
-
         // `borrowing()`: the AST node store and the
         // `AstVec` spill share `arena`'s heap and are bulk-freed when `arena`
         // drops at the end of `run()`.
@@ -754,10 +743,12 @@ impl TranspilerJob {
         let transpiler: &mut Transpiler<'_> =
             unsafe { &mut *(&raw mut *transpiler_storage).cast::<Transpiler<'_>>() };
         transpiler.set_arena(&arena);
-        transpiler.set_log(&raw mut log);
+        // SAFETY: `log` is declared before the copy and so outlives it, and it is read again only
+        // when `_log_clone_guard` drops, after the copy's last use.
+        unsafe { transpiler.set_log(&raw mut log) };
         // Note: the resolver already shares opts with the parent
         // Transpiler via raw pointer; set_arena/set_log keep them in sync.
-        transpiler.macro_context = None;
+        transpiler.macro_context.set(None);
         // Note: `parse_maybe` re-creates the macro context per-iteration
         // when `macro_context.is_none()`. It boxes a
         // higher-tier `MacroContext` via `__bun_macro_context_init`; that Box
@@ -770,16 +761,14 @@ impl TranspilerJob {
         // now lazy (`bump: Option<Arena>`, init on first `.call()`), so the
         // per-iteration `mi_heap_new()` is gone; this guard just reclaims the
         // small `Box`.
-        let _macro_ctx_guard =
-            scopeguard::guard(ptr::addr_of_mut!(transpiler.macro_context), |slot| {
-                // SAFETY: `slot` points into `transpiler_storage`, which is
-                // declared before this guard and so outlives it; no other
-                // borrow of `macro_context` is live at drop time (the parser's
-                // `&mut MacroContext` is scoped to the `parse` call).
-                if let Some(ctx) = unsafe { (*slot).take() } {
-                    ctx.deinit();
-                }
-            });
+        let _macro_ctx_guard = scopeguard::guard(ptr::addr_of!(transpiler.macro_context), |slot| {
+            // SAFETY: `slot` points into `transpiler_storage`, which is
+            // declared before this guard and so outlives it.
+            if let Some(ctx) = unsafe { (*slot).take() } {
+                // SAFETY: the parser's copy of the handle went with the `parse` call.
+                unsafe { ctx.deinit() };
+            }
+        });
 
         let mut package_json: Option<&'static bun_watcher::PackageJSON> = None;
         let hash = Watcher::get_hash(path.text);
@@ -1047,7 +1036,7 @@ impl TranspilerJob {
 
             if let Some(replacement) = HardcodedAlias::get(
                 import_record.path.text,
-                transpiler.options.target,
+                transpiler.options.target.get(),
                 HardcodedAliasCfg {
                     rewrite_jest_for_tests: transpiler.options.rewrite_jest_for_tests,
                 },
@@ -1123,11 +1112,7 @@ impl TranspilerJob {
             module_info.as_deref_mut().map(std::ptr::from_mut);
 
         let print_result = {
-            let mut mapper = SourceMapHandlerGetter::new(
-                vm.source_mappings,
-                vm.inline_source_map,
-                &raw mut printer,
-            );
+            let mut mapper = SourceMapHandlerGetter::new(vm.source_mappings, vm.inline_source_map);
             let _writeback = scopeguard::guard(
                 (
                     std::ptr::from_mut::<BufferPrinter>(source_code_printer),
@@ -1141,16 +1126,18 @@ impl TranspilerJob {
                     };
                 },
             );
-            transpiler.print_with_source_map(
-                // Same per-call `arena` that `transpiler.set_arena(&arena)`
-                // and `parse_options.arena` used to build `parse_result.ast`.
-                &arena,
-                parse_result,
-                &mut printer,
-                js_printer::Format::EsmAscii,
-                mapper.get(),
-                module_info_ptr,
-            )
+            transpiler
+                .print_with_source_map(
+                    // Same per-call `arena` that `transpiler.set_arena(&arena)`
+                    // and `parse_options.arena` used to build `parse_result.ast`.
+                    &arena,
+                    parse_result,
+                    &mut printer,
+                    js_printer::Format::EsmAscii,
+                    mapper.get(),
+                    module_info_ptr,
+                )
+                .and_then(|_| Ok(mapper.append_inline_source_map(&mut printer)?))
         };
         if let Err(err) = print_result {
             drop(module_info);

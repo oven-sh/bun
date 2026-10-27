@@ -158,11 +158,13 @@ impl Shared {
         }
     }
 
+    /// # Safety
+    /// For as long as the result is used the VM is alive: the caller holds a ticket, is inside
+    /// the weak gate before `Closed`, or is the VM's thread.
     #[inline]
-    fn loop_of(&self, kind: LoopKind) -> &LoopShared {
-        // SAFETY: caller holds a ticket or is inside the weak gate before
-        // `Closed`; the VM and both embedded loops are alive. Only the `Sync`
-        // place is borrowed, never the VM or the loop around it.
+    unsafe fn loop_of(&self, kind: LoopKind) -> &LoopShared {
+        // SAFETY: fn contract. Only the `Sync` place is borrowed, never the VM or the loop
+        // around it.
         unsafe {
             match kind {
                 LoopKind::Regular => &(*self.hot.vm).regular_event_loop.shared,
@@ -178,8 +180,12 @@ impl Shared {
 
     /// Push + wake; while draining, also wake the waiting teardown (it sleeps
     /// on the condvar, not on the loop).
-    fn deliver(&self, kind: LoopKind, task: NonNull<ConcurrentTaskItem>) {
-        let el = self.loop_of(kind);
+    ///
+    /// # Safety
+    /// That of [`loop_of`](Self::loop_of), for the length of the call.
+    unsafe fn deliver(&self, kind: LoopKind, task: NonNull<ConcurrentTaskItem>) {
+        // SAFETY: fn contract.
+        let el = unsafe { self.loop_of(kind) };
         el.concurrent_tasks.push(task);
         if self.state() >= State::Draining {
             self.notify();
@@ -188,8 +194,11 @@ impl Shared {
         }
     }
 
-    fn add_keep_alive(&self, kind: LoopKind, delta: i32) {
-        let el = self.loop_of(kind);
+    /// # Safety
+    /// That of [`loop_of`](Self::loop_of), for the length of the call.
+    unsafe fn add_keep_alive(&self, kind: LoopKind, delta: i32) {
+        // SAFETY: fn contract.
+        let el = unsafe { self.loop_of(kind) };
         let _ = el.concurrent_ref.fetch_add(delta, Ordering::SeqCst);
         el.wakeup();
     }
@@ -242,12 +251,14 @@ impl Ticket {
             self.shared.state() != State::Closed,
             "ticket post after its VM closed (a ticket was created after the wait)"
         );
-        self.shared.deliver(self.kind, task);
+        // SAFETY: `self` is a ticket.
+        unsafe { self.shared.deliver(self.kind, task) };
     }
 
     /// Release a keep-alive taken on the VM's loop (any thread).
     pub fn unref_keep_alive(&self) {
-        self.shared.add_keep_alive(self.kind, -1);
+        // SAFETY: `self` is a ticket.
+        unsafe { self.shared.add_keep_alive(self.kind, -1) };
     }
 
     /// Whether the VM is still running script (not stopping). What an
@@ -351,7 +362,8 @@ impl VmHandle {
             let Some(_a) = self.enter() else {
                 return Posted::Refused(task);
             };
-            self.0.deliver(kind, task);
+            // SAFETY: inside the gate.
+            unsafe { self.0.deliver(kind, task) };
             Posted::Queued
         })
     }
@@ -379,7 +391,8 @@ impl VmHandle {
     /// Adjust the VM's keep-alive from another thread (no-op once closed).
     pub fn add_keep_alive(&self, kind: LoopKind, delta: i32) {
         if let Some(_a) = self.enter() {
-            self.0.add_keep_alive(kind, delta);
+            // SAFETY: inside the gate.
+            unsafe { self.0.add_keep_alive(kind, delta) };
         }
     }
 
@@ -408,14 +421,16 @@ impl VmHandle {
                 // Thread-safe (VMTraps).
                 jsc_vm.notify_need_termination();
             }
-            self.0.loop_of(LoopKind::Regular).wakeup();
+            // SAFETY: inside the gate.
+            unsafe { self.0.loop_of(LoopKind::Regular) }.wakeup();
         }
     }
 
     /// Wake the VM's loop (no-op once closed). Any thread.
     pub fn wake(&self) {
         if let Some(_a) = self.enter() {
-            self.0.loop_of(LoopKind::Regular).wakeup();
+            // SAFETY: inside the gate.
+            unsafe { self.0.loop_of(LoopKind::Regular) }.wakeup();
         }
     }
 
@@ -456,7 +471,10 @@ impl VmHandle {
     /// long as the job (as Node's environment cleanup does). Every wake source
     /// (ticket drop, post) notifies the condvar; the 1 s timeout is a backstop
     /// and the debug build's cadence for naming the outstanding tickets.
-    pub(crate) fn close_and_wait(&self, mut service: impl FnMut()) {
+    ///
+    /// # Safety
+    /// The VM's thread, with the VM alive.
+    pub(crate) unsafe fn close_and_wait(&self, mut service: impl FnMut()) {
         self.assert_js_thread();
         let s = &*self.0;
         s.hot.state.store(State::Draining as u8, Ordering::SeqCst);
@@ -468,9 +486,10 @@ impl VmHandle {
         loop {
             service();
             let mut g = s.drained.0.lock();
-            if !s.loop_of(LoopKind::Regular).concurrent_tasks.is_empty()
-                || !s.loop_of(LoopKind::Macro).concurrent_tasks.is_empty()
-            {
+            // SAFETY: fn contract.
+            let (regular, macro_) =
+                unsafe { (s.loop_of(LoopKind::Regular), s.loop_of(LoopKind::Macro)) };
+            if !regular.concurrent_tasks.is_empty() || !macro_.concurrent_tasks.is_empty() {
                 continue;
             }
             if s.tickets.load(Ordering::SeqCst) == 0 {
@@ -857,13 +876,19 @@ impl ConcurrentPoster {
         }
     }
 
-    /// Post a mini-loop task (the mini loop outlives its work).
-    pub fn post_mini(
+    /// Post a mini-loop task.
+    ///
+    /// # Safety
+    /// `task` is in no queue, and is live until the loop's thread has run it.
+    pub unsafe fn post_mini(
         &self,
         task: NonNull<bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext>,
     ) {
         match self {
-            ConcurrentPoster::Mini(mini) => mini.enqueue_task_concurrent(task),
+            // SAFETY: `'static`; the rest is the fn contract.
+            ConcurrentPoster::Mini(mini) => unsafe {
+                bun_event_loop::MiniEventLoop::Shared::enqueue_task_concurrent(*mini, task)
+            },
             ConcurrentPoster::Js(..) => debug_assert!(false, "post_mini on a Js poster"),
         }
     }
@@ -936,7 +961,9 @@ unsafe impl Send for IsolatedPosterInner {}
 unsafe impl Sync for IsolatedPosterInner {}
 
 impl IsolatedPosterInner {
-    pub(crate) fn new(event_loop: *const LoopShared) -> Arc<Self> {
+    /// # Safety
+    /// `event_loop` is live until [`close`](Self::close) has returned.
+    pub(crate) unsafe fn new(event_loop: *const LoopShared) -> Arc<Self> {
         Arc::new(Self {
             open: core::sync::atomic::AtomicBool::new(true),
             active: AtomicU32::new(0),
@@ -957,7 +984,7 @@ impl IsolatedPosterInner {
         self.active.fetch_add(1, Ordering::SeqCst);
         let open = self.open.load(Ordering::SeqCst);
         if open {
-            // SAFETY: gate held and open ⇒ the isolated loop is alive.
+            // SAFETY: gate held and open ⇒ `close` has not returned (`new`'s contract).
             let el = unsafe { &*self.event_loop };
             el.concurrent_tasks.push(task);
             el.wakeup();

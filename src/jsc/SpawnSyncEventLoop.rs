@@ -33,25 +33,25 @@ use crate::event_loop::{EventLoop, EventLoopHandle};
 use crate::virtual_machine::VirtualMachine;
 
 /// Sets `vm.suppress_microtask_drain` for its lifetime and restores the prior value on drop.
-struct SuppressMicrotaskDrain {
+struct SuppressMicrotaskDrain<'a> {
+    vm: &'a VirtualMachine,
     prev: bool,
 }
 
-impl SuppressMicrotaskDrain {
+impl<'a> SuppressMicrotaskDrain<'a> {
     #[inline]
-    fn new() -> Self {
+    fn new(vm: &'a VirtualMachine) -> Self {
         Self {
-            prev: VirtualMachine::get().suppress_microtask_drain.replace(true),
+            vm,
+            prev: vm.suppress_microtask_drain.replace(true),
         }
     }
 }
 
-impl Drop for SuppressMicrotaskDrain {
+impl Drop for SuppressMicrotaskDrain<'_> {
     #[inline]
     fn drop(&mut self) {
-        VirtualMachine::get()
-            .suppress_microtask_drain
-            .set(self.prev);
+        self.vm.suppress_microtask_drain.set(self.prev);
     }
 }
 
@@ -110,7 +110,8 @@ impl SpawnSyncEventLoop {
 
         let (tag, ptr) = EventLoopHandle::js_tag_ptr(event_loop.as_erased_ptr());
         uws_loop.internal_loop_data.set_parent_raw(tag, ptr);
-        uws_loop.internal_loop_data.jsc_vm.set(core::ptr::null());
+        // SAFETY: null.
+        unsafe { uws_loop.internal_loop_data.set_jsc_vm(core::ptr::null()) };
 
         Some(Box::pin(Self {
             event_loop,
@@ -153,53 +154,46 @@ extern "C" fn on_close_uv_timer(timer: *mut libuv::Timer) {
 #[cfg(windows)]
 impl Drop for SpawnSyncEventLoop {
     fn drop(&mut self) {
-        {
-            if let Some(timer) = self.uv_timer.take() {
-                // SAFETY: timer is a live libuv handle owned by this struct.
-                unsafe {
-                    (*timer.as_ptr()).stop();
-                    (*timer.as_ptr()).unref();
-                    // `UvHandle::close` already does the `*mut Timer` →
-                    // `*mut uv_handle_t` cb cast internally.
-                    (*timer.as_ptr()).close(on_close_uv_timer);
-                }
+        if let Some(timer) = self.uv_timer.take() {
+            // SAFETY: timer is a live libuv handle owned by this struct.
+            unsafe {
+                (*timer.as_ptr()).stop();
+                (*timer.as_ptr()).unref();
+                // `UvHandle::close` already does the `*mut Timer` →
+                // `*mut uv_handle_t` cb cast internally.
+                (*timer.as_ptr()).close(on_close_uv_timer);
             }
         }
     }
 }
 
 impl SpawnSyncEventLoop {
-    /// Configure the event loop for one call, for as long as the result lives.
-    pub fn prepare(&self) -> PreparedSpawnSyncEventLoop<'_> {
-        let vm = VirtualMachine::get();
+    /// Configure `vm`'s event loop for one call, for as long as the result lives.
+    /// `'static`, because on Windows the VM hands the libuv loop out as such meanwhile.
+    pub fn prepare(&'static self, vm: &'static VirtualMachine) -> PreparedSpawnSyncEventLoop {
         self.event_loop.set_global(vm.global());
         self.did_timeout.set(false);
 
-        // SAFETY: `RareData` makes the only one and keeps it until the VM is destroyed, after the
-        // last use of `event_loop_handle`.
-        #[cfg(windows)]
-        let uv_loop: &'static libuv::Loop = unsafe { &*core::ptr::from_ref(self.uws_loop.uv()) };
-        #[cfg(windows)]
-        let original_event_loop_handle = vm.event_loop_handle.replace(Some(uv_loop));
-
         PreparedSpawnSyncEventLoop {
             inner: self,
+            vm,
             #[cfg(windows)]
-            original_event_loop_handle,
+            original_event_loop_handle: vm.replace_platform_loop(Some(self.uws_loop.uv())),
         }
     }
 }
 
 /// One spawnSync call's use of its thread's [`SpawnSyncEventLoop`].
 #[must_use]
-pub struct PreparedSpawnSyncEventLoop<'a> {
-    inner: &'a SpawnSyncEventLoop,
+pub struct PreparedSpawnSyncEventLoop {
+    inner: &'static SpawnSyncEventLoop,
+    vm: &'static VirtualMachine,
     /// The VM's event_loop_handle, which `prepare` overrode.
     #[cfg(windows)]
     original_event_loop_handle: Option<&'static libuv::Loop>,
 }
 
-impl core::ops::Deref for PreparedSpawnSyncEventLoop<'_> {
+impl core::ops::Deref for PreparedSpawnSyncEventLoop {
     type Target = SpawnSyncEventLoop;
 
     #[inline]
@@ -208,7 +202,7 @@ impl core::ops::Deref for PreparedSpawnSyncEventLoop<'_> {
     }
 }
 
-impl Drop for PreparedSpawnSyncEventLoop<'_> {
+impl Drop for PreparedSpawnSyncEventLoop {
     fn drop(&mut self) {
         #[cfg(unix)]
         debug_assert!(
@@ -219,9 +213,8 @@ impl Drop for PreparedSpawnSyncEventLoop<'_> {
         );
         #[cfg(windows)]
         {
-            VirtualMachine::get()
-                .event_loop_handle
-                .set(self.original_event_loop_handle);
+            self.vm
+                .replace_platform_loop(self.original_event_loop_handle);
             self.with_uv_timer(|timer| {
                 timer.stop();
                 timer.unref();
@@ -233,7 +226,6 @@ impl Drop for PreparedSpawnSyncEventLoop<'_> {
 #[cfg(windows)]
 extern "C" fn on_uv_timer(timer_: *mut libuv::Timer) {
     // SAFETY: `data` is the `SpawnSyncEventLoop` whose tick this fires under, set in `prepare_timer_on_windows`.
-    // That tick borrows the `uws::Loop` uniquely, so the uv loop comes from the handle instead.
     unsafe {
         (*(*timer_).data.cast::<SpawnSyncEventLoop>())
             .did_timeout
@@ -248,7 +240,7 @@ pub enum TickState {
     Completed,
 }
 
-impl PreparedSpawnSyncEventLoop<'_> {
+impl PreparedSpawnSyncEventLoop {
     #[cfg(windows)]
     fn prepare_timer_on_windows(&self, ts: &Timespec) {
         if self.uv_timer.get().is_none() {
@@ -258,7 +250,7 @@ impl PreparedSpawnSyncEventLoop<'_> {
             // `Box`-`noalias` reborrow that `into_raw` would later pop).
             self.uv_timer
                 .set(Some(bun_core::heap::into_raw_nn(uv_timer)));
-            let uv_loop = self.uws_loop().uv_loop.get();
+            let uv_loop = self.uws_loop().uv().as_ptr();
             // Pinned, and outlives its timer.
             let data = core::ptr::from_ref::<SpawnSyncEventLoop>(self.inner)
                 .cast_mut()
@@ -273,7 +265,7 @@ impl PreparedSpawnSyncEventLoop<'_> {
         // flight, so `loop->time` (which `uv_timer_start` computes the due time from) can be
         // staler than the timeout, which would make the timer fire immediately.
         // SAFETY: `uv_loop` is the live initialized loop owned by `self.uws_loop`.
-        unsafe { libuv::uv_update_time(self.uws_loop().uv_loop.get()) };
+        unsafe { libuv::uv_update_time(self.uws_loop().uv().as_ptr()) };
 
         self.with_uv_timer(|timer| {
             timer.start(ts.ms_unsigned(), 0, Some(on_uv_timer));
@@ -309,7 +301,7 @@ impl PreparedSpawnSyncEventLoop<'_> {
         // reaches drainMicrotasksWithGlobal, we must already have the flag set.
         // On POSIX, the uws tick only polls I/O; callbacks are dispatched later
         // via the task queue, but we set the flag here uniformly for safety.
-        let _suppress = SuppressMicrotaskDrain::new();
+        let _suppress = SuppressMicrotaskDrain::new(self.vm);
 
         // Tick the isolated uws loop with the specified timeout
         // This will only process I/O related to this subprocess

@@ -8,9 +8,9 @@ bun_core::declare_scope!(AutoKiller, hidden);
 
 #[derive(Default)]
 pub struct ProcessAutoKiller {
-    /// Intrusively-refcounted `Process`es by address (ref()'d on insert,
-    /// deref()'d on remove/drop).
-    processes: ArrayHashMapCell<usize, NonNull<Process>>,
+    /// Intrusively-refcounted `Process`es (ref()'d on insert, deref()'d on
+    /// remove/drop).
+    processes: ArrayHashMapCell<NonNull<Process>, ()>,
     pub enabled: Cell<bool>,
     ever_enabled: Cell<bool>,
 }
@@ -33,9 +33,9 @@ impl ProcessAutoKiller {
 
     fn kill_processes(&self) -> u32 {
         let mut count: u32 = 0;
-        for process in self.processes.take().values().iter().rev() {
+        while let Some((process, ())) = self.processes.pop() {
             {
-                // SAFETY: every value in `processes` was ref()'d on insert and is
+                // SAFETY: every key in `processes` was ref()'d on insert and is
                 // live until the matching deref() below; nothing else borrows the
                 // `Process` while this thread is here.
                 let p: &mut Process = unsafe { &mut *process.as_ptr() };
@@ -51,9 +51,13 @@ impl ProcessAutoKiller {
     }
 
     pub fn clear(&self) {
-        for process in self.processes.take().values() {
+        while let Some((process, ())) = self.processes.pop() {
             // SAFETY: see kill_processes — live until deref().
             unsafe { Process::deref(process.as_ptr()) };
+        }
+
+        if self.processes.capacity() > 256 {
+            drop(self.processes.take());
         }
     }
 
@@ -62,7 +66,7 @@ impl ProcessAutoKiller {
         if self.enabled.get() {
             // Alloc failure means we never took
             // a ref, so just bail. `put` here is fallible only on OOM.
-            if self.processes.put(process.addr().get(), process).is_err() {
+            if self.processes.put(process, ()).is_err() {
                 return;
             }
             // SAFETY: caller passes a live Process; we take a ref to extend its
@@ -75,7 +79,7 @@ impl ProcessAutoKiller {
     /// ref taken at spawn.
     pub(crate) fn on_subprocess_exit(&self, process: NonNull<Process>) {
         if self.ever_enabled.get() {
-            if self.processes.swap_remove(process.addr().get()) {
+            if self.processes.swap_remove(process) {
                 // SAFETY: we held a ref from on_subprocess_spawn; the pointee
                 // is live until this deref() releases it.
                 unsafe { Process::deref(process.as_ptr()) };

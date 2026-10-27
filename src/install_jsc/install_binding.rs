@@ -36,16 +36,18 @@ pub(crate) fn parse_lockfile(cx: &mut JsScope<'_>, cwd: &[u8]) -> bun_jsc::JsRes
     let mut lockfile_ = Lockfile::default();
 
     let vm = global.bun_vm();
-    if vm.transpiler().resolver.env_loader.is_none() {
-        // SAFETY: script called this function, so no caller borrows the transpiler, except the
-        // parse that runs a macro (see `transpiler_mut`). Nothing is called while this is live.
-        let transpiler = unsafe { vm.transpiler_mut() };
-        transpiler.resolver.env_loader = NonNull::new(transpiler.env);
+    let transpiler = vm.transpiler();
+    if transpiler.resolver.env_loader.get().is_none() {
+        transpiler
+            .resolver
+            .env_loader
+            .set(NonNull::new(transpiler.env));
     }
 
     // as long as we aren't migration from `package-lock.json`, leaving this undefined is okay
-    // SAFETY: as above, for the package manager too. Loading a lockfile runs no JavaScript, so
-    // nothing reaches the manager through the VM while this is live.
+    // SAFETY: script called this function, so no caller borrows the package manager. Loading a
+    // lockfile runs no JavaScript, so nothing reaches the manager through the VM while this is
+    // live.
     let manager = unsafe { vm.package_manager() };
 
     let load_result: LoadResult<'_> =

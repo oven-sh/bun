@@ -48,12 +48,18 @@ impl ConnectionTimers {
     }
 }
 
-fn start(timer: &JsCell<EventLoopTimer>, ms: u32) {
+/// # Safety
+/// `timer` is not in the heap. It is a field of `connection`, which is boxed and `stop`s it before
+/// it is freed.
+unsafe fn start<C: ?Sized>(connection: &C, timer: &JsCell<EventLoopTimer>, ms: u32) {
     timer.with_mut(|t| t.next = Timespec::ms_from_now(TimespecMockMode::ForceRealTime, ms.into()));
-    // SAFETY: not in the heap (every caller checks or `stop`s first). It is a field of a boxed
-    // connection, which `stop`s it before it is freed. The fire path recovers the connection from
-    // this pointer.
-    unsafe { VirtualMachine::timer_insert(VirtualMachine::get(), timer.as_ptr()) };
+    // The fire path goes back from the node to the connection, so it gets the provenance of that.
+    let node = core::ptr::from_ref(connection)
+        .cast_mut()
+        .cast::<EventLoopTimer>()
+        .with_addr(timer.as_ptr().addr());
+    // SAFETY: fn contract.
+    unsafe { VirtualMachine::timer_insert(VirtualMachine::get(), node) };
 }
 
 fn stop(timer: &JsCell<EventLoopTimer>) {
@@ -110,7 +116,9 @@ pub trait TimedConnection {
         stop(timer);
         let (_, ms, _) = self.timeout();
         if ms != 0 {
-            start(timer, ms);
+            // SAFETY: stopped above. Both connection types are boxed, return a field from
+            // `timers()` and `stop` it in their teardown.
+            unsafe { start(self, timer, ms) };
         }
     }
 
@@ -129,7 +137,8 @@ pub trait TimedConnection {
         if timers.max_lifetime_ms != 0
             && timers.max_lifetime_timer.get().state != EventLoopTimerState::ACTIVE
         {
-            start(&timers.max_lifetime_timer, timers.max_lifetime_ms);
+            // SAFETY: not `ACTIVE`, so not in the heap; the rest as in `reset_connection_timeout`.
+            unsafe { start(self, &timers.max_lifetime_timer, timers.max_lifetime_ms) };
         }
     }
 

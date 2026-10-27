@@ -74,11 +74,8 @@ struct PackageResolveError<'a> {
 /// ([`Queue::take`]), because rejecting a module's promise calls into JavaScriptCore.
 ///
 /// Its entry points are tasks of the event loop, apart from `enqueue`. No reference to the package
-/// manager or to the transpiler is held across a turn of the loop, which is what "a task" means
-/// in the `SAFETY` comments below.
-///
-/// FIXME: a macro is the exception. It runs, and turns the macro loop, under the `&mut Transpiler`
-/// of the parse that called it.
+/// manager is held across a turn of the loop, which is what "a task" means in the `SAFETY`
+/// comments below.
 ///
 /// FIXME: there is one package manager per process, which the VM of a Worker gets too, and
 /// nothing orders one thread's `&mut` to it with another's.
@@ -119,7 +116,7 @@ impl Queue {
     /// What is left of [`take`](Self::take)'s, ahead of the modules enqueued since.
     fn put_back(&self, mut modules: Vec<AsyncModule>) {
         modules.append(&mut self.map.take());
-        drop(self.map.replace(modules));
+        self.map.set(modules);
     }
 
     pub(crate) fn on_resolve(_: &Queue) {
@@ -300,7 +297,7 @@ impl<'a, const PROGRESS: bool> run_tasks::RunTasksCallbacks
 
 impl Queue {
     /// # Safety
-    /// No reference to the package manager or to the transpiler is live.
+    /// No reference to the package manager is live.
     pub unsafe fn enqueue(&self, global_object: &JSGlobalObject, opts: InitOpts<'_>) {
         bun_core::scoped_log!(AsyncModule, "enqueue: {}", bstr::BStr::new(opts.specifier));
         let module = AsyncModule::init(opts, global_object).expect("unreachable");
@@ -318,7 +315,8 @@ impl Queue {
     /// `runtime/jsc_hooks.rs`; the VM is reached only through its handle.
     pub fn on_wake_handler(ctx: *mut c_void, _: *mut c_void) {
         bun_core::scoped_log!(AsyncModule, "onWake");
-        // SAFETY: `ctx` is the leaked `WakeContext` registered with this handler.
+        // SAFETY: `ctx` is the `WakeContext` registered with this handler, which the VM's runtime
+        // state owns.
         let ctx = unsafe { &*ctx.cast::<WakeContext>() };
         let task = ConcurrentTaskItem::create(Task::new(
             <Queue as bun_event_loop::Taskable>::TAG,
@@ -576,13 +574,15 @@ impl Queue {
 }
 
 /// Points the transpiler, its linker and resolver, and the package manager at `log`.
-fn set_log(vm: &VirtualMachine, log: core::ptr::NonNull<bun_ast::Log>) {
-    // SAFETY: `resume_loading_module` runs as a task of the event loop and holds no borrow of the
-    // transpiler between statements, and nothing in this one runs script or reaches the
-    // transpiler through the VM again.
-    unsafe { vm.transpiler_mut() }.set_log(log.as_ptr());
-    // SAFETY: likewise for the package manager.
-    unsafe { vm.package_manager() }.log = log.as_ptr();
+///
+/// # Safety
+/// As for `Transpiler::set_log`. No borrow of the package manager is live.
+unsafe fn set_log(vm: &VirtualMachine, log: core::ptr::NonNull<bun_ast::Log>) {
+    // SAFETY: fn contract.
+    unsafe {
+        vm.transpiler().set_log(log.as_ptr());
+        vm.package_manager().log = log.as_ptr();
+    }
 }
 
 impl AsyncModule {
@@ -1092,20 +1092,21 @@ impl AsyncModule {
         // `expect` is infallible.
         let old_log = jsc_vm.log.get().expect("vm.log set in init");
 
-        set_log(jsc_vm, core::ptr::NonNull::from(&mut *log));
-        let _restore = scopeguard::guard((), |()| set_log(jsc_vm, old_log));
+        // SAFETY: `log` outlives this function, which does not touch it until `_restore` has
+        // taken it out again. `resume_loading_module` runs as a task of the event loop and
+        // holds no borrow of the package manager.
+        unsafe { set_log(jsc_vm, core::ptr::NonNull::from(&mut *log)) };
+        // SAFETY: the VM's own log, which outlives the VM.
+        let _restore = scopeguard::guard((), |()| unsafe { set_log(jsc_vm, old_log) });
 
         // We _must_ link because:
         // - node_modules bundle won't be properly
-        // SAFETY: as in `set_log`. `link` rewrites import records and writes to the log.
-        unsafe { jsc_vm.transpiler_mut() }
-            .linker
-            .link::<false, true>(
-                &path,
-                &mut parse_result,
-                &jsc_vm.origin,
-                bun_bundler::options::ImportPathFormat::AbsolutePath,
-            )?;
+        jsc_vm.transpiler().linker.link::<false, true>(
+            &path,
+            &mut parse_result,
+            &jsc_vm.origin,
+            bun_bundler::options::ImportPathFormat::AbsolutePath,
+        )?;
         self.parse_result = parse_result;
         // `print_with_source_map` consumes `ParseResult` by
         // value (it moves `ast` into `print_ast`). Hoist the post-print
@@ -1149,10 +1150,8 @@ impl AsyncModule {
             });
 
         {
-            let mut mapper = jsc_vm.source_map_handler(&raw mut printer);
-            // SAFETY: as in `set_log`. Of the VM, printing reaches only `source_mappings`, through
-            // `mapper`.
-            let _ = unsafe { jsc_vm.transpiler_mut() }.print_with_source_map(
+            let mut mapper = jsc_vm.source_map_handler();
+            let _ = jsc_vm.transpiler().print_with_source_map(
                 // `self.arena` is the same per-call arena that built
                 // `parse_result.ast` (handed to the queue via
                 // `InitOpts::arena` after the original parse). The
@@ -1165,6 +1164,9 @@ impl AsyncModule {
                 mapper.get(),
                 None,
             )?;
+            mapper
+                .append_inline_source_map(&mut printer)
+                .map_err(bun_bundler::Error::from)?;
         }
 
         // `bun_core::env::DUMP_SOURCE` is debug, non-test builds only. The previous

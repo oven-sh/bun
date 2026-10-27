@@ -1,24 +1,42 @@
 --- a/src/liblsquic/lsquic_stream.c
 +++ b/src/liblsquic/lsquic_stream.c
-@@ -3053,6 +3053,28 @@
+@@ -979,7 +979,12 @@
+         if (!(shf->shf_flags & SHF_WRITTEN))
+         {
+             size = stream_hq_frame_size(shf);
+-            assert(size <= stream_avail);
++            /* bun: upstream asserted that the stream's window has room for the
++             * header of every frame that waits.  A header block can wait with
++             * less than that, and without the assert the subtraction wrapped.
++             */
++            if (size > stream_avail)
++                return 0;
+             stream_avail -= size;
+         }
+ 
+@@ -3053,6 +3058,32 @@
                      stream_hq_frame_put(stream, shf);
                  break;
              }
 +            /* bun: a frame whose bytes were never buffered (a header block that
-+             * waits for a packet or for credit) has not taken the connection
-+             * credit for its header.  Without that credit, do not write the
-+             * header: the connection would pass the peer's MAX_DATA.  None of
-+             * the frame's bytes are in the buffer, so a flush is complete here.
-+             * The stream stays on the write queue: send_headers_ietf() set
-+             * SMQF_WANT_WRITE for the block that waits.
++             * waits for a packet or for credit) has taken no credit for its
++             * header.  Without that credit, do not write the header: the
++             * stream would pass the peer's MAX_DATA or MAX_STREAM_DATA.  None
++             * of the frame's bytes are in the buffer, so a flush is complete
++             * here.  The stream stays on the write queue: send_headers_ietf()
++             * set SMQF_WANT_WRITE for the block that waits.
 +             */
 +            if (!(shf->shf_flags & SHF_CC_PAID)
-+                    && (stream->sm_bflags & SMBF_CONN_LIMITED)
-+                    && lsquic_conn_cap_avail(&stream->conn_pub->conn_cap)
++                    && (((stream->sm_bflags & SMBF_CONN_LIMITED)
++                        && lsquic_conn_cap_avail(&stream->conn_pub->conn_cap)
 +                                                                < frame_sz)
++                        || stream->max_send_off - stream->tosend_off
++                                                                < frame_sz))
 +            {
-+                LSQ_DEBUG("no connection credit for %zu-byte HQ frame of type "
-+                    "0x%X at payload offset %"PRIu64, frame_sz,
++                LSQ_INFO("no %s credit for %zu-byte HQ frame of type 0x%X at "
++                    "payload offset %"PRIu64,
++                    stream->max_send_off - stream->tosend_off < frame_sz
++                        ? "stream" : "connection", frame_sz,
 +                    shf->shf_frame_type, stream->sm_payload);
 +                if (new)
 +                    stream_hq_frame_put(stream, shf);

@@ -153,19 +153,31 @@ export const lsquic: Dependency = {
     // and failed for a larger one. Such a block gets a heap buffer, sized from
     // the header list.
     "patches/lsquic/large-header-block.patch",
-    // frame_hq_gen_read() took the connection credit for the header of an
-    // HTTP/3 frame when it wrote the header, with no check. A header block
-    // that could not be written (no packet, or no credit) left its HEADERS
-    // frame unpaid, and a flush of the bytes in front of it wrote that frame
-    // header. The connection then sent more than the peer's MAX_DATA allows.
+    // frame_hq_gen_read() took the credit for the header of an HTTP/3 frame
+    // when it wrote the header, with no check of the connection's window or
+    // of the stream's. A header block that could not be written (no packet,
+    // or no credit) left its HEADERS frame unpaid, and a flush of the bytes
+    // in front of it wrote that frame header. The peer then got more than
+    // its MAX_DATA or MAX_STREAM_DATA allows. stream_write_avail_with_frames()
+    // only asserted that the stream's window has room for such a header.
     "patches/lsquic/frame-header-credit.patch",
     // A stream that buffers bytes takes their connection credit at once.
     // lsquic's own flush for that case (Scenario 1 above maybe_flush_stream())
-    // runs only for the stream whose write uses up the credit. Streams that
+    // ran only for the stream whose write uses up the credit. Streams that
     // buffered earlier got no write event after that, nothing sent their
-    // bytes, and the peer never sent MAX_DATA. Applies on top of
-    // frame-header-credit.
+    // bytes, and the peer never sent MAX_DATA. The flush target also counted
+    // the frame of a header block that waits outside of the buffer, so
+    // SMQF_WANT_FLUSH could outlive the buffer. Needs frame-header-credit:
+    // without that check, this flush writes the frame header of a block that
+    // waits.
     "patches/lsquic/flush-blocked-buffered-stream.patch",
+    // Upstream a9616720af (v4.10.2) and 555de41db3 (v4.11.0). After a 1xx
+    // response, lsquic accepted a write while the next header block waited,
+    // and put the bytes into that block's HEADERS frame. Drop this patch when
+    // the pinned commit has both.
+    // https://github.com/litespeedtech/lsquic/commit/a9616720af78b9aab895145c1792d5305c480ae8
+    // https://github.com/litespeedtech/lsquic/commit/555de41db3544706ffc3444d99f3d934295c70a0
+    "patches/lsquic/write-while-headers-pending.patch",
   ],
 
   fetchDeps: ["zlib", "lshpack", "lsqpack", "boringssl"],

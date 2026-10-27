@@ -413,26 +413,121 @@ describe("HTTP/3 header blocks that follow another header block", () => {
 // of the credit that is left then wraps, and the server sends on while the relay of the fixture keeps the client's
 // MAX_DATA from it. A debug build stops on an assertion of lsquic there.
 test("a HEADERS frame that has no connection credit waits for it", async () => {
+  // The fixture depends on timing: a machine that stalls while the server sends its flight does not bring the
+  // response to that point. lsquic logs a line when it stops in front of the frame header, and a run without that
+  // line does not count.
+  let stoppedInFrontOfTheFrame = false;
+  for (let attempt = 0; attempt < 4 && !stoppedInFrontOfTheFrame; attempt++) {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--no-warnings",
+        join(import.meta.dir, "quic-connection-credit-fixture.ts"),
+        join(keysDir, "agent1-key.pem"),
+        join(keysDir, "agent1-cert.pem"),
+      ],
+      // lsquic writes its log to stderr.
+      env: { ...bunEnv, BUN_DEBUG_lsquic: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Only a run that ended early prints nothing. The end of the log says why.
+    expect(stdout === "" ? stderr.slice(-2000) : "").toBe("");
+    // The bytes of bodies and trailers that the client got while its MAX_DATA did not reach the server. Its
+    // connection window is 136,000 bytes.
+    expect(Number(stdout)).toBeLessThanOrEqual(136_000);
+    expect(exitCode).toBe(0);
+    stoppedInFrontOfTheFrame = stderr.includes("no connection credit for");
+  }
+  expect(stoppedInFrontOfTheFrame).toBe(true);
+}, 60_000);
+
+// The same frame header also needs the credit of its stream. The interim response fills the client's stream window
+// to the last bytes, so the HEADERS frame of the final response has no room in it. lsquic wrote that frame header
+// and the body behind it, and the client closed the connection for the flow-control violation. This is its own
+// process because an assertion of lsquic stops a debug build that does not have the fix.
+test("a HEADERS frame that has no stream credit waits for it", async () => {
+  const script = /* js */ `
+    import { createPrivateKey } from "node:crypto";
+    import { readFileSync } from "node:fs";
+    import { join } from "node:path";
+    import { connect, listen } from "node:quic";
+
+    const keysDir = process.env.QUIC_KEYS_DIR;
+    // Bytes that Huffman coding doesn't shorten. The HEADERS frame of the interim response takes 4,095 bytes.
+    const filler = Buffer.alloc(4079, "X").toString();
+    const body = Buffer.alloc(5000, "b");
+    const errors = [];
+    const quiet = session => {
+      session.onerror = error => void errors.push(String(error?.message ?? error));
+      session.closed.catch(() => {});
+      return session;
+    };
+    let accepted = [];
+    const server = await listen(
+      session => {
+        quiet(session).onstream = stream => void stream.closed.catch(() => {});
+      },
+      {
+        sni: {
+          "*": {
+            keys: [createPrivateKey(readFileSync(join(keysDir, "agent1-key.pem")))],
+            certs: [readFileSync(join(keysDir, "agent1-cert.pem"))],
+          },
+        },
+        transportParams: { maxIdleTimeout: 2 },
+        onheaders() {
+          accepted = [
+            this.sendInformationalHeaders({ ":status": "103", "x-filler": filler }),
+            this.sendHeaders({ ":status": "200" }),
+          ];
+          this.writer.writeSync(body);
+          this.writer.endSync();
+        },
+      },
+    );
+    const client = quiet(
+      await connect(server.address, {
+        servername: "localhost",
+        verifyPeer: "manual",
+        transportParams: { maxIdleTimeout: 2, initialMaxStreamDataBidiLocal: 4096 },
+      }),
+    );
+    await client.opened;
+    let interim = 0;
+    let status = "";
+    let bytes = 0;
+    const stream = await client.createBidirectionalStream({
+      headers: { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost" },
+      oninfo: headers => void (interim = headers["x-filler"]?.length ?? 0),
+      onheaders: headers => void (status = headers[":status"]),
+    });
+    stream.closed.catch(() => {});
+    try {
+      for await (const batch of stream) for (const chunk of batch) bytes += chunk.byteLength;
+    } catch {}
+    console.log(JSON.stringify({ accepted, interim, status, bytes, errors }));
+    process.exit(0);
+  `;
   await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "--no-warnings",
-      join(import.meta.dir, "quic-connection-credit-fixture.ts"),
-      join(keysDir, "agent1-key.pem"),
-      join(keysDir, "agent1-cert.pem"),
-    ],
-    env: bunEnv,
+    cmd: [bunExe(), "--no-warnings", "-e", script],
+    env: { ...bunEnv, QUIC_KEYS_DIR: keysDir },
     stdout: "pipe",
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   // Only a run that ended early prints nothing.
   expect(stdout === "" ? stderr : "").toBe("");
-  // The bytes of bodies and trailers that the client got while its MAX_DATA did not reach the server. Its connection
-  // window is 136,000 bytes.
-  expect(Number(stdout)).toBeWithin(1, 136_001);
+  expect(JSON.parse(stdout)).toEqual({
+    accepted: [true, true],
+    interim: 4079,
+    status: "200",
+    bytes: 5000,
+    errors: [],
+  });
   expect(exitCode).toBe(0);
-}, 30_000);
+});
 
 // lsquic takes the connection credit for bytes when a stream buffers them, and bun sends a buffered header block on
 // the stream's next write event. A stream gets no write event while the connection has no credit. So when the
@@ -481,8 +576,11 @@ describe("header blocks that use up the peer's connection window", () => {
         },
       },
     );
+    // An endpoint keeps the limits it was created with, so not the shared one.
+    await using endpoint = new QuicEndpoint();
     const client = quiet(
       await connect(server.address!, {
+        endpoint,
         servername: "localhost",
         verifyPeer: "manual",
         transportParams: { maxIdleTimeout, initialMaxData: window },
@@ -531,8 +629,10 @@ describe("header blocks that use up the peer's connection window", () => {
         },
       },
     );
+    await using endpoint = new QuicEndpoint();
     const client = quiet(
       await connect(server.address!, {
+        endpoint,
         servername: "localhost",
         verifyPeer: "manual",
         transportParams: { maxIdleTimeout },

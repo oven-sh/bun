@@ -2270,6 +2270,59 @@ describe.concurrent("Bun.serve HTTP/3 sends the automatic 100 Continue ahead of 
   });
 });
 
+// The handler answers in the request's own call, right behind the automatic 100 Continue. The header block of the
+// final response can then wait in lsquic for a packet. lsquic took the body while that block waited and put its
+// bytes into the block's HEADERS frame: the client could not decode the block, and closed the connection.
+test("Bun.serve HTTP/3 keeps a body out of the header block that waits behind a 100 Continue", async () => {
+  // The header blocks of these responses are more than the packets that the server may send at first.
+  const count = 40;
+  // Bytes that Huffman coding doesn't shorten.
+  const filler = Buffer.alloc(3000, "~").toString();
+  const body = Buffer.alloc(10, "b");
+  await using server = Bun.serve({
+    port: 0,
+    tls,
+    http3: true,
+    http1: false,
+    fetch: () => new Response(body, { headers: { "x-filler": filler } }),
+  });
+  await using endpoint = new QuicEndpoint();
+  const client = await connect(`127.0.0.1:${server.port}`, {
+    endpoint,
+    servername: "localhost",
+    verifyPeer: "manual",
+    transportParams: { maxIdleTimeout: 5 },
+    onerror() {},
+  } as SessionOptions);
+  client.closed.catch(() => {});
+  await client.opened;
+  const whole = await Promise.all(
+    Array.from({ length: count }, async (_, i) => {
+      let interim = "";
+      let status = "";
+      let field = 0;
+      let bytes = 0;
+      try {
+        const stream = await client.createBidirectionalStream({
+          oninfo: received => void (interim = String(received[":status"])),
+          onheaders(received) {
+            status = String(received[":status"]);
+            field = String(received["x-filler"] ?? "").length;
+          },
+        });
+        stream.closed.catch(() => {});
+        stream.sendHeaders(requestHeaders(`/${i}`, { ":method": "POST", expect: "100-continue" }), { terminal: true });
+        for await (const batch of stream as AsyncIterable<Uint8Array[]>) {
+          for (const chunk of batch) bytes += chunk.byteLength;
+        }
+      } catch {}
+      return interim === "100" && status === "200" && field === filler.length && bytes === body.byteLength;
+    }),
+  );
+  if (!client.destroyed) client.close().catch(() => {});
+  expect(whole.filter(Boolean).length).toBe(count);
+});
+
 // lsquic takes the connection credit for a response's bytes when the stream buffers them, and the stream sends them
 // on its next write event. A stream gets no write event while the connection has no credit. So when the responses
 // of one turn use up the client's connection window, lsquic has to send what streams buffered before the credit ran

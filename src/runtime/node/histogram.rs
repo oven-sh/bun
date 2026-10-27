@@ -859,7 +859,7 @@ impl bun_jsc::JobContext for QrdeJob {
             Dequantize::All => "all",
         };
         let value = JSValue::create_empty_object_with_null_prototype(global);
-        let mut put = |key: &'static str, property: JSValue| {
+        let put = |key: &'static str, property: JSValue| {
             value.put(global, &bun_core::String::static_(key), property);
         };
         put("probabilities", float64_array(&this.probabilities)?);

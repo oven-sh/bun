@@ -134,7 +134,9 @@ fn test_static_dictionary_item(
         return Ok(false);
     }
 
-    let matchlen = find_match_length_with_limit(data, DATA.sub(offset..)?, len);
+    // Most words differ from the data in their first few bytes.
+    let word = DATA.sub(offset..offset + len)?;
+    let matchlen = word.iter().zip(data).take_while(|(a, b)| a == b).count();
     if matchlen + CUTOFF_TRANSFORMS_COUNT <= len || matchlen == 0 {
         return Ok(false);
     }

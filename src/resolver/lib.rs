@@ -890,9 +890,30 @@ pub mod fs {
     /// The active filesystem backend (always the real filesystem).
     pub type Implementation = RealFS;
 
+    /// The clock of `DirEntry.generation`: a lookup at a later tick reads a listing of an earlier tick again.
+    static GENERATION: AtomicU32 = AtomicU32::new(0);
+
+    /// A new tick. A lookup at it reads each cached listing again, once.
+    pub fn next_generation() -> Generation {
+        GENERATION
+            .try_update(Ordering::Relaxed, Ordering::Relaxed, |tick| {
+                tick.checked_add(1)
+            })
+            .map_or(Generation::MAX, |tick| tick + 1)
+    }
+
+    /// Which cache keys of a directory a bust evicts.
+    #[derive(Clone, Copy)]
+    pub(crate) enum DirKeys {
+        /// Its real path and that path through each link followed: the directory changed on disk.
+        Every,
+        /// The given path alone: a guess after a miss, which names the path that the lookup walked.
+        Walked,
+    }
+
     /// Every cache key of a directory: its real path, and that path through each link followed.
     #[derive(Default)]
-    pub(crate) struct DirLinks {
+    struct DirLinks {
         /// Path of a link as walked, to the real path of the directory.
         real_of: bun_collections::StringHashMap<&'static [u8]>,
         /// Real path of a directory, to the paths of the links to it.
@@ -900,17 +921,9 @@ pub mod fs {
     }
 
     impl DirLinks {
-        /// A stale record can name a link as its own target. The substitutions stop here.
-        const MAX_LINKS_IN_ONE_PATH: usize = 16;
-
         fn insert(&mut self, link: &'static [u8], real: &'static [u8]) {
-            if let Some(known) = self.real_of.get(link).copied() {
-                if known == real {
-                    return;
-                }
-                if let Some(links) = self.links_of.get_mut(known) {
-                    links.0.retain(|other| *other != link);
-                }
+            if self.real_of.get(link) == Some(&real) {
+                return;
             }
             bun_core::handle_oom(self.real_of.put_static_key(link, real));
             match self.links_of.get_mut(real) {
@@ -923,35 +936,29 @@ pub mod fs {
         }
 
         /// Calls `each` with `path`, then with every other cache key of that directory.
-        pub(crate) fn for_each_key_of(&self, path: &[u8], mut each: impl FnMut(&[u8])) {
+        fn for_each_key_of(&self, path: &[u8], mut each: impl FnMut(&[u8])) {
             each(path);
+            if self.real_of.is_empty() {
+                return;
+            }
 
             let mut real_buf = bun_paths::path_buffer_pool::get();
             let mut key_buf = bun_paths::path_buffer_pool::get();
-            if path.len() > real_buf.len() {
-                return;
-            }
-            real_buf[..path.len()].copy_from_slice(path);
-            let mut real_len = path.len();
-            for _ in 0..Self::MAX_LINKS_IN_ONE_PATH {
-                let walked = &real_buf[..real_len];
-                let Some((link_len, real)) = Self::ancestors(walked).find_map(|ancestor| {
-                    let real = self.real_of.get(ancestor)?;
-                    Some((ancestor.len(), *real))
-                }) else {
-                    break;
-                };
-                let Some(len) = Self::join_below(&mut key_buf[..], real, &walked[link_len..])
-                else {
-                    return;
-                };
-                real_buf[..len].copy_from_slice(&key_buf[..len]);
-                real_len = len;
-            }
-            let real = &real_buf[..real_len];
-            if real != path {
-                each(real);
-            }
+            // The record of the deepest link in `path` holds the real path of that link in full.
+            let deepest_link = Self::ancestors(path)
+                .find_map(|ancestor| Some((ancestor.len(), *self.real_of.get(ancestor)?)));
+            let real: &[u8] = match deepest_link {
+                Some((link_len, real_of_link)) => {
+                    let Some(len) =
+                        Self::join_below(&mut real_buf[..], real_of_link, &path[link_len..])
+                    else {
+                        return;
+                    };
+                    each(&real_buf[..len]);
+                    &real_buf[..len]
+                }
+                None => path,
+            };
 
             for ancestor in Self::ancestors(real) {
                 let Some(links) = self.links_of.get(ancestor) else {
@@ -980,20 +987,18 @@ pub mod fs {
             })
         }
 
-        /// Writes `dir` followed by `below`, the rest of a path from a directory boundary on.
+        /// Writes `dir`, one separator and `below`: the rest of a path after a directory, which can be empty.
         fn join_below(buf: &mut [u8], dir: &[u8], below: &[u8]) -> Option<usize> {
-            let below = match dir.last() {
-                Some(&last) if bun_paths::is_sep_any(last) => {
-                    strings::paths::without_leading_path_separator(below)
-                }
-                _ => below,
-            };
-            let len = dir.len() + below.len();
+            let below = strings::paths::without_leading_path_separator(below);
+            let dir_ends_in_sep = dir.last().is_some_and(|&last| bun_paths::is_sep_any(last));
+            let sep_len = usize::from(!below.is_empty() && !dir_ends_in_sep);
+            let len = dir.len() + sep_len + below.len();
             if len > buf.len() {
                 return None;
             }
             buf[..dir.len()].copy_from_slice(dir);
-            buf[dir.len()..len].copy_from_slice(below);
+            buf[dir.len()..dir.len() + sep_len].fill(bun_paths::SEP);
+            buf[len - below.len()..len].copy_from_slice(below);
             Some(len)
         }
     }
@@ -1009,9 +1014,7 @@ pub mod fs {
         /// `EntriesMap` (bun_alloc has no BSSMap equivalent).
         pub entries: EntriesMap,
         /// Guarded by `entries_mutex`.
-        pub(crate) dir_links: DirLinks,
-        /// False until a link is recorded: a bust then needs no lock to know there is none.
-        has_dir_links: AtomicBool,
+        dir_links: DirLinks,
         pub(crate) cwd: &'static [u8],
         #[cfg(not(windows))]
         pub(crate) file_limit: usize,
@@ -1029,26 +1032,18 @@ pub mod fs {
                 entries_mutex: Mutex::default(),
                 entries: EntriesMap::new(),
                 dir_links: DirLinks::default(),
-                has_dir_links: AtomicBool::new(false),
                 cwd,
                 #[cfg(not(windows))]
                 file_limit,
             }
         }
 
-        #[inline]
-        pub(crate) fn has_dir_links(&self) -> bool {
-            self.has_dir_links.load(Ordering::Acquire)
-        }
-
         /// Records the directory link `link` to `real`. The caller holds `entries_mutex`.
         pub(crate) fn record_dir_link(&mut self, link: &'static [u8], real: &'static [u8]) {
             debug_assert!(self.entries_mutex.is_held_by_current_thread());
-            if link == real {
-                return;
+            if link != real {
+                self.dir_links.insert(link, real);
             }
-            self.dir_links.insert(link, real);
-            self.has_dir_links.store(true, Ordering::Release);
         }
 
         /// Port of `RealFS.adjustUlimit` — always try to max out how many
@@ -1321,9 +1316,13 @@ pub mod fs {
             Ok(unsafe { &mut *out })
         }
 
-        /// Evicts `file_path` from the directory-entry cache; returns whether
-        /// an entry was removed.
-        pub(crate) fn bust_entries_cache(&mut self, file_path: &[u8]) -> bool {
+        /// Evicts the listing of the directory `path` under `keys`. `each` gets a key and whether a listing went.
+        pub(crate) fn bust_entries_cache(
+            &mut self,
+            path: &[u8],
+            keys: DirKeys,
+            mut each: impl FnMut(&[u8], bool),
+        ) {
             // `entries` is the process-global
             // BSSMap singleton and `remove` mutates it; callers (transpiler /
             // hot-reloader / VM) reach this without `RESOLVER_MUTEX`, so take
@@ -1331,7 +1330,12 @@ pub mod fs {
             // invariant. No caller already holds it (no re-entry from
             // `read_directory`/`dir_info_cached_maybe_log`).
             let _g = self.entries_mutex.lock_guard();
-            self.entries.remove(file_path)
+            let entries = &mut self.entries;
+            let mut evict = |key: &[u8]| each(key, entries.remove(key));
+            match keys {
+                DirKeys::Every => self.dir_links.for_each_key_of(path, evict),
+                DirKeys::Walked => evict(path),
+            }
         }
 
         /// lstat + (if symlink) open + fstat +

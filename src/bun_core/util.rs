@@ -2294,7 +2294,7 @@ impl StackCheck {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Bumped each rebuild/rescan to invalidate stale cache entries.
-pub type Generation = u16;
+pub type Generation = u32;
 
 // ── Ordinal ───────────────────────────────────────────────────────────────
 // ABI-equivalent of WTF::OrdinalNumber:

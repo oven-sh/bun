@@ -2749,30 +2749,31 @@ pub mod bv2_impl {
 
             let mut had_busted_dir_cache = false;
             let resolve_result = loop {
+                let lookup = |resolver: &mut _resolver::Resolver<'_>| {
+                    resolver.resolve(source_dir, &import_record.specifier, import_record.kind)
+                };
                 // SAFETY: see `transpiler` note above.
-                match unsafe { &mut *transpiler }.resolver.resolve(
-                    source_dir,
-                    &import_record.specifier,
-                    import_record.kind,
-                ) {
+                let resolver = unsafe { &mut (*transpiler).resolver };
+                match if had_busted_dir_cache {
+                    resolver.recheck_misses(lookup)
+                } else {
+                    lookup(resolver)
+                } {
                     Ok(r) => break r,
                     Err(err) => {
                         // Only perform directory busting when hot-reloading is enabled
                         if err == _resolver::Error::ModuleNotFound {
                             if let Some(dev) = &self.dev_server {
                                 if !had_busted_dir_cache {
-                                    // Only re-query if we previously had something cached.
                                     // SAFETY: see `transpiler` note above.
-                                    if unsafe { &mut *transpiler }
+                                    unsafe { &mut *transpiler }
                                         .resolver
                                         .bust_dir_cache_from_specifier(
                                             &import_record.source_file,
                                             &import_record.specifier,
-                                        )
-                                    {
-                                        had_busted_dir_cache = true;
-                                        continue;
-                                    }
+                                        );
+                                    had_busted_dir_cache = true;
+                                    continue;
                                 }
 
                                 // Tell Bake's Dev Server to wait for the file to be imported.
@@ -6882,11 +6883,18 @@ pub mod bv2_impl {
 
                 let mut had_busted_dir_cache = false;
                 let resolve_result: _resolver::Result<'a> = 'inner: loop {
-                    match transpiler.resolver.resolve_with_framework(
-                        source_dir,
-                        import_record.path.text,
-                        import_record.kind,
-                    ) {
+                    let lookup = |resolver: &mut _resolver::Resolver<'_>| {
+                        resolver.resolve_with_framework(
+                            source_dir,
+                            import_record.path.text,
+                            import_record.kind,
+                        )
+                    };
+                    match if had_busted_dir_cache {
+                        transpiler.resolver.recheck_misses(lookup)
+                    } else {
+                        lookup(&mut transpiler.resolver)
+                    } {
                         Ok(r) => break r,
                         Err(err) => {
                             // borrowck — `log_for_resolution_failures` returns
@@ -6913,14 +6921,12 @@ pub mod bv2_impl {
                                             bstr::BStr::new(&source.path.text),
                                             bstr::BStr::new(&import_record.path.text)
                                         );
-                                        // Only re-query if we previously had something cached.
-                                        if transpiler.resolver.bust_dir_cache_from_specifier(
+                                        transpiler.resolver.bust_dir_cache_from_specifier(
                                             source.path.text,
                                             import_record.path.text,
-                                        ) {
-                                            had_busted_dir_cache = true;
-                                            continue 'inner;
-                                        }
+                                        );
+                                        had_busted_dir_cache = true;
+                                        continue 'inner;
                                     }
                                     if let Some(dev) = self.dev_server {
                                         // Tell DevServer about the resolution failure.

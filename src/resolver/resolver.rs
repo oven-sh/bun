@@ -490,6 +490,8 @@ pub struct Resolver<'a> {
 
     pub caches: CacheSet,
     pub generation: Generation,
+    /// Set while `recheck_misses` runs: a directory cached as not found is opened again.
+    rechecks_misses: bool,
 
     /// Auto-install backend. `bun_install::PackageManager` implements
     /// [`AutoInstaller`]; the resolver only sees the trait object so it stays
@@ -628,6 +630,7 @@ impl<'a> Resolver<'a> {
             watcher: from.watcher,
             caches: CacheSet::init(),
             generation: from.generation,
+            rechecks_misses: false,
             package_manager: from.package_manager,
             on_wake_package_manager: from.on_wake_package_manager,
             env_loader: from.env_loader,
@@ -963,6 +966,7 @@ impl<'a> Resolver<'a> {
             elapsed: 0,
             watcher: None,
             generation: 0,
+            rechecks_misses: false,
             package_manager: None,
             on_wake_package_manager: Default::default(),
             env_loader: None,
@@ -2475,49 +2479,49 @@ impl<'a> Resolver<'a> {
 
     /// Bust the directory cache for the given path, which may end in a separator.
     pub fn bust_dir_cache(&mut self, path: &[u8]) -> bool {
-        let path = strings::without_trailing_slash_windows_path(path);
-        Self::assert_valid_cache_key(path);
-        if self.fs_ref().fs.has_dir_links() {
-            return self.bust_every_key_of_dir(path);
-        }
-        let first_bust = self.fs_mut().fs.bust_entries_cache(path);
-        let second_bust = self.dir_cache_mut().remove(path);
-        bun_core::scoped_log!(
-            ResolverDev,
-            "Bust {} = {}, {}",
-            bstr::BStr::new(path),
-            first_bust,
-            second_bust
-        );
-        first_bust || second_bust
+        self.bust_dir_cache_keys(path, Fs::DirKeys::Every)
     }
 
-    /// `bust_dir_cache` for every path of the directory: the watcher knows only the real one.
-    #[cold]
-    fn bust_every_key_of_dir(&mut self, path: &[u8]) -> bool {
+    /// `bust_dir_cache` for the one cache key `path`: what a retry after a miss drops.
+    pub fn bust_dir_cache_key(&mut self, path: &[u8]) -> bool {
+        self.bust_dir_cache_keys(path, Fs::DirKeys::Walked)
+    }
+
+    /// Runs `lookup` with each cached "not found" that it reads checked on disk: the retry after a miss.
+    pub fn recheck_misses<T>(&mut self, lookup: impl FnOnce(&mut Self) -> T) -> T {
+        let generation = core::mem::replace(&mut self.generation, Fs::next_generation());
+        let rechecked = core::mem::replace(&mut self.rechecks_misses, true);
+        let result = lookup(self);
+        self.rechecks_misses = rechecked;
+        self.generation = generation;
+        result
+    }
+
+    /// Drops the "not found" that is cached for the directory `key`, so that the walk opens it again.
+    fn forget_dir_not_found(&mut self, key: &[u8]) -> crate::CrateResult<allocators::Result> {
+        self.dir_cache_mut().remove(key);
+        Ok(self.dir_cache_mut().get_or_put(key)?)
+    }
+
+    fn bust_dir_cache_keys(&mut self, path: &[u8], keys: Fs::DirKeys) -> bool {
+        let path = strings::without_trailing_slash_windows_path(path);
+        Self::assert_valid_cache_key(path);
         let dir_cache = self.dir_cache();
-        let Fs::file_system::RealFS {
-            entries_mutex,
-            entries,
-            dir_links,
-            ..
-        } = &mut self.fs_mut().fs;
-        // Called on the watcher thread with no resolver mutex, so it must not read a `DirInfo`.
-        let _entries_lock = entries_mutex.lock_guard();
         let mut any_bust = false;
-        dir_links.for_each_key_of(path, |key| {
-            let first_bust = entries.remove(key);
-            // SAFETY: `dir_cache` is the process-lifetime `DirInfo` map, which locks itself.
-            let second_bust = unsafe { &mut *dir_cache }.remove(key);
-            bun_core::scoped_log!(
-                ResolverDev,
-                "Bust {} = {}, {}",
-                bstr::BStr::new(key),
-                first_bust,
-                second_bust
-            );
-            any_bust |= first_bust || second_bust;
-        });
+        self.fs_mut()
+            .fs
+            .bust_entries_cache(path, keys, |key, first_bust| {
+                // SAFETY: `dir_cache` is the process-lifetime `DirInfo` map, which locks itself.
+                let second_bust = unsafe { &mut *dir_cache }.remove(key);
+                bun_core::scoped_log!(
+                    ResolverDev,
+                    "Bust {} = {}, {}",
+                    bstr::BStr::new(key),
+                    first_bust,
+                    second_bust
+                );
+                any_bust |= first_bust || second_bust;
+            });
         any_bust
     }
 
@@ -2557,8 +2561,8 @@ impl<'a> Resolver<'a> {
         let path = strings::without_trailing_slash_windows_path(path);
         let dir = bun_paths::dirname_platform(path, bun_paths::Platform::AUTO);
 
-        let a = self.bust_dir_cache(dir);
-        let b = self.bust_dir_cache(path);
+        let a = self.bust_dir_cache_key(dir);
+        let b = self.bust_dir_cache_key(path);
         a || b
     }
 
@@ -4304,14 +4308,18 @@ impl<'a> Resolver<'a> {
 
         let path_without_trailing_slash = strings::without_trailing_slash_windows_path(input_path);
         Self::assert_valid_cache_key(path_without_trailing_slash);
-        let top_result = self
+        let mut top_result = self
             .dir_cache_mut()
             .get_or_put(path_without_trailing_slash)?;
         if top_result.status != allocators::ItemStatus::Unknown {
-            return Ok(self
+            let cached = self
                 .dir_cache_mut()
                 .at_index(top_result.index)
-                .map(DirInfoRef::from_slot));
+                .map(DirInfoRef::from_slot);
+            if cached.is_some() || !self.rechecks_misses {
+                return Ok(cached);
+            }
+            top_result = self.forget_dir_not_found(path_without_trailing_slash)?;
         }
 
         self.dir_info_cached_miss(enable_logging, input_path, top_result)
@@ -4386,7 +4394,10 @@ impl<'a> Resolver<'a> {
 
         while top.len() > root_path.len() {
             debug_assert!(top.as_ptr() == root_path.as_ptr());
-            let result = self.dir_cache_mut().get_or_put(top)?;
+            let mut result = self.dir_cache_mut().get_or_put(top)?;
+            if result.status == allocators::ItemStatus::NotFound && self.rechecks_misses {
+                result = self.forget_dir_not_found(top)?;
+            }
 
             if result.status != allocators::ItemStatus::Unknown {
                 top_parent = result;

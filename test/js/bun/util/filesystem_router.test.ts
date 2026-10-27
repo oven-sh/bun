@@ -1,6 +1,6 @@
 import { FileSystemRouter } from "bun";
 import { heapStats } from "bun:jsc";
-import { expect, it } from "bun:test";
+import { describe, expect, it } from "bun:test";
 import fs, { mkdirSync, rmSync } from "fs";
 import { bunEnv, bunExe, isASAN, isMacOS, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
 import path, { dirname } from "path";
@@ -489,21 +489,77 @@ it("reload() works with new dirs/files", () => {
   expect(router.match("/test/test2")!.name).toBe("/test/test2");
 });
 
-it("reload() reads a directory behind a link again under its own path too", () => {
-  const { dir } = make(["pages/index.tsx", "shared/c.js"]);
-  const root = fs.realpathSync(dir);
-  // A junction on Windows, where a symlink to a directory needs a privilege.
-  fs.symlinkSync(path.join(root, "shared"), path.join(root, "pages", "linked"), "junction");
+// The resolver caches a directory once for each path that it walked to it: its real path, and the path through each
+// link. reload() names the directories of the router by the paths the router has, and every other path of those
+// directories has to be read again too.
+describe("reload() reads a directory again under each path that leads to it", () => {
+  /** packages/lib with c.js and sub/c.js. It is also pages/linked and node_modules/lib, through links made first. */
+  function linkedLib() {
+    const { dir } = make(["pages/index.tsx", "packages/lib/a.js", "packages/lib/c.js", "packages/lib/sub/c.js"]);
+    const root = fs.realpathSync(dir);
+    const lib = path.join(root, "packages", "lib");
+    fs.writeFileSync(path.join(lib, "package.json"), JSON.stringify({ name: "lib", main: "./a.js" }));
+    fs.mkdirSync(path.join(root, "node_modules"));
+    // A junction on Windows, where a symlink to a directory needs a privilege.
+    for (const link of ["pages/linked", "node_modules/lib"]) fs.symlinkSync(lib, path.join(root, link), "junction");
+    /** The file of packages/lib that each specifier names. */
+    const resolve = (...specifiers: string[]) =>
+      specifiers.map(specifier => path.relative(lib, Bun.resolveSync(specifier, root)).replaceAll("\\", "/"));
+    // A stale listing still has c.js and lacks c.tsx, which is first in the extension order.
+    const rename = (dir: string) => fs.renameSync(path.join(lib, dir, "c.js"), path.join(lib, dir, "c.tsx"));
+    return { root, lib, resolve, rename };
+  }
+  const routerOf = (dir: string) => new Bun.FileSystemRouter({ dir, style: "nextjs" });
 
-  const router = new Bun.FileSystemRouter({ dir: path.join(root, "pages"), style: "nextjs" });
-  expect(Object.keys(router.routes).sort()).toEqual(["/", "/linked/c"]);
-  // The resolver caches the directory once for the link, which the router walks, and once for its own path.
-  expect(Bun.resolveSync("./shared/c", root)).toBe(path.join(root, "shared", "c.js"));
+  it.each([
+    { has: "the real path", of: "the directory", routes: "packages/lib", changed: "." },
+    { has: "the real path", of: "a directory below it", routes: "packages/lib", changed: "sub" },
+    { has: "a link", of: "the directory", routes: "pages", changed: "." },
+    { has: "a link", of: "a directory below it", routes: "pages", changed: "sub" },
+  ])("when the router has $has of $of", ({ routes, changed }) => {
+    const { root, resolve, rename } = linkedLib();
+    const router = routerOf(path.join(root, routes));
+    const file = changed === "." ? "c" : changed + "/c";
+    const paths = [`./packages/lib/${file}`, `./pages/linked/${file}`, `lib/${file}`];
+    expect(resolve(...paths)).toEqual([file + ".js", file + ".js", file + ".js"]);
+    rename(changed);
+    router.reload();
+    expect(resolve(...paths)).toEqual([file + ".tsx", file + ".tsx", file + ".tsx"]);
+  });
 
-  fs.renameSync(path.join(root, "shared", "c.js"), path.join(root, "shared", "c.tsx"));
-  router.reload();
-  expect(router.match("/linked/c")!.filePath).toEndWith("c.tsx");
-  expect(Bun.resolveSync("./shared/c", root)).toBe(path.join(root, "shared", "c.tsx"));
+  it("for the package.json that a link leads to", () => {
+    const { lib, resolve } = linkedLib();
+    const router = routerOf(lib);
+    expect(resolve("lib")).toEqual(["a.js"]);
+    fs.writeFileSync(path.join(lib, "package.json"), JSON.stringify({ name: "lib", main: "./c.js" }));
+    router.reload();
+    expect(resolve("lib")).toEqual(["c.js"]);
+  });
+
+  it("through a link to the root of the file system", () => {
+    const { root, lib, resolve, rename } = linkedLib();
+    const fileSystemRoot = path.parse(root).root;
+    fs.symlinkSync(fileSystemRoot, path.join(root, "rootlink"), "junction");
+    const throughRootLink = "./rootlink/" + path.relative(fileSystemRoot, lib).replaceAll("\\", "/") + "/c";
+    const router = routerOf(lib);
+    expect(resolve(throughRootLink)).toEqual(["c.js"]);
+    rename(".");
+    router.reload();
+    expect(resolve(throughRootLink)).toEqual(["c.tsx"]);
+  });
+
+  it("with a link cycle in the router", () => {
+    const { root, resolve, rename } = linkedLib();
+    // pages/up/pages/up/... ends where the system stops following links.
+    fs.symlinkSync(root, path.join(root, "pages", "up"), "junction");
+    const router = routerOf(path.join(root, "pages"));
+    expect(router.match("/linked/c")!.filePath).toEndWith("c.js");
+    expect(resolve("./packages/lib/c", "lib/c")).toEqual(["c.js", "c.js"]);
+    rename(".");
+    router.reload();
+    expect(router.match("/linked/c")!.filePath).toEndWith("c.tsx");
+    expect(resolve("./packages/lib/c", "lib/c")).toEqual(["c.tsx", "c.tsx"]);
+  });
 });
 
 it("the constructor and reload() don't create allocator heaps", () => {

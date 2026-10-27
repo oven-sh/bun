@@ -5288,18 +5288,27 @@ impl VirtualMachine {
         // returning the resolver result; `retry_on_not_found` is consumed on
         // the first miss.
         let mut retry_on_not_found = bun_paths::is_absolute(source_to_use);
+        let mut rechecks_misses = false;
         let result: bun_resolver::Result = loop {
             let import_kind = if is_esm {
                 bun_ast::ImportKind::Stmt
             } else {
                 bun_ast::ImportKind::Require
             };
-            match self.transpiler.resolver.resolve_and_auto_install(
-                source_to_use,
-                normalized_specifier,
-                import_kind,
-                global_cache,
-            ) {
+            let lookup = |resolver: &mut bun_resolver::Resolver<'_>| {
+                resolver.resolve_and_auto_install(
+                    source_to_use,
+                    normalized_specifier,
+                    import_kind,
+                    global_cache,
+                )
+            };
+            let resolver = &mut self.transpiler.resolver;
+            match if rechecks_misses {
+                resolver.recheck_misses(lookup)
+            } else {
+                lookup(resolver)
+            } {
                 ResultUnion::Success(r) => break r,
                 ResultUnion::Failure(e) => return Err(e.into()),
                 ResultUnion::Pending(_) | ResultUnion::NotFound => {
@@ -5348,13 +5357,11 @@ impl VirtualMachine {
                         .as_bytes()
                     };
 
-                    // Only re-query if we previously had something cached.
-                    if self.transpiler.resolver.bust_dir_cache(
+                    // This rebuilds the directory with its config files. The retry checks each cached "not found".
+                    self.transpiler.resolver.bust_dir_cache_key(
                         bun_paths::string_paths::without_trailing_slash_windows_path(buster_name),
-                    ) {
-                        continue;
-                    }
-                    return Err(crate::CrateError::ModuleNotFound);
+                    );
+                    rechecks_misses = true;
                 }
             }
         };

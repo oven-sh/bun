@@ -267,7 +267,7 @@ pub(crate) enum LongLengthType {
 pub(crate) struct SeqStore {
     /// Never grows beyond the capacity it is given by [`Self::reserve`].
     pub(crate) sequences: Vec<SeqDef>,
-    /// `max_nb_lit` bytes, and [`WILDCOPY_OVERLENGTH`] to copy in chunks.
+    /// As long as the longest block so far, and [`WILDCOPY_OVERLENGTH`] to copy in chunks, with room for `max_nb_lit`.
     pub(crate) lit_buffer: Vec<u8>,
     /// How much of `lit_buffer` is literals.
     pub(crate) lit_len: usize,
@@ -366,11 +366,19 @@ impl SeqStore {
         room(&mut self.sequences, max_nb_seq)?;
         room(&mut self.codes, max_nb_seq)?;
         room(&mut self.lit_buffer, max_nb_lit + WILDCOPY_OVERLENGTH)?;
-        self.lit_buffer.resize(max_nb_lit + WILDCOPY_OVERLENGTH, 0);
         self.max_nb_seq = max_nb_seq;
         self.max_nb_lit = max_nb_lit;
         self.reset();
         Ok(())
+    }
+
+    /// `ZSTD_resetSeqStore`, for a block of `block_size` bytes.
+    pub(crate) fn start_block(&mut self, block_size: usize) {
+        let len = block_size.min(self.max_nb_lit) + WILDCOPY_OVERLENGTH;
+        if self.lit_buffer.len() < len {
+            self.lit_buffer.resize(len, 0);
+        }
+        self.reset();
     }
 
     /// `ZSTD_resetSeqStore`

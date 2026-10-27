@@ -1182,7 +1182,7 @@ impl FrameCompressor {
             }
             return Ok(BuildSeqStore::NoCompress);
         }
-        self.seq_store.reset();
+        self.seq_store.start_block(src_size);
         ms.opt.literal_compression_mode = ParamSwitch::Auto;
 
         {

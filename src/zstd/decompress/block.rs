@@ -613,15 +613,16 @@ impl BlockDecoder {
             small_output,
         } = &mut **scratch;
         let dict_tables = dict_entropy.map(|dict| &dict.seq);
-        let tables = if nb_seq <= MAX_ONE_BY_ONE {
+        let is_history_long = total_history_size > (1 << 24);
+        let tables = if nb_seq <= MAX_ONE_BY_ONE && !use_prefetch_decoder && !is_history_long {
             entropy.seq.pick(self.seq_sources, dict_tables)
         } else {
             entropy.seq.gather(&mut self.seq_sources, dict_tables)
         };
 
-        // With matches far back in a long history, it pays to know the sequences ahead of time. Nothing is prefetched
-        // here, but which of two problems in a damaged block is reported depends on the order.
-        if !use_prefetch_decoder && total_history_size > (1 << 24) && nb_seq > 8 {
+        // With matches far back in a long history, it pays to know the sequences ahead of time. Which of two problems in
+        // a damaged block is reported depends on that too.
+        if !use_prefetch_decoder && is_history_long && nb_seq > 8 {
             const MIN_SHARE: u32 = 7;
             use_prefetch_decoder = long_offset_share(tables.of) >= MIN_SHARE;
         }
@@ -1623,9 +1624,10 @@ impl<'a> Executor<'_, 'a> {
         let mut remaining = nb_seq;
         // Long copies go on while the next sequences are decoded, if that is what comes next. And a batch of a few
         // sequences is not worth it.
-        if (seq_state.tables.matches_are_long() || nb_seq <= MAX_ONE_BY_ONE) && !self.split {
+        if (seq_state.tables.matches_are_long() || nb_seq <= MAX_ONE_BY_ONE) && !LONG && !self.split
+        {
             let mut exec = self.fork();
-            while remaining > ahead.len() {
+            while remaining > 0 {
                 let sequence = seq_state.decode_sequence(remaining == 1);
                 remaining -= 1;
                 exec.exec_sequence::<false>(sequence)?;
@@ -1685,9 +1687,15 @@ impl<'a> Executor<'_, 'a> {
                 }
             }
         }
+        let history = &mut self.history();
         for sequence in &mut *ahead {
             *sequence = seq_state.decode_sequence(remaining == 1);
             remaining -= 1;
+            history.prefetch(
+                sequence.lit_length,
+                sequence.match_length - MINMATCH,
+                (sequence.offset as u32).saturating_add(3),
+            );
         }
         let is_at_end = match left_at {
             Some(_) => PaddedStart::is_reached(&seq_state.bit_d),

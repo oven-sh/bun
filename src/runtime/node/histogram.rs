@@ -874,7 +874,7 @@ impl bun_jsc::JobContext for QrdeJob {
         put("corrections", JSValue::js_number(result.corrections as f64));
         put(
             "dequantize",
-            bun_jsc::StringJsc::to_js(&bun_core::String::static_(dequantize), global)?,
+            bun_jsc::bun_string_jsc::create_utf8_for_js(global, dequantize.as_bytes())?,
         );
         promise.resolve(global, value)
     }

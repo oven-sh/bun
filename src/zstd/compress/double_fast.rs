@@ -1,7 +1,7 @@
 //! `zstd_double_fast.c`: the `dfast` strategy, which looks up a table of long hashes and a table of short ones.
 
 use super::fast::{
-    DictBlock, ExtDictBlock, MatchSink, NoDictBlock, Segments, TaggedTable, ThirdPositions,
+    DictBlock, ExtDictBlock, Found, MatchSink, NoDictBlock, Segments, TaggedTable, ThirdPositions,
     put_tagged, put_tagged_in_between, restore_rep,
 };
 use super::internal::{
@@ -352,33 +352,30 @@ impl Finder {
                 hashed_swap(hash_long, long.hash(bytes0), curr).wrapping_sub(base_index);
             let match_index_s = hashed_swap(hash_small, small.hash(bytes0), curr);
 
-            if window.read32_before(ip + 1, offset_1) == Some((bytes0 >> 8) as u32) {
-                ip += 1;
-                let rep_place = window.place_of(ip).wrapping_sub(offset_1);
-                let end = ip + 4 + window.count(ip + 4, rep_place + 4);
-                sink.store::<16>(ip, end, REPCODE1_TO_OFFBASE);
+            if let Some(end) = window.repeat_end(ip + 1, offset_1, (bytes0 >> 8) as u32) {
+                sink.store::<16>(ip + 1, end, REPCODE1_TO_OFFBASE);
                 ip = end;
             } else {
-                // The place of the match, and how much of it is known. `ip` is moved to where it is for.
-                let (place, known) = 'found: {
+                // `ip` is moved to where the match is for.
+                let found = 'found: {
                     if near.has::<{ u64::MAX }>(match_long, bytes0) {
-                        break 'found (window.place_of(match_long), 8);
+                        break 'found window.found_near(ip, sink.anchor, match_long, 8);
                     }
                     if let Some(place) = dict_tables.long.get::<8>(bytes0)
                         && window.older.read64(place) == Some(bytes0)
                     {
-                        break 'found (place, 8);
+                        break 'found window.found_older(ip, sink.anchor, place, 8);
                     }
 
                     // The dictionary is only looked up if there is no candidate in the prefix.
                     let short = if match_index_s > base_index {
-                        Some(window.place_of(match_index_s - base_index))
+                        let pos = match_index_s - base_index;
+                        (near.read32(pos) == Some(bytes0 as u32)).then(|| window.place_of(pos))
                     } else {
-                        dict_tables.short.get::<MLS>(bytes0)
+                        (dict_tables.short.get::<MLS>(bytes0))
+                            .filter(|&place| window.older.read32(place) == Some(bytes0 as u32))
                     };
-                    let Some(place_short) =
-                        short.filter(|&place| window.read32(place) == Some(bytes0 as u32))
-                    else {
+                    let Some(place_short) = short else {
                         ip += ((ip - sink.anchor) >> K_SEARCH_STRENGTH) + 1;
                         continue 'search;
                     };
@@ -389,22 +386,24 @@ impl Finder {
                         .wrapping_sub(base_index);
                     if near.has::<{ u64::MAX }>(match_long1, bytes1) {
                         ip += 1;
-                        break 'found (window.place_of(match_long1), 8);
+                        break 'found window.found_near(ip, sink.anchor, match_long1, 8);
                     }
                     if let Some(place) = dict_tables.long.get::<8>(bytes1)
                         && window.older.read64(place) == Some(bytes1)
                     {
                         ip += 1;
-                        break 'found (place, 8);
+                        break 'found window.found_older(ip, sink.anchor, place, 8);
                     }
-                    (place_short, 4)
+                    Found {
+                        end: ip + 4 + window.count(ip + 4, place_short + 4),
+                        back: window.count_backwards(ip, sink.anchor, place_short),
+                        offset: window.place_of(ip) - place_short,
+                    }
                 };
-                let end = ip + known + window.count(ip + known, place + known);
-                let back = window.count_backwards(ip, sink.anchor, place);
                 offset_2 = offset_1;
-                offset_1 = window.place_of(ip) - place;
-                sink.store::<16>(ip - back, end, offset_to_offbase(offset_1));
-                ip = end;
+                offset_1 = found.offset;
+                sink.store::<16>(ip - found.back, found.end, offset_to_offbase(offset_1));
+                ip = found.end;
             }
 
             // `ip` is not past the last position that can be looked at.
@@ -428,10 +427,8 @@ impl Finder {
             );
 
             while let Some(bytes) = near.read64(ip)
-                && window.read32_before(ip, offset_2) == Some(bytes as u32)
+                && let Some(end) = window.repeat_end(ip, offset_2, bytes as u32)
             {
-                let rep_place = window.place_of(ip).wrapping_sub(offset_2);
-                let end = ip + 4 + window.count(ip + 4, rep_place + 4);
                 core::mem::swap(&mut offset_1, &mut offset_2);
                 let index = base_index.wrapping_add(ip);
                 hashed_put(hash_small, small.hash(bytes), index);

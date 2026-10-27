@@ -1,5 +1,7 @@
 //! `zstd_fast.c`: the `fast` strategy, which looks up one hash table.
 
+use core::sync::atomic::{Ordering, compiler_fence};
+
 use super::internal::{
     BlockSrc, CompressionParameters, DictTableLoadMethod, HASH_READ_SIZE, Hasher,
     K_SEARCH_STRENGTH, MatchState, Near, Prefix, REPCODE1_TO_OFFBASE, SeqSink, SeqStore,
@@ -447,13 +449,6 @@ impl<'a> Segments<'a> {
         spot.segment.read8(spot.pos)
     }
 
-    /// The 4 bytes at `place`, if they are in one segment.
-    #[inline(always)]
-    pub(super) fn read32(self, place: u32) -> Option<u32> {
-        let spot = self.spot(place);
-        spot.segment.read32(spot.pos)
-    }
-
     /// Whether the bits of `MASK` are the same in `bytes` and in the 8 bytes at `place`, which are in one segment, as they
     /// are wherever a table leads to.
     #[inline(always)]
@@ -484,6 +479,61 @@ impl<'a> Segments<'a> {
         len + self.near.count(ip + len, 0)
     }
 
+    /// [`Self::count`] for a place of the older segment.
+    #[inline(always)]
+    fn count_in_older(self, ip: u32, place: u32) -> u32 {
+        let len = self.near.count_in(ip, self.older, place);
+        if place + len != self.older.len() {
+            return len;
+        }
+        len + self.near.count(ip + len, 0)
+    }
+
+    /// Where the match of the position `ip` with what is `offset` before it ends, if there is one: `bytes` are the 4
+    /// bytes at `ip`, and those before have to be in one segment.
+    #[inline(always)]
+    pub(super) fn repeat_end(self, ip: u32, offset: u32, bytes: u32) -> Option<u32> {
+        let at = ip.wrapping_sub(offset);
+        let len = match self.near.read32(at) {
+            Some(there) if there == bytes => self.near.count(ip + 4, at + 4),
+            Some(_) => return None,
+            None => {
+                let place = self.place_of(at);
+                if self.older.read32(place) != Some(bytes) {
+                    return None;
+                }
+                self.count_in_older(ip + 4, place + 4)
+            }
+        };
+        Some(ip + 4 + len)
+    }
+
+    /// The match at the position `ip` with what is at `pos` of the current segment, of which `known` bytes are known.
+    #[inline(always)]
+    pub(super) fn found_near(self, ip: u32, anchor: u32, pos: u32, known: u32) -> Found {
+        Found {
+            end: ip + known + self.near.count(ip + known, pos + known),
+            back: self.near.count_backwards(ip, anchor, pos, 0),
+            offset: ip - pos,
+        }
+    }
+
+    /// The same with what is at `place`, which is in the older segment.
+    #[inline(always)]
+    pub(super) fn found_older(self, ip: u32, anchor: u32, place: u32, known: u32) -> Found {
+        let len = known + self.count_in_older(ip + known, place + known);
+        let back = if ip == anchor {
+            0
+        } else {
+            (self.near).count_backwards_in(ip, self.older, place, (ip - anchor).min(place))
+        };
+        Found {
+            end: ip + len,
+            back,
+            offset: self.place_of(ip) - place,
+        }
+    }
+
     /// [`Self::count_backwards`], with a branch on whether `ip` is `anchor`: whoever got there without a step is likely
     /// to do so again.
     #[inline(always)]
@@ -500,6 +550,14 @@ impl<'a> Segments<'a> {
         let spot = self.spot(place);
         (self.near).count_backwards_in(ip, spot.segment, spot.pos, (ip - anchor).min(spot.pos))
     }
+}
+
+/// A match at a position.
+pub(super) struct Found {
+    pub(super) end: u32,
+    /// How many bytes before the position belong to it as well.
+    pub(super) back: u32,
+    pub(super) offset: u32,
 }
 
 /// What `fast` looks for matches with, when there is no dictionary and the window is one segment.
@@ -893,9 +951,13 @@ impl<'a> TaggedTable<'a> {
     pub(super) fn get<const MLS: u32>(self, bytes: u64) -> Option<u32> {
         let hash_and_tag = self.hasher.with_mls(MLS).hash(bytes);
         let index_and_tag = hashed_get(self.table, hash_and_tag >> ZSTD_SHORT_CACHE_TAG_BITS);
+        if !compare_packed_tags(index_and_tag as usize, hash_and_tag) {
+            return None;
+        }
+        // Costs nothing, and keeps the compiler from asking both questions before it goes on, as it mostly does here.
+        compiler_fence(Ordering::SeqCst);
         let index = index_and_tag >> ZSTD_SHORT_CACHE_TAG_BITS;
-        (compare_packed_tags(index_and_tag as usize, hash_and_tag) && index > self.start_index)
-            .then(|| index - self.start_index)
+        (index > self.start_index).then(|| index - self.start_index)
     }
 }
 
@@ -933,19 +995,16 @@ impl Finder {
             let mut next_step = ip0 + K_STEP_INCR;
             let mut curr;
 
-            // One turn per position. Ends with the place of a match, or with `None` once a repeat is stored.
-            let place = loop {
+            // One turn per position. Ends with a match, or with `None` once a repeat is stored.
+            let found = loop {
                 let Some(bytes1) = near.read64(ip1) else {
                     break 'block;
                 };
                 curr = base_index.wrapping_add(ip0);
                 let match_index = hashed_swap(hash_table, hasher.hash(bytes0), curr);
 
-                if window.read32_before(ip0 + 1, rep_offset1) == Some((bytes0 >> 8) as u32) {
-                    ip0 += 1;
-                    let rep_place = window.place_of(ip0).wrapping_sub(rep_offset1);
-                    let end = ip0 + 4 + window.count(ip0 + 4, rep_place + 4);
-                    sink.store::<32>(ip0, end, REPCODE1_TO_OFFBASE);
+                if let Some(end) = window.repeat_end(ip0 + 1, rep_offset1, (bytes0 >> 8) as u32) {
+                    sink.store::<32>(ip0 + 1, end, REPCODE1_TO_OFFBASE);
                     ip0 = end;
                     break None;
                 }
@@ -955,11 +1014,11 @@ impl Finder {
                     && window.older.read32(place) == Some(bytes0 as u32)
                     && match_index <= base_index
                 {
-                    break Some(place);
+                    break Some(window.found_older(ip0, sink.anchor, place, 4));
                 }
                 let match_pos = match_index.wrapping_sub(base_index);
                 if near.has::<0xFFFF_FFFF>(match_pos, bytes0) {
-                    break Some(window.place_of(match_pos));
+                    break Some(window.found_near(ip0, sink.anchor, match_pos, 4));
                 }
 
                 if ip1 >= next_step {
@@ -972,13 +1031,11 @@ impl Finder {
                 bytes0 = bytes1;
             };
 
-            if let Some(place) = place {
-                let end = ip0 + 4 + window.count(ip0 + 4, place + 4);
-                let back = window.count_backwards_if_any(ip0, sink.anchor, place);
+            if let Some(found) = found {
                 rep_offset2 = rep_offset1;
-                rep_offset1 = window.place_of(ip0) - place;
-                sink.store::<32>(ip0 - back, end, offset_to_offbase(rep_offset1));
-                ip0 = end;
+                rep_offset1 = found.offset;
+                sink.store::<32>(ip0 - found.back, found.end, offset_to_offbase(rep_offset1));
+                ip0 = found.end;
             }
 
             // `ip0` is not past the last position that can be looked at.
@@ -995,9 +1052,7 @@ impl Finder {
                 base_index.wrapping_add(ip0 - 2),
             );
 
-            while window.read32_before(ip0, rep_offset2) == Some(bytes0 as u32) {
-                let rep_place = window.place_of(ip0).wrapping_sub(rep_offset2);
-                let end = ip0 + 4 + window.count(ip0 + 4, rep_place + 4);
+            while let Some(end) = window.repeat_end(ip0, rep_offset2, bytes0 as u32) {
                 core::mem::swap(&mut rep_offset1, &mut rep_offset2);
                 hashed_put(
                     hash_table,

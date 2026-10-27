@@ -290,7 +290,7 @@ fn hint<'a>(range: Span, file: &'a File<'a>) -> Option<String> {
         StmtTag::Break => ("break", ""),
         StmtTag::Continue => ("continue", ""),
         StmtTag::While | StmtTag::DoWhile | StmtTag::For => {
-            return Some(format!("The loop on line {line} runs forever, or leaves by return or throw."));
+            return Some(format!("The loop on line {line} only exits by return or throw."));
         }
         StmtTag::If => ("", "if"),
         StmtTag::Switch => ("", "switch"),

@@ -6,7 +6,7 @@ use bun_core::FeatureFlags;
 use bun_core::MutableString;
 use bun_threading::IntrusiveWorkTask as _;
 use bun_threading::thread_pool::{self, Batch, Task};
-use bun_url::{PercentEncoding, URL};
+use bun_url::{OwnedURL, PercentEncoding, URL};
 
 use bun_dotenv::Loader as DotEnvLoader;
 use bun_picohttp as picohttp;
@@ -81,22 +81,6 @@ const fn noop_callback() -> HTTPClientResultCallback {
         ctx: core::ptr::null_mut(),
         function: noop_result_callback,
         release_at_shutdown: None,
-    }
-}
-
-/// Free a `URL.href` slice that the caller marked as owned.
-///
-/// # Safety
-/// `href` must have been allocated via the global allocator as a `Box<[u8]>`
-/// and ownership ceded to this module via `is_url_owned = true`.
-#[inline]
-unsafe fn free_owned_href(href: &'static [u8]) {
-    if !href.is_empty() {
-        // SAFETY: caller guarantees `href` is the sole reference to a
-        // global-allocator `Box<[u8]>` allocation. The fat `*mut [u8]` is
-        // obtained directly from the borrowed slice — no need to round-trip
-        // through `(ptr, len)` + `from_raw_parts`.
-        unsafe { bun_core::heap::destroy(core::ptr::from_ref(href).cast_mut()) };
     }
 }
 
@@ -333,8 +317,9 @@ struct Preconnect {
     // `Option` so we can write the field after the heap address is fixed
     // (late-init); `None` is never observed after `preconnect()` populates it.
     async_http: Option<AsyncHTTP<'static>>,
-    url: URL<'static>,
-    is_url_owned: bool,
+    // Declared after `async_http`, which views these bytes: fields drop in
+    // declaration order.
+    url: OwnedURL,
 }
 
 impl Preconnect {
@@ -347,25 +332,15 @@ impl Preconnect {
                 .as_mut()
                 .expect("Preconnect.async_http set in preconnect()")
                 .clear_data();
-            if (*this).is_url_owned {
-                // SAFETY: `is_url_owned` is the caller's promise that `url.href`
-                // is a global-allocator `Box<[u8]>` we now own.
-                free_owned_href((*this).url.href);
-            }
-            // Reclaim and drop the heap allocation (runs Drop on `async_http`
-            // — which in turn drops `HTTPClient`).
+            // Reclaim and drop the heap allocation: `async_http` with its
+            // `HTTPClient` first, then `url`.
             drop(bun_core::heap::take(this));
         }
     }
 }
 
-pub fn preconnect(url: URL<'static>, is_url_owned: bool) {
+pub fn preconnect(url: OwnedURL) {
     if !FeatureFlags::IS_FETCH_PRECONNECT_SUPPORTED {
-        if is_url_owned {
-            // SAFETY: `is_url_owned` is the caller's promise that `url.href` is a
-            // global-allocator `Box<[u8]>` we now own.
-            unsafe { free_owned_href(url.href) };
-        }
         return;
     }
 
@@ -380,14 +355,15 @@ pub fn preconnect(url: URL<'static>, is_url_owned: bool) {
     let this: *mut Preconnect = bun_core::heap::into_raw(Box::new(Preconnect {
         async_http: None,
         url,
-        is_url_owned,
     }));
 
     // SAFETY: `this` is a freshly Box-allocated, uniquely-owned pointer; we
     // in-place write `async_http` before any read and before it can be observed
-    // by another thread.
+    // by another thread. The bytes of the view are owned by `(*this).url`,
+    // which only `on_result` drops, after `async_http`. The HTTP thread does
+    // not read its copy of the view after that callback.
     unsafe {
-        let url = (*this).url.clone();
+        let url = (*this).url.url().erase_lifetime();
         let async_http = (*this).async_http.insert(AsyncHTTP::init(
             Method::GET,
             url,
@@ -872,3 +848,38 @@ impl<'a> AsyncHTTP<'a> {
 // `bun_threading::Channel` requires `T: Copy`, which `HTTPClientResult` is not, so the
 // `HTTPChannel` here boxes the pair and ships the pointer (which IS `Copy`) through
 // a static-buffer channel. The receiver takes ownership of the Box.
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The record that `preconnect()` builds, ended the way the HTTP thread
+    /// ends it. Miri fails this test when the href is freed through a view.
+    #[test]
+    fn preconnect_record_frees_the_href_it_owns() {
+        let href: Box<[u8]> = Box::from(&b"http://example.com:8080/path"[..]);
+        let this: *mut Preconnect = bun_core::heap::into_raw(Box::new(Preconnect {
+            async_http: None,
+            url: OwnedURL::from_href(href),
+        }));
+        // SAFETY: `this` is the record allocated above. `on_result` frees it,
+        // and nothing reads it afterwards.
+        unsafe {
+            let url = (*this).url.url().erase_lifetime();
+            let async_http = (*this).async_http.insert(AsyncHTTP::init(
+                Method::GET,
+                url,
+                headers::EntryList::default(),
+                b"",
+                b"",
+                HTTPClientResultCallback::new::<Preconnect>(this, Preconnect::on_result),
+                FetchRedirect::Manual,
+                Options::default(),
+            ));
+            assert_eq!(async_http.client.url.hostname, b"example.com");
+            assert_eq!(async_http.url.port, b"8080");
+            let callback = async_http.result_callback;
+            callback.run(core::ptr::from_mut(async_http), HTTPClientResult::default());
+        }
+    }
+}

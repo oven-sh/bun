@@ -1240,7 +1240,8 @@ describe("bundler", () => {
           const out = f(arr);
           return <div arr={arr} out={out + twice} />;
         }
-        // \`made()\` and \`new Made()\` are numbers here. What \`new Made()\` is says nothing of what \`Made()\` returns.
+        // Both results are multiplied, so both are numbers to the compiler. What \`new Made()\` is says nothing of what
+        // \`Made()\` returns.
         function OneIsCalledAndOneIsMadeWithNew(props) {
           const arr = [props.x];
           const Made = props.Made;
@@ -1271,9 +1272,9 @@ describe("bundler", () => {
           if (!new.target) return a;
           this.valueOf = () => 1;
         }
-        const made = () => 1;
+        const made = () => [1];
         // Each render gets a \`mutate\` of its own, as from a parent that makes it when it renders.
-        const propsOf = () => ({ x: 1, e: false, Made, made, mutate: a => { a.push("m"); return a.length; } });
+        const propsOf = e => ({ x: 1, e, Made, made, mutate: a => { a.push("m"); return a.length; } });
         const components = [
           OneOfTwoInAConditional,
           AssignedInAnIf,
@@ -1287,9 +1288,10 @@ describe("bundler", () => {
         ];
         for (const component of components) {
           globalThis.rendering = component;
-          // The second render has the memo cache of the first.
-          const render = () => JSON.stringify(Object.values(component(propsOf()).p));
-          console.log(component.name, render(), render());
+          // Each render has the memo cache of the one before. The third picks the other function, which is the one
+          // that only reads.
+          const render = e => JSON.stringify(Object.values(component(propsOf(e)).p));
+          console.log(component.name, render(false), render(false), render(true), render(false));
         }
         const sizeOf = component => globalThis.caches.get(component).length;
         console.log("compiled", globalThis.caches.size);
@@ -1302,15 +1304,15 @@ describe("bundler", () => {
     backend: "cli",
     run: {
       stdout: [
-        'OneOfTwoInAConditional [[1,"m"],2] [[1,"m"],2]',
-        'AssignedInAnIf [[1,"m"],2] [[1,"m"],2]',
-        'ReturnedFromAFunction [[1,"m"],2] [[1,"m"],2]',
-        'ReturnedFromOneOfTwoFunctions [[1,"m"],2] [[1,"m"],2]',
-        'CalledBeforeItIsOneOfTwo [[1,"m"],4] [[1,"m"],4]',
-        'CalledAfterItIsOneOfTwo [[1,"m"],4] [[1,"m"],4]',
-        'OneIsCalledAndOneIsMadeWithNew [[1,"m"],4] [[1,"m"],4]',
-        "OneFunctionOnBothPaths [[1],1] [[1],1]",
-        "OneOfTwoArrowsThatReturnNumbers [1,2] [1,2]",
+        'OneOfTwoInAConditional [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2]',
+        'AssignedInAnIf [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2]',
+        'ReturnedFromAFunction [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2]',
+        'ReturnedFromOneOfTwoFunctions [[1,"m"],2] [[1,"m"],2] [[1],1] [[1,"m"],2]',
+        'CalledBeforeItIsOneOfTwo [[1,"m"],4] [[1,"m"],4] [[1],3] [[1,"m"],4]',
+        'CalledAfterItIsOneOfTwo [[1,"m"],4] [[1,"m"],4] [[1],3] [[1,"m"],4]',
+        'OneIsCalledAndOneIsMadeWithNew [[1,"m"],4] [[1,"m"],4] [[1],4] [[1,"m"],4]',
+        "OneFunctionOnBothPaths [[1],1] [[1],1] [[1],1] [[1],1]",
+        "OneOfTwoArrowsThatReturnNumbers [1,2] [1,2] [1,1] [1,2]",
         "compiled 9",
         "sizes 5 3",
       ].join("\n"),

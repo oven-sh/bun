@@ -25,7 +25,7 @@ extern "C" fn create_argv0(global_object: &JSGlobalObject) -> JSValue {
         .get(0)
         .map(|z| z.as_bytes())
         .unwrap_or(b"bun");
-    EncodedSlice::from_bytes(argv0).to_js(global_object)
+    bun_jsc::HostReturn::or_pending_exception(EncodedSlice::from_bytes(argv0).to_js(global_object))
 }
 
 #[unsafe(export_name = "Bun__Process__getExecPath")]
@@ -34,7 +34,8 @@ extern "C" fn get_exec_path(global_object: &JSGlobalObject) -> JSValue {
         // if for any reason we are unable to get the executable path, we just return argv[0]
         return create_argv0(global_object);
     };
-    EncodedSlice::from_bytes(out.as_bytes()).to_js(global_object)
+    let exec_path = EncodedSlice::from_bytes(out.as_bytes()).to_js(global_object);
+    bun_jsc::HostReturn::or_pending_exception(exec_path)
 }
 
 /// A worker's `argv`/`execArgv` strings live in its parent-thread
@@ -441,10 +442,12 @@ mod _impl {
             if script.is_empty() {
                 return JSValue::UNDEFINED;
             }
-            return EncodedSlice::from_bytes(script).to_js(global_object);
+            let script = EncodedSlice::from_bytes(script).to_js(global_object);
+            return bun_jsc::HostReturn::or_pending_exception(script);
         }
         if let Some(source) = vm.module_loader.eval_source.as_deref() {
-            return EncodedSlice::from_bytes(source.contents()).to_js(global_object);
+            let script = EncodedSlice::from_bytes(source.contents()).to_js(global_object);
+            return bun_jsc::HostReturn::or_pending_exception(script);
         }
         JSValue::UNDEFINED
     }

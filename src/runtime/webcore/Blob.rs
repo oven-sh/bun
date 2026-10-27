@@ -234,7 +234,7 @@ pub(crate) trait BlobExt {
         content_type: JsLocal<'_>,
     ) -> JsResult<JSValue>;
     fn get_mime_type_or_content_type(&self) -> Option<MimeType>;
-    fn get_type(&self, cx: &mut JsScope<'_>) -> JSValue;
+    fn get_type(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue>;
     fn get_name_string(&self) -> Option<&BunString>;
     fn get_name(&self, _: JsWrapper<'_, Blob>, cx: &mut JsScope<'_>) -> JsResult<JSValue>;
     fn set_name(
@@ -1815,7 +1815,7 @@ impl BlobExt for Blob {
         self.store().map(|s| s.mime_type.clone())
     }
 
-    fn get_type(&self, cx: &mut JsScope<'_>) -> JSValue {
+    fn get_type(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         let global_this = cx.global();
         let ct = self.content_type_slice();
         if !ct.is_empty() {
@@ -1824,7 +1824,7 @@ impl BlobExt for Blob {
         if let Some(store) = self.store.get() {
             return EncodedSlice::latin1(&store.mime_type.value).to_js(global_this);
         }
-        JSValue::js_empty_string(global_this)
+        Ok(JSValue::js_empty_string(global_this))
     }
 
     fn get_name_string(&self) -> Option<&BunString> {

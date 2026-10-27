@@ -48,7 +48,6 @@ CPP_DECL size_t JSC__JSObject__getArrayLength(JSC::JSObject* arg0);
 CPP_DECL JSC::EncodedJSValue JSC__JSObject__getIndex(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, uint32_t arg2);
 CPP_DECL JSC::EncodedJSValue EncodedSlice__external(const EncodedSlice* arg0, JSC::JSGlobalObject* arg1, void* arg2, void(* ArgFn3)(void* arg0, void* arg1, size_t arg2));
 CPP_DECL JSC::EncodedJSValue EncodedSlice__toExternalValue(const EncodedSlice* arg0, JSC::JSGlobalObject* arg1);
-CPP_DECL JSC::EncodedJSValue EncodedSlice__toValueGC(const EncodedSlice* arg0, JSC::JSGlobalObject* arg1);
 CPP_DECL WebCore::DOMURL* WebCore__DOMURL__cast_(JSC::EncodedJSValue JSValue0, JSC::VM* arg1);
 CPP_DECL BunString WebCore__DOMURL__fileSystemPath(WebCore::DOMURL* arg0, int* errorCode);
 

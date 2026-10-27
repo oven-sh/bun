@@ -32,7 +32,7 @@ export const Blob = b.class({
     stat: method,
     stream: { ...method, args: { chunkSize: b.any }, passThis: true },
     text: method,
-    type: { getter: b.any, capability: "js" },
+    type: { getter: b.any, ...js },
     unlink,
     write: { ...method, args: { data: b.any, options: b.any } },
     writer: { ...method, args: { options: b.any } },

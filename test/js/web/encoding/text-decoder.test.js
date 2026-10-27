@@ -4,12 +4,14 @@ import {
   bunExe,
   gc as gcTrace,
   isASAN,
+  isLinux,
   normalizeBunSnapshot,
   rss,
   runWithError,
   tempDir,
   withoutAggressiveGC,
 } from "harness";
+import os from "node:os";
 
 const getByteLength = str => {
   // returns the byte length of an utf8 string
@@ -979,3 +981,125 @@ it.each(["utf-16le", "utf-16be"])(
   },
   30_000,
 ); // 3072 decodes + repeated Bun.gc(true) take ~4s under ASAN.
+
+// A decode whose all-ASCII result is longer than a string can be (2^31 - 1
+// characters) returned "" with no error. Each case runs in a child.
+describe("TextDecoder when the result is too long for a string", () => {
+  const decodeInChild = async (script, env = bunEnv) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const results = {};
+        const run = async (label, fn) => {
+          try { results[label] = { length: (await fn()).length }; }
+          catch (e) { results[label] = { name: e.name, code: e.code, message: e.message }; }
+        };
+        ${script}
+        console.log(JSON.stringify(results));
+        `,
+      ],
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { results: JSON.parse(stdout.trim() || JSON.stringify({ stdout, stderr })), exitCode };
+  };
+  const tooLong = {
+    name: "Error",
+    code: "ERR_STRING_TOO_LONG",
+    message: "Cannot create a string longer than 2147483647 characters",
+  };
+  // Every all-ASCII road of decode(), with `bytes` one byte over the limit.
+  const decodeAll = `
+    await run("utf-8", () => new TextDecoder().decode(bytes));
+    await run("utf-8, fatal", () => new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+    await run("latin1", () => new TextDecoder("latin1").decode(bytes));
+    const decoder = new TextDecoder();
+    await run("utf-8, stream", () => decoder.decode(bytes, { stream: true }));
+    // The chunk that failed did not spend the BOM of the stream, and the decoder still works.
+    results["the next chunk"] = decoder.decode(Uint8Array.of(0xef, 0xbb, 0xbf, 0x61));
+    await run("TextDecoderStream(latin1)", async () => {
+      const stream = new TextDecoderStream("latin1");
+      const writer = stream.writable.getWriter();
+      const reader = stream.readable.getReader();
+      // The writer closes after the write, so a stream that drops the chunk ends the read too.
+      const [, read] = await Promise.all([
+        writer.write(bytes).then(() => writer.close()).catch(() => {}),
+        reader.read(),
+      ]);
+      return read.value ?? "";
+    });
+    await run("one byte less", () => new TextDecoder().decode(bytes.subarray(1)));
+  `;
+  const allTooLong = {
+    "utf-8": tooLong,
+    "utf-8, fatal": tooLong,
+    "latin1": tooLong,
+    "utf-8, stream": tooLong,
+    "the next chunk": "a",
+    "TextDecoderStream(latin1)": tooLong,
+  };
+
+  // BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT lowers the limit to 1 MiB, which every machine can reach.
+  it("throws ERR_STRING_TOO_LONG over a lowered limit", async () => {
+    const { results, exitCode } = await decodeInChild(
+      `const bytes = new Uint8Array(${1024 * 1024 + 1}).fill(97);${decodeAll}
+      // Not ASCII, so it is transcoded: "é", ASCII up to one unit over the limit, then the start of a sequence.
+      const notAscii = new Uint8Array(${1024 * 1024 + 4}).fill(97);
+      notAscii.set([0xc3, 0xa9]);
+      notAscii.set([0xe2, 0x82], notAscii.length - 2);
+      const transcoder = new TextDecoder();
+      await run("utf-8, stream, not ASCII", () => transcoder.decode(notAscii, { stream: true }));
+      // The chunk that failed left neither its BOM state nor its last bytes in the decoder.
+      results["the next chunk, not ASCII"] = transcoder.decode(Uint8Array.of(0xef, 0xbb, 0xbf, 0x61));
+      // A chunk that throws gives back the bytes that the chunk before it left: the start of "€" here.
+      const carrying = new TextDecoder();
+      carrying.decode(Uint8Array.of(0xe2, 0x82), { stream: true });
+      const rest = new Uint8Array(${1024 * 1024 + 2}).fill(97);
+      rest[0] = 0xac;
+      await run("utf-8, stream, after the start of a sequence", () => carrying.decode(rest, { stream: true }));
+      results["the sequence, ended later"] = carrying.decode(Uint8Array.of(0xac, 0x61));
+      // And the start of a BOM. The rest of this chunk is ASCII, so it is not transcoded.
+      const split = new TextDecoder();
+      split.decode(Uint8Array.of(0xef, 0xbb), { stream: true });
+      rest[0] = 0xbf;
+      await run("utf-8, stream, after the start of a BOM", () => split.decode(rest, { stream: true }));
+      results["the BOM, ended later"] = split.decode(Uint8Array.of(0xbf, 0x61));`,
+      { ...bunEnv, BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT: String(1024 * 1024) },
+    );
+    expect(results).toEqual({
+      ...allTooLong,
+      "one byte less": { length: 1024 * 1024 },
+      "utf-8, stream, not ASCII": tooLong,
+      "the next chunk, not ASCII": "a",
+      "utf-8, stream, after the start of a sequence": tooLong,
+      "the sequence, ended later": "€a",
+      "utf-8, stream, after the start of a BOM": tooLong,
+      "the BOM, ended later": "a",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // The input is never written, so its pages stay zero, which is ASCII: on
+  // Linux the child stays at about 30 MiB. Elsewhere the 2 GiB can be
+  // committed, so small machines skip (the gate of fs-oom.test.ts).
+  it.skipIf(!isLinux && os.totalmem() < 10 * 1024 ** 3)("throws ERR_STRING_TOO_LONG for 2^31 bytes", async () => {
+    const { results, exitCode } = await decodeInChild(
+      `const bytes = new Uint8Array(2 ** 31);${decodeAll.replace(/^.*one byte less.*$/m, "")}`,
+    );
+    expect(results).toEqual(allTooLong);
+    expect(exitCode).toBe(0);
+  });
+
+  // The string of 2^31 - 1 characters is made, so this one needs the memory.
+  it.skipIf(os.totalmem() < 10 * 1024 ** 3)("decodes 2^31 - 1 bytes", async () => {
+    const { results, exitCode } = await decodeInChild(`
+      await run("utf-8", () => new TextDecoder().decode(new Uint8Array(2 ** 31 - 1)));
+    `);
+    expect(results).toEqual({ "utf-8": { length: 2 ** 31 - 1 } });
+    expect(exitCode).toBe(0);
+  });
+});

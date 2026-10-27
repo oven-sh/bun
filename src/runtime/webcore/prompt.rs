@@ -370,5 +370,5 @@ pub(crate) fn prompt<'a>(
     // *  Too complex for server context.
 
     // 9. Return result.
-    Ok(result.to_js(global))
+    result.to_js(global)
 }

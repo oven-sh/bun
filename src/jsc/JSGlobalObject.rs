@@ -782,13 +782,16 @@ impl JSGlobalObject {
 
     pub fn throw_sys_error(&self, opts: &SysErrOptions, message: Arguments<'_>) -> JsError {
         let err = self.create_error_instance(message);
-        err.put(
-            self,
-            b"code",
-            EncodedSlice::latin1(<&'static str>::from(opts.code).as_bytes()).to_js(self),
-        );
+        let code = EncodedSlice::latin1(<&'static str>::from(opts.code).as_bytes());
+        match code.to_js(self) {
+            Ok(code) => err.put(self, b"code", code),
+            Err(thrown) => return thrown,
+        }
         if let Some(name) = opts.name {
-            err.put(self, b"name", EncodedSlice::latin1(name).to_js(self));
+            match EncodedSlice::latin1(name).to_js(self) {
+                Ok(name) => err.put(self, b"name", name),
+                Err(thrown) => return thrown,
+            }
         }
         if let Some(errno) = opts.errno {
             err.put(self, b"errno", JSValue::from(errno));

@@ -222,7 +222,10 @@ pub(crate) fn date_of(time: f64) -> f64 {
     time
 }
 
-pub(crate) fn latin1<'a>(heap: &JsHeap<'a>, bytes: &[u8]) -> JsLocal<'a, JSString> {
+pub(crate) fn latin1<'a>(
+    heap: &JsHeap<'a>,
+    bytes: &[u8],
+) -> bindgen::Result<'a, JsLocal<'a, JSString>> {
     heap.create_latin1_string(bytes)
 }
 

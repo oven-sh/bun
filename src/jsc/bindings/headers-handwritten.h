@@ -349,6 +349,10 @@ extern "C" JSC::EncodedJSValue BunString__toJS(JSC::JSGlobalObject*, const BunSt
 
 namespace Bun {
 JSC::JSString* toJS(JSC::JSGlobalObject*, BunString);
+// A JSString with a copy of the bytes. Throws and returns nullptr where `Zig::tryToStringCopy` refuses the copy.
+JSC::JSString* toJS(JSC::JSGlobalObject*, EncodedSlice);
+// The same copy as a WTF::String: null for empty bytes, and null with that exception thrown.
+WTF::String toWTFStringCopy(JSC::JSGlobalObject*, EncodedSlice);
 // Returns the empty identifier for a zero-length string with any tag.
 JSC::Identifier toIdentifier(JSC::VM&, const BunString&);
 BunString toString(WTF::String& wtfString);

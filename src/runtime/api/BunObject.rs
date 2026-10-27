@@ -571,11 +571,11 @@ pub(crate) fn register_macro<'a>(
     Ok(())
 }
 
-fn get_cwd(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+fn get_cwd(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JSValue> {
     EncodedSlice::from_bytes(bun_resolver::fs::FileSystem::get().top_level_dir()).to_js(global_this)
 }
 
-fn get_origin(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+fn get_origin(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JSValue> {
     EncodedSlice::from_bytes(VirtualMachine::get().origin.origin).to_js(global_this)
 }
 
@@ -596,7 +596,7 @@ pub(crate) fn get_main(global_this: &JSGlobalObject) -> JSValue {
     }
     // No entry module (`bun bake`): an empty string, as `Bun.main` is always a string.
     let Some(main) = vm.main() else {
-        return EncodedSlice::from_bytes(b"").to_js(global_this);
+        return JSValue::js_empty_string(global_this);
     };
 
     // Attempt to use the resolved filesystem path
@@ -661,7 +661,9 @@ pub(crate) fn get_main(global_this: &JSGlobalObject) -> JSValue {
             .or_pending_exception();
     }
 
-    EncodedSlice::from_bytes(main).to_js(global_this)
+    EncodedSlice::from_bytes(main)
+        .to_js(global_this)
+        .or_pending_exception()
 }
 
 // HOST_EXPORT(BunObject_setter_main, jsc)

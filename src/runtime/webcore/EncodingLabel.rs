@@ -109,7 +109,8 @@ impl EncodingLabel {
         if self == EncodingLabel::Utf8 {
             return heap.common_string(CommonString::Utf8WithDash);
         }
-        heap.create_latin1_string(self.get_label())
+        // A label is a short static string.
+        bun_core::handle_oom(heap.create_latin1_string(self.get_label()))
     }
 
     pub(crate) const LATIN1: EncodingLabel = EncodingLabel::Windows1252;

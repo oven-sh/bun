@@ -1325,7 +1325,7 @@ impl Subprocess<'_> {
         match signal.name() {
             Some(name) => {
                 use bun_jsc::EncodedSliceJsc as _;
-                bun_core::EncodedSlice::latin1(name.as_bytes()).to_js(global)
+                bun_core::EncodedSlice::latin1(name.as_bytes()).to_js_bounded(global)
             }
             None => JSValue::js_number(f64::from(signal.0)),
         }

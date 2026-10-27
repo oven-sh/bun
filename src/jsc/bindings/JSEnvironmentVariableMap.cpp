@@ -288,7 +288,8 @@ JSC_DEFINE_CUSTOM_GETTER(jsGetterEnvironmentVariable, (JSGlobalObject * globalOb
         return JSValue::encode(jsUndefined());
     }
 
-    JSValue result = jsString(vm, Zig::toStringCopy(value));
+    auto* result = Bun::toJS(globalObject, value);
+    RETURN_IF_EXCEPTION(scope, {});
     thisObject->putDirect(vm, propertyName, result, 0);
     return JSValue::encode(result);
 }
@@ -317,7 +318,8 @@ JSC_DEFINE_CUSTOM_GETTER(jsTimeZoneEnvironmentVariableGetter, (JSGlobalObject * 
         return JSValue::encode(jsUndefined());
     }
 
-    JSValue out = jsString(vm, Zig::toStringCopy(value));
+    auto* out = Bun::toJS(globalObject, value);
+    RETURN_IF_EXCEPTION(scope, {});
     thisObject->putDirect(vm, clientData->builtinNames().dataPrivateName(), out, 0);
 
     return JSValue::encode(out);
@@ -407,7 +409,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeTLSRejectUnauthorizedGetter, (JSGlobalObject * gl
         return JSValue::encode(jsUndefined());
     }
 
-    return JSValue::encode(jsString(vm, Zig::toStringCopy(value)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(Bun::toJS(globalObject, value)));
 }
 
 JSC_DEFINE_CUSTOM_SETTER(jsNodeTLSRejectUnauthorizedSetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
@@ -455,7 +457,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsBunConfigVerboseFetchGetter, (JSGlobalObject * global
         return JSValue::encode(jsUndefined());
     }
 
-    return JSValue::encode(jsString(vm, Zig::toStringCopy(value)));
+    RELEASE_AND_RETURN(scope, JSValue::encode(Bun::toJS(globalObject, value)));
 }
 
 JSC_DEFINE_CUSTOM_SETTER(jsBunConfigVerboseFetchSetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
@@ -1062,7 +1064,7 @@ JSObject* createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
                 EncodedSlice valueString = { nullptr, 0 };
                 EncodedSlice nameStr = toEncodedSlice(name);
                 if (Bun__getEnvValue(globalObject, &nameStr, &valueString)) {
-                    JSValue value = jsString(vm, Zig::toStringCopy(valueString));
+                    JSValue value = Bun::toJS(globalObject, valueString);
                     RETURN_IF_EXCEPTION(scope, nullptr);
                     // putDirectIndex falls back to [[Set]] on this exotic object, which can run an indexed setter on Object.prototype.
                     PropertyDescriptor descriptor(value, 0);

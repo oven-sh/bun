@@ -87,21 +87,21 @@ pub(crate) fn err_to_js(global: &JSGlobalObject, err_code: u32) -> JSValue {
         err.put(
             global,
             b"library",
-            EncodedSlice::latin1(library).to_js(global),
+            EncodedSlice::latin1(library).to_js_bounded(global),
         );
     }
     if let Some(function) = static_cstr(boring::ERR_func_error_string(err_code)) {
         err.put(
             global,
             b"function",
-            EncodedSlice::latin1(function).to_js(global),
+            EncodedSlice::latin1(function).to_js_bounded(global),
         );
     }
     if let Some(reason) = static_cstr(boring::ERR_reason_error_string(err_code)) {
         err.put(
             global,
             b"reason",
-            EncodedSlice::latin1(reason).to_js(global),
+            EncodedSlice::latin1(reason).to_js_bounded(global),
         );
 
         let lib = lib_short_name((err_code >> 24) & 0xff);
@@ -112,7 +112,11 @@ pub(crate) fn err_to_js(global: &JSGlobalObject, err_code: u32) -> JSValue {
         code.extend_from_slice(prefix.as_bytes());
         code.extend_from_slice(lib.as_bytes());
         code.extend_from_slice(reason);
-        err.put(global, b"code", EncodedSlice::latin1(&code).to_js(global));
+        err.put(
+            global,
+            b"code",
+            EncodedSlice::latin1(&code).to_js_bounded(global),
+        );
     }
 
     err

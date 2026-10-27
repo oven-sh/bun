@@ -85,6 +85,7 @@ export const latin1 = b.fn({
   args: { bytes: b.bytes({ from: ["buffer"] }) },
   returns: b.string.local,
   capability: "heap",
+  throws: true,
 });
 export const TestTextOrBytes = b.union({ text: b.string.utf8, bytes: b.bufferSource, nothing: b.null });
 export const textOrBytes = b.fn({

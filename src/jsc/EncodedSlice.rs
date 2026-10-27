@@ -4,8 +4,8 @@
 use core::ffi::c_void;
 
 use crate::bun_string_jsc::{self, ErrorKind};
-use crate::{DOMExceptionCode, JSGlobalObject, JSValue, JsResult, cpp};
-use bun_core::{EncodedSlice, StringView};
+use crate::{DOMExceptionCode, JSGlobalObject, JSValue, JsError, JsResult, cpp};
+use bun_core::{EncodedSlice, StringView, Tag};
 
 /// # Safety
 /// `ptr` must be a (possibly tagged) pointer to `len` bytes allocated by the
@@ -31,7 +31,12 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         code: u8,
     ) -> JSValue;
-    safe fn EncodedSlice__toValueGC(this: &EncodedSlice, global: &JSGlobalObject) -> JSValue;
+    // safe: as above. C++ writes only `Tag::Dead` or `Tag::OutOfMemory` to `failure`.
+    safe fn EncodedSlice__tryToJS(
+        this: &EncodedSlice,
+        global: &JSGlobalObject,
+        failure: &mut Tag,
+    ) -> JSValue;
     // EncodedSlice__toExternalValue: use the generated `cpp::` re-export (canonical signature).
     // safe: `EncodedSlice`/`JSGlobalObject` are `#[repr(C)]`/opaque-ZST handles (`&`
     // is ABI-identical to non-null `*const`); `ctx` is an opaque round-trip
@@ -52,14 +57,62 @@ fn error_instance(slice: &EncodedSlice<'_>, global: &JSGlobalObject, kind: Error
     bun_string_jsc::error_instance(&StringView::from_encoded(*slice), global, kind)
 }
 
+/// Why bytes were not copied into a JS string.
+pub(crate) enum StringCopyError {
+    /// The string would be longer than a string can be.
+    TooLong,
+    /// Its allocation failed.
+    AllocationFailed,
+}
+
+impl StringCopyError {
+    /// `ERR_STRING_TOO_LONG` or `ERR_MEMORY_ALLOCATION_FAILED`. Not thrown.
+    #[cold]
+    pub(crate) fn to_error_instance(self, global: &JSGlobalObject) -> JSValue {
+        match self {
+            Self::TooLong => global.create_string_too_long_error(),
+            Self::AllocationFailed => global.create_memory_allocation_failed_error(),
+        }
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn throw(self, global: &JSGlobalObject) -> JsError {
+        global.throw_value(self.to_error_instance(global))
+    }
+}
+
+/// `EncodedSliceJsc::to_js` with the error returned and nothing thrown.
+#[inline]
+pub(crate) fn try_to_js(
+    slice: &EncodedSlice<'_>,
+    global: &JSGlobalObject,
+) -> Result<JSValue, StringCopyError> {
+    let mut failure = Tag::Dead;
+    let value = EncodedSlice__tryToJS(slice, global, &mut failure);
+    if value.is_empty() {
+        return Err(if failure == Tag::OutOfMemory {
+            StringCopyError::AllocationFailed
+        } else {
+            StringCopyError::TooLong
+        });
+    }
+    Ok(value)
+}
+
+/// The longest string `EncodedSliceJsc::to_js_bounded` takes.
+const MAX_BOUNDED_LEN: usize = 4096;
+
 /// JSC conversions for `bun_core::EncodedSlice`.
 pub trait EncodedSliceJsc: Sized {
     fn to_error_instance(&self, global: &JSGlobalObject) -> JSValue;
     fn to_syntax_error_instance(&self, global: &JSGlobalObject) -> JSValue;
     fn to_dom_exception_instance(&self, global: &JSGlobalObject, code: DOMExceptionCode)
     -> JSValue;
-    /// Copies into a GC-managed `JSString`.
-    fn to_js(&self, global: &JSGlobalObject) -> JSValue;
+    /// Copies into a GC-managed `JSString`. Throws when the string is too long or its allocation fails.
+    fn to_js(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
+    /// `to_js` for a short name or code where no error can be returned. A failed copy ends the process.
+    fn to_js_bounded(&self, global: &JSGlobalObject) -> JSValue;
     /// Transfers ownership of a globally-allocated buffer to JSC's
     /// external-string finalizer.
     fn to_external_value(&self, global: &JSGlobalObject) -> JsResult<JSValue>;
@@ -94,8 +147,19 @@ impl EncodedSliceJsc for EncodedSlice<'_> {
     ) -> JSValue {
         EncodedSlice__toDOMExceptionInstance(self, global, code as u8)
     }
-    fn to_js(&self, global: &JSGlobalObject) -> JSValue {
-        EncodedSlice__toValueGC(self, global)
+    #[inline]
+    fn to_js(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        try_to_js(self, global).map_err(|error| error.throw(global))
+    }
+    fn to_js_bounded(&self, global: &JSGlobalObject) -> JSValue {
+        debug_assert!(self.len <= MAX_BOUNDED_LEN);
+        match try_to_js(self, global) {
+            Ok(value) => value,
+            Err(StringCopyError::AllocationFailed) => bun_core::out_of_memory(),
+            Err(StringCopyError::TooLong) => {
+                panic!("to_js_bounded: {} bytes do not fit in a string", self.len)
+            }
+        }
     }
     fn to_external_value(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
         self.try_to_external_value(global)

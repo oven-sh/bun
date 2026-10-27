@@ -3761,11 +3761,6 @@ __attribute__((__always_inline__)) VirtualMachine* JSC__JSGlobalObject__bunVM(JS
     return reinterpret_cast<VirtualMachine*>(WebCore::clientData(arg0->vm())->bunVM);
 }
 
-JSC::EncodedJSValue EncodedSlice__toValueGC(const EncodedSlice* arg0, JSC::JSGlobalObject* arg1)
-{
-    return JSC::JSValue::encode(JSC::jsString(arg1->vm(), Zig::toStringCopy(*arg0)));
-}
-
 JSC::EncodedJSValue EncodedSlice__external(const EncodedSlice* arg0, JSC::JSGlobalObject* arg1, void* arg2, void (*ArgFn3)(void* arg0, void* arg1, size_t arg2))
 {
     EncodedSlice str
@@ -6231,7 +6226,11 @@ extern "C" int JSC__JSValue__DateNowISOString(JSC::JSGlobalObject* globalObject,
 CPP_DECL bool WebCore__DOMFormData__append(WebCore::DOMFormData* arg0, JSC::JSGlobalObject* globalObject, const EncodedSlice* arg1, const EncodedSlice* arg2)
 {
     auto throwScope = DECLARE_THROW_SCOPE(globalObject->vm());
-    auto result = arg0->append(toStringCopy(*arg1), toStringCopy(*arg2));
+    auto name = Bun::toWTFStringCopy(globalObject, *arg1);
+    RETURN_IF_EXCEPTION(throwScope, false);
+    auto value = Bun::toWTFStringCopy(globalObject, *arg2);
+    RETURN_IF_EXCEPTION(throwScope, false);
+    auto result = arg0->append(name, value);
     if (result.hasException()) [[unlikely]] {
         WebCore::propagateException(*globalObject, throwScope, result.releaseException());
         return false;
@@ -6243,7 +6242,11 @@ CPP_DECL bool WebCore__DOMFormData__appendBlob(WebCore::DOMFormData* arg0, JSC::
 {
     auto throwScope = DECLARE_THROW_SCOPE(arg1->vm());
     RefPtr<Blob> blob = WebCore::Blob::create(blobValueInner);
-    auto result = arg0->append(toStringCopy(*arg2), blob, toStringCopy(*fileName));
+    auto name = Bun::toWTFStringCopy(arg1, *arg2);
+    RETURN_IF_EXCEPTION(throwScope, false);
+    auto file = Bun::toWTFStringCopy(arg1, *fileName);
+    RETURN_IF_EXCEPTION(throwScope, false);
+    auto result = arg0->append(name, blob, file);
     if (result.hasException()) [[unlikely]] {
         WebCore::propagateException(*arg1, throwScope, result.releaseException());
         return false;

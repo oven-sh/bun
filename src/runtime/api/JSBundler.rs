@@ -2112,7 +2112,7 @@ impl BuildArtifact {
         self.blob.get_size()
     }
 
-    pub(crate) fn get_type(&self, cx: &mut JsScope<'_>) -> JSValue {
+    pub(crate) fn get_type(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         self.blob.get_type(cx)
     }
 

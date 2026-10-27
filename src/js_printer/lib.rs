@@ -6554,21 +6554,21 @@ pub(crate) mod __gated_printer {
             {
                 return text;
             }
-            // `relative_platform` has no length limit, unlike the `_buf` variant.
+            // `relative_platform` has no length limit, unlike the `_buf` variant. On Windows a
+            // file on another volume has no relative path, and the result is its absolute path.
             let rel = bun_paths::resolve_path::relative_platform::<
-                bun_paths::resolve_path::platform::Loose,
+                bun_paths::resolve_path::platform::Auto,
                 false,
             >(self.options.output_dir, text);
-            let rel = rel.strip_suffix(b"/").unwrap_or(rel);
+            let is_absolute = bun_paths::is_absolute(rel);
+            let rel = rel.strip_suffix(&[bun_paths::SEP]).unwrap_or(rel);
             if rel.is_empty() {
                 return b"./";
             }
-            let prefix: &[u8] =
-                if rel.starts_with(b"../") || rel == b".." || bun_paths::is_absolute(rel) {
-                    b""
-                } else {
-                    b"./"
-                };
+            let is_parent = rel
+                .strip_prefix(b"..")
+                .is_some_and(|rest| rest.first().is_none_or(|&c| c == bun_paths::SEP));
+            let prefix: &[u8] = if is_parent || is_absolute { b"" } else { b"./" };
             // The resolver keeps the trailing separator of a specifier that names a directory.
             let suffix: &[u8] = if text.last() == Some(&bun_paths::SEP) {
                 b"/"
@@ -6580,6 +6580,9 @@ pub(crate) mod __gated_printer {
                 .alloc_slice_fill_copy(prefix.len() + rel.len() + suffix.len(), 0u8);
             out[..prefix.len()].copy_from_slice(prefix);
             out[prefix.len()..][..rel.len()].copy_from_slice(rel);
+            bun_paths::resolve_path::platform_to_posix_in_place::<u8>(
+                &mut out[prefix.len()..][..rel.len()],
+            );
             out[prefix.len() + rel.len()..].copy_from_slice(suffix);
             out
         }

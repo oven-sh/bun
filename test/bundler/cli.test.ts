@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, substDrive, tempDir, tmpdirSync } from "harness";
 import fs, { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import path, { join } from "node:path";
 
@@ -343,6 +343,36 @@ test.skipIf(!isWindows)("should be able to handle pretty path on windows #13897"
     ],
   });
   expect(buildOut?.success).toBe(true);
+});
+
+test.skipIf(!isWindows)("an external file is an absolute path in output written to another drive", async () => {
+  using dir = tempDir("bun-build-external-other-drive", {
+    "src/entry.mjs": `import lib from "./lib.js"; console.log(lib);`,
+    "src/lib.js": `export default "lib";`,
+    "mount": {},
+  });
+  using drive = substDrive(join(String(dir), "mount"));
+  const outdir = drive.root + "out";
+
+  await using build = Bun.spawn({
+    cmd: [bunExe(), "build", "./src/entry.mjs", "--external", "./src/lib.js", "--outdir", outdir],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, buildStderr, buildExitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+  expect(buildStderr).toBe("");
+  expect(buildExitCode).toBe(0);
+
+  // No relative path leads from one drive to another.
+  const written = join(outdir, "entry.js");
+  expect((await Bun.file(written).text()).match(/from "([^"]+)"/)?.[1]).toMatch(/^[A-Za-z]:\/.*\/src\/lib\.js$/);
+
+  await using run = Bun.spawn({ cmd: [bunExe(), written], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([run.stdout.text(), run.stderr.text(), run.exited]);
+  expect({ stdout, stderr }).toEqual({ stdout: "lib\n", stderr: "" });
+  expect(exitCode).toBe(0);
 });
 
 test("you can use --outfile=... and --sourcemap", async () => {

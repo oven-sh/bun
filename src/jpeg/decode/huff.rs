@@ -197,10 +197,8 @@ impl HuffDecoder {
                 if s != 0 {
                     k += r;
                     let value = bits.bits(s);
-                    if info.ac_needed
-                        && let Some(coef) = coef_at(block, k)
-                    {
-                        *coef = huff_extend(value, s) as i16;
+                    if info.ac_needed {
+                        *coef_at(block, k)? = huff_extend(value, s) as i16;
                     }
                 } else {
                     if r != 15 {

@@ -394,8 +394,8 @@ impl ArithDecoder {
                     st += 1;
                 }
             }
-            let small = (1i32 << self.dc_l.get(selector).copied().unwrap_or(0)) >> 1;
-            let large = (1i32 << self.dc_u.get(selector).copied().unwrap_or(0)) >> 1;
+            let small = (1i32 << self.dc_l.get(selector).ok_or(Error::Internal)?) >> 1;
+            let large = (1i32 << self.dc_u.get(selector).ok_or(Error::Internal)?) >> 1;
             *context = if m < small {
                 0
             } else if m > large {
@@ -416,7 +416,7 @@ impl ArithDecoder {
         let core = &mut self.core;
         let selector = usize::from(ac_table);
         let stats = self.ac_stats.get_mut(selector).ok_or(Error::Internal)?;
-        let kx = usize::from(self.ac_k.get(selector).copied().unwrap_or(0));
+        let kx = usize::from(*self.ac_k.get(selector).ok_or(Error::Internal)?);
 
         let mut k = self.ss;
         while k <= self.se {
@@ -449,9 +449,7 @@ impl ArithDecoder {
                 }
             }
             let v = core.decode_magnitude(input, stats, st + 14, m, sign)?;
-            if let Some(coef) = coef_at(block, k) {
-                *coef = v.wrapping_shl(self.al) as i16;
-            }
+            *coef_at(block, k)? = v.wrapping_shl(self.al) as i16;
             k += 1;
         }
         Ok(true)
@@ -468,7 +466,7 @@ impl ArithDecoder {
 
         // Where the block ended as of the previous stage.
         let mut kex = self.se;
-        while kex > 0 && coef_at(block, kex).is_none_or(|coef| *coef == 0) {
+        while kex > 0 && *coef_at(block, kex)? == 0 {
             kex -= 1;
         }
 
@@ -479,7 +477,7 @@ impl ArithDecoder {
                 break;
             }
             loop {
-                let coef = coef_at(block, k).ok_or(Error::Internal)?;
+                let coef = coef_at(block, k)?;
                 if *coef != 0 {
                     if core.decode_at(input, stats, st + 2)? {
                         *coef = coef.wrapping_add(if *coef < 0 { m1 } else { p1 });

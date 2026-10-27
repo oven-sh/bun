@@ -382,7 +382,7 @@ impl Emitter<'_> {
                         upsampler.buffer.row(r)?
                     };
                 }
-                color::convert(self.conversion, planes, self.output_width, self.pixels);
+                color::convert(self.conversion, planes, self.output_width, self.pixels)?;
             }
         }
         Ok(())

@@ -238,9 +238,7 @@ impl PHuffDecoder {
                 k += r as usize;
                 bits.ensure(input, s);
                 let value = huff_extend(bits.get(s), s);
-                if let Some(coef) = coef_at(block, k) {
-                    *coef = value.wrapping_shl(self.al) as i16;
-                }
+                *coef_at(block, k)? = value.wrapping_shl(self.al) as i16;
             } else if r == 15 {
                 k += 15;
             } else {
@@ -317,7 +315,7 @@ impl PHuffDecoder {
                 }
                 // Go past the nonzero coefficients, correcting them, and past `r` zero ones.
                 loop {
-                    let Some(coef) = coef_at(block, k) else { break };
+                    let coef = coef_at(block, k)?;
                     if *coef != 0 {
                         correct(bits, input, coef, p1, m1);
                     } else {
@@ -331,10 +329,8 @@ impl PHuffDecoder {
                         break;
                     }
                 }
-                if value != 0
-                    && let Some(coef) = coef_at(block, k)
-                {
-                    *coef = value;
+                if value != 0 {
+                    *coef_at(block, k)? = value;
                 }
                 k += 1;
             }
@@ -343,9 +339,8 @@ impl PHuffDecoder {
         if self.eobrun > 0 {
             // What is left of the band only gets correction bits.
             while k <= se {
-                if let Some(coef) = coef_at(block, k)
-                    && *coef != 0
-                {
+                let coef = coef_at(block, k)?;
+                if *coef != 0 {
                     correct(bits, input, coef, p1, m1);
                 }
                 k += 1;

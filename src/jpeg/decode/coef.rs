@@ -336,7 +336,7 @@ impl CoefController {
             .zip(&coef_bits.previous)
         {
             // These divide.
-            if low_frequencies(&comp.quant_table?).contains(&0) {
+            if low_frequencies(&comp.quant_table?).contains(&0u16) {
                 return None;
             }
             let current = *current.first_chunk::<SAVED_COEFS>()?;
@@ -431,22 +431,28 @@ impl CoefController {
                 };
                 let neighbors = [prev_prev, prev, this, next, next_next];
 
-                let dc_at =
-                    |x: usize| neighbors.map(|row| row.get(x).map_or(0, |&[dc, ..]| i32::from(dc)));
+                let dc_at = |x: usize| -> Result<[i32; 5]> {
+                    let mut column = [0; 5];
+                    for (out, row) in column.iter_mut().zip(neighbors) {
+                        let [dc, ..] = row.get(x).ok_or(Error::Internal)?;
+                        *out = i32::from(*dc);
+                    }
+                    Ok(column)
+                };
                 // A window of five columns slides along. Past either edge the edge column repeats.
-                let first = dc_at(0);
+                let first = dc_at(0)?;
                 let mut window = [first; 5];
                 for (block_num, block) in this.iter().take(width).enumerate() {
                     let [_, _, _, c3, c4] = &mut window;
                     if block_num == 0 && block_num + 1 < width {
-                        *c3 = dc_at(1);
+                        *c3 = dc_at(1)?;
                         *c4 = *c3;
                     }
                     if block_num + 2 < width {
-                        *c4 = dc_at(block_num + 2);
+                        *c4 = dc_at(block_num + 2)?;
                     }
                     let mut workspace = *block;
-                    smoother.smooth(&window, &mut workspace);
+                    smoother.smooth(&window, &mut workspace)?;
                     idct.run(
                         &workspace,
                         plane,
@@ -497,7 +503,7 @@ impl Smoother {
     }
 
     /// `window[x][y]` is the DC coefficient of the block `x - 2` to the right and `y - 2` below.
-    fn smooth(&self, window: &[[i32; 5]; 5], block: &mut Block) {
+    fn smooth(&self, window: &[[i32; 5]; 5], block: &mut Block) -> Result<()> {
         let [
             [dc01, dc06, dc11, dc16, dc21],
             [dc02, dc07, dc12, dc17, dc22],
@@ -637,9 +643,8 @@ impl Smoother {
             *c00 = Self::predict(num, q00, 0);
         }
         for (k, coef) in coefs.into_iter().enumerate() {
-            if let Some(out) = coef_at(block, k) {
-                *out = coef;
-            }
+            *coef_at(block, k)? = coef;
         }
+        Ok(())
     }
 }

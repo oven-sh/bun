@@ -1,5 +1,6 @@
 //! From the components of the stream to pixels (jdcolor.c, jdcolext.c).
 
+use crate::error::{Error, Result};
 use crate::tables::color::{ONE_HALF, SCALEBITS, fix};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -43,7 +44,7 @@ pub(crate) fn convert(
     planes: [&[u8]; 4],
     width: usize,
     output: &mut Vec<[u8; 4]>,
-) {
+) -> Result<()> {
     let [p0, p1, p2, p3] = planes.map(|row| row.get(..width).unwrap_or(row));
     let end = output.len() + width;
     match conversion {
@@ -74,5 +75,8 @@ pub(crate) fn convert(
             }));
         }
     }
-    output.resize(end, [0; 4]);
+    if output.len() != end {
+        return Err(Error::Internal);
+    }
+    Ok(())
 }

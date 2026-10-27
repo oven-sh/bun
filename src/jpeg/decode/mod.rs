@@ -33,8 +33,8 @@ pub(crate) type Block = [i16; 64];
 
 /// The `k`th coefficient in zigzag order.
 #[inline(always)]
-pub(crate) fn coef_at(block: &mut Block, k: usize) -> Option<&mut i16> {
-    block.get_mut(natural_order(k))
+pub(crate) fn coef_at(block: &mut Block, k: usize) -> Result<&mut i16> {
+    block.get_mut(natural_order(k)).ok_or(Error::Internal)
 }
 
 /// What the components of the stream mean.

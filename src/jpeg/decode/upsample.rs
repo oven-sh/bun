@@ -86,7 +86,7 @@ pub(crate) fn h2v2_fancy(near: &[u8], far: &[u8], column_sums: &mut Vec<u16>, ou
     widen(column_sums, output, [8, 7], 4);
 }
 
-/// Fills `output`.
+/// `output` has room for `h_expand` times the samples of `input`.
 pub(crate) fn replicate(input: &[u8], h_expand: u32, output: &mut [u8]) {
     match h_expand {
         1 => {
@@ -95,12 +95,9 @@ pub(crate) fn replicate(input: &[u8], h_expand: u32, output: &mut [u8]) {
             }
         }
         2 => {
-            let (pairs, rest) = output.as_chunks_mut::<2>();
+            let (pairs, _) = output.as_chunks_mut::<2>();
             for (pair, &v) in pairs.iter_mut().zip(input) {
                 *pair = [v; 2];
-            }
-            if let (Some(out), Some(&v)) = (rest.first_mut(), input.get(pairs.len())) {
-                *out = v;
             }
         }
         _ => {

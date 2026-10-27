@@ -35,12 +35,16 @@ fn main() {
     let px = photo(w, h);
     let mp = (w * h) as f64 / 1e6;
     let mut inputs: Vec<(String, Vec<u8>)> = Vec::new();
-    // For a profiler: PROFILE=decode|encode|decode-progressive|encode-progressive runs only that, with bun_jpeg, for a while.
+    // For a profiler: PROFILE=[ref-]decode|encode[-progressive] runs only that for a while, with bun_jpeg or with the reference.
     if let Ok(what) = std::env::var("PROFILE") {
         let progressive = what.ends_with("-progressive");
         let jpeg = jpegdiff::reference::encode(&px, w as u32, h as u32, 80, progressive, None).unwrap();
         for _ in 0..40 {
-            if what.starts_with("decode") {
+            if what.starts_with("ref-encode") {
+                std::hint::black_box(jpegdiff::reference::encode(&px, w as u32, h as u32, 80, progressive, None).unwrap());
+            } else if what.starts_with("ref-decode") {
+                std::hint::black_box(jpegdiff::reference::decode(&jpeg, std::env::var("SCALE").map_or(8, |s| s.parse().unwrap()), u64::MAX).ok().unwrap().pixels.len());
+            } else if what.starts_with("decode") {
                 std::hint::black_box(jpegdiff::ours(&jpeg, std::env::var("SCALE").map_or(8, |s| s.parse().unwrap()), u64::MAX).ok().unwrap().pixels.len());
             } else {
                 std::hint::black_box(bun_jpeg::encode(&px, w as u32, h as u32, &bun_jpeg::EncodeOptions { quality: 80, progressive, icc_profile: None }).unwrap());

@@ -241,7 +241,7 @@ describe("Bun.build", () => {
     });
     const result = await Bun.build({
       root: dir.root,
-      entrypoints: [path.join(dir.root, "index.css"), path.join(dir.root, "virtual.css")],
+      entrypoints: ["index.css", "virtual.css", "late.css"].map(name => path.join(dir.root, name)),
       files: {
         [path.join(dir.root, "index.css")]: `@import "tailwindcss/utilities";`,
         // Bun takes either separator in a key, on every platform.
@@ -249,12 +249,21 @@ describe("Bun.build", () => {
           `.virtual { @apply overline; }`,
         ),
       },
-      plugins: [tailwind],
+      plugins: [
+        tailwind,
+        {
+          name: "late",
+          setup(build) {
+            build.config.files![path.join(dir.root, "late.css")] = `.late { @apply line-through; }`;
+          },
+        },
+      ],
     });
-    const [index, virtual] = await Promise.all(result.outputs.map(output => output.text()));
-    expect(index).toContain(".underline {");
-    expect(index).not.toContain(".disk");
-    expect(virtual).toContain("text-decoration-line: overline");
+    const css = (name: string) => result.outputs.find(output => output.path.endsWith(name))!.text();
+    expect(await css("index.css")).toContain(".underline {");
+    expect(await css("index.css")).not.toContain(".disk");
+    expect(await css("virtual.css")).toContain("text-decoration-line: overline");
+    expect(await css("late.css")).toContain("text-decoration-line: line-through");
   });
 
   test("does not read assets", async () => {

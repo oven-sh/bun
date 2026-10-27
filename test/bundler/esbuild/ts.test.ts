@@ -484,6 +484,40 @@ describe("bundler", () => {
       stdout: `undefined undefined 123`,
     },
   });
+  // Decorator metadata reads the dropped name as a value, under `typeof`. An error for a value read would break this.
+  itBundled("ts/ExportMissingES6DecoratorMetadata", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { Options, create } from './barrel'
+        const types: unknown[] = []
+        ;(Reflect as any).metadata = (key: string, value: unknown) => {
+          if (key === 'design:type') types.push(value)
+          return () => {}
+        }
+        function dec(): PropertyDecorator {
+          return () => {}
+        }
+        class A {
+          @dec() options?: Options
+        }
+        console.log(types[0] === Object, typeof create)
+      `,
+      "/barrel.ts": `export { Options, create } from 'pkg'`,
+      "/node_modules/pkg/package.json": `{ "name": "pkg", "type": "module" }`,
+      "/node_modules/pkg/index.js": `export function create() { return 1 }`,
+      "/tsconfig.json": /* json */ `
+        {
+          "compilerOptions": {
+            "experimentalDecorators": true,
+            "emitDecoratorMetadata": true
+          }
+        }
+      `,
+    },
+    run: {
+      stdout: `true function`,
+    },
+  });
   itBundled("ts/ImportMissingFile", {
     files: {
       "/entry.ts": /* ts */ `

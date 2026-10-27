@@ -22,7 +22,7 @@ fn fill_double_hash_table_for_cdict(
 ) -> Result<()> {
     let long = Hasher::new(ms.tagged_hash_log(), 8);
     let small = Hasher::new(ms.tagged_chain_log(), ms.c_params.min_match);
-    let positions = ThirdPositions::new(prefix, ms.next_to_update, end)?;
+    let positions = ThirdPositions::new(prefix, ms.next_to_update, end);
     let hash_large = ms.hash_table.as_mut_slice();
     let hash_small = ms.chain_table.as_mut_slice();
     if dtlm == DictTableLoadMethod::Full {
@@ -45,7 +45,7 @@ fn fill_double_hash_table_for_cctx(
 ) -> Result<()> {
     let long = Hasher::new(ms.c_params.hash_log, 8);
     let small = Hasher::new(ms.c_params.chain_log, ms.c_params.min_match);
-    let positions = ThirdPositions::new(prefix, ms.next_to_update, end)?;
+    let positions = ThirdPositions::new(prefix, ms.next_to_update, end);
     let hash_large = ms.hash_table.as_mut_slice();
     let hash_small = ms.chain_table.as_mut_slice();
     for at in positions {

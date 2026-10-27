@@ -89,17 +89,18 @@ pub(super) struct ThirdPosition<'a> {
 const THIRD_POSITION_SIZE: usize = FAST_HASH_FILL_STEP as usize - 1 + HASH_READ_SIZE;
 
 impl<'a> ThirdPositions<'a> {
-    /// From `first_index` up to the position `end` of the segment.
-    pub(super) fn new(prefix: Prefix<'a>, first_index: u32, end: usize) -> Result<Self> {
-        let bytes = prefix.buf.sub(prefix.pos_of(first_index)..end)?;
+    /// From `first_index` up to the position `end` of the segment: none if that is before.
+    pub(super) fn new(prefix: Prefix<'a>, first_index: u32, end: usize) -> Self {
+        let bytes = prefix.buf.get(prefix.pos_of(first_index)..end);
+        let bytes = bytes.unwrap_or_default();
         let len = match bytes.len().checked_sub(THIRD_POSITION_SIZE) {
             Some(more) => bytes.len() - more % FAST_HASH_FILL_STEP as usize,
             None => 0,
         };
-        Ok(Self {
-            bytes: bytes.sub(..len)?,
+        Self {
+            bytes: bytes.get(..len).unwrap_or_default(),
             index: first_index,
-        })
+        }
     }
 }
 
@@ -166,7 +167,7 @@ fn fill_hash_table_for_cdict(
     dtlm: DictTableLoadMethod,
 ) -> Result<()> {
     let hasher = Hasher::new(ms.tagged_hash_log(), ms.c_params.min_match);
-    let positions = ThirdPositions::new(prefix, ms.next_to_update, end)?;
+    let positions = ThirdPositions::new(prefix, ms.next_to_update, end);
     let hash_table = ms.hash_table.as_mut_slice();
     if dtlm == DictTableLoadMethod::Full {
         put_tagged_in_between(hash_table, hasher, positions.clone());
@@ -180,7 +181,7 @@ fn fill_hash_table_for_cdict(
 /// `ZSTD_fillHashTableForCCtx`, which is only for `ZSTD_dtlm_fast`.
 fn fill_hash_table_for_cctx(ms: &mut MatchState, prefix: Prefix<'_>, end: usize) -> Result<()> {
     let hasher = Hasher::new(ms.c_params.hash_log, ms.c_params.min_match);
-    let positions = ThirdPositions::new(prefix, ms.next_to_update, end)?;
+    let positions = ThirdPositions::new(prefix, ms.next_to_update, end);
     let hash_table = ms.hash_table.as_mut_slice();
     for at in positions {
         table_put(hash_table, hasher.hash(le64_at::<0, _>(at.bytes)), at.index);

@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
   "src/opaque",
+  "src/pod",
   "src/analytics",
   "src/base64",
   "src/bundler",
@@ -14,7 +15,7 @@ members = [
   "src/install/windows-shim",
   "src/parsers",
   "src/io",
-  "src/libarchive",
+  "src/archive",
   "src/md",
   "src/paths",
   "src/resolver",
@@ -44,6 +45,7 @@ members = [
   "src/sourcemap",
   "src/sql",
   "src/sys",
+  "src/tar",
   "src/threading",
   "src/valkey",
   "src/watcher",
@@ -372,6 +374,7 @@ encoding_rs = "0.8.35"
 # Vendored, not crates.io — see the `exclude = ["vendor"]` note above.
 lol_html = { path = "vendor/lolhtml" }
 bun_opaque = { path = "src/opaque" }
+bun_pod = { path = "src/pod" }
 bun_analytics = { path = "src/analytics" }
 bun_base64 = { path = "src/base64" }
 bun_bundler = { path = "src/bundler" }
@@ -383,7 +386,7 @@ bun_http = { path = "src/http" }
 bun_install = { path = "src/install" }
 bun_parsers = { path = "src/parsers" }
 bun_io = { path = "src/io" }
-bun_libarchive = { path = "src/libarchive" }
+bun_archive = { path = "src/archive" }
 bun_md = { path = "src/md" }
 bun_paths = { path = "src/paths" }
 bun_resolver = { path = "src/resolver" }
@@ -412,6 +415,7 @@ bun_semver = { path = "src/semver" }
 bun_sourcemap = { path = "src/sourcemap" }
 bun_sql = { path = "src/sql" }
 bun_sys = { path = "src/sys" }
+bun_tar = { path = "src/tar" }
 bun_threading = { path = "src/threading" }
 bun_valkey = { path = "src/valkey" }
 bun_watcher = { path = "src/watcher" }

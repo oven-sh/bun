@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
   "src/opaque",
+  "src/pod",
   "src/analytics",
   "src/base64",
   "src/bundler",
@@ -14,7 +15,7 @@ members = [
   "src/install/windows-shim",
   "src/parsers",
   "src/io",
-  "src/libarchive",
+  "src/archive",
   "src/md",
   "src/paths",
   "src/resolver",
@@ -44,6 +45,7 @@ members = [
   "src/sourcemap",
   "src/sql",
   "src/sys",
+  "src/tar",
   "src/threading",
   "src/valkey",
   "src/watcher",
@@ -58,6 +60,7 @@ members = [
   "src/event_loop",
   "src/exe_format",
   "src/highway",
+  "src/histogram",
   "src/http_jsc",
   "src/http_types",
   "src/ini",
@@ -281,7 +284,7 @@ clone_on_copy = "deny"
 useless_conversion = "deny"
 # vec_box / boxed_local: legit patterns are `#[expect]`-suppressed at the site
 # with a one-line "why the box is load-bearing" comment (intrusive-list address
-# stability, JsClass finalizer thunk contract). Anything new must justify itself.
+# stability, a task's reclaim point). Anything new must justify itself.
 vec_box = "deny"
 boxed_local = "deny"
 arc_with_non_send_sync = "deny"
@@ -371,6 +374,7 @@ encoding_rs = "0.8.35"
 # Vendored, not crates.io — see the `exclude = ["vendor"]` note above.
 lol_html = { path = "vendor/lolhtml" }
 bun_opaque = { path = "src/opaque" }
+bun_pod = { path = "src/pod" }
 bun_analytics = { path = "src/analytics" }
 bun_base64 = { path = "src/base64" }
 bun_bundler = { path = "src/bundler" }
@@ -382,7 +386,7 @@ bun_http = { path = "src/http" }
 bun_install = { path = "src/install" }
 bun_parsers = { path = "src/parsers" }
 bun_io = { path = "src/io" }
-bun_libarchive = { path = "src/libarchive" }
+bun_archive = { path = "src/archive" }
 bun_md = { path = "src/md" }
 bun_paths = { path = "src/paths" }
 bun_resolver = { path = "src/resolver" }
@@ -411,6 +415,7 @@ bun_semver = { path = "src/semver" }
 bun_sourcemap = { path = "src/sourcemap" }
 bun_sql = { path = "src/sql" }
 bun_sys = { path = "src/sys" }
+bun_tar = { path = "src/tar" }
 bun_threading = { path = "src/threading" }
 bun_valkey = { path = "src/valkey" }
 bun_watcher = { path = "src/watcher" }
@@ -425,6 +430,7 @@ bun_dotenv = { path = "src/dotenv" }
 bun_event_loop = { path = "src/event_loop" }
 bun_exe_format = { path = "src/exe_format" }
 bun_highway = { path = "src/highway" }
+bun_histogram = { path = "src/histogram" }
 bun_http_jsc = { path = "src/http_jsc" }
 bun_http_types = { path = "src/http_types" }
 bun_ini = { path = "src/ini" }

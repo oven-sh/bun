@@ -31,9 +31,8 @@ for (let i = 0; i < NodeErrors.length; i++) {
 }
 
 for (let id = 0; id < jsclasses.length; id++) {
-  const name = jsclasses[id][0];
   replacements.push({
-    from: new RegExp(`\\b\\__intrinsic__inherits${name}\\(`, "g"),
+    from: new RegExp(`\\b\\__intrinsic__inherits${jsclasses[id]}\\(`, "g"),
     to: `$inherits(${id}, `,
   });
 }
@@ -166,8 +165,6 @@ export interface ReplacementRule {
 export const function_replacements = [
   "$debug",
   "$assert",
-  "$rust",
-  "$newRustFunction",
   "$cpp",
   "$newCppFunction",
   "$isPromiseFulfilled",
@@ -223,8 +220,7 @@ export function applyReplacements(src: string, length: number) {
         rest2,
         true,
       ];
-    } else if (["rust", "cpp", "newRustFunction", "newCppFunction"].includes(name)) {
-      const kind = name.includes("ust") ? "rust" : "cpp";
+    } else if (["cpp", "newCppFunction"].includes(name)) {
       const is_create_fn = name.startsWith("new");
 
       const inner = sliceSourceCode(rest, true);
@@ -254,7 +250,7 @@ export function applyReplacements(src: string, length: number) {
         }
       }
 
-      const id = registerNativeCall(kind, args[0], args[1], is_create_fn ? args[2] : null);
+      const id = registerNativeCall("cpp", args[0], args[1], is_create_fn ? args[2] : null);
 
       return [slice.slice(0, match.index) + "__intrinsic__lazy(" + id + ")", inner.rest, true];
     } else if (name === "isPromiseFulfilled" || name === "isPromiseRejected" || name === "isPromisePending") {

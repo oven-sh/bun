@@ -15,7 +15,7 @@ import path from "path";
 import jsclasses from "./../jsc/bindings/js_classes";
 import { sliceSourceCode } from "./builtin-parser";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
-import { getJS2NativeCPP, getJS2NativeRust } from "./generate-js2native";
+import { getJS2NativeCPP } from "./generate-js2native";
 import { cap, checkAscii, engineStamp, sourceStamp, writeIfNotChanged, writeIfNotChangedBinary } from "./helpers";
 import { createInternalModuleRegistry } from "./internal-module-registry-scanner";
 import { define } from "./replacements";
@@ -400,6 +400,12 @@ writeIfNotChanged(
 `,
 );
 
+// The ids replacements.ts compiles `$inherits*()` calls to, inlined into an enum in ZigGlobalObject.cpp.
+writeIfNotChanged(
+  path.join(CODEGEN_DIR, "JSClasses+enum.h"),
+  jsclasses.map((name, id) => `${name} = ${id},\n`).join(""),
+);
+
 // The bundled JS sources (builtin functions + internal modules) are linked into
 // the executable as one contiguous read-only blob via `.incbin` in the generated
 // `.S` below and addressed by {offset, length}. Emitting them as C++
@@ -743,9 +749,6 @@ writeIfNotChanged(
 
 writeIfNotChanged(path.join(CODEGEN_DIR, "GeneratedJS2Native.h"), getJS2NativeCPP());
 
-// Rust sibling: include!()'d by src/runtime/generated_js2native.rs
-writeIfNotChanged(path.join(CODEGEN_DIR, "generated_js2native.rs"), getJS2NativeRust());
-
 const generatedDTSPath = path.join(TYPES_DIR, "generated.d.ts");
 writeIfNotChanged(
   generatedDTSPath,
@@ -793,7 +796,7 @@ declare module "module" {
 }
 `;
 
-    for (const [name] of jsclasses) {
+    for (const name of jsclasses) {
       dts += `\ndeclare function $inherits${name}(value: any): value is ${name};`;
     }
 

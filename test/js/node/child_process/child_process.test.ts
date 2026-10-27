@@ -1808,7 +1808,7 @@ describe.skipIf(!isPosix)("child.stdout pull nested in a 'data' event", () => {
 // still lets the parent exit.
 describe("spawn().unref() with piped stdio", () => {
   // Not concurrent: each row starts a bun that starts a bun. On a debug build a
-  // row takes 1 to 2 s alone and up to 3.6 s when all eight run at once.
+  // row takes 1 to 2 s alone and up to 3.6 s when eight run at once.
 
   // The parent sends "go" from an unref'd timer. A due unref'd timer never
   // fires once nothing else keeps the loop alive, so the child reads "go"
@@ -1963,16 +1963,23 @@ describe("spawn().unref() with piped stdio", () => {
     });
   });
 
-  it("stream.unref() on both pipes lets the parent exit", async () => {
-    expect(await runAndKill(`undefined`, "process.stdin.resume()", "c.stdout.unref(); c.stderr.unref();")).toEqual({
+  // Like a Node handle, a stream keeps one ref flag, so its last call decides.
+  it.each([
+    ["unref()", "c.stdout.unref(); c.stderr.unref();"],
+    ["ref(), unref()", "c.stdout.ref(); c.stdout.unref(); c.stderr.ref(); c.stderr.unref();"],
+  ])("stream %s on both pipes lets the parent exit", async (_, afterUnref) => {
+    expect(await runAndKill(`undefined`, "process.stdin.resume()", afterUnref)).toEqual({
       stderr: "",
       exitCode: 0,
       childExitCode: null,
     });
   });
 
-  it("stream.ref() after stream.unref() holds the parent again", async () => {
-    expect(await run(`undefined`, "c.stdout.unref(); c.stderr.unref(); c.stdout.ref();")).toEqual({
+  it.each([
+    ["unref(), ref()", "c.stderr.unref(); c.stdout.unref(); c.stdout.ref();"],
+    ["unref(), unref(), ref()", "c.stderr.unref(); c.stdout.unref(); c.stdout.unref(); c.stdout.ref();"],
+  ])("stream %s on stdout holds the parent again", async (_, afterUnref) => {
+    expect(await run(`undefined`, afterUnref)).toEqual({
       stdout: "",
       stderr: "",
       exitCode: 0,
@@ -2074,12 +2081,16 @@ it.skipIf(!isPosix)("unref() leaves a child's earlier write in the pipe until th
     ],
     { stdio: ["ignore", "pipe", "ignore"] },
   );
-  waitFor("wrote-one");
-  c.unref();
-  const chunks: string[] = [];
-  c.stdout!.setEncoding("utf8").on("data", chunk => chunks.push(chunk));
-  fs.writeFileSync(file("go"), "");
-  waitFor("wrote-two");
-  await once(c, "close");
-  expect(chunks).toEqual(["one\ntwo\n"]);
+  try {
+    waitFor("wrote-one");
+    c.unref();
+    const chunks: string[] = [];
+    c.stdout!.setEncoding("utf8").on("data", chunk => chunks.push(chunk));
+    fs.writeFileSync(file("go"), "");
+    waitFor("wrote-two");
+    await once(c, "close");
+    expect(chunks).toEqual(["one\ntwo\n"]);
+  } finally {
+    c.kill();
+  }
 });

@@ -42,8 +42,8 @@ fn compute_distance_code(distance: usize, max_distance: usize, dist_cache: &[i32
 fn create_backward_references_with<H: LongestMatchHasher, const COMPOUND: bool>(
     num_bytes: usize,
     mut position: usize,
-    ringbuffer: &[u8],
-    ringbuffer_mask: usize,
+    ring_buffer: &[u8],
+    ring_buffer_mask: usize,
     params: &EncoderParams,
     hasher: &mut H,
     dictionary_stats: &mut DictionaryStats,
@@ -88,8 +88,8 @@ fn create_backward_references_with<H: LongestMatchHasher, const COMPOUND: bool>(
         };
         hasher.find_longest_match(
             &mut dictionary,
-            ringbuffer,
-            ringbuffer_mask,
+            ring_buffer,
+            ring_buffer_mask,
             dist_cache,
             position,
             max_length,
@@ -101,8 +101,8 @@ fn create_backward_references_with<H: LongestMatchHasher, const COMPOUND: bool>(
         if COMPOUND {
             lookup_compound_dictionary_match(
                 &params.dictionary,
-                ringbuffer,
-                ringbuffer_mask,
+                ring_buffer,
+                ring_buffer_mask,
                 dist_cache,
                 position,
                 max_length,
@@ -131,8 +131,8 @@ fn create_backward_references_with<H: LongestMatchHasher, const COMPOUND: bool>(
                 dictionary_start = (position + 1 + position_offset).min(max_backward_limit);
                 hasher.find_longest_match(
                     &mut dictionary,
-                    ringbuffer,
-                    ringbuffer_mask,
+                    ring_buffer,
+                    ring_buffer_mask,
                     dist_cache,
                     position + 1,
                     max_length,
@@ -144,8 +144,8 @@ fn create_backward_references_with<H: LongestMatchHasher, const COMPOUND: bool>(
                 if COMPOUND {
                     lookup_compound_dictionary_match(
                         &params.dictionary,
-                        ringbuffer,
-                        ringbuffer_mask,
+                        ring_buffer,
+                        ring_buffer_mask,
                         dist_cache,
                         position + 1,
                         max_length,
@@ -197,7 +197,7 @@ fn create_backward_references_with<H: LongestMatchHasher, const COMPOUND: bool>(
                 range_start =
                     range_end.min(range_start.max(position + best.len - (best.distance << 2)));
             }
-            hasher.store_range(ringbuffer, ringbuffer_mask, range_start, range_end)?;
+            hasher.store_range(ring_buffer, ring_buffer_mask, range_start, range_end)?;
             position += best.len;
         } else {
             insert_length += 1;
@@ -210,7 +210,7 @@ fn create_backward_references_with<H: LongestMatchHasher, const COMPOUND: bool>(
                     let margin = (H::STORE_LOOKAHEAD - 1).max(4);
                     let pos_jump = (position + 16).min(pos_end.wrapping_sub(margin));
                     while position < pos_jump {
-                        hasher.store(ringbuffer, ringbuffer_mask, position)?;
+                        hasher.store(ring_buffer, ring_buffer_mask, position)?;
                         insert_length += 4;
                         position += 4;
                     }
@@ -218,7 +218,7 @@ fn create_backward_references_with<H: LongestMatchHasher, const COMPOUND: bool>(
                     let margin = (H::STORE_LOOKAHEAD - 1).max(2);
                     let pos_jump = (position + 8).min(pos_end.wrapping_sub(margin));
                     while position < pos_jump {
-                        hasher.store(ringbuffer, ringbuffer_mask, position)?;
+                        hasher.store(ring_buffer, ring_buffer_mask, position)?;
                         insert_length += 2;
                         position += 2;
                     }
@@ -236,8 +236,8 @@ fn create_backward_references_with<H: LongestMatchHasher, const COMPOUND: bool>(
 pub(crate) fn create_backward_references(
     num_bytes: usize,
     position: usize,
-    ringbuffer: &[u8],
-    ringbuffer_mask: usize,
+    ring_buffer: &[u8],
+    ring_buffer_mask: usize,
     params: &EncoderParams,
     hasher: &mut Hasher,
     dist_cache: &mut [i32; 16],
@@ -263,8 +263,8 @@ pub(crate) fn create_backward_references(
             create_backward_references_with::<_, $compound>(
                 num_bytes,
                 position,
-                ringbuffer,
-                ringbuffer_mask,
+                ring_buffer,
+                ring_buffer_mask,
                 params,
                 $hasher,
                 dictionary_stats,

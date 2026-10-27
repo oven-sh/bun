@@ -6,20 +6,21 @@ use super::backward_references_hq::{
 };
 use super::bit_cost::bits_entropy;
 use super::bit_stream::{
-    store_meta_block, store_meta_block_fast, store_meta_block_trivial,
+    store_empty_last_meta_block, store_meta_block, store_meta_block_fast, store_meta_block_trivial,
     store_uncompressed_meta_block,
 };
 use super::bit_writer::BitWriter;
 use super::command::Command;
 use super::compound_dictionary::{CompoundDictionary, PreparedDictionary};
-use super::compress_fragment::{OnePassArena, compress_fragment_fast};
+use super::compress_fragment::{OnePassScratch, compress_fragment_fast};
 use super::compress_fragment_two_pass::{
-    COMPRESS_FRAGMENT_TWO_PASS_BLOCK_SIZE, TwoPassArena, compress_fragment_two_pass,
+    COMPRESS_FRAGMENT_TWO_PASS_BLOCK_SIZE, TwoPassScratch, compress_fragment_two_pass,
 };
 use super::fast_log::{fast_log2, log2_floor_nonzero};
 use super::hash::Hasher;
 use super::meta_block::{
-    MAX_STATIC_CONTEXTS, build_meta_block, build_meta_block_greedy, optimize_histograms,
+    MAX_STATIC_CONTEXTS, StaticContextMap, build_meta_block, build_meta_block_greedy,
+    optimize_histograms,
 };
 use super::params::{
     DistanceParams, EncoderParams, FAST_COMPRESSION_WINDOW_BITS, FAST_ONE_PASS_COMPRESSION_QUALITY,
@@ -77,9 +78,9 @@ enum Flint {
 
 /// What qualities 0 and 1 work with. They have no use for the ring buffer, the hasher and the commands.
 enum FastCompressor {
-    OnePass(Box<OnePassArena>),
+    OnePass(Box<OnePassScratch>),
     TwoPass {
-        arena: Box<TwoPassArena>,
+        arena: Box<TwoPassScratch>,
         /// Scratch space.
         command_buf: Vec<u32>,
         literal_buf: Vec<u8>,
@@ -100,7 +101,7 @@ pub struct Encoder {
 
     /// How many bytes were copied to the ring buffer.
     input_pos: u64,
-    ringbuffer: RingBuffer,
+    ring_buffer: RingBuffer,
     /// Of the meta-block in progress.
     commands: Vec<Command>,
     num_literals: usize,
@@ -219,14 +220,15 @@ fn estimate_entropy(population: &[u32]) -> f64 {
     total as f64 * fast_log2(total) - result
 }
 
-type StaticContextMap = &'static [u32; 64];
-
 /// Picks a context map by how well the two highest bits of a byte predict those of the next one. `bigram_histo` counts
 /// the pairs.
 ///
 /// This takes the Shannon entropy and not [`bits_entropy`], which assumes that the symbols get a prefix code of their own,
 /// while these are coded together with the other 6 bits of the byte.
-fn choose_context_map(quality: i32, bigram_histo: &[u32; 9]) -> (usize, Option<StaticContextMap>) {
+fn choose_context_map(
+    quality: i32,
+    bigram_histo: &[u32; 9],
+) -> (usize, Option<&'static StaticContextMap>) {
     #[rustfmt::skip]
     static STATIC_CONTEXT_MAP_CONTINUATION: [u32; 64] = [
         1, 1, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -282,7 +284,7 @@ fn complex_static_context_map(
     length: usize,
     mask: usize,
     size_hint: usize,
-) -> Checked<Option<StaticContextMap>> {
+) -> Checked<Option<&'static StaticContextMap>> {
     #[rustfmt::skip]
     static STATIC_CONTEXT_MAP_COMPLEX_UTF8: [u32; 64] = [
         11, 11, 12, 12, // 0 special
@@ -355,7 +357,7 @@ fn decide_over_literal_context_modeling(
     mask: usize,
     quality: i32,
     size_hint: usize,
-) -> Checked<(usize, Option<StaticContextMap>)> {
+) -> Checked<(usize, Option<&'static StaticContextMap>)> {
     if quality < MIN_QUALITY_FOR_CONTEXT_MODELING || length < 64 {
         return Ok((1, None));
     }
@@ -446,9 +448,7 @@ fn write_meta_block(
     let wrapped_last_flush_pos = wrap_position(last_flush_pos) as usize;
 
     if bytes == 0 {
-        // ISLAST and ISLASTEMPTY.
-        bw.write_bits(2, 3)?;
-        bw.jump_to_byte_boundary()?;
+        store_empty_last_meta_block(bw)?;
         return Ok(());
     }
 
@@ -684,7 +684,7 @@ impl Encoder {
                 dictionary: CompoundDictionary::default(),
             },
             input_pos: 0,
-            ringbuffer: RingBuffer::default(),
+            ring_buffer: RingBuffer::default(),
             commands: Vec::new(),
             num_literals: 0,
             last_insert_len: 0,
@@ -791,7 +791,7 @@ impl Encoder {
             self.dist_cache.write_at(0, &self.saved_dist_cache)?;
         }
 
-        self.ringbuffer.setup(&self.params);
+        self.ring_buffer.setup(&self.params);
 
         let mut lgwin = self.params.lgwin;
         if self.params.is_fast() {
@@ -810,10 +810,10 @@ impl Encoder {
 
         self.fast = match self.params.quality {
             FAST_ONE_PASS_COMPRESSION_QUALITY => {
-                Some(FastCompressor::OnePass(OnePassArena::new()?))
+                Some(FastCompressor::OnePass(OnePassScratch::new()?))
             }
             FAST_TWO_PASS_COMPRESSION_QUALITY => Some(FastCompressor::TwoPass {
-                arena: TwoPassArena::new()?,
+                arena: TwoPassScratch::new()?,
                 command_buf: Vec::new(),
                 literal_buf: Vec::new(),
             }),
@@ -827,9 +827,9 @@ impl Encoder {
     /// Takes input without processing it. Between two calls of [`Self::encode_data`] this can take up to
     /// [`Self::input_block_size`] bytes.
     fn copy_input_to_ring_buffer(&mut self, input: &[u8]) -> Fallible {
-        self.ringbuffer.write(input)?;
+        self.ring_buffer.write(input)?;
         self.input_pos += input.len() as u64;
-        self.ringbuffer.clear_after_end()?;
+        self.ring_buffer.clear_after_end()?;
         Ok(())
     }
 
@@ -848,10 +848,10 @@ impl Encoder {
         let delta = self.unprocessed_input_size();
         let mut bytes = delta as u32;
         let mut wrapped_last_processed_pos = wrap_position(self.last_processed_pos);
-        let mask = self.ringbuffer.mask;
+        let mask = self.ring_buffer.mask;
 
         if delta == 0 {
-            if !self.ringbuffer.is_allocated() {
+            if !self.ring_buffer.is_allocated() {
                 // There was no input at all.
                 if is_last {
                     debug_assert!(self.last_bytes_bits <= 14);
@@ -882,7 +882,7 @@ impl Encoder {
                 .map_err(|_| AllocError)?;
         }
 
-        let data = self.ringbuffer.buffer();
+        let data = self.ring_buffer.buffer();
 
         self.hasher.init_or_stitch_to_previous_block(
             data,
@@ -1000,7 +1000,7 @@ impl Encoder {
         if self.update_last_processed_pos() {
             self.hasher.reset();
         }
-        let data = self.ringbuffer.buffer();
+        let data = self.ring_buffer.buffer();
         if self.last_flush_pos > 0 {
             self.prev_byte =
                 data.at(((self.last_flush_pos as u32).wrapping_sub(1) & mask) as usize)?;

@@ -3,14 +3,15 @@
 
 use super::bit_cost::bits_entropy;
 use super::bit_stream::{
-    MetaBlockKind, build_and_store_huffman_tree_fast, store_meta_block_header,
+    MetaBlockKind, build_and_store_huffman_tree_fast, store_empty_last_meta_block,
+    store_meta_block_header, store_trivial_splits_and_contexts,
 };
 use super::bit_writer::BitWriter;
 use super::compress_fragment::{
     CommandSink, MAX_DISTANCE, build_and_store_command_prefix_code, emit_literals, hash_low_bytes,
-    same_low_bytes, write_empty_last_meta_block,
+    same_low_bytes,
 };
-use super::entropy_encode::HuffmanTree;
+use super::entropy_encode::HuffmanNode;
 use super::find_match_length::find_match_length_with_limit;
 use crate::common::constants::{NUM_LITERAL_SYMBOLS, WINDOW_GAP};
 use crate::util::{Bug, Checked, SliceExt, load_u64_le, try_box};
@@ -18,7 +19,7 @@ use bun_core::AllocError;
 
 pub(crate) const COMPRESS_FRAGMENT_TWO_PASS_BLOCK_SIZE: usize = 1 << 17;
 
-pub(crate) struct TwoPassArena {
+pub(crate) struct TwoPassScratch {
     lit_histo: [u32; 256],
     lit_depth: [u8; 256],
     lit_bits: [u16; 256],
@@ -27,10 +28,10 @@ pub(crate) struct TwoPassArena {
     cmd_depth: [u8; 128],
     cmd_bits: [u16; 128],
 
-    tmp_tree: [HuffmanTree; 2 * NUM_LITERAL_SYMBOLS + 1],
+    tmp_tree: [HuffmanNode; 2 * NUM_LITERAL_SYMBOLS + 1],
 }
 
-impl TwoPassArena {
+impl TwoPassScratch {
     pub(crate) fn new() -> Result<Box<Self>, AllocError> {
         try_box(Self {
             lit_histo: [0; 256],
@@ -39,7 +40,7 @@ impl TwoPassArena {
             cmd_histo: [0; 128],
             cmd_depth: [0; 128],
             cmd_bits: [0; 128],
-            tmp_tree: [HuffmanTree::new(0, 0, 0); 2 * NUM_LITERAL_SYMBOLS + 1],
+            tmp_tree: [HuffmanNode::new(0, 0, 0); 2 * NUM_LITERAL_SYMBOLS + 1],
         })
     }
 }
@@ -298,7 +299,7 @@ fn create_commands<const TABLE_BITS: u32, const TABLE_SIZE: usize>(
 /// Not inlined: as a part of its caller, this came out 1 % slower.
 #[inline(never)]
 fn store_commands(
-    s: &mut TwoPassArena,
+    s: &mut TwoPassScratch,
     literals: &[u8],
     commands: &[u32],
     bw: &mut BitWriter<'_>,
@@ -376,7 +377,7 @@ fn store_commands(
 const MIN_RATIO: f64 = 0.98;
 const SAMPLE_RATE: usize = 43;
 
-fn should_compress(s: &mut TwoPassArena, input: &[u8], num_literals: usize) -> Checked<bool> {
+fn should_compress(s: &mut TwoPassScratch, input: &[u8], num_literals: usize) -> Checked<bool> {
     let corpus_size = input.len() as f64;
     if (num_literals as f64) < MIN_RATIO * corpus_size {
         return Ok(true);
@@ -402,7 +403,7 @@ fn emit_uncompressed_meta_block(input: &[u8], bw: &mut BitWriter<'_>) -> Checked
 /// scratch space, each as long as `input` or [`COMPRESS_FRAGMENT_TWO_PASS_BLOCK_SIZE`] if that is less. No copy reaches
 /// back before `input`.
 pub(crate) fn compress_fragment_two_pass(
-    s: &mut TwoPassArena,
+    s: &mut TwoPassScratch,
     input: &[u8],
     is_last: bool,
     command_buf: &mut [u32],
@@ -443,8 +444,7 @@ pub(crate) fn compress_fragment_two_pass(
         }?;
         if should_compress(s, block, num_literals)? {
             store_meta_block_header(block_size, MetaBlockKind::Compressed, bw)?;
-            // No block splits, no contexts.
-            bw.write_bits(13, 0)?;
+            store_trivial_splits_and_contexts(bw)?;
             store_commands(
                 s,
                 literal_buf.sub(..num_literals)?,
@@ -465,7 +465,7 @@ pub(crate) fn compress_fragment_two_pass(
     }
 
     if is_last {
-        write_empty_last_meta_block(bw)?;
+        store_empty_last_meta_block(bw)?;
     }
     Ok(())
 }

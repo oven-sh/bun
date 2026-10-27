@@ -404,7 +404,7 @@ impl<const N: usize> GreedyBlockSplitter<N> {
 }
 
 /// What maps the context IDs of the literals to fewer contexts.
-type StaticContextMap = [u32; 1 << LITERAL_CONTEXT_BITS];
+pub(crate) type StaticContextMap = [u32; 1 << LITERAL_CONTEXT_BITS];
 
 /// Makes the context map that uses `static_context_map` for each of `num_block_types`.
 fn map_static_contexts(

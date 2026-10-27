@@ -50,7 +50,7 @@ pub(crate) fn prefix_encode_copy_distance(
 }
 
 #[inline(always)]
-pub(crate) fn get_insert_length_code(insert_len: usize) -> u16 {
+pub(crate) fn insert_length_code(insert_len: usize) -> u16 {
     if insert_len < 6 {
         insert_len as u16
     } else if insert_len < 130 {
@@ -68,7 +68,7 @@ pub(crate) fn get_insert_length_code(insert_len: usize) -> u16 {
 }
 
 #[inline(always)]
-pub(crate) fn get_copy_length_code(copy_len: usize) -> u16 {
+pub(crate) fn copy_length_code(copy_len: usize) -> u16 {
     if copy_len < 10 {
         copy_len.wrapping_sub(2) as u16
     } else if copy_len < 134 {
@@ -101,8 +101,8 @@ pub(crate) fn combine_length_codes(
 #[inline(always)]
 fn length_code(insert_len: usize, copy_len: usize, use_last_distance: bool) -> u16 {
     combine_length_codes(
-        get_insert_length_code(insert_len),
-        get_copy_length_code(copy_len),
+        insert_length_code(insert_len),
+        copy_length_code(copy_len),
         use_last_distance,
     )
 }

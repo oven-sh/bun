@@ -3,7 +3,7 @@
 
 use super::Fallible;
 use super::command::{
-    Command, combine_length_codes, get_copy_length_code, get_insert_length_code,
+    Command, combine_length_codes, copy_length_code, insert_length_code,
     prefix_encode_copy_distance,
 };
 use super::fast_log::fast_log2;
@@ -199,8 +199,8 @@ impl ZopfliCostModel {
     fn set_from_commands(
         &mut self,
         position: usize,
-        ringbuffer: &[u8],
-        ringbuffer_mask: usize,
+        ring_buffer: &[u8],
+        ring_buffer_mask: usize,
         commands: &[Command],
         last_insert_len: usize,
     ) -> Checked {
@@ -214,14 +214,14 @@ impl ZopfliCostModel {
             let inslength = command.insert_len as usize;
             let copylength = command.copy_len() as usize;
             let distcode = command.dist_prefix.symbol();
-            let cmdcode = usize::from(command.cmd_prefix);
+            let cmd_code = usize::from(command.cmd_prefix);
 
-            *histogram_cmd.at_mut(cmdcode)? += 1;
-            if cmdcode >= 128 {
+            *histogram_cmd.at_mut(cmd_code)? += 1;
+            if cmd_code >= 128 {
                 *histogram_dist.at_mut(distcode)? += 1;
             }
             for j in 0..inslength {
-                let literal = ringbuffer.at(pos.wrapping_add(j) & ringbuffer_mask)?;
+                let literal = ring_buffer.at(pos.wrapping_add(j) & ring_buffer_mask)?;
                 *histogram_literal.at_mut(usize::from(literal))? += 1;
             }
             pos = pos.wrapping_add(inslength + copylength);
@@ -247,7 +247,7 @@ impl ZopfliCostModel {
 
         self.accumulate_literal_costs(|_, i| {
             cost_literal.at(usize::from(
-                ringbuffer.at((position + i) & ringbuffer_mask)?,
+                ring_buffer.at((position + i) & ring_buffer_mask)?,
             ))
         })
     }
@@ -256,14 +256,14 @@ impl ZopfliCostModel {
     fn set_from_literal_costs(
         &mut self,
         position: usize,
-        ringbuffer: &[u8],
-        ringbuffer_mask: usize,
+        ring_buffer: &[u8],
+        ring_buffer_mask: usize,
     ) -> Checked {
         estimate_bit_costs_for_literals(
             position,
             self.num_bytes,
-            ringbuffer_mask,
-            ringbuffer,
+            ring_buffer_mask,
+            ring_buffer,
             self.literal_costs.sub_mut(1..)?,
         )?;
         self.accumulate_literal_costs(|literal_costs, i| literal_costs.at(i + 1))?;
@@ -278,8 +278,8 @@ impl ZopfliCostModel {
     }
 
     #[inline(always)]
-    fn command_cost(&self, cmdcode: u16) -> Checked<f32> {
-        self.cost_cmd.at(usize::from(cmdcode))
+    fn command_cost(&self, cmd_code: u16) -> Checked<f32> {
+        self.cost_cmd.at(usize::from(cmd_code))
     }
 
     #[inline(always)]
@@ -501,8 +501,8 @@ fn update_nodes(
     num_bytes: usize,
     block_start: usize,
     pos: usize,
-    ringbuffer: &[u8],
-    ringbuffer_mask: usize,
+    ring_buffer: &[u8],
+    ring_buffer_mask: usize,
     params: &EncoderParams,
     starting_dist_cache: &[i32],
     matches: &[BackwardMatch],
@@ -513,7 +513,7 @@ fn update_nodes(
     let stream_offset = params.stream_offset;
     let max_backward_limit = max_backward_limit(params.lgwin as u32);
     let cur_ix = block_start + pos;
-    let cur_ix_masked = cur_ix & ringbuffer_mask;
+    let cur_ix_masked = cur_ix & ring_buffer_mask;
     let max_distance = cur_ix.min(max_backward_limit);
     let dictionary_start = (cur_ix + stream_offset).min(max_backward_limit);
     let max_len = num_bytes - pos;
@@ -523,7 +523,7 @@ fn update_nodes(
     let gap = compound.total_size;
     let mut result = 0usize;
 
-    let current = ringbuffer.sub(cur_ix_masked..)?;
+    let current = ring_buffer.sub(cur_ix_masked..)?;
 
     evaluate_node(
         block_start + stream_offset,
@@ -546,10 +546,14 @@ fn update_nodes(
     for k in 0..max_iters.min(queue.size()) {
         let posdata = queue.at(k)?;
         let start = posdata.pos;
-        let inscode = get_insert_length_code(pos - start);
+        let insert_code = insert_length_code(pos - start);
         let start_costdiff = posdata.costdiff;
         let base_cost = start_costdiff
-            + f32::from(INSERT_LENGTH_PREFIX_CODE.at(usize::from(inscode))?.nbits)
+            + f32::from(
+                INSERT_LENGTH_PREFIX_CODE
+                    .at(usize::from(insert_code))?
+                    .nbits,
+            )
             + model.literal_costs(0, pos)?;
 
         // The distances that have a short code at that position.
@@ -562,7 +566,7 @@ fn update_nodes(
                 break;
             }
             let mut prev_ix = cur_ix.wrapping_sub(backward);
-            if cur_ix_masked + best_len > ringbuffer_mask {
+            if cur_ix_masked + best_len > ring_buffer_mask {
                 break;
             }
             let continuation = current.at(best_len)?;
@@ -574,13 +578,13 @@ fn update_nodes(
                 if prev_ix >= cur_ix {
                     continue;
                 }
-                prev_ix &= ringbuffer_mask;
-                if prev_ix + best_len > ringbuffer_mask
-                    || continuation != ringbuffer.at(prev_ix + best_len)?
+                prev_ix &= ring_buffer_mask;
+                if prev_ix + best_len > ring_buffer_mask
+                    || continuation != ring_buffer.at(prev_ix + best_len)?
                 {
                     continue;
                 }
-                find_match_length_with_limit(ringbuffer.sub(prev_ix..)?, current, max_len)
+                find_match_length_with_limit(ring_buffer.sub(prev_ix..)?, current, max_len)
             } else if backward > dictionary_start {
                 // That is in the compound dictionary.
                 let mut d = 0usize;
@@ -603,11 +607,11 @@ fn update_nodes(
             };
             let dist_cost = base_cost + model.distance_cost(j)?;
             for l in best_len + 1..=len {
-                let copycode = get_copy_length_code(l);
-                let cmdcode = combine_length_codes(inscode, copycode, j == 0);
-                let cost = (if cmdcode < 128 { base_cost } else { dist_cost })
-                    + f32::from(COPY_LENGTH_PREFIX_CODE.at(usize::from(copycode))?.nbits)
-                    + model.command_cost(cmdcode)?;
+                let copy_code = copy_length_code(l);
+                let cmd_code = combine_length_codes(insert_code, copy_code, j == 0);
+                let cost = (if cmd_code < 128 { base_cost } else { dist_cost })
+                    + f32::from(COPY_LENGTH_PREFIX_CODE.at(usize::from(copy_code))?.nbits)
+                    + model.command_cost(cmd_code)?;
                 if cost < nodes.at(pos + l)?.cost() {
                     update_zopfli_node(nodes, pos, start, l, l, backward, j + 1, cost)?;
                     result = result.max(l);
@@ -647,11 +651,11 @@ fn update_nodes(
                 } else {
                     len
                 };
-                let copycode = get_copy_length_code(len_code);
-                let cmdcode = combine_length_codes(inscode, copycode, false);
+                let copy_code = copy_length_code(len_code);
+                let cmd_code = combine_length_codes(insert_code, copy_code, false);
                 let cost = dist_cost
-                    + f32::from(COPY_LENGTH_PREFIX_CODE.at(usize::from(copycode))?.nbits)
-                    + model.command_cost(cmdcode)?;
+                    + f32::from(COPY_LENGTH_PREFIX_CODE.at(usize::from(copy_code))?.nbits)
+                    + model.command_cost(cmd_code)?;
                 if cost < nodes.at(pos + len)?.cost() {
                     update_zopfli_node(nodes, pos, start, len, len_code, dist, 0, cost)?;
                     result = result.max(len);
@@ -747,8 +751,8 @@ fn zopfli_create_commands(
 fn zopfli_iterate(
     num_bytes: usize,
     position: usize,
-    ringbuffer: &[u8],
-    ringbuffer_mask: usize,
+    ring_buffer: &[u8],
+    ring_buffer_mask: usize,
     params: &EncoderParams,
     dist_cache: &[i32],
     model: &ZopfliCostModel,
@@ -771,8 +775,8 @@ fn zopfli_iterate(
             num_bytes,
             position,
             i,
-            ringbuffer,
-            ringbuffer_mask,
+            ring_buffer,
+            ring_buffer_mask,
             params,
             dist_cache,
             cur_matches,
@@ -872,8 +876,8 @@ impl MatchBuffers {
     fn find_all_matches(
         &mut self,
         hasher: &mut H10,
-        ringbuffer: &[u8],
-        ringbuffer_mask: usize,
+        ring_buffer: &[u8],
+        ring_buffer_mask: usize,
         pos: usize,
         max_length: usize,
         params: &EncoderParams,
@@ -884,8 +888,8 @@ impl MatchBuffers {
         let compound = &params.dictionary;
         let gap = compound.total_size;
         let num_matches = hasher.find_all_matches(
-            ringbuffer,
-            ringbuffer_mask,
+            ring_buffer,
+            ring_buffer_mask,
             pos,
             max_length,
             max_distance,
@@ -899,8 +903,8 @@ impl MatchBuffers {
         }
         let cd_matches = lookup_all_compound_dictionary_matches(
             compound,
-            ringbuffer,
-            ringbuffer_mask,
+            ring_buffer,
+            ring_buffer_mask,
             pos,
             3,
             max_length,
@@ -927,8 +931,8 @@ fn store_end(position: usize, num_bytes: usize) -> usize {
 fn zopfli_compute_shortest_path(
     num_bytes: usize,
     position: usize,
-    ringbuffer: &[u8],
-    ringbuffer_mask: usize,
+    ring_buffer: &[u8],
+    ring_buffer_mask: usize,
     params: &EncoderParams,
     dist_cache: &[i32],
     hasher: &mut H10,
@@ -943,14 +947,14 @@ fn zopfli_compute_shortest_path(
     let gap = params.dictionary.total_size;
     let mut model = ZopfliCostModel::new(&params.dist, num_bytes)?;
     nodes.put(0, ZopfliNode::FIRST)?;
-    model.set_from_literal_costs(position, ringbuffer, ringbuffer_mask)?;
+    model.set_from_literal_costs(position, ring_buffer, ring_buffer_mask)?;
     let mut i = 0usize;
     while i + H10::HASH_TYPE_LENGTH <= num_bytes {
         let pos = position + i;
         let mut matches = buffers.find_all_matches(
             hasher,
-            ringbuffer,
-            ringbuffer_mask,
+            ring_buffer,
+            ring_buffer_mask,
             pos,
             num_bytes - i,
             params,
@@ -967,8 +971,8 @@ fn zopfli_compute_shortest_path(
             num_bytes,
             position,
             i,
-            ringbuffer,
-            ringbuffer_mask,
+            ring_buffer,
+            ring_buffer_mask,
             params,
             dist_cache,
             matches,
@@ -983,8 +987,8 @@ fn zopfli_compute_shortest_path(
         if skip > 1 {
             // Add the rest of the copy to the hasher.
             hasher.store_range(
-                ringbuffer,
-                ringbuffer_mask,
+                ring_buffer,
+                ring_buffer_mask,
                 pos + 1,
                 (pos + skip).min(store_end),
             )?;
@@ -1017,8 +1021,8 @@ fn zopfli_compute_shortest_path(
 pub(crate) fn create_zopfli_backward_references(
     num_bytes: usize,
     position: usize,
-    ringbuffer: &[u8],
-    ringbuffer_mask: usize,
+    ring_buffer: &[u8],
+    ring_buffer_mask: usize,
     params: &EncoderParams,
     hasher: &mut Hasher,
     dist_cache: &mut [i32; 16],
@@ -1030,8 +1034,8 @@ pub(crate) fn create_zopfli_backward_references(
     let num_commands = zopfli_compute_shortest_path(
         num_bytes,
         position,
-        ringbuffer,
-        ringbuffer_mask,
+        ring_buffer,
+        ring_buffer_mask,
         params,
         dist_cache,
         hasher.h10_mut()?,
@@ -1055,8 +1059,8 @@ pub(crate) fn create_zopfli_backward_references(
 pub(crate) fn create_hq_zopfli_backward_references(
     num_bytes: usize,
     position: usize,
-    ringbuffer: &[u8],
-    ringbuffer_mask: usize,
+    ring_buffer: &[u8],
+    ring_buffer_mask: usize,
     params: &EncoderParams,
     hasher: &mut Hasher,
     dist_cache: &mut [i32; 16],
@@ -1076,8 +1080,8 @@ pub(crate) fn create_hq_zopfli_backward_references(
         let pos = position + i;
         let found = buffers.find_all_matches(
             hasher,
-            ringbuffer,
-            ringbuffer_mask,
+            ring_buffer,
+            ring_buffer_mask,
             pos,
             num_bytes - i,
             params,
@@ -1091,8 +1095,8 @@ pub(crate) fn create_hq_zopfli_backward_references(
                 num_matches.put(i, 1)?;
                 // Add the rest of the copy to the hasher.
                 hasher.store_range(
-                    ringbuffer,
-                    ringbuffer_mask,
+                    ring_buffer,
+                    ring_buffer_mask,
                     pos + 1,
                     (pos + match_len).min(store_end),
                 )?;
@@ -1114,13 +1118,13 @@ pub(crate) fn create_hq_zopfli_backward_references(
     let mut model = ZopfliCostModel::new(&params.dist, num_bytes)?;
     for pass in 0..2 {
         if pass == 0 {
-            model.set_from_literal_costs(position, ringbuffer, ringbuffer_mask)?;
+            model.set_from_literal_costs(position, ring_buffer, ring_buffer_mask)?;
         } else {
             nodes.fill(ZopfliNode::INIT);
             model.set_from_commands(
                 position,
-                ringbuffer,
-                ringbuffer_mask,
+                ring_buffer,
+                ring_buffer_mask,
                 commands.sub(orig_num_commands..)?,
                 orig_last_insert_len,
             )?;
@@ -1132,8 +1136,8 @@ pub(crate) fn create_hq_zopfli_backward_references(
         let num_commands = zopfli_iterate(
             num_bytes,
             position,
-            ringbuffer,
-            ringbuffer_mask,
+            ring_buffer,
+            ring_buffer_mask,
             params,
             dist_cache,
             &model,

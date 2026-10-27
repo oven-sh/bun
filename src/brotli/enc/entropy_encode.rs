@@ -8,14 +8,14 @@ use crate::util::{Bug, Checked, SliceExt};
 
 /// A node of a Huffman tree.
 #[derive(Clone, Copy, Default)]
-pub(crate) struct HuffmanTree {
+pub(crate) struct HuffmanNode {
     total_count: u32,
     /// Negative for a leaf.
     index_left: i16,
     index_right_or_value: i16,
 }
 
-impl HuffmanTree {
+impl HuffmanNode {
     #[inline(always)]
     pub(crate) const fn new(count: u32, left: i16, right: i16) -> Self {
         Self {
@@ -32,8 +32,8 @@ static SHELL_GAPS: [usize; 6] = [132, 57, 23, 10, 4, 1];
 /// the output depends on it, so this has to be the very algorithm of the reference encoder.
 #[inline(always)]
 fn sort_huffman_tree_items(
-    items: &mut [HuffmanTree],
-    comparator: impl Fn(&HuffmanTree, &HuffmanTree) -> bool,
+    items: &mut [HuffmanNode],
+    comparator: impl Fn(&HuffmanNode, &HuffmanNode) -> bool,
 ) -> Checked {
     let n = items.len();
     if n < 13 {
@@ -73,7 +73,7 @@ fn sort_huffman_tree_items(
 }
 
 /// Stores the depth of every leaf below node `p0`. `false` if one is deeper than `max_depth`.
-fn set_depth(p0: usize, pool: &[HuffmanTree], depth: &mut [u8], max_depth: usize) -> Checked<bool> {
+fn set_depth(p0: usize, pool: &[HuffmanNode], depth: &mut [u8], max_depth: usize) -> Checked<bool> {
     let mut stack = [-1i32; 16];
     let mut level = 0usize;
     let mut p = p0;
@@ -107,7 +107,7 @@ fn set_depth(p0: usize, pool: &[HuffmanTree], depth: &mut [u8], max_depth: usize
 pub(crate) fn create_huffman_tree(
     data: &[u32],
     tree_limit: usize,
-    tree: &mut [HuffmanTree],
+    tree: &mut [HuffmanNode],
     depth: &mut [u8],
 ) -> Checked {
     create_huffman_tree_sorted_by(data, tree_limit, tree, depth, |v0, v1| {
@@ -122,7 +122,7 @@ pub(crate) fn create_huffman_tree(
 pub(crate) fn create_huffman_tree_fast(
     data: &[u32],
     tree_limit: usize,
-    tree: &mut [HuffmanTree],
+    tree: &mut [HuffmanNode],
     depth: &mut [u8],
 ) -> Checked {
     create_huffman_tree_sorted_by(data, tree_limit, tree, depth, |v0, v1| {
@@ -135,17 +135,17 @@ pub(crate) fn create_huffman_tree_fast(
 fn create_huffman_tree_sorted_by(
     data: &[u32],
     tree_limit: usize,
-    tree: &mut [HuffmanTree],
+    tree: &mut [HuffmanNode],
     depth: &mut [u8],
-    comes_first: impl Fn(&HuffmanTree, &HuffmanTree) -> bool,
+    comes_first: impl Fn(&HuffmanNode, &HuffmanNode) -> bool,
 ) -> Checked {
-    let sentinel = HuffmanTree::new(u32::MAX, -1, -1);
+    let sentinel = HuffmanNode::new(u32::MAX, -1, -1);
     let mut count_limit = 1u32;
     loop {
         let mut n = 0usize;
         for (i, &count) in data.iter().enumerate().rev() {
             if count != 0 {
-                tree.put(n, HuffmanTree::new(count.max(count_limit), -1, i as i16))?;
+                tree.put(n, HuffmanNode::new(count.max(count_limit), -1, i as i16))?;
                 n += 1;
             }
         }
@@ -165,7 +165,7 @@ fn create_huffman_tree_sorted_by(
         let mut i = 0usize;
         let mut j = n + 1;
         for k in (1..n).rev() {
-            let mut take_smaller = |tree: &[HuffmanTree]| -> Checked<usize> {
+            let mut take_smaller = |tree: &[HuffmanNode]| -> Checked<usize> {
                 if tree.at(i)?.total_count <= tree.at(j)?.total_count {
                     i += 1;
                     Ok(i - 1)
@@ -183,7 +183,7 @@ fn create_huffman_tree_sorted_by(
                 .wrapping_add(tree.at(right)?.total_count);
             tree.put(
                 j_end,
-                HuffmanTree::new(total_count, left as i16, right as i16),
+                HuffmanNode::new(total_count, left as i16, right as i16),
             )?;
             tree.put(j_end + 1, sentinel)?;
         }

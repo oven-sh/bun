@@ -4,13 +4,15 @@
 //! are built from the statistics of the block before.
 
 use super::bit_stream::{
-    MetaBlockKind, build_and_store_huffman_tree_fast, store_huffman_tree, store_meta_block_header,
+    MetaBlockKind, build_and_store_huffman_tree_fast, store_empty_last_meta_block,
+    store_huffman_tree, store_meta_block_header, store_trivial_splits_and_contexts,
 };
 use super::bit_writer::BitWriter;
-use super::entropy_encode::{HuffmanTree, convert_bit_depths_to_symbols, create_huffman_tree};
+use super::entropy_encode::{HuffmanNode, convert_bit_depths_to_symbols, create_huffman_tree};
 use super::fast_log::{fast_log2, log2_floor_nonzero};
 use super::find_match_length::find_match_length_with_limit;
 use super::hash::HASH_MUL_32;
+use super::params::FAST_COMPRESSION_WINDOW_BITS;
 use crate::common::constants::{
     NUM_COMMAND_SYMBOLS, NUM_DISTANCE_SHORT_CODES, NUM_LITERAL_SYMBOLS, WINDOW_GAP,
     max_backward_limit,
@@ -18,9 +20,9 @@ use crate::common::constants::{
 use crate::util::{Bug, Checked, SliceExt, load_u64_le, try_box};
 use bun_core::AllocError;
 
-pub(crate) const MAX_DISTANCE: usize = max_backward_limit(18);
+pub(crate) const MAX_DISTANCE: usize = max_backward_limit(FAST_COMPRESSION_WINDOW_BITS as u32);
 
-pub(crate) struct OnePassArena {
+pub(crate) struct OnePassScratch {
     lit_depth: [u8; 256],
     lit_bits: [u16; 256],
 
@@ -33,11 +35,11 @@ pub(crate) struct OnePassArena {
     cmd_code: [u8; 512],
     cmd_code_numbits: usize,
 
-    tree: [HuffmanTree; 2 * NUM_LITERAL_SYMBOLS + 1],
+    tree: [HuffmanNode; 2 * NUM_LITERAL_SYMBOLS + 1],
     histogram: [u32; 256],
 }
 
-impl OnePassArena {
+impl OnePassScratch {
     /// With the command and distance prefix codes of the first block.
     pub(crate) fn new() -> Result<Box<Self>, AllocError> {
         #[rustfmt::skip]
@@ -88,7 +90,7 @@ impl OnePassArena {
             cmd_histo: [0; 128],
             cmd_code,
             cmd_code_numbits: DEFAULT_COMMAND_CODE_NUM_BITS,
-            tree: [HuffmanTree::new(0, 0, 0); 2 * NUM_LITERAL_SYMBOLS + 1],
+            tree: [HuffmanNode::new(0, 0, 0); 2 * NUM_LITERAL_SYMBOLS + 1],
             histogram: [0; 256],
         })
     }
@@ -133,7 +135,7 @@ fn is_match(a: u64, b: u64) -> bool {
 /// Builds a prefix code for literals from `input`, which only approximates the literals that are left once the matches
 /// are found, and writes it. Returns an estimate of how well it compresses them, in thousandths of a byte for each.
 fn build_and_store_literal_prefix_code(
-    s: &mut OnePassArena,
+    s: &mut OnePassScratch,
     input: &[u8],
     bw: &mut BitWriter<'_>,
 ) -> Checked<usize> {
@@ -197,7 +199,7 @@ pub(crate) fn build_and_store_command_prefix_code(
     depth: &mut [u8; 128],
     bits: &mut [u16; 128],
     first_insert_symbol: usize,
-    tree: &mut [HuffmanTree],
+    tree: &mut [HuffmanNode],
     bw: &mut BitWriter<'_>,
 ) -> Checked {
     /// The groups of 8 symbols, counted from `first_insert_symbol`, in the order of the full alphabet.
@@ -250,56 +252,60 @@ pub(crate) trait CommandSink {
     fn emit(&mut self, symbol: usize, n_extra: usize, extra: usize) -> Checked;
 
     #[inline(always)]
-    fn emit_insert_len(&mut self, insertlen: usize) -> Checked {
+    fn emit_insert_len(&mut self, insert_len: usize) -> Checked {
         let first = Self::FIRST_INSERT_SYMBOL;
-        if insertlen < 6 {
-            self.emit(first + insertlen, 0, 0)
-        } else if insertlen < 130 {
-            let tail = insertlen - 2;
+        if insert_len < 6 {
+            self.emit(first + insert_len, 0, 0)
+        } else if insert_len < 130 {
+            let tail = insert_len - 2;
             let nbits = log2_floor_nonzero(tail) as usize - 1;
             let prefix = tail >> nbits;
             let code = (nbits << 1) + prefix + 2;
             self.emit(first + code, nbits, tail - (prefix << nbits))
-        } else if insertlen < 2114 {
-            let tail = insertlen - 66;
+        } else if insert_len < 2114 {
+            let tail = insert_len - 66;
             let nbits = log2_floor_nonzero(tail) as usize;
             self.emit(first + nbits + 10, nbits, tail - (1 << nbits))
-        } else if insertlen < 6210 {
-            self.emit(first + 21, 12, insertlen - 2114)
-        } else if insertlen < 22594 {
-            self.emit(first + 22, 14, insertlen - 6210)
+        } else if insert_len < 6210 {
+            self.emit(first + 21, 12, insert_len - 2114)
+        } else if insert_len < 22594 {
+            self.emit(first + 22, 14, insert_len - 6210)
         } else {
-            self.emit(first + 23, 24, insertlen - 22594)
+            self.emit(first + 23, 24, insert_len - 22594)
         }
     }
 
     #[inline(always)]
-    fn emit_copy_len(&mut self, copylen: usize) -> Checked {
+    fn emit_copy_len(&mut self, copy_len: usize) -> Checked {
         let first = Self::FIRST_COPY_SYMBOL;
-        if copylen < 10 {
-            self.emit(first + copylen - 2, 0, 0)
-        } else if copylen < 134 {
-            let tail = copylen - 6;
+        if copy_len < 10 {
+            self.emit(first + copy_len - 2, 0, 0)
+        } else if copy_len < 134 {
+            let tail = copy_len - 6;
             let nbits = log2_floor_nonzero(tail) as usize - 1;
             let prefix = tail >> nbits;
             let code = (nbits << 1) + prefix + 4;
             self.emit(first + code, nbits, tail - (prefix << nbits))
-        } else if copylen < 2118 {
-            let tail = copylen - 70;
+        } else if copy_len < 2118 {
+            let tail = copy_len - 70;
             let nbits = log2_floor_nonzero(tail) as usize;
             self.emit(first + nbits + 12, nbits, tail - (1 << nbits))
         } else {
-            self.emit(first + 23, 24, copylen - 2118)
+            self.emit(first + 23, 24, copy_len - 2118)
         }
     }
 
     /// A copy at the distance of the command before, which had copy length 2 and is made longer by this.
     #[inline(always)]
-    fn emit_copy_len_last_distance(&mut self, copylen: usize) -> Checked {
-        if copylen < 12 {
-            self.emit(Self::FIRST_COPY_AT_LAST_DISTANCE_SYMBOL + copylen - 4, 0, 0)
-        } else if copylen < 72 {
-            let tail = copylen - 8;
+    fn emit_copy_len_last_distance(&mut self, copy_len: usize) -> Checked {
+        if copy_len < 12 {
+            self.emit(
+                Self::FIRST_COPY_AT_LAST_DISTANCE_SYMBOL + copy_len - 4,
+                0,
+                0,
+            )
+        } else if copy_len < 72 {
+            let tail = copy_len - 8;
             let nbits = log2_floor_nonzero(tail) as usize - 1;
             let prefix = tail >> nbits;
             let code = (nbits << 1) + prefix + 4;
@@ -310,7 +316,7 @@ pub(crate) trait CommandSink {
             )
         } else {
             // There is no symbol for so long a copy at the last distance.
-            self.emit_copy_len(copylen - 2)?;
+            self.emit_copy_len(copy_len - 2)?;
             self.emit_last_distance()
         }
     }
@@ -418,10 +424,14 @@ fn should_merge_block(histo: &mut [u32; 256], data: &[u8], depths: &[u8; 256]) -
 /// A loss of 2% is acceptable for the speed gained on data that does not compress.
 const MIN_RATIO: usize = 980;
 
-/// `compressed` is how much of the meta-block was already written when `insertlen` literals come up.
+/// `compressed` is how much of the meta-block was already written when `insert_len` literals come up.
 #[inline(always)]
-fn should_use_uncompressed_mode(compressed: usize, insertlen: usize, literal_ratio: usize) -> bool {
-    if compressed * 50 > insertlen {
+fn should_use_uncompressed_mode(
+    compressed: usize,
+    insert_len: usize,
+    literal_ratio: usize,
+) -> bool {
+    if compressed * 50 > insert_len {
         false
     } else {
         literal_ratio > MIN_RATIO
@@ -459,7 +469,7 @@ enum Scan {
 }
 
 fn compress_fragment_fast_impl<const TABLE_BITS: u32, const TABLE_SIZE: usize>(
-    s: &mut OnePassArena,
+    s: &mut OnePassScratch,
     all_input: &[u8],
     is_last: bool,
     table: &mut [i32; TABLE_SIZE],
@@ -483,8 +493,7 @@ fn compress_fragment_fast_impl<const TABLE_BITS: u32, const TABLE_SIZE: usize>(
     let mut mlen_storage_ix = bw.pos() + 3;
 
     store_meta_block_header(block_size, MetaBlockKind::Compressed, bw)?;
-    // No block splits, no contexts.
-    bw.write_bits(13, 0)?;
+    store_trivial_splits_and_contexts(bw)?;
 
     let mut literal_ratio =
         build_and_store_literal_prefix_code(s, all_input.sub(input..input + block_size)?, bw)?;
@@ -719,8 +728,7 @@ fn compress_fragment_fast_impl<const TABLE_BITS: u32, const TABLE_SIZE: usize>(
         total_block_size = block_size;
         mlen_storage_ix = bw.pos() + 3;
         store_meta_block_header(block_size, MetaBlockKind::Compressed, bw)?;
-        // No block splits, no contexts.
-        bw.write_bits(13, 0)?;
+        store_trivial_splits_and_contexts(bw)?;
         literal_ratio =
             build_and_store_literal_prefix_code(s, all_input.sub(input..input + block_size)?, bw)?;
         s.build_and_store_command_prefix_code(bw)?;
@@ -737,20 +745,12 @@ fn compress_fragment_fast_impl<const TABLE_BITS: u32, const TABLE_SIZE: usize>(
     Ok(())
 }
 
-pub(crate) fn write_empty_last_meta_block(bw: &mut BitWriter<'_>) -> Checked {
-    // ISLAST
-    bw.write_bits(1, 1)?;
-    // ISLASTEMPTY
-    bw.write_bits(1, 1)?;
-    bw.jump_to_byte_boundary()
-}
-
 /// Writes `input`, of at most `1 << 24` bytes, as one or more meta-blocks, and an empty last meta-block if `is_last`.
 /// Without that, `input` is not empty.
 ///
 /// `table` is all 0 and its length is 2 to the power of 9, 11, 13 or 15. No copy reaches back before `input`.
 pub(crate) fn compress_fragment_fast(
-    s: &mut OnePassArena,
+    s: &mut OnePassScratch,
     input: &[u8],
     is_last: bool,
     table: &mut [i32],
@@ -760,7 +760,7 @@ pub(crate) fn compress_fragment_fast(
 
     if input.is_empty() {
         debug_assert!(is_last);
-        return write_empty_last_meta_block(bw);
+        return store_empty_last_meta_block(bw);
     }
 
     macro_rules! run {
@@ -788,7 +788,7 @@ pub(crate) fn compress_fragment_fast(
     }
 
     if is_last {
-        write_empty_last_meta_block(bw)?;
+        store_empty_last_meta_block(bw)?;
     }
     Ok(())
 }

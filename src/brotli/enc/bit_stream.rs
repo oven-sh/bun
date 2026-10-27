@@ -3,9 +3,9 @@
 use super::Fallible;
 use super::bit_writer::BitWriter;
 use super::block_splitter::BlockSplit;
-use super::command::{Command, get_copy_length_code, get_insert_length_code};
+use super::command::{Command, copy_length_code, insert_length_code};
 use super::entropy_encode::{
-    CodeLengthSymbols, HuffmanTree, convert_bit_depths_to_symbols, create_huffman_tree,
+    CodeLengthSymbols, HuffmanNode, convert_bit_depths_to_symbols, create_huffman_tree,
     create_huffman_tree_fast,
 };
 use super::entropy_encode_static::{
@@ -85,8 +85,8 @@ impl BlockTypeCodeCalculator {
 #[inline(always)]
 fn store_command_extra(cmd: &Command, bw: &mut BitWriter<'_>) -> Checked {
     let copy_len_code = cmd.copy_len_code();
-    let insert_code = get_insert_length_code(cmd.insert_len as usize);
-    let copy_code = get_copy_length_code(copy_len_code as usize);
+    let insert_code = insert_length_code(cmd.insert_len as usize);
+    let copy_code = copy_length_code(copy_len_code as usize);
     let insert = INSERT_LENGTH_PREFIX_CODE.at(usize::from(insert_code))?;
     let copy = COPY_LENGTH_PREFIX_CODE.at(usize::from(copy_code))?;
     let insert_extra = u64::from(cmd.insert_len - u32::from(insert.offset));
@@ -173,8 +173,17 @@ fn store_compressed_meta_block_header(
 /// 9.2. What follows in the header of a compressed meta-block that has one block type and one prefix code for each
 /// category: 1 as `NBLTYPESL`, `NBLTYPESI` and `NBLTYPESD` (a bit each), 0 as `NPOSTFIX` and `NDIRECT` (6 bits) and as the
 /// context mode of the literals (2 bits), 1 as `NTREESL` and `NTREESD` (a bit each).
-fn store_trivial_splits_and_contexts(bw: &mut BitWriter<'_>) -> Checked {
+#[inline(always)]
+pub(crate) fn store_trivial_splits_and_contexts(bw: &mut BitWriter<'_>) -> Checked {
     bw.write_bits(13, 0)
+}
+
+pub(crate) fn store_empty_last_meta_block(bw: &mut BitWriter<'_>) -> Checked {
+    // ISLAST
+    bw.write_bits(1, 1)?;
+    // ISLASTEMPTY
+    bw.write_bits(1, 1)?;
+    bw.jump_to_byte_boundary()
 }
 
 /// Writes the code lengths `depths` of the code that code lengths are written in. The zeros at the end are left out if
@@ -286,7 +295,7 @@ pub(crate) fn store_huffman_tree(depths: &[u8], bw: &mut BitWriter<'_>) -> Check
     };
 
     // The code that the code lengths are written in.
-    let mut tree = [HuffmanTree::default(); 2 * CODE_LENGTH_CODES + 1];
+    let mut tree = [HuffmanNode::default(); 2 * CODE_LENGTH_CODES + 1];
     let mut code_depths = [0u8; CODE_LENGTH_CODES];
     let mut code_bits = [0u16; CODE_LENGTH_CODES];
     create_huffman_tree(&histogram, 5, &mut tree, &mut code_depths)?;
@@ -304,7 +313,7 @@ pub(crate) fn store_huffman_tree(depths: &[u8], bw: &mut BitWriter<'_>) -> Check
 fn build_and_store_huffman_tree(
     histogram: &[u32],
     alphabet_size: usize,
-    tree: &mut [HuffmanTree],
+    tree: &mut [HuffmanNode],
     depth: &mut [u8],
     bits: &mut [u16],
     bw: &mut BitWriter<'_>,
@@ -346,7 +355,7 @@ fn build_and_store_huffman_tree(
 /// [`build_and_store_huffman_tree`] in less time: the code lengths are written in a fixed code. `histogram_total` is the
 /// sum of `histogram`, and a symbol takes `max_bits` in a simple code.
 pub(crate) fn build_and_store_huffman_tree_fast(
-    tree: &mut [HuffmanTree],
+    tree: &mut [HuffmanNode],
     histogram: &[u32],
     histogram_total: usize,
     max_bits: usize,
@@ -495,7 +504,7 @@ fn run_length_code_zeros(v: &mut [u32]) -> Checked<(usize, u32)> {
 fn encode_context_map(
     context_map: &[u32],
     num_clusters: usize,
-    tree: &mut [HuffmanTree],
+    tree: &mut [HuffmanNode],
     bw: &mut BitWriter<'_>,
 ) -> Fallible {
     store_var_len_uint8(num_clusters - 1, bw)?;
@@ -576,7 +585,7 @@ impl BlockSplitCode {
     fn build_and_store(
         &mut self,
         split: &BlockSplit,
-        tree: &mut [HuffmanTree],
+        tree: &mut [HuffmanNode],
         bw: &mut BitWriter<'_>,
     ) -> Checked {
         let num_types = split.num_types;
@@ -618,7 +627,7 @@ impl BlockSplitCode {
 fn store_trivial_context_map(
     num_types: usize,
     context_bits: usize,
-    tree: &mut [HuffmanTree],
+    tree: &mut [HuffmanNode],
     bw: &mut BitWriter<'_>,
 ) -> Checked {
     store_var_len_uint8(num_types - 1, bw)?;
@@ -740,7 +749,7 @@ impl<'a> BlockEncoder<'a> {
         &mut self,
         histograms: &[Histogram<N>],
         alphabet_size: usize,
-        tree: &mut [HuffmanTree],
+        tree: &mut [HuffmanNode],
         bw: &mut BitWriter<'_>,
     ) -> Fallible {
         let table_size = histograms.len() * self.histogram_length;
@@ -785,7 +794,7 @@ pub(crate) fn store_meta_block(
 
     store_compressed_meta_block_header(length, is_last, bw)?;
 
-    let mut tree = try_vec(HuffmanTree::default(), MAX_HUFFMAN_TREE_SIZE)?;
+    let mut tree = try_vec(HuffmanNode::default(), MAX_HUFFMAN_TREE_SIZE)?;
     let mut literal_enc = BlockEncoder::new(NUM_LITERAL_SYMBOLS, &mb.literal_split);
     let mut command_enc = BlockEncoder::new(NUM_COMMAND_SYMBOLS, &mb.command_split);
     let mut distance_enc = BlockEncoder::new(num_effective_distance_symbols, &mb.distance_split);
@@ -986,7 +995,7 @@ struct MetaBlockScratch {
     command_bits: [u16; NUM_COMMAND_SYMBOLS],
     distance_depths: [u8; MAX_SIMPLE_DISTANCE_ALPHABET_SIZE],
     distance_bits: [u16; MAX_SIMPLE_DISTANCE_ALPHABET_SIZE],
-    tree: Vec<HuffmanTree>,
+    tree: Vec<HuffmanNode>,
 }
 
 impl MetaBlockScratch {
@@ -1001,7 +1010,7 @@ impl MetaBlockScratch {
             command_bits: [0; NUM_COMMAND_SYMBOLS],
             distance_depths: [0; MAX_SIMPLE_DISTANCE_ALPHABET_SIZE],
             distance_bits: [0; MAX_SIMPLE_DISTANCE_ALPHABET_SIZE],
-            tree: try_vec(HuffmanTree::default(), MAX_HUFFMAN_TREE_SIZE)?,
+            tree: try_vec(HuffmanNode::default(), MAX_HUFFMAN_TREE_SIZE)?,
         })
     }
 }
@@ -1216,11 +1225,7 @@ pub(crate) fn store_uncompressed_meta_block(
 
     // An uncompressed meta-block cannot be the last one, so an empty one follows.
     if is_final_block {
-        // ISLAST
-        bw.write_bits(1, 1)?;
-        // ISLASTEMPTY
-        bw.write_bits(1, 1)?;
-        bw.jump_to_byte_boundary()?;
+        store_empty_last_meta_block(bw)?;
     }
     Ok(())
 }

@@ -46,7 +46,11 @@ impl PropertyRule {
 
             dest.write_str("initial-value:")?;
             dest.whitespace()?;
-            initial_value.to_css(dest)?;
+            // Printed without the targets: they lower `light-dark()` to `var()`, not valid here.
+            let targets = core::mem::take(&mut dest.targets);
+            let result = initial_value.to_css(dest);
+            dest.targets = targets;
+            result?;
 
             if !dest.minify {
                 dest.write_char(b';')?;
@@ -80,8 +84,8 @@ impl PropertyRule {
         input: &mut css::Parser,
         loc: Location,
     ) -> css::Result<PropertyRule> {
-        use css::css_parser::{ParserOpts, RuleBodyParser};
-        use css::{ParserError, ParserInput, TokenList};
+        use css::css_parser::RuleBodyParser;
+        use css::{Delimiters, ParserError};
         let mut p = PropertyRuleDeclarationParser {
             syntax: None,
             inherits: None,
@@ -108,38 +112,23 @@ impl PropertyRule {
             None => return Err(input.new_custom_error(ParserError::at_rule_body_invalid)),
         };
 
-        // SAFETY: `Tokenizer<'a>` owns `arena: &'a Bump`; the arena outlives
-        // the sub-`ParserInput` constructed below. `'static` is the crate-wide
-        // erasure (PORTING.md §AST crates).
-        let bump: &'static bun_alloc::Arena =
-            unsafe { &*std::ptr::from_ref::<bun_alloc::Arena>(input.arena()) };
-
         // `initial-value` is required unless the syntax is a universal definition.
-        let initial_value = match syntax {
-            SyntaxString::Universal => {
-                if let Some(val) = p.initial_value {
-                    let mut i = ParserInput::new(val, bump);
-                    let mut p2 = css::Parser::new(&mut i, None, ParserOpts::default(), None);
-
-                    if p2.is_exhausted() {
-                        Some(ParsedComponent::TokenList(TokenList {
-                            v: Default::default(),
-                        }))
-                    } else {
-                        Some(syntax.parse_value(&mut p2)?)
-                    }
-                } else {
-                    None
-                }
+        let initial_value = match p.initial_value {
+            Some(InitialValue {
+                value: Some(value), ..
+            }) => Some(value?),
+            Some(InitialValue { start, value: None }) => {
+                let mut end = input.state();
+                input.reset(&start);
+                let value =
+                    input.parse_until_before(Delimiters::SEMICOLON, |i| syntax.parse_value(i))?;
+                // `Parser::reset` drops the import records after the count of its state.
+                end.import_record_count = input.state().import_record_count;
+                input.reset(&end);
+                Some(value)
             }
-            _ => {
-                let Some(val) = p.initial_value else {
-                    return Err(input.new_custom_error(ParserError::at_rule_body_invalid));
-                };
-                let mut i = ParserInput::new(val, bump);
-                let mut p2 = css::Parser::new(&mut i, None, ParserOpts::default(), None);
-                Some(syntax.parse_value(&mut p2)?)
-            }
+            None if matches!(syntax, SyntaxString::Universal) => None,
+            None => return Err(input.new_custom_error(ParserError::at_rule_body_invalid)),
         };
 
         Ok(PropertyRule {
@@ -152,13 +141,18 @@ impl PropertyRule {
     }
 }
 
-// Borrows the parser input buffer for `initial_value` (arena-backed in the
-// CSS crate). Kept as `&'static [u8]` per the rules/mod.rs lifetime-erasure
-// note; TODO(refactor): re-thread `'i`.
 pub(crate) struct PropertyRuleDeclarationParser {
     pub syntax: Option<SyntaxString>,
     pub inherits: Option<bool>,
-    pub initial_value: Option<&'static [u8]>,
+    pub initial_value: Option<InitialValue>,
+}
+
+/// The last `initial-value` descriptor of the body.
+pub(crate) struct InitialValue {
+    /// Where the value starts.
+    start: css::ParserState,
+    /// `None` until `syntax` is known: `PropertyRule::parse` then reads the value from `start`.
+    value: Option<css::Result<ParsedComponent>>,
 }
 
 // Parser trait impls for `@property` rule bodies.
@@ -179,6 +173,10 @@ const _: () = {
             crate::match_ignore_ascii_case! { name, {
                 b"syntax" => {
                     this.syntax = Some(SyntaxString::parse(input)?);
+                    // A value that was read under an earlier `syntax` is read again.
+                    if let Some(initial_value) = &mut this.initial_value {
+                        initial_value.value = None;
+                    }
                 },
                 b"inherits" => {
                     let location = input.current_source_location();
@@ -190,11 +188,28 @@ const _: () = {
                     }});
                 },
                 b"initial-value" => {
-                    // Buffer the value into a string. We will parse it later.
-                    let start = input.position();
-                    while input.next().is_ok() {}
-                    let initial_value = input.slice_from_cloned(start);
-                    this.initial_value = Some(initial_value);
+                    let mut start = input.state();
+                    if let Some(previous) = &this.initial_value {
+                        // Drop the replaced value's import records. No other descriptor adds any.
+                        start.import_record_count = previous.start.import_record_count;
+                        input.reset(&start);
+                    }
+                    let value = match &this.syntax {
+                        Some(syntax) => {
+                            let result = syntax.parse_value(input);
+                            if result.is_err() {
+                                // The error counts only when no later value replaces this one.
+                                input.reset(&start);
+                                while input.next().is_ok() {}
+                            }
+                            Some(result)
+                        }
+                        None => {
+                            while input.next().is_ok() {}
+                            None
+                        }
+                    };
+                    this.initial_value = Some(InitialValue { start, value });
                 },
                 _ => return Err(input.new_custom_error(ParserError::invalid_declaration)),
             }}

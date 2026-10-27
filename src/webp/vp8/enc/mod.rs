@@ -181,7 +181,7 @@ pub(crate) fn encode(input: &Input<'_>, quality: f32) -> Result<Image, EncodeErr
     Ok(Image {
         width: pic.width,
         height: pic.height,
-        bitstream: syntax::write(&enc, &tokens)?,
+        bitstream: syntax::write(&enc, tokens)?,
         is_lossless: false,
         alpha,
         lossless_has_alpha: false,

@@ -1,15 +1,7 @@
 //! `filters.c`: undoes the spatial prediction of an alpha plane.
 
+use super::Filter;
 use crate::util::{Checked, SliceExt};
-
-/// `WEBP_FILTER_TYPE`
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Filter {
-    None,
-    Horizontal,
-    Vertical,
-    Gradient,
-}
 
 /// `pred` is the value to the left of the row.
 fn horizontal_unfilter(mut pred: u8, row: &mut [u8]) {

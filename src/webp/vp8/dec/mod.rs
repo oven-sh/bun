@@ -12,21 +12,21 @@ use crate::riff::le24;
 use crate::util::{Bug, Checked, SliceExt};
 use crate::vp8::common::{
     IntraMode, MAX_NUM_PARTITIONS, MB_FEATURE_TREE_PROBS, NUM_MB_SEGMENTS, NUM_MODE_LF_DELTAS,
-    NUM_REF_LF_DELTAS,
+    NUM_REF_LF_DELTAS, SIGNATURE,
 };
-use crate::vp8::tables::ZIGZAG;
+use crate::vp8::tables::{CAT3, CAT4, CAT5, CAT6, ZIGZAG};
 use crate::{DecodeError, Output};
 use bit_reader::BitReader;
 use frame::Frame;
 use quant::{Quant, QuantMatrix};
 use tree::{Proba, TypeProbas};
 
-pub(crate) const FRAME_HEADER_SIZE: usize = 10;
+pub(crate) use crate::vp8::common::FRAME_HEADER_SIZE;
 
 /// `VP8GetInfo`: the width and the height, if `data` starts like a key frame that fits in `chunk_size` bytes.
 pub(crate) fn get_info(data: &[u8], chunk_size: usize) -> Option<(u32, u32)> {
     let &[b0, b1, b2, s0, s1, s2, w0, w1, h0, h1] = data.first_chunk::<FRAME_HEADER_SIZE>()?;
-    if [s0, s1, s2] != [0x9d, 0x01, 0x2a] {
+    if [s0, s1, s2] != SIGNATURE {
         return None;
     }
     let bits = u32::from_le_bytes([b0, b1, b2, 0]);
@@ -281,11 +281,6 @@ impl MbData {
     };
 }
 
-const CAT3: &[u8] = &[173, 148, 140];
-const CAT4: &[u8] = &[176, 155, 140, 135];
-const CAT5: &[u8] = &[180, 157, 141, 134, 130];
-const CAT6: &[u8] = &[254, 254, 243, 230, 196, 177, 153, 140, 133, 130, 129];
-
 /// Paragraph 13.2: a coefficient of 2 or more.
 #[inline]
 fn get_large_value(br: &mut BitReader<'_>, p: &[u8; 11]) -> i32 {
@@ -305,14 +300,14 @@ fn get_large_value(br: &mut BitReader<'_>, p: &[u8; 11]) -> i32 {
     } else {
         let (cat, tab) = if !br.get_bit(p[8]) {
             if !br.get_bit(p[9]) {
-                (0, CAT3)
+                (0, CAT3.as_slice())
             } else {
-                (1, CAT4)
+                (1, CAT4.as_slice())
             }
         } else if !br.get_bit(p[10]) {
-            (2, CAT5)
+            (2, CAT5.as_slice())
         } else {
-            (3, CAT6)
+            (3, CAT6.as_slice())
         };
         let v = tab
             .iter()

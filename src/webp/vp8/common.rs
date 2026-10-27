@@ -18,6 +18,10 @@ pub(crate) enum IntraMode {
 
 pub(crate) const NUM_BMODES: usize = 10;
 
+/// Paragraph 9.1: three bytes of flags and the size of the first partition, `SIGNATURE`, the width and the height.
+pub(crate) const FRAME_HEADER_SIZE: usize = 10;
+pub(crate) const SIGNATURE: [u8; 3] = [0x9d, 0x01, 0x2a];
+
 pub(crate) const MB_FEATURE_TREE_PROBS: usize = 3;
 pub(crate) const NUM_MB_SEGMENTS: usize = 4;
 pub(crate) const NUM_REF_LF_DELTAS: usize = 4;

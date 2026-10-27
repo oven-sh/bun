@@ -4,22 +4,18 @@ use super::bit_writer::BitWriter;
 use super::tree::{code_intra_modes, write_probas};
 use super::{EncodeError, Encoder};
 use crate::util::OutOfMemory;
+use crate::vp8::common::{FRAME_HEADER_SIZE, SIGNATURE};
 
-const VP8_SIGNATURE: [u8; 3] = [0x9d, 0x01, 0x2a];
 const VP8_MAX_PARTITION0_SIZE: usize = 1 << 19;
-const VP8_FRAME_HEADER_SIZE: usize = 10;
 
 /// Paragraph 9.1.
-fn frame_header(
-    enc: &Encoder<'_>,
-    size0: usize,
-) -> Result<[u8; VP8_FRAME_HEADER_SIZE], EncodeError> {
+fn frame_header(enc: &Encoder<'_>, size0: usize) -> Result<[u8; FRAME_HEADER_SIZE], EncodeError> {
     if size0 >= VP8_MAX_PARTITION0_SIZE {
         return Err(EncodeError::Partition0Overflow);
     }
     // A key frame (1 bit), of profile 0 (3 bits), to be shown (1 bit), and the size of the first partition (19 bits).
     let [b0, b1, b2, _] = ((1 << 4) | ((size0 as u32) << 5)).to_le_bytes();
-    let [s0, s1, s2] = VP8_SIGNATURE;
+    let [s0, s1, s2] = SIGNATURE;
     let [w0, w1] = (enc.pic.width as u16).to_le_bytes();
     let [h0, h1] = (enc.pic.height as u16).to_le_bytes();
     Ok([b0, b1, b2, s0, s1, s2, w0, w1, h0, h1])
@@ -88,19 +84,13 @@ fn generate_partition0(enc: &Encoder<'_>) -> Result<Vec<u8>, EncodeError> {
     Ok(bw.finish()?)
 }
 
-/// `VP8EncWrite`: the payload of the `VP8 ` chunk. libwebp counts the padding to an even size as part of it.
-pub(super) fn write(enc: &Encoder<'_>, tokens: &[u8]) -> Result<Vec<u8>, EncodeError> {
+/// `VP8EncWrite`: the payload of the `VP8 ` chunk, in pieces. libwebp counts the padding to an even size as part of it.
+pub(super) fn write(enc: &Encoder<'_>, mut tokens: Vec<u8>) -> Result<Vec<Vec<u8>>, EncodeError> {
     let part0 = generate_partition0(enc)?;
     let header = frame_header(enc, part0.len())?;
-    let size = header.len() + part0.len() + tokens.len();
-    let mut out = Vec::new();
-    out.try_reserve_exact(size + (size & 1))
-        .map_err(|_| OutOfMemory)?;
-    out.extend_from_slice(&header);
-    out.extend_from_slice(&part0);
-    out.extend_from_slice(tokens);
-    if size & 1 != 0 {
-        out.push(0);
+    if (header.len() + part0.len() + tokens.len()) & 1 != 0 {
+        tokens.try_reserve_exact(1).map_err(|_| OutOfMemory)?;
+        tokens.push(0);
     }
-    Ok(out)
+    Ok(vec![header.to_vec(), part0, tokens])
 }

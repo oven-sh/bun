@@ -4,6 +4,7 @@
 use super::codecs;
 
 fn decode_error(error: bun_webp::DecodeError) -> codecs::Error {
+    debug_assert_ne!(error, bun_webp::DecodeError::Bug);
     match error {
         bun_webp::DecodeError::OutOfMemory => codecs::Error::OutOfMemory,
         _ => codecs::Error::DecodeFailed,
@@ -57,6 +58,9 @@ pub(crate) fn encode(
     match bun_webp::encode_rgba(rgba, w, h, (w as usize) * 4, compression, icc_profile) {
         Ok(bytes) => Ok(codecs::Encoded::from_owned(bytes)),
         Err(bun_webp::EncodeError::OutOfMemory) => Err(codecs::Error::OutOfMemory),
-        Err(_) => Err(codecs::Error::EncodeFailed),
+        Err(error) => {
+            debug_assert_ne!(error, bun_webp::EncodeError::Bug);
+            Err(codecs::Error::EncodeFailed)
+        }
     }
 }

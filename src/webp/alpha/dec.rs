@@ -1,11 +1,10 @@
 //! `alpha_dec.c`: the alpha plane of a lossy image.
 
-use super::unfilters::{Filter, unfilter};
+use super::unfilters::unfilter;
+use super::{ALPHA_LOSSLESS_COMPRESSION, ALPHA_NO_COMPRESSION, Filter};
 use crate::util::{SliceExt, try_vec};
 use crate::{DecodeError, vp8l};
 
-const ALPHA_NO_COMPRESSION: u8 = 0;
-const ALPHA_LOSSLESS_COMPRESSION: u8 = 1;
 const ALPHA_PREPROCESSED_LEVELS: u8 = 1;
 
 /// The `width * height` alpha values of an `ALPH` payload. libwebp decodes them as the rows of the image are, which

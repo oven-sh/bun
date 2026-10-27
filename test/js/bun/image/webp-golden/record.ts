@@ -3,33 +3,35 @@
 //   bun record.ts [--decode <directory of .webp files>]... [--encode <cases.jsonl>]...
 //
 // Without arguments it records the cases that are already there again. The results in the repository come from the
-// last Bun that used libwebp (1.4.4, libwebp 1.6.0, Linux x64).
+// last Bun that used libwebp (1.4.4, libwebp 1.6.0, Linux x64), and this script refuses to run on any other: what a
+// later Bun records is what it does, not what it should do.
 //
 // No case is a damaged lossy file whose coefficients overflow 16 bits: libwebp's SSE2 code and its C code decode
 // those to different pixels. `bun_webp` does what the C code does.
 import { readdirSync } from "node:fs";
 import { join } from "node:path";
-import {
-  load,
-  observeDecode,
-  observeEncode,
-  observeMetadata,
-  save,
-  type DecodeCase,
-  type EncodeCase,
-} from "./observe";
+import { load, observeDecode, observeEncode, observeMetadata, save, type DecodeCase, type EncodeCase } from "./observe";
+
+if (Bun.revision !== "38afee6c84fcf48c0edb2466aa4b27d287a59c30") {
+  throw new Error(`run this with the release build of Bun 1.4.4, not ${Bun.version}+${Bun.revision}`);
+}
 
 const decodeFixture = join(import.meta.dir, "decode.json.gz");
 const encodeFixture = join(import.meta.dir, "encode.json.gz");
 
 let files: Uint8Array[] = [];
-let encodes: Pick<EncodeCase, "image" | "options" | "icc">[] = [];
+let encodes: Omit<EncodeCase, "size" | "hash">[] = [];
 for (let i = 2; i < process.argv.length; i += 2) {
   const value = process.argv[i + 1];
   if (process.argv[i] === "--decode") {
     for (const name of readdirSync(value).sort()) files.push(await Bun.file(join(value, name)).bytes());
   } else if (process.argv[i] === "--encode") {
-    encodes.push(...(await Bun.file(value).text()).trim().split("\n").map(line => JSON.parse(line)));
+    encodes.push(
+      ...(await Bun.file(value).text())
+        .trim()
+        .split("\n")
+        .map(line => JSON.parse(line)),
+    );
   } else {
     throw new Error(`unknown argument ${process.argv[i]}`);
   }
@@ -50,8 +52,8 @@ for (const file of files) {
 await save(decodeFixture, decoded);
 
 const encoded: EncodeCase[] = [];
-for (const { image, options, icc } of encodes) {
-  encoded.push({ image, options, ...(icc ? { icc } : {}), ...(await observeEncode({ image, options, icc })) });
+for (const { image, options, icc, again } of encodes) {
+  encoded.push({ image, options, ...(icc ? { icc } : {}), ...(await observeEncode({ image, options, icc, again })) });
 }
 await save(encodeFixture, encoded);
 console.log(`recorded ${decoded.length} decodes and ${encoded.length} encodes with Bun ${Bun.version}`);

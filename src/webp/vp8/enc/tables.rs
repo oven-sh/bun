@@ -5,7 +5,8 @@ pub(super) use crate::vp8::common::{
     NUM_BANDS, NUM_BMODES, NUM_CTX, NUM_MB_SEGMENTS, NUM_PROBAS, NUM_TYPES,
 };
 pub(super) use crate::vp8::tables::{
-    AC_TABLE, BANDS as ENC_BANDS, BMODES_PROBA, COEFFS_PROBA0, COEFFS_UPDATE_PROBA, DC_TABLE,
+    AC_TABLE, BANDS as ENC_BANDS, BMODES_PROBA, CAT3, CAT4, CAT5, CAT6, COEFFS_PROBA0,
+    COEFFS_UPDATE_PROBA, DC_TABLE,
 };
 
 /// The last level with a variable cost.
@@ -371,11 +372,6 @@ pub(super) static FIXED_COSTS_I4: [[[u16; NUM_BMODES]; NUM_BMODES]; NUM_BMODES] 
         [305, 1167, 1358, 899, 1587, 1587, 987, 1988, 1332, 501],
     ],
 ];
-
-pub(super) const CAT3: [u8; 3] = [173, 148, 140];
-pub(super) const CAT4: [u8; 4] = [176, 155, 140, 135];
-pub(super) const CAT5: [u8; 5] = [180, 157, 141, 134, 130];
-pub(super) const CAT6: [u8; 11] = [254, 254, 243, 230, 196, 177, 153, 140, 133, 130, 129];
 
 /// `(pow(i / 255, 0.80) * 4095 + 0.5) as u16`.
 pub(super) static GAMMA_TO_LINEAR: [u16; 256] = [

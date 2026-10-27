@@ -738,9 +738,8 @@ describe("Bun.Image", () => {
 
     test("PNG iCCP transfers to lossless WebP encode", async () => {
       // VP8L has a different bitstream chunk from VP8; the VP8X + ICCP
-      // wrapping must still work. Lossless path is separate from lossy
-      // (`WebPEncodeLosslessRGBA` vs `WebPEncodeRGBA`), so both need
-      // coverage.
+      // wrapping must still work. Lossless path is separate from lossy,
+      // so both need coverage.
       const src = pngWithIccp(cornersPng, fakeProfile);
       const webp = await new Bun.Image(src).webp({ lossless: true }).bytes();
       const got = extractWebpIccp(webp);
@@ -751,8 +750,8 @@ describe("Bun.Image", () => {
     test("WebP ICCP transfers to PNG encode — demux extracts the profile", async () => {
       // Build the WebP via Bun.Image (PNG-with-iCCP → WebP) so the test
       // doesn't hand-assemble a VP8X container, then decode THAT WebP
-      // and re-encode to PNG. This exercises `WebPDemuxGetChunk` on the
-      // decode side.
+      // and re-encode to PNG. This exercises the demuxer on the decode
+      // side.
       const srcPng = pngWithIccp(cornersPng, fakeProfile);
       const webp = await new Bun.Image(srcPng).webp({ lossless: true }).bytes();
       const outPng = await new Bun.Image(webp).png().bytes();

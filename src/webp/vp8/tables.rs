@@ -8,6 +8,12 @@ pub(crate) const ZIGZAG: [u8; 16] = [0, 1, 4, 8, 5, 2, 3, 6, 9, 12, 13, 10, 7, 1
 /// The band of each coefficient. The last entry stands for the position after the last coefficient.
 pub(crate) const BANDS: [u8; 16 + 1] = [0, 1, 2, 3, 6, 4, 5, 6, 6, 6, 6, 6, 6, 6, 6, 7, 0];
 
+/// Paragraph 13.2: the probabilities of the extra bits of the large coefficients.
+pub(crate) const CAT3: [u8; 3] = [173, 148, 140];
+pub(crate) const CAT4: [u8; 4] = [176, 155, 140, 135];
+pub(crate) const CAT5: [u8; 5] = [180, 157, 141, 134, 130];
+pub(crate) const CAT6: [u8; 11] = [254, 254, 243, 230, 196, 177, 153, 140, 133, 130, 129];
+
 /// Paragraph 14.1
 pub(crate) static DC_TABLE: [u8; 128] = [
     4, 5, 6, 7, 8, 9, 10, 10, 11, 12, 13, 14, 15, 16, 17, 17, 18, 19, 20, 20, 21, 21, 22, 22, 23,

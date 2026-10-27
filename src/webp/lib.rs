@@ -1,5 +1,6 @@
 //! WebP: lossy (VP8), lossless (VP8L), alpha and the RIFF container. Derived from https://github.com/webmproject/libwebp
-//! v1.6.0 (LICENSE.md). It decodes to the same pixels and encodes to the same bytes.
+//! v1.6.0 (LICENSE.md). It encodes to the same bytes and decodes to the same pixels as libwebp's C code. libwebp's SIMD
+//! code makes other pixels of a damaged lossy image whose coefficients overflow 16 bits.
 #![forbid(unsafe_code)]
 // Images come from anywhere and a panic aborts the process.
 #![deny(
@@ -14,66 +15,14 @@
 mod alpha;
 mod container;
 mod demux;
+mod error;
 mod riff;
 mod util;
 mod vp8;
 mod vp8l;
 
-use util::{Bug, Checked, OutOfMemory, SliceExt};
-
-/// Those of libwebp's `VP8StatusCode` that a decode of a whole file ends with.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DecodeError {
-    OutOfMemory,
-    /// The output buffer is too small for the image.
-    InvalidParam,
-    BitstreamError,
-    /// An animation.
-    UnsupportedFeature,
-    NotEnoughData,
-    /// This crate broke one of its own invariants.
-    Bug,
-}
-
-impl From<Bug> for DecodeError {
-    fn from(_: Bug) -> Self {
-        Self::Bug
-    }
-}
-
-impl From<OutOfMemory> for DecodeError {
-    fn from(_: OutOfMemory) -> Self {
-        Self::OutOfMemory
-    }
-}
-
-/// Those of libwebp's `WebPEncodingError` that the two ways to encode end with.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EncodeError {
-    OutOfMemory,
-    /// The quality is not 0 to 100.
-    InvalidConfiguration,
-    /// A side is 0 or more than 16383 pixels, or the input is shorter than the image.
-    BadDimension,
-    /// The first partition of a lossy image is over 512 KiB.
-    Partition0Overflow,
-    /// The file would be over 4 GiB.
-    FileTooBig,
-    /// This crate broke one of its own invariants.
-    Bug,
-}
-
-impl From<Bug> for EncodeError {
-    fn from(_: Bug) -> Self {
-        Self::Bug
-    }
-}
-
-impl From<OutOfMemory> for EncodeError {
-    fn from(_: OutOfMemory) -> Self {
-        Self::OutOfMemory
-    }
-}
+pub use error::{DecodeError, EncodeError};
+use util::{Bug, Checked, SliceExt};
 
 /// Where the decoders write: non-premultiplied R, G, B, A bytes.
 pub(crate) struct Output<'a> {

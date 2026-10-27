@@ -2046,6 +2046,9 @@ dependencies = [
 [[package]]
 name = "bun_webp"
 version = "0.0.0"
+dependencies = [
+ "thiserror",
+]
 
 [[package]]
 name = "bun_which"

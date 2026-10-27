@@ -11,8 +11,8 @@ use crate::util::OutOfMemory;
 pub(crate) struct Image {
     pub(crate) width: usize,
     pub(crate) height: usize,
-    /// The payload of the `VP8 ` or `VP8L` chunk.
-    pub(crate) bitstream: Vec<u8>,
+    /// The payload of the `VP8 ` or `VP8L` chunk, in pieces.
+    pub(crate) bitstream: Vec<Vec<u8>>,
     pub(crate) is_lossless: bool,
     /// Lossy: the payload of the `ALPH` chunk.
     pub(crate) alpha: Option<Vec<u8>>,
@@ -20,43 +20,82 @@ pub(crate) struct Image {
     pub(crate) lossless_has_alpha: bool,
 }
 
-fn disk_size(payload: &[u8]) -> Result<u64, EncodeError> {
-    if payload.len() > MAX_CHUNK_PAYLOAD as usize {
-        return Err(EncodeError::FileTooBig);
-    }
-    Ok((CHUNK_HEADER_SIZE as u64 + payload.len() as u64 + 1) & !1)
+/// A chunk whose payload is in pieces.
+struct Chunk<'a, T> {
+    tag: [u8; TAG_SIZE],
+    payload: &'a [T],
 }
 
-fn put_chunk(out: &mut Vec<u8>, tag: [u8; TAG_SIZE], payload: &[u8]) {
-    out.extend_from_slice(&tag);
-    out.extend_from_slice(&(payload.len() as u32).to_le_bytes());
-    out.extend_from_slice(payload);
-    if payload.len() & 1 != 0 {
-        out.push(0);
+impl<T: AsRef<[u8]>> Chunk<'_, T> {
+    fn payload_size(&self) -> u64 {
+        self.payload
+            .iter()
+            .map(|piece| piece.as_ref().len() as u64)
+            .sum()
+    }
+
+    fn disk_size(&self) -> Result<u64, EncodeError> {
+        let size = self.payload_size();
+        if size > u64::from(MAX_CHUNK_PAYLOAD) {
+            return Err(EncodeError::FileTooBig);
+        }
+        Ok((CHUNK_HEADER_SIZE as u64 + size + 1) & !1)
+    }
+
+    /// `out` has room for `disk_size` bytes.
+    fn put(&self, out: &mut Vec<u8>) {
+        let size = self.payload_size();
+        out.extend_from_slice(&self.tag);
+        out.extend_from_slice(&(size as u32).to_le_bytes());
+        for piece in self.payload {
+            out.extend_from_slice(piece.as_ref());
+        }
+        if size & 1 != 0 {
+            out.push(0);
+        }
     }
 }
 
 pub(crate) fn assemble(image: &Image, icc_profile: Option<&[u8]>) -> Result<Vec<u8>, EncodeError> {
     let icc_profile = icc_profile.filter(|profile| !profile.is_empty());
-    let alpha = image.alpha.as_deref();
     let mut flags = 0;
     if icc_profile.is_some() {
         flags |= ICCP_FLAG;
     }
     // A lossless image says so itself, and only repeats it in a VP8X chunk that something else calls for.
-    if alpha.is_some() || (flags != 0 && image.lossless_has_alpha) {
+    if image.alpha.is_some() || (flags != 0 && image.lossless_has_alpha) {
         flags |= ALPHA_FLAG;
     }
+    let [w0, w1, w2, _] = (image.width as u32 - 1).to_le_bytes();
+    let [h0, h1, h2, _] = (image.height as u32 - 1).to_le_bytes();
+    let [f0, f1, f2, f3] = flags.to_le_bytes();
+    let vp8x: [u8; VP8X_CHUNK_SIZE] = [f0, f1, f2, f3, w0, w1, w2, h0, h1, h2];
 
-    let mut size = RIFF_HEADER_SIZE as u64 + disk_size(&image.bitstream)?;
-    if flags != 0 {
-        size += (CHUNK_HEADER_SIZE + VP8X_CHUNK_SIZE) as u64;
-    }
-    if let Some(profile) = icc_profile {
-        size += disk_size(profile)?;
-    }
-    if let Some(alpha) = alpha {
-        size += disk_size(alpha)?;
+    let one_piece = |tag: &[u8; TAG_SIZE], payload| Chunk { tag: *tag, payload };
+    let vp8x = [vp8x.as_slice()];
+    let icc_profile = icc_profile.map(|profile| [profile]);
+    let alpha = image.alpha.as_deref().map(|alpha| [alpha]);
+    let before = [
+        (flags != 0).then(|| one_piece(b"VP8X", vp8x.as_slice())),
+        icc_profile
+            .as_ref()
+            .map(|profile| one_piece(b"ICCP", profile.as_slice())),
+        alpha
+            .as_ref()
+            .map(|alpha| one_piece(b"ALPH", alpha.as_slice())),
+    ];
+    let bitstream = Chunk {
+        tag: if image.is_lossless {
+            *b"VP8L"
+        } else {
+            *b"VP8 "
+        },
+        payload: image.bitstream.as_slice(),
+    };
+
+    let mut size = RIFF_HEADER_SIZE as u64 + bitstream.disk_size()?;
+    for chunk in before.iter().flatten() {
+        size += chunk.disk_size()?;
     }
     let riff_size = size - CHUNK_HEADER_SIZE as u64;
     if riff_size > 0xffff_fffe {
@@ -69,30 +108,9 @@ pub(crate) fn assemble(image: &Image, icc_profile: Option<&[u8]>) -> Result<Vec<
     out.extend_from_slice(b"RIFF");
     out.extend_from_slice(&(riff_size as u32).to_le_bytes());
     out.extend_from_slice(b"WEBP");
-    if flags != 0 {
-        let [w0, w1, w2, _] = (image.width as u32 - 1).to_le_bytes();
-        let [h0, h1, h2, _] = (image.height as u32 - 1).to_le_bytes();
-        let [f0, f1, f2, f3] = flags.to_le_bytes();
-        put_chunk(
-            &mut out,
-            *b"VP8X",
-            &[f0, f1, f2, f3, w0, w1, w2, h0, h1, h2],
-        );
+    for chunk in before.iter().flatten() {
+        chunk.put(&mut out);
     }
-    if let Some(profile) = icc_profile {
-        put_chunk(&mut out, *b"ICCP", profile);
-    }
-    if let Some(alpha) = alpha {
-        put_chunk(&mut out, *b"ALPH", alpha);
-    }
-    put_chunk(
-        &mut out,
-        if image.is_lossless {
-            *b"VP8L"
-        } else {
-            *b"VP8 "
-        },
-        &image.bitstream,
-    );
+    bitstream.put(&mut out);
     Ok(out)
 }

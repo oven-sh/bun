@@ -1,20 +1,9 @@
 //! `alpha_enc.c`, and the forward filters of `filters.c` and `filters_utils.c`.
 
+use super::{ALPHA_LOSSLESS_COMPRESSION, ALPHA_NO_COMPRESSION, Filter};
 use crate::EncodeError;
 use crate::util::{Bug, Checked, OutOfMemory, SliceExt, try_vec};
 use crate::vp8l::enc::{BitWriter, Config, encode_stream};
-
-const ALPHA_NO_COMPRESSION: u8 = 0;
-const ALPHA_LOSSLESS_COMPRESSION: u8 = 1;
-
-/// `WEBP_FILTER_TYPE`: what each value is predicted from before compression.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Filter {
-    None = 0,
-    Horizontal = 1,
-    Vertical = 2,
-    Gradient = 3,
-}
 
 #[inline]
 fn gradient_predictor(a: u8, b: u8, c: u8) -> u8 {
@@ -111,8 +100,13 @@ fn estimate_best_filter(data: &[u8], width: usize, height: usize) -> Checked<Fil
     Ok(best_filter)
 }
 
-/// `EncodeLossless`: the plane becomes the green channel of an image.
-fn encode_lossless(data: &[u8], width: usize, height: usize) -> Result<Vec<u8>, EncodeError> {
+/// `EncodeLossless`: the plane becomes the green channel of an image. `header` comes first.
+fn encode_lossless(
+    header: u8,
+    data: &[u8],
+    width: usize,
+    height: usize,
+) -> Result<Vec<u8>, EncodeError> {
     let mut argb = try_vec(0u32, data.len())?;
     for (argb, &alpha) in argb.iter_mut().zip(data) {
         *argb = u32::from(alpha) << 8;
@@ -123,6 +117,7 @@ fn encode_lossless(data: &[u8], width: usize, height: usize) -> Result<Vec<u8>, 
         exact: true,
     };
     let mut bw = BitWriter::new();
+    bw.put_bits(header.into(), 8);
     encode_stream(config, argb, width, height, &mut bw)?;
     Ok(bw.finish()?)
 }
@@ -134,18 +129,17 @@ fn encode_alpha_internal(
     height: usize,
     filter: Filter,
 ) -> Result<Vec<u8>, EncodeError> {
-    let compressed = encode_lossless(data, width, height)?;
-    let (method, output) = if compressed.len() > data.len() {
-        (ALPHA_NO_COMPRESSION, data)
-    } else {
-        (ALPHA_LOSSLESS_COMPRESSION, compressed.as_slice())
-    };
+    let header = |method: u8| method | ((filter as u8) << 2);
+    let compressed = encode_lossless(header(ALPHA_LOSSLESS_COMPRESSION), data, width, height)?;
+    if compressed.len() <= 1 + data.len() {
+        return Ok(compressed);
+    }
     let mut chunk = Vec::new();
     chunk
-        .try_reserve_exact(1 + output.len())
+        .try_reserve_exact(1 + data.len())
         .map_err(|_| OutOfMemory)?;
-    chunk.push(method | ((filter as u8) << 2));
-    chunk.extend_from_slice(output);
+    chunk.push(header(ALPHA_NO_COMPRESSION));
+    chunk.extend_from_slice(data);
     Ok(chunk)
 }
 

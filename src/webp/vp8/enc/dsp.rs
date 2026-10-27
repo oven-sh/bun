@@ -8,6 +8,7 @@ use core::ops::{Add, Sub};
 
 use super::tables::MAX_LEVEL;
 use crate::util::{Bug, Checked};
+use crate::vp8::common::IntraMode;
 
 pub(super) type Matrix4x4<T> = [[T; 4]; 4];
 /// 4x4 samples.
@@ -348,10 +349,10 @@ pub(super) fn transform_wht(coeffs: &Coeffs) -> [i16; 16] {
 // Intra predictions
 
 /// The order of the 16x16 and of the chroma predictions.
-pub(super) const DC_PRED: usize = 0;
-pub(super) const TM_PRED: usize = 1;
-pub(super) const V_PRED: usize = 2;
-pub(super) const H_PRED: usize = 3;
+pub(super) const DC_PRED: usize = IntraMode::Dc as usize;
+pub(super) const TM_PRED: usize = IntraMode::TrueMotion as usize;
+pub(super) const V_PRED: usize = IntraMode::Vertical as usize;
+pub(super) const H_PRED: usize = IntraMode::Horizontal as usize;
 pub(super) const NUM_PRED_MODES: usize = 4;
 
 /// The samples around a square. `left` starts with the top left one. A side is absent on the edge of the picture.

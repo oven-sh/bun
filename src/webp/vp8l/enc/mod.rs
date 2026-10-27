@@ -14,7 +14,9 @@ use self::backward_references::{
     BackwardRefs, HashChain, Lz77, MAX_COLOR_CACHE_BITS, PixOrCopy, get_backward_references,
 };
 pub(crate) use self::bit_writer::BitWriter;
-use self::histogram::{Histogram, bits_entropy, get_histo_image_symbols, histogram_num_codes};
+use self::histogram::{
+    Histogram, add_costs, bits_entropy, get_histo_image_symbols, histogram_num_codes,
+};
 use self::huffman::{Scratch, Symbol, Token, create_compressed_huffman_tree, create_huffman_tree};
 use self::lossless::{
     LOG_2_PRECISION_BITS, bits_log2_floor, bundle_color_map, fast_log2, prefix_encode,
@@ -23,9 +25,10 @@ use self::lossless::{
 use self::palette::{Palette, get_color_palette, palette_sort_minimize_deltas};
 use self::predictor::{color_space_transform, optimize_sampling, residual_image};
 use super::format_constants::{
-    CODE_LENGTH_CODES, IMAGE_SIZE_BITS, MAGIC_BYTE, MAX_HUFFMAN_BITS, MAX_PALETTE_SIZE,
-    MAX_TRANSFORM_BITS, MIN_HUFFMAN_BITS, MIN_TRANSFORM_BITS, NUM_DISTANCE_CODES, NUM_LENGTH_CODES,
-    NUM_LITERAL_CODES, NUM_TRANSFORM_BITS, TransformType, VERSION, VERSION_BITS, sub_sample_size,
+    CODE_LENGTH_CODE_ORDER, CODE_LENGTH_CODES, IMAGE_SIZE_BITS, MAGIC_BYTE, MAX_HUFFMAN_BITS,
+    MAX_PALETTE_SIZE, MAX_TRANSFORM_BITS, MIN_HUFFMAN_BITS, MIN_TRANSFORM_BITS, NUM_DISTANCE_CODES,
+    NUM_LENGTH_CODES, NUM_LITERAL_CODES, NUM_TRANSFORM_BITS, TransformType, VERSION, VERSION_BITS,
+    sub_sample_size,
 };
 use crate::container::Image;
 use crate::util::{Bug, Checked, OutOfMemory, SliceExt, try_vec};
@@ -166,43 +169,56 @@ fn analyze_entropy(
     let modes = [
         (
             EntropyIx::Direct,
-            alpha + bits_entropy(&histo.red) + green + bits_entropy(&histo.blue),
+            add_costs([
+                alpha,
+                bits_entropy(&histo.red),
+                green,
+                bits_entropy(&histo.blue),
+            ]),
             &histo.red,
             &histo.blue,
         ),
         (
             EntropyIx::Spatial,
-            alpha_pred
-                + bits_entropy(&histo.red_pred)
-                + green_pred
-                + bits_entropy(&histo.blue_pred)
-                + num_tiles * u64::from(fast_log2(14)),
+            add_costs([
+                alpha_pred,
+                bits_entropy(&histo.red_pred),
+                green_pred,
+                bits_entropy(&histo.blue_pred),
+                num_tiles * u64::from(fast_log2(14)),
+            ]),
             &histo.red_pred,
             &histo.blue_pred,
         ),
         (
             EntropyIx::SubGreen,
-            alpha
-                + bits_entropy(&histo.red_sub_green)
-                + green
-                + bits_entropy(&histo.blue_sub_green),
+            add_costs([
+                alpha,
+                bits_entropy(&histo.red_sub_green),
+                green,
+                bits_entropy(&histo.blue_sub_green),
+            ]),
             &histo.red_sub_green,
             &histo.blue_sub_green,
         ),
         (
             EntropyIx::SpatialSubGreen,
-            alpha_pred
-                + bits_entropy(&histo.red_pred_sub_green)
-                + green_pred
-                + bits_entropy(&histo.blue_pred_sub_green)
-                + num_tiles * u64::from(fast_log2(24)),
+            add_costs([
+                alpha_pred,
+                bits_entropy(&histo.red_pred_sub_green),
+                green_pred,
+                bits_entropy(&histo.blue_pred_sub_green),
+                num_tiles * u64::from(fast_log2(24)),
+            ]),
             &histo.red_pred_sub_green,
             &histo.blue_pred_sub_green,
         ),
         (
             EntropyIx::Palette,
-            bits_entropy(&histo.palette)
-                + ((palette_size.unwrap_or(0) as u64 * 8) << LOG_2_PRECISION_BITS),
+            add_costs([
+                bits_entropy(&histo.palette),
+                (palette_size.unwrap_or(0) as u64 * 8) << LOG_2_PRECISION_BITS,
+            ]),
             &histo.red,
             &histo.blue,
         ),
@@ -354,12 +370,9 @@ fn store_huffman_tree_of_huffman_tree_to_bit_mask(
     bw: &mut BitWriter,
     code_length_code: &[Symbol; CODE_LENGTH_CODES],
 ) -> Checked {
-    const STORAGE_ORDER: [usize; CODE_LENGTH_CODES] = [
-        17, 18, 0, 1, 2, 3, 4, 5, 16, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15,
-    ];
     let mut lengths = [0; CODE_LENGTH_CODES];
-    for (length, index) in lengths.iter_mut().zip(STORAGE_ORDER) {
-        *length = code_length_code.at(index)?.length;
+    for (length, index) in lengths.iter_mut().zip(CODE_LENGTH_CODE_ORDER) {
+        *length = code_length_code.at(index.into())?.length;
     }
     let codes_to_store = lengths
         .iter()
@@ -999,6 +1012,7 @@ pub(crate) fn encode(input: &Input<'_>) -> Result<Image, EncodeError> {
     }
 
     let mut bw = BitWriter::new();
+    bw.put_bits(MAGIC_BYTE.into(), 8);
     bw.put_bits(width as u32 - 1, IMAGE_SIZE_BITS);
     bw.put_bits(height as u32 - 1, IMAGE_SIZE_BITS);
     bw.put_bits(has_alpha.into(), 1);
@@ -1009,17 +1023,10 @@ pub(crate) fn encode(input: &Input<'_>) -> Result<Image, EncodeError> {
     };
     encode_stream(config, argb, width, height, &mut bw)?;
 
-    let data = bw.finish()?;
-    let mut bitstream = Vec::new();
-    bitstream
-        .try_reserve_exact(1 + data.len())
-        .map_err(|_| OutOfMemory)?;
-    bitstream.push(MAGIC_BYTE);
-    bitstream.extend_from_slice(&data);
     Ok(Image {
         width,
         height,
-        bitstream,
+        bitstream: vec![bw.finish()?],
         is_lossless: true,
         alpha: None,
         lossless_has_alpha: has_alpha,

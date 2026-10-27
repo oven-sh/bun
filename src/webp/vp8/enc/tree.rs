@@ -6,15 +6,16 @@ use super::cost::Proba;
 use super::dsp::{DC_PRED, H_PRED, TM_PRED, V_PRED};
 use super::tables::{BMODES_PROBA, COEFFS_PROBA0, COEFFS_UPDATE_PROBA, NUM_BMODES, flatten};
 use crate::util::{Checked, SliceExt};
+use crate::vp8::common::IntraMode;
 
-const B_DC_PRED: u8 = 0;
-const B_TM_PRED: u8 = 1;
-const B_VE_PRED: u8 = 2;
-const B_HE_PRED: u8 = 3;
-const B_RD_PRED: u8 = 4;
-const B_LD_PRED: u8 = 6;
-const B_VL_PRED: u8 = 7;
-const B_HD_PRED: u8 = 8;
+const B_DC_PRED: u8 = IntraMode::Dc as u8;
+const B_TM_PRED: u8 = IntraMode::TrueMotion as u8;
+const B_VE_PRED: u8 = IntraMode::Vertical as u8;
+const B_HE_PRED: u8 = IntraMode::Horizontal as u8;
+const B_RD_PRED: u8 = IntraMode::DownRight as u8;
+const B_LD_PRED: u8 = IntraMode::DownLeft as u8;
+const B_VL_PRED: u8 = IntraMode::VerticalLeft as u8;
+const B_HD_PRED: u8 = IntraMode::HorizontalDown as u8;
 
 fn put_i4_mode(bw: &mut BitWriter, mode: u8, prob: &[u8; NUM_BMODES - 1]) {
     if bw.put_bit(mode != B_DC_PRED, prob[0])

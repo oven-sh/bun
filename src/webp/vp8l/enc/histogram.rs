@@ -168,23 +168,22 @@ impl Histogram {
 
     /// `VP8LHistogramEstimateBits`: the entropy, the prefix codes and the extra bits.
     pub(crate) fn estimate_bits(&self) -> Checked<u64> {
-        let cost: u64 = self
-            .populations()
-            .into_iter()
-            .map(|population| population_cost(population).cost)
-            .sum();
+        let cost = add_costs(
+            self.populations()
+                .map(|population| population_cost(population).cost),
+        );
         let lengths = self
             .literal
             .sub(NUM_LITERAL_CODES..)?
             .sub(..NUM_LENGTH_CODES)?;
         let extra = extra_cost(lengths) + extra_cost(&self.distance);
-        Ok(cost + (u64::from(extra) << LOG_2_PRECISION_BITS))
+        Ok(cost.wrapping_add(u64::from(extra) << LOG_2_PRECISION_BITS))
     }
 
     /// `ComputeHistogramCost`. The extra bits are left out: they stay the same however histograms are combined.
     fn compute_cost(&mut self) {
         let channels = self.populations().map(population_cost);
-        self.bit_cost = channels.iter().map(|channel| channel.cost).sum();
+        self.bit_cost = add_costs(channels.map(|channel| channel.cost));
         self.channels = channels;
     }
 
@@ -260,6 +259,9 @@ fn combined_channels(
 // -----------------------------------------------------------------------------
 // Entropy-related functions.
 
+/// From some 259 million symbols of 8 bits of entropy on, which an image of noise of the largest size has, the mix is
+/// too much for the signed division, and the result is a small negative number as a `u64`. libwebp goes on with that,
+/// so costs are added with `add_costs` and `wrapping_add`.
 fn bits_entropy_refine(entropy: &BitEntropy) -> u64 {
     let sum = u64::from(entropy.sum) << LOG_2_PRECISION_BITS;
     // A prefix code cannot do as well as the entropy says when there are few symbols. Mixing some of the entropy
@@ -274,6 +276,10 @@ fn bits_entropy_refine(entropy: &BitEntropy) -> u64 {
     let min_limit = 2 * sum - (u64::from(entropy.max_val) << LOG_2_PRECISION_BITS);
     let mixed = (mix * min_limit).wrapping_add((1000 - mix).wrapping_mul(entropy.entropy));
     entropy.entropy.max(div_round::<1000>(mixed as i64) as u64)
+}
+
+pub(crate) fn add_costs<const N: usize>(costs: [u64; N]) -> u64 {
+    costs.into_iter().fold(0, u64::wrapping_add)
 }
 
 /// `VP8LBitsEntropy`
@@ -304,7 +310,7 @@ fn population_cost(population: &[u32]) -> Channel {
     let [_, [nonzero_short, nonzero_long]] = stats.streaks;
     Channel {
         trivial_symbol: (bit_entropy.nonzeros == 1).then_some(bit_entropy.nonzero_code as u16),
-        cost: bits_entropy_refine(&bit_entropy) + final_huffman_cost(&stats),
+        cost: bits_entropy_refine(&bit_entropy).wrapping_add(final_huffman_cost(&stats)),
         is_used: nonzero_short != 0 || nonzero_long != 0,
     }
 }
@@ -317,7 +323,7 @@ fn get_combined_entropy(x: &[u32], c1: &Channel, y: &[u32], c2: &Channel) -> u64
         return if c1.is_used { c1.cost } else { c2.cost };
     }
     let (bit_entropy, stats) = get_combined_entropy_unrefined(x, y);
-    bits_entropy_refine(&bit_entropy) + final_huffman_cost(&stats)
+    bits_entropy_refine(&bit_entropy).wrapping_add(final_huffman_cost(&stats))
 }
 
 // -----------------------------------------------------------------------------
@@ -350,7 +356,7 @@ fn get_combined_histogram_entropy(
         .zip(&b.channels)
     {
         *out = get_combined_entropy(x, c1, y, c2);
-        cost += *out;
+        cost = cost.wrapping_add(*out);
         if cost >= cost_threshold as u64 {
             return None;
         }
@@ -429,7 +435,7 @@ impl HistogramSet {
     fn add_eval_to_spare(&mut self, a: usize, b: usize, cost_threshold: i64) -> Checked<bool> {
         let slots = [self.slots.at(a)?, self.slots.at(b)?, self.spare];
         let [a, b, out] = self.histograms.get_disjoint_mut(slots).map_err(|_| Bug)?;
-        let cost_threshold = saturate_add(a.bit_cost + b.bit_cost, cost_threshold);
+        let cost_threshold = saturate_add(a.bit_cost.wrapping_add(b.bit_cost), cost_threshold);
         let Some((bit_cost, costs)) = get_combined_histogram_entropy(a, b, cost_threshold) else {
             return Ok(false);
         };
@@ -611,7 +617,7 @@ impl HistogramPair {
         cost_threshold: i64,
     ) -> Checked<Option<Self>> {
         let (h1, h2) = (histograms.get(idx1)?, histograms.get(idx2)?);
-        let sum_cost = h1.bit_cost + h2.bit_cost;
+        let sum_cost = h1.bit_cost.wrapping_add(h2.bit_cost);
         let cost_threshold = saturate_add(sum_cost, cost_threshold);
         Ok(
             get_combined_histogram_entropy(h1, h2, cost_threshold).map(|(cost_combo, costs)| {

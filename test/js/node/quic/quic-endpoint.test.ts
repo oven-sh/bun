@@ -17,6 +17,48 @@ const keysDir = join(import.meta.dir, "..", "test", "fixtures", "keys");
 const key = createPrivateKey(readFileSync(join(keysDir, "agent1-key.pem")));
 const cert = readFileSync(join(keysDir, "agent1-cert.pem"));
 
+test.each(["connect", "listen"])("%s() reads each transport parameter once, and uses what it read", async side => {
+  const reads: Record<string, number> = {};
+  const values = { initialMaxData: 70_000, initialMaxStreamsBidi: 7, maxIdleTimeout: 5, disableActiveMigration: true };
+  const transportParams = new Proxy(values, {
+    get(target, name: string) {
+      reads[name] = (reads[name] ?? 0) + 1;
+      // A second read would get something that isn't a number.
+      return reads[name] === 1 ? Reflect.get(target, name) : {};
+    },
+  });
+  const accepted = Promise.withResolvers<any>();
+  await using server = await listen(
+    session => {
+      session.closed.catch(() => {});
+      accepted.resolve(session);
+    },
+    {
+      sni: { "*": { keys: [key], certs: [cert] } },
+      alpn: ["quic-test"],
+      ...(side === "listen" && { transportParams }),
+    } as SessionOptions,
+  );
+  const client: any = await connect(server.address!, {
+    alpn: "quic-test",
+    verifyPeer: "manual",
+    ...(side === "connect" && { transportParams }),
+  } as SessionOptions);
+  client.closed.catch(() => {});
+  await client.opened;
+  const { initialMaxData, initialMaxStreamsBidi, maxIdleTimeout } = (
+    side === "connect" ? client : await accepted.promise
+  ).localTransportParams;
+  expect({ initialMaxData, initialMaxStreamsBidi, maxIdleTimeout }).toEqual({
+    initialMaxData: 70_000n,
+    initialMaxStreamsBidi: 7n,
+    maxIdleTimeout: 5n,
+  });
+  expect(Object.values(reads).filter(count => count !== 1)).toEqual([]);
+  expect(Object.keys(reads)).toContain("disableActiveMigration");
+  client.destroy();
+});
+
 describe("sessions that share an endpoint", () => {
   test("can be HTTP/3 and raw QUIC", async () => {
     const onsession = (session: any) => session.closed.catch(() => {});

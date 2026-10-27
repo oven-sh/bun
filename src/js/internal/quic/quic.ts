@@ -5398,6 +5398,8 @@ function processSessionOptions(options, config: ProcessSessionOptions = kEmptyOb
 
   validateInteger(maxDatagramSendAttempts, "options.maxDatagramSendAttempts", 1, 255);
 
+  // Native code reads this copy, so each option is read from the caller's object once, and what was checked is what is used.
+  const checkedTransportParams = { __proto__: null };
   // Node accepts number | bigint and rejects everything else with ERR_INVALID_ARG_TYPE.
   for (const name of [
     "initialMaxStreamDataBidiLocal",
@@ -5424,9 +5426,10 @@ function processSessionOptions(options, config: ProcessSessionOptions = kEmptyOb
     ) {
       throw $ERR_INVALID_ARG_VALUE(`options.transportParams.${name}`, v, "must be a non-negative number or bigint");
     }
+    checkedTransportParams[name] = v;
   }
 
-  const { preferredAddressIpv4, preferredAddressIpv6 } = transportParams;
+  const { preferredAddressIpv4, preferredAddressIpv6, disableActiveMigration } = transportParams;
   if (preferredAddressIpv4 !== undefined) {
     if (!SocketAddress.isSocketAddress(preferredAddressIpv4)) {
       throw $ERR_INVALID_ARG_TYPE(
@@ -5511,7 +5514,7 @@ function processSessionOptions(options, config: ProcessSessionOptions = kEmptyOb
     version,
     minVersion,
     preferredAddressPolicy: getPreferredAddressPolicy(preferredAddressPolicy),
-    transportParams,
+    transportParams: { ...checkedTransportParams, preferredAddressIpv4, preferredAddressIpv6, disableActiveMigration },
     tls: {
       ...processTlsOptions(options, forServer),
       verifyPeerStrict: verifyPeer === "strict",

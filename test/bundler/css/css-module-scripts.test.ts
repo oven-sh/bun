@@ -234,6 +234,8 @@ describe("bundler", () => {
     outdir: "/out",
     target: "browser",
     minifyWhitespace: true,
+    minifySyntax: true,
+    minifyIdentifiers: true,
     onAfterBundle(api) {
       // A module that a page loads from a `blob:` URL: `new URL(path, base)` throws for that base.
       const js = api.readFile("/out/entry.js");

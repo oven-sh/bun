@@ -1,30 +1,34 @@
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer};
+use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer};
 
 use super::DiffFormatter;
 use super::mock;
 use super::throw;
 use super::Expect;
 
-pub(crate) fn to_have_returned_with(
-    this: &Expect,
-    global: &JSGlobalObject,
-    frame: &CallFrame,
-) -> JsResult<JSValue> {
-    MarkedArgumentBuffer::new(|return_roots| {
-        to_have_returned_with_impl(this, global, frame, return_roots)
-    })
+impl Expect {
+    pub(crate) fn to_have_returned_with(
+        &self,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        expected: JsLocal<'_>,
+    ) -> JsResult<JSValue> {
+        MarkedArgumentBuffer::new(|return_roots| {
+            to_have_returned_with_impl(self, cx.global(), this_value.to_js(), expected.to_js(), return_roots)
+        })
+    }
 }
 
 fn to_have_returned_with_impl(
     this: &Expect,
     global: &JSGlobalObject,
-    frame: &CallFrame,
+    this_value: JSValue,
+    expected: JSValue,
     return_roots: &mut MarkedArgumentBuffer,
 ) -> JsResult<JSValue> {
-    let expected = frame.arguments_as_array::<1>()[0];
-    let (this, returns, _value) = this.mock_prologue(
+    let (this, returns, _) = this.mock_prologue(
         global,
-        frame.this(),
+        this_value,
         "toHaveReturnedWith",
         "<green>expected<r>",
         mock::MockKind::Returns,

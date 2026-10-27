@@ -735,7 +735,6 @@ impl DevServer {
             crate::bake::get_hmr_runtime(crate::bake::Side::Server)
                 .code
                 .as_bytes(),
-            true,
         );
 
         // `self.global()` returns `&'static`, decoupled from `&self` — it's
@@ -819,13 +818,13 @@ impl DevServer {
     /// Returns true if a catch-all handler was attached.
     pub(crate) fn set_routes<const SSL: bool, const DEBUG: bool>(
         &mut self,
-        server: &mut crate::server::NewServer<SSL, DEBUG>,
+        server: &crate::server::NewServer<SSL, DEBUG>,
     ) -> crate::Result<bool> {
         // TODO: all paths here must be prefixed with publicPath if set.
         self.server = Some(AnyServer::from(server));
         // The server has its routes now; the scan of the pages ran before it had them.
         self.report_pages_hidden_by_server_routes();
-        let app = server.app.unwrap();
+        let app = server.app.get().unwrap();
         let dev = std::ptr::from_mut::<Self>(self).cast::<c_void>();
 
         // The ZST-fn-item trampoline pattern used by

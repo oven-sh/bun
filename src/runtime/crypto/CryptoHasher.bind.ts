@@ -18,7 +18,6 @@ const digest = { ...method, args: { output: DigestOutput.nullable }, returns: b.
 
 export const CryptoHasher = b.class({
   rustPath: "crate::crypto::crypto_hasher::CryptoHasher",
-  configurable: false,
   construct: {
     ...method,
     args: { algorithm: b.string.utf8, hmacKey: b.bytes({ from: ["string", "buffer"] }).nullable },
@@ -50,7 +49,6 @@ const hash = { ...method, args: { input, output: DigestOutput.optional }, return
 const staticHasher = (name: string) =>
   b.class({
     rustPath: `crate::crypto::crypto_hasher::${name}`,
-    configurable: false,
     construct: {},
     proto: {
       byteLength: { getter: b.u32 },

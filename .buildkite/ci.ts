@@ -1062,8 +1062,9 @@ function getWindowsSignStep(windowsPlatforms: Platform[], options: PipelineOptio
     }),
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
+    // smctl runs signtool.exe, which is only in PATH in a Visual Studio environment.
     command: [
-      `powershell -NoProfile -ExecutionPolicy Bypass -File .buildkite/scripts/sign-windows-artifacts.ps1 ` +
+      `pwsh -NoProfile -File .\\scripts\\vs-shell.ps1 pwsh -NoProfile -File .\\.buildkite\\scripts\\sign-windows-artifacts.ps1 ` +
         `-Artifacts ${artifacts.join(",")} ` +
         `-BuildSteps ${buildSteps.join(",")}`,
     ],

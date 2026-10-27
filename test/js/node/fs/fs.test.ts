@@ -3360,6 +3360,61 @@ it.if(isPosix)("realpath reads its path the way Node does", async () => {
   expect(exitCode).toBe(0);
 });
 
+it.if(isLinux)("realpath.native throws ENOENT for a working directory that was removed", async () => {
+  using dir = tempDir("fs-realpath-removed-cwd", {});
+
+  const script = `
+    import fs from "node:fs";
+    import { promisify } from "node:util";
+    const root = process.cwd();
+    const impls = [fs.realpathSync.native, promisify(fs.realpath.native), fs.promises.realpath];
+    async function run(path) {
+      const results = [];
+      for (const impl of impls) {
+        try {
+          results.push((await impl(path)).slice(root.length));
+        } catch (err) {
+          results.push(err.code + " " + err.path);
+        }
+      }
+      return results;
+    }
+    const out = [];
+    fs.mkdirSync("gone/sub", { recursive: true });
+    process.chdir("gone/sub");
+    fs.rmSync(root + "/gone", { recursive: true });
+    out.push(await run("."), await run("./"), await run(".."), await run("../.."));
+    fs.mkdirSync(root + "/gone/sub (deleted)", { recursive: true });
+    out.push(await run("."));
+    process.chdir(root + "/gone/sub (deleted)");
+    out.push(await run("."));
+    // With the suffix, this name is longer than a name can be.
+    const long = root + "/" + Buffer.alloc(250, "x").toString();
+    fs.mkdirSync(long);
+    process.chdir(long);
+    fs.rmdirSync(long);
+    out.push(await run("."));
+    console.log(JSON.stringify(out));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual(
+    ["ENOENT .", "ENOENT ./", "ENOENT ..", "", "ENOENT .", "/gone/sub (deleted)", "ENOENT ."].map(result =>
+      Array(3).fill(result),
+    ),
+  );
+  expect(exitCode).toBe(0);
+});
+
 it("promises.realpath is realpath.native", async () => {
   const { root } = path.parse(process.cwd());
   expect(await promises.realpath(root)).toBe(realpathSync.native(root));
@@ -6178,6 +6233,12 @@ it("lchown succeeds on every platform", async () => {
       fs.lchown(target, -1, -1, err => (err ? reject(err) : resolve()));
     });
   }
+});
+
+it("an id beyond 2 ** 32 is printed as in Node.js", () => {
+  expect(() => fs.fchownSync(0, 2 ** 53, 0)).toThrow(
+    RangeError(`The value of "uid" is out of range. It must be >= -1 && <= 4294967295. Received 9_007_199_254_740_992`),
+  );
 });
 
 it("open flags verification", async () => {

@@ -4,6 +4,8 @@
 
 #include "../bindings/JSBuffer.h"
 #include "ErrorCode.h"
+#include "GeneratedBlob.h"
+#include "GeneratedObjectURLRegistry.h"
 #include "JavaScriptCore/PageCount.h"
 #include "NodeValidator.h"
 #include "_NativeModule.h"
@@ -123,8 +125,6 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_isAscii,
         JSValue::encode(jsBoolean(simdutf::validate_ascii(ptr, byteLength))));
 }
 
-BUN_DECLARE_HOST_FUNCTION(jsFunctionResolveObjectURL);
-
 BUN_DECLARE_HOST_FUNCTION(jsBufferTranscode);
 
 JSC_DEFINE_CUSTOM_GETTER(jsGetter_INSPECT_MAX_BYTES, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
@@ -157,7 +157,7 @@ DEFINE_NATIVE_MODULE(NodeBuffer)
     put(JSC::Identifier::fromString(vm, "SlowBuffer"_s), slowBuffer);
     auto blobIdent = JSC::Identifier::fromString(vm, "Blob"_s);
 
-    JSValue blobValue = globalObject->JSBlobConstructor();
+    JSValue blobValue = Bun::Bindgen::constructorForClass<Bun::Bindgen::Generated::JSBlob>(globalObject);
     put(blobIdent, blobValue);
 
     put(JSC::Identifier::fromString(vm, "File"_s), globalObject->JSDOMFileConstructor());
@@ -198,7 +198,7 @@ DEFINE_NATIVE_MODULE(NodeBuffer)
 
     put(JSC::Identifier::fromString(vm, "transcode"_s), transcode);
 
-    auto* resolveObjectURL = JSC::JSFunction::create(vm, globalObject, 1, "resolveObjectURL"_s, jsFunctionResolveObjectURL, ImplementationVisibility::Public, NoIntrinsic);
+    auto* resolveObjectURL = JSC::JSFunction::create(vm, globalObject, 1, "resolveObjectURL"_s, Bun::Bindgen::Generated::ObjectURLRegistry::jsResolveObjectURL, ImplementationVisibility::Public, NoIntrinsic);
 
     put(JSC::Identifier::fromString(vm, "resolveObjectURL"_s), resolveObjectURL);
 

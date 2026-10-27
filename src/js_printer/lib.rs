@@ -3047,7 +3047,7 @@ pub(crate) mod __gated_printer {
                 self.print(b".then((m)=>");
                 self.print_symbol(self.options.to_esm_ref);
                 self.print(b"(m.default");
-                if self.is_node_mode() {
+                if self.options.input_module_type == bundle_opts::ModuleType::Esm {
                     self.print(b",1");
                 }
                 self.print(b"))");
@@ -3058,15 +3058,10 @@ pub(crate) mod __gated_printer {
             }
         }
 
-        /// An ES module by type reads `module.exports` as a default import, whatever `__esModule` says.
-        fn is_node_mode(&self) -> bool {
-            self.options.input_module_type == bundle_opts::ModuleType::Esm
-        }
-
         /// Closes a `__toESM(` call: `, 1` (`isNodeMode`) for an ES module by
         /// type, then `)`.
         fn print_to_esm_suffix(&mut self) {
-            if self.is_node_mode() {
+            if self.options.input_module_type == bundle_opts::ModuleType::Esm {
                 self.print(b",");
                 self.print_space();
                 self.print(b"1");
@@ -7125,7 +7120,7 @@ pub(crate) mod __gated_printer {
             }
             // [ dependencies, exports, starImports, load, flags ]: ESM, or CommonJS whose `import()` needs `RecordFlags.nodeMode` (a lazy export has no `import()`).
             let is_esm = ast.exports_kind == js_ast::ExportsKind::Esm;
-            let is_node_mode = self.is_node_mode();
+            let is_node_mode = self.options.input_module_type == bundle_opts::ModuleType::Esm;
             if is_esm || (is_node_mode && !ast.has_lazy_export) {
                 self.print(b": [ [");
                 // Print the dependencies.

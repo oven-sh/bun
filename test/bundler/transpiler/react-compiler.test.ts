@@ -4280,9 +4280,8 @@ test("react-compiler ends on a component whose types are made of each other", as
 });
 
 // A loop assigns the locals from each other, so the type of each is a cycle, and InferTypes works out what each holds
-// after the loop. This holds the result for three components. With other types the first one is compiled, although
-// `v0` can be the prop. The second keeps `arr` in the cache apart from the loop that can change it. The third is not
-// compiled.
+// after the loop. The first component stays as written, because `v0` can be the prop. The second has one block for
+// `arr` and the loop that can change it. The third is compiled, with a block for each of its two values.
 test("react-compiler keeps what it works out for locals that a loop assigns from each other", async () => {
   using dir = tempDir("react-compiler-cycles-of-types", {
     "entry.jsx": `
@@ -4352,14 +4351,25 @@ test("react-compiler keeps what it works out for locals that a loop assigns from
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  const caches = stdout
+  // The size of the cache of each component, and what each of its blocks depends on.
+  const compiled = stdout
     .split(/^function /m)
     .slice(1)
-    .map(text => [text.slice(0, text.indexOf("(")), text.match(/\b_c\(\d+\)/)?.[0] ?? "not compiled"]);
-  expect(caches).toEqual([
-    ["ALocalArrayOrAProp", "not compiled"],
-    ["FourFunctions", "_c(8)"],
-    ["AFunctionThatReturnsTheOneBefore", "_c(5)"],
+    .map(text => ({
+      name: text.slice(0, text.indexOf("(")),
+      cache: text.match(/\b_c\((\d+)\)/)?.[1] ?? "none",
+      blocks: Array.from(text.matchAll(/^ *if \((\$\[\d+\] .*)\)(?: \{)?$/gm), ([, condition]) =>
+        condition.replaceAll(/\$\[\d+\] (?:!== |=== __MEMO_CACHE_SENTINEL)/g, "").replaceAll(" || ", ", "),
+      ),
+    }));
+  expect(compiled).toEqual([
+    { name: "ALocalArrayOrAProp", cache: "none", blocks: [] },
+    {
+      name: "FourFunctions",
+      cache: "8",
+      blocks: ["props.c, props.d, props.fn2, props.mutate, props.n, props.other, props.x"],
+    },
+    { name: "AFunctionThatReturnsTheOneBefore", cache: "5", blocks: ["props.first", "props, t0"] },
   ]);
   expect(exitCode).toBe(0);
 });

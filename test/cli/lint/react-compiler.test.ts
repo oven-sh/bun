@@ -228,8 +228,8 @@ describe.concurrent(`bun lint: the React Compiler rules match oxlint ${expected.
     expect(exit).toBe(1);
   });
 
-  // The type of each local is a cycle. Two other ways to work the cycle out were tried. One reports nothing for
-  // `cycles.jsx` and `typed-cycle.ts`, and the other reports nothing at all.
+  // The loop assigns each local from another one, or from itself on another path, so its type is a cycle. After the
+  // loop a local that held a setter is still a setter, and one that held a frozen value is still frozen.
   test("locals that a loop assigns from each other have the types of what they held before it", async () => {
     const { diagnostics, exit } = await report(small.loops);
     expect(diagnostics).toEqual(expected.reports.loops.diagnostics);

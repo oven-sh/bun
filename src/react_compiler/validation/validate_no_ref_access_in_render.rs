@@ -1098,7 +1098,9 @@ fn validate_no_ref_access_in_render_impl(
                         });
                         let (return_type, read_ref_effect) = if inner_errors.is_empty() {
                             (result, false)
-                        } else if inner_errors[0].category == ErrorCategory::Invariant {
+                        } else if inner_errors[0].category == ErrorCategory::Invariant
+                            && !env.config.functions_that_do_not_converge_read_refs
+                        {
                             // Not in upstream: the TypeScript original throws this invariant, and it alone leaves.
                             *errors = inner_errors;
                             return RefAccessType::None;

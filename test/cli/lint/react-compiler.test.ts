@@ -92,7 +92,7 @@ const returnsItself = (indent: string) => `${indent}const f = () => f;\n${indent
 /**
  * Components with a nested function, `outer`, whose ref types don't settle: the type of a function holds the type of
  * what it returns, and `f` returns itself. The compiler in TypeScript throws "Ref type environment did not converge"
- * there, which gives the component up with that alone.
+ * there, which gives the component up with that alone. oxlint's goes on, with `outer` as a function that reads a ref.
  */
 const unsettled: Files = {
   // `outer` is called during render. There's no ref.
@@ -133,6 +133,17 @@ ${returnsItself("      ")}
 const unsettledUnder = (arrows: number) => `function Deep(props) {
   const outer = ${Buffer.alloc("() => ".length * arrows, "() => ")}{
 ${returnsItself("    ")}
+  };
+  return <div onClick={outer}>{props.a}</div>;
+}
+`;
+/** The same in a component that has a ref, which `outer` reads. */
+const unsettledBesideARefUnder = (arrows: number) => `function DeepRef(props) {
+  const ref = useRef(null);
+  const outer = ${Buffer.alloc("() => ".length * arrows, "() => ")}{
+    const f = () => f;
+    const x = ref.current + 1;
+    return [f, x];
   };
   return <div onClick={outer}>{props.a}</div>;
 }
@@ -376,31 +387,18 @@ describe.concurrent(`bun lint: the React Compiler rules match oxlint ${expected.
     slow,
   );
 
-  // oxlint 1.87.0 types such a function as one that reads a ref, and goes on: react(refs) at 6:13 in called.jsx, which
-  // has no ref, and at 3:13 in before.jsx.
+  // oxlint 1.87.0 reports the same. called.jsx has no ref.
   test(
-    "a nested function whose ref types don't settle gives its component up, with that alone",
+    "a nested function whose ref types don't settle is one that reads a ref",
     async () => {
       const { diagnostics, exit } = await report({ ".oxlintrc.json": rc(), ...unsettled });
       expect(
         Object.fromEntries(Object.entries(diagnostics).map(([path, found]) => [path, locationsOf(found)])),
       ).toEqual({
-        "before.jsx": [["react(invariant)", 1, 10]],
-        "called.jsx": [["react(invariant)", 1, 10]],
+        "before.jsx": [["react(refs)", 3, 13]],
+        "called.jsx": [["react(refs)", 6, 13]],
         "handler.jsx": [["react(invariant)", 1, 10]],
       });
-      expect(exit).toBe(1);
-    },
-    slow,
-  );
-
-  // oxlint 1.87.0 validates such a function again in each round of each function around it, and doesn't finish two
-  // arrows within a minute.
-  test(
-    "such a function under 20 arrows takes no longer",
-    async () => {
-      const { diagnostics, exit } = await report({ ".oxlintrc.json": rc(), "deep.jsx": unsettledUnder(20) });
-      expect(locationsOf(diagnostics["deep.jsx"])).toEqual([["react(invariant)", 1, 10]]);
       expect(exit).toBe(1);
     },
     slow,
@@ -607,7 +605,10 @@ describe.concurrent(
     test(
       "such a function under 20 arrows takes no longer",
       async () => {
-        const { files, exitCode } = await messages({ "deep.jsx": unsettledUnder(20) });
+        const { files, exitCode } = await messages({
+          "deep.jsx": unsettledUnder(20),
+          "deep-ref.jsx": unsettledBesideARefUnder(20),
+        });
         expect(files).toEqual({});
         expect(exitCode).toBe(0);
       },

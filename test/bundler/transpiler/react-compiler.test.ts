@@ -4809,30 +4809,48 @@ describe("react-compiler does not overflow the stack on a component that is nest
 // The ref validation of the function that holds `const f = () => f` does not
 // converge. It was validated again in each of the 10 rounds of each function
 // or object method around it: 3 levels took 3 seconds and 4 did not finish.
+// In a component with a ref, one arrow around a function that returns itself
+// in two shapes was enough, and used 3 GB in 20 seconds.
+const app = (outer: string) => `
+        export default function App(p) {
+          const outer = ${outer};
+          return <div onClick={outer}>{p.a}</div>;
+        }
+      `;
+const appWithARef = (outer: string) => `
+        import { useRef } from "react";
+        export default function App(p) {
+          const ref = useRef(null);
+          const outer = ${outer};
+          return <div onClick={outer}>{p.a}</div>;
+        }
+      `;
 const functionsThatReturnThemselves = {
-  "under 20 arrows": `${Buffer.alloc("() => ".length * 20, "() => ")}{
+  "under 20 arrows": app(`${Buffer.alloc("() => ".length * 20, "() => ")}{
     const f = () => f;
     return f;
-  }`,
-  "under object methods and arrows": `{ m() { return () => ({ m() { return () => {
+  }`),
+  "under object methods and arrows": app(`{ m() { return () => ({ m() { return () => {
     const f = () => f;
     return f;
-  }; } }); } }`,
+  }; } }); } }`),
+  "in two shapes that hold a ref, under one arrow": appWithARef(`() => {
+    const f = () => (p.a ? { f, r: [ref] } : f);
+    return f;
+  }`),
+  "beside a read of a ref, under 20 arrows": appWithARef(`${Buffer.alloc("() => ".length * 20, "() => ")}{
+    const f = () => f;
+    const x = ref.current + 1;
+    return [f, x];
+  }`),
 };
 
 // Not concurrent: when a test times out, `bun test` kills the process that the
 // test spawned only if the tests run one at a time.
 test.each(Object.entries(functionsThatReturnThemselves))(
   "react-compiler compile time is not exponential for a function that returns itself %s",
-  async (_name, outer) => {
-    using dir = tempDir("react-compiler-returns-itself", {
-      "entry.jsx": `
-        export default function App(p) {
-          const outer = ${outer};
-          return <div onClick={outer}>{p.a}</div>;
-        }
-      `,
-    });
+  async (_name, source) => {
+    using dir = tempDir("react-compiler-returns-itself", { "entry.jsx": source });
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", "entry.jsx"],

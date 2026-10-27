@@ -149,14 +149,18 @@ describe("MessagePort pipe", () => {
     expect(seen).toEqual(["a@1", "b@1", "close"]);
   });
 
-  // A microtask queued by a handler runs between two deliveries, still inside the drain.
-  test("close() from a microtask between two messages lets the batch finish", async () => {
+  // A callback queued by a handler runs between two deliveries, still inside the drain.
+  test.each([
+    ["queueMicrotask()", (fn: () => void) => queueMicrotask(fn)],
+    ["process.nextTick()", (fn: () => void) => process.nextTick(fn)],
+    ["a promise reaction", (fn: () => void) => void Promise.resolve().then(fn)],
+  ])("close() from %s between two messages lets the batch finish", async (_, defer) => {
     const { port1, port2 } = new MessageChannel();
     const seen: (number | string)[] = [];
     const { promise: closed, resolve } = Promise.withResolvers<void>();
     port2.onmessage = e => {
       seen.push(e.data);
-      if (e.data === 1) queueMicrotask(() => port2.close());
+      if (e.data === 1) defer(() => port2.close());
     };
     port2.addEventListener("close", () => {
       seen.push("close");
@@ -169,6 +173,287 @@ describe("MessagePort pipe", () => {
     expect(seen).toEqual([1, 2, 3, "close"]);
     port1.close();
   });
+
+  // One drain delivers at most 1024 messages and leaves the rest to a later task. A port
+  // that closed itself gets no later task, so the drain it closed in delivers the backlog.
+  test.each([
+    [3000, 1],
+    [3000, 1500],
+    [1025, 1024],
+  ])("%d queued and close() in the handler of message %d: every message is delivered", async (total, closeAt) => {
+    const { port1, port2 } = new MessageChannel();
+    const peerGot: string[] = [];
+    let handled = 0;
+    let depth = 0;
+    let maxDepth = 0;
+    let inOrder = true;
+    port2.onmessage = e => {
+      maxDepth = Math.max(maxDepth, ++depth);
+      if (e.data !== handled) inOrder = false;
+      if (++handled === closeAt) {
+        port2.close();
+        port2.postMessage("after-close");
+      }
+      depth--;
+    };
+    port1.onmessage = e => peerGot.push(e.data);
+    const { promise: peerClosed, resolve } = Promise.withResolvers<void>();
+    port1.addEventListener("close", () => resolve());
+    for (let i = 0; i < total; i++) port1.postMessage(i);
+    await peerClosed;
+    expect({ handled, maxDepth, inOrder, peerGot }).toEqual({
+      handled: total,
+      maxDepth: 1,
+      inOrder: true,
+      peerGot: [],
+    });
+    port1.close();
+  });
+
+  // After close() the drain takes what was queued at that point, or the rest of its 1024 if
+  // that is more. The peer's answers queue behind that, so they cannot keep the port open.
+  // Node's rule gives 2000 and 1000: max(queued when the drain began, 1000).
+  test.each([
+    [2000, 2000, 2000],
+    [1, 2, 1024],
+  ])(
+    "%d queued, the peer answers every message of the closing port: %d to %d are handled",
+    async (queued, min, max) => {
+      const { port1, port2 } = new MessageChannel();
+      const { promise: closed, resolve } = Promise.withResolvers<void>();
+      let handled = 0;
+      let depth = 0;
+      let maxDepth = 0;
+      port2.onmessage = () => {
+        maxDepth = Math.max(maxDepth, ++depth);
+        if (++handled === 1) port2.close();
+        port1.postMessage("answer");
+        depth--;
+      };
+      port2.addEventListener("close", () => resolve());
+      for (let i = 0; i < queued; i++) port1.postMessage(i);
+      await closed;
+      expect(maxDepth).toBe(1);
+      expect(handled).toBeWithin(min, max + 1);
+      port1.close();
+    },
+  );
+
+  test("receiveMessageOnPort() in the handler that closed the port takes the next queued message", async () => {
+    const { port1, port2 } = new MessageChannel();
+    const seen: unknown[] = [];
+    const { promise: closed, resolve } = Promise.withResolvers<void>();
+    port2.onmessage = e => {
+      seen.push(e.data);
+      if (e.data === 1) {
+        port2.close();
+        seen.push(receiveMessageOnPort(port2));
+      }
+    };
+    port2.addEventListener("close", () => {
+      seen.push("close");
+      resolve();
+    });
+    for (let i = 1; i <= 4; i++) port1.postMessage(i);
+    await closed;
+    expect(seen).toEqual([1, { message: 2 }, 3, 4, "close"]);
+    port1.close();
+  });
+
+  // postMessage() closes a port that is asked to transfer its own peer. Inside a handler
+  // that close waits for the drain like any other.
+  test("a port that posts its own peer from a handler is not re-entered by postMessage()", async () => {
+    const { port1, port2 } = new MessageChannel();
+    const seen: string[] = [];
+    const { promise: closed, resolve } = Promise.withResolvers<void>();
+    let depth = 0;
+    port2.onmessage = e => {
+      depth++;
+      seen.push(`${e.data}@${depth}`);
+      if (e.data === 1) {
+        port2.postMessage("lost", [port1]);
+        seen.push("postMessage returned");
+      }
+      depth--;
+    };
+    port2.addEventListener("close", () => {
+      seen.push("close");
+      resolve();
+    });
+    for (let i = 1; i <= 3; i++) port1.postMessage(i);
+    await closed;
+    expect(seen).toEqual(["1@1", "postMessage returned", "2@1", "3@1", "close"]);
+  });
+
+  // `expect(promise).resolves` runs the event loop until the promise settles, so the task
+  // that reports the peer's close runs inside the handler that called close().
+  test("a nested event loop turn in the handler that closed the port does not deliver the rest", async () => {
+    const { port1, port2 } = new MessageChannel();
+    const seen: string[] = [];
+    const { promise: closed, resolve } = Promise.withResolvers<void>();
+    let depth = 0;
+    port2.addEventListener("close", () => {
+      seen.push(`close@${depth}`);
+      resolve();
+    });
+    port2.onmessage = e => {
+      depth++;
+      seen.push(`${e.data}@${depth}`);
+      if (e.data === 1) {
+        port2.close();
+        const other = new MessageChannel();
+        let turned = false;
+        // This message is queued behind the notification of port1's close.
+        const turn = new Promise<void>(done => {
+          other.port2.onmessage = () => {
+            turned = true;
+            done();
+          };
+        });
+        other.port1.postMessage(0);
+        expect(turn).resolves.toBeUndefined();
+        seen.push(`nested turn ran: ${turned}`);
+        other.port1.close();
+      }
+      depth--;
+    };
+    for (let i = 1; i <= 4; i++) port1.postMessage(i);
+    port1.close();
+    await closed;
+    expect(seen).toEqual(["1@1", "nested turn ran: true", "2@1", "3@1", "4@1", "close@0"]);
+  });
+
+  // The closing port lives on a worker thread and its peer on the main thread.
+  test.concurrent(
+    "a port that closed itself in a worker's handler sends nothing to its peer on the main thread",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const { Worker, MessageChannel } = require("worker_threads");
+            const { port1, port2 } = new MessageChannel();
+            const w = new Worker(
+              \`
+                const { parentPort } = require("worker_threads");
+                parentPort.once("message", ({ port }) => {
+                  const seen = [];
+                  let depth = 0;
+                  port.on("message", v => {
+                    depth++;
+                    seen.push(v + "@" + depth);
+                    port.close();
+                    port.postMessage("after-close-" + v);
+                    depth--;
+                  });
+                  port.on("close", () => parentPort.postMessage(seen));
+                });
+              \`,
+              { eval: true },
+            );
+            const peerGot = [];
+            port1.on("message", v => peerGot.push(v));
+            // port1's 'close' lands after anything the worker's port sent it.
+            const peerClosed = new Promise(resolve => port1.once("close", resolve));
+            const workerSaw = new Promise(resolve => w.once("message", resolve));
+            // Queued before the transfer, so the worker's first drain has all three.
+            port1.postMessage(1);
+            port1.postMessage(2);
+            port1.postMessage(3);
+            w.postMessage({ port: port2 }, [port2]);
+            const [seen] = await Promise.all([workerSaw, peerClosed]);
+            console.log(JSON.stringify({ seen, peerGot }));
+            await w.terminate();
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ seen: ["1@1", "2@1", "3@1"], peerGot: [] });
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  // The main thread posts into the closing port without pause. The handler that called
+  // close() waits until 3000 more posts have landed, so a drain that went on until the
+  // inbox is empty would handle them. It handles the backlog and stops.
+  test.concurrent(
+    "a closing port in a worker that the main thread floods delivers its backlog and closes",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const { Worker, MessageChannel } = require("worker_threads");
+            const { port1, port2 } = new MessageChannel();
+            // How many flood messages the main thread has posted, in steps of one batch.
+            const flooded = new Int32Array(new SharedArrayBuffer(4));
+            const queued = 1500, batch = 200;
+            const w = new Worker(
+              \`
+                const { parentPort, workerData: flooded } = require("worker_threads");
+                parentPort.once("message", ({ port }) => {
+                  let handled = 0, depth = 0, maxDepth = 0, before = 0, after = 0;
+                  port.on("message", () => {
+                    maxDepth = Math.max(maxDepth, ++depth);
+                    if (++handled === 1) {
+                      before = Atomics.load(flooded, 0);
+                      port.close();
+                      after = Atomics.load(flooded, 0);
+                      for (let n; (n = Atomics.load(flooded, 0)) < after + 3000; ) Atomics.wait(flooded, 0, n);
+                    }
+                    port.postMessage("after-close");
+                    depth--;
+                  });
+                  port.on("close", () => parentPort.postMessage({ handled, maxDepth, before, after }));
+                  parentPort.postMessage("listening");
+                });
+              \`,
+              { eval: true, workerData: flooded },
+            );
+            let peerGot = 0, flooding = true;
+            port1.on("message", () => peerGot++);
+            // port1's 'close' lands after anything the worker's port sent it.
+            const peerClosed = new Promise(resolve => port1.once("close", resolve));
+            const flood = () => {
+              if (!flooding) return;
+              for (let i = 0; i < batch; i++) port1.postMessage("flood");
+              Atomics.add(flooded, 0, batch);
+              Atomics.notify(flooded, 0);
+              setImmediate(flood);
+            };
+            const report = new Promise(resolve =>
+              w.on("message", m => {
+                if (m === "listening") return flood();
+                flooding = false;
+                resolve(m);
+              }),
+            );
+            for (let i = 0; i < queued; i++) port1.postMessage(i);
+            w.postMessage({ port: port2 }, [port2]);
+            const [{ handled, maxDepth, before, after }] = await Promise.all([report, peerClosed]);
+            // Queued at close(): the 1500 and the flood, which is counted one batch late.
+            const backlogDelivered = handled >= queued + before;
+            const stopped = handled <= queued + after + batch + 1024;
+            console.log(JSON.stringify({ backlogDelivered, stopped, maxDepth, peerGot }));
+            await w.terminate();
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({ backlogDelivered: true, stopped: true, maxDepth: 1, peerGot: 0 });
+      expect(exitCode).toBe(0);
+    },
+  );
 
   test("messages queued on a port follow it across transfer", async () => {
     const { port1: A, port2: B } = new MessageChannel();

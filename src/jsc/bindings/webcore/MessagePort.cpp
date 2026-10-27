@@ -67,7 +67,7 @@ MessagePort::MessagePort(ScriptExecutionContext& context, Ref<MessagePortPipe>&&
 
 MessagePort::~MessagePort()
 {
-    if (!m_isDetached)
+    if (isEntangled())
         m_pipe->close(m_side, MessagePortPipe::CloseKind::Collected);
 }
 
@@ -85,7 +85,7 @@ ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSVa
         if (auto* jsPort = dynamicDowncast<JSMessagePort>(obj)) {
             if (&jsPort->wrapped() == this)
                 return Exception { DataCloneError, "Transfer list contains source port"_s };
-            if (jsPort->wrapped().isDetached() || jsPort->wrapped().isClosing())
+            if (!jsPort->wrapped().isOpen())
                 return Exception { DataCloneError, "MessagePort in transfer list is already detached"_s };
         } else if (!obj->inherits<JSC::JSArrayBuffer>()) {
             // MessagePort and ArrayBuffer are the only transferables bun serializes;
@@ -122,8 +122,8 @@ ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSVa
         transferredPorts = disentangled.releaseReturnValue();
     }
 
-    // m_isClosing: the close is pending under a DispatchScope. Node drops these posts too.
-    if (!isEntangled() || m_isClosing)
+    // A closing port drops its posts too (node: IsHandleClosing()).
+    if (!isOpen())
         return {};
 
     if (targetsEntangledPeer) {
@@ -192,7 +192,7 @@ void MessagePort::flushQueuedMessagesBeforeClose()
         // A handler (or a microtask it queued) may have transferred this port; the
         // remaining inbox now belongs to the new owner. drainAndDispatch()'s
         // per-iteration ctxId/port re-check guards the same case.
-        if (m_isDetached)
+        if (isDetached())
             break;
         auto message = m_pipe->takeOne(m_side);
         if (!message)
@@ -203,37 +203,25 @@ void MessagePort::flushQueuedMessagesBeforeClose()
     }
 }
 
-MessagePort::DispatchScope::DispatchScope(MessagePort& port)
-    : m_port(port)
-    , m_wasDispatching(port.m_isDispatching)
-{
-    port.m_isDispatching = true;
-}
-
-MessagePort::DispatchScope::~DispatchScope()
-{
-    m_port->m_isDispatching = m_wasDispatching;
-    if (!m_wasDispatching && m_port->m_isClosing)
-        m_port->closeNow();
-}
-
 void MessagePort::close()
 {
-    if (m_isDetached || m_isClosing)
+    if (!isOpen())
         return;
-    m_isClosing = true;
+    m_state = State::Closing;
 
-    // ~DispatchScope closes the port once the loop has delivered the rest of the inbox.
-    if (m_isDispatching)
+    if (m_isDispatching) {
+        // The loop on the stack delivers what is queued now, as node does. Then ~DispatchScope closes.
+        m_pipe->grantQueuedToDrain(m_side);
         return;
+    }
     closeNow();
 }
 
 void MessagePort::closeNow()
 {
-    if (m_isDetached)
+    if (isDetached())
         return;
-    m_isDetached = true;
+    m_state = State::Detached;
 
     // m_pipe is held for the port's whole lifetime (the GC thread reads
     // it in hasPendingActivity()); marking our side Closed is sufficient.
@@ -278,15 +266,16 @@ void MessagePort::dispatchCloseEvent()
     if (!context || !context->globalObject())
         return;
     auto* globalObject = defaultGlobalObject(context->globalObject());
-    // Bypass the m_isDetached guard in MessagePort::dispatchEvent — the deferred
-    // close task runs after m_isDetached is set.
+    // Bypass the isDetached() guard in MessagePort::dispatchEvent: the deferred
+    // close task runs after the port is detached.
     if (Zig::GlobalObject::scriptExecutionStatus(globalObject, globalObject) == ScriptExecutionStatus::Running)
         EventTarget::dispatchEvent(Event::create(eventNames().closeEvent, Event::CanBubble::No, Event::IsCancelable::No));
 }
 
 void MessagePort::peerClosed()
 {
-    if (m_isDetached)
+    // A closing port is under a DispatchScope, which delivers the rest and fires 'close'.
+    if (!isOpen())
         return;
     auto* context = scriptExecutionContext();
     if (!context || !context->globalObject())
@@ -341,7 +330,7 @@ TransferredMessagePort MessagePort::disentangle()
     // GC thread can always dereference it — our side is detached, so all
     // further operations on it are no-ops.
     m_pipe->detach(m_side);
-    m_isDetached = true;
+    m_state = State::Detached;
     m_started = false;
 
     // We can't receive any messages or generate any events after this, so remove ourselves from the list of active ports.
@@ -363,7 +352,8 @@ Ref<MessagePort> MessagePort::entangle(ScriptExecutionContext& context, Transfer
 
 void MessagePort::dispatchOneMessage(ScriptExecutionContext& context, MessageWithMessagePorts&& message)
 {
-    if (m_isDetached || !context.globalObject())
+    ASSERT(m_isDispatching);
+    if (isDetached() || !context.globalObject())
         return;
 
     auto* globalObject = defaultGlobalObject(context.globalObject());
@@ -413,7 +403,7 @@ JSValue MessagePort::tryTakeMessage(JSGlobalObject* lexicalGlobalObject, bool& h
 
 void MessagePort::dispatchEvent(Event& event)
 {
-    if (m_isDetached)
+    if (isDetached())
         return;
     EventTarget::dispatchEvent(event);
 }
@@ -436,7 +426,7 @@ bool MessagePort::virtualHasPendingActivity() const
     // atomic loads. The plain bool reads can observe stale values but
     // cannot crash — at worst the wrapper is collected one cycle early
     // or late, which is the same tolerance as before this refactor.
-    if (!scriptExecutionContext() || m_isDetached)
+    if (!scriptExecutionContext() || isDetached())
         return false;
     // A 'close' listener must outlive a GC until the event lands: notifyPeerClosed()
     // holds only a weak ref back here. This does pin both ends of an idle channel until
@@ -479,7 +469,7 @@ ExceptionOr<Vector<TransferredMessagePort>> MessagePort::disentanglePorts(Vector
 
     HashSet<MessagePort*> seen;
     for (auto& port : ports) {
-        if (!port || !port->isEntangled() || port->isClosing() || !seen.add(port.get()).isNewEntry)
+        if (!port || !port->isOpen() || !seen.add(port.get()).isNewEntry)
             return Exception { DataCloneError };
     }
 

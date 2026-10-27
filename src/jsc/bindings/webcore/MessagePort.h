@@ -85,21 +85,31 @@ public:
     TransferredMessagePort disentangle();
 
     bool started() const { return m_started; }
-    bool isDetached() const { return m_isDetached; }
+    bool isDetached() const { return m_state == State::Detached; }
 
     // Called by the pipe on this port's context thread with one dequeued message.
     void dispatchOneMessage(ScriptExecutionContext&, MessageWithMessagePorts&&);
 
-    // Held by a loop that delivers this port's inbox. close() under it waits for the loop to end.
+    // Held by a loop that delivers this port's inbox. The loop keeps the port alive.
     class DispatchScope {
         WTF_MAKE_NONCOPYABLE(DispatchScope);
 
     public:
-        explicit DispatchScope(MessagePort&);
-        ~DispatchScope();
+        explicit DispatchScope(MessagePort& port)
+            : m_port(port)
+            , m_wasDispatching(std::exchange(port.m_isDispatching, true))
+        {
+        }
+
+        ~DispatchScope()
+        {
+            m_port.m_isDispatching = m_wasDispatching;
+            if (!m_wasDispatching && m_port.isClosing())
+                m_port.closeNow();
+        }
 
     private:
-        const Ref<MessagePort> m_port;
+        MessagePort& m_port;
         const bool m_wasDispatching;
     };
 
@@ -142,11 +152,12 @@ private:
     // peerClosed(): deliver what the peer sent before it closed, ahead of its 'close'.
     void flushQueuedMessagesBeforeClose();
 
-    bool isEntangled() const { return !m_isDetached; }
+    bool isEntangled() const { return m_state != State::Detached; }
 
 public:
-    // The transfer path rejects a port whose close() is pending under a DispatchScope.
-    bool isClosing() const { return m_isClosing; }
+    // Closing: close() ran under a DispatchScope, which completes it. The port receives, and does not send or transfer.
+    bool isClosing() const { return m_state == State::Closing; }
+    bool isOpen() const { return m_state == State::Open; }
 
 private:
     // Held for the port's entire lifetime — never nulled — so that the GC
@@ -155,9 +166,12 @@ private:
     const Ref<MessagePortPipe> m_pipe;
     const uint8_t m_side { 0 };
 
+    enum class State : uint8_t { Open,
+        Closing,
+        Detached };
+
     bool m_started { false };
-    bool m_isDetached { false };
-    bool m_isClosing { false };
+    State m_state { State::Open };
     // True while a DispatchScope is on the stack. close() then defers to it.
     bool m_isDispatching { false };
     bool m_closeEventDispatched { false };

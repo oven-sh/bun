@@ -15,7 +15,8 @@
 // InternalCallbackScope behavior), up to a fixed 1024 per task before
 // continuing on the loop's next iteration. A port transferred mid-loop carries
 // the whole remaining queue to the new owner: detach() puts `draining` back in
-// front of the inbox, in order.
+// front of the inbox, in order. A port that closes itself mid-loop gets no later
+// task: the loop also delivers what was queued at that point.
 //
 // The Web API semantics (start(), close(), transfer, event dispatch) live in
 // MessagePort; this class knows nothing about EventTarget or JS.
@@ -60,6 +61,9 @@ public:
     // Receiver-thread synchronous pop, for node:worker_threads receiveMessageOnPort.
     std::optional<MessageWithMessagePorts> takeOne(uint8_t side);
 
+    // Receiver thread, when the port closes itself inside a drain: that drain also takes what is queued now.
+    void grantQueuedToDrain(uint8_t side);
+
     // Attach this side to a context + port. Schedules a drain if messages are
     // already queued (e.g. after transfer). Passing a null port is allowed and
     // means "just buffer, don't dispatch" (used before start()).
@@ -95,6 +99,8 @@ private:
 
     struct Side {
         WTF::Lock lock;
+        // Set by grantQueuedToDrain(), taken by the running drain at its next refill.
+        uint32_t closeGrant WTF_GUARDED_BY_LOCK(lock) { 0 };
         WTF::Deque<MessageWithMessagePorts> inbox WTF_GUARDED_BY_LOCK(lock);
         // Messages the owner's drain has taken out of `inbox` (a small batch per lock
         // acquisition) but not dispatched yet. Still counted as queued in `state`. If the

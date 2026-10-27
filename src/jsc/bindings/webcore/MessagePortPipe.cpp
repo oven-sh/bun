@@ -3,6 +3,7 @@
 #include "MessagePortPipe.h"
 #include "ScriptExecutionContext.h"
 #include <wtf/Locker.h>
+#include <wtf/MathExtras.h>
 
 namespace WebCore {
 
@@ -139,6 +140,9 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
                 break;
             }
             if (s.draining.isEmpty()) {
+                // The port closed itself in this drain and gets no later one (node: processing_limit).
+                if (s.closeGrant) [[unlikely]]
+                    limit = std::max<size_t>(limit, std::exchange(s.closeGrant, 0));
                 if (!limit) {
                     // Yield to the rest of the event loop; DrainScheduled stays
                     // set so concurrent sends don't double-schedule.
@@ -177,11 +181,19 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
 
     // Budget spent with messages left. We are on `context`'s thread: continue on
     // its next loop iteration (after I/O and timers), not in this drain.
-    if (rescheduleCtx && !port->isClosing()) {
+    if (rescheduleCtx && port->isOpen()) {
         context->postTaskAfterYield([pipe = Ref { *this }, side, rescheduleCtx](ScriptExecutionContext&) {
             pipe->drainAndDispatch(side, rescheduleCtx);
         });
     }
+}
+
+void MessagePortPipe::grantQueuedToDrain(uint8_t side)
+{
+    ASSERT(side < 2);
+    auto& s = m_sides[side];
+    Locker locker { s.lock };
+    s.closeGrant = clampTo<uint32_t>(s.inbox.size());
 }
 
 std::optional<MessageWithMessagePorts> MessagePortPipe::takeOne(uint8_t side)

@@ -64,8 +64,7 @@ impl McuRowSamples {
                 h2v2_downsample(cb0, cb1, cb);
                 h2v2_downsample(cr0, cr1, cr);
             } else {
-                let (above_y, (above_cb, above_cr)) =
-                    last_y.zip(last_c).ok_or(Error::InvalidArgument)?;
+                let (above_y, (above_cb, above_cr)) = last_y.zip(last_c).ok_or(Error::Internal)?;
                 y0.copy_from_slice(above_y);
                 y1.copy_from_slice(above_y);
                 cb.copy_from_slice(above_cb);

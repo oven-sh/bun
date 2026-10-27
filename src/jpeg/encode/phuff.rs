@@ -1,34 +1,46 @@
 //! Huffman coding of progressive scans (jcphuff.c).
 
 use super::huff::{BitWriter, Code, Counts, EncodeTable, bit_length, value_bits};
-use super::{Block, Scan};
+use super::{Block, PerTable, Scan, Table};
+use crate::error::{Result, try_vec_with_capacity};
 
 /// The most correction bits that wait for the end of a run of blocks. How long such a run gets depends on it.
 const MAX_CORR_BITS: usize = 1000;
 
 /// Every scan is gone through twice: once to count the symbols, for the table, and once to write them.
 pub(crate) enum Sink<'a, 'b> {
-    Count(&'a mut [Counts; 2]),
-    Write(&'a mut BitWriter<'b>, &'a [EncodeTable; 2]),
+    Count(&'a mut PerTable<Counts>),
+    Write(&'a mut BitWriter<'b>, &'a PerTable<EncodeTable>),
+}
+
+/// Up to 63 correction bits, the first one on top.
+#[derive(Clone, Copy, Default)]
+struct CorrectionBits {
+    bits: u64,
+    len: u32,
+}
+
+impl CorrectionBits {
+    #[inline(always)]
+    fn push(&mut self, bit: u32) {
+        self.bits = (self.bits << 1) | u64::from(bit);
+        self.len += 1;
+    }
 }
 
 impl Sink<'_, '_> {
     #[inline(always)]
-    fn symbol(&mut self, table: usize, symbol: u8) {
+    fn symbol(&mut self, table: Table, symbol: u8) {
         match self {
             Sink::Count(counts) => {
-                if let Some(count) = counts
-                    .get_mut(table)
-                    .and_then(|counts| counts.get_mut(usize::from(symbol)))
-                {
+                // There are more counts than values of a `u8`.
+                if let Some(count) = counts.get_mut(table).get_mut(usize::from(symbol)) {
                     *count += 1;
                 }
             }
             Sink::Write(bits, tables) => {
-                if let Some(table) = tables.get(table) {
-                    let Code { code, size } = table.get(symbol);
-                    bits.put(code, size);
-                }
+                let Code { code, size } = tables.get(table).get(symbol);
+                bits.put(code, size);
             }
         }
     }
@@ -40,12 +52,12 @@ impl Sink<'_, '_> {
         }
     }
 
-    fn buffered_bits(&mut self, buffered: &[u8]) {
-        if let Sink::Write(bits, _) = self {
-            for &bit in buffered {
-                bits.put(u32::from(bit), 1);
-            }
-        }
+    /// Leaves `correction` empty.
+    #[inline(always)]
+    fn correction_bits(&mut self, correction: &mut CorrectionBits) {
+        let CorrectionBits { bits, len } = core::mem::take(correction);
+        self.bits((bits >> 32) as u32, len.saturating_sub(32));
+        self.bits(bits as u32, len.min(32));
     }
 }
 
@@ -53,7 +65,7 @@ impl Sink<'_, '_> {
 #[inline]
 pub(crate) fn encode_dc_first(
     sink: &mut Sink,
-    table: usize,
+    table: Table,
     block: &Block,
     al: u32,
     last_dc: i32,
@@ -74,7 +86,7 @@ pub(crate) fn encode_dc_refine(sink: &mut Sink, block: &Block, al: u32) {
 
 /// The state of a scan of AC coefficients.
 pub(crate) struct AcEncoder {
-    table: usize,
+    table: Table,
     /// The first and the last coefficient of the scan, in zigzag order.
     ss: u32,
     se: u32,
@@ -82,23 +94,23 @@ pub(crate) struct AcEncoder {
     al: u32,
     /// Blocks gone by that had nothing left to code when they ended.
     eob_run: u32,
-    /// The correction bits of those blocks, one in a byte.
-    bit_buffer: [u8; MAX_CORR_BITS],
-    /// How many there are.
-    be: usize,
+    /// The correction bits of those of them that have any.
+    waiting: Vec<CorrectionBits>,
+    /// How many bits that is.
+    waiting_bits: usize,
 }
 
 impl AcEncoder {
-    pub(crate) fn new(table: usize, scan: &Scan) -> Self {
-        AcEncoder {
+    pub(crate) fn new(table: Table, scan: &Scan) -> Result<Self> {
+        Ok(AcEncoder {
             table,
             ss: u32::from(scan.ss),
             se: u32::from(scan.se),
             al: u32::from(scan.al),
             eob_run: 0,
-            bit_buffer: [0; MAX_CORR_BITS],
-            be: 0,
-        }
+            waiting: try_vec_with_capacity(MAX_CORR_BITS)?,
+            waiting_bits: 0,
+        })
     }
 
     fn emit_eob_run(&mut self, sink: &mut Sink) {
@@ -107,8 +119,10 @@ impl AcEncoder {
             sink.symbol(self.table, (nbits << 4) as u8);
             sink.bits(self.eob_run & ((1 << nbits) - 1), nbits);
             self.eob_run = 0;
-            sink.buffered_bits(self.bit_buffer.get(..self.be).unwrap_or(&[]));
-            self.be = 0;
+            for mut correction in self.waiting.drain(..) {
+                sink.correction_bits(&mut correction);
+            }
+            self.waiting_bits = 0;
         }
     }
 
@@ -168,9 +182,8 @@ impl AcEncoder {
         // Zeros since the last symbol.
         let mut run = 0u32;
         let mut next = self.ss;
-        // This block's correction bits since the last symbol go after those of the blocks before it.
-        let mut br_start = self.be;
-        let mut br = 0usize;
+        // This block's correction bits since the last symbol.
+        let mut correction = CorrectionBits::default();
         let mut left = nonzero;
         while left != 0 {
             let k = left.trailing_zeros();
@@ -187,35 +200,31 @@ impl AcEncoder {
                 self.emit_eob_run(sink);
                 sink.symbol(self.table, 0xf0);
                 run -= 16;
-                sink.buffered_bits(self.bit_buffer.get(br_start..br_start + br).unwrap_or(&[]));
-                br_start = 0;
-                br = 0;
+                sink.correction_bits(&mut correction);
             }
 
             if magnitude > 1 {
                 // It was nonzero before.
-                if let Some(bit) = self.bit_buffer.get_mut(br_start + br) {
-                    *bit = (magnitude & 1) as u8;
-                }
-                br += 1;
+                correction.push(magnitude & 1);
                 continue;
             }
 
             self.emit_eob_run(sink);
             sink.symbol(self.table, ((run << 4) + 1) as u8);
             sink.bits(u32::from(block.zigzag(k) >= 0), 1);
-            sink.buffered_bits(self.bit_buffer.get(br_start..br_start + br).unwrap_or(&[]));
-            br_start = 0;
-            br = 0;
+            sink.correction_bits(&mut correction);
             run = 0;
         }
         run += self.se + 1 - next;
 
-        if run > 0 || br > 0 {
+        if run > 0 || correction.len > 0 {
             self.eob_run += 1;
-            self.be += br;
-            // Before either the counter or, in the next block, the buffer overflows.
-            if self.eob_run == 0x7fff || self.be > MAX_CORR_BITS - 64 + 1 {
+            if correction.len > 0 {
+                self.waiting.push(correction);
+                self.waiting_bits += correction.len as usize;
+            }
+            // Before the counter overflows, or the bits of another block could go over the limit.
+            if self.eob_run == 0x7fff || self.waiting_bits > MAX_CORR_BITS - 64 + 1 {
                 self.emit_eob_run(sink);
             }
         }

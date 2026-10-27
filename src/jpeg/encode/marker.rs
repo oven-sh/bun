@@ -1,12 +1,19 @@
 //! Everything in the file that is not entropy-coded (jcmarker.c, jcicc.c).
 
 use super::huff::Output;
-use super::{COMPONENTS, Scan};
+use super::{Component, PerTable, Scan, Table};
 use crate::error::{Error, Result};
 use crate::markers::{
     ICC_SIGNATURE, M_APP0, M_APP2, M_DHT, M_DQT, M_EOI, M_SOF0, M_SOF2, M_SOI, M_SOS,
 };
 use crate::tables::{HuffSpec, NATURAL_ORDER};
+
+/// What a Huffman table codes. The discriminant is Tc in a DHT segment.
+#[derive(Clone, Copy)]
+pub(crate) enum TableClass {
+    Dc = 0,
+    Ac = 1,
+}
 
 impl Output {
     fn marker(&mut self, marker: u8) {
@@ -49,9 +56,9 @@ impl Output {
     }
 
     /// `quant` is in row-major order, each step from 1 to 255.
-    fn quant_table(&mut self, index: u8, quant: &[u16; 64]) {
+    fn quant_table(&mut self, table: Table, quant: &[u16; 64]) {
         self.segment(M_DQT, 1 + 64);
-        self.extend(&[index]);
+        self.extend(&[table as u8]);
         let mut zigzag = [0u8; 64];
         for (out, &position) in zigzag.iter_mut().zip(&NATURAL_ORDER) {
             *out = quant.get(usize::from(position)).copied().unwrap_or(0) as u8;
@@ -64,29 +71,33 @@ impl Output {
         width: u16,
         height: u16,
         progressive: bool,
-        quant: &[[u16; 64]; 2],
+        quant: &PerTable<[u16; 64]>,
     ) {
-        for (index, quant) in quant.iter().enumerate() {
-            self.quant_table(index as u8, quant);
-        }
+        self.quant_table(Table::Luma, &quant.luma);
+        self.quant_table(Table::Chroma, &quant.chroma);
         self.segment(
             if progressive { M_SOF2 } else { M_SOF0 },
-            6 + 3 * COMPONENTS.len(),
+            6 + 3 * Component::ALL.len(),
         );
         self.extend(&[8]);
         self.extend(&height.to_be_bytes());
         self.extend(&width.to_be_bytes());
-        self.extend(&[COMPONENTS.len() as u8]);
-        for comp in &COMPONENTS {
-            self.extend(&[comp.id, (comp.samp << 4) + comp.samp, comp.table]);
+        self.extend(&[Component::ALL.len() as u8]);
+        for component in Component::ALL {
+            let sampling = component.sampling();
+            self.extend(&[
+                component.id(),
+                (sampling << 4) + sampling,
+                component.table() as u8,
+            ]);
         }
     }
 
-    pub(crate) fn huff_table(&mut self, index: u8, is_ac: bool, spec: &HuffSpec) {
+    pub(crate) fn huff_table(&mut self, table: Table, class: TableClass, spec: &HuffSpec) {
         let [_, bits @ ..] = &spec.bits;
         let length: usize = bits.iter().map(|&count| usize::from(count)).sum();
         self.segment(M_DHT, 1 + 16 + length);
-        self.extend(&[index + if is_ac { 0x10 } else { 0 }]);
+        self.extend(&[((class as u8) << 4) + table as u8]);
         self.extend(bits);
         self.extend(spec.huffval.get(..length).unwrap_or(&[]));
     }
@@ -94,15 +105,16 @@ impl Output {
     pub(crate) fn scan_header(&mut self, scan: &Scan) {
         self.segment(M_SOS, 1 + 2 * scan.components.len() + 3);
         self.extend(&[scan.components.len() as u8]);
-        for comp in scan.components.iter().filter_map(|&ci| COMPONENTS.get(ci)) {
+        for component in scan.components {
             // A table that the scan does not use is given as 0.
+            let table = component.table() as u8;
             let dc = if scan.ss == 0 && scan.ah == 0 {
-                comp.table
+                table
             } else {
                 0
             };
-            let ac = if scan.se != 0 { comp.table } else { 0 };
-            self.extend(&[comp.id, (dc << 4) + ac]);
+            let ac = if scan.se != 0 { table } else { 0 };
+            self.extend(&[component.id(), (dc << 4) + ac]);
         }
         self.extend(&[scan.ss, scan.se, (scan.ah << 4) + scan.al]);
     }

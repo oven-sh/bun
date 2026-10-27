@@ -10,7 +10,8 @@ mod sample;
 use crate::error::{Error, Result, try_vec};
 use crate::tables::{self, HuffSpec, MAX_DIMENSION, natural_order};
 use fdct::Divisors;
-use huff::{BitWriter, Counts, EncodeTable, Output, SequentialTable};
+use huff::{BitWriter, EncodeTable, Output, SequentialTable};
+use marker::TableClass;
 use phuff::{AcEncoder, Sink};
 use sample::{MCU_SIZE, McuRowSamples};
 
@@ -57,36 +58,70 @@ impl Block {
     }
 }
 
-struct Component {
-    id: u8,
-    /// The sampling factor, horizontal and vertical.
-    samp: u8,
-    /// The number of its quantization table and of its Huffman tables.
-    table: u8,
+#[derive(Clone, Copy)]
+enum Component {
+    Y,
+    Cb,
+    Cr,
 }
 
-/// Y, Cb and Cr.
-const COMPONENTS: [Component; 3] = [
-    Component {
-        id: 1,
-        samp: 2,
-        table: 0,
-    },
-    Component {
-        id: 2,
-        samp: 1,
-        table: 1,
-    },
-    Component {
-        id: 3,
-        samp: 1,
-        table: 1,
-    },
-];
+impl Component {
+    const ALL: [Component; 3] = [Component::Y, Component::Cb, Component::Cr];
+
+    fn id(self) -> u8 {
+        self as u8 + 1
+    }
+
+    /// The sampling factor, horizontal and vertical.
+    fn sampling(self) -> u8 {
+        match self {
+            Component::Y => 2,
+            Component::Cb | Component::Cr => 1,
+        }
+    }
+
+    /// Its quantization table and its Huffman tables.
+    fn table(self) -> Table {
+        match self {
+            Component::Y => Table::Luma,
+            Component::Cb | Component::Cr => Table::Chroma,
+        }
+    }
+}
+
+/// The discriminant is the number of the table in the file.
+#[derive(Clone, Copy)]
+enum Table {
+    Luma = 0,
+    Chroma = 1,
+}
+
+#[derive(Default)]
+struct PerTable<T> {
+    luma: T,
+    chroma: T,
+}
+
+impl<T> PerTable<T> {
+    #[inline(always)]
+    fn get(&self, table: Table) -> &T {
+        match table {
+            Table::Luma => &self.luma,
+            Table::Chroma => &self.chroma,
+        }
+    }
+
+    #[inline(always)]
+    fn get_mut(&mut self, table: Table) -> &mut T {
+        match table {
+            Table::Luma => &mut self.luma,
+            Table::Chroma => &mut self.chroma,
+        }
+    }
+}
 
 struct Scan {
-    /// Indexes into `COMPONENTS`.
-    components: &'static [usize],
+    components: &'static [Component],
     /// The first and the last coefficient, in zigzag order.
     ss: u8,
     se: u8,
@@ -96,7 +131,7 @@ struct Scan {
     al: u8,
 }
 
-const fn scan(components: &'static [usize], ss: u8, se: u8, ah: u8, al: u8) -> Scan {
+const fn scan(components: &'static [Component], ss: u8, se: u8, ah: u8, al: u8) -> Scan {
     Scan {
         components,
         ss,
@@ -106,23 +141,23 @@ const fn scan(components: &'static [usize], ss: u8, se: u8, ah: u8, al: u8) -> S
     }
 }
 
-const SEQUENTIAL_SCAN: Scan = scan(&[0, 1, 2], 0, 63, 0, 0);
+const SEQUENTIAL_SCAN: Scan = scan(&Component::ALL, 0, 63, 0, 0);
 
 /// `jpeg_simple_progression` for YCbCr.
 const PROGRESSIVE_SCANS: [Scan; 10] = [
-    scan(&[0, 1, 2], 0, 0, 0, 1),
+    scan(&Component::ALL, 0, 0, 0, 1),
     // Enough of luma for a first picture.
-    scan(&[0], 1, 5, 0, 2),
+    scan(&[Component::Y], 1, 5, 0, 2),
     // Chroma is small enough to come all at once.
-    scan(&[2], 1, 63, 0, 1),
-    scan(&[1], 1, 63, 0, 1),
-    scan(&[0], 6, 63, 0, 2),
-    scan(&[0], 1, 63, 2, 1),
-    scan(&[0, 1, 2], 0, 0, 1, 0),
-    scan(&[2], 1, 63, 1, 0),
-    scan(&[1], 1, 63, 1, 0),
+    scan(&[Component::Cr], 1, 63, 0, 1),
+    scan(&[Component::Cb], 1, 63, 0, 1),
+    scan(&[Component::Y], 6, 63, 0, 2),
+    scan(&[Component::Y], 1, 63, 2, 1),
+    scan(&Component::ALL, 0, 0, 1, 0),
+    scan(&[Component::Cr], 1, 63, 1, 0),
+    scan(&[Component::Cb], 1, 63, 1, 0),
     // The lowest bit of luma is most of the file.
-    scan(&[0], 1, 63, 1, 0),
+    scan(&[Component::Y], 1, 63, 1, 0),
 ];
 
 pub struct EncodeOptions<'a> {
@@ -189,15 +224,15 @@ fn transform_rows(
         .zip(out.chunks_exact_mut(blocks_per_row))
     {
         if row < extent.height_in_blocks {
-            let mut lines = samples
-                .chunks_exact(blocks_per_row * 8)
-                .map(|line| line.as_chunks::<8>().0);
-            let lines: [&[[u8; 8]]; 8] = core::array::from_fn(|_| lines.next().unwrap_or_default());
+            let (eights, _) = samples.as_chunks::<8>();
             let (image, dummy) = out
                 .split_at_mut_checked(extent.width_in_blocks)
                 .ok_or(Error::Internal)?;
             for (x, block) in image.iter_mut().enumerate() {
-                let samples = lines.map(|line| line.get(x).copied().unwrap_or_default());
+                let mut samples = [[0; 8]; 8];
+                for (row, line) in samples.iter_mut().zip(eights.chunks_exact(blocks_per_row)) {
+                    *row = *line.get(x).ok_or(Error::Internal)?;
+                }
                 *block = fdct::forward(&samples, divisors);
             }
             dummy.fill(Block::flat(image.last().ok_or(Error::Internal)?.dc()));
@@ -252,9 +287,8 @@ struct Encoder<'a> {
     mcu_rows: usize,
     luma_extent: Extent,
     chroma_extent: Extent,
-    quant: [[u16; 64]; 2],
-    luma_divisors: Divisors,
-    chroma_divisors: Divisors,
+    quant: PerTable<[u16; 64]>,
+    divisors: PerTable<Divisors>,
     samples: McuRowSamples,
 }
 
@@ -267,7 +301,7 @@ impl Encoder<'_> {
         cb: &mut BlockRows,
         cr: &mut BlockRows,
     ) -> Result<()> {
-        let (luma_divisors, chroma_divisors) = (&self.luma_divisors, &self.chroma_divisors);
+        let (luma_divisors, chroma_divisors) = (&self.divisors.luma, &self.divisors.chroma);
         let width = usize::from(self.width);
         for (((mcu_row, y), cb), cr) in (first_mcu_row..)
             .zip(y.blocks.chunks_exact_mut(self.mcus_per_row * 4))
@@ -310,21 +344,16 @@ impl Encoder<'_> {
 
     fn encode_sequential(&mut self, out: &mut Output) -> Result<()> {
         out.frame_header(self.width, self.height, false, &self.quant);
-        let specs = [
-            (&tables::STD_DC_LUMINANCE, &tables::STD_AC_LUMINANCE),
-            (&tables::STD_DC_CHROMINANCE, &tables::STD_AC_CHROMINANCE),
-        ];
-        for (index, (dc, ac)) in specs.into_iter().enumerate() {
-            out.huff_table(index as u8, false, dc);
-            out.huff_table(index as u8, true, ac);
-        }
+        out.huff_table(Table::Luma, TableClass::Dc, &tables::STD_DC_LUMINANCE);
+        out.huff_table(Table::Luma, TableClass::Ac, &tables::STD_AC_LUMINANCE);
+        out.huff_table(Table::Chroma, TableClass::Dc, &tables::STD_DC_CHROMINANCE);
+        out.huff_table(Table::Chroma, TableClass::Ac, &tables::STD_AC_CHROMINANCE);
         out.scan_header(&SEQUENTIAL_SCAN);
 
-        let [(luma_dc, luma_ac), (chroma_dc, chroma_ac)] = specs;
-        let luma_dc = SequentialTable::new(luma_dc)?;
-        let luma_ac = SequentialTable::new(luma_ac)?;
-        let chroma_dc = SequentialTable::new(chroma_dc)?;
-        let chroma_ac = SequentialTable::new(chroma_ac)?;
+        let luma_dc = SequentialTable::new(&tables::STD_DC_LUMINANCE)?;
+        let luma_ac = SequentialTable::new(&tables::STD_AC_LUMINANCE)?;
+        let chroma_dc = SequentialTable::new(&tables::STD_DC_CHROMINANCE)?;
+        let chroma_ac = SequentialTable::new(&tables::STD_AC_CHROMINANCE)?;
 
         let mut y = BlockRows::new(self.mcus_per_row * 2, 2)?;
         let mut cb = BlockRows::new(self.mcus_per_row, 1)?;
@@ -356,59 +385,69 @@ impl Encoder<'_> {
 
         for (index, scan) in PROGRESSIVE_SCANS.iter().enumerate() {
             let al = u32::from(scan.al);
-            let is_dc = scan.ss == 0;
-            let run = |sink: &mut Sink| match *scan.components {
-                // Only a scan of one component leaves out the blocks that are not image.
-                [ci] => {
-                    let (blocks, extent, table) = match ci {
-                        0 => (&y, self.luma_extent, 0),
-                        1 => (&cb, self.chroma_extent, 1),
-                        _ => (&cr, self.chroma_extent, 1),
-                    };
-                    let mut encoder = AcEncoder::new(table, scan);
-                    for row in blocks.rows().take(extent.height_in_blocks) {
-                        for block in row.iter().take(extent.width_in_blocks) {
-                            if scan.ah == 0 {
-                                encoder.encode_first(sink, block);
-                            } else {
-                                encoder.encode_refine(sink, block);
+            let class = if scan.ss == 0 {
+                TableClass::Dc
+            } else {
+                TableClass::Ac
+            };
+            let run = |sink: &mut Sink| -> Result<()> {
+                match *scan.components {
+                    // Only a scan of one component leaves out the blocks that are not image.
+                    [component] => {
+                        let (blocks, extent) = match component {
+                            Component::Y => (&y, self.luma_extent),
+                            Component::Cb => (&cb, self.chroma_extent),
+                            Component::Cr => (&cr, self.chroma_extent),
+                        };
+                        let mut encoder = AcEncoder::new(component.table(), scan)?;
+                        for row in blocks.rows().take(extent.height_in_blocks) {
+                            for block in row.iter().take(extent.width_in_blocks) {
+                                if scan.ah == 0 {
+                                    encoder.encode_first(sink, block);
+                                } else {
+                                    encoder.encode_refine(sink, block);
+                                }
+                            }
+                        }
+                        encoder.finish(sink);
+                    }
+                    _ if scan.ah == 0 => {
+                        let [mut last_y, mut last_cb, mut last_cr] = [0i32; 3];
+                        for mcu in mcus(&y, &cb, &cr) {
+                            for block in mcu.y {
+                                last_y =
+                                    phuff::encode_dc_first(sink, Table::Luma, block, al, last_y);
+                            }
+                            last_cb =
+                                phuff::encode_dc_first(sink, Table::Chroma, mcu.cb, al, last_cb);
+                            last_cr =
+                                phuff::encode_dc_first(sink, Table::Chroma, mcu.cr, al, last_cr);
+                        }
+                    }
+                    _ => {
+                        for mcu in mcus(&y, &cb, &cr) {
+                            for block in mcu.y.into_iter().chain([mcu.cb, mcu.cr]) {
+                                phuff::encode_dc_refine(sink, block, al);
                             }
                         }
                     }
-                    encoder.finish(sink);
                 }
-                _ if scan.ah == 0 => {
-                    let [mut last_y, mut last_cb, mut last_cr] = [0i32; 3];
-                    for mcu in mcus(&y, &cb, &cr) {
-                        for block in mcu.y {
-                            last_y = phuff::encode_dc_first(sink, 0, block, al, last_y);
-                        }
-                        last_cb = phuff::encode_dc_first(sink, 1, mcu.cb, al, last_cb);
-                        last_cr = phuff::encode_dc_first(sink, 1, mcu.cr, al, last_cr);
-                    }
-                }
-                _ => {
-                    for mcu in mcus(&y, &cb, &cr) {
-                        for block in mcu.y.into_iter().chain([mcu.cb, mcu.cr]) {
-                            phuff::encode_dc_refine(sink, block, al);
-                        }
-                    }
-                }
+                Ok(())
             };
 
             // Refining DC coefficients takes no table: it is a bit for each.
-            let mut specs: [Option<HuffSpec>; 2] = [None, None];
-            if !is_dc || scan.ah == 0 {
-                let mut counts: [Counts; 2] = [[0; 257]; 2];
-                run(&mut Sink::Count(&mut counts));
-                for comp in scan.components.iter().filter_map(|&ci| COMPONENTS.get(ci)) {
-                    let table = usize::from(comp.table);
-                    let (Some(spec), Some(counts)) = (specs.get_mut(table), counts.get(table))
-                    else {
-                        return Err(Error::Internal);
-                    };
+            let mut specs: PerTable<Option<HuffSpec>> = PerTable::default();
+            if matches!(class, TableClass::Ac) || scan.ah == 0 {
+                let mut counts = PerTable {
+                    luma: [0; 257],
+                    chroma: [0; 257],
+                };
+                run(&mut Sink::Count(&mut counts))?;
+                for component in scan.components {
+                    let table = component.table();
+                    let spec = specs.get_mut(table);
                     if spec.is_none() {
-                        *spec = Some(huff::optimal_table(counts)?);
+                        *spec = Some(huff::optimal_table(counts.get(table))?);
                     }
                 }
             }
@@ -416,16 +455,19 @@ impl Encoder<'_> {
             if index == 0 {
                 out.frame_header(self.width, self.height, true, &self.quant);
             }
-            let mut tables = [EncodeTable::empty(), EncodeTable::empty()];
-            for ((index, spec), table) in specs.iter().enumerate().zip(&mut tables) {
-                if let Some(spec) = spec {
-                    out.huff_table(index as u8, !is_dc, spec);
-                    *table = EncodeTable::new(spec)?;
+            let mut tables = PerTable {
+                luma: EncodeTable::empty(),
+                chroma: EncodeTable::empty(),
+            };
+            for table in [Table::Luma, Table::Chroma] {
+                if let Some(spec) = specs.get(table) {
+                    out.huff_table(table, class, spec);
+                    *tables.get_mut(table) = EncodeTable::new(spec)?;
                 }
             }
             out.scan_header(scan);
             let mut bits = BitWriter::new(out);
-            run(&mut Sink::Write(&mut bits, &tables));
+            run(&mut Sink::Write(&mut bits, &tables))?;
             bits.finish();
         }
         Ok(())
@@ -448,11 +490,10 @@ pub fn encode(rgba: &[u8], width: u32, height: u32, options: &EncodeOptions) -> 
         .ok_or(Error::InvalidArgument)?;
 
     let mcus_per_row = w.div_ceil(MCU_SIZE);
-    let quant = [
-        scaled_quant_table(&tables::STD_LUMINANCE_QUANT, options.quality),
-        scaled_quant_table(&tables::STD_CHROMINANCE_QUANT, options.quality),
-    ];
-    let [luma_quant, chroma_quant] = &quant;
+    let quant = PerTable {
+        luma: scaled_quant_table(&tables::STD_LUMINANCE_QUANT, options.quality),
+        chroma: scaled_quant_table(&tables::STD_CHROMINANCE_QUANT, options.quality),
+    };
     let mut encoder = Encoder {
         rgba,
         width: width as u16,
@@ -467,8 +508,10 @@ pub fn encode(rgba: &[u8], width: u32, height: u32, options: &EncodeOptions) -> 
             width_in_blocks: w.div_ceil(16),
             height_in_blocks: h.div_ceil(16),
         },
-        luma_divisors: Divisors::new(luma_quant),
-        chroma_divisors: Divisors::new(chroma_quant),
+        divisors: PerTable {
+            luma: Divisors::new(&quant.luma),
+            chroma: Divisors::new(&quant.chroma),
+        },
         quant,
         samples: McuRowSamples::new(mcus_per_row)?,
     };

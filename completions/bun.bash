@@ -1,18 +1,33 @@
 #/usr/bin/env bash
 
+# sets working_dir to the value of --cwd before the cursor, or to $PWD.
+# readline splits `--cwd=dir` into `--cwd`, `=` and `dir`, and leaves a leading ~ as it is
+_working_dir() {
+    local line=0 value;
+    working_dir="${PWD}";
+    for ((; line < COMP_CWORD - 1; line+=1)); do
+        [[ "${COMP_WORDS[${line}]}" == "--cwd" ]] || continue;
+        value="${COMP_WORDS[$((line + 1))]}";
+        [[ "${value}" == "=" ]] && value="${COMP_WORDS[$((line + 2))]}";
+        [[ "${value}" == "~" || "${value}" == "~/"* ]] && value="${HOME}${value#\~}";
+        [[ -n "${value}" ]] && working_dir="${value}";
+    done
+}
+
 _file_arguments() {
     local extensions="${1}"
-    # bun resolves the files against --cwd when it is given
-    local working_dir="${PWD}" line=0;
-    for ((; line < COMP_CWORD - 1; line+=1)); do
-        [[ "${COMP_WORDS[${line}]}" == "--cwd" ]] && working_dir="${COMP_WORDS[$((line + 1))]}";
-    done
-    # quote a name with a space and put a / after a directory
-    compopt -o filenames 2>/dev/null;
+    local working_dir file;
+    _working_dir;
     # the filter patterns use extglob, which is off unless bash-completion turned it on.
     # bun test picks test files by their lowercased name, so the filter ignores case too.
-    # the options and the cd are in the subshell only, so an interrupted listing leaks nothing
-    readarray -t COMPREPLY < <(cd "${working_dir}" 2>/dev/null && shopt -s extglob nocasematch && compgen -f -X "${extensions}" -- "${cur_word}");
+    # the options and the cd are in the subshell only, so an interrupted listing leaks nothing.
+    # the callers add flags and script names to the list, so readline must not treat it as
+    # file names: a name with a space is escaped here instead
+    COMPREPLY=();
+    while IFS= read -r file; do
+        printf -v file '%q' "${file}";
+        COMPREPLY+=( "${file}" );
+    done < <(CDPATH= builtin cd -- "${working_dir}" >/dev/null 2>&1 && shopt -s extglob nocasematch && compgen -f -X "${extensions}" -- "${cur_word}");
 }
 
 _long_short_completion() {
@@ -33,12 +48,8 @@ _long_short_completion() {
 _read_scripts_in_package_json() {
     local package_json;
     local return_package_json
-    local line=0;
-    local working_dir="${PWD}";
-
-    for ((; line < ${#COMP_WORDS[@]}; line+=1)); do
-        [[ "${COMP_WORDS[${line}]}" == "--cwd" ]] && working_dir="${COMP_WORDS[$((line + 1))]}";
-    done
+    local working_dir;
+    _working_dir;
 
     [[ -f "${working_dir}/package.json" ]] && package_json=$(<"${working_dir}/package.json");
 

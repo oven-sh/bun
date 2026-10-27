@@ -519,11 +519,12 @@ describe("bun", () => {
 
         // `bun test <TAB>`: the test files in cwd and the flags, not the other files
         const empty = await complete(cwd, "test", "");
+        // readline inserts the entries as they are, so the space is escaped
         expect(empty.filter(word => !word.startsWith("-")).sort()).toEqual([
           "Button.Spec.tsx",
           "bar_spec.js",
           "foo.test.ts",
-          "my feature.test.ts",
+          "my\\ feature.test.ts",
         ]);
         expect(empty).toContain("--bail");
 
@@ -539,6 +540,9 @@ describe("bun", () => {
         // `bun test --cwd sub <TAB>`: the test files under sub
         const underCwd = await complete(cwd, "test", "--cwd", "sub", "");
         expect(underCwd.filter(word => !word.startsWith("-"))).toEqual(["nested.test.js"]);
+        // `bun test --cwd=sub <TAB>`: readline splits the word at the `=`
+        const underCwdEq = await complete(cwd, "test", "--cwd", "=", "sub", "");
+        expect(underCwdEq.filter(word => !word.startsWith("-"))).toEqual(["nested.test.js"]);
         expect((await complete(cwd, "test", "--preload", "")).sort()).toEqual([
           "Button.Spec.tsx",
           "bar_spec.js",

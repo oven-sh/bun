@@ -1,6 +1,7 @@
 // For each way of consuming a native rejection below, prints the names of the
 // error's `at async` frames, with and without an AsyncLocalStorage context.
 // process.argv[2] names what takes JSC off its promise fast paths first.
+import { exposedInternals } from "bun:internal-for-testing";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { readFile } from "node:fs/promises";
 import vm from "node:vm";
@@ -107,6 +108,42 @@ async function thenResolveReject() {
   await promise;
 }
 
+// The reject handler is not the reject function of the promise. The walk goes
+// by `resolve` alone, as V8's walk does.
+async function thenResolveWrappedReject() {
+  const { promise, resolve, reject } = Promise.withResolvers();
+  native().then(resolve, error => reject(error));
+  await promise;
+}
+// The same for the two functions of an await, and for the two of a promise
+// that was resolved with a thenable.
+async function awaitedThenableWrappedReject() {
+  await {
+    then(resolve: (value: unknown) => void, reject: (reason: unknown) => void) {
+      native().then(resolve, error => reject(error));
+    },
+  };
+}
+async function resolvedThenableWrappedReject() {
+  await Promise.resolve({
+    then(resolve: (value: unknown) => void, reject: (reason: unknown) => void) {
+      native().then(resolve, error => reject(error));
+    },
+  });
+}
+// Another handler takes the rejection. bystander() waits for what `resolve`
+// settles, so the walk names it. V8's walk does the same.
+async function thenResolveOtherHandler() {
+  const { promise, resolve } = Promise.withResolvers();
+  async function bystander() {
+    await promise;
+  }
+  bystander();
+  const seen = Promise.withResolvers();
+  native().then(resolve, seen.resolve);
+  return seen.promise;
+}
+
 // What waits for the promise that then() returned comes first, as on the fast
 // paths. Node goes to the promise of `resolve`: no frame for the first of these
 // two, and receiver() for the second.
@@ -180,8 +217,9 @@ async function handledBeforeRejectFunction() {
   native().catch(seen.resolve).catch(reject);
   return seen.promise;
 }
-// then() has no reject handler here. The rejection goes on to the promise that
-// then() returned, where nothing handles it, and bystander() never gets it.
+// then() has no reject handler here. V8's walk names bystander(). This walk
+// reads only a reaction that has both handlers: JSC keeps that one in the same
+// form with and without an AsyncLocalStorage context.
 async function thenResolveOnly() {
   const { promise, resolve } = Promise.withResolvers();
   async function bystander() {
@@ -251,6 +289,50 @@ async function promiseAllAfterThen() {
   Promise.all([rejected]).catch(() => {});
   return seen;
 }
+// Off its fast path Promise.any() calls then() with the resolve function of
+// its result. On the fast path the walk stops, as for Promise.all().
+async function promiseAny() {
+  try {
+    await Promise.any([native()]);
+  } catch (error) {
+    throw (error as AggregateError).errors[0];
+  }
+}
+
+// JSC keeps the async context of a finally() reaction where another reaction
+// keeps the promise that then() returned. Here that context is a promise, and
+// bystander() awaits it. It is no link: the rejection has nothing to do with it.
+const AsyncContextFrame = exposedInternals["internal/async_context_frame"];
+function finallyInAsyncContext(rejected: Promise<unknown>, context: unknown) {
+  const previous = AsyncContextFrame.exchange(context);
+  try {
+    return rejected.finally(() => {});
+  } finally {
+    AsyncContextFrame.exchange(previous);
+  }
+}
+async function asyncContextOfReaction() {
+  const { promise } = Promise.withResolvers();
+  async function bystander() {
+    await promise;
+  }
+  bystander();
+  const rejected = native();
+  const seen = rejected.then(undefined, error => error);
+  finallyInAsyncContext(rejected, promise).catch(() => {});
+  return seen;
+}
+// The same with finally() as the one reaction, which JSC keeps in the promise.
+async function asyncContextOfInlineReaction() {
+  const { promise } = Promise.withResolvers();
+  async function bystander() {
+    await promise;
+  }
+  bystander();
+  const seen = Promise.withResolvers();
+  finallyInAsyncContext(native(), promise).then(undefined, seen.resolve);
+  return seen.promise;
+}
 
 const shapes = [
   fsPromises,
@@ -264,6 +346,10 @@ const shapes = [
   otherRealmThen,
   otherRealmResolve,
   thenResolveReject,
+  thenResolveWrappedReject,
+  awaitedThenableWrappedReject,
+  resolvedThenableWrappedReject,
+  thenResolveOtherHandler,
   thenResolveRejectResult,
   bothAwaited,
   failFastWorker,
@@ -276,6 +362,9 @@ const shapes = [
   calledThenableJobPair,
   calledAwaitPair,
   promiseAllAfterThen,
+  promiseAny,
+  asyncContextOfReaction,
+  asyncContextOfInlineReaction,
 ];
 
 // The names of the leading `at async` frames, down to this helper.

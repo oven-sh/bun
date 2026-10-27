@@ -3,19 +3,17 @@
 // name each function once.
 const native = () => Bun.file("/nonexistent-path/does-not-exist.txt").stat();
 
+function asyncFrameNames(error: any): string[] {
+  if (error?.code !== "ENOENT") throw new Error(`expected ENOENT, got ${error}`);
+  return String(error.stack)
+    .split("\n")
+    .filter(line => line.includes("at async "))
+    .map(line => line.trim().split(" ")[2]);
+}
 function asyncFramesOf(promise: Promise<unknown>): Promise<string[]> {
-  return promise.then(
-    () => {
-      throw new Error("expected a rejection");
-    },
-    error => {
-      if (error?.code !== "ENOENT") throw new Error(`expected ENOENT, got ${error}`);
-      return String(error.stack)
-        .split("\n")
-        .filter(line => line.includes("at async "))
-        .map(line => line.trim().split(" ")[2]);
-    },
-  );
+  return promise.then(() => {
+    throw new Error("expected a rejection");
+  }, asyncFrameNames);
 }
 
 // Array.fromAsync() is an async function of JSC. It has no frame, so a cycle
@@ -39,6 +37,28 @@ function builtinAwaitsRaceWithItsOwnPromise() {
     },
   });
   return asyncFramesOf(promise);
+}
+
+// reader() catches the rejection. Array.fromAsync() awaits a race of reader()
+// and its own promise.
+function functionBeforeBuiltinCycle() {
+  const frames = Promise.withResolvers<string[]>();
+  async function reader() {
+    try {
+      await native();
+    } catch (error) {
+      frames.resolve(asyncFrameNames(error));
+    }
+  }
+  let promise: Promise<unknown>;
+  promise = Array.fromAsync({
+    length: 2,
+    0: null,
+    get 1() {
+      return Promise.race([promise, reader()]);
+    },
+  });
+  return frames.promise;
 }
 
 function builtinAwaitsRaceWithItsThenResult() {
@@ -65,6 +85,26 @@ function functionAwaitsRaceWithItsThenResult() {
   async function worker() {
     await null;
     await Promise.race([rejected, result]);
+  }
+  result = worker().then(value => value);
+  result.catch(() => {});
+  return frames;
+}
+
+// The race is a thenable here. It gives the two functions of the one await to
+// both promises, so the walk comes to worker() from each of them.
+function functionAwaitsThenableRaceWithItsThenResult() {
+  const rejected = native();
+  const frames = asyncFramesOf(rejected);
+  let result: Promise<unknown>;
+  async function worker() {
+    await null;
+    await {
+      then(resolve: (value: unknown) => void, reject: (reason: unknown) => void) {
+        rejected.then(resolve, reject);
+        result.then(resolve, reject);
+      },
+    };
   }
   result = worker().then(value => value);
   result.catch(() => {});
@@ -153,6 +193,9 @@ async function level1() {
 const frames: Record<string, string[]> = {};
 frames["Array.fromAsync() has no frame"] = await asyncFramesOf(caller());
 frames["a builtin awaits a race with its own promise"] = await builtinAwaitsRaceWithItsOwnPromise();
+frames["a function before a cycle of builtins"] = await functionBeforeBuiltinCycle();
+frames["a function awaits a thenable race with its then() result"] =
+  await functionAwaitsThenableRaceWithItsThenResult();
 frames["two functions await each other"] = await twoFunctionsAwaitEachOther();
 frames["a builtin awaits its own promise"] = await builtinAwaitsItsOwnPromise();
 frames["a function awaits its own promise"] = await functionAwaitsItsOwnPromise();

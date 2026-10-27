@@ -139,16 +139,27 @@ test.concurrent.each([
     "otherRealmThen",
     "otherRealmResolve",
     "thenResolveReject",
+    "thenResolveWrappedReject",
+    "awaitedThenableWrappedReject",
+    "resolvedThenableWrappedReject",
     "thenResolveRejectResult",
   ];
+  // Promise.any() leaves its fast path in these states. Only then can the walk read its reaction.
+  const anyIsALink = [
+    "after defining Object.prototype.then",
+    "after replacing Promise.prototype.then",
+    "after freezing Promise.prototype",
+  ].includes(state);
   const frames = {
     ...Object.fromEntries(shapes.map(shape => [shape, [shape, "asyncFramesOf"]])),
+    // The function that waits for what `resolve` settles, also if another handler takes the rejection.
+    thenResolveOtherHandler: ["bystander"],
     bothAwaited: ["starter", "bothAwaited", "asyncFramesOf"],
     // One frame for worker(), although the chain leads back to it.
     failFastWorker: ["worker", "failFastWorker", "asyncFramesOf"],
     cycleThroughThen: ["worker"],
     cycleThroughResolveReject: ["worker"],
-    // No frame for a function that the rejection does not go to, and none through a reject function alone.
+    // A link is a then() with a resolve function that was not called and a reject handler. These have none.
     catchReject: [],
     handledBeforeRejectFunction: [],
     thenResolveOnly: [],
@@ -156,6 +167,10 @@ test.concurrent.each([
     calledThenableJobPair: [],
     calledAwaitPair: [],
     promiseAllAfterThen: [],
+    promiseAny: anyIsALink ? ["promiseAny", "asyncFramesOf"] : [],
+    // The async context of a reaction is not the promise that then() returned.
+    asyncContextOfReaction: [],
+    asyncContextOfInlineReaction: [],
   };
   // The raw stdout if it is not JSON, so that a crash shows what the fixture printed.
   let result: unknown = stdout;
@@ -190,6 +205,8 @@ test("the async stack of a native rejection ends at a cycle of awaits", async ()
     result: {
       "Array.fromAsync() has no frame": ["caller"],
       "a builtin awaits a race with its own promise": [],
+      "a function before a cycle of builtins": ["reader"],
+      "a function awaits a thenable race with its then() result": ["worker"],
       "two functions await each other": ["inner", "first", "second"],
       "a builtin awaits its own promise": [],
       "a function awaits its own promise": ["selfAwait"],

@@ -2043,6 +2043,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "bun_webp"
+version = "0.0.0"
+
+[[package]]
 name = "bun_which"
 version = "0.0.0"
 dependencies = [

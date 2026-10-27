@@ -729,18 +729,17 @@ pub(crate) trait PathLikeExt {
     ) -> Result<&'a OSPathSliceZ, NameTooLong>
     where
         Self: Sized;
-    /// `Err` is the value when it is not a path, for the caller's own error.
-    fn from_js<'a>(
+    fn from_js(
         ctx: &JSGlobalObject,
-        path: generated::PathLike<'a>,
+        path: generated::PathLike<'_>,
         parsing: &mut Parsing,
-    ) -> JsResult<Result<PathLike<'static>, JsLocal<'a>>>
+    ) -> JsResult<Option<PathLike<'static>>>
     where
         Self: Sized;
 
     /// `from_js` + Node's `ERR_INVALID_ARG_VALUE` "<name> must be a string
-    /// or TypedArray" throw on `Err`. Collapses the open-coded
-    /// `?.map_err(|_| ctx.throw_invalid_arguments(...))?` repeated 22× in
+    /// or TypedArray" throw on `None`. Collapses the open-coded
+    /// `?.ok_or_else(|| ctx.throw_invalid_arguments(...))?` repeated 22× in
     /// `node_fs.rs::args::*::from_js`.
     #[inline]
     fn from_js_required(
@@ -752,7 +751,7 @@ pub(crate) trait PathLikeExt {
     where
         Self: Sized,
     {
-        Self::from_js(ctx, path, parsing)?.map_err(|_| {
+        Self::from_js(ctx, path, parsing)?.ok_or_else(|| {
             ctx.throw_invalid_arguments(format_args!("{name} must be a string or TypedArray"))
         })
     }
@@ -767,14 +766,35 @@ pub(crate) trait PathLikeExt {
         Self: Sized;
 }
 
+impl generated::PathLike<'_> {
+    /// The argument, for the error of a caller that [`PathLikeExt::from_js`] gave `None`.
+    pub(crate) fn to_js(self) -> JSValue {
+        match self {
+            Self::String(string) => string.to_js(),
+            Self::Buffer(buffer) => buffer.to_js(),
+            Self::Url(_) => unreachable!("a URL is a path"),
+            Self::Other(value) => value.to_js(),
+        }
+    }
+}
+
+impl generated::PathOrFileDescriptor<'_> {
+    /// As [`generated::PathLike::to_js`].
+    pub(crate) fn to_js(self) -> JSValue {
+        match self {
+            Self::Fd(fd) => JSValue::js_number(f64::from(fd)),
+            Self::Path(path) => path.to_js(),
+        }
+    }
+}
+
 /// `bun_runtime`-tier behaviour layered on `bun_jsc::node_path::PathOrFileDescriptor`.
 pub(crate) trait PathOrFdExt {
-    /// As [`PathLikeExt::from_js`].
-    fn from_js<'a>(
+    fn from_js(
         ctx: &JSGlobalObject,
-        path: generated::PathOrFileDescriptor<'a>,
+        path: generated::PathOrFileDescriptor<'_>,
         parsing: &mut Parsing,
-    ) -> JsResult<Result<PathOrFileDescriptor<'static>, JsLocal<'a>>>
+    ) -> JsResult<Option<PathOrFileDescriptor<'static>>>
     where
         Self: Sized;
 }
@@ -985,11 +1005,11 @@ impl PathLikeExt for PathLike<'_> {
         }
     }
 
-    fn from_js<'a>(
+    fn from_js(
         ctx: &JSGlobalObject,
-        path: generated::PathLike<'a>,
+        path: generated::PathLike<'_>,
         parsing: &mut Parsing,
-    ) -> JsResult<Result<PathLike<'static>, JsLocal<'a>>> {
+    ) -> JsResult<Option<PathLike<'static>>> {
         use jsc::JSType;
         let path = match path {
             generated::PathLike::Buffer(buffer) => {
@@ -998,7 +1018,7 @@ impl PathLikeExt for PathLike<'_> {
                     arg.js_type(),
                     JSType::Uint8Array | JSType::DataView | JSType::ArrayBuffer
                 ) {
-                    return Ok(Err(buffer.as_value()));
+                    return Ok(None);
                 }
                 let mut buffer = if parsing.flavor == Flavor::Async {
                     PinnedArrayBuffer::root(ctx, arg)
@@ -1059,10 +1079,10 @@ impl PathLikeExt for PathLike<'_> {
                 }
                 path_like_from_string(ctx, str, parsing.flavor == Flavor::Async)?
             }
-            generated::PathLike::Other(value) => return Ok(Err(value)),
+            generated::PathLike::Other(_) => return Ok(None),
         };
 
-        Valid::path_length(path, ctx, parsing).map(Ok)
+        Valid::path_length(path, ctx, parsing).map(Some)
     }
 
     fn from_bun_string(
@@ -1424,14 +1444,14 @@ pub(crate) fn mode_from_js(ctx: &JSGlobalObject, mode: generated::FileMode<'_>) 
 pub(crate) use bun_jsc::node_path::PathOrFileDescriptorSerializeTag;
 
 impl PathOrFdExt for PathOrFileDescriptor<'_> {
-    fn from_js<'a>(
+    fn from_js(
         ctx: &JSGlobalObject,
-        path: generated::PathOrFileDescriptor<'a>,
+        path: generated::PathOrFileDescriptor<'_>,
         parsing: &mut Parsing,
-    ) -> JsResult<Result<PathOrFileDescriptor<'static>, JsLocal<'a>>> {
+    ) -> JsResult<Option<PathOrFileDescriptor<'static>>> {
         match path {
             generated::PathOrFileDescriptor::Fd(fd) => {
-                Ok(Ok(PathOrFileDescriptor::Fd(Fd::from_uv(fd))))
+                Ok(Some(PathOrFileDescriptor::Fd(Fd::from_uv(fd))))
             }
             generated::PathOrFileDescriptor::Path(path) => {
                 Ok(PathLike::from_js(ctx, path, parsing)?.map(PathOrFileDescriptor::Path))
@@ -1688,11 +1708,11 @@ impl PathOrBlob {
         };
         PathOrFileDescriptor::from_js(ctx, path, &mut Parsing::new(Flavor::Sync))?
             .map(PathOrBlob::Path)
-            .map_err(|value| {
+            .ok_or_else(|| {
                 ctx.throw_invalid_argument_type_value(
                     b"destination",
                     b"path, file descriptor, or Blob",
-                    value.to_js(),
+                    path.to_js(),
                 )
             })
     }

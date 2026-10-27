@@ -893,7 +893,7 @@ impl Arguments {
         options: Deferred<'_, generated::WatchFileOptions>,
         listener: Option<JsLocal<'_, Callable>>,
     ) -> JsResult<Arguments> {
-        let Ok(path) = PathLike::from_js(cx.global(), filename, &mut Parsing::new(Flavor::Sync))?
+        let Some(path) = PathLike::from_js(cx.global(), filename, &mut Parsing::new(Flavor::Sync))?
         else {
             return Err(cx
                 .global()

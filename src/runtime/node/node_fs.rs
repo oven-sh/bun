@@ -2766,19 +2766,19 @@ pub(crate) mod args {
             old_path: generated::PathLike<'_>,
             new_path: generated::PathLike<'_>,
         ) -> JsResult<Self> {
-            let old_path = PathLike::from_js(ctx, old_path, parsing)?.map_err(|value| {
+            let old_path = PathLike::from_js(ctx, old_path, parsing)?.ok_or_else(|| {
                 ctx.throw_invalid_argument_type_value(
                     b"oldPath",
                     b"string or an instance of Buffer or URL",
-                    value.to_js(),
+                    old_path.to_js(),
                 )
             })?;
             // `Drop for PathLike` runs on early return.
-            let new_path = PathLike::from_js(ctx, new_path, parsing)?.map_err(|value| {
+            let new_path = PathLike::from_js(ctx, new_path, parsing)?.ok_or_else(|| {
                 ctx.throw_invalid_argument_type_value(
                     b"newPath",
                     b"string or an instance of Buffer or URL",
-                    value.to_js(),
+                    new_path.to_js(),
                 )
             })?;
             Ok(Rename { old_path, new_path })
@@ -2799,7 +2799,7 @@ pub(crate) mod args {
             path: generated::PathOrFileDescriptor<'_>,
             len: Deferred<'_, i64>,
         ) -> JsResult<Self> {
-            let path = PathOrFileDescriptor::from_js(ctx, path, parsing)?.map_err(|_| {
+            let path = PathOrFileDescriptor::from_js(ctx, path, parsing)?.ok_or_else(|| {
                 ctx.throw_invalid_arguments(format_args!("path must be a string or TypedArray"))
             })?;
             let len = len.convert(ctx)?.max(0) as u64;
@@ -3349,11 +3349,11 @@ pub(crate) mod args {
             prefix: generated::PathLike<'_>,
             options: Deferred<'_, generated::EncodingOrOptions<'_>>,
         ) -> JsResult<Self> {
-            let prefix = PathLike::from_js(ctx, prefix, parsing)?.map_err(|value| {
+            let prefix = PathLike::from_js(ctx, prefix, parsing)?.ok_or_else(|| {
                 ctx.throw_invalid_argument_type_value(
                     b"prefix",
                     b"string, Buffer, or URL",
-                    value.to_js(),
+                    prefix.to_js(),
                 )
             })?;
             let encoding = parse_encoding_arg(ctx, options, Encoding::Utf8)?;
@@ -3875,7 +3875,7 @@ pub(crate) mod args {
         ) -> JsResult<Self> {
             // `Drop` on `path` covers every
             // `?`-propagated JsError below.
-            let path = PathOrFileDescriptor::from_js(ctx, path, parsing)?.map_err(|_| {
+            let path = PathOrFileDescriptor::from_js(ctx, path, parsing)?.ok_or_else(|| {
                 ctx.throw_invalid_arguments(format_args!(
                     "path must be a string or a file descriptor"
                 ))
@@ -3959,7 +3959,7 @@ pub(crate) mod args {
         ) -> JsResult<Self> {
             // `Drop` on `path` covers every
             // `?`-propagated JsError below.
-            let path = PathOrFileDescriptor::from_js(ctx, path, parsing)?.map_err(|_| {
+            let path = PathOrFileDescriptor::from_js(ctx, path, parsing)?.ok_or_else(|| {
                 ctx.throw_invalid_arguments(format_args!(
                     "path must be a string or a file descriptor"
                 ))
@@ -4057,7 +4057,7 @@ pub(crate) mod args {
             path: generated::PathLike<'_>,
         ) -> JsResult<Self> {
             Ok(Exists {
-                path: PathLike::from_js(ctx, path, parsing)?.ok(),
+                path: PathLike::from_js(ctx, path, parsing)?,
             })
         }
     }

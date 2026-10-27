@@ -639,7 +639,7 @@ impl<'a> Arguments<'a> {
         options: Option<generated::WatchOptions<'_>>,
         listener: Option<JsLocal<'_, Callable>>,
     ) -> JsResult<Arguments<'a>> {
-        let Ok(path) = PathLike::from_js(cx.global(), filename, &mut Parsing::new(Flavor::Sync))?
+        let Some(path) = PathLike::from_js(cx.global(), filename, &mut Parsing::new(Flavor::Sync))?
         else {
             return Err(cx
                 .global()

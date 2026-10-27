@@ -94,9 +94,7 @@ enum MissingPathError {
 fn path_from_js(global: &JSGlobalObject, path: S3Path<'_>) -> JsResult<Option<PathLike<'static>>> {
     match path {
         S3Path::Missing => Ok(None),
-        S3Path::Path(path) => {
-            Ok(PathLike::from_js(global, path, &mut Parsing::new(Flavor::Sync))?.ok())
-        }
+        S3Path::Path(path) => PathLike::from_js(global, path, &mut Parsing::new(Flavor::Sync)),
     }
 }
 

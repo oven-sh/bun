@@ -2103,36 +2103,30 @@ impl BlobExt for Blob {
         options: BlobOptionsArgument<'_>,
     ) -> JsResult<*mut Blob> {
         let global_this = cx.global();
-        let blob: Blob;
-        if matches!(parts, BlobParts::Undefined) && matches!(options, BlobOptionsArgument::Missing)
+        let blob = match parts {
+            BlobParts::Undefined | BlobParts::Null => Blob::init_empty(global_this),
+            BlobParts::List(parts) => Blob::get::<false, true>(global_this, parts.to_js())?,
+            BlobParts::Buffer(parts) => Blob::get::<false, true>(global_this, parts.to_js())?,
+        };
+
+        if let BlobOptionsArgument::Options(options) = options
+            && let Some(content_type_str) =
+                BlobPropertyBag::from_js(global_this, options.to_js())?.r#type
         {
-            blob = Blob::init_empty(global_this);
-        } else {
-            blob = match parts {
-                BlobParts::Undefined | BlobParts::Null => Blob::init_empty(global_this),
-                BlobParts::List(parts) => Blob::get::<false, true>(global_this, parts.to_js())?,
-                BlobParts::Buffer(parts) => Blob::get::<false, true>(global_this, parts.to_js())?,
-            };
-
-            if let BlobOptionsArgument::Options(options) = options
-                && let Some(content_type_str) =
-                    BlobPropertyBag::from_js(global_this, options.to_js())?.r#type
-            {
-                let slice = content_type_str.slice();
-                if is_valid_blob_type(slice) {
-                    blob.content_type_was_set.set(true);
-                    blob.content_type
-                        .set(match global_this.bun_vm().as_mut().mime_type(slice) {
-                            Some(mime) => BlobContentType::from(mime),
-                            None => BlobContentType::from_lowercased(slice),
-                        });
-                }
+            let slice = content_type_str.slice();
+            if is_valid_blob_type(slice) {
+                blob.content_type_was_set.set(true);
+                blob.content_type
+                    .set(match global_this.bun_vm().as_mut().mime_type(slice) {
+                        Some(mime) => BlobContentType::from(mime),
+                        None => BlobContentType::from_lowercased(slice),
+                    });
             }
+        }
 
-            if blob.content_type_slice().is_empty() {
-                blob.content_type.set(BlobContentType::default());
-                blob.content_type_was_set.set(false);
-            }
+        if blob.content_type_slice().is_empty() {
+            blob.content_type.set(BlobContentType::default());
+            blob.content_type_was_set.set(false);
         }
 
         blob.calculate_estimated_byte_size();
@@ -5313,7 +5307,7 @@ pub(crate) fn file(
 ) -> JsResult<JSValue> {
     let global_object = cx.global();
 
-    let Ok(mut path) =
+    let Some(mut path) =
         PathOrFileDescriptor::from_js(global_object, path, &mut Parsing::new(Flavor::Sync))?
     else {
         return Err(global_object.throw_invalid_arguments(format_args!(

@@ -9,6 +9,7 @@ use crate::common::{
 use crate::error::{ErrorCode, Result};
 use crate::util::{BUG, SliceExt, highbit32, read_le32, read_le64, write_le24};
 use core::hint::{Locality, prefetch_read};
+use core::sync::atomic::{Ordering, compiler_fence};
 
 pub(crate) const K_SEARCH_STRENGTH: u32 = 8;
 pub(crate) const HASH_READ_SIZE: usize = 8;
@@ -707,6 +708,26 @@ impl<'a> Near<'a> {
             Some(there) => (u64::from_le_bytes(*there) ^ bytes) | u64::from(pos > last),
             None => 1,
         }
+    }
+
+    /// Whether the bits of `MASK` are the same in `bytes` and in the 8 bytes at `pos`. If `pos` is too far to read them,
+    /// that is only found out once other bytes turned out to be the same.
+    #[inline(always)]
+    pub(crate) fn has<const MASK: u64>(self, pos: u32, bytes: u64) -> bool {
+        let Some(last) = self.0.len().checked_sub(8) else {
+            return false;
+        };
+        let pos = pos as usize;
+        let at = pos.min(last);
+        let Some(there) = self.0.get(at..at + 8).and_then(<[u8]>::first_chunk) else {
+            return false;
+        };
+        if (u64::from_le_bytes(*there) ^ bytes) & MASK != 0 {
+            return false;
+        }
+        // Costs nothing, and keeps the compiler from asking the second question first.
+        compiler_fence(Ordering::SeqCst);
+        pos <= last
     }
 
     #[inline(always)]

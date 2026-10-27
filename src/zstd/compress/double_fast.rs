@@ -201,9 +201,9 @@ impl Finder {
                 // read instead is unlikely to be the same.
                 let matchl0 = idxl0.wrapping_sub(base_index);
                 let matchs0 = idxs0.wrapping_sub(base_index);
-                let (match0, end) = if near.diff64(matchl0, bytes0) == 0 {
+                let (match0, end) = if near.has::<{ u64::MAX }>(matchl0, bytes0) {
                     (matchl0, ip + 8 + near.count(ip + 8, matchl0 + 8))
-                } else if near.diff64(matchs0, bytes0) as u32 == 0 {
+                } else if near.has::<0xFFFF_FFFF>(matchs0, bytes0) {
                     // A short match: a longer one at the next position is preferred.
                     let end = ip + 4 + near.count(ip + 4, matchs0 + 4);
                     let idxl1 = table_get(hash_long, hash8(bytes1, h_bits_l, 0));

@@ -1417,6 +1417,15 @@ describe("OKP pkcs8 import of RFC 5958 v2 OneAsymmetricKey", () => {
     );
   });
 
+  it("rejects a 64-byte CurvePrivateKey (seed followed by the public key)", async () => {
+    // RFC 8410 section 7: the CurvePrivateKey is the 32-byte seed only. Node
+    // rejects this libsodium-style form too; the old walker accepted it.
+    const seedAndPublic = der("020100", edAlgorithm, "04420440" + edSeed + edPub);
+    await expect(crypto.subtle.importKey("pkcs8", seedAndPublic, "Ed25519", false, ["sign"])).rejects.toThrow(
+      "Invalid keyData",
+    );
+  });
+
   const expectRejected = async (pkcs8: Uint8Array) => {
     await expect(crypto.subtle.importKey("pkcs8", pkcs8, "Ed25519", false, ["sign"])).rejects.toThrow(
       "Invalid keyData",

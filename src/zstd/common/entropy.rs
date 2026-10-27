@@ -315,30 +315,34 @@ pub(crate) fn huf_read_stats_wksp(
 
     // Four counts of each weight: one that is incremented again and again has to be waited for.
     let mut counts = [[0u32; 16]; 4];
-    let mut weight_total: u32 = 0;
-    let mut max_weight = 0;
+    let mut all_bits = 0;
     let (fours, others) = huff_weight.sub(..o_size)?.as_chunks::<4>();
     for weights in fours.iter().chain(&[pad(others)]) {
+        all_bits |= u32::from_le_bytes(*weights);
         for (&weight, counts) in weights.iter().zip(&mut counts) {
             if let Some(count) = counts.get_mut(usize::from(weight) % 16) {
                 *count += 1;
             }
-            weight_total += (1 << (weight % 16)) >> 1;
-            max_weight = max_weight.max(weight);
         }
     }
-    if u32::from(max_weight) > HUF_TABLELOG_MAX {
-        return Err(ErrorCode::CorruptionDetected);
-    }
     let [counts0, counts1, counts2, counts3] = &counts;
-    for (weight, rank) in rank_stats.iter_mut().enumerate() {
+    let mut ranks = [0u32; 16];
+    for (weight, rank) in ranks.iter_mut().enumerate() {
         *rank =
             counts0.at(weight)? + counts1.at(weight)? + counts2.at(weight)? + counts3.at(weight)?;
     }
+    let (valid, too_large) = ranks.split_at(rank_stats.len());
+    if all_bits & 0xF0F0_F0F0 != 0 || too_large.iter().any(|&rank| rank != 0) {
+        return Err(ErrorCode::CorruptionDetected);
+    }
+    rank_stats.copy_from_slice(valid);
     // Those that complete the last four.
     if let Some(rank) = rank_stats.first_mut() {
         *rank -= (4 - others.len()) as u32;
     }
+    let weight_total = (rank_stats.iter().enumerate().skip(1))
+        .map(|(weight, &rank)| rank << (weight - 1))
+        .sum::<u32>();
     if weight_total == 0 {
         return Err(ErrorCode::CorruptionDetected);
     }

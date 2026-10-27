@@ -472,17 +472,16 @@ impl FileReader {
             {
                 use bun_io::pipe_reader::PosixFlags;
                 if !was_lazy && self.reader().flags.contains(PosixFlags::POLLABLE) {
-                    // Lazy subprocess stdio starts like uv_read_start: arm the poll, the event
-                    // loop delivers the first read, so a live child's writes are not split.
-                    // A pipe whose writer is gone is read now: its poll would fire after the
-                    // exit that is already queued, and 'exit' would come before the data.
-                    let lazy_start = self.reader().flags.contains(PosixFlags::IS_PAUSED)
+                    // A lazy subprocess pipe starts like uv_read_start: the event loop delivers
+                    // its first read, so a live child's writes are not split. Once the writer is
+                    // gone the child's exit is already queued: read now, so JS gets the data first.
+                    let from_loop = self.reader().flags.contains(PosixFlags::IS_PAUSED)
                         && !matches!(
                             bun_core::is_readable(self.reader().get_fd()),
                             bun_core::Pollable::Hup
                         );
                     self.reader().unpause();
-                    if lazy_start {
+                    if from_loop {
                         self.reader().watch();
                     } else {
                         // SAFETY: the reader cell is live for `self`'s lifetime; `read` is

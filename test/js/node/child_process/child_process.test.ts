@@ -1811,6 +1811,9 @@ describe.skipIf(!isPosix)("child.stdout pull nested in a 'data' event", () => {
 // next write. An unref'd child with no readable pipe still lets the parent
 // exit.
 describe("spawn().unref() with piped stdio", () => {
+  // Each row starts a bun that starts a bun: seconds on a busy debug or ASAN build.
+  const nestedSpawnTimeout = 30_000;
+
   // The parent sends "go" from an unref'd timer. A due unref'd timer never
   // fires once nothing else keeps the loop alive, so the child reads "go"
   // only if the un-read pipe kept the parent running. If the parent exited
@@ -1870,14 +1873,18 @@ describe("spawn().unref() with piped stdio", () => {
     `["pipe"]`,
     `["pipe", "pipe"]`,
   ])("stdio: %s", stdio => {
-    it.concurrent("keeps the parent alive until an un-read pipe closes", async () => {
-      expect(await run(stdio)).toEqual({
-        stdout: "",
-        stderr: "",
-        exitCode: 0,
-        marker: { input: "go", write: "ok" },
-      });
-    });
+    it.concurrent(
+      "keeps the parent alive until an un-read pipe closes",
+      async () => {
+        expect(await run(stdio)).toEqual({
+          stdout: "",
+          stderr: "",
+          exitCode: 0,
+          marker: { input: "go", write: "ok" },
+        });
+      },
+      nestedSpawnTimeout,
+    );
   });
 
   async function runAndKill(stdio: string, childScript: string) {
@@ -1907,30 +1914,38 @@ describe("spawn().unref() with piped stdio", () => {
     return { stderr, exitCode, childExitCode };
   }
 
-  it.concurrent("lets the parent exit when only stdin is piped", async () => {
-    // The child blocks on stdin, which the parent never closes.
-    expect(await runAndKill(`["pipe", "ignore", "ignore"]`, "process.stdin.resume()")).toEqual({
-      stderr: "",
-      exitCode: 0,
-      childExitCode: null,
-    });
-  });
+  it.concurrent(
+    "lets the parent exit when only stdin is piped",
+    async () => {
+      // The child blocks on stdin, which the parent never closes.
+      expect(await runAndKill(`["pipe", "ignore", "ignore"]`, "process.stdin.resume()")).toEqual({
+        stderr: "",
+        exitCode: 0,
+        childExitCode: null,
+      });
+    },
+    nestedSpawnTimeout,
+  );
 
-  it.concurrent("lets the parent exit once the un-read stdout buffer is full", async () => {
-    // The child fills the pipe past the stream's highWaterMark, then blocks
-    // on stdin. Reading stops at the highWaterMark, so nothing keeps the
-    // parent alive. Node exits here as well instead of deadlocking.
-    expect(
-      await runAndKill(
-        `["pipe", "pipe", "ignore"]`,
-        "process.stdout.write(Buffer.alloc(4 << 20, 97)); process.stdin.resume()",
-      ),
-    ).toEqual({
-      stderr: "",
-      exitCode: 0,
-      childExitCode: null,
-    });
-  });
+  it.concurrent(
+    "lets the parent exit once the un-read stdout buffer is full",
+    async () => {
+      // The child fills the pipe past the stream's highWaterMark, then blocks
+      // on stdin. Reading stops at the highWaterMark, so nothing keeps the
+      // parent alive. Node exits here as well instead of deadlocking.
+      expect(
+        await runAndKill(
+          `["pipe", "pipe", "ignore"]`,
+          "process.stdout.write(Buffer.alloc(4 << 20, 97)); process.stdin.resume()",
+        ),
+      ).toEqual({
+        stderr: "",
+        exitCode: 0,
+        childExitCode: null,
+      });
+    },
+    nestedSpawnTimeout,
+  );
 });
 
 // Node starts a child's stdout and stderr with uv_read_start: it arms the

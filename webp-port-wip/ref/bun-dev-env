@@ -1,0 +1,2 @@
+export PATH="$HOME/.cargo/bin:$PATH"
+export CMAKE_PREFIX_PATH=/usr

@@ -1,0 +1,5 @@
+fb80c16d webp: check lane numbers in the lossy encoder, count the levels of a block once
+579e2aaa webp: keep the lossy encoder's blocks as 4x4 matrices
+94319444 webp: make the lossy encoder's predictions by lanes, gather levels lazily
+4ea75fb0 webp: run the lossy encoder's kernels on many blocks at a time
+2e59acc9 webp: add the lossy encoder

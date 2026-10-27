@@ -1,0 +1,7 @@
+[package]
+name = "webp-select"
+version = "0.0.0"
+edition = "2024"
+[workspace]
+[profile.release]
+debug = 1

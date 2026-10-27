@@ -133,6 +133,7 @@ impl Source {
 /// `owned_bytes` is all a marking thread reads: the JS thread replaces `source` while it runs.
 struct SourceCell {
     source: JsCell<Source>,
+    /// Relaxed: a number on its own, nothing else is published through it.
     owned_bytes: AtomicUsize,
 }
 

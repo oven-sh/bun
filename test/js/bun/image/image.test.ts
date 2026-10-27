@@ -194,6 +194,7 @@ describe("Bun.Image", () => {
     expect((await res.bytes()).subarray(8, 12)).toEqual(Buffer.from("WEBP"));
   });
 
+  // Guards the copy of the size that marking threads read. The race it is there for cannot be tested.
   test("the size given to the GC follows the source as it is replaced", async () => {
     using dir = tempDir("image-gc-size", {});
     const p = join(String(dir), "src.png");
@@ -223,9 +224,10 @@ describe("Bun.Image", () => {
       // metadata() stops at the header; the rest is weight that the image keeps.
       "src.png": Buffer.concat([cornersPng, Buffer.alloc(1024 * 1024)]),
       "index.js": `
+        import { heapStats } from "bun:jsc";
         Bun.gc(true); // heapStats() collects by itself in a process that never has
         for (let i = 0; i < 256; i++) await Bun.file("src.png").image().metadata();
-        console.log(require("bun:jsc").heapStats().objectTypeCounts.Image < 128);
+        console.log((heapStats().objectTypeCounts.Image ?? 0) < 128);
       `,
     });
     // Its own process: how much the GC lets pass before it collects grows with the live heap.

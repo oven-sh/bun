@@ -206,6 +206,10 @@ describe("zlib", () => {
       inputs.coins = fourBytesEach(200_000, () => 0x41414141 + (next() & 0x01010101));
       // Matches are of no use here, so levels 10 to 12 write literals only. In libdeflate 1.16 that could exceed the bound.
       inputs.skewed = fourBytesEach(20_000, () => next() & next());
+      // Levels 10 to 12 notice each change late, and go back to end the block before it.
+      inputs.alternating = Buffer.concat(
+        Array.from({ length: 6 }, (_, i) => noise(6_000).map(byte => byte & (i % 2 ? 3 : 255))),
+      );
       // No match for more than 65535 bytes, which libdeflate 0.6 could not count. From its test_litrunlen_overflow.c.
       inputs.noMatches = Buffer.alloc(2 * 250 * 251);
       for (let half = 0, i = 0; half < 2; half++)
@@ -327,6 +331,21 @@ describe("zlib", () => {
         ...Array(3).fill("16706 3657cac564bd198c"),
         ...Array(5).fill("16808 06e8a1ba27ee603f"),
         ...Array(3).fill("16428 81e235ce25568523"),
+      ],
+      alternating: [
+        "36005 a8e3628a53e19ef2",
+        "25696 9c973e25e8765af8",
+        "25230 2a2e91003ec44944",
+        "25420 d4ba9c0e3d2f6c55",
+        "25373 3cb468cb6a3f6115",
+        "25368 d89e6663c679c55b",
+        "25341 9edfba4cc2dac136",
+        "25299 e58117b0208686aa",
+        "25277 9557ae05b273e1d1",
+        "25277 9557ae05b273e1d1",
+        "23423 1a84020412787af6",
+        "23383 8f1dda6a79a46ed8",
+        "23383 8f1dda6a79a46ed8",
       ],
       noMatches: ["125510 fe85f174af38f0d4", "125309 dedf5d158bed37db", ...Array(11).fill("125279 85be301be4068581")],
     };

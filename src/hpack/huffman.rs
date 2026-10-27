@@ -307,22 +307,25 @@ impl Decoder<'_> {
             }
             let start = self.pos;
             for steps_left in (0..WINDOW_BITS / PREFIX_BITS).rev() {
-                let mut prefix = Self::prefix(window);
-                if prefix.count == 0 {
-                    prefix = long_symbol(window)?;
-                    let left = WINDOW_BITS - (self.pos - start) as u32;
-                    // The window ends inside the code, and the zeros after it made it look like this one.
-                    if u32::from(prefix.bits) > left {
-                        break;
-                    }
-                    // It took the bits of a lookup that is still to come.
-                    if left - u32::from(prefix.bits) < steps_left * PREFIX_BITS {
-                        self.write(prefix)?;
-                        break;
-                    }
+                let prefix = Self::prefix(window);
+                // One `write` after the `if` for both kinds of code costs 6 more instructions here: huffman_simd.md.
+                if prefix.count != 0 {
+                    self.write(prefix)?;
+                    window <<= prefix.bits;
+                    continue;
                 }
-                self.write(prefix)?;
-                window <<= prefix.bits;
+                let long = long_symbol(window)?;
+                let left = WINDOW_BITS - (self.pos - start) as u32;
+                // The window ends inside the code, and the zeros after it made it look like this one.
+                if u32::from(long.bits) > left {
+                    break;
+                }
+                self.write(long)?;
+                // It took the bits of a lookup that is still to come.
+                if left - u32::from(long.bits) < steps_left * PREFIX_BITS {
+                    break;
+                }
+                window <<= long.bits;
             }
         }
         Ok(())

@@ -52,7 +52,7 @@ A call costs about 15 ns before the first symbol, which pays off from about a do
   text that is dense in such codes, like JSON.
 
 That leaves one call wasted on such text. It shows most on a short string: 5 to 8 bytes that start
-with a short code and go on with codes of 10 to 13 bits take 43 ns instead of 35.
+with a short code and go on with codes of 10 to 13 bits take 40 to 53 ns instead of 30 to 41.
 
 ## Which CPUs
 
@@ -73,21 +73,21 @@ bit.
 
 | value                                    | before | scalar | kernel |
 | ---------------------------------------- | ------ | ------ | ------ |
-| 4 characters with codes of up to 8 bits  | 44     | 40     | 40     |
-| 8                                        | 54     | 50     | 36     |
-| 16                                       | 76     | 68     | 41     |
-| 32                                       | 130    | 114    | 58     |
-| 100                                      | 369    | 307    | 127    |
-| 1000                                     | 3789   | 2852   | 1034   |
-| 65, 1 in 40 with a code of 10 to 19 bits | 250    | 205    | 144    |
-| 65, 1 in 10                              | 287    | 214    | 212    |
-| 65, 1 in 2                               | 492    | 370    | 385    |
-| 200, all with codes of 14 bits           | 826    | 820    | 826    |
-| 200, all with codes of 28 bits           | 4452   | 1879   | 1955   |
-| 30 bytes from 0x80 up                    | 1202   | 509    | 516    |
-| `gzip, deflate, br`                      | 64     | 52     | 40     |
-| `{"a":1,"b":[true,null],"c":"x"}`        | 131    | 122    | 131    |
-| the values in http2jp/hpack-test-case    | 108    | 92     | 65     |
+| 4 characters with codes of up to 8 bits  | 45     | 38     | 38     |
+| 8                                        | 56     | 51     | 36     |
+| 16                                       | 89     | 63     | 41     |
+| 32                                       | 139    | 104    | 58     |
+| 100                                      | 385    | 274    | 126    |
+| 1000                                     | 3706   | 2480   | 1037   |
+| 65, 1 in 40 with a code of 10 to 19 bits | 261    | 194    | 144    |
+| 65, 1 in 10                              | 293    | 208    | 217    |
+| 65, 1 in 2                               | 474    | 307    | 325    |
+| 200, all with codes of 14 bits           | 824    | 725    | 736    |
+| 200, all with codes of 28 bits           | 4419   | 1790   | 1824   |
+| 30 bytes from 0x80 up                    | 1175   | 491    | 491    |
+| `gzip, deflate, br`                      | 62     | 46     | 39     |
+| `{"a":1,"b":[true,null],"c":"x"}`        | 131    | 107    | 119    |
+| the values in http2jp/hpack-test-case    | 109    | 85     | 65     |
 
 With cold caches the kernel is further ahead. Prototypes of both, 8 strings at a time with 1 MB
 touched in between: 299 cycles a string against 155. With 8 MB: 842 against 317. The scalar decoder's
@@ -117,3 +117,8 @@ The scalar one-pass encoder was in the crate for a day and was taken out again. 
 before it knows whether the code will be shorter than the text. On Sapphire Rapids it made the
 corpus 22% faster. On Cascade Lake the corpus took as long as before. On both, a string that is
 sent as it is took 1.3 to 2 times as long, and one of 1 to 3 bytes 1.1 to 1.3 times.
+
+The scalar decoder's loop writes a short code and a long code in two places. With one `write` after
+the `if` for both, the compiler loads the four bytes of a table entry one by one and puts the two
+symbols together again: 23 instructions a lookup instead of 17. Sapphire Rapids hides most of that.
+On Cascade Lake text took 10 to 25% longer.

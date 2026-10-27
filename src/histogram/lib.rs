@@ -438,6 +438,10 @@ impl Histogram {
 
     /// NaN if the histogram is empty.
     pub fn mean(&self) -> f64 {
+        // Above 2^53 the sum and the count are rounded, and their quotient is not always the one value there is.
+        if self.first == self.last {
+            return self.slot(self.first).median() as f64;
+        }
         // At most `count * (1 << 63)`.
         let sum: u128 = self
             .slots()

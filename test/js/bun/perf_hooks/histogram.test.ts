@@ -1789,6 +1789,14 @@ describe("statistics", () => {
     );
   });
 
+  test("more equal values than a double counts", () => {
+    const h = filled([3777]);
+    for (let i = 0; i < 54; i++) h.add(h);
+    for (let i = 0; i < 3; i++) h.record(3777);
+    assert.strictEqual(h.countBigInt, 2n ** 54n + 3n);
+    assert.deepStrictEqual([h.mean, h.stddev, h.skewness, h.kurtosis], [3777, 0, 0, 0]);
+  });
+
   test("the moving averages of halfLife and threshold", () => {
     const h = createHistogram({ halfLife: 2, threshold: 10 });
     assert.deepStrictEqual([h.ewmaMean, h.ewmaStddev, h.ewmaErrorRate, h.burnRate(0.9)], [0, 0, 0, 0]);

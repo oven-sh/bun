@@ -69,13 +69,23 @@ impl core::fmt::Display for SystemError {
     /// `Display` stays side-effect-free. The colored path is handled by
     /// `bun_core::Output::pretty*` at the call site that prints the error.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        if !self.path.is_empty() {
+        self.fmt_with_path(&self.path, f)
+    }
+}
+impl SystemError {
+    /// `Display` with `path` in place of `self.path`.
+    pub(crate) fn fmt_with_path(
+        &self,
+        path: &bun_core::String,
+        f: &mut core::fmt::Formatter<'_>,
+    ) -> core::fmt::Result {
+        if !path.is_empty() {
             // "<code>: <path>: <message> (<syscall>())"
             write!(
                 f,
                 "{}: {}: {} ({}())",
                 self.code,
-                bun_core::fmt::EscapeControlChars(&self.path),
+                bun_core::fmt::EscapeControlChars(path),
                 self.message,
                 self.syscall,
             )
@@ -698,7 +708,7 @@ pub mod dir_iterator {
                 // name_byte_offset + name_len_u16*2 ≤ BUF_SIZE by clamp above.
                 // `AlignedBuf` is align(8) and `entry_offset`/`NAME_OFFSET` are
                 // both multiples of 4, so the u8→u16 cast is always aligned.
-                let dir_info_name: &[u16] = bytemuck::cast_slice(
+                let dir_info_name: &[u16] = bun_core::cast_slice(
                     &buf[name_byte_offset..name_byte_offset + name_len_u16 * 2],
                 );
 
@@ -5211,9 +5221,8 @@ pub mod c {
         pub ldavg: [u32; 3],
         pub fscale: core::ffi::c_long,
     }
-    // SAFETY: integers only; all-zero is valid pre-`sysctl` state.
     #[cfg(target_os = "macos")]
-    unsafe impl bun_core::ffi::Zeroable for struct_loadavg {}
+    bun_core::impl_zeroable!(struct_loadavg);
 
     // ── <mach/mach_init.h> / <mach-o/dyld.h> — declared directly because the
     // `libc` crate has deprecated these in favour of the `mach2` crate. We
@@ -5311,9 +5320,8 @@ pub mod c {
         pub pbi_start_tvsec: u64,
         pub pbi_start_tvusec: u64,
     }
-    // SAFETY: integers + byte arrays only; all-zero is valid pre-`proc_pidinfo` state.
     #[cfg(target_os = "macos")]
-    unsafe impl bun_core::ffi::Zeroable for struct_proc_bsdinfo {}
+    bun_core::impl_zeroable!(struct_proc_bsdinfo);
     #[cfg(target_os = "macos")]
     pub const PROC_PIDTBSDINFO: c_int = 3;
     #[cfg(target_os = "macos")]
@@ -5962,6 +5970,7 @@ pub mod macho {
         pub nsects: u32,
         pub flags: u32,
     }
+    bun_core::impl_pod!(mach_header_64, load_command, segment_command_64);
     impl segment_command_64 {
         /// Segment name with trailing NULs trimmed.
         #[inline]
@@ -5970,115 +5979,58 @@ pub mod macho {
         }
     }
 
-    /// Raw `(*const u8, len)` pair so [`LoadCommandIterator`] does not hold a
-    /// Rust borrow of its backing buffer. `bun_exe_format::macho` interleaves
-    /// iterator reads with in-place mutation of the same `Vec<u8>`;
-    /// a `&'a [u8]` here would
-    /// force a structural rewrite of that consumer.
+    /// One parsed load command: header + bytes (header included).
     #[derive(Clone, Copy)]
-    pub struct RawSlice {
-        ptr: *const u8,
-        len: usize,
-    }
-    impl RawSlice {
-        #[inline]
-        pub fn as_ptr(&self) -> *const u8 {
-            self.ptr
-        }
-        #[inline]
-        pub fn len(&self) -> usize {
-            self.len
-        }
-    }
-
-    /// One parsed load command: header + raw bytes (header included).
-    #[derive(Clone, Copy)]
-    pub struct LoadCommand {
+    pub struct LoadCommand<'a> {
         pub hdr: load_command,
-        pub data: RawSlice,
+        pub data: &'a [u8],
         /// Byte offset of this command within the buffer passed to
         /// `LoadCommandIterator::new`.
         pub offset: usize,
     }
-    impl LoadCommand {
+    impl LoadCommand<'_> {
         #[inline]
         pub fn cmd(&self) -> u32 {
             self.hdr.cmd
         }
-        /// Reinterpret the command bytes
-        /// as `T` if large enough. Returns an owned `Copy` value (via
-        /// `read_unaligned`) rather than `&T`: the backing buffer may be a
-        /// heap `Vec<u8>` with arbitrary alignment, so materialising a typed
-        /// reference would be UB.
-        pub fn cast<T: Copy>(&self) -> Option<T> {
-            if self.data.len < core::mem::size_of::<T>() {
-                return None;
-            }
-            // SAFETY: `data.ptr` points into a live Mach-O image buffer with
-            // at least `size_of::<T>()` bytes (checked above); `T` is
-            // `#[repr(C)]` POD per all callers. `read_unaligned` tolerates any
-            // alignment.
-            Some(unsafe { core::ptr::read_unaligned(self.data.ptr.cast::<T>()) })
+        /// The command bytes as a `T`, if there are enough of them. A copy: the bytes have no alignment.
+        pub fn cast<T: bun_core::AnyBitPattern>(&self) -> Option<T> {
+            bun_core::read_prefix(self.data)
         }
     }
 
     /// Walks the load-command region
     /// that immediately follows a `mach_header_64`.
-    ///
-    /// SAFETY contract: callers must not reallocate, shrink, or free the
-    /// backing buffer while a `LoadCommandIterator` derived from it (or any
-    /// `LoadCommand` it yielded) is live.
-    pub struct LoadCommandIterator {
+    pub struct LoadCommandIterator<'a> {
         ncmds: u32,
-        index: u32,
-        buf_ptr: *const u8,
-        buf_len: usize,
+        rest: &'a [u8],
         offset: usize,
     }
-    impl LoadCommandIterator {
-        /// `buffer` must remain live (no realloc/free) for the lifetime of the
-        /// returned iterator and any `LoadCommand` it yields.
+    impl<'a> LoadCommandIterator<'a> {
         #[inline]
-        pub fn new(ncmds: u32, buffer: &[u8]) -> Self {
+        pub fn new(ncmds: u32, buffer: &'a [u8]) -> Self {
             Self {
                 ncmds,
-                index: 0,
-                buf_ptr: buffer.as_ptr(),
-                buf_len: buffer.len(),
+                rest: buffer,
                 offset: 0,
             }
         }
+    }
+    impl<'a> Iterator for LoadCommandIterator<'a> {
+        type Item = LoadCommand<'a>;
 
-        pub fn next(&mut self) -> Option<LoadCommand> {
-            if self.index >= self.ncmds || self.buf_len < core::mem::size_of::<load_command>() {
-                self.index = self.ncmds;
+        /// Ends at a malformed header as it does after the last command.
+        fn next(&mut self) -> Option<LoadCommand<'a>> {
+            self.ncmds = self.ncmds.checked_sub(1)?;
+            let hdr: load_command = bun_core::read_prefix(self.rest)?;
+            let (data, rest) = self.rest.split_at_checked(hdr.cmdsize as usize)?;
+            if data.len() < core::mem::size_of::<load_command>() {
                 return None;
             }
-            // SAFETY: `buf_ptr` was derived from a slice of `buf_len` bytes
-            // which the caller promised stays live, and at least
-            // `size_of::<load_command>()` bytes remain (checked above).
-            let hdr: load_command =
-                unsafe { core::ptr::read_unaligned(self.buf_ptr.cast::<load_command>()) };
-            let cmdsize = hdr.cmdsize as usize;
-            if cmdsize < core::mem::size_of::<load_command>() || cmdsize > self.buf_len {
-                // Malformed header — stop iteration rather than UB.
-                self.index = self.ncmds;
-                return None;
-            }
-            let lc = LoadCommand {
-                hdr,
-                data: RawSlice {
-                    ptr: self.buf_ptr,
-                    len: cmdsize,
-                },
-                offset: self.offset,
-            };
-            // SAFETY: advancing within the original buffer; bounds checked above.
-            self.buf_ptr = unsafe { self.buf_ptr.add(cmdsize) };
-            self.buf_len -= cmdsize;
-            self.offset += cmdsize;
-            self.index += 1;
-            Some(lc)
+            let offset = self.offset;
+            self.rest = rest;
+            self.offset += data.len();
+            Some(LoadCommand { hdr, data, offset })
         }
     }
 }
@@ -6120,7 +6072,7 @@ impl DynLib {
         // SAFETY: irreducible — `dlsym` yields an untyped symbol address as
         // `*mut c_void`; the caller asserts `T` is a pointer-sized fn pointer
         // (or `*mut c_void`) whose ABI matches the resolved symbol. fn pointers
-        // are not `bytemuck::Pod` (not zeroable), so no safe cast exists.
+        // are not `Pod` (not zeroable), so no safe cast exists.
         // `transmute_copy` is used over `transmute` because `T` is generic and
         // its size cannot be checked at the definition site; the `const` assert
         // above enforces `size_of::<T>() == size_of::<*mut c_void>()` at
@@ -6228,7 +6180,7 @@ macro_rules! dlsym_with_handle {
             )
         };
         // SAFETY: irreducible — `$T` is a fn-pointer type (caller contract);
-        // fn pointers are not `bytemuck::Pod`, so the `*mut c_void` → `$T`
+        // fn pointers are not `Pod`, so the `*mut c_void` → `$T`
         // reinterpretation cannot be expressed safely. `p` is non-null (checked
         // below) and was obtained from `dlsym`, so it is a valid code address;
         // `Once` provides happens-before for the store. The `const` assert above
@@ -8194,9 +8146,8 @@ pub mod posix {
         pub cur: u64,
         pub max: u64,
     }
-    // SAFETY: two `u64`; all-zero is a valid `Rlimit`.
     #[cfg(unix)]
-    unsafe impl bun_core::ffi::Zeroable for Rlimit {}
+    bun_core::impl_zeroable!(Rlimit);
     #[cfg(unix)]
     #[derive(Clone, Copy)]
     #[repr(i32)]

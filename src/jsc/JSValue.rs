@@ -76,8 +76,8 @@ impl JSValue {
     }
 
     /// `JSValue.fromPtrAddress` — encode an arbitrary native pointer as a JS
-    /// number (round-trips via `as_promise_ptr`). Used to smuggle a `*mut T`
-    /// context through `Promise.then` reaction arguments.
+    /// number. Used to smuggle a `*mut T` context through `Promise.then`
+    /// reaction arguments, which a reaction takes as `b.promisePtr`.
     #[inline]
     pub fn from_ptr_address(addr: usize) -> JSValue {
         // Always double-encoded via `jsDoubleNumber` (never the int32 fast
@@ -90,13 +90,6 @@ impl JSValue {
     #[inline]
     pub fn as_ptr_address(self) -> usize {
         self.as_number() as usize
-    }
-
-    /// `JSValue.asPromisePtr` — decode a `*mut T` smuggled
-    /// through [`from_ptr_address`] as the trailing `.then` reaction argument.
-    #[inline]
-    pub fn as_promise_ptr<T>(self) -> *mut T {
-        self.as_ptr_address() as *mut T
     }
 
     /// Attach `(resolve, reject)` reactions to this Promise, passing `ctx` as
@@ -296,18 +289,8 @@ impl JSValue {
     pub fn is_big_int(self) -> bool {
         JSC__JSValue__isBigInt(self)
     }
-    /// `JSValue.isBigInt32()` — true iff this value uses
-    /// JSC's packed BigInt32 immediate representation (vs heap `JSBigInt`).
-    #[inline]
-    pub fn is_big_int32(self) -> bool {
-        unsafe extern "C" {
-            safe fn JSC__JSValue__isBigInt32(this: JSValue) -> bool;
-        }
-        JSC__JSValue__isBigInt32(self)
-    }
     /// `JSValue.isHeapBigInt()` — true iff this is a
-    /// heap-allocated `JSBigInt` cell. Distinct from [`is_big_int`], which
-    /// also returns `true` for the packed `BigInt32` immediate.
+    /// heap-allocated `JSBigInt` cell, as every BigInt is.
     #[inline]
     pub fn is_heap_big_int(self) -> bool {
         unsafe extern "C" {
@@ -462,15 +445,6 @@ impl JSValue {
     }
     pub fn js_number_from_uint64(i: u64) -> JSValue {
         if i <= i32::MAX as u64 {
-            Self::js_number_from_int32(i as i32)
-        } else {
-            Self::js_double_number(i as f64)
-        }
-    }
-    /// `JSValue.jsNumberFromInt64` — int32 fast-path,
-    /// otherwise lossy double.
-    pub fn js_number_from_int64(i: i64) -> JSValue {
-        if i <= i32::MAX as i64 && i >= i32::MIN as i64 {
             Self::js_number_from_int32(i as i32)
         } else {
             Self::js_double_number(i as f64)
@@ -829,7 +803,7 @@ impl JSValue {
     pub fn to_utf8(self, global: &JSGlobalObject) -> JsResult<bun_core::Utf8Bytes<'static>> {
         Ok(self.to_bun_string(global)?.into_utf8())
     }
-    pub fn to_zig_exception(self, global: &JSGlobalObject, exception: &mut ZigException) {
+    pub fn to_zig_exception(self, global: &JSGlobalObject, exception: &mut ZigException<'_>) {
         JSC__JSValue__toZigException(self, global, exception)
     }
     pub fn to_error(self) -> Option<JSValue> {
@@ -917,7 +891,7 @@ impl JSValue {
     /// Returns `Some(&T)` when `self` wraps a live `T` cell. The borrow is
     /// sound because JSC's conservative stack scanner keeps the cell alive
     /// while `self` (the encoded `JSValue`) is on the stack, and the
-    /// `#[JsClass]` payload is pinned at a stable address inside the GC cell
+    /// [`JsClass`] struct is pinned at a stable address inside the GC cell
     /// for its lifetime — so a `&T` derived from `from_js`'s pointer is valid
     /// for as long as the caller holds `self`.
     ///
@@ -944,7 +918,7 @@ impl JSValue {
     }
 
     /// [`as_class_ref`](Self::as_class_ref) as a [`ThisPtr`](bun_ptr::ThisPtr),
-    /// for `m_ctx` payloads that are intrusively refcounted: lets the caller
+    /// for payloads that are intrusively refcounted: lets the caller
     /// take its own ref (`RefPtr::from_this`) or dispatch into a
     /// `ThisPtr`-taking entry point. Same frame-scoped validity.
     #[inline]
@@ -2001,7 +1975,7 @@ unsafe extern "C" {
     safe fn JSC__JSValue__toZigException(
         this: JSValue,
         global: &JSGlobalObject,
-        exception: &mut ZigException,
+        exception: &mut ZigException<'_>,
     );
     safe fn JSC__JSValue__getUnixTimestamp(this: JSValue) -> f64;
     // safe: `&mut [u8; 64]` is ABI-identical to the non-null 64-byte out-buffer
@@ -2250,25 +2224,6 @@ impl JSValue {
         host_fn::from_js_host_call_generic(global, || Bun__JSValue__toNumber(self, global))
     }
 
-    /// `JSValue.toPortNumber` — Node `validatePort` semantics:
-    /// numeric, non-NaN, integer-truncated `0..=65535`, else `ERR_SOCKET_BAD_PORT`.
-    pub fn to_port_number(self, global: &JSGlobalObject) -> JsResult<u16> {
-        if self.is_number() {
-            let double = self.to_number(global)?;
-            if double.is_nan() {
-                return Err(crate::ErrorCode::SOCKET_BAD_PORT
-                    .throw(global, format_args!("Invalid port number")));
-            }
-            let port = self.to_int64();
-            if (0..=65535).contains(&port) {
-                return Ok(port.max(0) as u16);
-            }
-            return Err(crate::ErrorCode::SOCKET_BAD_PORT
-                .throw(global, format_args!("Port number out of range: {port}")));
-        }
-        Err(crate::ErrorCode::SOCKET_BAD_PORT.throw(global, format_args!("Invalid port number")))
-    }
-
     /// `JSValue.coerce(f64)` — fast-path doubles, else `ToNumber`.
     pub fn coerce_f64(self, global: &JSGlobalObject) -> JsResult<f64> {
         if self.is_double() {
@@ -2345,7 +2300,7 @@ impl JSValue {
         global: &JSGlobalObject,
         property_name: impl AsRef<[u8]>,
     ) -> JsResult<Option<JSValue>> {
-        let name = bun_core::String::borrow_utf8(property_name.as_ref());
+        let name = bun_core::StringView::borrow_utf8(property_name.as_ref());
         match self.get_own(global, &name)? {
             Some(prop) if !prop.is_undefined() => Ok(Some(prop)),
             _ => Ok(None),
@@ -2785,11 +2740,11 @@ impl JSValue {
     /// `JSValue.asBigIntCompare` — compare a BigInt against another BigInt or
     /// Number. Returns [`ComparisonResult::InvalidComparison`] if `self` is
     /// not a BigInt or `other` is neither BigInt nor Number.
-    pub fn as_big_int_compare(self, global: &JSGlobalObject, other: JSValue) -> ComparisonResult {
+    pub fn as_big_int_compare(self, other: JSValue) -> ComparisonResult {
         if !self.is_big_int() || (!other.is_big_int() && !other.is_number()) {
             return ComparisonResult::InvalidComparison;
         }
-        JSC__JSValue__asBigIntCompare(self, global, other)
+        JSC__JSValue__asBigIntCompare(self, other)
     }
 
     // ── Object.keys / Object.values. ────────────────
@@ -2891,11 +2846,7 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         replace_props: bool,
     ) -> bool;
-    safe fn JSC__JSValue__asBigIntCompare(
-        this: JSValue,
-        global: &JSGlobalObject,
-        other: JSValue,
-    ) -> ComparisonResult;
+    safe fn JSC__JSValue__asBigIntCompare(this: JSValue, other: JSValue) -> ComparisonResult;
     safe fn JSC__JSValue__keys(global: &JSGlobalObject, value: JSValue) -> JSValue;
     safe fn JSC__JSValue__values(global: &JSGlobalObject, value: JSValue) -> JSValue;
     safe fn JSC__JSValue__isInstanceOf(

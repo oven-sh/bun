@@ -173,7 +173,7 @@ impl EventIterator {
         // The variable-length filename begins at the `FileName` field of the
         // record; `FileNameLength` (kernel-set) bounds the trailing UTF-16
         // bytes which lie wholly inside `buf`. Safe bounds-checked sub-slice of
-        // the owned `[u8; 64K]` buffer, then a `bytemuck`-checked u8→u16 view
+        // the owned `[u8; 64K]` buffer, then a checked u8→u16 view
         // (alignment holds: `buf` is DWORD-aligned per the static assert above,
         // `self.offset` advances by kernel `NextEntryOffset` which is DWORD-
         // aligned, and `name_offset` == 12). Wrap in `RawSlice` so callers
@@ -497,19 +497,17 @@ fn process_watch_event_batch(this: &mut Watcher, event_count: usize) -> bun_sys:
     index_sort::sort_slice_unstable_by(all_events, |a, b| WatchEvent::sort_by_index(*a, *b));
 
     let mut last_event_index: usize = 0;
-    // The sentinel must be wider than
-    // WatchItemIndex (u16) so it can never collide with a real index (incl. no_watch_item=65535).
-    let mut last_event_id: u32 = u32::MAX;
+    let mut last_event_id: WatchItemIndex = WatchItemIndex::MAX;
 
     for i in 0..all_events.len() {
-        if all_events[i].index as u32 == last_event_id {
+        if all_events[i].index == last_event_id {
             // reshaped for borrowck — copy then merge to avoid two &mut into all_events.
             let ev = all_events[i];
             all_events[last_event_index].merge(ev);
             continue;
         }
         last_event_index = i;
-        last_event_id = all_events[i].index as u32;
+        last_event_id = all_events[i].index;
     }
     if all_events.is_empty() {
         return Ok(());

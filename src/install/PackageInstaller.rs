@@ -2084,17 +2084,14 @@ impl<'a> PackageInstaller<'a> {
                             context,
                         )
                     }
-                    resolution::Tag::LocalTarball => {
-                        package_manager::enqueue_tarball_for_reading(
-                            self.manager_mut(),
-                            dependency_id,
-                            package_id,
-                            alias.slice(string_buf!()),
-                            resolution,
-                            context,
-                        );
-                        Ok(())
-                    }
+                    resolution::Tag::LocalTarball => package_manager::enqueue_tarball_for_reading(
+                        self.manager_mut(),
+                        dependency_id,
+                        package_id,
+                        alias.slice(string_buf!()),
+                        resolution,
+                        context,
+                    ),
                     resolution::Tag::RemoteTarball => {
                         package_manager::enqueue_tarball_for_download(
                             self.manager_mut(),

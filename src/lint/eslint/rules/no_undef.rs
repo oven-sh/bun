@@ -53,7 +53,7 @@ fn hint(reference: Reference) -> String {
     match text::spelling_suggestion(name.bytes(), declared.chain(globals)) {
         Some(close) => format!("Did you mean \"{}\"?", bstr::BStr::new(close)),
         None => {
-            "If it is a global variable, declare it in [lint.globals] in bunfig.toml.".to_owned()
+            "If it's a global, declare it in [lint.globals] in bunfig.toml.".to_owned()
         }
     }
 }

@@ -9476,6 +9476,8 @@ declare module "bun" {
        * Reject inputs whose `width × height` exceeds this many pixels. The
        * check runs after the header is read but before any pixel buffer is
        * allocated, so a tiny file claiming a huge canvas is refused cheaply.
+       * A lower limit also lowers how much a compressed PNG chunk, such as an
+       * ICC profile, may inflate to before the image is refused.
        * @default 268402689 // 0x3FFF * 0x3FFF, same as Sharp
        */
       maxPixels?: number;

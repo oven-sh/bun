@@ -530,7 +530,7 @@ impl MtCtx {
         if !self.all_jobs_completed {
             self.abandon_jobs();
         }
-        if params.nb_workers != self.params.nb_workers {
+        if params.nb_workers as usize != self.nb_workers {
             self.resize(params.nb_workers as usize)?;
         }
 

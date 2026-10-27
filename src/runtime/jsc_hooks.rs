@@ -3836,11 +3836,7 @@ pub(crate) fn loader_for_path(
         return Some(Loader::Dataurl);
     }
     let name = path.name();
-    let ext = name.ext;
-    let result = loaders
-        .get(ext)
-        .copied()
-        .or_else(|| Loader::from_string(ext));
+    let result = Loader::of_extension(name.ext, loaders);
     if result.is_none() || result == Some(Loader::Json) {
         let str = name.filename;
         if str == b"package.json" || str == b"bun.lock" {

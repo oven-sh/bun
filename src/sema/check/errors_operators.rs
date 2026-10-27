@@ -82,18 +82,6 @@ fn error_end(c: &Checker<'_, '_>, file: FileId, e: ExprId) -> u32 {
     c.error_end_of(file, e)
 }
 
-/// `SkipOuterExpressions(e, OEKAssertions | OEKParentheses)`
-fn skip_assertions(hir: &File, mut e: ExprId) -> ExprId {
-    while let ExprKind::As { expr, .. }
-    | ExprKind::Satisfies { expr, .. }
-    | ExprKind::AsConst(expr)
-    | ExprKind::NonNull(expr) = hir[e].kind
-    {
-        e = expr;
-    }
-    e
-}
-
 /// Position of the `=` directly before `value`.
 pub(super) fn start_of_equals_before(
     c: &Checker<'_, '_>,

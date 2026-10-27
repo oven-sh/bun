@@ -23968,6 +23968,761 @@ describe.concurrent("--check", () => {
     expect(built.exitCode).toBe(1);
   });
 
+  // Bun loads an import as a page by the import's `type` attribute, or else by the loader of the file's extension.
+  // A check of named files decides the same way, for an import that is written as a path.
+  describe("follows an import as an HTML page when Bun loads it as one", () => {
+    const page = (src: string) => `<!doctype html><script type="module" src="${src}"></script>\n`;
+    // The script of this page does not exist: a check that reads the file as a page reports TS6053.
+    const template = `<!doctype html><script src="/assets/app.js"></script>\n`;
+    const wrong = `export const c: number = "1";\n`;
+    // Prints the type of each of `values`. Bun drops an import whose binding nothing reads.
+    const server = (imports: string, values = ["it"]) =>
+      `${imports}\nconsole.log(${[`"ran"`, ...values.map(it => `typeof ${it}`)].join(", ")});\nexport {};\n`;
+    const pattern = (name: string) => `declare module "${name}" {\n  const page: unknown;\n  export default page;\n}\n`;
+    const withOptions = (more: object) =>
+      JSON.stringify({ compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, ...more } });
+    // In every fixture. `bun test --check` is given `server.test.ts`.
+    const shared = {
+      "html.d.ts": pattern("*.html"),
+      "bun-test.d.ts": `declare module "bun:test" {\n  export function test(name: string, fn: () => void): void;\n}\n`,
+      "server.test.ts": `import { test } from "bun:test";\nimport "./server";\ntest("t", () => {});\n`,
+    };
+    // `bun build` prints the place of an error on a line of its own.
+    const errorsOf = (output: string) => [
+      ...[...output.matchAll(/^(\S+\(\d+,\d+\)): error (TS\d+)/gm)].map(it => `${it[1]} ${it[2]}`),
+      ...[...output.matchAll(/^error: (TS\d+): .*\n +at <dir>\/(\S+):(\d+):(\d+)$/gm)].map(
+        it => `${it[2]}(${it[3]},${it[4]}) ${it[1]}`,
+      ),
+      ...[...output.matchAll(/^error:? (TS\d+): .*$(?!\n +at )/gm)].map(it => it[1]),
+    ];
+    // The line that `server` prints, if the program ran.
+    const ranOf = (stdout: string) => /^ran.*$/m.exec(stdout)?.[0];
+
+    type Fixture = {
+      files: Record<string, string>;
+      // `--loader`. `bun check` has none, so it isn't run.
+      loader?: string;
+      // `--external`, which only a bundle has.
+      external?: string;
+      // What each command reports, as `file(line,column) code`.
+      errors: string[];
+      // What `bun check server.ts` reports, where it differs.
+      checked?: string[];
+      // What the program prints, if it isn't `ran string`. A command that reports no error runs it.
+      ran?: string;
+    };
+    // By its name alone, each of these would be a page.
+    const notPages: Record<string, Fixture> = {
+      '`with { type: "text" }`': {
+        files: {
+          "template.html": template,
+          "server.ts": server(`import it from "./template.html" with { type: "text" };`),
+        },
+        errors: [],
+      },
+      '`with { type: "file" }`': {
+        files: {
+          "template.html": template,
+          "server.ts": server(`import it from "./template.html" with { type: "file" };`),
+        },
+        errors: [],
+      },
+      "the name of a loader in another spelling": {
+        files: {
+          "template.html": template,
+          "server.ts": server(`import it from "./template.html" with { "type": "TEXT" };`),
+        },
+        errors: [],
+      },
+      'an import for its effects `with { type: "text" }`': {
+        files: {
+          "template.html": template,
+          "server.ts": server(`import "./template.html" with { type: "text" };`, []),
+        },
+        errors: [],
+        ran: "ran",
+      },
+      '`import()` with `{ with: { type: "text" } }`': {
+        files: {
+          "template.html": template,
+          "server.ts": server(`const it = (await import("./template.html", { with: { type: "text" } })).default;`),
+        },
+        errors: [],
+      },
+      // Bun's parser drops what only has a type.
+      "`import()` with options under `as const` and `satisfies`": {
+        files: {
+          "template.html": template,
+          "server.ts": server(
+            `const it = (await import("./template.html", { with: { type: "text" } } as const)).default;\n` +
+              `const other = (\n` +
+              `  await import("./template.html", { with: { type: "text" } satisfies ImportAttributes })\n` +
+              `).default;`,
+            ["it", "other"],
+          ),
+        },
+        errors: [],
+        ran: "ran string string",
+      },
+      "a file under `--loader .html:text`": {
+        files: { "template.html": template, "server.ts": server(`import it from "./template.html";`) },
+        loader: ".html:text",
+        errors: [],
+      },
+      // `bun check` reads no bunfig.toml.
+      "a file under `[loader]` in bunfig.toml": {
+        files: {
+          "bunfig.toml": `[loader]\n".html" = "text"\n`,
+          "template.html": template,
+          "server.ts": server(`import it from "./template.html";`),
+        },
+        errors: [],
+        checked: ["TS6053"],
+      },
+    };
+    // By its name alone, none of these would be a page.
+    const pages: Record<string, Fixture> = {
+      'a file of any name `with { type: "html" }`': {
+        files: {
+          "tmpl.d.ts": pattern("*.tmpl"),
+          "page.tmpl": page("./main.ts"),
+          "main.ts": wrong,
+          "server.ts": server(`import it from "./page.tmpl" with { type: "html" };`),
+        },
+        errors: ["main.ts(1,14) TS2322"],
+      },
+      'a file of any name in `import()` with `{ with: { type: "html" } }`': {
+        files: {
+          "tmpl.d.ts": pattern("*.tmpl"),
+          "page.tmpl": page("./main.ts"),
+          "main.ts": wrong,
+          "server.ts": server(`const it = (await import("./page.tmpl", { with: { type: "html" } })).default;`),
+        },
+        errors: ["main.ts(1,14) TS2322"],
+      },
+      "a file under `--loader .x:html`": {
+        files: {
+          "x.d.ts": pattern("*.x"),
+          "index.x": page("./main.ts"),
+          "main.ts": wrong,
+          "server.ts": server(`import it from "./index.x";`),
+        },
+        loader: ".x:html",
+        errors: ["main.ts(1,14) TS2322"],
+      },
+      "an extension in upper case": {
+        files: {
+          "upper.d.ts": pattern("*.HTML"),
+          "INDEX.HTML": page("./main.ts"),
+          "main.ts": wrong,
+          "server.ts": server(`import it from "./INDEX.HTML";`),
+        },
+        errors: ["main.ts(1,14) TS2322"],
+      },
+      "a file without an extension under `--loader :html`": {
+        files: {
+          "page": page("./main.ts"),
+          "main.ts": wrong,
+          "server.ts": server(`// @ts-ignore\nimport it from "./page";`),
+        },
+        loader: ":html",
+        errors: ["main.ts(1,14) TS2322"],
+      },
+      // A bundle does not hold this page. Its check follows the import all the same.
+      "a file of any name that is external to the bundle": {
+        files: {
+          "tmpl.d.ts": pattern("*.tmpl"),
+          "page.tmpl": page("./main.ts"),
+          "main.ts": wrong,
+          "server.ts": server(`import it from "./page.tmpl" with { type: "html" };`),
+        },
+        external: "./page.tmpl",
+        errors: ["main.ts(1,14) TS2322"],
+      },
+    };
+    // The name alone says the same about each of these.
+    const asNamed: Record<string, Fixture> = {
+      "a `type` that no loader has": {
+        files: {
+          "index.html": page("./main.ts"),
+          "main.ts": wrong,
+          "server.ts": server(`import it from "./index.html" with { type: "page" };`),
+        },
+        errors: ["main.ts(1,14) TS2322"],
+      },
+      // The attribute decides before `--loader` does.
+      '`with { type: "html" }` under `--loader .html:text`': {
+        files: {
+          "index.html": page("./main.ts"),
+          "main.ts": wrong,
+          "server.ts": server(`import it from "./index.html" with { type: "html" };`),
+        },
+        loader: ".html:text",
+        errors: ["main.ts(1,14) TS2322"],
+      },
+      '`import()` with `{ with: { type: "html" } }` under `--loader .html:text`': {
+        files: {
+          "index.html": page("./main.ts"),
+          "main.ts": wrong,
+          "server.ts": server(`const it = (await import("./index.html", { with: { type: "html" } })).default;`),
+        },
+        loader: ".html:text",
+        errors: ["main.ts(1,14) TS2322"],
+      },
+      // Bun reads no attributes there.
+      '`export .. from`, also `with { type: "text" }`': {
+        files: {
+          "index.html": page("./main.ts"),
+          "main.ts": wrong,
+          "server.ts": `export { default } from "./index.html" with { type: "text" };\nconsole.log("ran");\n`,
+        },
+        errors: ["main.ts(1,14) TS2322"],
+      },
+      '`export * from`, also `with { type: "text" }`': {
+        files: {
+          "index.html": page("./main.ts"),
+          "main.ts": wrong,
+          "server.ts": `export * from "./index.html" with { type: "text" };\nconsole.log("ran");\n`,
+        },
+        errors: ["main.ts(1,14) TS2322"],
+      },
+      // So this `type` makes no page of the file that the next line imports.
+      "a `type` after `export .. from`, beside the import of another file": {
+        files: {
+          "tmpl.d.ts": pattern("*.tmpl"),
+          "x.ts": `export const x = 1;\n`,
+          "template.tmpl": template,
+          "server.ts": server(`export { x } from "./x" with { type: "html" };\nimport it from "./template.tmpl";`),
+        },
+        errors: [],
+      },
+      // Bun runs a macro when it reads the importer. The import loads no page.
+      '`with { type: "html", type: "macro" }`': {
+        files: {
+          "tmpl.d.ts": pattern("*.tmpl"),
+          "template.tmpl": template,
+          "server.ts": server(`// @ts-ignore\nimport it from "./template.tmpl" with { type: "html", type: "macro" };`),
+        },
+        errors: [],
+        ran: "ran undefined",
+      },
+      "an import for its effects": {
+        files: {
+          "index.html": page("./main.ts"),
+          "main.ts": wrong,
+          "server.ts": `import "./index.html";\nconsole.log("ran");\n`,
+        },
+        errors: ["main.ts(1,14) TS2322"],
+      },
+      // A use in a type position counts like any other use of the path.
+      "a page that is imported for its type": {
+        files: {
+          "index.html": page("./main.ts"),
+          "main.ts": wrong,
+          "server.ts":
+            `import type it from "./index.html";\n` +
+            `export type Page = typeof it | typeof import("./index.html");\nconsole.log("ran");\n`,
+        },
+        errors: ["main.ts(1,14) TS2322"],
+      },
+      "a file named `.html`": {
+        files: {
+          "pages/.html": page("./main.ts"),
+          "pages/main.ts": wrong,
+          "server.ts": server(`import it from "./pages/.html";`),
+        },
+        errors: ["pages/main.ts(1,14) TS2322"],
+      },
+      // TypeScript takes the types of `./index.html` from these. Bun loads the page.
+      "a page beside an `index.html.d.ts`": {
+        files: {
+          "index.html": page("./main.ts"),
+          "index.html.d.ts": `declare const page: unknown;\nexport default page;\n`,
+          "main.ts": wrong,
+          "server.ts": server(`import it from "./index.html";`),
+        },
+        errors: ["main.ts(1,14) TS2322"],
+      },
+      "a page beside an `index.d.html.ts`": {
+        files: {
+          "tsconfig.json": withOptions({ allowArbitraryExtensions: true }),
+          "index.html": page("./main.ts"),
+          "index.d.html.ts": `declare const page: unknown;\nexport default page;\n`,
+          "main.ts": wrong,
+          "server.ts": server(`import it from "./index.html";`),
+        },
+        errors: ["main.ts(1,14) TS2322"],
+      },
+      "a page beside an `index.html.ts`": {
+        files: {
+          "index.html": page("./main.ts"),
+          "index.html.ts": `const page: unknown = 1;\nexport default page;\n`,
+          "main.ts": wrong,
+          "server.ts": server(`import it from "./index.html";`),
+        },
+        errors: ["main.ts(1,14) TS2322"],
+      },
+      // The attributes in a JSDoc comment are not those of the import below it. The error in `types.ts` shows
+      // that the comment is read.
+      "a page below a JSDoc import with attributes": {
+        files: {
+          "tsconfig.json": withOptions({ allowJs: true, checkJs: true }),
+          "types.ts": `export type T = number;\nexport const t: T = "1";\n`,
+          "index.html": page("./main.ts"),
+          "main.ts": wrong,
+          // TypeScript has an error for the attributes of a JSDoc import. It is not what this row is for.
+          "routes.js":
+            `// @ts-nocheck\n/** @import { T } from "./types" with { type: "text" } */\n` +
+            `import it from "./index.html";\n/** @type {T} */\nexport const n = 1;\nexport { it };\n`,
+          "server.ts": server(`import { it } from "./routes.js";`),
+        },
+        errors: ["main.ts(1,14) TS2322", "types.ts(2,14) TS2322"],
+      },
+      // Bun loads nothing for a JSDoc import, so its attributes make no page.
+      'a JSDoc import `with { type: "html" }`': {
+        files: {
+          "tsconfig.json": withOptions({ allowJs: true, checkJs: true }),
+          "tmpl.d.ts": pattern("*.tmpl"),
+          "page.tmpl": page("./main.ts"),
+          "main.ts": wrong,
+          "routes.js": `// @ts-nocheck\n/** @import { T } from "./page.tmpl" with { type: "html" } */\nexport const n = 1;\n`,
+          "server.ts": server(`import { n } from "./routes.js";`, ["n"]),
+        },
+        errors: [],
+        ran: "ran number",
+      },
+      // A bundle does not hold these two pages. Its check follows them like a check without a bundle.
+      "a page whose import nothing reads": {
+        files: {
+          "index.html": page("./main.ts"),
+          "main.ts": wrong,
+          "server.ts": server(`import it from "./index.html";`, []),
+        },
+        errors: ["main.ts(1,14) TS2322"],
+      },
+      "a page that is external to the bundle": {
+        files: {
+          "index.html": page("./main.ts"),
+          "main.ts": wrong,
+          "server.ts": server(`import it from "./index.html";`),
+        },
+        external: "./index.html",
+        errors: ["main.ts(1,14) TS2322"],
+      },
+      // A bundle holds this page, and does not name an installed script to the check. The check reads the page too.
+      "a page whose script is in node_modules": {
+        files: {
+          "index.html": page("./node_modules/lib/index.ts"),
+          "node_modules/lib/index.ts": wrong,
+          "server.ts": server(`import it from "./index.html";`),
+        },
+        errors: ["node_modules/lib/index.ts(1,14) TS2322"],
+      },
+    };
+
+    describe.each([
+      ["not a page", notPages],
+      ["a page", pages],
+      ["as its name says", asNamed],
+    ])("%s", (_, fixtures) => {
+      test.each(Object.keys(fixtures))("%s", async name => {
+        const { files, loader, external, errors } = fixtures[name];
+        const { checked = errors, ran = "ran string" } = fixtures[name];
+        using dir = project({ ...shared, ...files });
+        const flags = loader ? ["--loader", loader] : [];
+        const outside = external ? ["--external", external] : [];
+        // Each with what it reports, and with what the program prints if the command runs it.
+        const commands: [cmd: string[], errors: string[], ran?: string][] = [
+          ...(loader ? [] : [[["check", "server.ts"], checked] as [string[], string[]]]),
+          [["--check", ...flags, "server.ts"], errors, ran],
+          [["test", "--check", ...flags, "server.test.ts"], errors, ran],
+          [["build", "--no-bundle", "--check", ...flags, "server.ts"], errors],
+          [["build", "--check", ...flags, ...outside, "--target=bun", "server.ts", "--outdir", "out"], errors],
+        ];
+        const results = await Promise.all(commands.map(([cmd]) => run(String(dir), cmd)));
+        const found = results.map((it, at) => [
+          commands[at][0].join(" "),
+          errorsOf(`${it.stdout}\n${it.stderr}`),
+          it.exitCode,
+          ranOf(it.stdout),
+        ]);
+        expect(found).toEqual(
+          commands.map(([cmd, expected, prints]) => [
+            cmd.join(" "),
+            expected,
+            expected.length ? 1 : 0,
+            expected.length ? undefined : prints,
+          ]),
+        );
+      });
+    });
+
+    // The files of a program keep the names they were found by, and so does the script of a page.
+    test("a page of a project that is named through a linked folder", async () => {
+      using dir = project({
+        ...shared,
+        "real/index.html": page("./main.ts"),
+        "real/main.ts": wrong,
+        "real/server.ts": server(`import it from "./index.html";`) + wrong,
+        "real/server.test.ts": shared["server.test.ts"],
+      });
+      symlinkSync(join(String(dir), "real"), join(String(dir), "linked"), "junction");
+      const commands = [
+        ["check", "linked/server.ts"],
+        ["--check", "linked/server.ts"],
+        ["test", "--check", "linked/server.test.ts"],
+        ["build", "--no-bundle", "--check", "linked/server.ts"],
+        ["build", "--check", "--target=bun", "linked/server.ts", "--outdir", "out"],
+      ];
+      const results = await Promise.all(commands.map(cmd => run(String(dir), cmd)));
+      // Each command names its entry point through the link or by the real path. The script has the same folder.
+      const found = results.map((it, at) => {
+        const errors = errorsOf(`${it.stdout}\n${it.stderr}`).map(error => error.split("/"));
+        const folders = new Set(errors.map(([folder]) => folder));
+        return [commands[at].join(" "), errors.map(([, error]) => error).sort(), folders.size];
+      });
+      expect(found).toEqual(
+        commands.map(cmd => [cmd.join(" "), ["main.ts(1,14) TS2322", "server.ts(4,14) TS2322"], 1]),
+      );
+    });
+
+    // Reading a pipe without a writer blocks forever.
+    test.skipIf(isWindows)("does not read an imported page that is a named pipe", async () => {
+      using dir = project({ ...shared, "server.ts": server(`import it from "./pipe.html";`) });
+      expect(Bun.spawnSync(["mkfifo", join(String(dir), "pipe.html")]).exitCode).toBe(0);
+      const { stdout, exitCode } = await check(dir, ["server.ts"]);
+      expect([errorsOf(stdout), exitCode]).toEqual([[], 0]);
+    });
+
+    // The runtime evaluates the options: of two `with`s or two `type`s, the last one decides.
+    test("`import()` with options that name `html` first and another loader last", async () => {
+      const options = [
+        // The value of the last `type` is not written in the call.
+        `{ with: { type: "html", type: name } }`,
+        `{ with: { type: "html", type: "text" } }`,
+        `{ with: { type: "html" }, with: { type: "text" } }`,
+        // A spread or a computed key can give `type` or `with` another value than the one that is written before it.
+        `{ with: { type: "html", ...{ type: "text" } } }`,
+        `{ with: { type: "html" }, ...{ with: { type: "text" } } }`,
+        `{ with: { type: "html", [key]: "text" } }`,
+        `{ with: { type: "html" }, [key2]: { type: "text" } }`,
+      ];
+      // One template for each call: Bun gives two imports of one file one module.
+      const imports = options.map(
+        (it, at) => `// @ts-ignore\nconst it${at} = (await import("./template${at}.tmpl", ${it})).default;\n`,
+      );
+      const values = options.map((_, at) => `it${at}`);
+      const names = `const name: string = "text";\nconst key: string = "type";\nconst key2: string = "with";\n`;
+      using dir = project({
+        "tmpl.d.ts": pattern("*.tmpl"),
+        ...Object.fromEntries(options.map((_, at) => [`template${at}.tmpl`, template])),
+        "server.ts": server(names + imports.join(""), values),
+      });
+      const [ran, alone, before] = await Promise.all([
+        run(String(dir), ["server.ts"]),
+        check(dir, ["server.ts"]),
+        run(String(dir), ["--check", "server.ts"]),
+      ]);
+      const printed = ["ran", ...options.map(() => "string")].join(" ");
+      expect(ran.stdout).toBe(printed);
+      expect([errorsOf(alone.stdout), alone.exitCode]).toEqual([[], 0]);
+      expect([errorsOf(before.stderr), before.stdout, before.exitCode]).toEqual([[], printed, 0]);
+    });
+
+    // Each script declares the same global variable with another type: TS2403 names the script that is checked last.
+    test("checks the pages of a file in the order of its imports", async () => {
+      const declares = (type: string) => `export {};\ndeclare global {\n  var shared: ${type};\n}\n`;
+      // Without a tsconfig.json, so that the scripts are in no project of their own.
+      using dir = tempDir("bun-check", {
+        "html.d.ts": pattern("*.html"),
+        "a.html": page("./a.ts"),
+        "a.ts": declares("number"),
+        "b.html": page("./b.ts"),
+        "b.ts": declares("string"),
+        // The text of the second specifier is read before that of the first.
+        "server.ts":
+          `/// <reference path="./html.d.ts" />\nexport const first = "./b.html";\n` +
+          `import a from "./a.html";\nimport b from "./b.html";\nexport const both = [a, b, first];\n`,
+      });
+      const commands = [
+        ["check", "server.ts"],
+        ["--check", "server.ts"],
+        ["build", "--no-bundle", "--check", "server.ts"],
+      ];
+      const results = await Promise.all(commands.map(cmd => run(String(dir), cmd)));
+      expect(results.map(it => errorsOf(`${it.stdout}\n${it.stderr}`))).toEqual(
+        commands.map(() => ["b.ts(3,7) TS2403"]),
+      );
+    });
+
+    // Where such an import leads is for Bun's resolver to say. A bundle has that answer, and no other check follows it.
+    test("an import that is not written as a path", async () => {
+      const files = {
+        ...shared,
+        "pages/index.html": page("./main.ts"),
+        "pages/main.ts": wrong,
+        "stubs/index.html": page("./main.ts"),
+        "stubs/main.ts": `export const c: number = 1;\n`,
+        "server.ts": server(`import it from "#pages/index.html";`),
+      };
+      const imports = { "#pages/*": { bun: "./pages/*", default: "./stubs/*" } };
+      using inPackage = project({ ...files, "package.json": JSON.stringify({ name: "app", imports }) });
+      using inTsconfig = project({ ...files, "tsconfig.json": withOptions({ paths: { "#pages/*": ["./pages/*"] } }) });
+      // `web` is a package. The folder of that name is not what `bun` loads.
+      using named = project({
+        ...shared,
+        "web/index.html": page("./main.ts"),
+        "web/main.ts": wrong,
+        "node_modules/web/package.json": JSON.stringify({ name: "web", version: "1.0.0" }),
+        "node_modules/web/index.html": `<!doctype html><p>installed</p>\n`,
+        "server.ts": server(`import it from "web/index.html";`),
+      });
+      const unbundled = [
+        ["check", "server.ts"],
+        ["--check", "server.ts"],
+        ["test", "--check", "server.test.ts"],
+        ["build", "--no-bundle", "--check", "server.ts"],
+      ];
+      const bundle = (target: string) => ["build", "--check", `--target=${target}`, "server.ts", "--outdir", target];
+      const followed = ["pages/main.ts(1,14) TS2322"];
+      const commands: [{ toString(): string }, string[], string[]][] = [
+        ...unbundled.map(cmd => [inPackage, cmd, []] as [typeof inPackage, string[], string[]]),
+        [inPackage, bundle("bun"), followed],
+        // A bundle for Node takes the other branch of `imports`.
+        [inPackage, bundle("node"), []],
+        ...unbundled.map(cmd => [inTsconfig, cmd, []] as [typeof inTsconfig, string[], string[]]),
+        [inTsconfig, bundle("bun"), followed],
+        ...unbundled.map(cmd => [named, cmd, []] as [typeof named, string[], string[]]),
+        [named, bundle("bun"), []],
+      ];
+      const results = await Promise.all(commands.map(([dir, cmd]) => run(String(dir), cmd)));
+      const found = results.map((it, at) => [
+        commands[at][1].join(" "),
+        errorsOf(`${it.stdout}\n${it.stderr}`),
+        it.exitCode,
+        // `bun` loads the page all the same: the check before the run does not cover it.
+        commands[at][1][0] === "--check" ? ranOf(it.stdout) : undefined,
+      ]);
+      expect(found).toEqual(
+        commands.map(([, cmd, errors]) => [
+          cmd.join(" "),
+          errors,
+          errors.length ? 1 : 0,
+          cmd[0] === "--check" ? "ran object" : undefined,
+        ]),
+      );
+    });
+
+    // Each module imports one file in one way, and exports `it`.
+    const forms: Record<string, (file: string) => string> = {
+      "plain": file => `import it from "${file}";\nexport { it };\n`,
+      "text": file => `import it from "${file}" with { type: "text" };\nexport { it };\n`,
+      "file": file => `import it from "${file}" with { type: "file" };\nexport { it };\n`,
+      "string-key": file => `import it from "${file}" with { "type": "text" };\nexport { it };\n`,
+      "upper-case": file => `import it from "${file}" with { type: "TEXT" };\nexport { it };\n`,
+      "no-such-loader": file => `import it from "${file}" with { type: "page" };\nexport { it };\n`,
+      "html": file => `import it from "${file}" with { type: "html" };\nexport { it };\n`,
+      // The last `type` that names a loader decides.
+      "html-then-text": file => `import it from "${file}" with { type: "html", type: "text" };\nexport { it };\n`,
+      "text-then-html": file => `import it from "${file}" with { type: "text", type: "html" };\nexport { it };\n`,
+      "text-then-no-such-loader": file =>
+        `import it from "${file}" with { type: "text", type: "page" };\nexport { it };\n`,
+      "export-from": file => `export { default as it } from "${file}" with { type: "text" };\n`,
+      // The attributes of the next declaration are not those of this one.
+      "before-text": file =>
+        `import it from "${file}";\nimport text from "./text.html" with { type: "text" };\nexport { it, text };\n`,
+      "one-of-two": file =>
+        `import text from "${file}" with { type: "text" };\nimport it from "${file}";\nexport { it, text };\n`,
+      "dynamic": file => `export const it = (await import("${file}")).default;\n`,
+      "dynamic-text": file => `export const it = (await import("${file}", { with: { type: "text" } })).default;\n`,
+      "dynamic-html": file => `export const it = (await import("${file}", { with: { type: "html" } })).default;\n`,
+      "dynamic-as-const": file =>
+        `export const it = (await import("${file}", { with: { type: "text" } } as const)).default;\n`,
+      "dynamic-satisfies": file =>
+        `export const it = (await import("${file}", { with: { type: "text" } satisfies ImportAttributes })).default;\n`,
+      "dynamic-as-any": file =>
+        `export const it = (await import("${file}", { with: { type: "text" } } as any)).default;\n`,
+      "dynamic-non-null": file => `export const it = (await import("${file}", { with: { type: "text" } }!)).default;\n`,
+      "dynamic-angle-const": file =>
+        `export const it = (await import("${file}", <const>{ with: { type: "text" } })).default;\n`,
+      "dynamic-name-as-const": file =>
+        `export const it = (await import("${file}", { with: { type: "text" as const } })).default;\n`,
+      "dynamic-template-name": file =>
+        'export const it = (await import("' + file + '", { with: { type: `text` } })).default;\n',
+      "dynamic-no-attributes": file => `export const it = (await import("${file}", {})).default;\n`,
+      "dynamic-assert": file => `export const it = (await import("${file}", { assert: { type: "text" } })).default;\n`,
+      "dynamic-variable": file =>
+        `const options = { with: { type: "text" } };\nexport const it = (await import("${file}", options)).default;\n`,
+    };
+    const names = Object.keys(forms);
+    // `server.ts` prints the type of what each module of `forms` exports. A page is an object.
+    const modules = {
+      "html.d.ts": pattern("*.html"),
+      ...Object.fromEntries(
+        names.flatMap(name => [
+          [`forms/${name}.ts`, forms[name](`./${name}.html`)],
+          [`forms/${name}.html`, page(`./${name}.client.ts`)],
+          [`forms/${name}.client.ts`, wrong],
+        ]),
+      ),
+      "server.ts":
+        names.map((name, at) => `import { it as it${at} } from "./forms/${name}";\n`).join("") +
+        `console.log(JSON.stringify([${names.map((_, at) => `typeof it${at}`).join(", ")}]));\n`,
+    };
+    // The forms whose page the output of a check names.
+    const followedIn = (output: string) =>
+      [...output.matchAll(/forms\/([\w-]+)\.client\.ts[(:]1[,:]14\b/g)].map(it => it[1]).sort();
+
+    // What `bun` gives each of these modules decides what a check follows: before that run, and of a bundle.
+    describe.each([
+      ["the loaders that Bun has", [] as string[], {}],
+      ["`--loader .html:text`", ["--loader", ".html:text"], {}],
+      ["`[loader]` in bunfig.toml", [] as string[], { "bunfig.toml": `[loader]\n".html" = "text"\n` }],
+    ])("with %s", (_, flags, more) => {
+      test("the imports that `bun` loads as a page, and no other", async () => {
+        using dir = project({ ...modules, ...more });
+        const isPageByName = !flags.length && !Object.keys(more).length;
+        const [ran, checked, bundled, alone] = await Promise.all([
+          run(String(dir), [...flags, "server.ts"]),
+          run(String(dir), ["--check", ...flags, "server.ts"]),
+          run(String(dir), ["build", "--check", ...flags, "--target=bun", "server.ts", "--outdir", "out"]),
+          // `bun check` takes no loaders.
+          isPageByName ? check(dir, ["server.ts"]) : undefined,
+        ]);
+        const loaded: string[] = JSON.parse(ran.stdout);
+        expect(loaded).toHaveLength(names.length);
+        // `bun` evaluates the options of an `import()`. The check reads them only where the call has them written.
+        const notRead = isPageByName ? ["dynamic-variable"] : [];
+        const expected = names.filter((name, at) => loaded[at] === "object" || notRead.includes(name)).sort();
+        expect(expected).not.toEqual([]);
+        expect([followedIn(checked.stderr), checked.exitCode]).toEqual([expected, 1]);
+        expect([followedIn(bundled.stderr), bundled.exitCode]).toEqual([expected, 1]);
+        if (alone) expect([followedIn(alone.stdout), alone.exitCode]).toEqual([expected, 1]);
+      });
+    });
+
+    // JavaScript is read for what it imports, also where its errors are not reported.
+    test("a page and a template that JavaScript imports", async () => {
+      using dir = project({
+        "template.html": template,
+        "index.html": page("./main.ts"),
+        "main.ts": wrong,
+        "static.mjs": `import it from "./template.html" with { type: "text" };\nconsole.log("static", typeof it);\n`,
+        "dynamic.cjs": `import("./template.html", { with: { type: "text" } }).then(it => console.log("dynamic", typeof it.default));\n`,
+        "required.cjs": `const it = require("./index.html");\nconsole.log("required", typeof it);\n`,
+      });
+      const files = ["static.mjs", "dynamic.cjs", "required.cjs"];
+      const [ran, checked] = await Promise.all([
+        Promise.all(files.map(file => run(String(dir), [file]))),
+        Promise.all(files.map(file => run(String(dir), ["--check", file]))),
+      ]);
+      expect(ran.map(it => it.stdout)).toEqual(["static string", "dynamic string", "required object"]);
+      expect(checked.map(it => [errorsOf(it.stderr), it.stdout, it.exitCode])).toEqual([
+        [[], "static string", 0],
+        [[], "dynamic string", 0],
+        [["main.ts(1,14) TS2322"], "", 1],
+      ]);
+    });
+
+    test("a template that `-e` and stdin import as text", async () => {
+      using dir = project({ "html.d.ts": pattern("*.html"), "template.html": template });
+      const code = `import it from "./template.html" with { type: "text" };\nconsole.log("ran", typeof it);\n`;
+      await using piped = spawn({
+        timeout: longLimit,
+        cmd: [bunExe(), "--check", "-"],
+        cwd: String(dir),
+        env,
+        stdin: new Blob([code]),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [evaluated, stdout, stderr, exitCode] = await Promise.all([
+        run(String(dir), ["--check", "-e", code]),
+        piped.stdout.text(),
+        piped.stderr.text(),
+        piped.exited,
+      ]);
+      expect([errorsOf(evaluated.stderr), evaluated.stdout, evaluated.exitCode]).toEqual([[], "ran string", 0]);
+      expect([errorsOf(stderr), stdout.trim(), exitCode]).toEqual([[], "ran string", 0]);
+    });
+
+    // `Bun.build` has the loaders of its `loader` option. Its check reads an import by the same rule.
+    test("Bun.build({ check: true }) follows the pages that its loaders make", async () => {
+      using dir = project({
+        "html.d.ts": pattern("*.html"),
+        "build.mjs": buildScript,
+        "template.html": template,
+        "text.ts": server(`import it from "./template.html" with { type: "text" };`),
+        "plain.ts": server(`import it from "./template.html";`),
+        "index.html": page("./main.ts"),
+        // `run` turns a backslash into a slash, so the line that a log quotes has no double quote.
+        "main.ts": `export const c: number = '1';\n`,
+        "page.ts": server(`import it from "./index.html";`),
+      });
+      const [text, byLoader, aPage, external] = await Promise.all([
+        build(dir, { entrypoints: ["text.ts"], outdir: "out-text", target: "bun", throw: false }),
+        build(dir, {
+          entrypoints: ["plain.ts"],
+          outdir: "out-loader",
+          target: "bun",
+          loader: { ".html": "text" },
+          throw: false,
+        }),
+        build(dir, { entrypoints: ["page.ts"], outdir: "out-page", target: "bun", throw: false }),
+        build(dir, {
+          entrypoints: ["page.ts"],
+          outdir: "out-external",
+          target: "bun",
+          external: ["./index.html"],
+          throw: false,
+        }),
+      ]);
+      expect(text.result).toEqual({ success: true, outputs: 1, logs: [] });
+      expect(byLoader.result).toEqual({ success: true, outputs: 1, logs: [] });
+      expect(aPage.result).toEqual({
+        success: false,
+        outputs: 0,
+        logs: [ts2322("main.ts", `export const c: number = '1';`)],
+      });
+      expect(external.result).toEqual(aPage.result);
+    });
+
+    // A path is a named file, unless it is a directory that has every file of its project.
+    test("`bun check` of a directory, with and without a tsconfig.json", async () => {
+      using bare = tempDir("bun-check", {
+        "html.d.ts": pattern("*.html"),
+        "template.html": template,
+        "web/index.html": page("./app.ts"),
+        "web/app.ts": wrong,
+        "text/server.ts": `/// <reference path="../html.d.ts" />\nimport it from "../template.html" with { type: "text" };\nexport { it };\n`,
+        "page/server.ts": `/// <reference path="../html.d.ts" />\nimport it from "../web/index.html";\nexport { it };\n`,
+      });
+      // A project names its files itself: what a page of it imports is checked only if `include` has it.
+      using whole = project({
+        "tsconfig.json": JSON.stringify({ ...JSON.parse(tsconfig), include: ["server.ts", "*.d.ts"] }),
+        "html.d.ts": pattern("*.html"),
+        "web/index.html": page("./app.ts"),
+        "web/app.ts": wrong,
+        "server.ts": server(`import it from "./web/index.html";`),
+      });
+      const commands: [{ toString(): string }, string[], string[]][] = [
+        [bare, ["text"], []],
+        [bare, ["text/server.ts"], []],
+        [bare, ["page"], ["web/app.ts(1,14) TS2322"]],
+        // Without a path and without a tsconfig.json, the working directory is the path.
+        [join(String(bare), "text"), [], []],
+        [join(String(bare), "page"), [], ["../web/app.ts(1,14) TS2322"]],
+        [whole, [], []],
+        [whole, ["."], []],
+        [whole, ["server.ts"], ["web/app.ts(1,14) TS2322"]],
+      ];
+      const results = await Promise.all(commands.map(([dir, paths]) => check(dir, paths)));
+      expect(results.map(it => [errorsOf(it.stdout), it.exitCode])).toEqual(
+        commands.map(([, , errors]) => [errors, errors.length ? 1 : 0]),
+      );
+    });
+  });
+
   test("resolves with --conditions in the type check too", async () => {
     using dir = project({
       "a.ts": `import { which } from "custom";\nconsole.log("ran", which);\n`,

@@ -6,6 +6,7 @@
 pub mod format;
 pub mod host;
 pub mod outline;
+mod pages;
 
 pub use bun_sema::check::explain::MessageChain;
 pub use bun_sema::messages::Category;
@@ -883,6 +884,8 @@ pub struct Request<'a> {
     pub script_kinds_by_extension: &'a [(Vec<u8>, ScriptKind)],
     /// `--conditions` of what is run or bundled, besides `customConditions`.
     pub conditions: &'a [Box<[u8]>],
+    /// The loaders by extension (`--loader`), which say what import is an HTML page to follow. `None`: follow none.
+    pub loaders: Option<&'a bun_ast::LoaderHashTable>,
     /// Compiler options given on the command line. They override the configuration file, including those of referenced
     /// projects.
     pub compiler_options: &'a [CompilerOption],
@@ -3926,6 +3929,8 @@ fn check_named_files(
     let mut scripts_elsewhere = Vec::new();
     let is_reached = named.map(|named| {
         let modules = &program.files.modules;
+        let of_program = |loaders| pages::Pages::new(host, program.files, loaders);
+        let pages = request.loaders.map(of_program);
         let mut is_reached = vec![false; modules.len()];
         let mut to_follow: Vec<usize> = (0..modules.len())
             .filter(|&i| is_among(named, modules[i].path.text))
@@ -3935,11 +3940,9 @@ fn check_named_files(
         }
         while let Some(i) = to_follow.pop() {
             // A page represents its scripts.
-            let specifiers = modules[i].bound.specifiers.iter();
-            let specifiers = specifiers.map(|&it| program.files.atoms.bytes(it));
-            let pages = specifiers.filter(|it| it.ends_with(b".html") && is_relative(it));
-            let directory = dirname::<Posix>(modules[i].file_name());
-            let scripts = pages.flat_map(|page| host.scripts_of_page(&join(directory, page)));
+            let importer = FileId(i as u32);
+            let imported = pages.iter().flat_map(|pages| pages.imported_by(importer));
+            let scripts = imported.flat_map(|page| host.scripts_of_page(&page));
             let scripts = scripts.filter_map(|script| {
                 let here = program.files.by_path.get(&script);
                 if here.is_none() {

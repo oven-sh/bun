@@ -246,6 +246,8 @@ Bun checks each file with the same `tsconfig.json` your editor uses for it:
 
 A directory means the files of the project inside that directory. If the project has no files there, Bun checks every file in the directory that `exclude` does not rule out. An example is `bun check scripts` when `include` is `["src"]`.
 
+If a file that you name imports an HTML page, Bun also checks the local scripts of the page, as [`--check`](#check-before-you-run-build-or-test) does. A directory works the same way, with one exception: if the directory has every file of the project that its nearest `tsconfig.json` describes, Bun checks that whole project and follows no page, as `bun check` without a path does. Without a `tsconfig.json` there is no such project, so Bun follows the pages of every file it checks. `bun check` has no `--loader` and does not read `bunfig.toml`, so a page is a `.html` file, or any file imported `with { type: "html" }`.
+
 ### Without a `tsconfig.json`
 
 Bun uses the compiler options that [`bun init`](/runtime/templating/init) writes, without the three optional strictness rules `noUncheckedIndexedAccess`, `noImplicitOverride`, and `noFallthroughCasesInSwitch`.
@@ -379,6 +381,13 @@ A few more details:
 - `--filter`, `--parallel`, and `--sequential` check the whole project before the first script starts.
 - Bun reads a JavaScript entry point to find what it imports, with or without `allowJs`. Bun reports errors in the JavaScript file itself only if `checkJs` is on.
 - Bun runs a file without an extension as TSX, for example a script that starts with `#!/usr/bin/env bun`. The same goes for `-e`, `-p`, and code from stdin. `--check` checks that code as TSX too. Errors in it appear at `[eval]` or `[stdin]`.
+- Bun reads each import to tell whether it names a page, by the rule that it uses to pick a loader:
+  - `with { type: "html" }` makes a page of any file.
+  - `with { type: "text" }`, `with { type: "file" }`, or the name of any other loader does not. Bun then leaves the scripts in the file alone.
+  - Without a `type`, the extension of the file decides. A `.html` file is a page, unless `--loader` or `[loader]` in [`bunfig.toml`](/runtime/bunfig) gives `.html` another loader. Both can also give the `html` loader to another extension. A check of the whole project reads neither, like `bun check`.
+  - The options of `import()` count only if the call has `with` and its `type` written out, as in `import("./a.html", { with: { type: "text" } })`. Options from a variable or from a spread do not count.
+  - A plugin that loads the file in another way is not known to the check.
+- Bun follows a page that the import names by the path of the file, such as `./index.html`. If the import goes through `paths` in `tsconfig.json`, `imports` in `package.json`, or the name of a workspace package, only `bun build --check` follows it, because the bundle knows which file that is.
 - A page can have a `tsconfig.json` of its own, for example in `web/`. Bun checks the scripts of the page with that one.
 - With `--tsconfig-override`, or `tsconfig` in `Bun.build()`, the check uses that `tsconfig.json`.
 - With `--conditions`, the check resolves packages with those conditions too.
@@ -412,6 +421,8 @@ error: TS2322: Type 'string' is not assignable to type 'number'.
 note: TS6500: The expected type comes from property 'age' which is declared here on type '{ name?: string | undefined; age: number; }'
    at /app/src/greet.ts:1:46
 ```
+
+The check follows an imported HTML page as it does when Bun runs a file.
 
 ### `Bun.build`
 
@@ -655,6 +666,7 @@ These differences are intentional:
 - **Compiler options work with `-b`.** `tsc -b --strict` reports TS5094. `bun check -b --strict` applies the option to every project.
 - **A `tsconfig.json` with nothing but `references` is followed.** `tsc` without `-b` [checks nothing](#a-tsconfigjson-with-nothing-but-references) there.
 - **Paths work next to a `tsconfig.json`.** `tsc src/index.ts` reports TS5112 if there is a `tsconfig.json`. `bun check src/index.ts` [checks the file with it](#some-files-or-directories).
+- **A file that imports an HTML page brings the scripts of the page.** `tsc` does not read HTML. `bun check src/server.ts` also checks the local `<script src>` files of a page that [the file imports](#some-files-or-directories). Import the file `with { type: "text" }` if it is not a page.
 - **There is no `bun check --watch`.** To check again on every change, use [`bun --watch --check`](#watch-mode).
 - **An error that one file raises in another file is reported.** `tsc` collects the errors of a file right after it checks that file, so it drops an error that a later file raises in an earlier one. `bun check` reports it.
 - **A file that is too long affects no other file.** After TS2563 for the top-level code of one file, `tsc` stops following the types of variables and parameters in the files it checks next, so it drops errors there and reports false ones. `bun check` starts every file afresh.

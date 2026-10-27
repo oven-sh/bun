@@ -1,7 +1,7 @@
 // lsquic fixes HTTP/3-vs-raw framing per client *engine*, set by the first
 // connect() through an endpoint; a later connect in the other mode must fail
 // loudly instead of silently reusing an engine that cannot frame it.
-import { describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isLinux, normalizeBunSnapshot, tempDir } from "harness";
 import { createPrivateKey } from "node:crypto";
 import { createSocket } from "node:dgram";
@@ -402,4 +402,382 @@ describe("endpoint.close() with an unsent stateless reset", () => {
     // LeakSanitizer needs more than the default 5 s on a debug build.
     60_000,
   );
+});
+
+// node:quic reads the caller's `ca`, `crl` and `certs` arrays twice: in JS to
+// validate them, then in native code to copy them. An accessor on an element
+// runs user code in the second read, after JS tested the endpoint state. Node
+// reads every option before its native state test and before it binds
+// (src/quic/endpoint.cc, DoListen and DoConnect): listen() is then a no-op
+// and connect() fails with ERR_QUIC_CONNECTION_FAILED.
+describe("user code that runs while native code reads the options", () => {
+  const sni = { "*": { keys: [key], certs: [cert] } };
+  const tp = { maxIdleTimeout: 1 };
+  const ca = readFileSync(join(keysDir, "ca1-cert.pem"));
+  const crl = readFileSync(join(keysDir, "ca2-crl.pem"));
+  const badPem = Buffer.from("-----BEGIN CERTIFICATE-----\nnot a certificate\n-----END CERTIFICATE-----\n");
+  const onSession = (s: any) => {
+    s.closed.catch(() => {});
+  };
+  const clientOptions = { alpn: "quic-test", verifyPeer: "manual", transportParams: tp };
+
+  // destroy() at the end: a graceful close would wait one idle timeout for
+  // each session whose client endpoint a test destroyed.
+  let server: QuicEndpoint;
+  beforeAll(async () => {
+    server = await listen(onSession, { sni, alpn: ["quic-test"], transportParams: tp });
+  });
+  afterAll(async () => {
+    await server.destroy();
+  });
+
+  // Element 0 runs `action` on its second read, the one in native code.
+  function onNativeRead<T>(value: T, action: () => void): T[] {
+    const array = [value];
+    let reads = 0;
+    Object.defineProperty(array, 0, {
+      enumerable: true,
+      get() {
+        if (++reads === 2) action();
+        return value;
+      },
+    });
+    return array;
+  }
+  type Trap = (value: Buffer) => Buffer[];
+
+  test.each<[string, (trap: Trap) => object]>([
+    ["ca", trap => ({ sni, ca: trap(ca) })],
+    ["crl", trap => ({ sni, crl: trap(crl) })],
+    ["sni['*'].certs", trap => ({ sni: { "*": { keys: [key], certs: trap(cert) } } })],
+    ["the certs of a named host", trap => ({ sni: { ...sni, "x.test": { keys: [key], certs: trap(cert) } } })],
+  ])("listen() has not bound the endpoint when %s destroys it", async (_, options) => {
+    const endpoint = new QuicEndpoint();
+    let addressInAccessor: unknown = "the accessor did not run";
+    const destroy = () => {
+      addressInAccessor = endpoint.address;
+      endpoint.destroy();
+    };
+    const returned = await listen(onSession, { endpoint, ...options(value => onNativeRead(value, destroy)) });
+    expect({ addressInAccessor, returned: returned === endpoint }).toEqual({
+      addressInAccessor: undefined,
+      returned: true,
+    });
+    await endpoint.closed;
+  });
+
+  describe.each<[string, (trap: Trap) => object]>([
+    ["ca", trap => ({ ca: trap(ca) })],
+    ["crl", trap => ({ crl: trap(crl) })],
+    ["certs", trap => ({ keys: [key], certs: trap(cert) })],
+  ])("connect() fails when %s", (_, options) => {
+    test.each<[string, boolean, (endpoint: QuicEndpoint) => unknown]>([
+      ["destroys a new endpoint", false, endpoint => endpoint.destroy()],
+      ["destroys an endpoint that has a session", true, endpoint => endpoint.destroy()],
+      // close() waits for the session, so the endpoint is closing and not closed.
+      ["closes an endpoint that has a session", true, endpoint => endpoint.close()],
+    ])("%s", async (_, hasSession, act) => {
+      const endpoint = new QuicEndpoint();
+      let held;
+      if (hasSession) {
+        held = await connect(server.address!, { endpoint, ...clientOptions } as SessionOptions);
+        held.closed.catch(() => {});
+        await held.opened;
+      }
+      await expect(
+        connect(server.address!, {
+          endpoint,
+          ...clientOptions,
+          ...options(value => onNativeRead(value, () => act(endpoint))),
+        } as SessionOptions),
+      ).rejects.toMatchObject({ code: "ERR_QUIC_CONNECTION_FAILED", message: "QUIC connection failed" });
+      held?.destroy();
+      await endpoint.closed;
+    });
+  });
+
+  // Both fixture modes also run on Node v26.3.0 built with QUIC, with this output.
+  const fixture = join(import.meta.dir, "quic-endpoint-closed-by-option-fixture.ts");
+  const runFixture = async (mode: string, flags: string[] = [], env: Record<string, string> = {}) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...flags, fixture, mode, keysDir],
+      env: { ...bunEnv, NODE_NO_WARNINGS: "1", ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode };
+  };
+
+  test.concurrent(
+    "listen() leaves the native endpoint state alone",
+    async () => {
+      const { stdout, stderr, exitCode } = await runFixture("state", ["--expose-internals"]);
+      expect({ state: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+        state: {
+          inAccessor: { isBound: false, isListening: false },
+          afterDestroy: { isBound: false, isListening: false },
+          afterClose: { isBound: true, isListening: false },
+        },
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    30_000,
+  );
+
+  // Without the fix connect() returns a session on the destroyed endpoint, and
+  // session.destroy() then reads the endpoint's freed lsquic callbacks.
+  test.concurrent(
+    "connect() returns no session to destroy",
+    async () => {
+      expect(await runFixture("destroy-session")).toEqual({
+        stdout: "ERR_QUIC_CONNECTION_FAILED",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    30_000,
+  );
+
+  // Without the fix listen() builds an lsquic engine on the endpoint that the
+  // accessor destroyed, and nothing destroys that engine.
+  test.skipIf(!isASAN || !isLinux)(
+    "listen() builds no engine on the destroyed endpoint",
+    async () => {
+      const leakSanitizer = {
+        BUN_DESTRUCT_VM_ON_EXIT: "1",
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+        LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dir, "..", "..", "..", "leaksan.supp")}`,
+      };
+      expect(await runFixture("leak", [], leakSanitizer)).toEqual({ stdout: "closed", stderr: "", exitCode: 0 });
+    },
+    // LeakSanitizer needs more than the default 5 s on a debug build.
+    60_000,
+  );
+
+  test("a listen() made from the accessor is the one that listens", async () => {
+    const endpoint = new QuicEndpoint();
+    const announced: string[] = [];
+    const announce = (label: string) => (s: any) => {
+      announced.push(label);
+      s.closed.catch(() => {});
+    };
+    let inner: Promise<unknown> | undefined;
+    const listenAgain = () => {
+      inner = listen(announce("inner"), { endpoint, sni, alpn: ["inner-proto"], transportParams: tp });
+    };
+    await listen(announce("outer"), {
+      endpoint,
+      sni,
+      alpn: ["outer-proto"],
+      transportParams: tp,
+      ca: onNativeRead(ca, listenAgain),
+    });
+    await inner;
+
+    const dial = async (alpn: string) => {
+      await using clientEndpoint = new QuicEndpoint();
+      const client = await connect(endpoint.address!, {
+        endpoint: clientEndpoint,
+        ...clientOptions,
+        alpn,
+      } as SessionOptions);
+      client.closed.catch(() => {});
+      try {
+        await client.opened;
+        return "opened";
+      } catch (error: any) {
+        return error.code;
+      } finally {
+        client.destroy();
+      }
+    };
+    // A session is announced at its first packet, before the ALPN is known.
+    expect({ inner: await dial("inner-proto"), outer: await dial("outer-proto"), announced }).toEqual({
+      inner: "opened",
+      outer: "ERR_QUIC_TRANSPORT_ERROR",
+      announced: ["inner", "inner"],
+    });
+    await endpoint.destroy();
+  });
+
+  // The first connect() on an endpoint builds its client engine. The outer
+  // call must not build a second engine over the one the inner call built.
+  test("a connect() made from the accessor keeps its session", async () => {
+    const endpoint = new QuicEndpoint();
+    let inner: ReturnType<typeof connect> | undefined;
+    const connectAgain = () => {
+      inner = connect(server.address!, { endpoint, ...clientOptions } as SessionOptions);
+    };
+    const sessions = await Promise.all([
+      connect(server.address!, { endpoint, ...clientOptions, ca: onNativeRead(ca, connectAgain) } as SessionOptions),
+      inner!,
+    ]);
+    for (const session of sessions) session.closed.catch(() => {});
+    const opened = await Promise.all(sessions.map(session => session.opened));
+    expect(opened.map(info => info.protocol)).toEqual(["quic-test", "quic-test"]);
+    await endpoint.destroy();
+  });
+
+  // Function.prototype.bind reads `name` after listen() tested the endpoint
+  // state in JS and before it calls native code.
+  const callbackWithName = (onNameRead: () => void) =>
+    Object.defineProperty(() => {}, "name", {
+      get() {
+        onNameRead();
+        return "callback";
+      },
+    });
+
+  test("listen() rejects when the endpoint is destroyed before the native call", async () => {
+    const endpoint = new QuicEndpoint();
+    await expect(
+      listen(
+        callbackWithName(() => endpoint.destroy()),
+        { endpoint, sni },
+      ),
+    ).rejects.toMatchObject({
+      code: "ERR_QUIC_ENDPOINT_CLOSED",
+      message: "Endpoint is closed",
+    });
+    await endpoint.closed;
+  });
+
+  test("listen() is a no-op when the endpoint starts to close before the native call", async () => {
+    const endpoint = new QuicEndpoint();
+    const held = await connect(server.address!, { endpoint, ...clientOptions } as SessionOptions);
+    held.closed.catch(() => {});
+    await held.opened;
+    expect(
+      await listen(
+        callbackWithName(() => endpoint.close()),
+        { endpoint, sni },
+      ),
+    ).toBe(endpoint);
+    held.destroy();
+    await endpoint.closed;
+  });
+
+  test.each<[string, () => object, object]>([
+    [
+      "an invalid certificate",
+      () => ({ sni: { "*": { keys: [key], certs: [badPem] } } }),
+      { message: "tls: failed to parse certificate PEM" },
+    ],
+    [
+      "an invalid certificate of a named host",
+      () => ({ sni: { ...sni, "x.test": { keys: [key], certs: [badPem] } } }),
+      { code: "ERR_INVALID_ARG_VALUE", message: "tls: failed to parse certificate PEM" },
+    ],
+    ["a mixed ALPN list", () => ({ sni, alpn: ["h3", "custom"] }), { code: "ERR_INVALID_ARG_VALUE" }],
+    [
+      "an accessor that throws",
+      () => ({
+        sni,
+        ca: onNativeRead(ca, () => {
+          throw new Error("thrown by the accessor");
+        }),
+      }),
+      { message: "thrown by the accessor" },
+    ],
+  ])("listen() that rejects on %s does not bind the endpoint", async (_, options, error) => {
+    const endpoint = new QuicEndpoint();
+    await expect(listen(onSession, { endpoint, transportParams: tp, ...options() })).rejects.toMatchObject(error);
+    expect(endpoint.address).toBeUndefined();
+    // The endpoint keeps nothing from the failed call.
+    await listen(onSession, { endpoint, sni, transportParams: tp });
+    expect(endpoint.address!.port).toBeGreaterThan(0);
+    await endpoint.close();
+  });
+
+  // listen() stored the ORIGIN frame payload (RFC 9412) before the steps that
+  // can throw, so the next listen() on the endpoint advertised the hosts of
+  // the call that failed.
+  test("listen() that rejects leaves no ORIGIN frame for the next listen()", async () => {
+    const endpoint = new QuicEndpoint();
+    await expect(
+      listen(onSession, { endpoint, sni: { ...sni, "stale.example": sni["*"] }, alpn: ["h3", "custom"] }),
+    ).rejects.toMatchObject({ code: "ERR_INVALID_ARG_VALUE" });
+    await listen(
+      (s: any) => {
+        s.onstream = (stream: any) => stream.closed.catch(() => {});
+        s.closed.catch(() => {});
+      },
+      {
+        endpoint,
+        sni,
+        transportParams: tp,
+        onheaders(this: any) {
+          this.sendHeaders({ ":status": "200" });
+          this.writer.endSync();
+        },
+      },
+    );
+
+    const origins: string[][] = [];
+    await using clientEndpoint = new QuicEndpoint();
+    const client = await connect(endpoint.address!, {
+      endpoint: clientEndpoint,
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: tp,
+      onorigin: (list: string[]) => origins.push(list),
+    } as SessionOptions);
+    client.closed.catch(() => {});
+    await client.opened;
+    // The server sends ORIGIN with its SETTINGS, before it answers a request.
+    const answered = Promise.withResolvers<void>();
+    await client.createBidirectionalStream({
+      headers: { ":method": "GET", ":path": "/", ":scheme": "https", ":authority": "localhost" },
+      onheaders: () => answered.resolve(),
+    });
+    await answered.promise;
+    client.destroy();
+    expect(origins).toEqual([]);
+    await endpoint.destroy();
+  });
+
+  test("connect() that rejects while it reads its options does not bind the endpoint", async () => {
+    const endpoint = new QuicEndpoint();
+    const throwing = onNativeRead(ca, () => {
+      throw new Error("thrown by the accessor");
+    });
+    await expect(
+      connect(server.address!, { endpoint, ...clientOptions, ca: throwing } as SessionOptions),
+    ).rejects.toMatchObject({ message: "thrown by the accessor" });
+    expect(endpoint.address).toBeUndefined();
+    await endpoint.close();
+  });
+
+  test("setSNIContexts() returns when certs destroys the endpoint", async () => {
+    const endpoint = await listen(onSession, { sni, transportParams: tp });
+    const certs = onNativeRead(cert, () => endpoint.destroy());
+    expect(endpoint.setSNIContexts({ "x.test": { keys: [key], certs } })).toBeUndefined();
+    await endpoint.closed;
+  });
+
+  // The default ALPN of an SNI identity is the ALPN the endpoint listens
+  // with, so setSNIContexts() has to take it after the read that ran listen().
+  test("setSNIContexts() uses the ALPN of a listen() made from the accessor", async () => {
+    const endpoint = new QuicEndpoint();
+    let listening: Promise<unknown> | undefined;
+    const certs = onNativeRead(cert, () => {
+      listening = listen(onSession, { endpoint, sni, alpn: ["quic-test"], transportParams: tp });
+    });
+    endpoint.setSNIContexts({ "x.test": { keys: [key], certs } });
+    await listening;
+
+    await using clientEndpoint = new QuicEndpoint();
+    const client = await connect(endpoint.address!, {
+      endpoint: clientEndpoint,
+      servername: "x.test",
+      ...clientOptions,
+    } as SessionOptions);
+    client.closed.catch(() => {});
+    const { servername, protocol } = await client.opened;
+    client.destroy();
+    expect({ servername, protocol }).toEqual({ servername: "x.test", protocol: "quic-test" });
+    await endpoint.destroy();
+  });
 });

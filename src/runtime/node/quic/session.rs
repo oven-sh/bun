@@ -417,6 +417,51 @@ pub(crate) struct QuicSession {
     global: Cell<*const JSGlobalObject>,
 }
 
+/// The options that `apply_options` gives to a session. The endpoint reads
+/// them once, before it tests its state, so that no session reads the options
+/// object.
+pub(super) struct SessionOptions {
+    datagram_drop_newest: Option<bool>,
+    qlog_enabled: Option<bool>,
+    reject_unverified_peer: Option<bool>,
+    application: Option<Strong>,
+}
+
+impl SessionOptions {
+    pub(super) fn from_js(global: &JSGlobalObject, options: JSValue) -> JsResult<Self> {
+        let mut this = Self {
+            datagram_drop_newest: None,
+            qlog_enabled: None,
+            reject_unverified_peer: None,
+            application: None,
+        };
+        if !options.is_object() {
+            return Ok(this);
+        }
+        if let Some(v) = options
+            .get(global, "datagramDropPolicy")?
+            .filter(|v| v.is_string())
+        {
+            this.datagram_drop_newest =
+                Some(bun_core::String::from_js(v, global)?.to_owned_slice() == b"drop-newest");
+        }
+        if let Some(v) = options.get(global, "qlog")? {
+            this.qlog_enabled = Some(v.to_boolean());
+        }
+        if let Some(v) = options.get(global, "verifyPeer")?.filter(|v| v.is_string()) {
+            this.reject_unverified_peer =
+                Some(bun_core::String::from_js(v, global)?.to_owned_slice() != b"manual");
+        }
+        if let Some(app) = options
+            .get(global, "application")?
+            .filter(|v| v.is_object())
+        {
+            this.application = Some(Strong::create(app, global));
+        }
+        Ok(this)
+    }
+}
+
 impl QuicSession {
     fn new(global: &JSGlobalObject, vtable: *const lsquic::NqVtable) -> Self {
         Self {
@@ -615,32 +660,20 @@ impl QuicSession {
     pub(super) fn handle(&self) -> JSValue {
         self.this_value.get().get()
     }
-    pub(super) fn apply_options(&self, global: &JSGlobalObject, options: JSValue) -> JsResult<()> {
-        if !options.is_object() {
-            return Ok(());
+    pub(super) fn apply_options(&self, global: &JSGlobalObject, options: &SessionOptions) {
+        if let Some(v) = options.datagram_drop_newest {
+            self.datagram_drop_newest.set(v);
         }
-        if let Some(v) = options
-            .get(global, "datagramDropPolicy")?
-            .filter(|v| v.is_string())
-        {
-            self.datagram_drop_newest
-                .set(bun_core::String::from_js(v, global)?.to_owned_slice() == b"drop-newest");
+        if let Some(v) = options.qlog_enabled {
+            self.qlog_enabled.set(v);
         }
-        if let Some(v) = options.get(global, "qlog")? {
-            self.qlog_enabled.set(v.to_boolean());
+        if let Some(v) = options.reject_unverified_peer {
+            self.reject_unverified_peer.set(v);
         }
-        if let Some(v) = options.get(global, "verifyPeer")?.filter(|v| v.is_string()) {
-            self.reject_unverified_peer
-                .set(bun_core::String::from_js(v, global)?.to_owned_slice() != b"manual");
-        }
-        if let Some(app) = options
-            .get(global, "application")?
-            .filter(|v| v.is_object())
-        {
+        if let Some(app) = options.application.as_ref() {
             self.application_options_js
-                .set(Some(Strong::create(app, global)));
+                .set(Some(Strong::create(app.get(), global)));
         }
-        Ok(())
     }
     pub(super) fn is_server(&self) -> bool {
         self.is_server.get()

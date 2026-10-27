@@ -20,7 +20,9 @@ use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
 use super::callbacks;
 use super::ffi::lsquic_callback;
 use super::now_ns;
-use super::session::{self, QuicSession, SOCKADDR_IN_LEN, SOCKADDR_IN6_LEN, StoredAddr};
+use super::session::{
+    self, QuicSession, SOCKADDR_IN_LEN, SOCKADDR_IN6_LEN, SessionOptions, StoredAddr,
+};
 use super::stream;
 use super::tls::{TlsConfig, TlsContext};
 
@@ -219,7 +221,7 @@ pub(crate) struct QuicEndpoint {
     server_is_http: Cell<bool>,
     client_is_http: Cell<bool>,
     pub(super) server_verify_client: Cell<bool>,
-    server_session_options: JsCell<Option<bun_jsc::Strong>>,
+    server_session_options: JsCell<Option<SessionOptions>>,
     disable_stateless_reset: Cell<bool>,
     stateless_reset_burst: Cell<u32>,
     stateless_reset_rate: Cell<f64>,
@@ -1079,6 +1081,188 @@ fn apply_transport_params(
     Ok(())
 }
 
+/// The engine settings that the options decide. `QuicEndpoint::build_engine`
+/// adds the settings that the endpoint decides.
+struct EngineOptions {
+    settings: lsquic::Settings,
+    local_tp: lsquic::NqTransportParams,
+    alpn_cstr: Vec<u8>,
+    is_http: bool,
+}
+
+impl EngineOptions {
+    fn from_js(
+        global: &JSGlobalObject,
+        is_server: bool,
+        config: &TlsConfig,
+        options: JSValue,
+    ) -> JsResult<Self> {
+        let alpn_cstr = TlsContext::alpn_cstr(config);
+        let is_http = alpn_cstr_is_http(&alpn_cstr);
+        let mut settings = lsquic::Settings::new(is_server, is_http);
+        // Node always advertises datagram support.
+        settings.datagrams(1);
+        settings.delayed_acks(0);
+        // Node's `closed` promise on the peer resolves on receipt of CONNECTION_CLOSE.
+        settings.silent_close(0);
+        settings.honor_prst(1);
+        let mut local_tp = lsquic::NqTransportParams::default();
+        apply_transport_params(global, &mut settings, options, &mut local_tp)?;
+        if let Some(app) = options
+            .get(global, "application")?
+            .filter(|v| v.is_object())
+        {
+            if let Some(v) = app
+                .get(global, "enableConnectProtocol")?
+                .filter(|v| v.is_boolean())
+            {
+                settings.h3_connect_protocol(v.to_boolean() as c_int);
+            }
+            if let Some(v) = app
+                .get(global, "enableDatagrams")?
+                .filter(|v| v.is_boolean())
+            {
+                // RFC 9297: HTTP/3 datagram support is advertised separately
+                // from the transport-level max_datagram_frame_size.
+                settings.h3_datagram(v.to_boolean() as c_int);
+            }
+            if let Some(v) = read_u64_option(global, app, "maxHeaderPairs")? {
+                settings.max_h3_header_pairs(v.min(u16::MAX as u64) as u16);
+            }
+            if let Some(v) = read_u64_option(global, app, "maxHeaderLength")? {
+                settings.max_h3_header_bytes(v.min(u32::MAX as u64) as u32);
+            }
+        }
+        Ok(Self {
+            settings,
+            local_tp,
+            alpn_cstr,
+            is_http,
+        })
+    }
+}
+
+/// Everything `listen()` reads from its options. Reading runs user code (the
+/// `ca`, `crl` and `certs` arrays are the caller's own), so `listen()` reads
+/// all of it before it tests or changes the endpoint, as Node does:
+/// https://github.com/nodejs/node/blob/v26.3.0/src/quic/endpoint.cc#L2058
+struct ListenOptions {
+    session: SessionOptions,
+    /// Empty when no SNI host is authoritative.
+    origin_blob: Vec<u8>,
+    tls: TlsConfig,
+    sni: Option<Vec<(Vec<u8>, TlsConfig)>>,
+    engine: EngineOptions,
+}
+
+impl ListenOptions {
+    fn from_js(global: &JSGlobalObject, options: JSValue) -> JsResult<Self> {
+        let session = SessionOptions::from_js(global, options)?;
+        let tls = options.get(global, "tls")?.unwrap_or(JSValue::UNDEFINED);
+        // Authoritative origins for the HTTP/3 ORIGIN frame (RFC 9412
+        // sec 2): each Origin-Entry is a 16-bit length prefix followed
+        // by the ASCII origin.
+        let mut origin_blob = Vec::new();
+        if tls.is_object() {
+            if let Some(origins) = tls.get(global, "origins")?.filter(|v| v.is_array()) {
+                let len = origins.get_length(global)? as u32;
+                for i in 0..len {
+                    let v = origins.get_index(global, i)?;
+                    if !v.is_string() {
+                        continue;
+                    }
+                    let bytes = bun_core::String::from_js(v, global)?.to_owned_slice();
+                    if bytes.is_empty() || bytes.len() > u16::MAX as usize {
+                        continue;
+                    }
+                    origin_blob.extend_from_slice(&(bytes.len() as u16).to_be_bytes());
+                    origin_blob.extend_from_slice(&bytes);
+                }
+            }
+        }
+        let mut config = TlsConfig::from_js(global, tls, true)?;
+        if config.alpn.is_empty() {
+            // Node's default ALPN is `h3`.
+            config.alpn = b"\x02h3".to_vec();
+        }
+        let mut sni = None;
+        if tls.is_object() {
+            if let Some(entries) = tls.get(global, "sni")?.filter(|v| v.is_object()) {
+                sni = Some(QuicEndpoint::read_sni_entries(global, entries, Ok)?);
+            }
+        }
+        let engine = EngineOptions::from_js(global, true, &config, options)?;
+        Ok(Self {
+            session,
+            origin_blob,
+            tls: config,
+            sni,
+            engine,
+        })
+    }
+}
+
+/// Everything `connect()` reads from its options for a session, read before
+/// it tests or changes the endpoint (see `ListenOptions`).
+struct ConnectOptions {
+    tls: TlsConfig,
+    /// `None` when the endpoint already has a client engine: lsquic settings
+    /// are per engine, so a later `connect()` does not read them.
+    engine: Option<EngineOptions>,
+    idle_ms: u64,
+    keepalive_us: u64,
+    use_preferred: bool,
+    resume_blob: Option<Vec<u8>>,
+    session: SessionOptions,
+}
+
+impl ConnectOptions {
+    fn from_js(
+        global: &JSGlobalObject,
+        options: JSValue,
+        session_ticket: JSValue,
+        need_engine: bool,
+    ) -> JsResult<Self> {
+        let tls = options.get(global, "tls")?.unwrap_or(JSValue::UNDEFINED);
+        let config = TlsConfig::from_js(global, tls, false)?;
+        let engine = if need_engine {
+            Some(EngineOptions::from_js(global, false, &config, options)?)
+        } else {
+            None
+        };
+        // Node's DEFAULT_MAX_IDLE_TIMEOUT is 10 seconds when unspecified.
+        let idle_ms = options
+            .get(global, "transportParams")?
+            .filter(|v| v.is_object())
+            .map(|tp| read_u64_option(global, tp, "maxIdleTimeout"))
+            .transpose()?
+            .flatten()
+            .map(|secs| secs.saturating_mul(MS_PER_SEC))
+            .unwrap_or(DEFAULT_MAX_IDLE_TIMEOUT_SECS * MS_PER_SEC);
+        let keepalive_us =
+            read_u64_option(global, options, "keepAlive")?.map_or(0, |ms| ms.saturating_mul(1000));
+        let use_preferred = read_u64_option(global, options, "preferredAddressPolicy")?
+            == Some(PREFERRED_ADDRESS_USE);
+        let resume_blob = if config.enable_early_data {
+            session_ticket
+                .as_array_buffer(global)
+                .map(|buf| buf.byte_slice().to_vec())
+        } else {
+            None
+        };
+        let session = SessionOptions::from_js(global, options)?;
+        Ok(Self {
+            tls: config,
+            engine,
+            idle_ms,
+            keepalive_us,
+            use_preferred,
+            resume_blob,
+            session,
+        })
+    }
+}
+
 pub(super) fn alloc_exposed_array_buffer(
     global: &JSGlobalObject,
     holder: JSValue,
@@ -1358,6 +1542,7 @@ impl QuicEndpoint {
 
     /// Returns `Ok(false)` when the bind fails: Node does not throw here.
     fn ensure_bound(&self, global: &JSGlobalObject, this_value: JSValue) -> JsResult<bool> {
+        debug_assert!(!self.closed.get());
         if self.socket.get().is_some() {
             return Ok(true);
         }
@@ -1416,6 +1601,16 @@ impl QuicEndpoint {
             }
         });
         Ok(true)
+    }
+
+    /// Node's `Endpoint::Start`: `Ok(false)` when the endpoint is closed or
+    /// closing, or when the bind fails. `connect()` then returns undefined.
+    /// https://github.com/nodejs/node/blob/v26.3.0/src/quic/endpoint.cc#L1149
+    fn start(&self, global: &JSGlobalObject, this_value: JSValue) -> JsResult<bool> {
+        if self.closed.get() || self.closing.get() {
+            return Ok(false);
+        }
+        self.ensure_bound(global, this_value)
     }
 
     fn update_keepalive(&self) {
@@ -1727,7 +1922,7 @@ impl QuicEndpoint {
             true,
             self.application(true),
         )?;
-        let applied = self.apply_server_session_options(global, session);
+        self.apply_server_session_options(global, session);
         self.sessions.with_mut(|v| v.push(session));
         self.pending_new_sessions.with_mut(|v| v.push(session));
         self.add_stat(IDX_STATS_SERVER_SESSIONS, 1);
@@ -1739,7 +1934,7 @@ impl QuicEndpoint {
                 session,
             })
         });
-        applied
+        Ok(())
     }
 
     /// Queues the handshake-failure close both timeout lists deliver.
@@ -1889,9 +2084,7 @@ impl QuicEndpoint {
             self.application(true),
         ) {
             Ok((session, _handle)) => {
-                if let Err(err) = self.apply_server_session_options(global, session) {
-                    crate::dispatch::fold(Err(err));
-                }
+                self.apply_server_session_options(global, session);
                 self.sessions.with_mut(|v| v.push(session));
                 self.pending_new_sessions.with_mut(|v| v.push(session));
                 self.add_stat(IDX_STATS_SERVER_SESSIONS, 1);
@@ -1985,43 +2178,29 @@ impl QuicEndpoint {
     fn build_engine(
         &self,
         is_server: bool,
-        config: &TlsConfig,
-        options: JSValue,
+        tls: TlsContext,
+        options: EngineOptions,
         global: &JSGlobalObject,
     ) -> JsResult<*mut lsquic::lsquic_engine> {
-        let tls = TlsContext::new(config).map_err(|e| global.throw(format_args!("tls: {}", e)))?;
-        // Node accepts a list, so own ALPN on the SSL_CTX and pass NULL here.
-        let alpn_cstr = TlsContext::alpn_cstr(config);
-        let is_http = alpn_cstr_is_http(&alpn_cstr);
-        if is_server && !alpn_list_is_uniform(&config.alpn) {
-            return Err(global
-                .err(
-                    jsc::ErrorCode::INVALID_ARG_VALUE,
-                    format_args!(
-                        "options.alpn cannot mix HTTP/3 and non-HTTP/3 protocols on one endpoint; use a separate QuicEndpoint for each"
-                    ),
-                )
-                .throw());
-        }
+        let EngineOptions {
+            mut settings,
+            local_tp,
+            alpn_cstr,
+            is_http,
+        } = options;
         if is_server {
             self.server_tls.set(Some(tls));
             self.server_alpn.set(alpn_cstr);
             self.server_is_http.set(is_http);
-            self.server_verify_client.set(config.verify_client);
+            self.server_local_tp.set(local_tp);
         } else {
             self.client_tls.set(Some(tls));
             self.client_alpn.set(alpn_cstr);
             self.client_is_http.set(is_http);
+            self.client_local_tp.set(local_tp);
         }
-        let mut settings = lsquic::Settings::new(is_server, is_http);
-        // Node always advertises datagram support.
-        settings.datagrams(1);
-        settings.delayed_acks(0);
-        // Node's `closed` promise on the peer resolves on receipt of CONNECTION_CLOSE.
-        settings.silent_close(0);
         // RFC 9000 sec 10.3: stateless reset.
         settings.send_prst(!self.disable_stateless_reset.get() as c_int);
-        settings.honor_prst(1);
         if is_server {
             let burst = self.stateless_reset_burst.get();
             if burst > 0 {
@@ -2033,38 +2212,7 @@ impl QuicEndpoint {
                 settings.origin_blob(origin_blob);
             }
         }
-        let mut local_tp = lsquic::NqTransportParams::default();
-        apply_transport_params(global, &mut settings, options, &mut local_tp)?;
-        if let Some(app) = options
-            .get(global, "application")?
-            .filter(|v| v.is_object())
-        {
-            if let Some(v) = app
-                .get(global, "enableConnectProtocol")?
-                .filter(|v| v.is_boolean())
-            {
-                settings.h3_connect_protocol(v.to_boolean() as c_int);
-            }
-            if let Some(v) = app
-                .get(global, "enableDatagrams")?
-                .filter(|v| v.is_boolean())
-            {
-                // RFC 9297: HTTP/3 datagram support is advertised separately
-                // from the transport-level max_datagram_frame_size.
-                settings.h3_datagram(v.to_boolean() as c_int);
-            }
-            if let Some(v) = read_u64_option(global, app, "maxHeaderPairs")? {
-                settings.max_h3_header_pairs(v.min(u16::MAX as u64) as u16);
-            }
-            if let Some(v) = read_u64_option(global, app, "maxHeaderLength")? {
-                settings.max_h3_header_bytes(v.min(u32::MAX as u64) as u32);
-            }
-        }
-        if is_server {
-            self.server_local_tp.set(local_tp);
-        } else {
-            self.client_local_tp.set(local_tp);
-        }
+        debug_assert!(!self.closed.get());
         // SAFETY: `vtable` outlives both engines (held in this struct);
         // `settings` is copied by lsquic before this returns.
         let engine = unsafe {
@@ -2073,6 +2221,7 @@ impl QuicEndpoint {
                 is_http as c_int,
                 self.vtable_ptr.cast_mut(),
                 settings.as_ptr(),
+                // Node accepts a list, so own ALPN on the SSL_CTX and pass NULL here.
                 core::ptr::null(),
             )
         };
@@ -2145,21 +2294,11 @@ impl QuicEndpoint {
         );
     }
 
-    fn apply_server_session_options(
-        &self,
-        global: &JSGlobalObject,
-        session: *mut QuicSession,
-    ) -> JsResult<()> {
-        if let Some(options) = self
-            .server_session_options
-            .get()
-            .as_ref()
-            .map(bun_jsc::Strong::get)
-        {
+    fn apply_server_session_options(&self, global: &JSGlobalObject, session: *mut QuicSession) {
+        if let Some(options) = self.server_session_options.get().as_ref() {
             // SAFETY: `session` was just created and is live.
-            unsafe { (*session).apply_options(global, options) }?;
+            unsafe { (*session).apply_options(global, options) };
         }
-        Ok(())
     }
 
     pub(super) fn buffer_early_keylog(&self, ssl: *mut c_void, peer: StoredAddr, line: Vec<u8>) {
@@ -2214,7 +2353,7 @@ impl QuicEndpoint {
         options: JsLocal<'_>,
     ) -> JsResult<()> {
         let global = cx.global();
-        if self.closed.get() || self.closing.get() {
+        if self.closed.get() {
             return Err(global
                 .err(
                     jsc::ErrorCode::QUIC_ENDPOINT_CLOSED,
@@ -2222,52 +2361,55 @@ impl QuicEndpoint {
                 )
                 .throw());
         }
-        if !self.ensure_bound(global, this_value.to_js())? {
+        let ListenOptions {
+            session,
+            origin_blob,
+            tls: config,
+            sni,
+            engine,
+        } = ListenOptions::from_js(global, options.to_js())?;
+        // The read above ran user code, which can close this endpoint or
+        // listen on it. Node makes this test after its read too, and returns
+        // with no error. Nothing below reads an option.
+        // https://github.com/nodejs/node/blob/v26.3.0/src/quic/endpoint.cc#L1184
+        if self.closed.get() || self.closing.get() || !self.server_engine.get().is_null() {
             return Ok(());
         }
-        if self.server_engine.get().is_null() {
-            let options = options.to_js();
-            if options.is_object() {
-                self.server_session_options
-                    .set(Some(bun_jsc::Strong::create(options, global)));
+        let tls = TlsContext::new(&config).map_err(|e| global.throw(format_args!("tls: {}", e)))?;
+        if !alpn_list_is_uniform(&config.alpn) {
+            return Err(global
+                .err(
+                    jsc::ErrorCode::INVALID_ARG_VALUE,
+                    format_args!(
+                        "options.alpn cannot mix HTTP/3 and non-HTTP/3 protocols on one endpoint; use a separate QuicEndpoint for each"
+                    ),
+                )
+                .throw());
+        }
+        let mut sni_contexts = None;
+        if let Some(entries) = sni {
+            // Not `collect()`: that keeps the allocation of `entries`, whose
+            // elements are several times the size of a context.
+            let mut contexts = Vec::with_capacity(entries.len());
+            for (host, host_config) in entries {
+                let context = Self::build_sni_context(global, host_config, &config.alpn)?;
+                contexts.push((host, context));
             }
-            let tls = options.get(global, "tls")?.unwrap_or(JSValue::UNDEFINED);
-            // Authoritative origins for the HTTP/3 ORIGIN frame (RFC 9412
-            // sec 2): each Origin-Entry is a 16-bit length prefix followed
-            // by the ASCII origin.
-            if tls.is_object() {
-                if let Some(origins) = tls.get(global, "origins")?.filter(|v| v.is_array()) {
-                    let len = origins.get_length(global)? as u32;
-                    let mut blob = Vec::new();
-                    for i in 0..len {
-                        let v = origins.get_index(global, i)?;
-                        if !v.is_string() {
-                            continue;
-                        }
-                        let bytes = bun_core::String::from_js(v, global)?.to_owned_slice();
-                        if bytes.is_empty() || bytes.len() > u16::MAX as usize {
-                            continue;
-                        }
-                        blob.extend_from_slice(&(bytes.len() as u16).to_be_bytes());
-                        blob.extend_from_slice(&bytes);
-                    }
-                    self.origin_blob.with_mut(|b| *b = blob);
-                }
-            }
-            let mut config = TlsConfig::from_js(global, tls, true)?;
-            if config.alpn.is_empty() {
-                // Node's default ALPN is `h3`.
-                config.alpn = b"\x02h3".to_vec();
-            }
-            self.server_alpn_wire.set(config.alpn.clone());
-            if tls.is_object() {
-                if let Some(sni) = tls.get(global, "sni")?.filter(|v| v.is_object()) {
-                    let built = Self::build_sni_contexts(global, sni, &config.alpn)?;
-                    self.sni_contexts.with_mut(|m| *m = built);
-                }
-            }
-            let engine = self.build_engine(true, &config, options, global)?;
-            self.server_engine.set(engine);
+            sni_contexts = Some(contexts);
+        }
+        self.server_session_options.set(Some(session));
+        self.origin_blob.set(origin_blob);
+        if let Some(contexts) = sni_contexts {
+            self.sni_contexts.set(contexts);
+        }
+        self.server_verify_client.set(config.verify_client);
+        self.server_alpn_wire.set(config.alpn);
+        let engine = self.build_engine(true, tls, engine, global)?;
+        self.server_engine.set(engine);
+        // Node's `Endpoint::Listen` binds last. A failed bind closes the
+        // endpoint, which destroys the engine stored above.
+        if !self.ensure_bound(global, this_value.to_js())? {
+            return Ok(());
         }
         // SAFETY: state buffer is live.
         self.with_state(|s| s.listening = 1);
@@ -2284,7 +2426,7 @@ impl QuicEndpoint {
         session_ticket: JsLocal<'_>,
     ) -> JsResult<JSValue> {
         let global = cx.global();
-        if self.closed.get() || self.closing.get() {
+        if self.closed.get() {
             return Err(global
                 .err(
                     jsc::ErrorCode::QUIC_ENDPOINT_CLOSED,
@@ -2292,13 +2434,11 @@ impl QuicEndpoint {
                 )
                 .throw());
         }
-        if !self.ensure_bound(global, this_value.to_js())? {
-            return Ok(JSValue::UNDEFINED);
-        }
-        let address = address.to_js();
         let options = options.to_js();
-        let session_ticket = session_ticket.to_js();
-        let Some(addr) = address.as_class_ref::<crate::socket::SocketAddress>() else {
+        let Some(addr) = address
+            .to_js()
+            .as_class_ref::<crate::socket::SocketAddress>()
+        else {
             return Err(global
                 .err(
                     jsc::ErrorCode::INVALID_ARG_TYPE,
@@ -2313,6 +2453,9 @@ impl QuicEndpoint {
         {
             let min_version = read_u64_option(global, options, "minVersion")?
                 .map_or(QUIC_VERSION_1, |v| v as u32);
+            if !self.start(global, this_value.to_js())? {
+                return Ok(JSValue::UNDEFINED);
+            }
             return self.connect_verneg_probe(
                 global,
                 this_value.to_js(),
@@ -2321,10 +2464,30 @@ impl QuicEndpoint {
                 min_version,
             );
         }
-        let tls = options.get(global, "tls")?.unwrap_or(JSValue::UNDEFINED);
-        let config = TlsConfig::from_js(global, tls, false)?;
-        if self.client_engine.get().is_null() {
-            let engine = self.build_engine(false, &config, options, global)?;
+        let ConnectOptions {
+            tls: config,
+            engine,
+            idle_ms,
+            keepalive_us,
+            use_preferred,
+            resume_blob,
+            session: session_options,
+        } = ConnectOptions::from_js(
+            global,
+            options,
+            session_ticket.to_js(),
+            self.client_engine.get().is_null(),
+        )?;
+        // The read above ran user code, which can close this endpoint. Nothing
+        // below reads an option.
+        if !self.start(global, this_value.to_js())? {
+            return Ok(JSValue::UNDEFINED);
+        }
+        // A connect() made from an option accessor can have built the engine.
+        if let Some(engine) = engine.filter(|_| self.client_engine.get().is_null()) {
+            let tls =
+                TlsContext::new(&config).map_err(|e| global.throw(format_args!("tls: {}", e)))?;
+            let engine = self.build_engine(false, tls, engine, global)?;
             self.client_engine.set(engine);
         } else {
             if alpn_cstr_is_http(&TlsContext::alpn_cstr(&config)) != self.client_is_http.get() {
@@ -2350,15 +2513,6 @@ impl QuicEndpoint {
                 Err(e) => return Err(global.throw(format_args!("{e}"))),
             }
         }
-        // Node's DEFAULT_MAX_IDLE_TIMEOUT is 10 seconds when unspecified.
-        let idle_ms = options
-            .get(global, "transportParams")?
-            .filter(|v| v.is_object())
-            .map(|tp| read_u64_option(global, tp, "maxIdleTimeout"))
-            .transpose()?
-            .flatten()
-            .map(|secs| secs.saturating_mul(MS_PER_SEC))
-            .unwrap_or(DEFAULT_MAX_IDLE_TIMEOUT_SECS * MS_PER_SEC);
         // SAFETY: the client engine exists after the branch above.
         unsafe {
             lsquic::lsquic_engine_set_idle_timeout_ms(
@@ -2371,13 +2525,6 @@ impl QuicEndpoint {
         // still echo the first session's value.
         self.client_local_tp
             .with_mut(|tp| tp.max_idle_timeout = idle_ms);
-        // Read before the session exists: `QuicSession::create` self-roots, and
-        // the conn that follows holds it as its ctx, so a throw after either
-        // point has to unwind state that a plain `?` here avoids creating.
-        let keepalive_us =
-            read_u64_option(global, options, "keepAlive")?.map_or(0, |ms| ms.saturating_mul(1000));
-        let use_preferred = read_u64_option(global, options, "preferredAddressPolicy")?
-            == Some(PREFERRED_ADDRESS_USE);
         let (session, handle) = QuicSession::create(
             global,
             self.vtable_ptr,
@@ -2390,13 +2537,6 @@ impl QuicEndpoint {
         // `TlsConfig::from_js` defaults servername to "localhost\0" (Node parity).
         let sni = config.servername.as_ref();
         let local = self.local_addr.get();
-        let resume_blob: Option<Vec<u8>> = if config.enable_early_data {
-            session_ticket
-                .as_array_buffer(global)
-                .map(|buf| buf.byte_slice().to_vec())
-        } else {
-            None
-        };
         let (resume_ptr, resume_len) = match resume_blob.as_deref() {
             Some(b) if !b.is_empty() => (b.as_ptr(), b.len()),
             _ => (null(), 0),
@@ -2437,12 +2577,7 @@ impl QuicEndpoint {
             lsquic::lsquic_conn_set_ctx(conn, session.cast());
             (*session).conn.set(conn);
             (*session).cache_sockaddrs(conn);
-            // `conn` is set above, so teardown clears the conn's ctx and the
-            // late callbacks no-op instead of reaching an unrooted session.
-            if let Err(e) = (*session).apply_options(global, options) {
-                (*session).teardown(global);
-                return Err(e);
-            }
+            (*session).apply_options(global, &session_options);
             if resume_len != 0 {
                 (*session).apply_peer_datagram_budget();
             }
@@ -2597,11 +2732,13 @@ impl QuicEndpoint {
         // SAFETY: state buffer is live.
         self.with_state(|s| s.busy = busy as u8);
     }
-    fn build_sni_contexts(
+    /// Reads the TLS options of each SNI host in `entries`, and gives each to
+    /// `f` before it reads the next host. The reads run user code.
+    fn read_sni_entries<T>(
         global: &JSGlobalObject,
         entries: JSValue,
-        alpn: &[u8],
-    ) -> JsResult<Vec<(Vec<u8>, TlsContext)>> {
+        mut f: impl FnMut(TlsConfig) -> JsResult<T>,
+    ) -> JsResult<Vec<(Vec<u8>, T)>> {
         let keys = entries.keys(global)?;
         let len = keys.get_length(global)? as u32;
         let mut out = Vec::with_capacity(len as usize);
@@ -2614,20 +2751,24 @@ impl QuicEndpoint {
             if !value.is_object() {
                 continue;
             }
-            let mut config = TlsConfig::from_js(global, value, true)?;
-            if config.alpn.is_empty() {
-                config.alpn = alpn.to_vec();
-            }
-            match TlsContext::new(&config) {
-                Ok(ctx) => out.push((host, ctx)),
-                Err(e) => {
-                    return Err(global
-                        .err(jsc::ErrorCode::INVALID_ARG_VALUE, format_args!("tls: {e}"))
-                        .throw());
-                }
-            }
+            out.push((host, f(TlsConfig::from_js(global, value, true)?)?));
         }
         Ok(out)
+    }
+
+    fn build_sni_context(
+        global: &JSGlobalObject,
+        mut config: TlsConfig,
+        alpn: &[u8],
+    ) -> JsResult<TlsContext> {
+        if config.alpn.is_empty() {
+            config.alpn = alpn.to_vec();
+        }
+        TlsContext::new(&config).map_err(|e| {
+            global
+                .err(jsc::ErrorCode::INVALID_ARG_VALUE, format_args!("tls: {e}"))
+                .throw()
+        })
     }
 
     pub(crate) fn set_sni_contexts(
@@ -2655,11 +2796,18 @@ impl QuicEndpoint {
                 )
                 .throw());
         }
-        let mut alpn = self.server_alpn_wire.get().clone();
-        if alpn.is_empty() {
-            alpn = b"\x02h3".to_vec();
+        let built = Self::read_sni_entries(global, entries, |config| {
+            // Taken after this host's read, which can call `listen()`.
+            let alpn: &[u8] = match self.server_alpn_wire.get().as_slice() {
+                [] => b"\x02h3",
+                wire => wire,
+            };
+            Self::build_sni_context(global, config, alpn)
+        })?;
+        // The reads above ran user code, which can close this endpoint.
+        if self.closed.get() {
+            return Ok(());
         }
-        let built = Self::build_sni_contexts(global, entries, &alpn)?;
         self.sni_contexts.with_mut(|map| {
             if replace.to_boolean() {
                 map.clear();

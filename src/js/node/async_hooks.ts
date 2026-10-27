@@ -234,14 +234,27 @@ class AsyncLocalStorage<T = any> {
     }
   }
 
-  static bind(fn, ...args: any) {
+  // Node's bind() is AsyncResource.bind(fn): fn gets the caller's `this`. Bun's
+  // AsyncResource carries no hooks or async ids, so the wrapper holds the frame itself.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/async_hooks.js#L250-L277
+  static bind(fn) {
     validateFunction(fn, "fn");
-    return this.snapshot().bind(null, fn, ...args);
+    var context = get();
+    return function bound(this: unknown, ...args) {
+      var prev = get();
+      set(context);
+      try {
+        return fn.$apply(this, args);
+      } finally {
+        set(prev);
+      }
+    };
   }
 
   static snapshot() {
     var context = get();
-    return (fn, ...args) => {
+    // Named "bound" as in Node, where snapshot() returns a bind() result.
+    var bound = (fn, ...args) => {
       var prev = get();
       set(context);
       try {
@@ -250,6 +263,7 @@ class AsyncLocalStorage<T = any> {
         set(prev);
       }
     };
+    return bound;
   }
 
   enterWith(store) {
@@ -272,7 +286,7 @@ class AsyncLocalStorage<T = any> {
     // finally-restore. Observable when the callback calls enterWith() —
     // the new value survives past run() (verified against Node v22/v26).
     if (sameValue(beforeValue, store_value)) {
-      return callback.$apply(undefined, args);
+      return callback.$apply(null, args);
     }
     var mutations = frameMutations;
     // Replace rather than shadow an outer binding of this storage, so a callback
@@ -283,8 +297,8 @@ class AsyncLocalStorage<T = any> {
     set(frame);
     try {
       // $apply, not a spread: spreading goes through Array.prototype[Symbol.iterator],
-      // which userland can delete (node uses ReflectApply here for the same reason).
-      return callback.$apply(undefined, args);
+      // which userland can delete (node uses ReflectApply(fn, null, args) here for the same reason).
+      return callback.$apply(null, args);
     } finally {
       var head = get();
       if (

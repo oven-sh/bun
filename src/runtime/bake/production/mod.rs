@@ -982,6 +982,12 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
 
         // Count how many JS+CSS files associated with this route and prepare `pattern`
         let mut file_count: u32 = 1;
+        // The page and each layout above it are separate entry points, each with its own classification.
+        let mut fully_static = pt
+            .output_file(main_file_route_index)
+            .bake_extra
+            .route
+            .is_fully_static();
         let mut next: Option<router::RouteIndex> = Some(route_index);
         while let Some(current_index) = next {
             let current = router.route_ptr(current_index);
@@ -997,8 +1003,9 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                 }
                 router::Part::Text(_) | router::Part::Group(_) => {}
             }
-            if current.file_layout.is_some() {
+            if let Some(layout) = current.file_layout {
                 file_count += 1;
+                fully_static &= pt.output_file(layout).bake_extra.route.is_fully_static();
             }
             next = current.parent;
         }
@@ -1112,14 +1119,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                 global,
                 u32::try_from(nav_index).expect("int cast"),
                 JSValue::js_number_from_int32(
-                    TypeAndFlags::new(
-                        route.r#type.get(),
-                        pt.output_file(main_file_route_index)
-                            .bake_extra
-                            .route
-                            .is_fully_static(),
-                    )
-                    .bits(),
+                    TypeAndFlags::new(route.r#type.get(), fully_static).bits(),
                 ),
             )
             .map_err(js_err)?;

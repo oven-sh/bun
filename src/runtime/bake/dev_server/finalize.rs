@@ -1018,10 +1018,8 @@ pub(super) fn finalize_bundle(
             // Send the JS chunk
             if dev.client_graph.current_chunk_len > 0 {
                 let script_id = 'h: {
-                    // The key must cover every field `Entry::render_json`
-                    // emits: a literal-only edit changes the contents but not
-                    // the mappings. The tag byte keeps Some/LineCount/None
-                    // parts from colliding.
+                    // Hash every field `Entry::render_json` emits, with a tag
+                    // byte per `Shared` variant.
                     let mut source_map_hash = bun_hash::XxHash64Streaming::new(0x4b12);
                     let keys = dev.client_graph.bundled_files.keys();
                     let values = dev.client_graph.bundled_files.values();

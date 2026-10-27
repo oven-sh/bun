@@ -994,7 +994,7 @@ impl FFI {
         let mut compile_c = CompileC::default();
 
         let symbols_object: JSValue = object
-            .get_own(global_this, &bun_core::String::borrow_utf8(b"symbols"))?
+            .get_own(global_this, &bun_core::StringView::borrow_utf8(b"symbols"))?
             .unwrap_or(JSValue::UNDEFINED);
         if symbols_object.is_empty() || !symbols_object.is_object() {
             return Err(global_this.throw_invalid_argument_type_value(
@@ -1022,7 +1022,7 @@ impl FFI {
         }
 
         if let Some(library_value) =
-            object.get_own(global_this, &bun_core::String::borrow_utf8(b"library"))?
+            object.get_own(global_this, &bun_core::StringView::borrow_utf8(b"library"))?
         {
             compile_c.libraries = StringArray::from_js(global_this, library_value, "library")?;
         }
@@ -1099,7 +1099,7 @@ impl FFI {
         }
 
         if let Some(source_value) =
-            object.get_own(global_this, &bun_core::String::borrow_utf8(b"source"))?
+            object.get_own(global_this, &bun_core::StringView::borrow_utf8(b"source"))?
         {
             if source_value.is_array() {
                 let mut files = Vec::new();
@@ -1573,7 +1573,7 @@ impl FFI {
                     }
                 };
             // Symbol names are user input, so one can be an array index like "0".
-            let key = bun_core::String::borrow_utf8(function_name.as_bytes());
+            let key = bun_core::StringView::borrow_utf8(function_name.as_bytes());
             if let Err(err) = obj.put_may_be_index(global, &key, cb) {
                 dylib.close();
                 lib.do_close();
@@ -1656,7 +1656,7 @@ impl FFI {
                     }
                 };
             // Symbol names are user input, so one can be an array index like "0".
-            let key = bun_core::String::borrow_utf8(function_name.as_bytes());
+            let key = bun_core::StringView::borrow_utf8(function_name.as_bytes());
             if let Err(err) = obj.put_may_be_index(global, &key, cb) {
                 lib.do_close();
                 return Err(err);
@@ -1719,7 +1719,7 @@ pub(super) fn generate_symbol_for_function(
 
     let mut abi_types: Vec<ABIType> = Vec::new();
 
-    if let Some(args) = value.get_own(global, &bun_core::String::borrow_utf8(b"args"))? {
+    if let Some(args) = value.get_own(global, &bun_core::StringView::borrow_utf8(b"args"))? {
         if args.is_empty_or_undefined_or_null() || !args.js_type().is_array() {
             return Ok(Some(global.create_error_instance(format_args!(
                 "Expected an object with \"args\" as an array"

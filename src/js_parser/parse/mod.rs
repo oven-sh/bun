@@ -1483,7 +1483,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         is_prologue: bool,
     ) -> Option<js_ast::stmt::Data> {
         let p = self;
-        let source: &'a bun_ast::Source = p.source;
+        let source: &'a bun_ast::Source<'a> = p.source;
         let dropped = Some(js_ast::stmt::Data::SEmpty(S::Empty {}));
         let is_use_strict = is_prologue && is_use_strict_token(source.contents(), loc);
 

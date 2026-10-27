@@ -1742,10 +1742,11 @@ describe("a macro import that is used outside of a call", () => {
     expect(exitCode).toBe(0);
   });
 
-  // These read the same parse as transformSync() and print nothing. scanImports() does not visit the file.
-  test("Bun.Transpiler: scan() and transform() have the error, and scanImports() does not", async () => {
+  // scan() returns the imports and exports and prints nothing, so it is not an error there. scanImports() does not
+  // visit the file.
+  test("Bun.Transpiler: transform() has the error, and scan() and scanImports() do not", async () => {
     const transpiler = new Bun.Transpiler({ loader: "js" });
-    const source = `${named}\nconst f = m;\nconsole.log(f, m);\n`;
+    const source = `${named}\nexport const f = m;\nconsole.log(f, m);\n`;
     const errors = (e: any) => (e?.errors ?? [e]).map((error: any) => [error?.message, error?.notes?.length]);
     const thrownBy = (call: () => unknown) => {
       try {
@@ -1759,10 +1760,11 @@ describe("a macro import that is used outside of a call", () => {
       [notDefined("m"), 2],
       [notDefined("m"), 0],
     ];
-    expect(errors(thrownBy(() => transpiler.scan(source)))).toEqual(expected);
     expect(errors(thrownBy(() => transpiler.transformSync(source)))).toEqual(expected);
     expect(errors(await transpiler.transform(source).catch(e => e))).toEqual(expected);
-    expect(transpiler.scanImports(source)).toEqual([{ kind: "import-statement", path: "./m.ts" }]);
+    const imports = [{ kind: "import-statement", path: "./m.ts" }];
+    expect(transpiler.scan(source)).toEqual({ exports: ["f"], imports });
+    expect(transpiler.scanImports(source)).toEqual(imports);
     // A transpiler that keeps dead code does not look for the reference.
     const keepsDeadCode = new Bun.Transpiler({ loader: "js", deadCodeElimination: false });
     expect(keepsDeadCode.transformSync(source)).toContain("const f = m;");

@@ -39,8 +39,8 @@ pub(crate) fn reject_macro_value_uses(
     if !features.dead_code_elimination {
         return;
     }
-    // A graph scan reads only the imports of the file. The command that runs or prints the file has the error.
-    if features.graph_scan {
+    // The caller reads the imports and exports, or compares a re-print. The command that runs the file has the error.
+    if features.output_never_runs {
         return;
     }
     let (located, is_cut) = locate_macro_refs(ast.parts.as_slice(), refs);

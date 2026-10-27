@@ -2603,6 +2603,7 @@ fn transpile_source_code_of_any_provenance(
                         && unsafe { &*jsc_vm }.module_loader.eval_source.is_some(),
                     macro_js_ctx: bun_bundler::transpiler::default_macro_js_value(),
                     replace_exports: Default::default(),
+                    output_never_runs: false,
                 };
 
                 // Both the file-only and transpiled arms hit the same

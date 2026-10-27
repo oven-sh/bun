@@ -906,6 +906,8 @@ pub struct ParseOptions<'a, 'b> {
 
     pub keep_json_and_toml_as_one_statement: bool,
     pub allow_bytecode_cache: bool,
+    /// Nothing runs the result of this parse: the caller reads only the imports and exports of the file.
+    pub output_never_runs: bool,
 }
 
 use bun_options_types::schema::api;
@@ -1512,6 +1514,7 @@ impl<'a> Transpiler<'a> {
                     .trim_unused_imports
                     .unwrap_or_else(|| loader.is_typescript());
                 opts.features.no_macros = self.options.no_macros;
+                opts.features.output_never_runs = this_parse.output_never_runs;
                 // `bun_ast::RuntimeTranspilerCache` is the single nominal
                 // type on both sides; thread the pointer directly.
                 // The same `RuntimeTranspilerCache` raw pointer goes to BOTH
@@ -2884,6 +2887,7 @@ impl<'a> Transpiler<'a> {
                     runtime_transpiler_cache: None,
                     keep_json_and_toml_as_one_statement: false,
                     allow_bytecode_cache: false,
+                    output_never_runs: false,
                 };
 
                 let Some(mut result) = self.parse(parse_opts, client_entry_point_) else {

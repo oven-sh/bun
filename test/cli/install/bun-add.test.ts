@@ -372,6 +372,29 @@ it("bun add --analyze leaves out builtins, paths and aliases, with or without a 
   ).toEqual({ added: ["bar"], errors: [], exitCode: 0 });
 });
 
+// A build refuses this file, because its output names an import that Bun removes. Nothing runs the output of the scan.
+it.each(["add", "install"] as const)(
+  "bun %s --analyze adds the packages of a file that names a macro import outside of a call",
+  async command => {
+    const urls: string[] = [];
+    await writeFile(join(package_dir, "macro.ts"), `export function one() { return 1; }\n`);
+    const source = `import "bar/sub";\nimport { one } from "./macro.ts" with { type: "macro" };\nconsole.log(one);\n`;
+    expect(await analyze(command, source, { urls })).toEqual({ added: ["bar"], errors: [], exitCode: 0 });
+    expect(urls).toEqual([`${root_url}/bar`]);
+
+    await using build = spawn({
+      cmd: [bunExe(), "build", "--no-bundle", "./entry-point.ts"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect(stderr).toContain(`"one" is a macro import and is not defined at runtime`);
+    expect(exitCode).toBe(1);
+  },
+);
+
 it("bun add --analyze does not add the package that the rest of a bun: specifier names", async () => {
   const urls: string[] = [];
   // "#!/usr/bin/env bun" makes this a file for bun.

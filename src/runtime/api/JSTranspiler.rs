@@ -755,6 +755,7 @@ impl TransformTask {
             runtime_transpiler_cache: None,
             keep_json_and_toml_as_one_statement: false,
             allow_bytecode_cache: false,
+            output_never_runs: false,
         };
 
         let Some(parse_result) = self.transpiler.parse(parse_options, None) else {
@@ -1154,6 +1155,7 @@ impl JSTranspiler {
         code: &'p [u8],
         loader: Option<Loader>,
         macro_js_ctx: MacroJSCtx,
+        output_never_runs: bool,
     ) -> Option<ParseResult<'p>> {
         let config = self.config.get();
         let name = config.default_loader.stdin_name();
@@ -1218,6 +1220,7 @@ impl JSTranspiler {
             runtime_transpiler_cache: None,
             keep_json_and_toml_as_one_statement: false,
             allow_bytecode_cache: false,
+            output_never_runs,
         };
 
         // SAFETY: see `transpiler_mut` — `parse` may re-enter JS via macros.
@@ -1260,7 +1263,13 @@ impl JSTranspiler {
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
         let _ast_scope = ast_memory_allocator.enter();
 
-        let parse_result = self.get_parse_result(arena_ref, code, loader, MacroJSCtx::ZERO);
+        let parse_result = self.get_parse_result(
+            arena_ref,
+            code,
+            loader,
+            MacroJSCtx::ZERO,
+            /* output_never_runs */ true,
+        );
         let log_ref = self.transpiler.get().log_mut();
         let Some(mut parse_result) = parse_result else {
             if (log_ref.warnings + log_ref.errors) > 0 {
@@ -1405,7 +1414,13 @@ impl JSTranspiler {
 
         // `MacroJSCtx` carries the encoded `JSValue` bits (`#[repr(transparent)] i64`).
         let macro_js_ctx: MacroJSCtx = MacroJSCtx(js_ctx_value.0 as i64);
-        let parse_result = self.get_parse_result(arena_ref, code, loader, macro_js_ctx);
+        let parse_result = self.get_parse_result(
+            arena_ref,
+            code,
+            loader,
+            macro_js_ctx,
+            /* output_never_runs */ false,
+        );
         let log_ref = self.transpiler.get().log_mut();
         let Some(parse_result) = parse_result else {
             if (log_ref.warnings + log_ref.errors) > 0 {

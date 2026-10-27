@@ -194,8 +194,8 @@ pub mod Runtime {
         pub inject_jest_globals: bool,
 
         pub no_macros: bool,
-        /// The caller reads only the import records of the AST. It never links or prints it.
-        pub graph_scan: bool,
+        /// Nothing runs the result of this parse. The caller reads the imports and exports, or compares a re-print.
+        pub output_never_runs: bool,
 
         pub commonjs_named_exports: bool,
 
@@ -291,7 +291,7 @@ pub mod Runtime {
                 inlining: false,
                 inject_jest_globals: false,
                 no_macros: false,
-                graph_scan: false,
+                output_never_runs: false,
                 commonjs_named_exports: true,
                 minify_syntax: false,
                 minify_identifiers: false,

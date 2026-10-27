@@ -838,6 +838,32 @@ describe.concurrent("bun pm diff (canonical re-print)", () => {
     expect(exitCode).toBe(0);
   });
 
+  // A build refuses this file, because its output names an import that Bun removes. Nothing runs the re-print.
+  test("a file that names a macro import outside of a call is re-printed", async () => {
+    const value = `import { m } from "./m.js" with { type: "macro" };\nexport const f = m;\n`;
+    const files = {
+      "a/index.js": value + `export function g() { return 1; }\n`,
+      "b/index.js": value + `export function g() {\n  return 1;\n}\n`,
+      "a/m.js": `export const m = () => 1;\n`,
+      "b/m.js": `export const m = () => 1;\n`,
+    };
+    const { text, exitCode } = await pretty(files);
+    expect(text).toMatch(/\nindex\.js ─+ formatting only\n/);
+    expect(exitCode).toBe(0);
+
+    using dir = tempDir("pm-diff-macro", files);
+    await using build = Bun.spawn({
+      cmd: [bunExe(), "build", "./b/index.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, buildExitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    expect(stderr).toContain(`"m" is a macro import and is not defined at runtime`);
+    expect(buildExitCode).toBe(1);
+  });
+
   test("two minified builds with different mangled names diff down to the real change", async () => {
     // Same program, names handed out differently by the "minifier", plus one genuine edit (* 2 → * 3) and one
     // inserted helper in b. Long enough on one line to count as minified.

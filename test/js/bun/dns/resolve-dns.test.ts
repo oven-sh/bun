@@ -327,8 +327,7 @@ describe("dns", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe("");
-      expect(exitCode).toBe(0);
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
       return JSON.parse(stdout);
     }
 
@@ -347,8 +346,7 @@ describe("dns", () => {
         ["host.corp.test", ["10.0.0.1 4"], []],
         ["host.corp.test", ["2001:db8::1 6"], []],
         ["v6.test", ["2001:db8::6 6"], ["v6.test 1", "v6.test 28"]],
-        // That it has no A record was remembered.
-        ["v6.test", "DNS_ENOTFOUND", ["v6.test.corp.test 1"]],
+        ["v6.test", "DNS_ENOTFOUND", ["v6.test 1", "v6.test.corp.test 1"]],
       ]);
     });
 

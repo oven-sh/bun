@@ -108,7 +108,7 @@ impl<I: Io, T> Channel<I, T> {
             return Ok(());
         }
         let server = conn.server;
-        conn.queries.retain(|other| *other != serial);
+        conn.queries.remove(&(query.send_order, serial));
 
         if answer.flags & flag::TC != 0 && conn.transport == Transport::Udp {
             query.using_tcp = true;
@@ -157,7 +157,7 @@ impl<I: Io, T> Channel<I, T> {
         if let Some((conn, _)) = query.sent_on.take()
             && let Some(conn) = self.conns.get_mut(&conn)
         {
-            conn.queries.retain(|other| *other != serial);
+            conn.queries.remove(&(query.send_order, serial));
         }
     }
 
@@ -363,13 +363,15 @@ impl<I: Io, T> Channel<I, T> {
         let timeout = now.plus_ms(self.query_timeout_ms(now, server, serial));
         self.remove_from_connection(serial);
         if let Some(query) = self.queries.get_mut(&serial) {
+            self.sends += 1;
             query.sent_at = now;
             query.timeout = Some(timeout);
             query.sent_on = Some((conn, server));
+            query.send_order = self.sends;
             self.timeouts.insert((timeout, serial));
-        }
-        if let Some(conn) = self.conns.get_mut(&conn) {
-            conn.queries.push_back(serial);
+            if let Some(conn) = self.conns.get_mut(&conn) {
+                conn.queries.insert((query.send_order, serial));
+            }
         }
 
         if may_probe {
@@ -423,7 +425,7 @@ impl<I: Io, T> Channel<I, T> {
             no_cache: true,
             no_retry: true,
         };
-        self.send(now, Some(server), flags, &request, Owner::Probe);
+        self.send(now, Some(server), flags, &request, Owner::Probe { server });
     }
 }
 

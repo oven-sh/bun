@@ -19,7 +19,7 @@ pub enum Source {
     Dns,
 }
 
-#[derive(Default, Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct SysConfig {
     pub servers: Vec<ServerConfig>,
     /// The search list.
@@ -30,6 +30,21 @@ pub struct SysConfig {
     pub timeout_ms: Option<u32>,
     pub rotate: bool,
     pub use_tcp: bool,
+}
+
+impl Default for SysConfig {
+    fn default() -> SysConfig {
+        SysConfig {
+            servers: Vec::new(),
+            domains: Vec::new(),
+            sources: None,
+            ndots: 1,
+            tries: None,
+            timeout_ms: None,
+            rotate: false,
+            use_tcp: false,
+        }
+    }
 }
 
 pub(crate) fn load_file<I: Io>(io: &mut I, path: &[u8]) -> Result<Vec<u8>> {
@@ -45,10 +60,7 @@ pub(crate) fn load_etc_file<I: Io>(io: &mut I, name: &str) -> Result<Vec<u8>> {
 }
 
 pub(crate) fn read<I: Io>(io: &mut I) -> Result<SysConfig> {
-    let mut config = SysConfig {
-        ndots: 1,
-        ..SysConfig::default()
-    };
+    let mut config = SysConfig::default();
     match io.settings() {
         Settings::Files => config.read_files(io)?,
         Settings::Windows(settings) => config.read_windows(io, settings),

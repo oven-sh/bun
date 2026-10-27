@@ -86,8 +86,9 @@ impl QueryCache {
         };
         let ttl = match record.rcode {
             _ if record.flags & flag::TC != 0 => return,
-            rcode::NOERROR => lowest_ttl(&record),
-            rcode::NXDOMAIN => negative_ttl(&record),
+            // c-ares keeps an answer without records for `MAX_TTL`: no TTL in it is the lowest.
+            rcode::NOERROR if !record.answer.is_empty() => lowest_ttl(&record),
+            rcode::NOERROR | rcode::NXDOMAIN => negative_ttl(&record),
             _ => return,
         }
         .min(MAX_TTL);

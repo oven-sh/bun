@@ -482,13 +482,13 @@ impl Io for World {
         _ = writeln!(self.log, "close {id}");
     }
 
-    /// xorshift64, a byte a step.
+    /// xorshift64*, a byte a step.
     fn random(&mut self, bytes: &mut [u8]) {
         for byte in bytes {
             self.random ^= self.random << 13;
             self.random ^= self.random >> 7;
             self.random ^= self.random << 17;
-            *byte = (self.random >> 32) as u8;
+            *byte = (self.random.wrapping_mul(0x2545_f491_4f6c_dd1d) >> 56) as u8;
         }
     }
 

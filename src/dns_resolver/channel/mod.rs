@@ -71,7 +71,9 @@ pub(crate) enum Owner<T> {
         lookup: LookupId,
     },
     /// A copy of another query, sent to a server that failed. What becomes of it is that server's record.
-    Probe,
+    Probe {
+        server: ServerId,
+    },
 }
 
 pub(crate) struct Query<T> {
@@ -88,6 +90,8 @@ pub(crate) struct Query<T> {
     /// Its place in `Channel::timeouts`.
     timeout: Option<Time>,
     sent_on: Option<(ConnId, ServerId)>,
+    /// Its place in `Conn::queries`.
+    send_order: u64,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -118,6 +122,7 @@ pub struct Channel<I: Io, T> {
     next_server_id: u64,
     conns: BTreeMap<ConnId, Conn<I::Socket>>,
     next_conn_id: u64,
+    sends: u64,
     pub(crate) queries: BTreeMap<Serial, Query<T>>,
     next_serial: Serial,
     serial_of_qid: BTreeMap<u16, Serial>,
@@ -155,6 +160,7 @@ impl<I: Io, T> Channel<I, T> {
             next_server_id: 0,
             conns: BTreeMap::new(),
             next_conn_id: 0,
+            sends: 0,
             queries: BTreeMap::new(),
             next_serial: 0,
             serial_of_qid: BTreeMap::new(),
@@ -403,6 +409,7 @@ impl<I: Io, T> Channel<I, T> {
                 sent_at: now,
                 timeout: None,
                 sent_on: None,
+                send_order: 0,
             },
         );
         self.send_query(now, server, serial).ok().map(|()| serial)
@@ -415,7 +422,12 @@ impl<I: Io, T> Channel<I, T> {
             None => Err(Error::EBADRESP),
         });
         match owner {
-            Owner::Probe => {}
+            // Also one that never got as far as a connection, which no server is told of.
+            Owner::Probe { server } => {
+                if let Some(server) = self.server_mut(server) {
+                    server.probe_pending = false;
+                }
+            }
             Owner::Caller { kind, token } => {
                 // c-ares hands an answer over as a message. One it cannot write is an error, whatever else is.
                 let message = answer.map(|answer| answer.write(0)).transpose();

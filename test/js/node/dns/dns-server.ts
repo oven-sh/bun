@@ -114,7 +114,7 @@ export function encode(query: Query, reply: Reply): Buffer {
   ]);
 }
 
-function parse(message: Buffer, transport: Query["transport"], index: number, from: string): Query {
+export function parse(message: Buffer, transport: Query["transport"], index: number, from: string): Query {
   const labels: string[] = [];
   let offset = 12;
   while (message[offset]) {

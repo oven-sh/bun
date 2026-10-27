@@ -1,0 +1,844 @@
+// The resolver behind `node:dns` makes no system call of its own, so these run it in a made-up world: files, settings,
+// routes, sockets and the clock are the script's. What a script and a log say is in src/dns_resolver/simulation.rs.
+import { dnsSimulate } from "bun:internal-for-testing";
+import { describe, expect, test } from "bun:test";
+import { a, aaaa, cname, encode, name, parse, RCODE, record, type Reply, TYPE, u16 } from "./dns-server";
+
+/** A word of a script that stands for these bytes. */
+function text(value: string | Buffer): string {
+  const bytes = Buffer.from(value);
+  if (bytes.length === 0) return "%";
+  return Array.from(bytes, byte =>
+    byte <= 0x20 || byte >= 0x7f || byte === 0x25
+      ? "%" + byte.toString(16).padStart(2, "0").toUpperCase()
+      : String.fromCharCode(byte),
+  ).join("");
+}
+
+const file = (path: string, contents: string, modified?: number) =>
+  `file ${path} ${text(contents)}${modified === undefined ? "" : ` ${modified}`}`;
+
+/** A script that grows. What it has so far is run again for every line added, which always goes the same way. */
+class World {
+  #script: string[] = [];
+  #seen = 0;
+  log: string[] = [];
+
+  constructor(...lines: string[]) {
+    this.#script.push(...lines);
+  }
+
+  /** What these lines add to the log. */
+  run(...lines: string[]): string[] {
+    this.#script.push(...lines);
+    this.log = dnsSimulate(this.#script.join("\n")).split("\n").slice(0, -1);
+    const added = this.log.slice(this.#seen);
+    this.#seen = this.log.length;
+    return added;
+  }
+
+  /** The last message sent on `socket`. */
+  sent(socket: number) {
+    const line = this.log.findLast(line => line.startsWith(`send ${socket} `) && !/ (blocks|fails)$/.test(line));
+    if (!line) throw new Error(`nothing was sent on ${socket}:\n${this.log.join("\n")}`);
+    const isTcp = this.log.some(line => line.startsWith(`open ${socket} tcp `));
+    return parse(Buffer.from(line.split(" ")[2], "hex").subarray(isTcp ? 2 : 0), isTcp ? "tcp" : "udp", 0, "");
+  }
+
+  /** Answers the last message sent on `socket`. */
+  reply(socket: number, reply: Reply): string[] {
+    const query = this.sent(socket);
+    const message = encode(query, reply);
+    const framed = query.transport === "tcp" ? Buffer.concat([u16(message.length), message]) : message;
+    return this.run(`deliver ${socket} ${framed.toString("hex")}`);
+  }
+
+  /** `transport type name` of every message sent, in order. */
+  questions(): string[] {
+    return this.log
+      .filter(line => /^send \d+ [0-9a-f]+$/.test(line))
+      .map(line => {
+        const socket = Number(line.split(" ")[1]);
+        const isTcp = this.log.some(line => line.startsWith(`open ${socket} tcp `));
+        const query = parse(Buffer.from(line.split(" ")[2], "hex").subarray(isTcp ? 2 : 0), "udp", 0, "");
+        return `${socket} ${query.type} ${query.name}`;
+      });
+  }
+}
+
+const servers = (...lines: string[]) =>
+  new World(...lines).run("local 0.0.0.0").find(line => line.startsWith("servers"));
+
+describe("where the servers come from", () => {
+  test("resolv.conf", () => {
+    expect(
+      servers(
+        file(
+          "/etc/resolv.conf",
+          [
+            "# comment",
+            "; comment",
+            "nameserver 10.0.0.1",
+            "  nameserver   10.0.0.2   # comment",
+            "nameserver 10.0.0.3:5353",
+            "nameserver [10.0.0.4]:54",
+            "nameserver 2001:db8::1",
+            "nameserver [2001:db8::2]:5353",
+            "nameserver 10.0.0.5, 10.0.0.6 10.0.0.7",
+            "nameserver not-an-address",
+            "nameserver 10.0.0.1",
+            "nameserver fec0::1",
+            "nameserver fe80::1",
+            "nameserver fe80::2%eth0",
+            "nameserver fe80::3%7",
+            "nameserver fe80::4%nope",
+            "nameserver fe80::5%9",
+            "nameserverx 10.9.9.9",
+            "NAMESERVER 10.9.9.8",
+          ].join("\n"),
+        ),
+        "interface 3 eth0",
+        "interface 7 eth1",
+      ),
+    ).toMatchInlineSnapshot(
+      `"servers 10.0.0.1#53#53#0 10.0.0.2#53#53#0 10.0.0.3#5353#5353#0 10.0.0.4#54#54#0 2001:db8::1#53#53#0 2001:db8::2#5353#5353#0 10.0.0.5#53#53#0 10.0.0.6#53#53#0 10.0.0.7#53#53#0 fe80::2#53#53#3 fe80::3#53#53#7"`,
+    );
+  });
+
+  test("no file, no server in it, or a file that cannot be read: 127.0.0.1", () => {
+    expect(servers()).toBe("servers 127.0.0.1#53#53#0");
+    expect(servers(file("/etc/resolv.conf", "search corp.test\n"))).toBe("servers 127.0.0.1#53#53#0");
+    expect(servers("unreadable /etc/resolv.conf")).toBe("servers 127.0.0.1#53#53#0");
+    // All of the configuration is given up, also what could be read.
+    expect(servers(file("/etc/resolv.conf", "nameserver 10.0.0.1\n"), "unreadable /etc/nsswitch.conf")).toBe(
+      "servers 127.0.0.1#53#53#0",
+    );
+  });
+
+  test("Windows: the adapters' servers by the metric of the route to them", () => {
+    expect(
+      servers(
+        "settings windows",
+        "interface 12 ethernet_1",
+        "windows-server 10.0.0.1 53 25 256 0",
+        "windows-server 10.0.0.2 53 25 0 0",
+        "windows-server 10.0.0.3 0 5 - 0",
+        "windows-server 10.0.0.4 53 5 4294967295 0",
+        "windows-server 10.0.0.5 53 4294967295 1 0",
+        "windows-server 10.0.0.6 53 25 0 0",
+        "windows-server 10.0.0.2 53 1 0 0",
+        "windows-server 0.0.0.0 53 0 0 0",
+        "windows-server 255.255.255.255 53 0 0 0",
+        "windows-server :: 53 0 0 0",
+        "windows-server fec0:0:0:ffff::1 53 0 0 12",
+        "windows-server fe80::1 53 30 0 12",
+        "windows-server fe80::2 53 30 0 13",
+        "windows-server fe80::3 53 30 0 0",
+        "windows-server 2001:db8::1 53 10 0 12",
+      ),
+    ).toBe(
+      "servers 10.0.0.2#53#53#0 2001:db8::1#53#53#0 10.0.0.6#53#53#0 fe80::1#53#53#12 10.0.0.1#53#53#0 " +
+        "10.0.0.3#53#53#0 10.0.0.4#53#53#0 10.0.0.5#53#53#0",
+    );
+    expect(servers("settings windows")).toBe("servers 127.0.0.1#53#53#0");
+  });
+
+  test("macOS: the resolvers for every domain that can be reached", () => {
+    expect(
+      servers(
+        "settings mac",
+        "interface 4 en0",
+        "mac-resolver 0 2 0 0 - 10.0.0.1#0 10.0.0.2#5353",
+        "mac-resolver 1 2 0 0 - 10.0.0.3#0",
+        "mac-resolver 0 0 0 0 - 10.0.0.4#0",
+        "mac-resolver 0 4 0 0 - 10.0.0.5#0",
+        "mac-resolver 0 8 54 0 - 10.0.0.6#0 10.0.0.7#55",
+        "mac-resolver 0 2 0 4 - fe80::1#0 2001:db8::1#0",
+        "mac-resolver 0 2 0 5 - fe80::2#0",
+        "mac-resolver 0 2 0 0 - search=nobody.test",
+      ),
+    ).toBe(
+      "servers 10.0.0.1#53#53#0 10.0.0.2#5353#5353#0 10.0.0.6#54#54#0 10.0.0.7#55#55#0 fe80::1#53#53#4 2001:db8::1#53#53#0",
+    );
+    expect(servers("settings mac")).toBe("servers 127.0.0.1#53#53#0");
+    expect(servers("settings mac-fails", file("/etc/resolv.conf", "nameserver 10.0.0.1\n"))).toBe(
+      "servers 127.0.0.1#53#53#0",
+    );
+  });
+
+  test("Android: the properties", () => {
+    expect(servers("settings android", "android-property 10.0.0.1", "android-property 2001:db8::1,10.0.0.2")).toBe(
+      "servers 10.0.0.1#53#53#0 2001:db8::1#53#53#0 10.0.0.2#53#53#0",
+    );
+    expect(servers("settings android")).toBe("servers 127.0.0.1#53#53#0");
+  });
+});
+
+/** The names asked for when every server says that nothing exists. */
+function searched(lookup: string, ...world: string[]): string[] {
+  const it = new World(...world);
+  it.run(`lookup ${lookup} 0 4`);
+  for (let socket = 1; !it.log.some(line => line.startsWith("done 0"));) {
+    socket = Number(it.log.findLast(line => line.startsWith("send "))!.split(" ")[1]);
+    it.reply(socket, { rcode: RCODE.NXDOMAIN });
+  }
+  expect(it.log.at(-2)).toBe("done 0 error ENOTFOUND");
+  return it.questions().map(question => question.split(" ")[2]);
+}
+
+describe("the search list", () => {
+  const resolvConf = (...lines: string[]) => file("/etc/resolv.conf", ["nameserver 10.0.0.1", ...lines, ""].join("\n"));
+
+  test("every domain in turn, before or after the name itself", () => {
+    const world = resolvConf("search one.test two.test three.test");
+    expect(searched("host", world)).toEqual(["host.one.test", "host.two.test", "host.three.test", "host"]);
+    expect(searched("host.sub", world)).toEqual([
+      "host.sub",
+      "host.sub.one.test",
+      "host.sub.two.test",
+      "host.sub.three.test",
+    ]);
+    expect(searched("host.", world)).toEqual(["host"]);
+  });
+
+  test("ndots", () => {
+    const world = resolvConf("search one.test", "options ndots:3");
+    expect(searched("a.b.c", world)).toEqual(["a.b.c.one.test", "a.b.c"]);
+    expect(searched("a.b.c.d", world)).toEqual(["a.b.c.d", "a.b.c.d.one.test"]);
+    expect(searched("host", resolvConf("search one.test", "options ndots:0"))).toEqual(["host", "host.one.test"]);
+  });
+
+  test("the last `search` counts, `domain` only if there is none before it", () => {
+    expect(searched("host", resolvConf("search one.test", "search two.test"))).toEqual(["host.two.test", "host"]);
+    expect(searched("host", resolvConf("domain one.test two.test"))).toEqual(["host.one.test", "host"]);
+    expect(searched("host", resolvConf("search one.test", "domain two.test"))).toEqual(["host.one.test", "host"]);
+    expect(searched("host", resolvConf("domain two.test", "search one.test"))).toEqual(["host.one.test", "host"]);
+    expect(searched("host", resolvConf("search one.test, ONE.test,two.test"))).toEqual([
+      "host.one.test",
+      "host.two.test",
+      "host",
+    ]);
+  });
+
+  test("without one, the domain of the host's own name", () => {
+    expect(searched("host", resolvConf(), "hostname box.corp.test")).toEqual(["host.corp.test", "host"]);
+    expect(searched("host", resolvConf(), "hostname box")).toEqual(["host"]);
+    expect(searched("host", resolvConf())).toEqual(["host"]);
+    expect(searched("host", "unreadable /etc/resolv.conf", "hostname box.corp.test")).toEqual([
+      "host.corp.test",
+      "host",
+    ]);
+  });
+
+  test("the environment has the last word", () => {
+    const world = resolvConf("search one.test two.test", "options ndots:1");
+    expect(searched("host", world, `env LOCALDOMAIN ${text("env.test other.test")}`)).toEqual([
+      "host.env.test",
+      "host",
+    ]);
+    expect(searched("a.b", world, `env RES_OPTIONS ${text("ndots:2 attempts:1")}`)).toEqual([
+      "a.b.one.test",
+      "a.b.two.test",
+      "a.b",
+    ]);
+  });
+
+  test("Windows: the registry's suffixes, one after the other", () => {
+    expect(
+      searched(
+        "host",
+        "settings windows",
+        `windows-suffix ${text("one.test,two.test")}`,
+        "windows-suffix three.test",
+        `windows-suffix ${text("caf\u00e9.test")}`,
+        "windows-suffix %",
+        "windows-suffix ONE.test",
+        `windows-suffix ${text("four.test five.test")}`,
+      ),
+    ).toEqual(["host.one.test", "host.two.test", "host.three.test", "host.four.test", "host.five.test", "host"]);
+  });
+
+  test("macOS: the resolvers' search lists and options together", () => {
+    expect(
+      searched(
+        "a.b",
+        "settings mac",
+        "mac-resolver 0 2 0 0 ndots:2 search=one.test search=two.test 10.0.0.1#0",
+        "mac-resolver 1 2 0 0 - search=skipped.test 10.0.0.2#0",
+        "mac-resolver 0 2 0 0 - search=TWO.test search=three.test 10.0.0.3#0",
+      ),
+    ).toEqual(["a.b.one.test", "a.b.two.test", "a.b.three.test", "a.b"]);
+  });
+
+  test("HOSTALIASES", () => {
+    const world = [
+      resolvConf("search one.test"),
+      "env HOSTALIASES /aliases",
+      file("/aliases", "# comment\nother  far.test\nSHORT\tlong.example.test  ignored\nshort second.test\n"),
+    ];
+    expect(searched("short", ...world)).toEqual(["long.example.test"]);
+    expect(searched("short.x", ...world)).toEqual(["short.x", "short.x.one.test"]);
+    expect(searched("unlisted", ...world)).toEqual(["unlisted.one.test", "unlisted"]);
+  });
+
+  test("an answer other than that the name does not exist ends the search", () => {
+    for (const [rcode, error] of [
+      [RCODE.SERVFAIL, "ESERVFAIL"],
+      [RCODE.REFUSED, "EREFUSED"],
+      [RCODE.FORMERR, "EFORMERR"],
+    ] as const) {
+      const it = new World(resolvConf("search one.test two.test"));
+      it.run("lookup host 0 4");
+      expect(it.reply(1, { rcode })).toContain(`done 0 error ${error}`);
+      expect(it.questions()).toEqual(["1 1 host.one.test"]);
+    }
+  });
+
+  test("a name that exists without an address does not", () => {
+    const it = new World(resolvConf("search one.test two.test"));
+    it.run("lookup host 0 4");
+    it.reply(1, {});
+    it.reply(1, { answers: [a("host.two.test", 60, "10.1.1.1")] });
+    expect(it.questions()).toEqual(["1 1 host.one.test", "1 1 host.two.test"]);
+    expect(it.log).toContain("done 0 name=host.two.test 10.1.1.1#0/60");
+  });
+});
+
+const oneServer = file("/etc/resolv.conf", "nameserver 10.0.0.1\n");
+
+describe("the hosts file", () => {
+  const hosts = [
+    "# comment",
+    "127.0.0.1 localhost",
+    "::1 localhost ip6-localhost",
+    "10.1.1.1 box.corp.test box BOX2 # comment",
+    "10.1.1.2 box.corp.test other",
+    "2001:db8::1 box",
+    "10.1.1.1 again",
+    "10.1.1.3",
+    "not-an-address name",
+    "10.1.1.4 bad_name! good",
+    "  10.1.1.5\tindented",
+  ].join("\n");
+
+  test("names and addresses of lines that share either are one entry", () => {
+    const it = new World(oneServer, file("/etc/hosts", hosts));
+    expect(
+      it.run(
+        "lookup box 80 0",
+        "lookup BOX.corp.test 80 4",
+        "lookup box 80 6",
+        "lookup other 0 0",
+        "lookup again 0 4",
+        "lookup good 0 4",
+        "lookup indented 0 4",
+        "reverse 10.1.1.1",
+        "reverse 10.1.1.2",
+        "reverse 2001:db8::1",
+        "reverse 10.1.1.4",
+      ),
+    ).toMatchInlineSnapshot(`
+      [
+        "start",
+        "read /etc/resolv.conf",
+        "read /etc/nsswitch.conf",
+        "servers 10.0.0.1#53#53#0",
+        "read /etc/hosts",
+        "done 0 name=box 2001:db8::1#80/0 10.1.1.1#80/0 10.1.1.2#80/0",
+        "done 1 name=BOX.corp.test 10.1.1.1#80/0 10.1.1.2#80/0",
+        "done 2 name=box 2001:db8::1#80/0",
+        "done 3 name=other 2001:db8::1#0/0 10.1.1.1#0/0 10.1.1.2#0/0",
+        "done 4 name=again 10.1.1.1#0/0 10.1.1.2#0/0",
+        "done 5 name=good 10.1.1.4#0/0",
+        "done 6 name=indented 10.1.1.5#0/0",
+        "done 7 name=box.corp.test box BOX2 other again",
+        "done 8 name=box.corp.test box BOX2 other again",
+        "done 9 name=box.corp.test box BOX2 other again",
+        "done 10 name=good",
+      ]
+    `);
+  });
+
+  test("is read again once it was modified", () => {
+    const it = new World(oneServer, file("/etc/hosts", "10.1.1.1 box\n", 1_600_000_000));
+    expect(it.run("lookup box 0 4", "lookup box 0 4")).toEqual([
+      "start",
+      "read /etc/resolv.conf",
+      "read /etc/nsswitch.conf",
+      "servers 10.0.0.1#53#53#0",
+      "read /etc/hosts",
+      "done 0 name=box 10.1.1.1#0/0",
+      "done 1 name=box 10.1.1.1#0/0",
+    ]);
+    expect(it.run(file("/etc/hosts", "10.1.1.2 box\n", 1_700_000_001), "lookup box 0 4")).toEqual([
+      "read /etc/hosts",
+      "done 2 name=box 10.1.1.2#0/0",
+    ]);
+  });
+
+  test("nsswitch.conf says whether it comes before the servers", () => {
+    const world = [oneServer, file("/etc/hosts", "10.1.1.1 box\n")];
+    const asks = (...more: string[]) => new World(...world, ...more).run("lookup box 0 4").slice(4);
+    expect(asks(file("/etc/nsswitch.conf", "hosts: files dns\n"))).toEqual([
+      "read /etc/hosts",
+      "done 0 name=box 10.1.1.1#0/0",
+    ]);
+    expect(
+      asks(file("/etc/nsswitch.conf", "passwd: files\nhosts:\tmdns4_minimal [NOTFOUND=return] dns files\n"))[0],
+    ).toBe("open 1 udp 10.0.0.1#53#0");
+    expect(
+      new World(...world, file("/etc/nsswitch.conf", "hosts: files\n")).run("lookup missing 0 4").slice(4),
+    ).toEqual(["read /etc/hosts", "done 0 error ECONNREFUSED"]);
+    expect(asks(file("/etc/resolv.conf", "nameserver 10.0.0.1\nlookup bind file\n"))[0]).toBe(
+      "open 1 udp 10.0.0.1#53#0",
+    );
+  });
+
+  test("localhost is the loopback address whatever the file says", () => {
+    const lookups = ["lookup localhost 0 0", "lookup a.LOCALHOST 0 4", "lookup localhost 0 6"];
+    expect(new World(oneServer).run(...lookups).filter(line => line.startsWith("done"))).toEqual([
+      "done 0 name=localhost ::1#0/0 127.0.0.1#0/0",
+      "done 1 name=a.LOCALHOST 127.0.0.1#0/0",
+      "done 2 name=localhost ::1#0/0",
+    ]);
+    expect(
+      new World(oneServer, file("/etc/hosts", "127.0.0.2 localhost\n"))
+        .run(...lookups)
+        .filter(line => line.startsWith("done")),
+    ).toEqual([
+      "done 0 name=localhost ::1#0/0 127.0.0.2#0/0",
+      "done 1 name=a.LOCALHOST 127.0.0.1#0/0",
+      "done 2 name=localhost ::1#0/0",
+    ]);
+    // Windows keeps a list.
+    expect(
+      new World(oneServer, file("/etc/hosts", "127.0.0.2 localhost\n"), "loopback 127.0.0.1 127.0.0.9 ::1")
+        .run(...lookups)
+        .filter(line => line.startsWith("done")),
+    ).toEqual([
+      "done 0 name=localhost ::1#0/0 127.0.0.1#0/0",
+      "done 1 name=a.LOCALHOST 127.0.0.1#0/0",
+      "done 2 name=localhost ::1#0/0",
+    ]);
+  });
+});
+
+describe("the order of addresses", () => {
+  test("RFC 6724", () => {
+    const addresses = {
+      "10.1.1.1": "10.0.0.9",
+      "192.0.2.1": "none",
+      "127.0.0.1": "127.0.0.1",
+      "169.254.1.1": "10.0.0.9",
+      "198.51.100.1": "198.51.100.9",
+    };
+    const addresses6 = {
+      "20010db8000000000000000000000001": ["2001:db8::1", "2001:db8::9"],
+      "20010db8ffff00000000000000000001": ["2001:db8:ffff::1", "2001:db8::9"],
+      "fe800000000000000000000000000001": ["fe80::1", "fe80::9"],
+      "fc000000000000000000000000000001": ["fc00::1", "fc00::9"],
+      "20020102030400000000000000000001": ["2002:102:304::1", "2001:db8::9"],
+      "20010000000000000000000000000001": ["2001::1", "none"],
+      "00000000000000000000000000000001": ["::1", "::1"],
+    };
+    const it = new World(
+      oneServer,
+      ...Object.entries(addresses).map(([to, from]) => `route ${to} ${from}`),
+      ...Object.values(addresses6).map(([to, from]) => `route ${to} ${from}`),
+    );
+    it.run("lookup host.test 0 0");
+    const [first, second] = it.log.filter(line => line.startsWith("send 1 "));
+    const reply = (line: string, answers: Buffer[]) =>
+      it.run(
+        `deliver 1 ${encode(parse(Buffer.from(line.split(" ")[2], "hex"), "udp", 0, ""), { answers }).toString("hex")}`,
+      );
+    reply(
+      first,
+      Object.keys(addresses).map(address => a("host.test", 60, address)),
+    );
+    expect(
+      reply(
+        second,
+        Object.keys(addresses6).map(address => aaaa("host.test", 60, address)),
+      )
+        .find(line => line.startsWith("done"))!
+        .split(" ")
+        .slice(3),
+    ).toMatchInlineSnapshot(`
+      [
+        "::1#0/60",
+        "fe80::1#0/60",
+        "2001:db8::1#0/60",
+        "2001:db8:ffff::1#0/60",
+        "127.0.0.1#0/60",
+        "10.1.1.1#0/60",
+        "198.51.100.1#0/60",
+        "fc00::1#0/60",
+        "2002:102:304::1#0/60",
+        "169.254.1.1#0/60",
+        "192.0.2.1#0/60",
+        "2001::1#0/60",
+      ]
+    `);
+  });
+
+  test("is left alone if the routes cannot be asked for", () => {
+    const it = new World(oneServer, "route 10.1.1.2 fails", "route 10.1.1.3 10.0.0.9");
+    it.run("lookup host.test 0 4");
+    expect(
+      it.reply(1, { answers: ["10.1.1.1", "10.1.1.2", "10.1.1.3"].map(address => a("host.test", 60, address)) }),
+    ).toContain("done 0 name=host.test 10.1.1.1#0/60 10.1.1.2#0/60 10.1.1.3#0/60");
+  });
+});
+
+describe("timeouts and servers", () => {
+  const twoServers = file("/etc/resolv.conf", "nameserver 10.0.0.1\nnameserver 10.0.0.2\n");
+
+  test("each server in turn, for longer every round", () => {
+    const it = new World(twoServers, "tries 3", "timeout 1000");
+    it.run("query A a.test");
+    while (!it.log.some(line => line.startsWith("done"))) it.run("expire");
+    const timers = it.log.filter(line => line.startsWith("timer ")).map(line => Number(line.split(" ")[1]));
+    const waits = timers.slice(0, -1).map((timer, i) => timer - (timers[i - 1] ?? 0));
+    expect(it.log.filter(line => line.startsWith("open")).map(line => line.split(" ")[3])).toEqual([
+      "10.0.0.1#53#0",
+      "10.0.0.2#53#0",
+      "10.0.0.1#53#0",
+      "10.0.0.2#53#0",
+      "10.0.0.1#53#0",
+      "10.0.0.2#53#0",
+    ]);
+    expect(waits.slice(0, 2)).toEqual([1000, 1000]);
+    // Up to half is taken off at random from the second round on.
+    for (const wait of waits.slice(2, 4)) expect(wait).toBeWithin(1000, 2001);
+    for (const wait of waits.slice(4, 6)) expect(wait).toBeWithin(2000, 4001);
+    expect(it.log.at(-2)).toBe("done 0 error ETIMEOUT");
+  });
+
+  test("resolv.conf's options, unless the resolver was given its own", () => {
+    const conf = file("/etc/resolv.conf", "nameserver 10.0.0.1\noptions timeout:3 attempts:2\n");
+    const run = (...options: string[]) => {
+      const it = new World(conf, ...options);
+      it.run("query A a.test");
+      while (!it.log.some(line => line.startsWith("done"))) it.run("expire");
+      return [it.log.find(line => line.startsWith("timer")), it.questions().length];
+    };
+    expect(run()).toEqual(["timer 3000", 2]);
+    expect(run("timeout 500", "tries 1")).toEqual(["timer 500", 1]);
+  });
+
+  test("a timeout is never under 250 ms nor over 5 s at first", () => {
+    const first = (timeout: number) => new World(oneServer, `timeout ${timeout}`).run("query A a.test").at(-1);
+    expect([first(1), first(249), first(251), first(5000), first(60000)]).toEqual([
+      "timer 250",
+      "timer 250",
+      "timer 251",
+      "timer 5000",
+      "timer 5000",
+    ]);
+  });
+
+  test("a socket a query timed out on takes no new query, and is closed once it has none", () => {
+    const it = new World(oneServer, "tries 2");
+    expect(it.run("query A a.test", "query A b.test").slice(4)).toMatchInlineSnapshot(`
+      [
+        "open 1 udp 10.0.0.1#53#0",
+        "watch 1 r-",
+        "send 1 dd7401000001000000000000016104746573740000010001",
+        "timer 2000",
+        "send 1 547d01000001000000000000016204746573740000010001",
+      ]
+    `);
+    expect(it.run("advance 2000")).toMatchInlineSnapshot(`
+      [
+        "open 2 udp 10.0.0.1#53#0",
+        "watch 2 r-",
+        "send 2 dd7401000001000000000000016104746573740000010001",
+        "send 2 547d01000001000000000000016204746573740000010001",
+        "close 1",
+        "timer 4641",
+      ]
+    `);
+  });
+
+  test("a late answer to the first try is not accepted on the second", () => {
+    const it = new World(oneServer, "tries 2");
+    it.run("query A a.test");
+    const query = it.sent(1);
+    it.run("advance 2000");
+    expect(it.log).toContain("close 1");
+    expect(it.reply(2, { answers: [a("a.test", 60, "1.2.3.4")] })).toContain("done 0 name=a.test 1.2.3.4/60");
+    expect(query.id).toBe(it.sent(2).id);
+  });
+
+  test("`options rotate` starts with a server at random", () => {
+    const conf = file(
+      "/etc/resolv.conf",
+      "nameserver 10.0.0.1\nnameserver 10.0.0.2\nnameserver 10.0.0.3\noptions rotate\n",
+    );
+    const it = new World(conf);
+    it.run(...Array.from({ length: 12 }, (_, i) => `query A ${i}.test`));
+    const asked = new Set(it.log.filter(line => line.startsWith("open")).map(line => line.split(" ")[3]));
+    expect([...asked].sort()).toEqual(["10.0.0.1#53#0", "10.0.0.2#53#0", "10.0.0.3#53#0"]);
+  });
+
+  test("a server that failed goes behind the others until it answers", () => {
+    const it = new World(twoServers);
+    it.run("query A a.test", "expire");
+    it.reply(2, { answers: [a("a.test", 60, "1.2.3.4")] });
+    expect(it.run("query A b.test").filter(line => line.startsWith("open"))).toEqual(["open 3 udp 10.0.0.2#53#0"]);
+  });
+
+  test("a socket that cannot be opened counts against the server", () => {
+    const it = new World(twoServers, "opens fail ok");
+    expect(it.run("query A a.test").slice(4)).toMatchInlineSnapshot(`
+      [
+        "open fails udp 10.0.0.1#53#0",
+        "open 1 udp 10.0.0.2#53#0",
+        "watch 1 r-",
+        "send 1 dd7401000001000000000000016104746573740000010001",
+        "timer 2000",
+      ]
+    `);
+    const none = new World(oneServer, "tries 2", "opens fail fail");
+    expect(none.run("query A a.test").slice(4)).toMatchInlineSnapshot(`
+      [
+        "open fails udp 10.0.0.1#53#0",
+        "open fails udp 10.0.0.1#53#0",
+        "done 0 error ECONNREFUSED",
+      ]
+    `);
+  });
+
+  test("setServers() moves the queries of a server that is dropped to another", () => {
+    const it = new World(twoServers);
+    it.run("query A a.test");
+    expect(it.run("servers 10.0.0.2#0#0#0 10.0.0.3#0#0#0")).toMatchInlineSnapshot(`
+      [
+        "open 2 udp 10.0.0.2#53#0",
+        "watch 2 r-",
+        "send 2 dd7401000001000000000000016104746573740000010001",
+        "close 1",
+        "servers 10.0.0.2#53#53#0 10.0.0.3#53#53#0",
+      ]
+    `);
+  });
+});
+
+describe("TCP", () => {
+  const truncated = (it: World, socket = 1) => it.reply(socket, { truncated: true });
+
+  test("a truncated answer is asked for again on a connection", () => {
+    const it = new World(oneServer);
+    it.run("query A a.test");
+    expect(truncated(it)).toMatchInlineSnapshot(`
+      [
+        "open 2 tcp 10.0.0.1#53#0",
+        "watch 2 rw",
+        "close 1",
+      ]
+    `);
+    expect(it.run("writable 2")).toMatchInlineSnapshot(`
+      [
+        "send 2 0018dd7401000001000000000000016104746573740000010001",
+        "watch 2 r-",
+      ]
+    `);
+    expect(it.reply(2, { answers: [a("a.test", 60, "1.2.3.4")] })).toMatchInlineSnapshot(`
+      [
+        "close 2",
+        "done 0 name=a.test 1.2.3.4/60",
+        "timer none",
+      ]
+    `);
+  });
+
+  test("an answer may arrive a byte at a time", () => {
+    const it = new World(oneServer);
+    it.run("query A a.test");
+    truncated(it);
+    it.run("writable 2");
+    const message = encode(it.sent(2), { answers: [a("a.test", 60, "1.2.3.4")] });
+    const bytes = [...Buffer.concat([u16(message.length), message])];
+    const last = bytes.pop()!;
+    expect(it.run(...bytes.map(byte => `deliver 2 ${byte.toString(16).padStart(2, "0")}`))).toEqual([]);
+    expect(it.run(`deliver 2 ${last.toString(16).padStart(2, "0")}`)).toContain("done 0 name=a.test 1.2.3.4/60");
+  });
+
+  test("several answers may arrive at once, with the start of another", () => {
+    const it = new World(oneServer);
+    it.run("query A a.test", "query A b.test", "query A c.test");
+    const queries = it.log
+      .filter(line => line.startsWith("send 1 "))
+      .map(line => Buffer.from(line.split(" ")[2], "hex"));
+    it.run(
+      ...queries.map(query => `deliver 1 ${encode(parse(query, "udp", 0, ""), { truncated: true }).toString("hex")}`),
+    );
+    it.run("writable 2");
+    const frames = queries.map((query, i) => {
+      const message = encode(parse(query, "udp", 0, ""), {
+        answers: [a(parse(query, "udp", 0, "").name, 60, `1.2.3.${i}`)],
+      });
+      return Buffer.concat([u16(message.length), message]);
+    });
+    const all = Buffer.concat(frames);
+    const cut = frames[0].length + frames[1].length + 5;
+    expect(it.run(`deliver 2 ${all.subarray(0, cut).toString("hex")}`).filter(line => line.startsWith("done"))).toEqual(
+      ["done 0 name=a.test 1.2.3.0/60", "done 1 name=b.test 1.2.3.1/60"],
+    );
+    expect(it.run(`deliver 2 ${all.subarray(cut).toString("hex")}`).filter(line => line.startsWith("done"))).toEqual([
+      "done 2 name=c.test 1.2.3.2/60",
+    ]);
+  });
+
+  test("what the socket does not take is sent when it can be written to again", () => {
+    const it = new World(oneServer);
+    it.run("query A a.test");
+    truncated(it);
+    expect(it.run("sends 2 5 block 1", "writable 2", "writable 2", "writable 2", "writable 2")).toMatchInlineSnapshot(`
+      [
+        "send 2 0018dd7401",
+        "send 2 blocks",
+        "send 2 00",
+        "send 2 0001000000000000016104746573740000010001",
+        "watch 2 r-",
+      ]
+    `);
+  });
+
+  test("with TCP Fast Open the query goes out before the connection is made", () => {
+    const it = new World(oneServer, "fast-open");
+    it.run("query A a.test");
+    expect(truncated(it)).toMatchInlineSnapshot(`
+      [
+        "open 2 tcp 10.0.0.1#53#0",
+        "send 2 0018dd7401000001000000000000016104746573740000010001",
+        "watch 2 rw",
+        "close 1",
+      ]
+    `);
+    expect(it.run("writable 2")).toMatchInlineSnapshot(`
+      [
+        "watch 2 r-",
+      ]
+    `);
+  });
+
+  test("a connection that breaks is made again for the queries on it", () => {
+    const it = new World(oneServer, "tries 2");
+    it.run("query A a.test");
+    truncated(it);
+    it.run("writable 2");
+    expect(it.run("break 2")).toMatchInlineSnapshot(`
+      [
+        "open 3 tcp 10.0.0.1#53#0",
+        "watch 3 rw",
+        "close 2",
+        "timer 3340",
+      ]
+    `);
+    it.run("writable 3");
+    expect(it.run("break 3")).toMatchInlineSnapshot(`
+      [
+        "close 3",
+        "done 0 error ECONNREFUSED",
+        "timer none",
+      ]
+    `);
+  });
+
+  test("`options use-vc` never uses UDP", () => {
+    const it = new World(file("/etc/resolv.conf", "nameserver 10.0.0.1\noptions use-vc\n"));
+    expect(it.run("query A a.test").slice(4, 6)).toEqual(["open 1 tcp 10.0.0.1#53#0", "watch 1 rw"]);
+  });
+});
+
+describe("lookupService()", () => {
+  const services = [
+    "# comment",
+    "tcpmux 1/tcp",
+    "echo\t\t7/udp",
+    "echo\t\t7/tcp",
+    "http 80/tcp www # comment",
+    "https 443/udp",
+    "#ssh 22/tcp",
+    "  indented 23/tcp",
+    `${Buffer.alloc(32, "x")} 32/tcp`,
+    `${Buffer.alloc(33, "y")} 33/tcp`,
+  ].join("\n");
+
+  test("the name from the hosts file or a PTR record, the service from the services file", () => {
+    const it = new World(oneServer, file("/etc/hosts", "10.1.1.1 box.test box\n"), file("/etc/services", services));
+    expect(
+      it
+        .run(...[0, 1, 7, 80, 443, 22, 23, 32, 33, 65535].map(port => `nameinfo 10.1.1.1 ${port}`))
+        .filter(line => line.startsWith("done")),
+    ).toMatchInlineSnapshot(`
+      [
+        "done 0 name=box.test",
+        "done 1 name=box.test service=tcpmux",
+        "done 2 name=box.test service=echo",
+        "done 3 name=box.test service=http",
+        "done 4 name=box.test service=443",
+        "done 5 name=box.test service=22",
+        "done 6 name=box.test service=indented",
+        "done 7 name=box.test service=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "done 8 name=box.test service=%",
+        "done 9 name=box.test service=65535",
+      ]
+    `);
+    it.run("nameinfo 10.9.9.9 80");
+    expect(it.questions()).toEqual(["1 12 9.9.9.10.in-addr.arpa"]);
+    expect(it.reply(1, { answers: [record("9.9.9.10.in-addr.arpa", TYPE.PTR, 60, name("far.test"))] })).toContain(
+      "done 10 name=far.test service=http",
+    );
+    it.run("nameinfo 10.9.9.8 80");
+    expect(it.reply(2, { rcode: RCODE.NXDOMAIN })).toContain("done 11 error ENOTFOUND");
+  });
+});
+
+describe("what is remembered", () => {
+  test("an answer, for the lowest TTL in it and an hour at most, with the TTLs counted down", () => {
+    const it = new World(oneServer);
+    it.run("query A a.test");
+    it.reply(1, { answers: [cname("a.test", 100, "b.test"), a("b.test", 50, "1.2.3.4")] });
+    expect(it.run("advance 20000", "query A A.TEST")).toEqual(["done 1 name=b.test 1.2.3.4/30"]);
+    expect(it.run("advance 29000", "query A a.test")).toEqual(["done 2 name=b.test 1.2.3.4/1"]);
+    expect(it.run("advance 1000", "query A a.test")[0]).toBe("open 2 udp 10.0.0.1#53#0");
+    it.reply(2, { answers: [a("a.test", 100_000, "1.2.3.4")] });
+    expect(it.run("advance 3599000", "query A a.test")).toEqual(["done 4 name=a.test 1.2.3.4/96401"]);
+    expect(it.run("advance 1000", "query A a.test")[0]).toBe("open 3 udp 10.0.0.1#53#0");
+  });
+
+  test("that there is nothing, for as long as the SOA record says", () => {
+    const soa = (ttl: number, minimum: number) =>
+      record(
+        "test",
+        TYPE.SOA,
+        ttl,
+        Buffer.concat([name("ns.test"), name("admin.test"), Buffer.alloc(16), u16(0, minimum)]),
+      );
+    for (const rcode of [RCODE.NXDOMAIN, RCODE.NOERROR]) {
+      const it = new World(oneServer);
+      it.run("query A a.test");
+      it.reply(1, { rcode, authority: [soa(300, 30)] });
+      expect(it.run("advance 29000", "query A a.test")).toHaveLength(1);
+      expect(it.run("advance 1000", "query A a.test")[0]).toBe("open 2 udp 10.0.0.1#53#0");
+      it.reply(2, { rcode, authority: [soa(20, 30)] });
+      expect(it.run("advance 19000", "query A a.test")).toHaveLength(1);
+      expect(it.run("advance 1000", "query A a.test")[0]).toBe("open 3 udp 10.0.0.1#53#0");
+      // Nothing says for how long.
+      it.reply(3, { rcode });
+      expect(it.run("query A a.test")[0]).toBe("open 4 udp 10.0.0.1#53#0");
+    }
+  });
+
+  test("not a failure, a truncated answer or a TTL of 0", () => {
+    for (const reply of [{ rcode: RCODE.SERVFAIL }, { answers: [a("a.test", 0, "1.2.3.4")] }]) {
+      const it = new World(oneServer);
+      it.run("query A a.test");
+      it.reply(1, reply);
+      expect(it.run("query A a.test")[0]).toBe("open 2 udp 10.0.0.1#53#0");
+    }
+  });
+});

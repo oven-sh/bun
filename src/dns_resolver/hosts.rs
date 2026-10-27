@@ -115,17 +115,19 @@ impl HostsFile {
                 entry.addresses.push(address);
             }
         }
-        // A name belongs to the entry that had it first.
-        for host in line.hosts {
-            let key = host.to_ascii_lowercase();
-            if !self.by_host.contains_key(&key) {
+        // A name belongs to the entry that had it first. One that is twice on a line is kept twice.
+        let keys: Vec<Vec<u8>> = line
+            .hosts
+            .iter()
+            .map(|it| it.to_ascii_lowercase())
+            .collect();
+        for (host, key) in line.hosts.into_iter().zip(&keys) {
+            if !self.by_host.contains_key(key) {
                 entry.hosts.push(host);
             }
         }
-        for host in &entry.hosts {
-            self.by_host
-                .entry(host.to_ascii_lowercase())
-                .or_insert(index);
+        for key in keys {
+            self.by_host.entry(key).or_insert(index);
         }
     }
 

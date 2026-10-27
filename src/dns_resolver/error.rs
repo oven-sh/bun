@@ -1,35 +1,62 @@
 /// Why a request failed. The numbers are c-ares's `ARES_E*`, which `node:dns` reports as `errno`.
 #[repr(i32)]
 #[allow(non_camel_case_types)]
-#[derive(Copy, Clone, Eq, PartialEq, Debug)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug, thiserror::Error)]
 pub enum Error {
+    #[error("No data record of requested type")]
     ENODATA = 1,
+    #[error("Malformed DNS query")]
     EFORMERR = 2,
+    #[error("Server failed to complete the DNS operation")]
     ESERVFAIL = 3,
+    #[error("Domain name not found")]
     ENOTFOUND = 4,
+    #[error("DNS resolver does not implement requested operation")]
     ENOTIMP = 5,
+    #[error("DNS operation refused")]
     EREFUSED = 6,
+    #[error("Misformatted DNS query")]
     EBADQUERY = 7,
+    #[error("Misformatted domain name")]
     EBADNAME = 8,
+    #[error("Misformatted DNS query (family)")]
     EBADFAMILY = 9,
+    #[error("Misformatted DNS reply")]
     EBADRESP = 10,
+    #[error("Could not contact DNS servers")]
     ECONNREFUSED = 11,
+    #[error("Timeout while contacting DNS servers")]
     ETIMEOUT = 12,
+    #[error("End of file")]
     EOF = 13,
+    #[error("Error reading file")]
     EFILE = 14,
+    #[error("Out of memory")]
     ENOMEM = 15,
+    #[error("Channel is being destroyed")]
     EDESTRUCTION = 16,
+    #[error("Misformatted string")]
     EBADSTR = 17,
+    #[error("Illegal flags specified")]
     EBADFLAGS = 18,
+    #[error("Given hostname is not numeric")]
     ENONAME = 19,
+    #[error("Illegal hints flags specified")]
     EBADHINTS = 20,
+    #[error("Library initialization not yet performed")]
     ENOTINITIALIZED = 21,
+    #[error("Error loading iphlpapi.dll")]
     ELOADIPHLPAPI = 22,
+    #[error("Could not find GetNetworkParams function")]
     EADDRGETNETWORKPARAMS = 23,
+    #[error("DNS query cancelled")]
     ECANCELLED = 24,
+    #[error("Service not available")]
     ESERVICE = 25,
+    #[error("No DNS servers were configured")]
     ENOSERVER = 26,
     /// getaddrinfo(3)'s `EAI_AGAIN`, which no request of this crate fails with.
+    #[error("Temporary failure in name resolution")]
     EAI_AGAIN = 27,
 }
 
@@ -82,38 +109,6 @@ impl Error {
             Error::ESERVICE => "DNS_ESERVICE",
             Error::ENOSERVER => "DNS_ENOSERVER",
             Error::EAI_AGAIN => "DNS_EAI_AGAIN",
-        }
-    }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Error::ENODATA => "No data record of requested type",
-            Error::EFORMERR => "Malformed DNS query",
-            Error::ESERVFAIL => "Server failed to complete the DNS operation",
-            Error::ENOTFOUND => "Domain name not found",
-            Error::ENOTIMP => "DNS resolver does not implement requested operation",
-            Error::EREFUSED => "DNS operation refused",
-            Error::EBADQUERY => "Misformatted DNS query",
-            Error::EBADNAME => "Misformatted domain name",
-            Error::EBADFAMILY => "Misformatted DNS query (family)",
-            Error::EBADRESP => "Misformatted DNS reply",
-            Error::ECONNREFUSED => "Could not contact DNS servers",
-            Error::ETIMEOUT => "Timeout while contacting DNS servers",
-            Error::EOF => "End of file",
-            Error::EFILE => "Error reading file",
-            Error::ENOMEM => "Out of memory",
-            Error::EDESTRUCTION => "Channel is being destroyed",
-            Error::EBADSTR => "Misformatted string",
-            Error::EBADFLAGS => "Illegal flags specified",
-            Error::ENONAME => "Given hostname is not numeric",
-            Error::EBADHINTS => "Illegal hints flags specified",
-            Error::ENOTINITIALIZED => "Library initialization not yet performed",
-            Error::ELOADIPHLPAPI => "ELOADIPHLPAPI TODO WHAT DOES THIS MEAN",
-            Error::EADDRGETNETWORKPARAMS => "EADDRGETNETWORKPARAMS",
-            Error::ECANCELLED => "DNS query cancelled",
-            Error::ESERVICE => "Service not available",
-            Error::ENOSERVER => "No DNS servers were configured",
-            Error::EAI_AGAIN => "Temporary failure in name resolution",
         }
     }
 }

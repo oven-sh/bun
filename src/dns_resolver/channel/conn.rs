@@ -1,6 +1,6 @@
 //! The sockets of a channel: one TCP connection to a server at most, and as many UDP ones as timeouts have retired.
 
-use std::collections::VecDeque;
+use std::collections::BTreeSet;
 
 use super::server::ServerId;
 use super::{Channel, Serial, Status};
@@ -24,8 +24,8 @@ pub(crate) struct Conn<Socket> {
     /// Messages, each after its length in 16 bits, whatever the transport.
     pub(crate) in_buf: Vec<u8>,
     out_buf: Vec<u8>,
-    /// Sent and not answered, oldest first.
-    pub(crate) queries: VecDeque<Serial>,
+    /// Sent and not answered, each after its `Query::send_order`: oldest first.
+    pub(crate) queries: BTreeSet<(u64, Serial)>,
 }
 
 const LARGEST_MESSAGE: usize = 65535;
@@ -84,7 +84,7 @@ impl<I: Io, T> Channel<I, T> {
                 watching: (false, false),
                 in_buf: Vec::new(),
                 out_buf: Vec::new(),
-                queries: VecDeque::new(),
+                queries: BTreeSet::new(),
             },
         );
         if let Some(server) = self.server_mut(server_id) {
@@ -232,7 +232,7 @@ impl<I: Io, T> Channel<I, T> {
                 server.tcp_connection = None;
             }
         }
-        for serial in conn.queries {
+        for (_, serial) in conn.queries {
             let _ = self.requeue_query(now, serial, status, true, None, None);
         }
         self.io.close(conn.socket);

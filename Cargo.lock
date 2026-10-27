@@ -507,6 +507,7 @@ name = "bun_dns_resolver"
 version = "0.0.0"
 dependencies = [
  "bun_core",
+ "thiserror",
 ]
 
 [[package]]

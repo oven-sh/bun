@@ -78,19 +78,20 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__ExposeNodeModuleGlobals(Zig::Global
 {
 
     auto& vm = JSC::getVM(globalObject);
-#define PUT_CUSTOM_GETTER_SETTER(id, field) \
-    globalObject->putDirectCustomAccessor( \
-        vm, \
-        JSC::Identifier::fromString(vm, #id##_s), \
-        JSC::CustomGetterSetter::create( \
-            vm, \
-            ExposeNodeModuleGlobalGetters::id, \
-            nullptr), \
-        0 | JSC::PropertyAttribute::CustomValue \
-    );
-
-    FOREACH_EXPOSED_BUILTIN_IMR(PUT_CUSTOM_GETTER_SETTER)
-#undef PUT_CUSTOM_GETTER_SETTER
+    struct Entry {
+        ASCIILiteral name;
+        JSC::EncodedJSValue (JIT_OPERATION_ATTRIBUTES* getter)(JSC::JSGlobalObject*, JSC::EncodedJSValue, JSC::PropertyName);
+    };
+#define EXPOSED_BUILTIN_ENTRY(id, field) { #id##_s, ExposeNodeModuleGlobalGetters::id },
+    static const Entry entries[] = { FOREACH_EXPOSED_BUILTIN_IMR(EXPOSED_BUILTIN_ENTRY) };
+#undef EXPOSED_BUILTIN_ENTRY
+    for (auto& entry : entries) {
+        globalObject->putDirectCustomAccessor(
+            vm,
+            JSC::Identifier::fromString(vm, entry.name),
+            JSC::CustomGetterSetter::create(vm, entry.getter, nullptr),
+            0 | JSC::PropertyAttribute::CustomValue);
+    }
 }
 
 // Evaluate `internal/process/pre_execution` before any user code runs.
@@ -129,14 +130,14 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__REPL__setupGlobalRequire(
     moduleObject->hasEvaluated = true;
 
     auto* resolveFunction = JSBoundFunction::create(vm, globalObject,
-        globalObject->requireResolveFunctionUnbound(), filename,
-        ArgList(), 1, globalObject->commonStrings().resolveString(globalObject),
+        globalObject->requireResolveFunctionUnbound(), moduleObject,
+        ArgList(), 1, Bun::commonStrings(vm).resolveString(),
         makeSource("resolve"_s, SourceOrigin(), SourceTaintedOrigin::Untainted));
     RETURN_IF_EXCEPTION(scope, );
 
     auto* requireFunction = JSBoundFunction::create(vm, globalObject,
         globalObject->requireFunctionUnbound(), moduleObject,
-        ArgList(), 1, globalObject->commonStrings().requireString(globalObject),
+        ArgList(), 1, Bun::commonStrings(vm).requireString(),
         makeSource("require"_s, SourceOrigin(), SourceTaintedOrigin::Untainted));
     RETURN_IF_EXCEPTION(scope, );
 
@@ -144,9 +145,9 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void Bun__REPL__setupGlobalRequire(
     moduleObject->putDirect(vm, WebCore::clientData(vm)->builtinNames().requirePublicName(), requireFunction, 0);
 
     globalObject->putDirect(vm, WebCore::builtinNames(vm).requirePublicName(), requireFunction, 0);
-    globalObject->putDirect(vm, Identifier::fromString(vm, "module"_s), moduleObject, 0);
-    globalObject->putDirect(vm, Identifier::fromString(vm, "__filename"_s), filename, 0);
-    globalObject->putDirect(vm, Identifier::fromString(vm, "__dirname"_s), dirname, 0);
+    Bun::putDirectNamed(vm, globalObject, "module"_s, moduleObject);
+    Bun::putDirectNamed(vm, globalObject, "__filename"_s, filename);
+    Bun::putDirectNamed(vm, globalObject, "__dirname"_s, dirname);
 }
 
 #pragma pop_macro("assert")

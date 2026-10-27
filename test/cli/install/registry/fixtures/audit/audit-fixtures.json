@@ -243,7 +243,7 @@
 				"url": "https://github.com/advisories/GHSA-wrvr-8mpx-r7pp",
 				"title": "mime Regular Expression Denial of Service when MIME lookup performed on untrusted user input",
 				"severity": "high",
-				"vulnerable_versions": "<1.4.1",
+				"vulnerable_versions": "<1.3.5",
 				"cwe": [
 					"CWE-400"
 				],

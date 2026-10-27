@@ -1,0 +1,2 @@
+patchedDependencies:
+  no-deps: patches/no-deps.patch

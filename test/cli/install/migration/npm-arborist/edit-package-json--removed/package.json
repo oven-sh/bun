@@ -1,0 +1,7 @@
+{
+  "peerDependenciesMeta": {
+    "semver": {
+      "optional": true
+    }
+  }
+}

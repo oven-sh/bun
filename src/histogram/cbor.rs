@@ -313,13 +313,11 @@ impl Histogram {
         }
         histogram.ewma = if ewma.alpha > 0.0 {
             Ewma {
-                // What it is for the half-life that this one stands for, which there is none of from 1 on.
-                alpha: if ewma.alpha < 1.0 {
-                    1.0 - (-(2.0f64.ln()) / (-1.0 / (1.0 - ewma.alpha).log2())).exp()
-                } else {
-                    0.0
-                },
-                initialized: true,
+                // Node.js: what it is for the half-life that this one stands for, which is not always the same and
+                // which there is none of for 1.
+                alpha: if ewma.alpha <= 1.0 { ewma.alpha } else { 0.0 },
+                // Node.js: always, so the first value after an empty histogram is averaged with 0.
+                initialized: histogram.count > 0,
                 ..ewma
             }
         } else {

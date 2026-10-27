@@ -2304,6 +2304,27 @@ describe("export and importHistogram", () => {
     }
   });
 
+  // Node.js: the averages of an imported histogram have always begun, so the first value is averaged with 0.
+  test("the moving averages of an empty histogram", notInNode, () => {
+    const h = createHistogram({ halfLife: 2, threshold: 5 });
+    const imported = importHistogram(h.export());
+    for (const histogram of [h, imported]) histogram.record(10);
+    assert.deepStrictEqual([imported.ewmaMean, imported.ewmaStddev, imported.ewmaErrorRate], [10, 0, 1]);
+    assert.strictEqual(hex(imported.export()), hex(h.export()));
+  });
+
+  // Node.js works out the half-life and the weight again: that is not always the same weight, and none at all for 1.
+  test("the weight of the moving averages", notInNode, () => {
+    for (const halfLife of [0.01, 0.1, 0.7, 1, 3, 7, 1000, 1e9]) {
+      const h = filled([5, 50], { halfLife });
+      const imported = importHistogram(h.export());
+      assert.strictEqual(hex(imported.export()), hex(h.export()), `${halfLife}`);
+      for (const histogram of [h, imported]) histogram.record(500);
+      assert.deepStrictEqual([imported.ewmaMean, imported.ewmaStddev], [h.ewmaMean, h.ewmaStddev], `${halfLife}`);
+      if (halfLife === 0.01) assert.strictEqual(imported.ewmaMean, 500);
+    }
+  });
+
   // Node.js exports such a threshold as a number that it does not import.
   test("a threshold above every value", notInNode, () => {
     for (const threshold of [Infinity, 2 ** 63, 1e300]) {

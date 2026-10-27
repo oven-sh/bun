@@ -10,6 +10,7 @@ import {
   isMacOS,
   isRoot,
   isWindows,
+  nodeExeAtLeast,
   tempDir,
   tempDirWithFiles,
 } from "harness";
@@ -253,6 +254,31 @@ describe("fs.watch", () => {
       fs.writeFileSync(filepath, "world");
     });
   }, 10000);
+
+  // Node makes one callback for each OS event, so what a listener queued for one event has run
+  // when the next event arrives. The fixture prints what a listener observes. Where a recent
+  // Node.js is installed, its output is the reference.
+  test("nextTicks, microtasks and enterWith() of one event are done before the next event", async () => {
+    const fixture = path.join(import.meta.dir, "fixtures", "checkpoint-between-events.mjs");
+    async function observe(exe: string) {
+      await using proc = Bun.spawn({ cmd: [exe, fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { observed: stdout && JSON.parse(stdout), stderr, exitCode };
+    }
+    const node = nodeExeAtLeast("22.0.0");
+    const [bun, reference] = await Promise.all([observe(bunExe()), node ? observe(node) : undefined]);
+    expect(bun).toEqual({
+      observed: {
+        "an event arrived before a nextTick of the event before it": false,
+        "an event arrived before a microtask of the event before it": false,
+        "an event saw the enterWith() store of the event before it": false,
+        "a loop of `await once(watcher, 'change')` saw every event": true,
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+    if (reference) expect(reference).toEqual(bun);
+  });
 
   test("should error on invalid path", done => {
     try {

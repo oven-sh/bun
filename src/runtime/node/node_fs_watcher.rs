@@ -204,6 +204,12 @@ impl FSWatchTaskPosix {
         for i in 0..self.count as usize {
             // SAFETY: entries [0..count) were written by `append`.
             let entry = unsafe { self.entries[i].assume_init_ref() };
+            if i > 0 {
+                // Node's checkpoint after each OS event: https://github.com/nodejs/node/blob/v26.12.1/src/fs_event_wrap.cc#L239
+                let global = self.ctx().global_this;
+                let drained = global.bun_vm().event_loop_mut().drain_microtasks();
+                drained.map_err(|stopped| stopped.throw(&global))?;
+            }
             let emitted = match &entry.event {
                 Event::Rename(file_path) => self.ctx().emit::<{ EventType::Rename }>(file_path),
                 Event::Change(file_path) => self.ctx().emit::<{ EventType::Change }>(file_path),

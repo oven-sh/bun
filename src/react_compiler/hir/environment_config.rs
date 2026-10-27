@@ -78,8 +78,7 @@ pub struct EnvironmentConfig {
     pub enable_name_anonymous_functions: bool,
     pub validate_hooks_usage: bool,
     pub validate_ref_access_during_render: bool,
-    /// For `validate_ref_access_during_render`: a nested function whose ref types do not converge is one that reads a
-    /// ref, and the validation of the function around it goes on. Upstream throws there, which gives the component up.
+    /// For `validate_ref_access_during_render`: a nested function that does not converge reads a ref. Upstream throws.
     pub functions_that_do_not_converge_read_refs: bool,
     /// For `validate_ref_access_during_render`: a ref value that meets a value of another kind, at a
     /// phi or in an object, stays the ref value that it was. It is then reported where `.current`

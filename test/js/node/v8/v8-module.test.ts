@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, nodeExeAtLeast, tempDir } from "harness";
 import { GCProfiler, isStringOneByteRepresentation } from "node:v8";
 
 describe("v8.isStringOneByteRepresentation", () => {
@@ -129,5 +129,53 @@ describe("v8.GCProfiler", () => {
       stderr: "",
       exitCode: 0,
     });
+  });
+
+  // Node.js stamps these times with a native clock. The fixture also runs under Node.js when it is installed.
+  test("startTime and endTime are the current time when Date is mocked at the first load of node:v8", async () => {
+    using dir = tempDir("v8-gcprofiler-mocked-date", {
+      "fixture.cjs": `
+        const RealDate = Date;
+        const now = Date.now;
+        let calls = 0;
+        let reads = 0;
+        if (process.argv[2] === "Date.now") Date.now = () => (calls++, 1700000000000);
+        else if (process.argv[2] === "mock.timers") require("node:test").mock.timers.enable({ apis: ["Date"] });
+        else Object.defineProperty(globalThis, "Date", { configurable: true, get: () => (reads++, () => calls++) });
+
+        const { GCProfiler } = require("node:v8");
+        function timesAreCurrent() {
+          const profiler = new GCProfiler();
+          profiler.start();
+          const { startTime, endTime } = profiler.stop();
+          return Math.abs(startTime - now()) < 60_000 && Math.abs(endTime - now()) < 60_000;
+        }
+        const whileMocked = timesAreCurrent();
+        if (process.argv[2] === "mock.timers") require("node:test").mock.timers.reset();
+        RealDate.now = now;
+        Object.defineProperty(globalThis, "Date", { configurable: true, writable: true, value: RealDate });
+        console.log(JSON.stringify({ whileMocked, afterRestore: timesAreCurrent(), calls, reads }));
+      `,
+    });
+    // Date.now replaced, the global Date replaced (a getter counts the reads), and the Date mock of node:test.
+    const node = nodeExeAtLeast("26.3.0");
+    const cases = (node ? [bunExe(), node] : [bunExe()]).flatMap(exe =>
+      ["Date.now", "Date", "mock.timers"].map(mocked => ({ exe, mocked })),
+    );
+    const results = await Promise.all(
+      cases.map(async ({ exe, mocked }) => {
+        await using proc = Bun.spawn({
+          cmd: [exe, "fixture.cjs", mocked],
+          cwd: String(dir),
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { exe, mocked, stdout: stdout.trim(), stderr: exitCode === 0 ? "" : stderr, exitCode };
+      }),
+    );
+    const stdout = `{"whileMocked":true,"afterRestore":true,"calls":0,"reads":0}`;
+    expect(results).toEqual(cases.map(each => ({ ...each, stdout, stderr: "", exitCode: 0 })));
   });
 });

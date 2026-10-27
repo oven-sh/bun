@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, nodeExeAtLeast, tempDir } from "harness";
 import inspector from "node:inspector";
 
 test("inspector.url()", () => {
@@ -733,6 +733,59 @@ test("a tampered Set.prototype[Symbol.iterator] or Date.now does not break conso
     Date.now = savedNow;
     session.disconnect();
   }
+});
+
+// The test above replaces Date.now after node:inspector is loaded. This is the other order.
+// Node.js stamps the timestamp with a native clock. The fixture also runs under Node.js when it is installed.
+test("the consoleAPICalled timestamp is the current time when Date is mocked at the first load of node:inspector", async () => {
+  using dir = tempDir("inspector-mocked-date", {
+    "fixture.cjs": `
+      const RealDate = Date;
+      const now = Date.now;
+      let calls = 0;
+      let reads = 0;
+      if (process.argv[2] === "Date.now") Date.now = () => (calls++, 1700000000000);
+      else if (process.argv[2] === "mock.timers") require("node:test").mock.timers.enable({ apis: ["Date"] });
+      else Object.defineProperty(globalThis, "Date", { configurable: true, get: () => (reads++, () => calls++) });
+
+      const inspector = require("node:inspector");
+      function timestampIsCurrent() {
+        const session = new inspector.Session();
+        session.connect();
+        let timestamp;
+        session.on("Runtime.consoleAPICalled", message => (timestamp = message.params.timestamp));
+        session.post("Runtime.enable");
+        console.debug("");
+        session.disconnect();
+        return Math.abs(timestamp - now()) < 60_000;
+      }
+      const whileMocked = timestampIsCurrent();
+      if (process.argv[2] === "mock.timers") require("node:test").mock.timers.reset();
+      RealDate.now = now;
+      Object.defineProperty(globalThis, "Date", { configurable: true, writable: true, value: RealDate });
+      console.log(JSON.stringify({ whileMocked, afterRestore: timestampIsCurrent(), calls, reads }));
+    `,
+  });
+  // Date.now replaced, the global Date replaced (a getter counts the reads), and the Date mock of node:test.
+  const node = nodeExeAtLeast("26.3.0");
+  const cases = (node ? [bunExe(), node] : [bunExe()]).flatMap(exe =>
+    ["Date.now", "Date", "mock.timers"].map(mocked => ({ exe, mocked })),
+  );
+  const results = await Promise.all(
+    cases.map(async ({ exe, mocked }) => {
+      await using proc = Bun.spawn({
+        cmd: [exe, "fixture.cjs", mocked],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { exe, mocked, stdout: stdout.trim(), stderr: exitCode === 0 ? "" : stderr, exitCode };
+    }),
+  );
+  const stdout = `{"whileMocked":true,"afterRestore":true,"calls":0,"reads":0}`;
+  expect(results).toEqual(cases.map(each => ({ ...each, stdout, stderr: "", exitCode: 0 })));
 });
 
 test("Object.prototype pollution does not cause Runtime.enable to hook extra console methods", () => {

@@ -24,7 +24,7 @@
 import assert from "assert";
 import { exposedInternals } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, nodeExeAtLeast, tempDir } from "harness";
 import util from "util";
 // const context = require('vm').runInNewContext; // TODO: Use a vm polyfill
 
@@ -683,6 +683,50 @@ it("inspect() does not use isMapIterator and isSetIterator of the writable node:
     stderr: "",
     exitCode: 0,
   });
+});
+
+// Node.js formats a Date with primordials. The fixture also runs under Node.js when it is installed.
+it("inspect() formats a Date with the engine's functions when Date is mocked at the first load", async () => {
+  using dir = tempDir("util-inspect-mocked-date", {
+    "fixture.cjs": `
+      const RealDate = Date;
+      const { getTime, toISOString, toString } = Date.prototype;
+      let calls = 0;
+      let reads = 0;
+      if (process.argv[2] === "Date.prototype") {
+        Date.prototype.getTime = () => (calls++, NaN);
+        Date.prototype.toISOString = () => (calls++, "mocked");
+        Date.prototype.toString = () => (calls++, "mocked");
+      } else Object.defineProperty(globalThis, "Date", { configurable: true, get: () => (reads++, () => calls++) });
+
+      const { inspect } = require("node:util");
+      const dates = [new RealDate(0), new RealDate(NaN)];
+      const whileMocked = dates.map(date => inspect(date));
+      Object.assign(RealDate.prototype, { getTime, toISOString, toString });
+      Object.defineProperty(globalThis, "Date", { configurable: true, writable: true, value: RealDate });
+      console.log(JSON.stringify({ whileMocked, afterRestore: dates.map(date => inspect(date)), calls, reads }));
+    `,
+  });
+  // Three Date.prototype methods replaced, and the global Date replaced (a getter counts the reads).
+  const node = nodeExeAtLeast("26.3.0");
+  const cases = (node ? [bunExe(), node] : [bunExe()]).flatMap(exe =>
+    ["Date.prototype", "Date"].map(mocked => ({ exe, mocked })),
+  );
+  const results = await Promise.all(
+    cases.map(async ({ exe, mocked }) => {
+      await using proc = Bun.spawn({
+        cmd: [exe, "fixture.cjs", mocked],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { exe, mocked, stdout: stdout.trim(), stderr: exitCode === 0 ? "" : stderr, exitCode };
+    }),
+  );
+  const stdout = `{"whileMocked":["1970-01-01T00:00:00.000Z","Invalid Date"],"afterRestore":["1970-01-01T00:00:00.000Z","Invalid Date"],"calls":0,"reads":0}`;
+  expect(results).toEqual(cases.map(each => ({ ...each, stdout, stderr: "", exitCode: 0 })));
 });
 
 describe("util.parseEnv", () => {

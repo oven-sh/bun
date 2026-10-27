@@ -1998,7 +1998,7 @@ fn compress_block_lazy_generic<'a, F: Finder<'a>, const DEPTH: u32, const DICT_M
         }
 
         // Store the sequence.
-        seq_store.store_seq(start - anchor, near, anchor, best.off_base.get(), best.len)?;
+        seq_store.store_seq::<16>(start - anchor, near, anchor, best.off_base.get(), best.len)?;
         ip = start + best.len;
         anchor = ip;
 
@@ -2015,7 +2015,7 @@ fn compress_block_lazy_generic<'a, F: Finder<'a>, const DEPTH: u32, const DICT_M
                 break;
             }
             (offset_1, offset_2) = (offset_2, offset_1);
-            seq_store.store_seq(0, near, anchor, REPCODE1_TO_OFFBASE, rep_len)?;
+            seq_store.store_seq::<16>(0, near, anchor, REPCODE1_TO_OFFBASE, rep_len)?;
             ip += rep_len;
             anchor = ip;
         }

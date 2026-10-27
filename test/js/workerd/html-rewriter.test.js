@@ -4595,22 +4595,35 @@ describe("a rewrite that a Bun.ModuleGraph's script started is the graph's", () 
   });
 
   // What the client had was sent, and the rest is not. Before the first byte, the host's error() answers.
+  // After it there is no answer left to give: the server prints the error, as for any body that fails there.
   it.concurrent.each([
-    ["after the first byte", { first: "<p>1</p>", rest: "failed", errors: [] }],
+    [
+      "after the first byte",
+      { first: "<p>1</p>", rest: "failed", errors: [] },
+      expect.stringMatching(/^AbortError: The operation was aborted\./),
+    ],
     [
       "before the first byte",
       { response: "500 the host's error()", errors: ["AbortError: The operation was aborted."] },
+      "",
     ],
-  ])("dispose() cuts a response of the host's Bun.serve() that is sending the output, %s", async (when, expected) => {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), join(dir, "rewrite-served.mjs"), when],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout: stdout && JSON.parse(stdout), exitCode }).toEqual({ stdout: expected, exitCode: 0 });
-  });
+  ])(
+    "dispose() cuts a response of the host's Bun.serve() that is sending the output, %s",
+    async (when, expected, printed) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), join(dir, "rewrite-served.mjs"), when],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout && JSON.parse(stdout), stderr, exitCode }).toEqual({
+        stdout: expected,
+        stderr: printed,
+        exitCode: 0,
+      });
+    },
+  );
 
   it.concurrent(
     "a worker terminated, and a process that exits, while rewrites their graphs started are running",

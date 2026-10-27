@@ -60,6 +60,24 @@ const ADAM7: [(u8, u8, u8, u8); 7] = [
 const WHOLE: [(u8, u8, u8, u8); 1] = [(0, 0, 1, 1)];
 
 impl Header {
+    pub(crate) fn new(
+        width: u32,
+        height: u32,
+        bit_depth: u8,
+        color_type: ColorType,
+        interlaced: bool,
+    ) -> Result<Self> {
+        let header = Self {
+            width,
+            height,
+            bit_depth,
+            color_type,
+            interlaced,
+        };
+        header.check()?;
+        Ok(header)
+    }
+
     /// The 13 bytes of an IHDR chunk.
     pub(crate) fn parse(data: &[u8; 13]) -> Result<Self> {
         let [
@@ -88,15 +106,13 @@ impl Header {
         if compression != 0 || filter != 0 || interlace > 1 {
             return Err(Error::InvalidHeader);
         }
-        let header = Self {
-            width: u32::from_be_bytes([w0, w1, w2, w3]),
-            height: u32::from_be_bytes([h0, h1, h2, h3]),
+        Self::new(
+            u32::from_be_bytes([w0, w1, w2, w3]),
+            u32::from_be_bytes([h0, h1, h2, h3]),
             bit_depth,
             color_type,
-            interlaced: interlace == 1,
-        };
-        header.check()?;
-        Ok(header)
+            interlace == 1,
+        )
     }
 
     pub(crate) fn to_bytes(self) -> [u8; 13] {
@@ -122,7 +138,7 @@ impl Header {
     }
 
     // https://github.com/randy408/libspng/blob/fb768002d4288590083a476af628e51c3f1d47cd/spng/spng.c#L2030
-    pub(crate) fn check(self) -> Result<()> {
+    fn check(self) -> Result<()> {
         if self.width == 0 || self.width > MAX_U31 || self.height == 0 || self.height > MAX_U31 {
             return Err(Error::InvalidHeader);
         }

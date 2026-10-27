@@ -32,13 +32,7 @@ pub fn encode_rgba(
     level: Option<u8>,
     icc_profile: Option<&[u8]>,
 ) -> Result<Vec<u8>> {
-    let header = Header {
-        width,
-        height,
-        bit_depth: 8,
-        color_type: ColorType::TruecolorAlpha,
-        interlaced: false,
-    };
+    let header = Header::new(width, height, 8, ColorType::TruecolorAlpha, false)?;
     encode(header, rgba, None, level, icc_profile)
 }
 
@@ -51,13 +45,7 @@ pub fn encode_indexed(
     level: Option<u8>,
     icc_profile: Option<&[u8]>,
 ) -> Result<Vec<u8>> {
-    let header = Header {
-        width,
-        height,
-        bit_depth: 8,
-        color_type: ColorType::Indexed,
-        interlaced: false,
-    };
+    let header = Header::new(width, height, 8, ColorType::Indexed, false)?;
     encode(header, indices, Some(palette), level, icc_profile)
 }
 
@@ -69,7 +57,6 @@ fn encode(
     level: Option<u8>,
     icc_profile: Option<&[u8]>,
 ) -> Result<Vec<u8>> {
-    header.check()?;
     let row_bytes = header.width as usize * header.bytes_per_pixel();
     if row_bytes.checked_mul(header.height as usize) != Some(image.len()) {
         return Err(Error::BufferSize);

@@ -54,16 +54,10 @@ fn fmt_size(bytes: u64) -> bfmt::SizeFormatter {
     bfmt::size(bytes as usize, Default::default())
 }
 
-/// The "inputs" key of each module: its pretty path.
-///
-/// A build can have more than one graph: server code that imports an HTML page also bundles
-/// the page for the browser. A file that two graphs load is a module of each, and both have its
-/// pretty path. When both have a record, the one of the first graph keeps the path as its key
-/// and the other takes the suffix of its graph: `<path> (browser)`.
+/// The "inputs" key of each record: its pretty path, or `<path> (browser)` when two graphs have it.
 struct InputKeys<'a> {
     sources: &'a [bun_ast::Source<'a>],
-    /// By source index, the source whose record stands for it: the page, for the stub that a
-    /// server graph holds in place of an imported HTML page. Empty when there is no stub.
+    /// By source index, the page whose record stands for a stub of a server graph. Else itself.
     record_of: Vec<u32>,
     /// By source index, a key that is not the pretty path. Empty when there is none.
     renamed: Vec<Option<Box<[u8]>>>,
@@ -89,8 +83,7 @@ impl<'a> InputKeys<'a> {
             return Ok(keys);
         }
         keys.has_unique_keys = true;
-        // The graphs in the order of their claims: the build's target, then the other server
-        // targets, then the browser.
+        // The order of the claims: the build's target, the other server targets, the browser.
         let main = c.options.target;
         let used = || {
             build_graphs
@@ -118,16 +111,14 @@ impl<'a> InputKeys<'a> {
             keys.record_of = (0..u32::try_from(sources.len()).expect("int cast")).collect();
             let stubs = html.server_source_indices.iter();
             for (&stub, &page) in stubs.zip(&html.html_source_indices) {
-                // Browser code can load the file first, as a module that is not built as a
-                // page. The stub then keeps its own record.
+                // The stub keeps its record when browser code loaded the file first (no page).
                 if has_record.is_set(page as usize) && loaders[page as usize] == Loader::Html {
                     keys.record_of[stub as usize] = page;
                 }
             }
         }
 
-        // Graph by graph, each module that has a record claims its pretty path. A module that
-        // tree shaking dropped has none: a file with one record keeps its path as the key.
+        // Graph by graph, each record claims its pretty path. A dropped module has no record.
         let reachable = c.graph.reachable_files.slice();
         let mut claimed: ArrayHashMap<&[u8], ()> = ArrayHashMap::new();
         claimed.ensure_total_capacity(reachable.len())?;
@@ -150,8 +141,7 @@ impl<'a> InputKeys<'a> {
                 }
             }
         }
-        // A record whose path is claimed is a copy. It takes the suffix of its graph, and takes
-        // it again while a record has that key (a file can be named `a.js (browser)`).
+        // A copy takes the suffix of its graph, again while that key is taken (`a.js (browser)`).
         let mut suffixed: StringHashMap<()> = StringHashMap::default();
         for i in copies {
             let graph = target_of[i as usize].naming_placeholder();
@@ -244,14 +234,14 @@ fn generate_chunk_json(
     let mut first_chunk_input = true;
     let chunk_keys = chunk.files_with_parts_in_chunk.keys();
     let chunk_values = chunk.files_with_parts_in_chunk.values();
-    // Counters are `AtomicUsize` because they're populated by the parallel
-    // codegen workers; metafile emission runs strictly after the
-    // `group.wait()` join in `generate_chunks_in_parallel`, so a relaxed
-    // load observes the final value.
     let bytes_of = |member: usize| chunk_values[member].load(core::sync::atomic::Ordering::Relaxed);
     let stub_records = keys.records_of_stubs(chunk_keys);
     let mut written = WrittenKeys::default();
     for (member, &file_source_index) in chunk_keys.iter().enumerate() {
+        // Counters are `AtomicUsize` because they're populated by the parallel
+        // codegen workers; metafile emission runs strictly after the
+        // `group.wait()` join in `generate_chunks_in_parallel`, so a relaxed
+        // load observes the final value.
         let mut bytes_in_output = bytes_of(member);
         if file_source_index as usize >= sources.len() {
             continue;
@@ -268,8 +258,7 @@ fn generate_chunk_json(
             continue;
         }
 
-        // A page and its stubs are one member, with the sum of their bytes. A chunk holds more
-        // than one of them only when a Bun hashbang gives the server code a second graph.
+        // A page and its stubs are one member. Only a Bun hashbang puts two of them in a chunk.
         let record = keys.record_of(file_source_index);
         if stub_records.contains(&record) {
             let is_same_member = |&other: &u32| keys.record_of(other) == record;
@@ -496,9 +485,9 @@ pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Re
                 first_import = false;
 
                 j.push_static(b"\n        {\n          \"path\": ");
-                // Bundled imports use the target source's "inputs" key. `record.path.text` is
-                // unreliable here: dedup can set `source_index` without rewriting the path.
-                // Externals/chunk refs fall through.
+                // Bundled imports use the key of the target source's record (same string as the
+                // "inputs" key). `record.path.text` is unreliable here: dedup can set
+                // `source_index` without rewriting the path. Externals/chunk refs fall through.
                 let import_path: &[u8] = 'path: {
                     if record.source_index.is_valid()
                         && record.source_index.get() != Index::RUNTIME.get()
@@ -1107,7 +1096,7 @@ pub fn generate_markdown(metafile_json: &[u8]) -> crate::Result<Box<[u8]>> {
                         }
                         if let Some(imp_path) = imp_path {
                             if let JsonValue::String(target) = imp_path {
-                                // An import of a module that tree shaking removed can name no record.
+                                // An import of a dropped module can name no record.
                                 let target: &[u8] = target;
                                 if inputs_obj.contains(target) {
                                     let gop = imported_by.get_or_put(target)?;

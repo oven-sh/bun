@@ -626,8 +626,10 @@ async function connectToInspector(child: Subprocess<"ignore", "ignore", "pipe">)
   webSocket.addEventListener("open", () => opened.resolve({}));
   webSocket.addEventListener("close", () => closed.resolve({ error: { message: "the inspector closed the socket" } }));
   webSocket.addEventListener("error", () => closed.resolve({ error: { message: "the inspector socket failed" } }));
+  const events: { method: string; params: any }[] = [];
   webSocket.addEventListener("message", ({ data }) => {
-    const reply: InspectorReply & { id: number } = JSON.parse(data.toString());
+    const reply: InspectorReply & { id?: number; method: string; params: any } = JSON.parse(data.toString());
+    if (reply.id === undefined) return void events.push(reply);
     pending.get(reply.id)?.(reply);
     pending.delete(reply.id);
   });
@@ -642,7 +644,7 @@ async function connectToInspector(child: Subprocess<"ignore", "ignore", "pipe">)
   }
 
   expect(await Promise.race([opened.promise, closed.promise])).toEqual({});
-  return { send, webSocket };
+  return { send, events, webSocket };
 }
 
 test("LifecycleReporter.getModuleGraph reports an empty argv when process.argv isn't an array", async () => {
@@ -698,17 +700,46 @@ test("a preview of an object that inherits from a stream reader or writer protot
     stdout: "ignore",
     stderr: "pipe",
   });
-  const { send, webSocket } = await connectToInspector(child);
+  const { send, events, webSocket } = await connectToInspector(child);
+  const takeRejections = async () => {
+    const reply = await send("Runtime.evaluate", { expression: "rejections.splice(0)", returnByValue: true });
+    return reply.error?.message ?? reply.result.result.value;
+  };
+  // The getters that a preview read: it shows their value as a Promise.
+  const promisesIn = (preview: any) => preview?.properties.filter(p => p.value === "Promise").map(p => p.name);
 
+  const getterReads: Record<string, unknown> = {};
   for (const expression of ["reader", "byobReader", "writer", "holder"]) {
     const evaluated = await send("Runtime.evaluate", { expression, generatePreview: true });
     const objectId = evaluated.result?.result.objectId;
-    await send("Runtime.getDisplayableProperties", { objectId, generatePreview: true });
-    await send("Runtime.getProperties", { objectId, ownProperties: true, generatePreview: true });
+    const displayable = await send("Runtime.getDisplayableProperties", { objectId, generatePreview: true });
+    const own = await send("Runtime.getProperties", { objectId, ownProperties: true, generatePreview: true });
+    getterReads[expression] = {
+      evaluate: evaluated.error?.message ?? promisesIn(evaluated.result.result.preview),
+      getDisplayableProperties:
+        displayable.error?.message ?? displayable.result.properties.filter(p => p.nativeGetter).map(p => p.name),
+      getProperties: own.error?.message ?? own.result.properties.flatMap(p => promisesIn(p.value?.preview) ?? []),
+    };
   }
+  // A request that reads no getter tests nothing. This table fails when the inspector stops these reads.
+  expect(getterReads).toEqual({
+    reader: { evaluate: ["closed"], getDisplayableProperties: ["closed"], getProperties: [] },
+    byobReader: { evaluate: ["closed"], getDisplayableProperties: ["closed"], getProperties: [] },
+    writer: { evaluate: ["closed", "ready"], getDisplayableProperties: ["closed", "ready"], getProperties: [] },
+    holder: { evaluate: [], getDisplayableProperties: [], getProperties: ["closed", "closed", "closed", "ready"] },
+  });
+  expect(await takeRejections()).toEqual([]);
 
-  const rejections = await send("Runtime.evaluate", { expression: "rejections", returnByValue: true });
-  expect(rejections.result?.result.value).toEqual([]);
+  // With the Console domain on, the inspector previews each argument of console.log and the formatter prints it.
+  await send("Console.enable");
+  await send("Runtime.evaluate", { expression: "console.log(reader, byobReader, writer)" });
+  const logged = events.findLast(event => event.method === "Console.messageAdded");
+  expect(logged?.params.message.parameters.map(parameter => promisesIn(parameter.preview))).toEqual([
+    ["closed"],
+    ["closed"],
+    ["closed", "ready"],
+  ]);
+  expect(await takeRejections()).toEqual([]);
 
   expect(child.exitCode).toBe(null);
   webSocket.close();

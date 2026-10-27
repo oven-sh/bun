@@ -3,7 +3,9 @@ import {
   bunEnv,
   bunExe,
   isASAN,
+  isLinux,
   isWindows,
+  libcPathForDlopen,
   normalizeBunSnapshot,
   tempDir,
   tmpdirSync,
@@ -1540,8 +1542,8 @@ it.skipIf(!isASAN)("prints a substring-rope jsx type after a prop's inspect.cust
 // The formatter reads native getters to print their values. The `closed` and `ready` getters of stream readers and
 // writers return a rejected promise when the printed object is not an instance.
 describe("a native getter that rejects for the printed object", () => {
-  async function run(script) {
-    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  async function run(script, env = bunEnv) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env, stdout: "pipe", stderr: "pipe" });
     const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return { stdout, exitCode };
   }
@@ -1558,6 +1560,8 @@ describe("a native getter that rejects for the printed object", () => {
           console.error(value);
           Bun.inspect(value);
           Bun.inspect(value, { sorted: true });
+          // The message of the error prints the value.
+          try { new CompressionStream(value); } catch {}
         }
       }`);
     expect(JSON.parse(stdout)).toEqual([]);
@@ -1570,19 +1574,94 @@ describe("a native getter that rejects for the printed object", () => {
     expect(exitCode).toBe(0);
   });
 
+  it.concurrent("does not fail a passing test in bun test", async () => {
+    using dir = tempDir("inspect-native-getter-rejection", {
+      "print.test.js": `
+        import { expect, test } from "bun:test";
+        test("console.log", () => {
+          console.log(Object.create(ReadableStreamDefaultReader.prototype));
+        });
+        test("snapshot", () => {
+          expect(ReadableStreamDefaultReader.prototype).toMatchSnapshot();
+          expect({ writer: WritableStreamDefaultWriter.prototype }).toMatchSnapshot();
+        });
+        test.each([[ReadableStreamBYOBReader.prototype]])("title %p", () => {});`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--update-snapshots", "print.test.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(" 3 pass");
+    expect(stderr).toContain(" 0 fail");
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("adds no report when an unhandledRejection listener prints the reason", async () => {
+    const { stdout, exitCode } = await run(`
+      const seen = [];
+      process.on("unhandledRejection", reason => {
+        console.error(reason);
+        seen.push(reason instanceof Error ? reason.message : "the reader");
+      });
+      Promise.reject(Object.create(ReadableStreamDefaultReader.prototype));
+      Promise.reject(new Error("a second rejection in the same pass"));
+      setImmediate(() => console.log(JSON.stringify(seen)));`);
+    expect(JSON.parse(stdout)).toEqual(["the reader", "a second rejection in the same pass"]);
+    expect(exitCode).toBe(0);
+  });
+
   it.concurrent("leaves a rejection that user code holds reported", async () => {
     const { stdout, exitCode } = await run(`${collectRejections}
       const writer = Object.create(WritableStreamDefaultWriter.prototype);
       console.error({ promise: Promise.reject(new Error("own property")) });
       console.error(new CustomEvent("event", { detail: Promise.reject(new Error("behind a native getter")) }));
       console.error(new CustomEvent("event", { detail: writer.ready }));
-      writer.closed;`);
+      writer.closed;
+      // console._stdout is a native getter that reads process.stdout.
+      Object.defineProperty(process, "stdout", {
+        configurable: true,
+        get() {
+          Promise.reject(new Error("rejected during the read of a native getter, not returned"));
+        },
+      });
+      Bun.inspect(console);`);
     expect(JSON.parse(stdout)).toEqual([
       "own property",
       "behind a native getter",
       "The 'ready' getter can only be used on a WritableStreamDefaultWriter",
       "The 'closed' getter can only be used on a WritableStreamDefaultWriter",
+      "rejected during the read of a native getter, not returned",
     ]);
+    expect(exitCode).toBe(0);
+  });
+
+  // After the wait for a child failed, each read of Subprocess.exited returns a new rejected promise. Its error has
+  // no native getter flag. Here libc's waitpid() takes the exit status first, so the wait of bun fails with ECHILD.
+  it.skipIf(!isLinux).concurrent("handles a rejection that has no native getter flag", async () => {
+    const { stdout, exitCode } = await run(
+      `
+      const { dlopen } = require("bun:ffi");
+      const { waitpid } = dlopen(process.env.LIBC_PATH, { waitpid: { args: ["i32", "ptr", "i32"], returns: "i32" } }).symbols;
+      const rejections = [];
+      process.on("unhandledRejection", error => rejections.push(error.code));
+      const exited = Promise.withResolvers();
+      const proc = Bun.spawn({ cmd: [process.execPath, "-e", ""], stdio: ["ignore", "ignore", "ignore"], onExit: exited.resolve });
+      waitpid(proc.pid, null, 0);
+      await exited.promise;
+      Bun.inspect(proc);
+      console.error(proc);
+      setImmediate(() => {
+        const printed = [...rejections];
+        proc.exited;
+        setImmediate(() => console.log(JSON.stringify({ printed, read: rejections })));
+      });`,
+      { ...bunEnv, LIBC_PATH: libcPathForDlopen() },
+    );
+    expect(JSON.parse(stdout)).toEqual({ printed: [], read: ["ECHILD"] });
     expect(exitCode).toBe(0);
   });
 });

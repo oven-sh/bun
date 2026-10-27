@@ -56,6 +56,42 @@ describe("fs.watch", () => {
     expect(await bunRun(path.join(import.meta.dir, "fixtures", "unref.js"))).toSpawn();
   });
 
+  // Node makes one callback for each OS event, so what a listener queued for one event has run
+  // when the next event arrives. The fixture prints what a listener observes. Where a Node.js of
+  // v24 or later is installed, its output is the reference. Older ones keep the enterWith() store
+  // on the watcher's handle, so that line differs.
+  test.concurrent("nextTicks, microtasks and enterWith() of one event are done before the next event", async () => {
+    const fixture = path.join(import.meta.dir, "fixtures", "checkpoint-between-events.mjs");
+    using dir = tempDir("fs-watch-checkpoint", { bun: {}, node: {} });
+    async function observe(exe: string, workDir: "bun" | "node") {
+      await using proc = Bun.spawn({
+        cmd: [exe, fixture, path.join(String(dir), workDir)],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { observed: stdout && JSON.parse(stdout), stderr, exitCode };
+    }
+    const node = nodeExeAtLeast("24.0.0");
+    const [bun, reference] = await Promise.all([observe(bunExe(), "bun"), node ? observe(node, "node") : undefined]);
+    expect(bun).toEqual({
+      observed: {
+        "an event arrived before a nextTick of the event before it": false,
+        "an event arrived before a microtask of the event before it": false,
+        "an event saw the enterWith() store of the event before it": false,
+        "a loop of `await once(watcher, 'change')` saw every event": true,
+        ...(isLinux && {
+          "a nextTick ran between the events of a directory moved into a recursive watcher": false,
+          "the event after that directory arrived before a nextTick of its events": false,
+        }),
+      },
+      stderr: "",
+      exitCode: 0,
+    });
+    if (reference) expect(reference.observed).toEqual(bun.observed);
+  });
+
   test("should work with relative files", done => {
     try {
       bunRunAsScript(testDir, path.join(import.meta.dir, "fixtures", "relative.js"));
@@ -254,35 +290,6 @@ describe("fs.watch", () => {
       fs.writeFileSync(filepath, "world");
     });
   }, 10000);
-
-  // Node makes one callback for each OS event, so what a listener queued for one event has run
-  // when the next event arrives. The fixture prints what a listener observes. Where a recent
-  // Node.js is installed, its output is the reference.
-  test("nextTicks, microtasks and enterWith() of one event are done before the next event", async () => {
-    const fixture = path.join(import.meta.dir, "fixtures", "checkpoint-between-events.mjs");
-    async function observe(exe: string) {
-      await using proc = Bun.spawn({ cmd: [exe, fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      return { observed: stdout && JSON.parse(stdout), stderr, exitCode };
-    }
-    const node = nodeExeAtLeast("22.0.0");
-    const [bun, reference] = await Promise.all([observe(bunExe()), node ? observe(node) : undefined]);
-    expect(bun).toEqual({
-      observed: {
-        "an event arrived before a nextTick of the event before it": false,
-        "an event arrived before a microtask of the event before it": false,
-        "an event saw the enterWith() store of the event before it": false,
-        "a loop of `await once(watcher, 'change')` saw every event": true,
-        ...(isLinux && {
-          "a nextTick ran between the events of a directory moved into a recursive watcher": false,
-          "the event after that directory arrived before a nextTick of its events": false,
-        }),
-      },
-      stderr: "",
-      exitCode: 0,
-    });
-    if (reference) expect(reference.observed).toEqual(bun.observed);
-  });
 
   test("should error on invalid path", done => {
     try {

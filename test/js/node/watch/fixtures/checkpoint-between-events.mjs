@@ -1,12 +1,12 @@
 // Prints what a listener can observe between two events of one fs.watch watcher.
 // fs.watch.test.ts runs this file with Bun and with Node.js and compares the two outputs.
+// argv[2] is an empty directory to work in. The caller removes it.
 import { AsyncLocalStorage } from "node:async_hooks";
 import { once } from "node:events";
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 
-const base = fs.mkdtempSync(path.join(os.tmpdir(), "fs-watch-checkpoint-"));
+const base = process.argv[2];
 const observed = {};
 
 // The OS hands over several events at once when 40 files are written in a row.
@@ -98,5 +98,4 @@ if (process.platform === "linux") {
   observed["the event after that directory arrived before a nextTick of its events"] = early.after;
 }
 
-fs.rmSync(base, { recursive: true, force: true });
 console.log(JSON.stringify(observed, null, 2));

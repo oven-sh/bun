@@ -793,7 +793,7 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
         // node: builtin specifiers bypass the file resolver — JSModuleLoader
         // resolves them internally, so `bun --import node:*` works like Node's.
         let module_name = if normalized.starts_with(b"node:") {
-            bun_core::String::from_bytes(normalized)
+            bun_core::StringView::from_bytes(normalized)
         } else {
             // ── resolve ─────────────────────────────────────────────────────
             // SAFETY: per fn contract; `top_level_dir` is the `'static` fs
@@ -851,7 +851,7 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
                 (*vm).preload_hash = bun_watcher::Watcher::get_hash(path_text);
                 (*vm).transpiler.options.test_file_imports_vitest = false;
             }
-            bun_core::String::from_bytes(path_text)
+            bun_core::StringView::from_bytes(path_text)
         };
         // Note: use `import_ptr` (not `import`) so the `*mut` we store in
         // `pending_internal_promise` keeps the FFI's mutable provenance instead
@@ -1922,7 +1922,7 @@ unsafe fn retroactively_report_discovered_tests(
     let file_path = runner.files.items_source()[active_file.file_id as usize]
         .path
         .text();
-    let source_url = bun_core::String::from_bytes(file_path);
+    let source_url = bun_core::StringView::from_bytes(file_path);
 
     let mut max_id: i32 = next_test_id;
 
@@ -1941,7 +1941,7 @@ unsafe fn retroactively_report_discovered_tests(
                     max_id += 1;
                     // Assign the ID so start/end events will fire during execution.
                     describe.base.test_id_for_debugger = max_id;
-                    let name = bun_core::String::from_bytes(
+                    let name = bun_core::StringView::from_bytes(
                         describe.base.name.as_deref().unwrap_or(b"(unnamed)"),
                     );
                     // SAFETY: `agent` is a live C++ handle (fn contract).
@@ -1961,7 +1961,7 @@ unsafe fn retroactively_report_discovered_tests(
                 if test_entry.base.test_id_for_debugger == 0 {
                     max_id += 1;
                     test_entry.base.test_id_for_debugger = max_id;
-                    let name = bun_core::String::from_bytes(
+                    let name = bun_core::StringView::from_bytes(
                         test_entry.base.name.as_deref().unwrap_or(b"(unnamed)"),
                     );
                     // SAFETY: `agent` is a live C++ handle (fn contract).
@@ -4004,7 +4004,9 @@ fn get_hardcoded_module(
             // `Runtime.Runtime.sourceCode()` — the bundler's CJS-interop
             // shim, embedded as a static string in `bun_ast::runtime`.
             return Some(ResolvedSource {
-                source_code: bun_core::String::from_bytes(bun_ast::runtime::Runtime::source_code()),
+                source_code: bun_core::String::from_static_bytes(
+                    bun_ast::runtime::Runtime::source_code(),
+                ),
                 source_url: specifier.clone(),
                 is_static: true,
                 ..ResolvedSource::default()
@@ -4124,7 +4126,7 @@ export default db;
             origin_path: if file.bytecode_origin_path.is_empty() {
                 specifier.clone()
             } else {
-                bun_core::String::from_bytes(file.bytecode_origin_path)
+                bun_core::String::from_static_bytes(file.bytecode_origin_path)
             },
             bytecode_cache: Bytecode::persistent_at(file.bytecode, file.bytecode_entry_offset),
             source_code_hash: file.source_hash,
@@ -5121,7 +5123,7 @@ pub(crate) fn parse_http_date(value: &[u8]) -> Option<u64> {
     // the VM; `parse_http_date` is only reachable from a `Bun.serve` request
     // callback (JS thread, VM live).
     let global = unsafe { &*(*vm).global };
-    let string = bun_core::String::from_bytes(value);
+    let string = bun_core::StringView::from_bytes(value);
     // The only callers — FileRoute / static
     // routes — treat a throw the same as "header absent / unparsable", so
     // swallow `JsError` here and surface `None`.

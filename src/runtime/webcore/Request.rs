@@ -16,7 +16,7 @@ use crate::webcore::jsc::{HTTPHeaderName, JSGlobalObject, JSValue, JsError, JsRe
 use crate::webcore::{AbortSignal, Blob, CookieMap, FetchHeaders, ReadableStream, Response};
 use bun_alloc::AllocError;
 use bun_core::{Output, fmt as bun_fmt};
-use bun_core::{String as BunString, strings};
+use bun_core::{String as BunString, StringView, strings};
 use bun_http_jsc::fetch_enums_jsc::{
     fetch_cache_mode_to_js, fetch_redirect_to_js, fetch_request_mode_to_js,
 };
@@ -274,7 +274,7 @@ impl Request {
                 if !content_type_.is_empty() {
                     self.headers_mut().as_mut().unwrap().put(
                         HTTPHeaderName::ContentType,
-                        &BunString::ascii(content_type_),
+                        &StringView::ascii(content_type_),
                         global_this,
                     )?;
                 }
@@ -891,7 +891,7 @@ impl Request {
 
                         debug_assert!(self.size_of_url() == url.len());
 
-                        let href = bun_url::href_from_string(&BunString::from_bytes(url));
+                        let href = bun_url::href_from_string(&StringView::from_bytes(url));
                         if !href.is_empty() {
                             if core::ptr::eq(href.byte_slice().as_ptr(), url.as_ptr()) {
                                 self.url.set(BunString::clone_latin1(&url[..href.length()]));
@@ -1414,7 +1414,7 @@ impl Request {
                     match req.headers_mut().as_mut().unwrap().put(
                         HTTPHeaderName::ContentType,
                         // SAFETY: ct_ptr borrows req.body which is not mutated here.
-                        &BunString::ascii(unsafe { &*ct_ptr }),
+                        &StringView::ascii(unsafe { &*ct_ptr }),
                         cx.global(),
                     ) {
                         Ok(()) => {}

@@ -33,7 +33,7 @@ use bun_resolver::package_json::{MacroMap, PackageJSON};
 use bun_resolver::tsconfig_json::TSConfigJSON;
 // `bun_schema::api` → schema lives in `bun_options_types::schema::api`.
 use bun_collections::ArrayHashMapExt;
-use bun_core::{EncodedSlice, String as BunString};
+use bun_core::{EncodedSlice, String as BunString, StringView};
 use bun_options_types::schema::api;
 
 // Host-fn re-entrancy: every JS-exposed method takes `&self`; per-field
@@ -1465,8 +1465,8 @@ fn named_exports_to_js(
     }
     index_sort::sort_slice_unstable_by(&mut keys, |a, b| a.cmp(b));
 
-    let names: Vec<BunString> = keys.into_iter().map(BunString::from_bytes).collect();
-    bun_string_jsc::to_js_array(global, &names)
+    let names: Vec<StringView<'_>> = keys.into_iter().map(StringView::from_bytes).collect();
+    bun_string_jsc::to_js_array(global, StringView::as_strings(&names))
 }
 
 fn named_imports_to_js(

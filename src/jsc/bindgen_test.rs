@@ -62,22 +62,21 @@ pub(crate) fn string_echo(text: &bun_core::String) -> bun_core::String {
     text.clone()
 }
 
-fn copy_of(text: &bun_core::String) -> bun_core::String {
-    if text.is_utf16() {
-        bun_core::String::clone_utf16(text.utf16())
-    } else {
-        bun_core::String::clone_latin1(text.latin1())
-    }
+pub(crate) fn string_view_echo(text: &bun_core::StringView<'_>) -> bun_core::String {
+    bun_core::String::clone(text)
 }
 
-pub(crate) fn string_view_echo(text: &bun_core::StringView<'_>) -> bun_core::String {
-    copy_of(text)
+pub(crate) fn string_view_clone_outlives_bytes(text: &[u8]) -> bun_core::String {
+    let bytes = text.to_vec();
+    let clone = bun_core::String::clone(&bun_core::StringView::from_bytes(&bytes));
+    drop(bytes);
+    clone
 }
 
 pub(crate) fn string_or_object_view_echo(
     text: Option<bun_core::StringView<'_>>,
 ) -> Option<bun_core::String> {
-    text.map(|text| copy_of(&text))
+    text.map(|text| bun_core::String::clone(&text))
 }
 
 pub(crate) fn string_length(text: &bun_core::String) -> usize {

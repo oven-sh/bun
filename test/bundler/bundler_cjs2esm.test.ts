@@ -3050,16 +3050,11 @@ describe("bundler", () => {
     run: { stdout: "1" },
   });
   // --minify-syntax substitutes a single-use `const` and visits the result
-  // again. A `module.exports` made or consumed there is still a value.
-  itBundled("cjs2esm/ModuleExportsValueAliasMinifySyntax", {
-    files: {
-      "/entry.js": /* js */ `
-        import { get as a } from './alias-member.cjs';
-        import { get as b } from './alias-typeof.cjs';
-        import { get as c } from './module-alias-member.cjs';
-        import { get as d } from './module-alias-typeof.cjs';
-        console.log(a(), b(), c(), d());
-      `,
+  // again. A `module.exports` made or consumed there is still a value. A
+  // default import that only calls `get()` binds the lifted `get`, as a named
+  // import does. That form regressed in 1.4.1.
+  {
+    const aliases = {
       "/alias-member.cjs": /* js */ `
         exports.a = 1;
         exports.get = function () { const m = module.exports; return m.a + 1; };
@@ -3076,8 +3071,34 @@ describe("bundler", () => {
         exports.a = 1;
         exports.get = function () { const m = module; return typeof m.exports; };
       `,
-    },
-    minifySyntax: true,
-    run: { stdout: "2 object 2 object" },
-  });
+    };
+    itBundled("cjs2esm/ModuleExportsValueAliasMinifySyntax", {
+      files: {
+        "/entry.js": /* js */ `
+          import { get as a } from './alias-member.cjs';
+          import { get as b } from './alias-typeof.cjs';
+          import { get as c } from './module-alias-member.cjs';
+          import { get as d } from './module-alias-typeof.cjs';
+          console.log(a(), b(), c(), d());
+        `,
+        ...aliases,
+      },
+      minifySyntax: true,
+      run: { stdout: "2 object 2 object" },
+    });
+    itBundled("cjs2esm/ModuleExportsValueAliasMinifySyntaxDefaultImport", {
+      files: {
+        "/entry.js": /* js */ `
+          import a from './alias-member.cjs';
+          import b from './alias-typeof.cjs';
+          import c from './module-alias-member.cjs';
+          import d from './module-alias-typeof.cjs';
+          console.log(a.get(), b.get(), c.get(), d.get());
+        `,
+        ...aliases,
+      },
+      minifySyntax: true,
+      run: { stdout: "2 object 2 object" },
+    });
+  }
 });

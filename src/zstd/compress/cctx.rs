@@ -516,7 +516,7 @@ fn compress_insert_dictionary(
 
 /// `ZSTD_CDict`: a dictionary that is indexed, ready to start frames with.
 pub(crate) struct CDict {
-    dict_content: Arc<[u8]>,
+    dict_content: Arc<Vec<u8>>,
     match_state: MatchState,
     c_block_state: Box<CompressedBlockState>,
     dict_id: u32,
@@ -525,7 +525,7 @@ pub(crate) struct CDict {
 
 impl CDict {
     /// `ZSTD_createCDict_advanced2`
-    pub(crate) fn new(dict: Arc<[u8]>, original_cctx_params: &CCtxParams) -> Result<Self> {
+    pub(crate) fn new(dict: Arc<Vec<u8>>, original_cctx_params: &CCtxParams) -> Result<Self> {
         let mut params = *original_cctx_params;
         params.c_params = get_c_params_from_cctx_params(
             &params,

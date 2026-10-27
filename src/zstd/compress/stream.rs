@@ -48,7 +48,7 @@ pub struct CCtx {
     stream_stage: StreamStage,
     frame_ended: bool,
     /// `localDict.dict`
-    local_dict: Option<Arc<[u8]>>,
+    local_dict: Option<Arc<Vec<u8>>>,
     /// `localDict.cdict`, which is made when the first frame starts.
     cdict: Option<Arc<CDict>>,
     mtctx: Option<Box<MtCtx>>,
@@ -140,7 +140,7 @@ impl CCtx {
         copy.try_reserve_exact(dict.len())
             .map_err(|_| ErrorCode::MemoryAllocation)?;
         copy.extend_from_slice(dict);
-        self.local_dict = Some(Arc::from(copy));
+        self.local_dict = Some(Arc::new(copy));
         Ok(())
     }
 

@@ -4,6 +4,7 @@ use super::internal::{
     CompressionParameters, LdmParams, ParamSwitch, Strategy, ZSTD_OPT_SIZE,
     ZSTD_SHORT_CACHE_TAG_BITS,
 };
+use super::lazy::ZSTD_ROW_HASH_TAG_BITS;
 use super::{ldm, row_match_finder_supported};
 use crate::common::{
     LITBITS, MAX_LL, MAX_ML, MAX_OFF, WILDCOPY_OVERLENGTH, ZSTD_BLOCKSIZE_MAX,
@@ -42,7 +43,6 @@ const ZSTD_TARGETCBLOCKSIZE_MIN: i32 = 1340;
 const ZSTD_TARGETCBLOCKSIZE_MAX: i32 = ZSTD_BLOCKSIZE_MAX as i32;
 const ZSTD_LDM_DEFAULT_WINDOW_LOG: u32 = ZSTD_WINDOWLOG_LIMIT_DEFAULT;
 pub(crate) const ZSTD_HASHLOG3_MAX: u32 = 17;
-pub(crate) const ZSTD_ROW_HASH_TAG_BITS: u32 = 8;
 
 pub(crate) const ZSTDMT_NBWORKERS_MAX: i32 = 256;
 pub(crate) const ZSTDMT_JOBSIZE_MIN: i32 = 512 << 10;

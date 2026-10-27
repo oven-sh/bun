@@ -92,8 +92,9 @@ mod _impl {
         /// Per-mode external-allocation footprint, fixed at construction.
         fn external_size_for(mode: NodeMode) -> usize {
             match mode {
-                NodeMode::ZSTD_COMPRESS => 5272,    // estimate of ZSTD_sizeof_CCtx
-                NodeMode::ZSTD_DECOMPRESS => 95968, // estimate of ZSTD_sizeof_DCtx
+                // About what a new context takes, with the tables it allocates at once.
+                NodeMode::ZSTD_COMPRESS => 14 * 1024,
+                NodeMode::ZSTD_DECOMPRESS => 28 * 1024,
                 _ => 0,
             }
         }

@@ -3,7 +3,7 @@ title: Image
 description: Decode, transform, and encode images with a fast native pipeline
 ---
 
-`Bun.Image` is a chainable image pipeline for decoding, resizing, rotating, and re-encoding JPEG, PNG, WebP, HEIC, and AVIF. It is built on libjpeg-turbo, spng, libwebp, and SIMD geometry kernels, with zero npm dependencies and no native addon build step.
+`Bun.Image` is a chainable image pipeline for decoding, resizing, rotating, and re-encoding JPEG, PNG, WebP, HEIC, and AVIF. It is built on a JPEG codec in Rust, spng, libwebp, and SIMD geometry kernels, with zero npm dependencies and no native addon build step.
 
 ```ts
 await Bun.file("photo.jpg").image().resize(400, 400, { fit: "inside" }).webp({ quality: 80 }).write("thumb.webp");
@@ -29,7 +29,7 @@ Bun sniffs the format from the bytes and ignores extensions and `Content-Type`.
 
 When passing a `TypedArray`/`ArrayBuffer`, don't mutate it while a terminal is pending — decode runs off-thread and borrows the bytes. Bun refuses `SharedArrayBuffer` and resizable buffers; use `buf.slice()` to pass a fixed view.
 
-Bun decodes a damaged JPEG when libjpeg-turbo can finish the decode with only a warning. Examples are stray bytes between segments, a missing end-of-image marker, and truncated scan data. libjpeg-turbo fills the blocks that have no data with flat grey. A progressive file that is cut after its first scan has data for every block, so Bun returns the whole picture with less detail. When libjpeg-turbo cannot finish the decode, the terminal rejects with `ERR_IMAGE_DECODE_FAILED`. `metadata()` reads only the header, so it can resolve for a file that a terminal rejects.
+Bun decodes a damaged JPEG in the cases where libjpeg-turbo finishes the decode with only a warning. Examples are stray bytes between segments, a missing end-of-image marker, and truncated scan data. The blocks that have no data come back flat grey. A progressive file that is cut after its first scan has data for every block, so Bun returns the whole picture with less detail. When the decode cannot finish, the terminal rejects with `ERR_IMAGE_DECODE_FAILED`. `metadata()` reads only the header, so it can resolve for a file that a terminal rejects.
 
 A second `options` argument guards against decompression bombs and controls EXIF handling:
 
@@ -184,7 +184,7 @@ For a passive "image in clipboard, press ⌘V" hint, poll `clipboardChangeCount(
 
 |                        | Linux                             | macOS               | Windows      |
 | ---------------------- | --------------------------------- | ------------------- | ------------ |
-| JPEG / PNG / WebP      | libjpeg-turbo · spng · libwebp    | same                | same         |
+| JPEG / PNG / WebP      | built-in · spng · libwebp         | same                | same         |
 | BMP / GIF (decode)     | built-in                          | ImageIO             | WIC          |
 | TIFF (decode)          | ❌                                | ImageIO             | WIC          |
 | Resize / rotate / flip | Highway SIMD                      | Accelerate vImage ³ | Highway SIMD |

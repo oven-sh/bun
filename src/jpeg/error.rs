@@ -65,16 +65,12 @@ pub enum Error {
         "Invalid restart interval {0}; must be an integer multiple of the number of MCUs in an MCU row ({1})"
     )]
     BadRestart(u32, u32),
-    #[error("Arithmetic table 0x{0:02x} was not defined")]
-    NoArithTable(u8),
     #[error("Sorry, arithmetic coding is not implemented")]
     ArithNotImpl,
     #[error("Corrupt JPEG data: bad DCT coefficient")]
     BadDctCoef,
     #[error("Huffman code size table overflow")]
     HuffCodeLengthOverflow,
-    #[error("Missing Huffman code table entry")]
-    HuffMissingCode,
     #[error("Invalid argument")]
     InvalidArgument,
     #[error("Insufficient memory")]

@@ -203,12 +203,12 @@ describe("String search — Highway memMem/indexOfChar", () => {
   });
 });
 
-describe("JPEG codec: libjpeg-turbo jsimd runtime dispatch", () => {
-  // libjpeg-turbo picks its kernels per codec instance from CPUID (simd/jsimd.c; on
-  // x64: AVX2, else SSE2; Neon on aarch64). On the emulated baseline CPU the
-  // AVX2 kernels must stay unselected, so this traps if that gate breaks.
-  // 72 px wide: two full 32-pixel AVX2 / 16-pixel SSE2 column iterations plus an
-  // 8-pixel tail; 40 px tall keeps h2v2 chroma downsampling and upsampling busy.
+describe("JPEG codec: loops the compiler vectorizes", () => {
+  // bun_jpeg has no kernels of its own and no runtime dispatch. The compiler turns its
+  // loops into vector code for the CPU the build targets, so this traps if that is not the
+  // baseline CPU.
+  // 72 px wide: whole vectors of 32 or 16 pixels plus an 8-pixel tail; 40 px tall keeps
+  // h2v2 chroma downsampling and upsampling busy.
   const width = 72;
   const height = 40;
 
@@ -256,8 +256,8 @@ describe("JPEG codec: libjpeg-turbo jsimd runtime dispatch", () => {
     // 100 stores exactly, and a grey value converts to YCbCr and back exactly.
     // So decoding the JPEG gives back the exact source pixels, and encoding
     // them again has to reproduce the first file. That runs the colour
-    // conversion, downsampling, DCT, quantization and Huffman kernels on the
-    // encode side and the IDCT, upsampling and colour conversion kernels on the
+    // conversion, downsampling, DCT, quantization and Huffman coding on the
+    // encode side and the IDCT, upsampling and colour conversion on the
     // decode side, and checks their results, not just that they did not trap.
     const first = await new Bun.Image(png(() => [77, 77, 77])).jpeg({ quality: 100 }).bytes();
     const second = await new Bun.Image(first).jpeg({ quality: 100 }).bytes();
@@ -266,8 +266,7 @@ describe("JPEG codec: libjpeg-turbo jsimd runtime dispatch", () => {
   });
 
   test("gradient round-trips through baseline and progressive encoders", async () => {
-    // Non-flat content drives the AC coefficient paths of the Huffman kernels
-    // and of the progressive encoder's coefficient preparation.
+    // Non-flat content drives the AC coefficient paths of the Huffman coders.
     const source = png((x, y) => [x * 3, y * 6, (x + y) & 0xff]);
     for (const progressive of [false, true]) {
       const jpeg = await new Bun.Image(source).jpeg({ quality: 90, progressive }).bytes();

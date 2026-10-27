@@ -62,6 +62,7 @@ bun_install.workspace = true
 bun_install_types.workspace = true
 bun_parsers.workspace = true
 bun_io.workspace = true
+bun_jpeg.workspace = true
 bun_js_parser.workspace = true
 bun_js_parser_jsc.workspace = true
 bun_sema_driver.workspace = true

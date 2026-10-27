@@ -34,7 +34,7 @@ const HAS_SYSTEM_BACKEND: bool = cfg!(any(target_os = "macos", windows));
 /// Process-global selector exposed as `Bun.Image.backend`.
 ///
 /// `.system` (default on darwin/windows) is the perf-optimal hybrid:
-///   • jpeg/png/webp decode+encode → static codecs (turbo/spng/libwebp).
+///   • jpeg/png/webp decode+encode → static codecs (bun_jpeg/spng/libwebp).
 ///     Profiling on M-series found ImageIO no faster: Huffman/inflate
 ///     dominate and aren't AMX-amenable, and ImageIO bottoms out in stock
 ///     libz vs our zlib-ng. Keeping these static also makes output bytes
@@ -355,9 +355,7 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
             h = u32::from_be_bytes(bytes[20..24].try_into().expect("infallible: size matches"));
         }
         Format::Jpeg => {
-            // turbojpeg's header decode is already cheap (no scan data read).
-            let handle = jpeg::Handle::init(1).ok_or(Error::OutOfMemory)?;
-            (w, h) = handle.read_header(bytes)?;
+            (w, h) = jpeg::probe(bytes)?;
         }
         Format::Webp => {
             let mut cw: c_int = 0;
@@ -476,7 +474,7 @@ impl Default for EncodeOptions {
 }
 
 /// Encoded output paired with the free function for its allocator. The C
-/// codecs each malloc internally (turbojpeg's allocator, libwebp's, libc for
+/// codecs each malloc internally (libwebp's allocator, libc for
 /// libspng); rather than dupe into the global allocator so JS can own it,
 /// we hand the original buffer to JS via `ArrayBuffer.toJSWithContext` with
 /// the matching free — one allocation, zero copies, for the final output.
@@ -502,7 +500,7 @@ impl Drop for Encoded {
     }
 }
 
-/// Adapt a 1-arg C free (`tj3Free`, `WebPFree`, libc `free`) to the
+/// Adapt a 1-arg C free (`WebPFree`, libc `free`) to the
 /// 2-arg JSC deallocator signature.
 // Rust cannot capture a runtime fn pointer in a non-capturing `extern "C" fn`,
 // so this is a macro that mints a static trampoline per call site.
@@ -518,7 +516,6 @@ macro_rules! encoded_wrap_free {
 }
 
 impl Encoded {
-    #[cfg(any(target_os = "macos", windows))]
     pub(crate) fn from_owned(bytes: Vec<u8>) -> Encoded {
         let mut bytes = core::mem::ManuallyDrop::new(bytes);
         // SAFETY: Vec data ptr is non-null; len is valid.
@@ -570,7 +567,7 @@ pub(crate) fn encode(
         Format::Webp => webp::encode(rgba, width, height, opts.quality, opts.lossless, icc),
         // Same routing rationale as decode(): the OS encoder is a capability
         // fallback, not a fast path — ImageIO's quality scale doesn't match
-        // libjpeg-turbo's, and it can't honour compressionLevel/palette/
+        // libjpeg's, and it can't honour compressionLevel/palette/
         // lossless, so using it for jpeg/png/webp would make output bytes
         // diverge from Linux for no speed win.
         Format::Heic | Format::Avif => {
@@ -652,7 +649,7 @@ unsafe extern "C" {
     fn bun_image_cmyk_to_rgba8(buf: *mut u8, len: usize);
 }
 
-/// In-place inverted-CMYK (libjpeg-turbo `TJPF_CMYK` output) → opaque RGBA.
+/// In-place inverted-CMYK (`bun_jpeg::PixelFormat::Cmyk` output) → opaque RGBA.
 pub(crate) fn cmyk_to_rgba(px: &mut [u8]) {
     // SAFETY: ptr+len from a valid slice; C++ kernel writes within bounds.
     unsafe { bun_image_cmyk_to_rgba8(px.as_mut_ptr(), px.len()) }

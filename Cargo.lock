@@ -1509,6 +1509,7 @@ dependencies = [
  "bun_install_jsc",
  "bun_install_types",
  "bun_io",
+ "bun_jpeg",
  "bun_js_parser",
  "bun_js_parser_jsc",
  "bun_js_printer",

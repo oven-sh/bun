@@ -1,337 +1,91 @@
-//! libjpeg-turbo (TurboJPEG 3 API) decode/encode for `Bun.Image`.
+//! JPEG decode/encode for `Bun.Image`, on `bun_jpeg`.
 //! Dispatch lives in codecs.rs; this file is the codec body.
 
-use core::ffi::{c_int, c_void};
-use core::ptr::NonNull;
+use bun_jpeg::{ColorSpace, Decoder, EncodeOptions, PixelFormat};
 
 use super::codecs;
-use crate::encoded_wrap_free;
 
-#[allow(non_camel_case_types)]
-type tjhandle = *mut c_void;
-
-// TJINIT_COMPRESS=0, TJINIT_DECOMPRESS=1.
-unsafe extern "C" {
-    fn tj3Init(init_type: c_int) -> tjhandle;
-    fn tj3Destroy(h: tjhandle);
-    fn tj3Set(h: tjhandle, param: c_int, value: c_int) -> c_int;
-    fn tj3Get(h: tjhandle, param: c_int) -> c_int;
-    fn tj3BunCompletedWithWarning(h: tjhandle) -> c_int;
-    fn tj3DecompressHeader(h: tjhandle, buf: *const u8, len: usize) -> c_int;
-    fn tj3Decompress8(
-        h: tjhandle,
-        buf: *const u8,
-        len: usize,
-        dst: *mut u8,
-        pitch: c_int,
-        pf: c_int,
-    ) -> c_int;
-    fn tj3Compress8(
-        h: tjhandle,
-        src: *const u8,
-        w: c_int,
-        pitch: c_int,
-        height: c_int,
-        pf: c_int,
-        out: *mut *mut u8,
-        out_len: *mut usize,
-    ) -> c_int;
-    fn tj3SetScalingFactor(h: tjhandle, sf: ScalingFactor) -> c_int;
-    fn tj3SetCroppingRegion(h: tjhandle, r: CropRegion) -> c_int;
-    fn tj3GetScalingFactors(n: *mut c_int) -> *const ScalingFactor;
-    pub(crate) fn tj3Free(ptr: *mut c_void);
-    // ICC profile transport: the APP2 ICC_PROFILE marker carries the source's
-    // colour space (sRGB implicit when absent; Display-P3 / Adobe RGB / Jpegli
-    // XYB / … explicit when present). tj3GetICCProfile reads the decoded
-    // marker after TJPARAM_SAVEMARKERS is set to 2 or 4 — it allocates via
-    // libjpeg-turbo's allocator and returns it in *iccBuf for the caller to
-    // tj3Free. tj3SetICCProfile copies the bytes into the encoder's state so
-    // the input buffer can be freed immediately after.
-    fn tj3GetICCProfile(h: tjhandle, icc_buf: *mut *mut u8, icc_size: *mut usize) -> c_int;
-    fn tj3SetICCProfile(h: tjhandle, icc_buf: *const u8, icc_size: usize) -> c_int;
-}
-
-/// RAII owner for a TurboJPEG handle — `tj3Destroy` on drop.
-pub(crate) struct Handle(NonNull<c_void>);
-
-impl Handle {
-    /// `init_type`: `0` = compress, `1` = decompress.
-    #[inline]
-    pub(crate) fn init(init_type: c_int) -> Option<Self> {
-        // SAFETY: FFI — tj3Init has no preconditions; returns null on failure.
-        NonNull::new(unsafe { tj3Init(init_type) }).map(Self)
-    }
-
-    #[inline]
-    fn as_ptr(&self) -> tjhandle {
-        self.0.as_ptr()
-    }
-
-    /// Whether the decompress call that just returned `rc` ran to completion; a libjpeg warning alone still does.
-    fn completed(&self, rc: c_int) -> bool {
-        // SAFETY: `self` owns a live tjhandle; this only reads a flag, which the next tj3Set*/tj3GetICCProfile call resets.
-        rc == 0 || unsafe { tj3BunCompletedWithWarning(self.as_ptr()) } != 0
-    }
-
-    /// SOF dimensions from the last header parse.
-    fn dimensions(&self) -> Option<(u32, u32)> {
-        // SAFETY: `self` owns a live tjhandle; tj3Get only reads handle state.
-        let (w, ht) = unsafe {
-            (
-                tj3Get(self.as_ptr(), TJPARAM_JPEGWIDTH),
-                tj3Get(self.as_ptr(), TJPARAM_JPEGHEIGHT),
-            )
-        };
-        match (u32::try_from(w), u32::try_from(ht)) {
-            (Ok(w @ 1..), Ok(ht @ 1..)) => Some((w, ht)),
-            // -1 until a header with an SOF has been parsed.
-            _ => None,
-        }
-    }
-
-    /// Parse the header (SOF dims, saved ICC markers) without touching scan data.
-    pub(crate) fn read_header(&self, bytes: &[u8]) -> Result<(u32, u32), codecs::Error> {
-        // SAFETY: `self` owns a live tjhandle; ptr/len come from a valid `&[u8]` borrowed for the call.
-        let rc = unsafe { tj3DecompressHeader(self.as_ptr(), bytes.as_ptr(), bytes.len()) };
-        if !self.completed(rc) {
-            return Err(codecs::Error::DecodeFailed);
-        }
-        self.dimensions().ok_or(codecs::Error::DecodeFailed)
+fn decode_error(err: bun_jpeg::Error) -> codecs::Error {
+    match err {
+        bun_jpeg::Error::OutOfMemory => codecs::Error::OutOfMemory,
+        _ => codecs::Error::DecodeFailed,
     }
 }
 
-impl Drop for Handle {
-    #[inline]
-    fn drop(&mut self) {
-        // SAFETY: `self.0` is the non-null tjhandle returned by tj3Init;
-        // tj3Destroy is the documented owner-release and is called exactly once.
-        unsafe { tj3Destroy(self.0.as_ptr()) };
-    }
+/// SOF dimensions. Reads up to the first scan and none of its data.
+pub(crate) fn probe(bytes: &[u8]) -> Result<(u32, u32), codecs::Error> {
+    let decoder = Decoder::new(bytes).map_err(decode_error)?;
+    Ok((decoder.width(), decoder.height()))
 }
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct ScalingFactor {
-    num: c_int,
-    denom: c_int,
-}
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct CropRegion {
-    x: c_int,
-    y: c_int,
-    w: c_int,
-    h: c_int,
-}
-
-/// TJSCALED: ceil(dim * num / denom).
-#[inline]
-fn scaled(dim: u32, sf: ScalingFactor) -> u32 {
-    // @divFloor with positive denom and non-negative numerator == truncating division.
-    u32::try_from(
-        (i64::from(dim) * i64::from(sf.num) + i64::from(sf.denom) - 1) / i64::from(sf.denom),
-    )
-    .unwrap()
-}
-
-// tjparam / tjpf enum values from turbojpeg.h.
-const TJPARAM_QUALITY: c_int = 3;
-const TJPARAM_SUBSAMP: c_int = 4;
-const TJPARAM_JPEGWIDTH: c_int = 5;
-const TJPARAM_JPEGHEIGHT: c_int = 6;
-const TJPARAM_COLORSPACE: c_int = 8;
-const TJPARAM_PROGRESSIVE: c_int = 12;
-const TJPARAM_MAXPIXELS: c_int = 24;
-/// `2` = save only APP2/ICC_PROFILE markers (enough for colour management,
-/// skips the rest). Must be set BEFORE `tj3DecompressHeader` so the marker
-/// parser keeps the profile around for `tj3GetICCProfile`.
-const TJPARAM_SAVEMARKERS: c_int = 25;
-const TJPF_RGBA: c_int = 7;
-const TJPF_CMYK: c_int = 11;
-const TJCS_CMYK: c_int = 3;
-const TJCS_YCCK: c_int = 4;
-const TJSAMP_420: c_int = 2;
 
 pub(crate) fn decode(
     bytes: &[u8],
     max_pixels: u64,
     hint: codecs::DecodeHint,
 ) -> Result<codecs::Decoded, codecs::Error> {
-    let handle = Handle::init(1).ok_or(codecs::Error::OutOfMemory)?;
-    let h = handle.as_ptr();
-    // Ask libjpeg-turbo to keep the APP2/ICC_PROFILE markers so we can pull
-    // the profile out after header parse. Must be set PRE-header — the
-    // marker buffer is discarded if we set this after.
-    // SAFETY: `h` is a live tjhandle for as long as `handle` is in scope.
-    unsafe { tj3Set(h, TJPARAM_SAVEMARKERS, 2) };
-    let (src_w, src_h) = handle.read_header(bytes)?;
+    let mut decoder = Decoder::new(bytes).map_err(decode_error)?;
+    let (src_w, src_h) = (decoder.width(), decoder.height());
     codecs::guard(src_w, src_h, max_pixels)?;
-    // libjpeg-turbo won't convert 4-component JPEGs to RGB; decode as packed CMYK (also 4 bytes/px) and convert below.
-    // SAFETY: `h` is live; tj3Get only reads handle state.
-    let cmyk = matches!(
-        unsafe { tj3Get(h, TJPARAM_COLORSPACE) },
-        TJCS_CMYK | TJCS_YCCK
-    );
+    // However high `max_pixels` is set. TurboJPEG took its own limit as an `int`.
+    if u64::from(src_w) * u64::from(src_h) > i32::MAX as u64 {
+        return Err(codecs::Error::DecodeFailed);
+    }
+    // 4-component JPEGs decode as packed CMYK (also 4 bytes/px) and are converted below.
+    let cmyk = matches!(decoder.color_space(), ColorSpace::Cmyk | ColorSpace::Ycck);
 
-    let mut w = src_w;
-    let mut ht = src_h;
-    // DCT-domain scaling: if the pipeline will downscale, ask libjpeg-turbo
-    // for the smallest M/8 IDCT that still ≥ target. The IDCT is where the
+    // DCT-domain scaling: if the pipeline will downscale, ask for the
+    // smallest M/8 IDCT that still ≥ target. The IDCT is where the
     // decode time goes, so this is roughly (8/M)² faster AND the RGBA
     // buffer shrinks by the same factor — both speed and RSS win in one
     // place. The subsequent resize pass takes it the rest of the way.
-    if hint.target_w != 0 && hint.target_h != 0 && (hint.target_w < src_w || hint.target_h < src_h)
+    let mut eighths = 8;
+    if hint.target_w != 0
+        && hint.target_h != 0
+        && (hint.target_w < src_w || hint.target_h < src_h)
+        && decoder.scalable()
     {
-        let mut n: c_int = 0;
-        // SAFETY: FFI — writes a count into `n` and returns a pointer to a
-        // static const table inside libjpeg-turbo; no handle required.
-        let sfs = unsafe { tj3GetScalingFactors(&raw mut n) };
-        if !sfs.is_null() {
-            let mut best = ScalingFactor { num: 1, denom: 1 };
-            // SAFETY: tj3GetScalingFactors returned `n` valid ScalingFactor entries at `sfs`.
-            let sfs =
-                unsafe { core::slice::from_raw_parts(sfs, usize::try_from(n).expect("int cast")) };
-            for &sf in sfs {
-                // Only consider downscale factors.
-                if sf.num >= sf.denom {
-                    continue;
-                }
-                let sw = scaled(src_w, sf);
-                let sh = scaled(src_h, sf);
-                // Never go BELOW target — that would force upscale and
-                // throw away detail the user asked for.
-                if sw < hint.target_w || sh < hint.target_h {
-                    continue;
-                }
-                // Pick the smallest output (= largest reduction).
-                if u64::from(sw) * u64::from(sh)
-                    < u64::from(scaled(src_w, best)) * u64::from(scaled(src_h, best))
-                {
-                    best = sf;
-                }
+        let area = |(w, h): (u32, u32)| u64::from(w) * u64::from(h);
+        for candidate in (1..8).rev() {
+            let (sw, sh) = decoder.scaled_size(candidate);
+            // Never go BELOW target — that would force upscale and
+            // throw away detail the user asked for.
+            if sw < hint.target_w || sh < hint.target_h {
+                continue;
             }
-            if best.num != best.denom {
-                // SAFETY: `h` is live; `best` is a plain #[repr(C)] value passed by copy.
-                unsafe { tj3SetScalingFactor(h, best) };
-                w = scaled(src_w, best);
-                ht = scaled(src_h, best);
+            // Pick the smallest output (= largest reduction), and of the
+            // factors that round up to the same size the largest.
+            if area((sw, sh)) < area(decoder.scaled_size(eighths)) {
+                eighths = candidate;
             }
         }
     }
+    let (width, height) = decoder.scaled_size(eighths);
 
-    // `bytes` may alias a JS ArrayBuffer; the contract is "don't mutate while
-    // a terminal is pending" (SharedArrayBuffer is refused at construction),
-    // so the honest path costs nothing. Hardening here is so a hostile
-    // mid-decode swap degrades to DecodeFailed, not OOB/heap-leak:
-    // tj3DecompressHeader ends with `jpeg_abort_decompress`, so
-    // tj3Decompress8 re-runs `jpeg_read_header` and derives row count /
-    // stride from a fresh parse. Bound the WRITE REGION to OUR alloc with
-    //   • TJPARAM_MAXPIXELS — second-parse w'·h' > w·h fails before output
-    //     (turbojpeg-mp.c:183)
-    //   • explicit pitch — stride can't grow with w'
-    //   • croppingRegion {0,0,w,ht} — `croppedHeight = ht` regardless of h'
-    //     (turbojpeg-mp.c:222), so an aspect-swap (4096×1→1×4096) that
-    //     passes the product check still can't write more rows than fit
-    // and post-check the second-parse dims so a smaller swap (which would
-    // leave rows unfilled with raw mimalloc bytes) is treated as corrupt.
-    // SAFETY: `h` is live; CropRegion is a plain #[repr(C)] value passed by copy.
-    let cropped = unsafe {
-        tj3Set(
-            h,
-            TJPARAM_MAXPIXELS,
-            c_int::try_from(src_w * src_h).unwrap_or(c_int::MAX),
-        );
-        tj3SetCroppingRegion(
-            h,
-            CropRegion {
-                x: 0,
-                y: 0,
-                w: c_int::try_from(w).expect("int cast"),
-                h: c_int::try_from(ht).expect("int cast"),
-            },
-        ) == 0
-    };
-    let pitch = if cropped {
-        c_int::try_from(w * 4).expect("int cast")
+    // A CMYK profile describes ink channels, not the RGBA produced below.
+    // Otherwise the profile must not get lost: the pixels may be Display P3 /
+    // Adobe RGB / XYB, where "no profile" silently reinterprets them as sRGB
+    // and shifts colour, which is the exact bug #30197 is about.
+    let icc_profile = if cmyk {
+        None
     } else {
-        // SAFETY: `h` is live; ScalingFactor is a plain #[repr(C)] value passed by copy.
-        unsafe { tj3SetScalingFactor(h, ScalingFactor { num: 1, denom: 1 }) };
-        w = src_w;
-        ht = src_h;
-        0
+        decoder.take_icc_profile()
     };
-    let out_len = w as usize * ht as usize * 4;
-    let mut out: Vec<u8> = Vec::with_capacity(out_len);
-    // SAFETY: `h` is live and src ptr/len come from a valid `&[u8]`. dst is
-    // `out`'s exclusive `w*ht*4` bytes of capacity: the pitch and the cropping
-    // region bound libjpeg-turbo's writes to it. TurboJPEG refuses the region
-    // for a lossless stream and for unknown subsampling (turbojpeg.c:2093), and
-    // the row count then comes from the second parse (turbojpeg-mp.c:233). That
-    // path decodes unscaled (libjpeg ignores the factor for a lossless stream,
-    // jdmaster.c:539) with pitch 0, which packs the rows at that parse's width,
-    // so TJPARAM_MAXPIXELS bounds the bytes written by `out_len`.
-    let rc = unsafe {
-        tj3Decompress8(
-            h,
-            bytes.as_ptr(),
-            bytes.len(),
-            out.as_mut_ptr(),
-            pitch,
-            if cmyk { TJPF_CMYK } else { TJPF_RGBA },
-        )
+
+    let format = if cmyk {
+        PixelFormat::Cmyk
+    } else {
+        PixelFormat::Rgba
     };
-    if !handle.completed(rc) || handle.dimensions() != Some((src_w, src_h)) {
-        return Err(codecs::Error::DecodeFailed);
-    }
-    // SAFETY: a completed decode with unchanged dims wrote all `ht` rows of `w`
-    // pixels. That includes rows libjpeg had no scan data for: it writes grey.
-    unsafe { bun_core::vec::commit_spare(&mut out, out_len) };
+    let mut rgba = decoder.decode(eighths, format).map_err(decode_error)?;
     if cmyk {
-        codecs::cmyk_to_rgba(&mut out);
+        codecs::cmyk_to_rgba(&mut rgba);
     }
 
-    // Extract the APP2 ICC profile (if the source carried one). The marker
-    // parser ran during tj3DecompressHeader, so this is a copy-out of
-    // already-parsed state. `tj3GetICCProfile` allocates via libjpeg-turbo's
-    // allocator; re-home into the global allocator so the rest of the
-    // pipeline can free it uniformly. A decode that simply has no profile
-    // returns non-zero with iccSize==0 — treat that as "no profile", not an
-    // error. OutOfMemory on the dupe is propagated (not swallowed) — the
-    // pixels may be Display P3 / Adobe RGB / XYB, where "no profile"
-    // silently reinterprets them as sRGB and shifts colour, which is the
-    // exact bug #30197 is about.
-    let mut icc_ptr: *mut u8 = core::ptr::null_mut();
-    let mut icc_size: usize = 0;
-    let icc: Option<Vec<u8>> = 'blk: {
-        // A CMYK profile describes ink channels, not the RGBA produced above.
-        if cmyk {
-            break 'blk None;
-        }
-        // SAFETY: `h` is live; out-params are valid `&mut` locals.
-        if unsafe { tj3GetICCProfile(h, &raw mut icc_ptr, &raw mut icc_size) } != 0 || icc_size == 0
-        {
-            break 'blk None;
-        }
-        let _free = scopeguard::guard(icc_ptr, |p| {
-            if !p.is_null() {
-                // SAFETY: `p` was allocated by libjpeg-turbo via tj3GetICCProfile;
-                // tj3Free is its matching deallocator and is called exactly once.
-                unsafe { tj3Free(p.cast()) };
-            }
-        });
-        if icc_ptr.is_null() {
-            break 'blk None;
-        }
-        // SAFETY: tj3GetICCProfile wrote `icc_size` bytes at `icc_ptr`.
-        let src = unsafe { core::slice::from_raw_parts(icc_ptr, icc_size) };
-        break 'blk Some(src.to_vec());
-    };
     Ok(codecs::Decoded {
-        rgba: out,
-        width: w,
-        height: ht,
-        icc_profile: icc,
+        rgba,
+        width,
+        height,
+        icc_profile,
     })
 }
 
@@ -343,66 +97,21 @@ pub(crate) fn encode(
     progressive: bool,
     icc_profile: Option<&[u8]>,
 ) -> Result<codecs::Encoded, codecs::Error> {
-    let handle = Handle::init(0).ok_or(codecs::Error::OutOfMemory)?;
-    let h = handle.as_ptr();
-    // SAFETY: `h` is a live tjhandle for as long as `handle` is in scope.
-    unsafe {
-        tj3Set(h, TJPARAM_QUALITY, c_int::from(quality.clamp(1, 100)));
-        tj3Set(h, TJPARAM_SUBSAMP, TJSAMP_420);
-    }
-    // Progressive emits a multi-scan SOF2 stream; same size ±1%, decodes
-    // coarse-to-fine. Off by default (slower to encode, some old decoders
-    // mishandle it).
-    if progressive {
-        // SAFETY: `h` is live.
-        unsafe { tj3Set(h, TJPARAM_PROGRESSIVE, 1) };
-    }
-    // Embed the source colour profile as an APP2/ICC_PROFILE marker. The
-    // library copies the bytes, so the caller can free `icc_profile` right
-    // after this call returns. A non-zero return here means the profile
-    // was malformed — drop it rather than fail the encode; a JPEG without a
-    // profile is still a valid JPEG (implicitly sRGB). See #30197.
-    if let Some(p) = icc_profile {
-        if !p.is_empty() {
-            // SAFETY: `h` is live; ptr/len come from a valid `&[u8]`; the
-            // library copies the bytes so the borrow need only outlive the call.
-            unsafe { tj3SetICCProfile(h, p.as_ptr(), p.len()) };
+    let options = EncodeOptions {
+        quality: quality.clamp(1, 100),
+        // Progressive emits a multi-scan SOF2 stream; same size ±1%, decodes
+        // coarse-to-fine. Off by default (slower to encode, some old decoders
+        // mishandle it).
+        progressive,
+        // The source colour profile, as APP2/ICC_PROFILE markers. See #30197.
+        icc_profile: icc_profile.filter(|profile| !profile.is_empty()),
+    };
+    match bun_jpeg::encode(rgba, w, ht, &options) {
+        Ok(mut bytes) => {
+            bytes.shrink_to_fit();
+            Ok(codecs::Encoded::from_owned(bytes))
         }
+        Err(bun_jpeg::Error::OutOfMemory) => Err(codecs::Error::OutOfMemory),
+        Err(_) => Err(codecs::Error::EncodeFailed),
     }
-    let mut out_ptr: *mut u8 = core::ptr::null_mut();
-    let mut out_len: usize = 0;
-    // SAFETY: `h` is live; src ptr/len come from a valid `&[u8]` with the
-    // caller-asserted `w*ht*4` layout; out-params are valid `&mut` locals and
-    // libjpeg-turbo allocates the output buffer (out_ptr starts null).
-    if unsafe {
-        tj3Compress8(
-            h,
-            rgba.as_ptr(),
-            c_int::try_from(w).expect("int cast"),
-            0,
-            c_int::try_from(ht).expect("int cast"),
-            TJPF_RGBA,
-            &raw mut out_ptr,
-            &raw mut out_len,
-        )
-    } != 0
-    {
-        // tj3Compress8 may have allocated (or grown) `out_ptr` before
-        // failing mid-stream; the docs say the caller owns it on any return.
-        if !out_ptr.is_null() {
-            // SAFETY: `out_ptr` was allocated by tj3Compress8 via libjpeg-turbo's
-            // allocator; tj3Free is its matching deallocator.
-            unsafe { tj3Free(out_ptr.cast()) };
-        }
-        return Err(codecs::Error::EncodeFailed);
-    }
-    // tj3Compress8 allocates via libjpeg-turbo's allocator; hand it to JS
-    // with `tj3Free` as the finalizer instead of duping.
-    Ok(codecs::Encoded {
-        // SAFETY: tj3Compress8 succeeded; out_ptr is non-null and owns `out_len` bytes.
-        bytes: unsafe {
-            NonNull::new_unchecked(core::ptr::slice_from_raw_parts_mut(out_ptr, out_len))
-        },
-        free: encoded_wrap_free!(tj3Free),
-    })
 }

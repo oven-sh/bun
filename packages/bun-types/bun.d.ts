@@ -9435,7 +9435,7 @@ declare module "bun" {
      * - `ERR_IMAGE_TOO_MANY_PIXELS` — header dimensions or resize output
      *   exceed `maxPixels`, or a path-backed input is over the 256 MiB cap.
      * - `ERR_IMAGE_DECODE_FAILED` / `ERR_IMAGE_ENCODE_FAILED` — codec error.
-     *   A damaged JPEG that libjpeg-turbo decodes with only a warning (stray
+     *   A damaged JPEG that libjpeg-turbo would decode with only a warning (stray
      *   bytes, a missing end marker, truncated scan data) does not reject.
      *   Blocks with no data come back flat grey.
      * - `ERR_IMAGE_UNKNOWN_FORMAT` — input bytes didn't match any sniffer.
@@ -9516,9 +9516,9 @@ declare module "bun" {
   }
 
   /**
-   * Decode, transform and re-encode images. Ships JPEG, PNG and WebP via
-   * statically-linked libjpeg-turbo / libspng / libwebp; resize and rotate
-   * are SIMD kernels — no native module install, no `sharp`.
+   * Decode, transform and re-encode images. JPEG, PNG and WebP codecs are
+   * built in; resize and rotate are SIMD kernels — no native module install,
+   * no `sharp`.
    *
    * The constructor and every chainable method only *record* settings; the
    * decode → transform → encode pipeline runs on a worker thread when a

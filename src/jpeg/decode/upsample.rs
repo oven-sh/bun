@@ -26,7 +26,7 @@ impl Method {
 /// and 1/4 of the further one. A half is rounded down for the left one and up for the right one. Past either end the
 /// edge sample repeats, which leaves the outermost samples as they are.
 ///
-/// `Wide` holds a sum of four inputs. The result is `(sum + bias) >> shift`.
+/// The result is `(3 * near + far + bias) >> shift`.
 #[inline(always)]
 fn widen<T: Copy + Into<u32>>(input: &[T], output: &mut [u8], bias: [u32; 2], shift: u32) {
     let (pairs, _) = output.as_chunks_mut::<2>();

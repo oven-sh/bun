@@ -289,7 +289,9 @@ fn pass<T: Int, const K: usize, const N: usize>(
     f(x).map(|v| v.shr(shift))
 }
 
-/// No sum in the first pass leaves 32 bits if its inputs are no larger than this. `first_pass_fits_32_bits` checks it.
+/// The sums of the first pass fit in 32 bits if its inputs are smaller than this. A sum is linear in the inputs, and the
+/// magnitudes of its factors add up to less than `10 << CONST_BITS` in every transform below (9.7 in `idct14`). What
+/// wraps on the way to a sum that fits does no harm.
 const MAX_INPUT_FOR_32_BITS: i32 = 1 << 14;
 
 /// `K` is how many rows and columns of the block have a part in the result.

@@ -948,6 +948,10 @@ impl<'a> Near<'a> {
         match_pos: u32,
         match_low: u32,
     ) -> u32 {
+        // Whoever got here without a step is likely to do so again.
+        if pos == anchor {
+            return 0;
+        }
         let most = (pos - anchor).min(match_pos - match_low);
         self.count_backwards_in(pos, self, match_pos, most)
     }
@@ -1580,7 +1584,7 @@ pub(crate) const fn hash3_of(bytes: u32, h: u32) -> usize {
     hash3(bytes, h, 0) as usize
 }
 
-/// [`hash_of`], when `mls` is not a constant.
+/// [`hash_ptr`], out of the 8 bytes at the position.
 #[derive(Clone, Copy)]
 pub(crate) struct Hasher {
     /// Takes the bytes that do not count out, on the left.
@@ -1608,22 +1612,18 @@ impl Hasher {
         }
     }
 
+    /// The same of `mls` bytes.
+    pub(crate) const fn with_mls(self, mls: u32) -> Self {
+        Self {
+            shift: self.shift,
+            ..Self::new(0, mls)
+        }
+    }
+
     /// [`hash_ptr`] of the position that the 8 bytes `bytes` were read at.
     #[inline(always)]
     pub(crate) const fn hash(self, bytes: u64) -> usize {
         (bytes.wrapping_mul(self.factor) >> self.shift) as usize
-    }
-}
-
-/// [`hash_ptr`] of the position that the 8 bytes `bytes` were read at.
-#[inline(always)]
-pub(crate) const fn hash_of<const MLS: u32>(bytes: u64, h_bits: u32) -> usize {
-    match MLS {
-        5 => hash5(bytes, h_bits, 0),
-        6 => hash6(bytes, h_bits, 0),
-        7 => hash7(bytes, h_bits, 0),
-        8 => hash8(bytes, h_bits, 0),
-        _ => hash4(bytes as u32, h_bits, 0) as usize,
     }
 }
 
@@ -1923,18 +1923,6 @@ pub(crate) const fn index_overlap_check(prefix_lowest_index: u32, rep_index: u32
 
 pub(crate) const ZSTD_SHORT_CACHE_TAG_BITS: u32 = 8;
 pub(crate) const ZSTD_SHORT_CACHE_TAG_MASK: u32 = (1 << ZSTD_SHORT_CACHE_TAG_BITS) - 1;
-
-/// `ZSTD_writeTaggedIndex`: the tables of a dictionary keep 8 more bits of the hash beside each index.
-#[inline(always)]
-pub(crate) fn write_tagged_index(
-    hash_table: &mut [u32],
-    hash_and_tag: usize,
-    index: u32,
-) -> Result<()> {
-    let hash = hash_and_tag >> ZSTD_SHORT_CACHE_TAG_BITS;
-    let tag = hash_and_tag as u32 & ZSTD_SHORT_CACHE_TAG_MASK;
-    hash_table.put(hash, (index << ZSTD_SHORT_CACHE_TAG_BITS) | tag)
-}
 
 /// `ZSTD_comparePackedTags`
 #[inline(always)]

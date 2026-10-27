@@ -1,16 +1,16 @@
 //! `zstd_fast.c`: the `fast` strategy, which looks up one hash table.
 
 use super::internal::{
-    BlockSrc, CompressionParameters, DictTableLoadMethod, HASH_READ_SIZE, K_SEARCH_STRENGTH,
-    MatchState, Near, Prefix, REPCODE1_TO_OFFBASE, SeqSink, SeqStore, TableFillPurpose,
-    ZSTD_SHORT_CACHE_TAG_BITS, compare_packed_tags, hash_of, hash_ptr, hashed_get, hashed_put,
-    hashed_swap, le32_at, le64_at, offset_to_offbase, table_of_size, write_tagged_index,
+    BlockSrc, CompressionParameters, DictTableLoadMethod, HASH_READ_SIZE, Hasher,
+    K_SEARCH_STRENGTH, MatchState, Near, Prefix, REPCODE1_TO_OFFBASE, SeqSink, SeqStore,
+    TableFillPurpose, ZSTD_SHORT_CACHE_TAG_BITS, compare_packed_tags, hashed_get, hashed_put,
+    hashed_swap, le32_at, le64_at, offset_to_offbase, table_of_size, table_put,
 };
 use crate::common::ZSTD_REP_NUM;
 use crate::error::Result;
 use crate::util::{BUG, SliceExt};
 
-pub(super) const FAST_HASH_FILL_STEP: u32 = 3;
+const FAST_HASH_FILL_STEP: u32 = 3;
 
 /// The repeat offsets at the start of a block. Those that reach further than `max_rep` are 0, and saved.
 pub(super) struct SavedRep {
@@ -70,54 +70,121 @@ pub(super) fn restore_rep(
     };
 }
 
-/// `ZSTD_fillHashTableForCDict`
+/// What `fast` and `dfast` index a dictionary by: every third position, with the 10 bytes there, which the 8 bytes at
+/// it and at the two positions in between are among.
+#[derive(Clone)]
+pub(super) struct ThirdPositions<'a> {
+    /// From the first position that is left up to the end of the 10 bytes at the last one.
+    bytes: &'a [u8],
+    /// The index of the first position that is left.
+    index: u32,
+}
+
+/// One of [`ThirdPositions`].
+pub(super) struct ThirdPosition<'a> {
+    pub(super) index: u32,
+    pub(super) bytes: &'a [u8; THIRD_POSITION_SIZE],
+}
+
+const THIRD_POSITION_SIZE: usize = FAST_HASH_FILL_STEP as usize - 1 + HASH_READ_SIZE;
+
+impl<'a> ThirdPositions<'a> {
+    /// From `first_index` up to the position `end` of the segment: none if that is before.
+    pub(super) fn new(prefix: Prefix<'a>, first_index: u32, end: usize) -> Self {
+        let bytes = prefix.buf.get(prefix.pos_of(first_index)..end);
+        let bytes = bytes.unwrap_or_default();
+        let len = match bytes.len().checked_sub(THIRD_POSITION_SIZE) {
+            Some(more) => bytes.len() - more % FAST_HASH_FILL_STEP as usize,
+            None => 0,
+        };
+        Self {
+            bytes: bytes.get(..len).unwrap_or_default(),
+            index: first_index,
+        }
+    }
+}
+
+impl<'a> Iterator for ThirdPositions<'a> {
+    type Item = ThirdPosition<'a>;
+
+    #[inline(always)]
+    fn next(&mut self) -> Option<Self::Item> {
+        let item = ThirdPosition {
+            index: self.index,
+            bytes: self.bytes.first_chunk()?,
+        };
+        self.bytes = self.bytes.get(FAST_HASH_FILL_STEP as usize..)?;
+        self.index += FAST_HASH_FILL_STEP;
+        Some(item)
+    }
+}
+
+impl DoubleEndedIterator for ThirdPositions<'_> {
+    #[inline(always)]
+    fn next_back(&mut self) -> Option<Self::Item> {
+        let (before, bytes) = self.bytes.split_last_chunk()?;
+        let item = ThirdPosition {
+            index: self.index + before.len() as u32,
+            bytes,
+        };
+        let len = self.bytes.len() - FAST_HASH_FILL_STEP as usize;
+        self.bytes = self.bytes.get(..len)?;
+        Some(item)
+    }
+}
+
+/// `ZSTD_writeTaggedIndex`: the tables of a dictionary keep 8 more bits of the hash beside each index. The size of
+/// `table` is a power of 2 that the hash is less than.
+#[inline(always)]
+pub(super) fn put_tagged(table: &mut [u32], hash_and_tag: usize, index: u32) {
+    let hash = hash_and_tag >> ZSTD_SHORT_CACHE_TAG_BITS;
+    if let Some(cell) = table.get_mut(hash & table.len().wrapping_sub(1)) {
+        *cell = (index << ZSTD_SHORT_CACHE_TAG_BITS) | u32::from(hash_and_tag as u8);
+    }
+}
+
+/// Indexes the positions between `positions`, for which the C code only has the cells that are empty when it gets to
+/// them, on its way from the first position to the last. As `table` is empty, it comes to the same to go from the last
+/// to the first, and to index `positions` afterwards. Whether a cell is empty, which is as good as random, is then of
+/// no concern.
+#[inline(always)]
+pub(super) fn put_tagged_in_between(
+    table: &mut [u32],
+    hasher: Hasher,
+    positions: ThirdPositions<'_>,
+) {
+    for at in positions.rev() {
+        put_tagged(table, hasher.hash(le64_at::<2, _>(at.bytes)), at.index + 2);
+        put_tagged(table, hasher.hash(le64_at::<1, _>(at.bytes)), at.index + 1);
+    }
+}
+
+/// `ZSTD_fillHashTableForCDict`: the table is empty.
 fn fill_hash_table_for_cdict(
     ms: &mut MatchState,
     prefix: Prefix<'_>,
     end: usize,
     dtlm: DictTableLoadMethod,
 ) -> Result<()> {
-    let h_bits = ms.tagged_hash_log();
-    let mls = ms.c_params.min_match;
+    let hasher = Hasher::new(ms.tagged_hash_log(), ms.c_params.min_match);
+    let positions = ThirdPositions::new(prefix, ms.next_to_update, end);
     let hash_table = ms.hash_table.as_mut_slice();
-    let buf = prefix.buf;
-    let mut ip = prefix.pos_of(ms.next_to_update);
-    let Some(iend) = end.checked_sub(HASH_READ_SIZE) else {
-        return Ok(());
-    };
-
-    while ip + (FAST_HASH_FILL_STEP as usize) < iend + 2 {
-        let curr = prefix.index_of(ip);
-        write_tagged_index(hash_table, hash_ptr(buf, ip, h_bits, mls)?, curr)?;
-        if dtlm == DictTableLoadMethod::Full {
-            // The positions in between only go where there is nothing yet.
-            for p in 1..FAST_HASH_FILL_STEP {
-                let hash_and_tag = hash_ptr(buf, ip + p as usize, h_bits, mls)?;
-                if hash_table.at(hash_and_tag >> ZSTD_SHORT_CACHE_TAG_BITS)? == 0 {
-                    write_tagged_index(hash_table, hash_and_tag, curr + p)?;
-                }
-            }
-        }
-        ip += FAST_HASH_FILL_STEP as usize;
+    if dtlm == DictTableLoadMethod::Full {
+        put_tagged_in_between(hash_table, hasher, positions.clone());
+    }
+    for at in positions {
+        put_tagged(hash_table, hasher.hash(le64_at::<0, _>(at.bytes)), at.index);
     }
     Ok(())
 }
 
 /// `ZSTD_fillHashTableForCCtx`, which is only for `ZSTD_dtlm_fast`.
 fn fill_hash_table_for_cctx(ms: &mut MatchState, prefix: Prefix<'_>, end: usize) -> Result<()> {
-    let h_bits = ms.c_params.hash_log;
-    let mls = ms.c_params.min_match;
+    let hasher = Hasher::new(ms.c_params.hash_log, ms.c_params.min_match);
+    let positions = ThirdPositions::new(prefix, ms.next_to_update, end);
     let hash_table = ms.hash_table.as_mut_slice();
-    let buf = prefix.buf;
-    let mut ip = prefix.pos_of(ms.next_to_update);
-    let Some(iend) = end.checked_sub(HASH_READ_SIZE) else {
-        return Ok(());
-    };
-
-    while ip + (FAST_HASH_FILL_STEP as usize) < iend + 2 {
-        let curr = prefix.index_of(ip);
-        hash_table.put(hash_ptr(buf, ip, h_bits, mls)?, curr)?;
-        ip += FAST_HASH_FILL_STEP as usize;
+    for at in positions {
+        table_put(hash_table, hasher.hash(le64_at::<0, _>(at.bytes)), at.index);
     }
     Ok(())
 }
@@ -417,6 +484,16 @@ impl<'a> Segments<'a> {
         len + self.near.count(ip + len, 0)
     }
 
+    /// [`Self::count_backwards`], with a branch on whether `ip` is `anchor`: whoever got there without a step is likely
+    /// to do so again.
+    #[inline(always)]
+    pub(super) fn count_backwards_if_any(self, ip: u32, anchor: u32, place: u32) -> u32 {
+        if ip == anchor {
+            return 0;
+        }
+        self.count_backwards(ip, anchor, place)
+    }
+
     /// How many bytes before the position `ip`, down to `anchor`, are the same as those before `place` in its segment.
     #[inline(always)]
     pub(super) fn count_backwards(self, ip: u32, anchor: u32, place: u32) -> u32 {
@@ -430,7 +507,7 @@ struct Finder {
     /// The index of the first position.
     base_index: u32,
     step_size: u32,
-    hlog: u32,
+    hasher: Hasher,
     /// Where to start.
     first: u32,
     rep_offset1: u32,
@@ -444,7 +521,7 @@ impl Finder {
     /// at `ip2` for a repeat. The C code computes hashes and reads the table one position ahead. Here that is left to
     /// the processor: a turn only takes the position and the 8 bytes there, `bytes0`, from the one before.
     ///
-    /// `HLOG` is `hlog`, or 0 for any: see [`table_of_size`].
+    /// `MLS` and `HLOG` are what `hasher` is made with, or both 0 for any: see [`table_of_size`].
     #[inline(never)]
     fn find_matches<const MLS: u32, const HLOG: u32>(
         &mut self,
@@ -455,13 +532,17 @@ impl Finder {
         let Self {
             base_index,
             step_size,
-            hlog,
+            hasher,
             first: mut ip0,
             mut rep_offset1,
             mut rep_offset2,
         } = *self;
         let near = sink.near;
-        let hlog = if HLOG > 0 { HLOG } else { hlog };
+        let hasher = if HLOG > 0 {
+            Hasher::new(HLOG, MLS)
+        } else {
+            hasher
+        };
         let Some(hash_table) = table_of_size::<HLOG>(hash_table) else {
             return;
         };
@@ -481,24 +562,24 @@ impl Finder {
                 let Some(ahead) = near.window::<{ HASH_READ_SIZE + 2 }>(ip2) else {
                     break 'block;
                 };
-                let idx0 = hashed_swap(hash_table, hash_of::<MLS>(bytes0, hlog), current0);
+                let idx0 = hashed_swap(hash_table, hasher.hash(bytes0), current0);
 
                 if sink.read32_before(ip2, rep_offset1) == Some(le32_at::<0, _>(ahead))
                     && rep_offset1 > 0
                 {
-                    hashed_put(hash_table, hash_of::<MLS>(bytes0 >> 8, hlog), current0 + 1);
+                    hashed_put(hash_table, hasher.hash(bytes0 >> 8), current0 + 1);
                     let back = u32::from(sink.same_byte_before(ip2, rep_offset1));
                     let end = ip2 + 4 + sink.count_before(ip2 + 4, rep_offset1);
                     break (ip2 - back, end, REPCODE1_TO_OFFBASE);
                 }
                 let mut match0 = idx0.wrapping_sub(base_index);
                 if near.has::<0xFFFF_FFFF>(match0, bytes0) {
-                    hashed_put(hash_table, hash_of::<MLS>(bytes0 >> 8, hlog), current0 + 1);
+                    hashed_put(hash_table, hasher.hash(bytes0 >> 8), current0 + 1);
                 } else {
                     // As far as they are hashed or compared.
                     let bytes1 = bytes0 >> 8;
                     current0 += 1;
-                    let idx1 = hashed_swap(hash_table, hash_of::<MLS>(bytes1, hlog), current0);
+                    let idx1 = hashed_swap(hash_table, hasher.hash(bytes1), current0);
                     match0 = idx1.wrapping_sub(base_index);
                     if !near.has::<0xFFFF_FFFF>(match0, bytes1) {
                         current0 = base_index.wrapping_add(ip2);
@@ -515,7 +596,7 @@ impl Finder {
                     if step <= 4 {
                         hashed_put(
                             hash_table,
-                            hash_of::<MLS>(le64_at::<0, _>(ahead), hlog),
+                            hasher.hash(le64_at::<0, _>(ahead)),
                             base_index.wrapping_add(ip2),
                         );
                     }
@@ -532,30 +613,28 @@ impl Finder {
             sink.store::<32>(start, end, off_base);
 
             // `ip0` is not past the last position that can be looked at.
-            let Some(bytes) = near.read64(ip0) else {
+            let Some(around) = near.window::<{ 2 + HASH_READ_SIZE }>(ip0 - 2) else {
                 break 'block;
             };
-            bytes0 = bytes;
+            bytes0 = le64_at::<2, _>(around);
             if let Some(to_insert) = near.read64((current0 + 2).wrapping_sub(base_index)) {
-                hashed_put(hash_table, hash_of::<MLS>(to_insert, hlog), current0 + 2);
+                hashed_put(hash_table, hasher.hash(to_insert), current0 + 2);
             }
-            if let Some(before) = near.read64(ip0 - 2) {
-                hashed_put(
-                    hash_table,
-                    hash_of::<MLS>(before, hlog),
-                    base_index.wrapping_add(ip0 - 2),
-                );
-            }
+            hashed_put(
+                hash_table,
+                hasher.hash(le64_at::<0, _>(around)),
+                base_index.wrapping_add(ip0 - 2),
+            );
 
             while rep_offset2 > 0 && sink.read32_before(ip0, rep_offset2) == Some(bytes0 as u32) {
                 let end = ip0 + 4 + sink.count_before(ip0 + 4, rep_offset2);
                 core::mem::swap(&mut rep_offset1, &mut rep_offset2);
                 hashed_put(
                     hash_table,
-                    hash_of::<MLS>(bytes0, hlog),
+                    hasher.hash(bytes0),
                     base_index.wrapping_add(ip0),
                 );
-                sink.store::<32>(ip0, end, REPCODE1_TO_OFFBASE);
+                sink.store_repeat(end);
                 ip0 = end;
                 let Some(bytes) = near.read64(ip0) else {
                     break 'block;
@@ -582,7 +661,7 @@ impl Finder {
         let Self {
             base_index,
             step_size,
-            hlog,
+            hasher,
             first: mut ip0,
             mut rep_offset1,
             mut rep_offset2,
@@ -591,7 +670,11 @@ impl Finder {
         let older_len = window.older.len();
         // The index of the first place.
         let origin_index = base_index.wrapping_sub(older_len);
-        let hlog = if HLOG > 0 { HLOG } else { hlog };
+        let hasher = if HLOG > 0 {
+            Hasher::new(HLOG, MLS)
+        } else {
+            hasher
+        };
         let Some(hash_table) = table_of_size::<HLOG>(hash_table) else {
             return;
         };
@@ -610,7 +693,7 @@ impl Finder {
                 let Some(ahead) = near.window::<{ HASH_READ_SIZE + 2 }>(ip2) else {
                     break 'block;
                 };
-                let idx0 = hashed_swap(hash_table, hash_of::<MLS>(bytes0, hlog), current0);
+                let idx0 = hashed_swap(hash_table, hasher.hash(bytes0), current0);
 
                 // The 4 bytes have to be in one segment, with a byte before them.
                 let rep_place = window.place_of(ip2).wrapping_sub(rep_offset1);
@@ -618,7 +701,7 @@ impl Finder {
                     && rep_place != older_len
                     && rep_offset1 > 0
                 {
-                    hashed_put(hash_table, hash_of::<MLS>(bytes0 >> 8, hlog), current0 + 1);
+                    hashed_put(hash_table, hasher.hash(bytes0 >> 8), current0 + 1);
                     let back =
                         u32::from(near.read8(ip2 - 1) == window.read8(rep_place.wrapping_sub(1)));
                     break (ip2, rep_place, back, REPCODE1_TO_OFFBASE, u32::MAX);
@@ -626,11 +709,11 @@ impl Finder {
                 let mut place = idx0.wrapping_sub(origin_index);
                 let mut next = u32::MAX;
                 if window.has::<0xFFFF_FFFF>(place, bytes0) {
-                    hashed_put(hash_table, hash_of::<MLS>(bytes0 >> 8, hlog), current0 + 1);
+                    hashed_put(hash_table, hasher.hash(bytes0 >> 8), current0 + 1);
                 } else {
                     let bytes1 = bytes0 >> 8;
                     current0 += 1;
-                    let idx1 = hashed_swap(hash_table, hash_of::<MLS>(bytes1, hlog), current0);
+                    let idx1 = hashed_swap(hash_table, hasher.hash(bytes1), current0);
                     place = idx1.wrapping_sub(origin_index);
                     if !window.has::<0xFFFF_FFFF>(place, bytes1) {
                         current0 = base_index.wrapping_add(ip2);
@@ -648,7 +731,7 @@ impl Finder {
                 let ip = current0.wrapping_sub(base_index);
                 rep_offset2 = rep_offset1;
                 rep_offset1 = window.place_of(ip) - place;
-                let back = window.count_backwards(ip, sink.anchor, place);
+                let back = window.count_backwards_if_any(ip, sink.anchor, place);
                 break (ip, place, back, offset_to_offbase(rep_offset1), next);
             };
 
@@ -660,26 +743,24 @@ impl Finder {
             {
                 hashed_put(
                     hash_table,
-                    hash_of::<MLS>(bytes, hlog),
+                    hasher.hash(bytes),
                     base_index.wrapping_add(next),
                 );
             }
 
             // `ip0` is not past the last position that can be looked at.
-            let Some(bytes) = near.read64(ip0) else {
+            let Some(around) = near.window::<{ 2 + HASH_READ_SIZE }>(ip0 - 2) else {
                 break 'block;
             };
-            bytes0 = bytes;
+            bytes0 = le64_at::<2, _>(around);
             if let Some(to_insert) = near.read64((current0 + 2).wrapping_sub(base_index)) {
-                hashed_put(hash_table, hash_of::<MLS>(to_insert, hlog), current0 + 2);
+                hashed_put(hash_table, hasher.hash(to_insert), current0 + 2);
             }
-            if let Some(before) = near.read64(ip0 - 2) {
-                hashed_put(
-                    hash_table,
-                    hash_of::<MLS>(before, hlog),
-                    base_index.wrapping_add(ip0 - 2),
-                );
-            }
+            hashed_put(
+                hash_table,
+                hasher.hash(le64_at::<0, _>(around)),
+                base_index.wrapping_add(ip0 - 2),
+            );
 
             while window.read32_before(ip0, rep_offset2) == Some(bytes0 as u32) && rep_offset2 > 0 {
                 let rep_place = window.place_of(ip0).wrapping_sub(rep_offset2);
@@ -687,10 +768,10 @@ impl Finder {
                 core::mem::swap(&mut rep_offset1, &mut rep_offset2);
                 hashed_put(
                     hash_table,
-                    hash_of::<MLS>(bytes0, hlog),
+                    hasher.hash(bytes0),
                     base_index.wrapping_add(ip0),
                 );
-                sink.store::<32>(ip0, end, REPCODE1_TO_OFFBASE);
+                sink.store_repeat(end);
                 ip0 = end;
                 let Some(bytes) = near.read64(ip0) else {
                     break 'block;
@@ -717,24 +798,30 @@ pub(crate) fn compress_block_fast(
         base_index: block.prefix_lowest_index,
         // The least step is 2, as two positions are looked at per turn.
         step_size: least_step(&ms.c_params) + 1,
-        hlog,
+        hasher: Hasher::new(hlog, ms.c_params.min_match),
         first: block.first,
         rep_offset1: block.rep.offset_1,
         rep_offset2: block.rep.offset_2,
     };
     let mut sink = MatchSink::new(seq_store, &block);
     let hash_table = ms.hash_table.sub_mut(..1 << hlog)?;
-    // First, what levels 1, 2 and those below 0 come with if the input is not known to be small, and level 1 if it is.
+    // What the levels come with, for an input of any size.
     match (ms.c_params.min_match, hlog) {
         (7, 14) => finder.find_matches::<7, 14>(hash_table, &mut sink),
         (6, 16) => finder.find_matches::<6, 16>(hash_table, &mut sink),
-        (6, 13) => finder.find_matches::<6, 13>(hash_table, &mut sink),
         (6, 14) => finder.find_matches::<6, 14>(hash_table, &mut sink),
+        (6, 13) => finder.find_matches::<6, 13>(hash_table, &mut sink),
         (5, 15) => finder.find_matches::<5, 15>(hash_table, &mut sink),
-        (5, _) => finder.find_matches::<5, 0>(hash_table, &mut sink),
-        (6, _) => finder.find_matches::<6, 0>(hash_table, &mut sink),
-        (7, _) => finder.find_matches::<7, 0>(hash_table, &mut sink),
-        _ => finder.find_matches::<4, 0>(hash_table, &mut sink),
+        (5, 14) => finder.find_matches::<5, 14>(hash_table, &mut sink),
+        (5, 13) => finder.find_matches::<5, 13>(hash_table, &mut sink),
+        (5, 12) => finder.find_matches::<5, 12>(hash_table, &mut sink),
+        (5, 11) => finder.find_matches::<5, 11>(hash_table, &mut sink),
+        (4, 15) => finder.find_matches::<4, 15>(hash_table, &mut sink),
+        (4, 14) => finder.find_matches::<4, 14>(hash_table, &mut sink),
+        (4, 13) => finder.find_matches::<4, 13>(hash_table, &mut sink),
+        (4, 12) => finder.find_matches::<4, 12>(hash_table, &mut sink),
+        (4, 11) => finder.find_matches::<4, 11>(hash_table, &mut sink),
+        _ => finder.find_matches::<0, 0>(hash_table, &mut sink),
     }
     let last_literals = sink.last_literals()?;
     restore_rep(
@@ -784,26 +871,27 @@ impl<'a> DictBlock<'a> {
 #[derive(Clone, Copy)]
 pub(super) struct TaggedTable<'a> {
     table: &'a [u32],
-    /// How many bits to hash to, tag included.
-    h_bits: u32,
+    /// To a hash and a tag.
+    hasher: Hasher,
     /// The index that the first place has in the table.
     start_index: u32,
 }
 
 impl<'a> TaggedTable<'a> {
-    pub(super) fn new(table: &'a [u32], h_bits: u32, start_index: u32) -> Result<Self> {
+    /// `mls` is how many bytes are hashed.
+    pub(super) fn new(table: &'a [u32], h_bits: u32, mls: u32, start_index: u32) -> Result<Self> {
         Ok(Self {
             table: table.sub(..1 << (h_bits - ZSTD_SHORT_CACHE_TAG_BITS))?,
-            h_bits,
+            hasher: Hasher::new(h_bits, mls),
             start_index,
         })
     }
 
-    /// The place that the table has for the `MLS` first bytes of `bytes`. `None` if the tag tells that it is for
-    /// something else, or if it is the first place, which stands for none.
+    /// The place that the table has for the `MLS` first bytes of `bytes`, as many as it was made for. `None` if the tag
+    /// tells that it is for something else, or if it is the first place, which stands for none.
     #[inline(always)]
     pub(super) fn get<const MLS: u32>(self, bytes: u64) -> Option<u32> {
-        let hash_and_tag = hash_of::<MLS>(bytes, self.h_bits);
+        let hash_and_tag = self.hasher.with_mls(MLS).hash(bytes);
         let index_and_tag = hashed_get(self.table, hash_and_tag >> ZSTD_SHORT_CACHE_TAG_BITS);
         let index = index_and_tag >> ZSTD_SHORT_CACHE_TAG_BITS;
         (compare_packed_tags(index_and_tag as usize, hash_and_tag) && index > self.start_index)
@@ -825,12 +913,13 @@ impl Finder {
         let Self {
             base_index,
             step_size,
-            hlog,
+            hasher,
             first: mut ip0,
             mut rep_offset1,
             mut rep_offset2,
         } = *self;
         let near = window.near;
+        let hasher = hasher.with_mls(MLS);
         if hash_table.is_empty() || dict_table.table.is_empty() {
             return;
         }
@@ -850,7 +939,7 @@ impl Finder {
                     break 'block;
                 };
                 curr = base_index.wrapping_add(ip0);
-                let match_index = hashed_swap(hash_table, hash_of::<MLS>(bytes0, hlog), curr);
+                let match_index = hashed_swap(hash_table, hasher.hash(bytes0), curr);
 
                 if window.read32_before(ip0 + 1, rep_offset1) == Some((bytes0 >> 8) as u32) {
                     ip0 += 1;
@@ -885,7 +974,7 @@ impl Finder {
 
             if let Some(place) = place {
                 let end = ip0 + 4 + window.count(ip0 + 4, place + 4);
-                let back = window.count_backwards(ip0, sink.anchor, place);
+                let back = window.count_backwards_if_any(ip0, sink.anchor, place);
                 rep_offset2 = rep_offset1;
                 rep_offset1 = window.place_of(ip0) - place;
                 sink.store::<32>(ip0 - back, end, offset_to_offbase(rep_offset1));
@@ -893,20 +982,18 @@ impl Finder {
             }
 
             // `ip0` is not past the last position that can be looked at.
-            let Some(bytes) = near.read64(ip0) else {
+            let Some(around) = near.window::<{ 2 + HASH_READ_SIZE }>(ip0 - 2) else {
                 break 'block;
             };
-            bytes0 = bytes;
+            bytes0 = le64_at::<2, _>(around);
             if let Some(to_insert) = near.read64((curr + 2).wrapping_sub(base_index)) {
-                hashed_put(hash_table, hash_of::<MLS>(to_insert, hlog), curr + 2);
+                hashed_put(hash_table, hasher.hash(to_insert), curr + 2);
             }
-            if let Some(before) = near.read64(ip0 - 2) {
-                hashed_put(
-                    hash_table,
-                    hash_of::<MLS>(before, hlog),
-                    base_index.wrapping_add(ip0 - 2),
-                );
-            }
+            hashed_put(
+                hash_table,
+                hasher.hash(le64_at::<0, _>(around)),
+                base_index.wrapping_add(ip0 - 2),
+            );
 
             while window.read32_before(ip0, rep_offset2) == Some(bytes0 as u32) {
                 let rep_place = window.place_of(ip0).wrapping_sub(rep_offset2);
@@ -914,10 +1001,10 @@ impl Finder {
                 core::mem::swap(&mut rep_offset1, &mut rep_offset2);
                 hashed_put(
                     hash_table,
-                    hash_of::<MLS>(bytes0, hlog),
+                    hasher.hash(bytes0),
                     base_index.wrapping_add(ip0),
                 );
-                sink.store::<32>(ip0, end, REPCODE1_TO_OFFBASE);
+                sink.store_repeat(end);
                 ip0 = end;
                 let Some(bytes) = near.read64(ip0) else {
                     break 'block;
@@ -944,6 +1031,7 @@ pub(crate) fn compress_block_fast_dict_match_state(
     let dict_table = TaggedTable::new(
         &dms.ms.hash_table,
         dms.ms.tagged_hash_log(),
+        ms.c_params.min_match,
         block.dict_start_index,
     )?;
     let hlog = ms.c_params.hash_log;
@@ -951,7 +1039,7 @@ pub(crate) fn compress_block_fast_dict_match_state(
     let mut finder = Finder {
         base_index: block.prefix_start_index,
         step_size: least_step(&ms.c_params),
-        hlog,
+        hasher: Hasher::new(hlog, ms.c_params.min_match),
         first: block.first(),
         rep_offset1,
         rep_offset2,
@@ -986,21 +1074,19 @@ pub(crate) fn compress_block_fast_ext_dict(
     let mut finder = Finder {
         base_index: block.prefix_start_index,
         step_size: least_step(&ms.c_params) + 1,
-        hlog,
+        hasher: Hasher::new(hlog, ms.c_params.min_match),
         first: block.istart,
         rep_offset1: block.rep.offset_1,
         rep_offset2: block.rep.offset_2,
     };
     let mut sink = MatchSink::with_near(seq_store, block.window.near, block.istart);
     let hash_table = ms.hash_table.sub_mut(..1 << hlog)?;
+    // What the levels come with, for an input that is large enough to get here.
     match (ms.c_params.min_match, hlog) {
         (7, 14) => finder.find_matches_ext_dict::<7, 14>(hash_table, &mut sink, block.window),
         (6, 16) => finder.find_matches_ext_dict::<6, 16>(hash_table, &mut sink, block.window),
         (6, 13) => finder.find_matches_ext_dict::<6, 13>(hash_table, &mut sink, block.window),
-        (5, _) => finder.find_matches_ext_dict::<5, 0>(hash_table, &mut sink, block.window),
-        (6, _) => finder.find_matches_ext_dict::<6, 0>(hash_table, &mut sink, block.window),
-        (7, _) => finder.find_matches_ext_dict::<7, 0>(hash_table, &mut sink, block.window),
-        _ => finder.find_matches_ext_dict::<4, 0>(hash_table, &mut sink, block.window),
+        _ => finder.find_matches_ext_dict::<0, 0>(hash_table, &mut sink, block.window),
     }
     let last_literals = sink.last_literals()?;
     restore_rep(

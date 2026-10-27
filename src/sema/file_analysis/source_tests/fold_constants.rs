@@ -18,6 +18,8 @@ enum Specifier {
     Unknown,
     Constant(&'static str),
     Pattern(&'static str, &'static str),
+    /// What the site may name, and what folding alone says of the argument.
+    OneOf(&'static [Specifier], &'static Specifier),
 }
 
 type FoldedRow = (&'static str, &'static str, Expected);
@@ -285,52 +287,102 @@ const SPECIFIERS: &[SpecifierRow] = &[
     (
         "a.cjs",
         r#"require(`./${c ? "a" : "b"}.js`);"#,
-        Specifier::Pattern("./", ".js"),
+        Specifier::OneOf(
+            &[Specifier::Constant("./a.js"), Specifier::Constant("./b.js")],
+            &Specifier::Pattern("./", ".js"),
+        ),
     ),
     (
         "a.cjs",
         r#"require(c ? "./d/one.cjs" : "./d/two.cjs");"#,
-        Specifier::Pattern("./d/", ".cjs"),
+        Specifier::OneOf(
+            &[
+                Specifier::Constant("./d/one.cjs"),
+                Specifier::Constant("./d/two.cjs"),
+            ],
+            &Specifier::Pattern("./d/", ".cjs"),
+        ),
     ),
     (
         "a.cjs",
         r#"require("./" + (c ? "a/x" : "a/y") + ".js");"#,
-        Specifier::Pattern("./a/", ".js"),
+        Specifier::OneOf(
+            &[
+                Specifier::Constant("./a/x.js"),
+                Specifier::Constant("./a/y.js"),
+            ],
+            &Specifier::Pattern("./a/", ".js"),
+        ),
     ),
     (
         "a.cjs",
         r#"require(c ? "./a/x" : d ? "./a/y" : "./a/z");"#,
-        Specifier::Pattern("./a/", ""),
+        Specifier::OneOf(
+            &[
+                Specifier::Constant("./a/x"),
+                Specifier::Constant("./a/y"),
+                Specifier::Constant("./a/z"),
+            ],
+            &Specifier::Pattern("./a/", ""),
+        ),
     ),
     (
         "a.cjs",
         r#"require(c ? "./a/" + x : "./a/b.js");"#,
-        Specifier::Pattern("./a/", ""),
+        Specifier::OneOf(
+            &[
+                Specifier::Pattern("./a/", ""),
+                Specifier::Constant("./a/b.js"),
+            ],
+            &Specifier::Pattern("./a/", ""),
+        ),
     ),
     (
         "a.cjs",
         r#"require(c ? "./a/" + (d ? 1 : 2) : "./a/z");"#,
-        Specifier::Pattern("./a/", ""),
+        Specifier::OneOf(
+            &[
+                Specifier::Constant("./a/1"),
+                Specifier::Constant("./a/2"),
+                Specifier::Constant("./a/z"),
+            ],
+            &Specifier::Pattern("./a/", ""),
+        ),
     ),
     (
         "a.cjs",
         r#"require(c ? "ab" : "aab");"#,
-        Specifier::Pattern("a", "b"),
+        Specifier::OneOf(
+            &[Specifier::Constant("aab"), Specifier::Constant("ab")],
+            &Specifier::Pattern("a", "b"),
+        ),
     ),
     (
         "a.cjs",
         r#"require(c ? "./a" : "./a");"#,
-        Specifier::Pattern("./a", ""),
+        Specifier::OneOf(
+            &[Specifier::Constant("./a")],
+            &Specifier::Pattern("./a", ""),
+        ),
     ),
     (
         "a.cjs",
         r#"require(c ? "./\u00e9.js" : "./\u00e8.js");"#,
-        Specifier::Pattern("./", ".js"),
+        Specifier::OneOf(
+            &[
+                Specifier::Constant("./\u{e8}.js"),
+                Specifier::Constant("./\u{e9}.js"),
+            ],
+            &Specifier::Pattern("./", ".js"),
+        ),
     ),
     (
         "a.ts",
         r#"require((c ? "./a/x" : "./a/y") as string);"#,
-        Specifier::Pattern("./a/", ""),
+        Specifier::OneOf(
+            &[Specifier::Constant("./a/x"), Specifier::Constant("./a/y")],
+            &Specifier::Pattern("./a/", ""),
+        ),
     ),
     (
         "a.cjs",
@@ -392,13 +444,20 @@ const SPECIFIERS: &[SpecifierRow] = &[
     ("a.cjs", "require(x);", Specifier::Unknown),
     ("a.cjs", "require(f());", Specifier::Unknown),
     ("a.cjs", r#"require(c ? "./a" : x);"#, Specifier::Unknown),
-    ("a.cjs", r#"require(c ? "./a" : "b");"#, Specifier::Unknown),
+    (
+        "a.cjs",
+        r#"require(c ? "./a" : "b");"#,
+        Specifier::OneOf(
+            &[Specifier::Constant("./a"), Specifier::Constant("b")],
+            &Specifier::Unknown,
+        ),
+    ),
     ("a.cjs", "require(`${a}${b}`);", Specifier::Unknown),
     ("a.cjs", "require(1);", Specifier::Unknown),
     (
         "a.cjs",
         r#"let p = "./a/" + x; require(p);"#,
-        Specifier::Unknown,
+        Specifier::OneOf(&[Specifier::Pattern("./a/", "")], &Specifier::Unknown),
     ),
     ("a.cjs", r"require(`\ud83d${x}\ude00`);", Specifier::Unknown),
 ];
@@ -822,6 +881,7 @@ fn to_import_specifier(w: &Workspace<'_>, specifier: Specifier) -> ImportSpecifi
             prefix: w.atom(prefix),
             suffix: w.atom(suffix),
         },
+        Specifier::OneOf(..) => panic!("{specifier:?} holds another"),
     }
 }
 
@@ -837,9 +897,21 @@ fn check_specifiers(rows: &[SpecifierRow]) {
     for &(path, text, expected) in rows {
         analyzed(path, text, |s| {
             let site = last_site(s, text);
-            let expected = to_import_specifier(&s.workspace, expected);
+            let (alternatives, folded) = match expected {
+                Specifier::OneOf(alternatives, folded) => (alternatives, *folded),
+                _ => (std::slice::from_ref(&expected), expected),
+            };
+            let alternatives: Vec<ImportSpecifier> = alternatives
+                .iter()
+                .map(|&it| to_import_specifier(&s.workspace, it))
+                .collect();
+            let expected = to_import_specifier(&s.workspace, folded);
             assert!(site.kind.call().is_some(), "{text}");
-            assert_eq!(site.specifier, expected, "{text}");
+            assert_eq!(
+                s.analysis.alternatives_of(&site.specifier),
+                alternatives,
+                "{text}"
+            );
             assert_eq!(
                 s.analysis.decisions.specifier(site.specifier_node),
                 expected,
@@ -957,6 +1029,38 @@ fn const_reads_check_the_dead_zone() {
                 "{text}"
             );
             assert!(!s.analysis.decisions.is_dead_expr(e), "{text}");
+        });
+    }
+}
+
+const TARGET: Fold<'static> = Fold {
+    defines: &[
+        (
+            Path::Global(&["process", "platform"]),
+            Defined::Value(Text("linux")),
+        ),
+        (
+            Path::Global(&["process", "env", "NODE_ENV"]),
+            Defined::Value(Text("development")),
+        ),
+    ],
+    ..Fold::NONE
+};
+
+/// A define stands for what is written. What a pattern takes out of the object is what the run finds there, which a program may have changed.
+const MEMBERS_TAKEN_BY_PATTERNS: &[&str] = &[
+    "const { platform } = process; v(platform);",
+    "const { platform: name } = process; v(name);",
+    "const { platform } = process; function f() { v(platform); }",
+    "const { NODE_ENV } = process.env; v(NODE_ENV);",
+    "const { env: { NODE_ENV } } = process; v(NODE_ENV);",
+];
+
+#[test]
+fn member_taken_by_pattern_is_no_define() {
+    for &text in MEMBERS_TAKEN_BY_PATTERNS {
+        folded("a.cjs", text, TARGET, |s| {
+            assert_folded(s, probe(s), Unknown, text)
         });
     }
 }

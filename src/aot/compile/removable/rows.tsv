@@ -37,7 +37,62 @@
 # names
 +	+	+	-	-	ts	const a = 1; const MARK = a;
 +	+	+	-	-	ts	function f(...a: any[]): any {} let a = f(); const MARK = a;
-+	+	+	-	-	ts	const MARK = later; const later = 1;
+-	+	+	missed	-	ts	const MARK = later; const later = 1;
+-	+	+	missed	-	ts	const MARK = [later]; let later = 1;
+-	+	+	missed	-	ts	const MARK: any = MARK;
+-	+	+	missed	-	ts	const MARK: any = [MARK];
+-	+	+	missed	-	ts	let MARK: any = [MARK];
+-	+	+	missed	-	ts	const MARK: any = { a: MARK };
+-	+	+	missed	-	ts	const MARK: any = class { [MARK]() {} };
+-	+	+	missed	-	ts	const MARK: any = class { static get [MARK]() { return 1; } };
+-	+	+	missed	-	ts	const MARK: any = typeof MARK;
+-	+	+	missed	-	ts	const MARK = typeof later; const later = 1;
+-	+	+	missed	-	ts	const MARK = !later; const later = 1;
+-	+	+	missed	-	ts	const MARK = void later; const later = 1;
+-	+	+	missed	-	ts	const MARK = later ? 1 : 2; const later = 1;
+-	+	+	missed	-	ts	const MARK = later && 1; const later = 1;
+-	+	+	missed	-	ts	const MARK = later ?? 1; const later = 1;
+-	+	+	missed	-	ts	const MARK = later === 1; const later = 1;
+-	+	+	missed	-	ts	const MARK = (later, 1); const later = 1;
+-	-	+	-	-	ts	const MARK = [...[later]]; const later = 1;
+-	-	+	-	-	ts	const MARK = new Set([later]); const later = 1;
+-	-	+	-	-	ts	const MARK = new Map([[later, 1]]); const later = 1;
+-	+	+	missed	-	ts	const MARK = { a: [{ b: [later] }] }; const later = 1;
+-	+	+	missed	-	ts	function f(...a: any[]): any {} const MARK = /* @__PURE__ */ f(later); const later = 1;
+-	+	+	missed	-	ts	const MARK = [later], later = 1;
+-	+	+	missed	-	ts	const [MARK = later, later] = [] as any[];
+-	+	+	missed	-	ts	var MARK = [later]; let later = 1;
+-	+	+	missed	-	ts	const MARK = [Later]; class Later extends Object {}
+-	+	+	missed	-	ts	const MARK = class extends Later {}; class Later extends Object {}
+-	+	+	missed	-	ts	class MARK extends Later {} class Later extends Object {}
+-	+	+	missed	-	ts	class MARK extends (MARK as any) {}
+-	+	+	missed	-	ts	class MARK { [MARK as any]() {} }
+-	+	+	missed	-	ts	class MARK { static [MARK as any] = 1; }
+-	+	+	missed	-	ts	class MARK { static a = [later]; } const later = 1;
+-	+	+	missed	-	ts	class MARK { static { [later]; } } const later = 1;
+-	+	+	missed	-	ts	const MARK = class Inner extends (Inner as any) {};
+-	+	+	missed	-	ts	const MARK = class Inner { [Inner as any]() {} };
+-	+	+	missed	-	ts	const MARK = class { static a = class { [later]() {} }; }; const later = 1;
++	+	+	-	-	ts	let earlier = 1; const MARK = [earlier];
++	+	+	-	-	ts	class Earlier extends Object {} const MARK = [Earlier];
++	+	+	-	-	ts	const earlier = 1, MARK = [earlier];
++	+	+	-	-	ts	const MARK = [Later]; class Later {}
++	+	+	-	-	ts	class MARK extends Later {} class Later {}
++	+	+	-	-	ts	const MARK = [later]; function later() {}
++	+	+	-	-	ts	const MARK = [later]; var later = 1;
++	+	+	-	-	ts	const MARK = () => later; const later = 1;
++	+	+	-	-	ts	const MARK = function (a = later) {}; const later = 1;
++	+	+	-	-	ts	const MARK = class { a = later; b() { return later; } }; const later = 1;
++	+	+	-	-	ts	class MARK { static a = [MARK]; }
++	+	+	-	-	ts	class MARK { static { [MARK]; } }
++	+	+	-	-	ts	const MARK = class Inner { static a = [Inner]; };
++	+	+	-	-	ts	class MARK { static a = class { static b = [MARK]; }; }
++	+	+	-	-	ts	let earlier = 1; class MARK { static a = [earlier]; static { [earlier]; } }
++	+	+	-	-	ts	let earlier = 1; const MARK = typeof earlier;
+-	+	+	missed	-	ts	enum MARK { A = later } let later = 1;
++	+	+	-	-	ts	let earlier = 1; enum MARK { A = earlier }
++	+	+	-	-	ts	namespace N { export const a = 1; } import alias = N.a; const MARK = [alias];
++	+	+	-	-	ts	export default class Earlier extends Object {} const MARK = [Earlier];
 +	+	+	-	-	ts	function f(...a: any[]): any {} const MARK = f;
 +	+	+	-	-	ts	class C {} const MARK = C;
 +	+	+	-	-	ts	import { value } from "./dep.ts"; const MARK = value;

@@ -1,8 +1,10 @@
+mod alternatives;
 mod call_sites;
 mod import_uses;
 mod jsx;
 mod macro_calls;
 mod made_requires;
+mod parameters;
 mod scan;
 mod statements;
 #[cfg(all(test, not(miri)))]
@@ -23,6 +25,7 @@ pub use made_requires::{
     is_require_made_for_own_file, may_require_get_members, may_still_be_undefined,
 };
 pub(crate) use made_requires::{find_imported_export, settled_symbol};
+pub use parameters::{find_values_of_parameter, is_exported};
 pub(crate) use scan::collect_import_sites;
 pub(crate) use statements::is_runtime_import;
 
@@ -65,8 +68,20 @@ impl ImportSiteKind {
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
 pub enum ImportSpecifier {
     Constant(Atom),
-    Pattern { prefix: Atom, suffix: Atom },
+    Pattern {
+        prefix: Atom,
+        suffix: Atom,
+    },
+    /// One of a few, each of them a `Constant` or a `Pattern`: `FileAnalysis::alternatives_of`.
+    OneOf(Alternatives),
     Unknown,
+}
+
+/// A range of `FileAnalysis::alternatives`.
+#[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
+pub struct Alternatives {
+    pub(crate) first: u32,
+    pub(crate) count: u32,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -90,6 +105,8 @@ pub(crate) struct ScanInputs<'a, 's> {
 
 pub(crate) struct ImportScan<'s> {
     pub sites: &'s [ImportSite],
+    pub alternatives: &'s [ImportSpecifier],
+    pub paths_from_own_directory: &'s [ExprId],
     pub first_call_site: u32,
     pub sites_by_kind: &'s [u32],
     pub jsx_imports: JsxImportSet,

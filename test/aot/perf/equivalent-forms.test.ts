@@ -64,12 +64,12 @@ const programs: [entry: string, pairs: Pair[]][] = [
       [
         "a method under a plain name that is called",
         "a method under a plain name that is read, compared with undefined and called",
-        4,
+        2,
       ],
       [
         "a method under a symbol that is called",
         "a method under a symbol that is read, compared with undefined and called",
-        4,
+        2,
       ],
     ],
   ],

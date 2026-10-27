@@ -1148,14 +1148,16 @@ const trimExecutableNative = $bindgen("trim_testing.bind.ts", "trimExecutable") 
   path: string,
   out: string,
   featureNames: string,
+  usedFeatureNames: string,
 ) => string;
-/** Removes `featureNames` (as written in src/trim/features/*.def: "Sqlite") from the executable at `path` and writes the result to `out`. Throws what `bun build --compile --trim` would print. */
+/** Removes `featureNames` (as written in src/trim/features/*.def: "Sqlite") from the executable at `path` and writes the result to `out`. With `usedFeatureNames`, also what a program that uses only those leaves unused. Throws what `bun build --compile --trim` would print. */
 export const trimExecutable = (
   path: string,
   out: string,
   featureNames: string[],
+  usedFeatureNames: string[] = [],
 ): { removed: string[]; removedBytes: number; fileBytesSaved: number; uncutReason: string | null } =>
-  JSON.parse(trimExecutableNative(path, out, featureNames.join("\n")));
+  JSON.parse(trimExecutableNative(path, out, featureNames.join("\n"), usedFeatureNames.join("\n")));
 
 const readTrimTableNative = $bindgen("trim_testing.bind.ts", "readTrimTable") as (path: string) => string;
 /** The trim table of the executable at `path`, as `decodeTable` of scripts/build/trim/table.ts returns it. Throws on a file without one. */

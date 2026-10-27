@@ -206,6 +206,10 @@ pub(super) struct OrderParts {
     pub is_code_of_program: Vec<bool>,
     pub is_exposed: Vec<bool>,
     pub is_half: Vec<bool>,
+    /// The strongly connected component of each module in the graph of all requests.
+    pub component_of: Vec<u32>,
+    /// A synchronous load whose time the build does not know may start the module: `require` in a function, or a load by an unknown name.
+    pub is_required_at_any_time: Vec<bool>,
     pub is_loaded_by_loader: Vec<bool>,
     pub is_required_during_load: Vec<bool>,
     pub may_be_imported_while_it_runs: Vec<bool>,
@@ -222,6 +226,8 @@ impl OrderParts {
             is_code_of_program: vec![false; file_count],
             is_exposed: vec![false; file_count],
             is_half: vec![false; file_count],
+            component_of: (0..file_count as u32).collect(),
+            is_required_at_any_time: vec![false; file_count],
             is_loaded_by_loader: vec![false; file_count],
             is_required_during_load: vec![false; file_count],
             may_be_imported_while_it_runs: vec![false; file_count],
@@ -682,12 +688,13 @@ fn collect_edges(
     (all, importers)
 }
 
-fn find_modules_on_cycles(edges: &[Vec<u32>]) -> Vec<bool> {
+fn find_modules_on_cycles(edges: &[Vec<u32>]) -> (Vec<bool>, Vec<u32>) {
     let (component_of, components) = strongly_connected_components(edges);
     let is_on_cycle = |(module, targets): (usize, &Vec<u32>)| {
         components[component_of[module] as usize].len() > 1 || targets.contains(&(module as u32))
     };
-    edges.iter().enumerate().map(is_on_cycle).collect()
+    let is_on_cycle = edges.iter().enumerate().map(is_on_cycle).collect();
+    (is_on_cycle, component_of)
 }
 
 fn find_reached(edges: &[Vec<u32>], mut pending: Vec<u32>) -> Vec<bool> {
@@ -876,27 +883,36 @@ pub(super) fn compute_order(
     });
     let other_loads = planned.iter().flat_map(|it| &it.1.other_loads);
     let other_loads = other_loads.map(|load| load.1);
+    let required_candidates = planned.iter().flat_map(|it| &it.1.required_candidates);
+    let required_candidates = required_candidates.map(|load| load.1);
     // The host, or a name that the build does not know, loads an entry point at any time.
     let entry_points = input.sources.entry_points().iter();
     let loaded_by_name = entry_points
         .filter(|entry| !matches!(entry.kind, EntryPointKind::Main | EntryPointKind::Library));
-    let late_targets = other_loads.chain(loaded_by_name.map(|entry| ModuleRef::File(entry.file)));
+    let loaded_by_name = loaded_by_name.map(|entry| ModuleRef::File(entry.file));
+    let late_targets = other_loads.chain(loaded_by_name.clone());
     let is_exposed_in_application = |module: &ModuleRef| {
         let application = input.application?;
         let module = application.application_module(*module)?;
         Some(application.graph.exposed(module))
     };
     let exposed_in_application = numbers.modules();
-    let exposed_in_application =
-        exposed_in_application.filter(|module| is_exposed_in_application(module) == Some(true));
-    let late_targets = late_targets.chain(exposed_in_application);
+    let exposed_in_application: Vec<ModuleRef> = exposed_in_application
+        .filter(|module| is_exposed_in_application(module) == Some(true))
+        .collect();
+    let late_targets = late_targets.chain(exposed_in_application.iter().copied());
     let number_of = |target: ModuleRef| Some(numbers.number_of(target)? as u32);
+    let required_at_any_time = required_late.clone().chain(required_candidates);
+    let required_at_any_time = required_at_any_time.chain(loaded_by_name);
+    let required_at_any_time = required_at_any_time.chain(exposed_in_application.iter().copied());
+    let is_required_at_any_time =
+        find_reached(&edges, required_at_any_time.filter_map(number_of).collect());
     // All but `require`, which asks for no link.
     let linked_late: Vec<u32> = late_targets.filter_map(number_of).collect();
     let late_targets = linked_late.iter().copied();
     let late_targets = late_targets.chain(required_late.filter_map(number_of));
     let is_exposed = find_reached(&edges, late_targets.collect());
-    let is_on_cycle = find_modules_on_cycles(&edges);
+    let (is_on_cycle, component_of) = find_modules_on_cycles(&edges);
     let is_half = is_on_cycle.iter().zip(&is_exposed);
     let is_half: Vec<bool> = is_half
         .map(|(&on_cycle, &exposed)| on_cycle || exposed)
@@ -927,6 +943,8 @@ pub(super) fn compute_order(
         is_code_of_program,
         is_exposed,
         is_half,
+        component_of,
+        is_required_at_any_time,
         is_loaded_by_loader: loads.is_loaded_by_loader,
         is_required_during_load: loads.is_required_during_load,
         may_be_imported_while_it_runs: loads.may_be_imported_while_it_runs,

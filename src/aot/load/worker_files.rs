@@ -7,7 +7,7 @@ use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, BindingInitializer, CommonJsVariable, Decl, Parent, SymbolId};
 use bun_sema::fold::{Constant, FoldedValue};
 use bun_sema::hir::{BinOp, Branches, CallId, ExprId, ExprKind, PropKind, StmtKind};
-use bun_sema::import_sites::ImportSiteKind;
+use bun_sema::import_sites::{ImportSiteKind, find_values_of_parameter};
 use bun_sema::messages::Category;
 use bun_sema::program::{CodeAnswer, FileId, Files};
 use bun_sema_driver::Locator;
@@ -19,7 +19,7 @@ use crate::load::loaders::{loader_named_by_path, script_kind_of};
 use crate::load::module_paths::{
     compute_module_path, compute_relative_path, with_separators_of_host,
 };
-use crate::load::named_loads::{find_import_of, find_values_of_parameter};
+use crate::load::named_loads::find_import_of;
 use crate::load::source_provider::SourceProvider;
 use crate::load::sources::parsed_source;
 use crate::load::{SourceKind, is_host_path, is_in_node_modules};

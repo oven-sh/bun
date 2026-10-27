@@ -5,6 +5,7 @@ use core::mem::offset_of;
 use bun_exe_format::builtins::Image;
 use bun_exe_format::image::KnownSection;
 use bun_exe_format::section::find_known_section;
+use bun_options_types::trim::TrimRequest;
 use bun_removable_features::{
     Feature, FeatureSet, RemovableFeatureState, Removal, RuntimeRequirement,
 };
@@ -13,9 +14,9 @@ use crate::decide::{CREATES_REALMS, decide};
 use crate::error::{TrimError, TrimInternalError, TrimRequestError};
 use crate::locales::resolve_wanted_groups;
 use crate::model::{
-    Decision, FeatureEdges, IcuPackage, ModuleText, OptionRequirement, PlannedIcuPackage,
-    PlannedRange, SetIndex, TrimInput, TrimPlan, TrimTable, UsedFeatures, UsedLocales,
-    WantedLocaleGroups,
+    Decision, EntryPointNeeds, FeatureEdges, IcuPackage, ModuleText, OptionRequirement,
+    PlannedIcuPackage, PlannedRange, RefusedEntryPoint, RemovableRange, RetainReason, SetIndex,
+    TrimInput, TrimPlan, TrimTable, UsedFeatures, UsedLocales, WantedLocaleGroups,
 };
 use crate::table::read_trim_table;
 
@@ -24,7 +25,7 @@ pub fn plan(input: &TrimInput<'_>, executable: &mut Image<'_>) -> Result<TrimPla
         return Ok(TrimPlan::empty());
     }
     let table = read_trim_table(executable)?;
-    let decision = decide(input, &table.edges);
+    let decision = decide(input, &edges_and_needs_of_builtins(&table));
     let is_kept = |feature: &Feature| !decision.unused.contains(*feature);
     if let Some(missing) = read_removed_features(executable)?.iter().find(is_kept) {
         return Err(TrimRequestError::MissingFromTemplate(missing).into());
@@ -53,7 +54,8 @@ pub fn plan(input: &TrimInput<'_>, executable: &mut Image<'_>) -> Result<TrimPla
         &table.icu_languages,
     )?;
     let runs_library_text = is_template || can_run_library_text(input.used, &decision.requirements);
-    let plan = plan_table(&table, decision, &wanted, runs_library_text);
+    let mut plan = plan_table(&table, decision, &wanted, runs_library_text);
+    plan.refused_entry_points = find_refused_entry_points(&table, &plan.decision, input.request);
     if !is_template {
         return Ok(plan);
     }
@@ -107,7 +109,22 @@ fn can_run_library_text(used: &UsedFeatures, requirements: &[OptionRequirement])
 }
 
 pub fn read_feature_edges(executable: &mut Image<'_>) -> Result<FeatureEdges, TrimError> {
-    read_trim_table(executable).map(|table| table.edges)
+    read_trim_table(executable).map(|table| edges_and_needs_of_builtins(&table))
+}
+
+fn edges_and_needs_of_builtins(table: &TrimTable) -> FeatureEdges {
+    let mut needs = Vec::new();
+    for entry in &table.entry_point_needs {
+        let Some(always) = entry.always else { continue };
+        for own in table.sets[usize::from(entry.own.0)].iter() {
+            for needed in table.sets[usize::from(always.0)].iter() {
+                needs.push((own, needed));
+            }
+        }
+    }
+    needs.sort_unstable();
+    needs.dedup();
+    table.edges.clone().with_needs_of_builtins(needs)
 }
 
 pub(crate) fn plan_table(
@@ -159,9 +176,71 @@ pub(crate) fn plan_table(
     TrimPlan {
         decision,
         ranges,
+        refused_entry_points: Vec::new(),
         icu_packages,
         keeps_table: false,
     }
+}
+
+fn find_refused_entry_points(
+    table: &TrimTable,
+    decision: &Decision,
+    request: &TrimRequest,
+) -> Vec<RefusedEntryPoint> {
+    let removed = decision.removed();
+    let is_removed = |set: SetIndex| table.sets[usize::from(set.0)].is_subset_of(&removed);
+    // The request takes a feature whoever uses it, so that it is gone says nothing about who names what.
+    let mut unused = removed;
+    unused.subtract(&decision.requested);
+    unused.subtract(&FeatureSet::from_features(&request.remove_internal));
+    table
+        .entry_point_needs
+        .iter()
+        .filter(|entry| !ranges_over(entry, table).any(|range| is_removed(range.set)))
+        .filter_map(|entry| {
+            Some(RefusedEntryPoint {
+                range: entry.range,
+                named_feature: find_feature_that_refuses(entry, &table.sets, decision, &unused)?,
+            })
+        })
+        .collect()
+}
+
+/// A program that names the built-in keeps what the built-in always needs, and what it needs with the arguments of the program.
+/// So nothing names the built-in where nothing uses a feature that it always needs, or where its own features stay only for other
+/// features. The error names the feature that has to be allowed next: the built-in's own, then what that needs.
+fn find_feature_that_refuses(
+    entry: &EntryPointNeeds,
+    sets: &[FeatureSet],
+    decision: &Decision,
+    unused: &FeatureSet,
+) -> Option<Feature> {
+    let is_unused = |feature: &Feature| unused.contains(*feature);
+    let find_unused = |set: Option<SetIndex>| sets[usize::from(set?.0)].iter().find(is_unused);
+    let stays_for_others = |feature: Feature| {
+        matches!(
+            decision.reason_of(feature),
+            None | Some(RetainReason::NeededBy { .. })
+        )
+    };
+    let own = &sets[usize::from(entry.own.0)];
+    if !own.iter().all(stays_for_others) {
+        return find_unused(entry.always);
+    }
+    find_unused(entry.always).or_else(|| find_unused(entry.sometimes))?;
+    own.iter().next()
+}
+
+fn ranges_over<'a>(
+    entry: &'a EntryPointNeeds,
+    table: &'a TrimTable,
+) -> impl Iterator<Item = &'a RemovableRange> {
+    let first = table
+        .ranges
+        .partition_point(|range| range.range.end <= entry.range.start);
+    table.ranges[first..]
+        .iter()
+        .take_while(|range| range.range.start < entry.range.end)
 }
 
 fn is_set_removed(removed_sets: &[bool], set: SetIndex) -> bool {
@@ -222,14 +301,13 @@ fn plan_icu_package(
 #[allow(clippy::single_range_in_vec_init)]
 mod tests {
     use bun_exe_format::image::AddressRange;
-    use bun_options_types::trim::TrimRequest;
     use bun_removable_features::{FEATURES_HASH, Removal, TrimFeature};
 
     use super::*;
     use crate::error::TrimRequestError;
     use crate::model::{
-        ExecutableSettings, IcuItemRun, IcuLanguage, LocaleGroup, LocaleTag, RemovableRange,
-        UnseenCode, UnseenCodeCause,
+        EdgeStrength, ExecutableSettings, FeatureEdge, IcuItemRun, IcuLanguage, LocaleGroup,
+        LocaleTag, UnseenCode, UnseenCodeCause,
     };
     use crate::table::tests::encode_table;
 
@@ -248,6 +326,7 @@ mod tests {
             icu_packages: Vec::new(),
             icu_languages: Vec::new(),
             module_texts: Vec::new(),
+            entry_point_needs: Vec::new(),
         }
     }
 
@@ -439,6 +518,140 @@ mod tests {
             named_feature: Feature::Jit,
         };
         assert_eq!(both.ranges, vec![expected]);
+    }
+
+    // The entry point leaves with Sql. It comes to Ffi and Sqlite through guards that abort, and with some arguments to Yaml.
+    fn table_with_entry_point_that_needs_two_features() -> TrimTable {
+        TrimTable {
+            ranges: vec![code_range(0x10, 0x20, 0)],
+            entry_point_needs: vec![EntryPointNeeds {
+                range: address_range(0x18, 8),
+                own: SetIndex(0),
+                always: Some(SetIndex(1)),
+                sometimes: Some(SetIndex(2)),
+            }],
+            ..table_with_sets(&[
+                &[Feature::Sql],
+                &[Feature::Ffi, Feature::Sqlite],
+                &[Feature::Yaml],
+            ])
+        }
+    }
+
+    fn plan_program_using(
+        used: &[Feature],
+        edges: FeatureEdges,
+        request: &TrimRequest,
+    ) -> TrimPlan {
+        let table = TrimTable {
+            edges,
+            ..table_with_entry_point_that_needs_two_features()
+        };
+        let input = TrimInput {
+            used: &UsedFeatures::from_features(used),
+            settings: &ExecutableSettings::default(),
+            request,
+        };
+        plan_encoded_input(&table, &input)
+    }
+
+    fn refused_in_program_using(used: &[Feature], edges: FeatureEdges) -> Vec<Feature> {
+        plan_program_using(used, edges, &removing_unused())
+            .refused_entry_points
+            .iter()
+            .map(|entry| entry.named_feature)
+            .collect()
+    }
+
+    #[test]
+    fn entry_point_is_refused_once_one_feature_it_always_needs_is_unused() {
+        let refused = |used: &[Feature]| refused_in_program_using(used, FeatureEdges::default());
+        assert!(refused(&[Feature::Sql, Feature::Ffi, Feature::Sqlite]).is_empty());
+        assert_eq!(refused(&[Feature::Sql, Feature::Sqlite]), [Feature::Ffi]);
+        assert_eq!(refused(&[Feature::Sql, Feature::Ffi]), [Feature::Sqlite]);
+        let first = Feature::Ffi.min(Feature::Sqlite);
+        assert_eq!(refused(&[Feature::Sql]), [first]);
+
+        let planned = plan_program_using(
+            &[Feature::Sql, Feature::Sqlite],
+            FeatureEdges::default(),
+            &removing_unused(),
+        );
+        assert_eq!(
+            planned.refused_entry_points,
+            [RefusedEntryPoint {
+                range: address_range(0x18, 8),
+                named_feature: Feature::Ffi,
+            }]
+        );
+    }
+
+    #[test]
+    fn entry_point_stays_where_the_program_uses_its_feature_without_what_it_sometimes_needs() {
+        let used = [Feature::Sql, Feature::Ffi, Feature::Sqlite];
+        assert!(refused_in_program_using(&used, FeatureEdges::default()).is_empty());
+    }
+
+    #[test]
+    fn entry_point_whose_feature_stays_for_another_is_refused_without_what_it_sometimes_needs() {
+        let edges = || {
+            FeatureEdges::new(vec![FeatureEdge {
+                from: Feature::Toml,
+                to: Feature::Sql,
+                strength: EdgeStrength::AbortingGuard,
+                is_followed: true,
+            }])
+        };
+        let others = [Feature::Toml, Feature::Ffi, Feature::Sqlite];
+        assert_eq!(refused_in_program_using(&others, edges()), [Feature::Sql]);
+        let with_all = [Feature::Toml, Feature::Ffi, Feature::Sqlite, Feature::Yaml];
+        assert!(refused_in_program_using(&with_all, edges()).is_empty());
+    }
+
+    #[test]
+    fn allowed_feature_keeps_what_its_entry_point_always_needs() {
+        let input = TrimInput {
+            used: &UsedFeatures::from_features(&[]),
+            settings: &ExecutableSettings::default(),
+            request: &TrimRequest {
+                allow: vec![TrimFeature::Sql],
+                ..removing_unused()
+            },
+        };
+        let table = table_with_entry_point_that_needs_two_features();
+        let planned = plan_encoded_input(&table, &input);
+        for feature in [Feature::Sql, Feature::Ffi, Feature::Sqlite] {
+            assert_eq!(planned.removal_of(feature), Removal::Present);
+        }
+        assert_eq!(planned.removal_of(Feature::Yaml), Removal::Unused);
+        assert!(planned.refused_entry_points.is_empty());
+    }
+
+    #[test]
+    fn entry_point_in_removed_range_is_listed_once() {
+        let planned = plan_program_using(&[], FeatureEdges::default(), &removing_unused());
+        assert_eq!(planned.ranges.len(), 1);
+        assert!(planned.refused_entry_points.is_empty());
+    }
+
+    #[test]
+    fn entry_point_stays_where_the_request_removes_what_it_needs() {
+        let used = [Feature::Sql, Feature::Ffi, Feature::Sqlite];
+        let by_name = TrimRequest {
+            remove: vec![TrimFeature::Ffi],
+            ..removing_unused()
+        };
+        let planned = plan_program_using(&used, FeatureEdges::default(), &by_name);
+        assert_eq!(planned.removal_of(Feature::Ffi), Removal::Requested);
+        assert!(planned.refused_entry_points.is_empty());
+
+        let internally = TrimRequest {
+            remove_internal: vec![Feature::Ffi],
+            ..removing_unused()
+        };
+        let planned = plan_program_using(&used, FeatureEdges::default(), &internally);
+        assert_eq!(planned.removal_of(Feature::Ffi), Removal::Unused);
+        assert!(planned.refused_entry_points.is_empty());
     }
 
     #[test]

@@ -86,6 +86,8 @@ diagnostic_codes! {
         NestedTooDeeply = 100301, Error, "This code is nested more than {0} levels deep.";
         FunctionIntrospection = 100302, Warning, "'{0}' is always null on a compiled function.";
         InvalidRuntimeSource = 100305, Error, "Bun's own source cannot be compiled: {0}";
+        RefusedByTranspiler = 100306, Error, "{0}";
+        InvalidRegExp = 100307, Error, "{0}";
         LibraryFileHasTopLevelCode = 100501, Error, "A library file can only declare functions and types";
         JsxKeyIgnored = 100510, Warning, "\"key\" prop ignored. Must be a string, number or symbol.";
         JsxKeyAfterSpread = 100511, Warning, "\"key\" prop after a {...spread} is deprecated in JSX. Falling back to classic runtime.";

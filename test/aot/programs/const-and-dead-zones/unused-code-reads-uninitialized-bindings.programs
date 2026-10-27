@@ -1,0 +1,368 @@
+//// unused-local-declarations-read-uninitialized-bindings.js
+// Each function declares a local binding that nothing reads, and most of the declarations read a let, const or class before it is initialized.
+function show(f) {
+  try {
+    console.log(f.name, f());
+  } catch (error) {
+    console.log(f.name, error.name);
+  }
+}
+function pure() {}
+show(function list() { const v = [v]; return 1; });
+show(function letList() { let v = [v]; return 1; });
+show(function object() { const v = { a: v }; return 1; });
+show(function objectKey() { const v = { [v]: 1 }; return 1; });
+show(function classKey() { const v = class { [v]() {} }; return 1; });
+show(function classStaticGetterKey() { const v = class { static get [v]() { return 1; } }; return 1; });
+show(function classStaticField() { const v = class { static a = v; }; return 1; });
+show(function classExtends() { const v = class extends v {}; return 1; });
+show(function template() { const v = `${v}`; return 1; });
+show(function spread() { const v = [...[v]]; return 1; });
+show(function newSet() { const v = new Set([v]); return 1; });
+show(function newMap() { const v = new Map([[v, 1]]); return 1; });
+show(function typeOf() { const v = typeof v; return 1; });
+show(function closureCalled() { const v = (() => v)(); return 1; });
+show(function closureCalledInList() { const v = [(() => v)()]; return 1; });
+show(function closureKept() { const v = () => v; return 1; });
+show(function laterConst() { const w = [v]; const v = 1; return 1; });
+show(function laterLet() { const w = [v]; let v = 1; return 1; });
+show(function laterClass() { const w = [C]; class C {} return 1; });
+show(function classExtendsLater() { class A extends B {} class B {} return 1; });
+show(function classExtendsItself() { class A extends A {} return 1; });
+show(function classOwnKey() { class A { [A]() {} } return 1; });
+show(function classOwnStaticField() { class A { static a = [A]; } return 1; });
+show(function block() { { const v = [v]; } return 1; });
+show(function loop() { for (let i = 0; i < 2; i++) { const v = [v]; } return 1; });
+show(function loopSecondTurn() { for (let i = 0; i < 2; i++) { if (i) { const w = [v]; } const v = 1; } return 1; });
+show(function loopHead() { for (let i = [i]; ; ) break; return 1; });
+show(function forOfHead() { for (const v of [v]) break; return 1; });
+show(function forInHead() { for (const v in { v }) break; return 1; });
+show(function switchSameClause() { switch (1) { case 1: const v = 1; const w = [v]; } return 1; });
+show(function switchItself() { switch (1) { case 1: const v = [v]; } return 1; });
+show(function tryBlock() { try { const v = [v]; } catch (error) { return "caught " + error.name; } return 1; });
+show(function patternDefault() { const [a = b, b] = []; return 1; });
+show(function objectPatternDefault() { const { a = b, b } = {}; return 1; });
+show(function parameterDefault(a = [b], b) { return 1; });
+show(function sameStatement() { const a = [b], b = 1; return 1; });
+show(function behind() { const v = 1; const w = [v]; return 1; });
+show(function markedCall() { const w = /* @__PURE__ */ pure(v); const v = 1; return 1; });
+//// unused-top-level-declarations-read-uninitialized-bindings/main.js
+// Each module declares a top-level binding that nothing reads, and most of the declarations read a let, const or class before it is initialized.
+const modules = [
+  ["array-holds-itself", () => import("./array-holds-itself.js")],
+  ["let-array-holds-itself", () => import("./let-array-holds-itself.js")],
+  ["initializer-is-itself", () => import("./initializer-is-itself.js")],
+  ["object-value-is-itself", () => import("./object-value-is-itself.js")],
+  ["object-key-is-itself", () => import("./object-key-is-itself.js")],
+  ["class-method-key-is-itself", () => import("./class-method-key-is-itself.js")],
+  ["class-static-getter-key-is-itself", () => import("./class-static-getter-key-is-itself.js")],
+  ["subclass-static-getter-key-is-itself", () => import("./subclass-static-getter-key-is-itself.js")],
+  ["typeof-itself", () => import("./typeof-itself.js")],
+  ["array-holds-later-const", () => import("./array-holds-later-const.js")],
+  ["array-holds-later-let", () => import("./array-holds-later-let.js")],
+  ["var-holds-later-let", () => import("./var-holds-later-let.js")],
+  ["nested-literals-hold-later-const", () => import("./nested-literals-hold-later-const.js")],
+  ["array-holds-later-subclass", () => import("./array-holds-later-subclass.js")],
+  ["class-extends-later-subclass", () => import("./class-extends-later-subclass.js")],
+  ["class-expression-extends-later-subclass", () => import("./class-expression-extends-later-subclass.js")],
+  ["class-extends-itself", () => import("./class-extends-itself.js")],
+  ["class-key-is-own-name", () => import("./class-key-is-own-name.js")],
+  ["class-expression-extends-own-name", () => import("./class-expression-extends-own-name.js")],
+  ["class-expression-static-key-is-own-name", () => import("./class-expression-static-key-is-own-name.js")],
+  ["static-field-holds-later-const", () => import("./static-field-holds-later-const.js")],
+  ["nested-class-key-in-static-field", () => import("./nested-class-key-in-static-field.js")],
+  ["template-holds-later-const", () => import("./template-holds-later-const.js")],
+  ["spread-of-array-literal", () => import("./spread-of-array-literal.js")],
+  ["new-set", () => import("./new-set.js")],
+  ["new-map", () => import("./new-map.js")],
+  ["typeof-later-const", () => import("./typeof-later-const.js")],
+  ["not-later-const", () => import("./not-later-const.js")],
+  ["condition-is-later-const", () => import("./condition-is-later-const.js")],
+  ["left-of-and", () => import("./left-of-and.js")],
+  ["left-of-nullish", () => import("./left-of-nullish.js")],
+  ["compared", () => import("./compared.js")],
+  ["argument-of-annotated-call", () => import("./argument-of-annotated-call.js")],
+  ["closure-called-in-initializer", () => import("./closure-called-in-initializer.js")],
+  ["array-pattern-default", () => import("./array-pattern-default.js")],
+  ["object-pattern-default", () => import("./object-pattern-default.js")],
+  ["later-declarator-of-same-statement", () => import("./later-declarator-of-same-statement.js")],
+  ["exported-array-holds-itself", () => import("./exported-array-holds-itself.js")],
+  ["default-export-holds-later-const", () => import("./default-export-holds-later-const.js")],
+  ["using-holds-later-const", () => import("./using-holds-later-const.js")],
+  ["earlier-const", () => import("./earlier-const.js")],
+  ["earlier-class", () => import("./earlier-class.js")],
+  ["earlier-declarator-of-same-statement", () => import("./earlier-declarator-of-same-statement.js")],
+  ["later-class-without-extends", () => import("./later-class-without-extends.js")],
+  ["class-extends-later-class-without-extends", () => import("./class-extends-later-class-without-extends.js")],
+  ["later-function", () => import("./later-function.js")],
+  ["later-var", () => import("./later-var.js")],
+  ["closure-reads-later-const", () => import("./closure-reads-later-const.js")],
+  ["parameter-default-reads-later-const", () => import("./parameter-default-reads-later-const.js")],
+  ["instance-field-reads-later-const", () => import("./instance-field-reads-later-const.js")],
+  ["static-field-holds-own-name", () => import("./static-field-holds-own-name.js")],
+  ["static-block-reads-own-name", () => import("./static-block-reads-own-name.js")],
+  ["class-expression-static-field-holds-own-name", () => import("./class-expression-static-field-holds-own-name.js")],
+];
+for (const [name, load] of modules) {
+  try {
+    await load();
+    console.log(name, "loaded");
+  } catch (error) {
+    console.log(name, error.name);
+  }
+}
+//// unused-top-level-declarations-read-uninitialized-bindings/array-holds-itself.js
+const v = [v];
+//// unused-top-level-declarations-read-uninitialized-bindings/let-array-holds-itself.js
+let v = [v];
+//// unused-top-level-declarations-read-uninitialized-bindings/initializer-is-itself.js
+const v = v;
+//// unused-top-level-declarations-read-uninitialized-bindings/object-value-is-itself.js
+const v = { a: v };
+//// unused-top-level-declarations-read-uninitialized-bindings/object-key-is-itself.js
+const v = { [v]: 1 };
+//// unused-top-level-declarations-read-uninitialized-bindings/class-method-key-is-itself.js
+const v = class { [v]() {} };
+//// unused-top-level-declarations-read-uninitialized-bindings/class-static-getter-key-is-itself.js
+const v = class { static get [v]() { return 1; } };
+//// unused-top-level-declarations-read-uninitialized-bindings/subclass-static-getter-key-is-itself.js
+const v = class extends Array { static get [v]() { return 1; } };
+//// unused-top-level-declarations-read-uninitialized-bindings/typeof-itself.js
+const v = typeof v;
+//// unused-top-level-declarations-read-uninitialized-bindings/array-holds-later-const.js
+const w = [v];
+const v = 1;
+//// unused-top-level-declarations-read-uninitialized-bindings/array-holds-later-let.js
+const w = [v];
+let v = 1;
+//// unused-top-level-declarations-read-uninitialized-bindings/var-holds-later-let.js
+var w = [v];
+let v = 1;
+//// unused-top-level-declarations-read-uninitialized-bindings/nested-literals-hold-later-const.js
+const w = { a: [{ b: [v] }] };
+const v = 1;
+//// unused-top-level-declarations-read-uninitialized-bindings/array-holds-later-subclass.js
+const w = [C];
+class C extends Object {}
+//// unused-top-level-declarations-read-uninitialized-bindings/class-extends-later-subclass.js
+class A extends B {}
+class B extends Object {}
+//// unused-top-level-declarations-read-uninitialized-bindings/class-expression-extends-later-subclass.js
+const w = class extends C {};
+class C extends Object {}
+//// unused-top-level-declarations-read-uninitialized-bindings/class-extends-itself.js
+class A extends A {}
+//// unused-top-level-declarations-read-uninitialized-bindings/class-key-is-own-name.js
+class A { [A]() {} }
+//// unused-top-level-declarations-read-uninitialized-bindings/class-expression-extends-own-name.js
+const w = class N extends N {};
+//// unused-top-level-declarations-read-uninitialized-bindings/class-expression-static-key-is-own-name.js
+const w = class N { static [N] = 1; };
+//// unused-top-level-declarations-read-uninitialized-bindings/static-field-holds-later-const.js
+class A { static x = [v]; }
+const v = {};
+//// unused-top-level-declarations-read-uninitialized-bindings/nested-class-key-in-static-field.js
+const w = class { static a = class { [v]() {} }; };
+const v = 1;
+//// unused-top-level-declarations-read-uninitialized-bindings/template-holds-later-const.js
+const w = `${v}`;
+const v = "a";
+//// unused-top-level-declarations-read-uninitialized-bindings/spread-of-array-literal.js
+const w = [...[v]];
+const v = 1;
+//// unused-top-level-declarations-read-uninitialized-bindings/new-set.js
+const w = new Set([v]);
+const v = 1;
+//// unused-top-level-declarations-read-uninitialized-bindings/new-map.js
+const w = new Map([[v, 1]]);
+const v = 1;
+//// unused-top-level-declarations-read-uninitialized-bindings/typeof-later-const.js
+const w = typeof v;
+const v = 1;
+//// unused-top-level-declarations-read-uninitialized-bindings/not-later-const.js
+const w = !v;
+const v = 1;
+//// unused-top-level-declarations-read-uninitialized-bindings/condition-is-later-const.js
+const w = v ? 1 : 2;
+const v = 1;
+//// unused-top-level-declarations-read-uninitialized-bindings/left-of-and.js
+const w = v && 1;
+const v = 1;
+//// unused-top-level-declarations-read-uninitialized-bindings/left-of-nullish.js
+const w = v ?? 1;
+const v = 1;
+//// unused-top-level-declarations-read-uninitialized-bindings/compared.js
+const w = v === 1;
+const v = 1;
+//// unused-top-level-declarations-read-uninitialized-bindings/argument-of-annotated-call.js
+function f() {}
+const w = /* @__PURE__ */ f(v);
+const v = 1;
+//// unused-top-level-declarations-read-uninitialized-bindings/closure-called-in-initializer.js
+const v = (() => v)();
+//// unused-top-level-declarations-read-uninitialized-bindings/array-pattern-default.js
+const [a = b, b] = [];
+//// unused-top-level-declarations-read-uninitialized-bindings/object-pattern-default.js
+const { a = b, b } = {};
+//// unused-top-level-declarations-read-uninitialized-bindings/later-declarator-of-same-statement.js
+const a = [b], b = 1;
+//// unused-top-level-declarations-read-uninitialized-bindings/exported-array-holds-itself.js
+export const v = [v];
+//// unused-top-level-declarations-read-uninitialized-bindings/default-export-holds-later-const.js
+export default [v];
+const v = {};
+//// unused-top-level-declarations-read-uninitialized-bindings/using-holds-later-const.js
+using w = null, x = [y];
+const y = 1;
+//// unused-top-level-declarations-read-uninitialized-bindings/earlier-const.js
+const v = 1;
+const w = [v];
+//// unused-top-level-declarations-read-uninitialized-bindings/earlier-class.js
+class C extends Object {}
+const w = [C];
+//// unused-top-level-declarations-read-uninitialized-bindings/earlier-declarator-of-same-statement.js
+const a = 1, b = [a];
+//// unused-top-level-declarations-read-uninitialized-bindings/later-class-without-extends.js
+const w = [C];
+class C {}
+//// unused-top-level-declarations-read-uninitialized-bindings/class-extends-later-class-without-extends.js
+class A extends B {}
+class B {}
+//// unused-top-level-declarations-read-uninitialized-bindings/later-function.js
+const w = [f];
+function f() {}
+//// unused-top-level-declarations-read-uninitialized-bindings/later-var.js
+const w = [x];
+var x = 1;
+//// unused-top-level-declarations-read-uninitialized-bindings/closure-reads-later-const.js
+const w = () => v;
+const v = 1;
+//// unused-top-level-declarations-read-uninitialized-bindings/parameter-default-reads-later-const.js
+const w = function (a = v) {};
+const v = 1;
+//// unused-top-level-declarations-read-uninitialized-bindings/instance-field-reads-later-const.js
+const w = class { a = v; b() { return v; } };
+const v = 1;
+//// unused-top-level-declarations-read-uninitialized-bindings/static-field-holds-own-name.js
+class A { static x = [A]; }
+//// unused-top-level-declarations-read-uninitialized-bindings/static-block-reads-own-name.js
+class A { static { [A]; } }
+//// unused-top-level-declarations-read-uninitialized-bindings/class-expression-static-field-holds-own-name.js
+const w = class N { static x = [N]; };
+//// unused-top-level-reads-of-uninitialized-bindings/main.js
+// Each module reads a const before it is initialized and drops the value. Plain Bun removes these reads.
+const modules = [
+  ["statement", () => import("./statement.js")],
+  ["array-statement", () => import("./array-statement.js")],
+  ["typeof-statement", () => import("./typeof-statement.js")],
+  ["void-in-initializer", () => import("./void-in-initializer.js")],
+  ["left-of-comma-in-initializer", () => import("./left-of-comma-in-initializer.js")],
+  ["annotated-call-statement", () => import("./annotated-call-statement.js")],
+  ["array-statement-in-static-block", () => import("./array-statement-in-static-block.js")],
+];
+for (const [name, load] of modules) {
+  try {
+    await load();
+    console.log(name, "loaded");
+  } catch (error) {
+    console.log(name, error.name);
+  }
+}
+//// unused-top-level-reads-of-uninitialized-bindings/statement.js
+v;
+const v = 1;
+//// unused-top-level-reads-of-uninitialized-bindings/array-statement.js
+[v];
+const v = 1;
+//// unused-top-level-reads-of-uninitialized-bindings/typeof-statement.js
+typeof v;
+const v = 1;
+//// unused-top-level-reads-of-uninitialized-bindings/void-in-initializer.js
+const w = void v;
+const v = 1;
+//// unused-top-level-reads-of-uninitialized-bindings/left-of-comma-in-initializer.js
+const w = (v, 1);
+const v = 1;
+//// unused-top-level-reads-of-uninitialized-bindings/annotated-call-statement.js
+function f() {}
+/* @__PURE__ */ f(v);
+const v = 1;
+//// unused-top-level-reads-of-uninitialized-bindings/array-statement-in-static-block.js
+class A { static { [v]; } }
+const v = 1;
+//// unused-declarations-read-imports-of-a-module-that-has-not-run/main.js
+// The entry point imports a module that loads others, and each of those declares a binding that nothing reads from an export of the entry point, which has not run yet.
+import "./loads.js";
+export const number = 1;
+export const text = "a";
+export const object = {};
+export class Base extends Object {}
+export function hoisted() {}
+export var variable = 1;
+console.log("main");
+//// unused-declarations-read-imports-of-a-module-that-has-not-run/loads.js
+const modules = [
+  ["array-holds-const", () => require("./modules/array-holds-const.js")],
+  ["array-holds-object", () => require("./modules/array-holds-object.js")],
+  ["sum-with-const", () => require("./modules/sum-with-const.js")],
+  ["computed-key", () => require("./modules/computed-key.js")],
+  ["typeof-const", () => require("./modules/typeof-const.js")],
+  ["class-extends-class", () => require("./modules/class-extends-class.js")],
+  ["namespace-member", () => require("./modules/namespace-member.js")],
+  ["namespace-member-constant", () => require("./modules/namespace-member-constant.js")],
+  ["reexported-const", () => require("./modules/reexported-const.js")],
+  ["array-holds-function", () => require("./modules/array-holds-function.js")],
+  ["array-holds-var", () => require("./modules/array-holds-var.js")],
+  ["array-holds-namespace", () => require("./modules/array-holds-namespace.js")],
+  ["closure-reads-const", () => require("./modules/closure-reads-const.js")],
+];
+for (const [name, load] of modules) {
+  try {
+    load();
+    console.log(name, "loaded");
+  } catch (error) {
+    console.log(name, error.name);
+  }
+}
+export {};
+//// unused-declarations-read-imports-of-a-module-that-has-not-run/modules/reexports.js
+export { object as renamed } from "../main.js";
+//// unused-declarations-read-imports-of-a-module-that-has-not-run/modules/array-holds-const.js
+import { number } from "../main.js";
+const unused = [number];
+//// unused-declarations-read-imports-of-a-module-that-has-not-run/modules/array-holds-object.js
+import { object } from "../main.js";
+const unused = [object];
+//// unused-declarations-read-imports-of-a-module-that-has-not-run/modules/sum-with-const.js
+import { number } from "../main.js";
+const unused = number + 1;
+//// unused-declarations-read-imports-of-a-module-that-has-not-run/modules/computed-key.js
+import { text } from "../main.js";
+const unused = { [text]: 1 };
+//// unused-declarations-read-imports-of-a-module-that-has-not-run/modules/typeof-const.js
+import { object } from "../main.js";
+const unused = typeof object;
+//// unused-declarations-read-imports-of-a-module-that-has-not-run/modules/class-extends-class.js
+import { Base } from "../main.js";
+class Unused extends Base {}
+//// unused-declarations-read-imports-of-a-module-that-has-not-run/modules/namespace-member.js
+import * as main from "../main.js";
+const unused = [main.object];
+//// unused-declarations-read-imports-of-a-module-that-has-not-run/modules/namespace-member-constant.js
+import * as main from "../main.js";
+const unused = [main.number];
+//// unused-declarations-read-imports-of-a-module-that-has-not-run/modules/reexported-const.js
+import { renamed } from "./reexports.js";
+const unused = [renamed];
+//// unused-declarations-read-imports-of-a-module-that-has-not-run/modules/array-holds-function.js
+import { hoisted } from "../main.js";
+const unused = [hoisted];
+//// unused-declarations-read-imports-of-a-module-that-has-not-run/modules/array-holds-var.js
+import { variable } from "../main.js";
+const unused = [variable];
+//// unused-declarations-read-imports-of-a-module-that-has-not-run/modules/array-holds-namespace.js
+import * as main from "../main.js";
+const unused = [main];
+//// unused-declarations-read-imports-of-a-module-that-has-not-run/modules/closure-reads-const.js
+import { object } from "../main.js";
+const unused = () => object;

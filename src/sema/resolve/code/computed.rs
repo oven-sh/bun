@@ -67,6 +67,28 @@ impl<'h> Resolver<'h> {
         let outcome = search.find_candidates();
         search.finish(outcome)
     }
+
+    /// What one of a few specifiers finds. Each is a text, or the start and the end of one. Those of `request` are not read.
+    pub fn resolve_alternative_code<'a>(
+        &self,
+        request: &ComputedCodeRequest<'a>,
+        alternatives: &[(&'a [u8], Option<&'a [u8]>)],
+    ) -> ComputedResolution<'h> {
+        let mut search = CandidateSearch::new(self, *request);
+        let outcome = alternatives.iter().try_for_each(|&(start, end)| {
+            search.request.prefix = start;
+            search.request.suffix = end.unwrap_or_default();
+            match end {
+                Some(_) => search.find_candidates(),
+                // A path finds what a walk over the folders finds.
+                None if is_path(start) && strings::split(start, b"/").any(is_left_out_of_walks) => {
+                    Ok(())
+                }
+                None => search.try_specifier(start),
+            }
+        });
+        search.finish(outcome)
+    }
 }
 
 impl<'a, 'h> CandidateSearch<'a, 'h> {
@@ -445,8 +467,7 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
                 ));
             }
             for name in directories {
-                let is_excluded = name == b"node_modules" || name.starts_with(b".");
-                if is_excluded || (is_root && !name.starts_with(name_prefix)) {
+                if is_left_out_of_walks(&name) || (is_root && !name.starts_with(name_prefix)) {
                     continue;
                 }
                 steps.push(WalkStep::Enter {
@@ -502,6 +523,10 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
             form: request.form,
         });
         let candidate = match resolution {
+            // LICENSE, Makefile, a lock file.
+            CodeResolution::File(file) if !has_extension(split_after_last_slash(file.path).1) => {
+                return Ok(());
+            }
             CodeResolution::File(file) => ComputedCandidate::File(file),
             CodeResolution::HostModule(module) => ComputedCandidate::HostModule(module),
             CodeResolution::External {
@@ -519,6 +544,16 @@ impl<'a, 'h> CandidateSearch<'a, 'h> {
         self.spellings.push((text.to_vec(), candidate));
         Ok(())
     }
+}
+
+fn is_left_out_of_walks(folder: &[u8]) -> bool {
+    folder == b"node_modules" || folder.starts_with(b".") && !is_dot_segment(folder)
+}
+
+fn is_path(specifier: &[u8]) -> bool {
+    bun_paths::is_absolute(specifier)
+        || specifier.starts_with(b"./")
+        || specifier.starts_with(b"../")
 }
 
 fn has_extension(name: &[u8]) -> bool {
@@ -543,10 +578,7 @@ fn classify_prefix<'a>(prefix: &'a [u8], suffix: &[u8]) -> PrefixKind<'a> {
         PrefixKind::Unclear
     } else if prefix.starts_with(b"#") {
         PrefixKind::PackageImports
-    } else if bun_paths::is_absolute(prefix)
-        || prefix.starts_with(b"./")
-        || prefix.starts_with(b"../")
-    {
+    } else if is_path(prefix) {
         PrefixKind::Path
     } else if prefix.starts_with(b".") {
         PrefixKind::Unclear

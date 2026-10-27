@@ -34,6 +34,7 @@ mod scope;
 mod statement;
 mod switch;
 mod template;
+mod transpiled;
 mod types;
 mod typescript;
 mod yield_star;
@@ -54,6 +55,7 @@ pub use self::fragment::{Fragment, ModuleFragment};
 pub(crate) use self::layouts::late_answers;
 pub use self::layouts::{DefinedObjectType, DefinedObjectTypes, ObjectTypeKey};
 pub use self::module::{LeftOutDeclarations, LibraryFunctions, collect_library_functions};
+pub use self::transpiled::RuntimeTranspiler;
 
 pub(crate) use self::context::{FileLowering, FunctionLowering};
 pub(crate) use self::convert::FamilyFacts;
@@ -90,6 +92,7 @@ fn lower_with_queries<'a, 'c, 'p, 's>(
 ) -> Option<LoweredFile> {
     let mut lowering = FileLowering::new(inputs, queries, file);
     lowering.refuse_chains_past_nesting_limit();
+    lowering.refuse_invalid_regexp_literals();
     let roots = lowering.declare_module_roots();
     while let Some(function) = lowering.take_next_function() {
         lowering.queries.note_idle();
@@ -98,6 +101,7 @@ fn lower_with_queries<'a, 'c, 'p, 's>(
         }
         lowering.lower_function(function);
     }
+    lowering.queries.note_idle();
     lowering.define_remaining_layouts();
     let module = lowering.finish_module(roots);
     lowering.define_signatures();

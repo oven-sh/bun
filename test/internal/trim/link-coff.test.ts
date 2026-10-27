@@ -137,7 +137,13 @@ describeLink("a trimmable link with lld-link", () => {
     using dir = tempDir("trim-coff-sections", sources);
     const folder = String(dir);
     const { executable } = await linked(folder);
-    expect(reviewFiles(folder, output)).toEqual(["entry-points.txt", "groups.txt", "requires.txt", "retained-by.txt"]);
+    expect(reviewFiles(folder, output)).toEqual([
+      "entry-points.txt",
+      "groups.txt",
+      "needs.txt",
+      "requires.txt",
+      "retained-by.txt",
+    ]);
     const entryPoints = entryPointsText(folder, output).trimEnd().split("\n");
     expect(entryPoints).toHaveLength(1);
     expect(entryPoints[0]).toStartWith(`${Extra} Abort `);

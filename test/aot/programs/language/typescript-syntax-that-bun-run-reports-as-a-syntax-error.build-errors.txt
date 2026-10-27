@@ -40,3 +40,9 @@ error: TS17013: Meta-property 'new.target' is only allowed in the body of a func
 error: TS1215: Invalid use of 'eval'. Modules are automatically in strict mode.
 error: TS1215: Invalid use of 'arguments'. Modules are automatically in strict mode.
 error: TS1264: Declarations with definite assignment assertions must also have type annotations.
+error: TS1098: Type parameter list cannot be empty.
+error: TS1099: Type argument list cannot be empty.
+error: TS1009: Trailing comma not allowed.
+error: TS1005: ';' expected.
+error: TS2338: 'super' property access is permitted only in a constructor, member function, or member accessor of a derived class.
+error: TS1358: Tagged template expressions are not permitted in an optional chain.

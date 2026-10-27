@@ -217,7 +217,9 @@ fn answer_of<'s>(
         SiteResolution::Constant(resolution) => {
             let written = match written {
                 ImportSpecifier::Constant(specifier) => Some(specifier),
-                ImportSpecifier::Pattern { .. } | ImportSpecifier::Unknown => None,
+                ImportSpecifier::Pattern { .. }
+                | ImportSpecifier::OneOf(_)
+                | ImportSpecifier::Unknown => None,
             };
             return constant_answer(atoms, written, resolution, targets);
         }

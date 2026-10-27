@@ -826,15 +826,17 @@ export const shapes: Shape[] = [
   // Each name asks whether the iterator has ended, and every way to that question knows the answer. The names taken so far are all read at the end.
   ...(
     [
-      ["names that a list pattern takes from a typed array or a list", (index: number) => `e${index}`, "", ""],
-      ["names with defaults that a list pattern takes from a typed array or a list", (index: number) => `e${index} = ${index}`, "", ""],
-      ["names that a list pattern takes from a typed array or a list, in front of a rest element", (index: number) => `e${index}`, ", ...more", " + more.length"],
+      ["names that a list pattern takes from a typed array or a list", 1000, (index: number) => `e${index}`, "", ""],
+      ["names with defaults that a list pattern takes from a typed array or a list", 1000, (index: number) => `e${index} = ${index}`, "", ""],
+      ["names that a list pattern takes from a typed array or a list, in front of a rest element", 1000, (index: number) => `e${index}`, ", ...more", " + more.length"],
+      // What takes a step for each name at each name shows from here on.
+      ["very many names that a list pattern takes from a typed array or a list", 8000, (index: number) => `e${index}`, "", ""],
     ] as const
   ).map(
-    ([name, element, rest, readsRest]): Shape => ({
+    ([name, smallerSize, element, rest, readsRest]): Shape => ({
       name,
       counted: "names",
-      size: 1000,
+      size: smallerSize,
       entry: "main.js",
       isExcludedFromCombinedBuild: true,
       write: size => ({
@@ -844,6 +846,51 @@ export const shapes: Shape[] = [
       }),
     }),
   ),
+  // Each pattern takes one element of what the pattern around it has taken, and the iterator of the outer one is open for as long as the inner ones run.
+  {
+    name: "list patterns nested in one another",
+    counted: "levels",
+    size: 200,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.js": `function apart(list) {\n  const [${"[".repeat(size)}inmost${"]".repeat(size)}] = list;\n  return inmost;\n}\nconsole.log(apart([${"[".repeat(size)}7${"]".repeat(size)}]));\n`,
+    }),
+  },
+  {
+    name: "names that an object pattern takes, all read at the end",
+    counted: "names",
+    size: 16000,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.js":
+        `function apart(object) {\n  const { first, ${upTo(size, index => `e${index}`).join(", ")} } = object;\n  return [first, ${upTo(size, index => `e${index}`).join(", ")}].join();\n}\n` +
+        `console.log(apart({ first: 1, ${upTo(size, index => `e${index}: ${index}`).join(", ")} }).length, apart({}).length);\n`,
+    }),
+  },
+  {
+    name: "parameters of one function, all read at the end",
+    counted: "parameters",
+    size: 16000,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.js":
+        `function apart(first, ${upTo(size, index => `e${index}`).join(", ")}) {\n  return [first, ${upTo(size, index => `e${index}`).join(", ")}].join();\n}\n` +
+        `console.log(apart(1, ${upTo(size, index => index).join(", ")}).length, apart().length);\n`,
+    }),
+  },
+  {
+    name: "arguments of one call, each a sum",
+    counted: "arguments",
+    size: 16000,
+    entry: "main.js",
+    isExcludedFromCombinedBuild: true,
+    write: size => ({
+      "main.js": `function take() {\n  return arguments.length;\n}\nfunction give(a) {\n  return take(a, ${upTo(size, index => `a + ${index}`).join(", ")});\n}\nconsole.log(give(1), give("x"));\n`,
+    }),
+  },
   packagesWithOwnCompilerOptions,
 ];
 

@@ -6,7 +6,7 @@ pub(crate) const REFERENCE: u8 = 0;
 pub(crate) const ABORTING_GUARD: u8 = 1;
 pub(crate) const RECOVERABLE_GUARD: u8 = 2;
 
-const TABLE_HEADER_BYTES: usize = 96;
+const TABLE_HEADER_BYTES: usize = 104;
 const TABLE_DIRECTORY_OFFSET: usize = 32;
 const ICU_HEADER_BYTES: usize = 32;
 const ICU_ENTRY_BYTES: usize = 8;
@@ -60,11 +60,12 @@ pub(crate) fn encode_table(table: &ToyTable) -> Vec<u8> {
         runs,
         encode_icu_languages(table),
         Records::default(),
+        Records::default(),
     ];
 
     let mut bytes = vec![0u8; TABLE_HEADER_BYTES];
     bytes[..8].copy_from_slice(b"BUNTRIM\0");
-    bytes[8..12].copy_from_slice(&4u32.to_le_bytes());
+    bytes[8..12].copy_from_slice(&5u32.to_le_bytes());
     bytes[16..24].copy_from_slice(&table.features_hash.to_le_bytes());
     bytes[24..32].copy_from_slice(&base_address.to_le_bytes());
     for (index, section) in sections.iter().enumerate() {

@@ -3,6 +3,7 @@ import type { IcuPackageRuns } from "./icu-data.ts";
 import { fieldBytes, recordBytes, sectionNames, type SectionName } from "./table-format.ts";
 import {
   edgeStrengths,
+  type EntryPointNeeds,
   type IcuLanguage,
   type ModuleTextRange,
   type Partition,
@@ -14,8 +15,8 @@ export type { IcuItemRun, IcuPackage, ModuleText, TrimTable } from "./types.ts";
 export { recordBytes };
 
 export const trimTableMagic = "BUNTRIM\0";
-export const trimTableVersion = 4;
-export const trimTableHeaderBytes = 96;
+export const trimTableVersion = 5;
+export const trimTableHeaderBytes = 104;
 
 export interface TableParts {
   featuresHash: bigint;
@@ -24,12 +25,13 @@ export interface TableParts {
   icuPackages: IcuPackageRuns[];
   icuLanguages: IcuLanguage[];
   moduleTexts: ModuleTextRange[];
+  entryPointNeeds: EntryPointNeeds[];
 }
 
 export const roomFor = (tableBytes: number) => Math.ceil((tableBytes * 17) / 16 / 1024) * 1024;
 
-// `apply` in src/trim/apply.rs writes a header and at most one RemovedRange for each range and each module text over
-// the table, and fails without the room.
+// `apply` in src/trim/apply.rs writes a header and at most one RemovedRange for each range, each module text and each
+// entry point that needs a feature over the table, and fails without the room.
 export const removedRangeListBytes = (rangeCount: number) => 16 + 16 * rangeCount;
 
 const versionOffset = 8;
@@ -74,6 +76,7 @@ interface SectionRecords {
     removalMethods: number,
     reserved: number,
   ];
+  entryPointNeeds: [start: number, size: number, own: number, always: number, sometimes: number, reserved: number];
 }
 type Sections = Record<SectionName, Buffer>;
 
@@ -123,7 +126,17 @@ export function assembleTable(parts: TableParts): TrimTable {
     set: renumberSet(set),
     readers: readers.length === 0 ? undefined : internSet(readers),
   }));
-  const lowestStart = Math.min(...[ranges, icuPackages, moduleTexts].map(list => list[0]?.start ?? Infinity));
+  const internUnlessEmpty = (members: number[]) => (members.length === 0 ? undefined : internSet(members));
+  const entryPointNeeds = [...parts.entryPointNeeds].sort(byStart).map(({ start, end, own, always, sometimes }) => ({
+    start,
+    end,
+    own: internSet(own),
+    always: internUnlessEmpty(always),
+    sometimes: internUnlessEmpty(sometimes),
+  }));
+  const lowestStart = Math.min(
+    ...[ranges, icuPackages, moduleTexts, entryPointNeeds].map(list => list[0]?.start ?? Infinity),
+  );
   const baseAddress = Number.isFinite(lowestStart) ? lowestStart - (lowestStart % baseAddressAlignment) : 0;
   return {
     featuresHash,
@@ -134,6 +147,7 @@ export function assembleTable(parts: TableParts): TrimTable {
     icuPackages,
     icuLanguages: parts.icuLanguages,
     moduleTexts,
+    entryPointNeeds,
   };
 }
 
@@ -154,7 +168,8 @@ function rangesOutside(ranges: RemovableRange[], listedElsewhere: readonly Addre
   return outside;
 }
 
-function checkFormatLimits({ featuresHash, baseAddress, sets, ranges, icuPackages, moduleTexts }: TrimTable): void {
+function checkFormatLimits(table: TrimTable): void {
+  const { featuresHash, baseAddress, sets, ranges, icuPackages, moduleTexts, entryPointNeeds } = table;
   if (BigInt.asUintN(64, featuresHash) !== featuresHash) {
     throw new BuildError(`the trim table's features hash ${featuresHash} does not fit in 64 bits`);
   }
@@ -164,7 +179,7 @@ function checkFormatLimits({ featuresHash, baseAddress, sets, ranges, icuPackage
   if (sets.length >= setCountLimit) {
     throw new BuildError(`the trim table has ${sets.length} feature sets, the limit is ${setCountLimit - 1}`);
   }
-  for (const { start, end } of [...ranges, ...icuPackages, ...moduleTexts]) {
+  for (const { start, end } of [...ranges, ...icuPackages, ...moduleTexts, ...entryPointNeeds]) {
     if (!isUnsignedBelow(start, addressLimit) || !isUnsignedBelow(end, addressLimit)) {
       throw new BuildError(`the trim table's addresses ${start} and ${end} are not integers below 2^53`);
     }
@@ -212,7 +227,7 @@ function packRemovalMethods({ canBeCut, canBeFilled }: Pick<RemovableRange, "can
 }
 
 function packSections(table: TrimTable): Sections {
-  const { baseAddress, edges, sets, ranges, icuPackages, icuLanguages, moduleTexts } = table;
+  const { baseAddress, edges, sets, ranges, icuPackages, icuLanguages, moduleTexts, entryPointNeeds } = table;
   const nextMemberSpan = createSpanSequence();
   const nextRunSpan = createSpanSequence();
   const edgeRecords = edges.map(({ from, to, strength, isFollowed }): SectionRecords["edges"] => [
@@ -255,6 +270,14 @@ function packSections(table: TrimTable): Sections {
     packRemovalMethods(text),
     0,
   ]);
+  const entryPointRecords = entryPointNeeds.map((entry): SectionRecords["entryPointNeeds"] => [
+    entry.start - baseAddress,
+    entry.end - entry.start,
+    entry.own!,
+    entry.always === undefined ? 0 : entry.always + 1,
+    entry.sometimes === undefined ? 0 : entry.sometimes + 1,
+    0,
+  ]);
   return {
     edges: packRecords("edges", edgeRecords),
     featureSets: packRecords(
@@ -270,6 +293,7 @@ function packSections(table: TrimTable): Sections {
     icuRuns: packRecords("icuRuns", runRecords),
     icuLanguages: packRecords("icuLanguages", languageRecords),
     moduleTexts: packRecords("moduleTexts", moduleTextRecords),
+    entryPointNeeds: packRecords("entryPointNeeds", entryPointRecords),
   };
 }
 

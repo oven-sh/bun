@@ -26,13 +26,15 @@ pub(super) fn resolve_code_imports<'s, 'r>(
             },
             None => key,
         };
-        let resolution = resolve_site(context, key, hir, site);
+        let alternatives = analyzed.analysis.alternatives_of(&site.specifier);
+        let resolution = resolve_site(context, key, hir, site, alternatives);
         resolutions.push(resolution);
         let origin = TargetOrigin {
             kind: loader_kind(site),
             type_attribute: loader_attribute(hir, site).map(|value| atoms.bytes(value)),
             embed_attribute: embed_attribute(hir, site).map(|value| atoms.bytes(value)),
-            increases_depth: !is_relative(constant_prefix(atoms, site.specifier)),
+            increases_depth: (alternatives.iter())
+                .any(|&specifier| !is_relative(constant_prefix(atoms, specifier))),
         };
         for file in files_of(resolution) {
             let increases_depth = origin.increases_depth
@@ -132,6 +134,7 @@ fn resolve_site<'r>(
     key: LoadKey<'r>,
     hir: &hir::File<'_>,
     site: &ImportSite,
+    alternatives: &[ImportSpecifier],
 ) -> SiteResolution<'r> {
     let is_constant = matches!(site.specifier, ImportSpecifier::Constant(_));
     debug_assert!(is_constant || !site.is_host_value && !is_get_builtin_module(site.kind));
@@ -146,6 +149,25 @@ fn resolve_site<'r>(
             let (prefix, suffix) = (atoms.bytes(prefix), atoms.bytes(suffix));
             let resolution = resolve_pattern(context, key, prefix, suffix, kind);
             return SiteResolution::Computed(resolution);
+        }
+        ImportSpecifier::OneOf(_) => {
+            let texts = alternatives.iter().map(|&it| match it {
+                ImportSpecifier::Constant(text) => (atoms.bytes(text), None),
+                ImportSpecifier::Pattern { prefix, suffix } => {
+                    (atoms.bytes(prefix), Some(atoms.bytes(suffix)))
+                }
+                ImportSpecifier::OneOf(_) | ImportSpecifier::Unknown => (&b""[..], Some(&b""[..])),
+            });
+            let texts: Vec<(&[u8], Option<&[u8]>)> = texts.collect();
+            let request = ComputedCodeRequest {
+                prefix: b"",
+                suffix: b"",
+                importer: key.path,
+                directory: &context.host.directory_of(key.path),
+                kind: kind.0,
+                form: kind.1,
+            };
+            return SiteResolution::Computed(resolver.resolve_alternative_code(&request, &texts));
         }
         ImportSpecifier::Unknown => {
             let resolution = resolve_pattern(context, key, b"", b"", kind);
@@ -254,7 +276,7 @@ fn constant_prefix<'a>(atoms: &'a Interner<'_>, specifier: ImportSpecifier) -> &
         ImportSpecifier::Constant(text) | ImportSpecifier::Pattern { prefix: text, .. } => {
             atoms.bytes(text)
         }
-        ImportSpecifier::Unknown => b"",
+        ImportSpecifier::OneOf(_) | ImportSpecifier::Unknown => b"",
     }
 }
 

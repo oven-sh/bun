@@ -20,6 +20,9 @@
 // Where something else really comes (comes) a program mostly prints the messages of errors and the texts of functions, which quote the text of the program and are not the same in an
 // executable. There the executable is only asked to be built, to run compiled code and to end by itself.
 //
+// Whatever is killed at its time limit is a red. A variant that does something else than its program (comes, inline, caught) is a program that nobody has run: plain Bun runs it before
+// anything is built. One that does not end there is a red of the tool, which is not to write it: `whatTheEndHangsOn` there.
+//
 //   TEST_PART=aot/values-that-may-be-something-else-3 bun test test/aot/parts.test.ts   one part
 //   AOT_PROGRAMS=<text> TEST_PART=aot/values-that-may-be-something-else bun test ..     the programs whose path contains the text
 //   AOT_PROGRAMS_LISTED=<file> ..                                                       the programs that the file lists, one a line, as paths below ./programs without the extension, up to a tab
@@ -83,6 +86,8 @@ const variantsOfAProgram = process.env.AOT_VARIANTS === "all" ? Infinity : Numbe
 // A variant by itself costs many times what it costs among the others.
 const variantsOfAProgramThatIsBuiltAlone = Math.min(variantsOfAProgram, Number(process.env.AOT_VARIANTS) || 8);
 const drawsOfSeveral = 3;
+// The programs end in a second or two.
+const limitOfTheFirstRun = 30_000;
 const variantsOfOneForm = 12;
 const mostFilesOfAProgram = 12;
 const today = Math.floor(Date.now() / 86_400_000);
@@ -96,6 +101,8 @@ const printsFrames = (name: string) => /^errors\/|stack|frames|columns|positions
 // docs/compiler/compatibility.mdx says what these are about: a `require` helper of a bundler is known by its text, and so are the options that are written in an import call.
 const goesByItsText = (name: string) => /imported-require|options-of-an-import/.test(name);
 const startsWorkersOrProcesses = /\bWorker\b|worker_threads|child_process|\bcluster\b|Bun\.spawn|process\.execPath|\$`/;
+const keepsSomethingOpen =
+  /\bBun\.(serve|listen|connect|udpSocket)\b|\bcreateServer\b|\.listen\(|\bWebSocket\b|\bMessageChannel\b|\bMessagePort\b|\bBroadcastChannel\b|\bsetInterval\b|\breadline\b/;
 const bringsWhatNobodyKnows = (variant: string) => /:(unknown|handed|written|several)@/.test(variant);
 const saysThatItWasNotBuiltForTheCall =
   /this executable can't load a module from a dynamic path|was not compiled into this executable because your code never (?:uses|calls) it|this executable only runs code that was compiled into it|because built-in objects are read-only in a compiled executable|it isn't in this executable, which only runs code that was compiled into it|Code generation from strings disallowed for this context: the compiler couldn't tell/;
@@ -178,18 +185,22 @@ function define(part: number, parts: number, takesTheFixedLines: boolean) {
           : wanted !== ""
             ? name.includes(wanted)
             : takesWhatIsDrawn && (isToldWhatToTake || isInShareOfToday(name)));
-      const chosen = taken(
-        find()
-          .filter(path => /[\\/]/.test(inPrograms(path)) && !isGroup(path))
-          .filter(path => Number((BigInt(Bun.hash(nameOf(path))) >> 12n) % BigInt(parts)) === part - 1),
-        path => isDrawn(nameOf(path)) || (!isNamed && hasLines(nameOf(path))),
-      ).filter(
+      // Every part gets as many of the programs of the day as any other: CI gives each part the same time.
+      const dealt = (some: string[]) => some.filter((_, index) => index % parts === part - 1);
+      const all = find().filter(
         path =>
-          !whyLeftOut(path) &&
-          !existsSync(besideOf(path) + ".expected.txt") &&
+          /[\\/]/.test(inPrograms(path)) &&
+          !isGroup(path) &&
           !printsFrames(nameOf(path)) &&
           !goesByItsText(nameOf(path)),
       );
+      const chosen = taken(
+        [
+          ...dealt(all.filter(path => isDrawn(nameOf(path)))),
+          ...dealt(all.filter(path => !isDrawn(nameOf(path)) && !isNamed && hasLines(nameOf(path)))),
+        ],
+        () => true,
+      ).filter(path => !whyLeftOut(path) && !existsSync(besideOf(path) + ".expected.txt"));
       if (chosen.length === 0) return void test.skip("no program selected", () => {});
 
       // It stands for ./programs: a variant lies as deep below it as its program below ./programs, beside what the program names by a relative path.
@@ -253,16 +264,17 @@ function define(part: number, parts: number, takesTheFixedLines: boolean) {
         cwd: string,
         spelled: string,
         env: Record<string, string> | undefined,
+        limit?: number,
       ): Promise<Ran> {
         const tasks = join(folder, `tasks-${lists++}.json`);
         writeFileSync(tasks, JSON.stringify([{ program: spelled, cwd, env }]));
         const ran = await slot(() =>
-          spawned(withoutCoreDump(command), cwd, {
-            ...envOf(command),
-            BUN_AOT_VERBOSE: "1",
-            AOT_TASKS: tasks,
-            AOT_MARK: mark,
-          }),
+          spawned(
+            withoutCoreDump(command),
+            cwd,
+            { ...envOf(command), BUN_AOT_VERBOSE: "1", AOT_TASKS: tasks, AOT_MARK: mark },
+            limit,
+          ),
         );
         rmSync(tasks, { force: true });
         const parts = (text: string) => text.split(new RegExp(`\\r?\\n${mark} (-?[0-9]+)\\r?\\n`));
@@ -271,12 +283,17 @@ function define(part: number, parts: number, takesTheFixedLines: boolean) {
           return { stdout: stdout[0], stderr: stderr[0], exitCode: Number(stdout[1]), signal: null };
         return { stdout: stdout[0], stderr: stderr[0], exitCode: ran.exitCode, signal: ran.signal };
       }
-      const runOnMainThread = (command: string[], cwd: string, env: Record<string, string> | undefined): Promise<Ran> =>
-        slot(() => spawned(withoutCoreDump(command), cwd, { ...envOf(command), ...env, BUN_AOT_VERBOSE: "1" }));
-      const runPlain = (entry: string, inWorker: boolean, env: Record<string, string> | undefined) =>
+      const runOnMainThread = (
+        command: string[],
+        cwd: string,
+        env: Record<string, string> | undefined,
+        limit?: number,
+      ): Promise<Ran> =>
+        slot(() => spawned(withoutCoreDump(command), cwd, { ...envOf(command), ...env, BUN_AOT_VERBOSE: "1" }, limit));
+      const runPlain = (entry: string, inWorker: boolean, env: Record<string, string> | undefined, limit?: number) =>
         inWorker
-          ? runInWorker([plainBun, "run", join(root, runner)], dirname(entry), entry, env)
-          : runOnMainThread([plainBun, "run", entry], dirname(entry), env);
+          ? runInWorker([plainBun, "run", join(root, runner)], dirname(entry), entry, env, limit)
+          : runOnMainThread([plainBun, "run", entry], dirname(entry), env, limit);
       // A message for a value that is not what an operation takes quotes the text of the program, and a frame has a column.
       const withoutTheText = (result: RunResult) => ({
         ...result,
@@ -330,13 +347,6 @@ function define(part: number, parts: number, takesTheFixedLines: boolean) {
             ? runInWorker([way.executableOf.get(entry)!], dirname(entry), fromRunner(root, entry), env)
             : runOnMainThread([way.executableOf.get(entry)!], dirname(entry), env));
           judged++;
-          // A variant that does something else than its program may never end.
-          if (
-            ran.signal === "SIGKILL" &&
-            !doesAsStored(variant.slice(variant.lastIndexOf(":") + 1)) &&
-            (await runPlain(entry, inWorker, env)).signal !== null
-          )
-            return void passedOver++;
           if (ran.signal !== null) return red(variant, way, `${ran.signal}: ${ran.stderr.slice(0, 300)}`);
           if (!ran.stderr.includes("[aot] module: "))
             return red(
@@ -352,6 +362,8 @@ function define(part: number, parts: number, takesTheFixedLines: boolean) {
           )
             return;
           const plain = await runPlain(entry, inWorker, env);
+          if (plain.signal === "SIGKILL")
+            return red(variant, way, "plain Bun does not end it within the limits of a run");
           if (plain.signal !== null) return void passedOver++;
           const expected = told(plain);
           if (Bun.deepEquals(withoutTheText(result), withoutTheText(expected))) return;
@@ -375,6 +387,20 @@ function define(part: number, parts: number, takesTheFixedLines: boolean) {
           red(variant, way, firstDifference(withoutTheText(result), withoutTheText(expected)));
         }
 
+        await Promise.all(
+          [...entries].map(async ([entry, variant]) => {
+            if (doesAsStored(variant.slice(variant.lastIndexOf(":") + 1))) return;
+            // On the main thread: a Worker ends where its file waits for a promise that nobody settles.
+            if ((await runPlain(entry, false, env, limitOfTheFirstRun)).signal !== "SIGKILL") return;
+            red(
+              variant,
+              wayOf.get(entry)!,
+              `plain Bun does not end it in ${limitOfTheFirstRun / 1000} s: nothing was built`,
+            );
+            entries.delete(entry);
+            rmSync(/[\\/]main\.[a-z]+$/.test(entry) ? dirname(entry) : entry, { recursive: true, force: true });
+          }),
+        );
         await Promise.all(
           ways.map(async way => {
             const mine = [...entries.keys()].filter(entry => wayOf.get(entry) === way);
@@ -411,10 +437,16 @@ function define(part: number, parts: number, takesTheFixedLines: boolean) {
           const texts = new Map(filesOf(path).map(file => [file, readFileSync(join(dirname(path), file), "utf8")]));
           // Where something else comes in the place of a test, a program that starts a Worker or a process only on the main thread starts them without end.
           const startsOthers = [...texts.values()].some(text => startsWorkersOrProcesses.test(text));
+          // A program that has opened a server, a socket, a port or a timer ends where it closes it. Where it does something else it may never come there.
+          const waitsToClose = [...texts.values()].some(text => keepsSomethingOpen.test(text));
           return [...texts].flatMap(([file, text]) => {
             const variants = read(file, text);
             return [
-              ...list(variants, draw).filter(variant => !(startsOthers && variant.startsWith("comes@"))),
+              ...list(variants, draw).filter(
+                variant =>
+                  !((startsOthers || waitsToClose) && variant.startsWith("comes@")) &&
+                  !(waitsToClose && variant.startsWith("inline@")),
+              ),
               ...Array.from(
                 { length: drawsOfSeveral },
                 (_, index) => `several@${(draw * drawsOfSeveral + index) % 100_000}`,

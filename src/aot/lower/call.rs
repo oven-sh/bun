@@ -7,7 +7,7 @@ mod intrinsic_operation;
 mod number_questions;
 mod written_operands;
 
-use bun_sema::bind::{Binding, Parent};
+use bun_sema::bind::Binding;
 use bun_sema::hir::{Call, ExprId, ExprKind, IdList};
 use smallvec::SmallVec;
 
@@ -397,33 +397,9 @@ impl FileLowering<'_, '_, '_, '_> {
     }
 
     fn is_base_of_access(&self, expression: ExprId) -> bool {
-        let hir = self.hir;
-        let mut child = expression;
-        loop {
-            let parent = match self.bound.parent_of_expr(child) {
-                Parent::Expr(parent) => parent,
-                Parent::VarInit(_) => match self.find_name_replaced_by(child) {
-                    Some(name) => {
-                        child = name;
-                        continue;
-                    }
-                    None => return false,
-                },
-                _ => return false,
-            };
-            match hir[parent].kind {
-                ExprKind::As { .. }
-                | ExprKind::Satisfies { .. }
-                | ExprKind::AsConst(_)
-                | ExprKind::NonNull(_)
-                | ExprKind::Instantiation { .. } => child = parent,
-                ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => return obj == child,
-                ExprKind::Call(site) | ExprKind::New(site) | ExprKind::TaggedTemplate(site) => {
-                    return hir[site].callee == child;
-                }
-                _ => return false,
-            }
-        }
+        let position = self.hir[expression].pos;
+        let transpiled = self.transpiled.as_ref();
+        transpiled.is_some_and(|transpiled| transpiled.has_accessed_construction_at(position))
     }
 
     // A native error constructor, `Function` and `Array` do the same with and without `new`, and Bun's transpiler prints the call. So a stack trace shows the position of a call, and in tail position the caller leaves the stack.

@@ -279,7 +279,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
     fn empty_type_parameters(&mut self, less_than: u32) {
         if self.token() != T::GreaterThan || self.prev_end() != less_than + 1 {
             let list = (less_than, self.pos() + 1);
-            self.flag(DiagnosticKind::Grammar, 1098, list, &[]);
+            self.flag_early_error(1098, list, &[]);
         }
     }
 

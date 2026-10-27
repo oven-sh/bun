@@ -11,7 +11,7 @@ The compiler lives in two repositories, and they are one product: change whichev
 | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
 | Front end: resolve, parse, check types, lower to IR, link                 | `src/aot`, `src/sema` (the type checker), `src/bundler/aot`                                            |
 | What an executable holds, trimming                                        | `src/exe_format`, `src/standalone_graph`, `src/trim`, `scripts/build/trim`                             |
-| Bun's own modules, which are compiled too                                 | `src/js`, `src/builtin_sources`                                                                        |
+| Bun's own modules, which are compiled too                                 | `src/js` (`src/js/ahead-of-time/<name>` in place of `<name>`), `src/builtin_sources`                   |
 | The host's side of compiled programs                                      | `src/jsc/bindings/BunCompiled*`, `src/resolver/compiled_program.rs`                                    |
 | Engine: IR, flow analysis, passes, code generation, stubs, image, runtime | `Source/JavaScriptCore/aot` in oven-sh/WebKit (`vendor/WebKit`, or `$BUN_WEBKIT_PATH`)                 |
 | B3 and Air, the back end                                                  | `Source/JavaScriptCore/b3` in oven-sh/WebKit                                                           |

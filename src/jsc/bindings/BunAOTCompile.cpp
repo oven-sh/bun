@@ -13,6 +13,8 @@
 #include <JavaScriptCore/AOTRemovableFeature.h>
 #include <JavaScriptCore/AOTRuntimeDescription.h>
 #include <JavaScriptCore/AOTRuntimeTable.h>
+#include <JavaScriptCore/YarrErrorCode.h>
+#include <JavaScriptCore/YarrSyntaxChecker.h>
 #include <algorithm>
 #include <array>
 #include <cstring>
@@ -477,6 +479,22 @@ extern "C" size_t Bun__AOT__describeWhatThreadsAreCompiling(uint8_t* buffer, siz
     return JSC::AOT::describeWhatThreadsAreCompiling({ reinterpret_cast<char*>(buffer), capacity });
 }
 
+
+// What the parser of JavaScript says of a regular expression literal, which it refuses the whole file for. How deep a pattern may be nested depends on the thread, so that is left to where the literal is evaluated. The front end reads the flags itself.
+extern "C" size_t Bun__AOT__describeRegExpSyntaxError(const uint8_t* pattern, size_t patternSize, const uint8_t* flags, size_t flagsSize, uint8_t* message, size_t capacity)
+{
+    WTF::initialize();
+    String patternText = String::fromUTF8ReplacingInvalidSequences(std::span { pattern, patternSize });
+    String flagsText = String::fromUTF8ReplacingInvalidSequences(std::span { flags, flagsSize });
+    JSC::Yarr::ErrorCode error = JSC::Yarr::checkSyntax(patternText, flagsText);
+    if (!JSC::Yarr::hasHardError(error) || error == JSC::Yarr::ErrorCode::InvalidRegularExpressionFlags)
+        return 0;
+
+    ASCIILiteral sentence = JSC::Yarr::errorMessage(error);
+    if (size_t copiedLength = std::min(capacity, sentence.length()))
+        memcpy(message, sentence.characters(), copiedLength);
+    return sentence.length();
+}
 #else // ENABLE(AOT)
 
 #include <cstddef>
@@ -486,6 +504,7 @@ extern "C" size_t Bun__AOT__describeWhatThreadsAreCompiling(uint8_t* buffer, siz
 extern "C" size_t Bun__AOT__imageAlignment() { return 1; }
 extern "C" void Bun__AOT__relocateImage(uint8_t*, size_t, uint64_t) {}
 extern "C" size_t Bun__AOT__describeDifferenceOfRuntime(const uint8_t*, size_t, uint8_t*, size_t) { return 0; }
+extern "C" size_t Bun__AOT__describeRegExpSyntaxError(const uint8_t*, size_t, const uint8_t*, size_t, uint8_t*, size_t) { return 0; }
 // What src/runtime/cli/compile_command/build.rs names.
 extern "C" size_t Bun__AOT__describeWhereThisThreadStopped(uint8_t*, size_t) { return 0; }
 extern "C" size_t Bun__AOT__describeWhatThreadsAreCompiling(uint8_t*, size_t) { return 0; }

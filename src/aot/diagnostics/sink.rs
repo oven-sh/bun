@@ -5,7 +5,7 @@ use bun_sema::check::aot::{Effect, FileOrigin, effect_of};
 use bun_sema::program::Files;
 use bun_sema::util::SharedSort;
 use bun_sema_driver::{self as driver, log_message};
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::{
     COMPILER_DIAGNOSTIC_CLASS, Diagnostic, DiagnosticBuffer, Diagnostics, Entry, InternalError,
@@ -162,7 +162,25 @@ impl Diagnostics {
         self.internal_errors.extend(lists.internal_errors);
     }
 
+    /// An error that shows where the code of a file is nested too deeply says more than the one that names the file.
+    fn drop_files_whose_nesting_is_shown(&mut self) {
+        let (shown, named) = (Code::NestedTooDeeply, Code::FileNestedTooDeeply);
+        if !(self.entries.iter()).any(|entry| entry.key.4 == named.number()) {
+            return;
+        }
+        let shown = (self.entries.iter()).filter(|entry| entry.key.4 == shown.number());
+        let texts: FxHashSet<Vec<u8>> = shown
+            .map(|entry| {
+                let diagnostic = Diagnostic::new(named, None, &[entry.key.1.as_slice()]);
+                to_message(None, &diagnostic, None).data.text.to_vec()
+            })
+            .collect();
+        self.entries
+            .retain(|entry| entry.key.4 != named.number() || !texts.contains(&entry.key.5));
+    }
+
     pub(crate) fn write_to(mut self, log: &mut Log) {
+        self.drop_files_whose_nesting_is_shown();
         self.entries.shared_sort_by(|a, b| a.key.cmp(&b.key));
         self.entries
             .dedup_by(|next, previous| next.key == previous.key);

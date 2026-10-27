@@ -26,9 +26,11 @@
 // `--throwers 20`, with `--together`, takes 20 of 100 programs that end in an error. Such a program is the last of its entry point, and an entry point costs a build as much as twenty programs.
 // `--slow 10`, with `--together`, takes 10 of 100 programs that don't end in time under `bun run`. Each of them needs an entry point to itself.
 // `--scene sceneOfASmallPackage`: the ordinary scenes are all of that kind.
+// `--only-throwers 12`, with `--together`: one run of this script in eight takes only the programs that end in an error under `bun run`, each as an entry point of its own.
+// `--compares-errors`: two runs that end in an error agree only if the last error that each printed has the same class and, but for what it quotes of the source, the same message.
 // `--each-a-program 25`: a quarter of the runs of this script leave --together aside: each program is an entry point, which begins a program of its own, at most 120 to a build.
 // `--launders 50`: in half of the runs of this script every program has values handed through a function that the build knows nothing about (launder-values.ts). Such programs share executables.
-// `--checks 50`: half of the other runs, and every run that launders, build with the compiler's checks that move no output: every pass is verified, and references are validated.
+// `--checks 50`: half of the other runs, and every run that launders, build with the compiler's checks that move no output: every pass is verified, and references are validated. `--checks never`: no run does.
 // `--ignores-type-errors 100` writes `// @ts-ignore` above every line of a TypeScript program. One error of the type checker in one program costs the whole batch a build.
 import {
   appendFileSync,
@@ -90,6 +92,8 @@ const { values: options } = parseArgs({
     launders: { type: "string", default: "0" },
     scene: { type: "string", default: "" },
     "each-a-program": { type: "string", default: "0" },
+    "only-throwers": { type: "string", default: "0" },
+    "compares-errors": { type: "boolean", default: false },
     checks: { type: "string", default: "0" },
     "hides-function-text": { type: "boolean", default: false },
     // Kinds of outcomes that are only counted otherwise, separated by commas.
@@ -103,7 +107,8 @@ const [groupSize, batches, milliseconds] = [options.group, options.batches, opti
 /** Whether every program of this run has values handed through a function that the build knows nothing about. All of them have the world open then, and none waits for others like it. */
 const launders = Math.random() * 100 < Number(options.launders);
 // The programs that an entry point imports are one program of many modules. What a build proves only of a small program, it never proves there.
-const isEachAProgram = !launders && Math.random() * 100 < Number(options["each-a-program"]);
+const takesOnlyThrowers = !launders && Math.random() * 100 < Number(options["only-throwers"]);
+const isEachAProgram = !launders && !takesOnlyThrowers && Math.random() * 100 < Number(options["each-a-program"]);
 const together = isEachAProgram ? 1 : Number(options.together);
 if (together > 1 && groupSize !== 1) throw new Error("--together goes with --group 1");
 /** How many programs a batch takes. The batches go through the list in turn. */
@@ -120,7 +125,7 @@ const buildFlags = [
 /** A package that stays outside the executable. Beside it the compiler counts on code that it hasn't seen, which can reach every built-in module. */
 const packageOutside = Math.random() * 100 < Number(options["beside-an-external"]) ? "a-package-outside" : "";
 if (packageOutside) buildFlags.push("--external", packageOutside);
-if (launders || Math.random() * 100 < Number(options.checks))
+if ((launders && options.checks !== "never") || Math.random() * 100 < Number(options.checks))
   buildFlags.push("--aot-check=verify-each-pass,validate-references");
 const importOfThePackageOutside = packageOutside && `import "${packageOutside}";\n`;
 const runner = "run-each-program-in-a-worker.ts";
@@ -563,8 +568,29 @@ const removeDetailsOfErrors = (output: string) =>
         ),
     )
     .join("\n");
+/**
+ * The class and the message of the last error in what a run wrote to stderr, which is the one that ended it. An executable quotes less of the source in a message than `bun run` does
+ * (docs/compiler/compatibility.mdx, "Error messages"), so what is quoted is left out, and so is what stands in front of "is not a function" and the like.
+ */
+function lastError({ stderr }: Ended) {
+  const [, name = "", message = ""] = [...stderr.matchAll(/^[ \t]*(\w*[Ee]rror): ?(.*)$/gm)].at(-1) ?? [];
+  return {
+    name,
+    message: message
+      .replace(/ ?\((?:evaluating|In|near) '.*\)\.?$/, "")
+      .replace(
+        /^.* is not (a function|a constructor|an object|an Object|iterable|callable)\b.*$/,
+        "something is not $1",
+      )
+      .replace(/'[^']*'|"[^"]*"/g, "''"),
+  };
+}
+const endInTheSameError = (a: Ended, b: Ended) =>
+  !options["compares-errors"] ||
+  a.end !== "error" ||
+  (lastError(a).name === lastError(b).name && lastError(a).message === lastError(b).message);
 const agree = (a: Ended, b: Ended) =>
-  a.end === b.end && removeDetailsOfErrors(a.stdout) === removeDetailsOfErrors(b.stdout);
+  a.end === b.end && removeDetailsOfErrors(a.stdout) === removeDetailsOfErrors(b.stdout) && endInTheSameError(a, b);
 /** The text of a function is a key or a part of a string, and the two runs differ in where its lines break and in parentheses that change nothing. */
 const withoutLayout = (output: string) => removeDetailsOfErrors(output).replace(/\\n|[\s()]/g, "");
 const agreeButForLayout = (a: Ended, b: Ended) =>
@@ -1055,6 +1081,13 @@ async function judgeTogether(texts: string[], extension: string, add: (kind: str
   waitingForABatchOfTheirOwn.push(...scripts.map(({ text }) => text));
   programs = programs.filter(each => !scripts.includes(each));
   const canBeLast = ({ end }: { end: string }) => end === "error" || /^[1-9]\d*$/.test(end);
+  if (takesOnlyThrowers) {
+    const throwers = programs.filter(canBeLast);
+    add("ends in an error and waits for a batch of such", throwers.length);
+    add("taken", throwers.length + scripts.length - texts.length);
+    waitingForABatchOfTheirOwn.push(...throwers.map(({ text }) => text));
+    return;
+  }
   const onTheirOwn = programs.filter(each => each.end !== "0" && !canBeLast(each));
   const kept = onTheirOwn.filter(({ end }) => end !== "time" || Math.random() * 100 < Number(options.slow));
   add("does not end in time and is left out", onTheirOwn.length - kept.length);
@@ -1614,9 +1647,13 @@ for (
                             ? "limit"
                             : second.end !== referenceAgain.end
                               ? "exit-code"
-                              : "stdout";
+                              : removeDetailsOfErrors(second.stdout) !== removeDetailsOfErrors(referenceAgain.stdout)
+                                ? "stdout"
+                                : lastError(second).name !== lastError(referenceAgain).name
+                                  ? "error-class"
+                                  : "error-message";
     // A build warns about the first write to a built-in that it meets, so the build of a group names one program of several.
-    if (["limit", "exit-code", "stdout"].includes(kind)) {
+    if (["limit", "exit-code", "stdout", "error-class", "error-message"].includes(kind)) {
       const alone = join(work, `alone-${process.pid}`);
       layOut(alone, [texts[index]], extension, 1);
       const said = await withErrorsOfItsOwnExecutable(alone, extension, second);
@@ -1645,10 +1682,26 @@ for (
       rmSync(alone, { recursive: true, force: true });
     }
     add(kind);
-    if (!["bun-run-signal", "unsteady", "signal", "limit", "exit-code", "stdout", ...alsoKept].includes(kind)) continue;
+    if (
+      ![
+        "bun-run-signal",
+        "unsteady",
+        "signal",
+        "limit",
+        "exit-code",
+        "stdout",
+        "error-class",
+        "error-message",
+        ...alsoKept,
+      ].includes(kind)
+    )
+      continue;
     // What the process wrote last, in front of the report that starts with a line of "=", tells one end by a signal from another.
     const lastWords = kind === "signal" ? (/([^\n]*)\n={20,}\n/.exec(second.stderr)?.[1] ?? "") : "";
-    const summary = `compiled: ${second.end}${lastWords && " | " + lastWords}\nbun run:  ${referenceAgain.end}\n${firstDifference(second.stdout, referenceAgain.stdout)}`;
+    const errors = kind.startsWith("error-")
+      ? `compiled ends in: ${lastError(second).name}: ${lastError(second).message}\nbun run ends in:  ${lastError(referenceAgain).name}: ${lastError(referenceAgain).message}\n`
+      : "";
+    const summary = `compiled: ${second.end}${lastWords && " | " + lastWords}\nbun run:  ${referenceAgain.end}\n${errors}${firstDifference(second.stdout, referenceAgain.stdout)}`;
     let where = "not tried alone";
     let enough: number[] = [];
     if (kind !== "unsteady" && kind !== "bun-run-signal" && !alsoKept.includes(kind) && isolated++ < maxFindsIsolated) {

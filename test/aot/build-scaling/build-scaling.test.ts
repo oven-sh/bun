@@ -17,6 +17,11 @@
 // that, the difference is left out of the shape's memory, so one row fails and not all of them. A build that is over its budget in memory is measured again,
 // together with a new build of size 0.
 //
+// The allocator hands freed memory back to the system a while after it was freed, by the clock. So a build has resident what it needs and, on top, what an
+// earlier stage has freed and the system has not got back yet: up to 30 MB more in one run than in the next. Where the smaller size adds under 100 MB, three
+// such numbers make a quotient that is off by a half. A growth in memory that is over its bound is measured again, and each of the three sizes keeps the
+// least that it was seen to take: what a build needs it takes every time.
+//
 // One more build has all the shapes as its entry points, on four threads. The stages of a build run one after another, and a stage takes the memory that
 // the stage before it has freed, so the build needs what its largest stage needs. On one thread that is so by itself. On several threads it also takes
 // an allocator that hands what one thread has freed to the others, or back to the system. Only its memory is held against the budget, with less slack:
@@ -203,18 +208,34 @@ describe.skipIf(!!skipped)("compile/aot/build scaling", () => {
       async () => {
         const size = shape.size * factor;
         const budget = holdsBudgets ? budgets[shape.name] : undefined;
-        const [none, once, twice] = await Promise.all(
-          [0, size, 2 * size].map(size => slot(() => measure(shape, size, carrier))),
-        );
-        const grown = (name: keyof Cost, least: number, leastDivisor: number) => {
+        const grown = ([none, once, twice]: Cost[], name: keyof Cost, least: number, leastDivisor: number) => {
           if (none[name] === undefined || once[name] === undefined || twice[name] === undefined) return undefined;
           const [added, addedByTwice] = [once[name] - none[name], twice[name] - none[name]];
           // What the smaller size adds may be next to nothing, or little beside what wavers from run to run: then the quotient says little more than "much".
           return addedByTwice < least ? undefined : addedByTwice / Math.max(added, leastDivisor);
         };
+        const grownInMemory = (costs: Cost[]) => grown(costs, "peakBytes", leastBytesJudged, leastBytesJudged / 2);
+        const allowedGrowth = (what: keyof Cost) =>
+          Math.max(mostGrowth, (budgets[shape.name]?.growth?.[what] ?? 0) * slackOfGrowth);
+        let leastSeen: Cost[] | undefined;
+        const costs = await measureUntilWithinBounds(
+          shape.name,
+          async () => {
+            const measured = await Promise.all(
+              [0, size, 2 * size].map(size => slot(() => measure(shape, size, carrier))),
+            );
+            leastSeen = measured.map((cost, index) => ({
+              ...cost,
+              peakBytes: Math.min(cost.peakBytes, leastSeen?.[index].peakBytes ?? Infinity),
+            }));
+            return leastSeen;
+          },
+          costs => (grownInMemory(costs) ?? 0) <= allowedGrowth("peakBytes"),
+        );
+        const [none, once, twice] = costs;
         const growth = {
-          instructions: grown("instructions", leastInstructionsJudged, leastInstructionsJudged / 8),
-          peakBytes: grown("peakBytes", leastBytesJudged, leastBytesJudged / 2),
+          instructions: grown(costs, "instructions", leastInstructionsJudged, leastInstructionsJudged / 8),
+          peakBytes: grownInMemory(costs),
         };
         const row = (cost: Cost) =>
           `${cost.instructions === undefined ? "?" : inMillions(cost.instructions)} M instructions, ${inMillions(cost.peakBytes)} MB`;
@@ -261,7 +282,7 @@ describe.skipIf(!!skipped)("compile/aot/build scaling", () => {
 
         const worse: string[] = [];
         for (const what of ["instructions", "peakBytes"] as const) {
-          const allowed = Math.max(mostGrowth, (budgets[shape.name]?.growth?.[what] ?? 0) * slackOfGrowth);
+          const allowed = allowedGrowth(what);
           if (growth[what] !== undefined && growth[what] > allowed)
             worse.push(
               `twice as many ${shape.counted} cost ${growth[what].toFixed(2)} times the ${what}; allowed: ${rounded(allowed)}`,

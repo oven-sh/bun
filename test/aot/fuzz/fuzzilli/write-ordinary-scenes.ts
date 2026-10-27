@@ -2643,6 +2643,344 @@ class Scenes {
     );
     this.lines.push("}");
   }
+
+  /** An object is made with a function under a name: a method, an arrow, a class. Native code stores something else under that name, and the program reads it. */
+  sceneOfNativeStoresOverFunctions() {
+    const number = ++this.count;
+    const any = this.typed("any");
+    const asAny = this.isTypeScript ? " as any" : "";
+    this.lines.push("{");
+    this.emit(
+      1,
+      `let out = "";`,
+      `function note(value${any})${this.typed("void")} { out += (typeof value === "function" ? "function " + value.name : typeof value === "object" && value !== null ? JSON.stringify(value) : typeof value + " " + String(value)) + ";"; }`,
+    );
+    for (let index = this.pick([1, 2, 2, 3]); index > 0; index--) {
+      const id = `${number}_${index}`;
+      const [n, other] = [this.nameOfItsOwn("n"), this.nameOfItsOwn("m")];
+      const made = this.pick([
+        `{ ${n}() { return 1; } }`,
+        `{ ${n}() { return 1; } }`,
+        `{ ${n}() { return 1; } }`,
+        `{ ${n}: () => 1 }`,
+        `{ ${n}: function () { return 1; } }`,
+        `{ ${other}: 1, ${n}() { return this.${other}; } }`,
+        `{ ${n}() { return 1; }, ${other}() { return 2; } }`,
+        `{ async ${n}() { return 1; } }`,
+        `{ *${n}() { yield 1; } }`,
+        `{ ${n}: class {} }`,
+        `{ get ${n}() { return () => 1; }, set ${n}(given) {} }`,
+        `new (class { ${n} = () => 1; })()`,
+        `Object.assign({}, { ${n}() { return 1; } })`,
+        `{ ...{ ${n}() { return 1; } } }`,
+      ]);
+      const stores = this.several(1, 2, () =>
+        this.pick([
+          `Reflect.set(o, "${n}", y);`,
+          `Reflect.set(o, "${n}", y);`,
+          `Object.assign(o, { ${n}: y });`,
+          `Object.assign(o, { ${n}: y });`,
+          `Object.defineProperty(o, "${n}", { value: y, writable: true, enumerable: true, configurable: true });`,
+          `Object.defineProperty(o, "${n}", { value: y });`,
+          `Object.defineProperties(o, { ${n}: { value: y, enumerable: true, configurable: true } });`,
+          `Reflect.defineProperty(o, "${n}", { value: y, configurable: true });`,
+          `Object.defineProperty(o, "${n}", { get() { return y; }, configurable: true });`,
+          `new Proxy(o, {}).${n} = y;`,
+          `new Proxy(o, { set(target, key, value) { return Reflect.set(target, key, value); } }).${n} = y;`,
+          `Reflect.set(Object.create(o), "${n}", y, o);`,
+          `Object.assign(o, JSON.parse('{"${n}":2}'));`,
+          `Object.assign(o, Object.fromEntries([["${n}", y]]));`,
+          `[["${n}", y]].forEach(([key, value]) => { o[key${asAny}] = value; });`,
+          `for (const key of Object.keys(o)) o[key] = y;`,
+          `Reflect.deleteProperty(o, "${n}");`,
+          `Object.setPrototypeOf(o, { ${n}: y }); Reflect.deleteProperty(o, "${n}");`,
+          `Object.freeze(o);`,
+        ]),
+      ).join(" ");
+      const looks = this.several(1, 3, () =>
+        this.pick([
+          `note(o.${n});`,
+          `note(o.${n});`,
+          `note(o.${n});`,
+          `note(typeof o.${n});`,
+          `note(typeof o.${n} === "function" ? o.${n}() : o.${n});`,
+          `note(o.${n}?.call?.(o));`,
+          `note(o["${n}"]);`,
+          `note({ ...o }.${n});`,
+          `{ const { ${n}: read } = o; note(read); }`,
+          `note(JSON.stringify(o));`,
+          `note(Object.getOwnPropertyDescriptor(o, "${n}")?.value);`,
+          `note(Object.values(o).length);`,
+          `note("${n}" in o);`,
+        ]),
+      ).join(" ");
+      const given = this.several(2, 4, () =>
+        this.pick([
+          `""`,
+          "true",
+          "undefined",
+          `"a"`,
+          "0",
+          "1.5",
+          "null",
+          "{ k: 1 }",
+          "[1]",
+          "() => 2",
+          "10n",
+          "function other() {}",
+        ]),
+      );
+      const caught = `catch (error) { note("threw " + (error${asAny})?.constructor?.name); }`;
+      this.emit(
+        1,
+        `function run${id}(y${any})${this.typed("void")} { ${this.pick(["const", "const", "let"])} o${any} = ${made}; ${this.chance(25) ? looks + " " : ""}${stores} ${looks} }`,
+        this.pick([
+          `for (const y of [${given.join(", ")}]) { try { run${id}(y); } ${caught} }`,
+          given.map(y => `try { run${id}(${y}); } ${caught}`).join(" "),
+          `try { run${id}(${given[0]}); } ${caught}`,
+          `for (const row of JSON.parse('[{"y":""},{"y":true},{"x":1},{"y":"a"},{"y":2}]')) { try { run${id}(row.y); } ${caught} }`,
+        ]),
+      );
+    }
+    this.emit(1, `printValue("natives ${number}", out);`);
+    this.lines.push("}");
+  }
+
+  /**
+   * A function answers a class expression, and the program extends what it answers or makes instances of it. The class holds what a class can hold: static blocks, private names of every kind,
+   * accessors, computed keys, field initializers that close over the variables of the function, WeakMaps and WeakSets behind the helpers that tsc writes for private names, decorators as tsc writes them.
+   */
+  sceneOfClassesOutOfFactories() {
+    const number = ++this.count;
+    const any = this.typed("any");
+    const asAny = this.isTypeScript ? " as any" : "";
+    const caught = `catch (error) { note("threw " + (error${asAny})?.constructor?.name); }`;
+    const value = () => this.pick(["1", "2", "1.5", `"t"`, "true", "null", "[1]", "{ k: 1 }", "10n"]);
+    type Part = {
+      top?: string[];
+      variables?: string[];
+      members: string[];
+      built?: string[];
+      behind?: (made: string) => string[];
+      looks: (K: string, o: string, Other: string) => string[];
+    };
+    const parts: ((i: string) => Part)[] = [
+      i => ({
+        members: [
+          `static #c${i} = ${value()};`,
+          `static { ${this.isTypeScript ? "(this as any)" : "this"}.t${i} = this.#c${i}; }`,
+        ],
+        looks: K => [`note(${K}.t${i});`],
+      }),
+      i => ({
+        members: [
+          `static #c${i} = ${value()};`,
+          `static { ${this.isTypeScript ? "(this as any)" : "this"}.t${i} = this.#c${i}; }`,
+        ],
+        looks: K => [`note(${K}.t${i});`],
+      }),
+      i => ({
+        variables: [`let next${i} = 1;`],
+        members: [`static { next${i} = 100; }`, `id${i} = next${i}++;`],
+        looks: (K, o) => [`note(${o}.id${i});`, `note(new ${K}(8).id${i});`],
+      }),
+      i => ({
+        variables: [`let next${i} = 1;`],
+        members: [`static { next${i} = 100; }`, `id${i} = next${i}++;`],
+        looks: (K, o) => [`note(${o}.id${i});`, `note(new ${K}(8).id${i});`],
+      }),
+      i => ({
+        members: [
+          `#p${i}${any} = ${value()};`,
+          `read${i}()${any} { return this.#p${i}; }`,
+          `write${i}(given${any})${any} { this.#p${i} = given; return this; }`,
+        ],
+        looks: (_, o) => [`note(${o}.read${i}());`, `note(${o}.write${i}(5).read${i}());`],
+      }),
+      i => ({
+        members: [
+          `#m${i}()${any} { return ${value()}; }`,
+          `get #g${i}()${any} { return this.#m${i}(); }`,
+          `seen${i}()${any} { return this.#g${i}; }`,
+        ],
+        looks: (_, o) => [`note(${o}.seen${i}());`],
+      }),
+      i => ({
+        members: [`#b${i}${any};`, `static is${i}(given${any})${any} { return #b${i} in given; }`],
+        looks: (K, o, Other) => [
+          `note(${K}.is${i}(${o}));`,
+          `note(${K}.is${i}({}));`,
+          `note(${K}.is${i}(new ${Other}(1)));`,
+        ],
+      }),
+      i => ({
+        members: [
+          `static #s${i}()${any} { return ${value()}; }`,
+          `static viaThis${i}()${any} { return this.#s${i}(); }`,
+        ],
+        looks: K => [`note(${K}.viaThis${i}());`],
+      }),
+      i => ({
+        top: [
+          `var get${i} = function (receiver${any}, map${any})${any} { if (!map.has(receiver)) { throw new TypeError("attempted to get private field on non-instance"); } return map.get(receiver); };`,
+          `var set${i} = function (receiver${any}, map${any}, given${any})${any} { if (!map.has(receiver)) { throw new TypeError("attempted to set private field on non-instance"); } map.set(receiver, given); return given; };`,
+          `const map${i} = new WeakMap${this.isTypeScript ? "<any, any>" : ""}();`,
+        ],
+        built: [`map${i}.set(this, v);`],
+        members: [
+          `readMap${i}()${any} { return get${i}(this, map${i}); }`,
+          `writeMap${i}(given${any})${any} { return set${i}(this, map${i}, given); }`,
+        ],
+        looks: (_, o) => [
+          `map${i}.set(${o}, 9); note([${o}.readMap${i}(), ${o}.readMap${i}()].join());`,
+          `note(${o}.writeMap${i}(4)); note(${o}.readMap${i}());`,
+        ],
+      }),
+      i => ({
+        top: [
+          `function in${i}(state${any}, receiver${any})${any} { if (receiver === null || (typeof receiver !== "object" && typeof receiver !== "function")) throw new TypeError("Cannot use 'in' operator on non-object"); return typeof state === "function" ? receiver === state : state.has(receiver); }`,
+          `const set${i} = new WeakSet${this.isTypeScript ? "<any>" : ""}();`,
+        ],
+        built: [`set${i}.add(this);`],
+        members: [`isIn${i}()${any} { return in${i}(set${i}, this); }`],
+        looks: (K, o) => [`note(${o}.isIn${i}());`, `note(${K}.prototype.isIn${i}.call({}));`],
+      }),
+      i => ({
+        variables: [`let held${i}${any} = ${value()};`],
+        members: [
+          `get a${i}()${any} { return held${i}; }`,
+          `set a${i}(given${any}) { held${i} = given; }`,
+          `static get sa${i}()${any} { return held${i}; }`,
+        ],
+        looks: (K, o) => [`note(${o}.a${i});`, `${o}.a${i} = 5; note(${o}.a${i}); note(${K}.sa${i});`],
+      }),
+      i => ({
+        variables: [`const key${i} = "k${i}";`],
+        members: [
+          `[key${i}]()${any} { return ${value()}; }`,
+          `static [key${i} + "s"] = ${value()};`,
+          `get [key${i} + "g"]()${any} { return ${value()}; }`,
+        ],
+        looks: (K, o) => [`note(${o}.k${i}());`, `note(${K}.k${i}s);`, `note(${o}.k${i}g);`],
+      }),
+      i => ({
+        variables: [`let count${i} = 0;`],
+        members: [`f${i} = ++count${i};`, `g${i} = ()${any} => count${i};`, `static sf${i} = count${i};`],
+        looks: (K, o) => [
+          `note(${o}.f${i});`,
+          `note(new ${K}(2).g${i}());`,
+          `note(${o}.g${i}());`,
+          `note(${K}.sf${i});`,
+        ],
+      }),
+      i => ({
+        top: [`const registry${i}${this.isTypeScript ? ": any[]" : ""} = [];`],
+        members: [`static { registry${i}.push(typeof this, this.name); }`],
+        looks: () => [`note(registry${i}.join());`],
+      }),
+      i => ({
+        top: [
+          `var decorate${i} = function (decorators${any}, target${any}, key${this.isTypeScript ? "?: any" : ""}, desc${this.isTypeScript ? "?: any" : ""})${any} { var c = arguments.length, r = c < 3 ? target : desc === null ? (desc = Object.getOwnPropertyDescriptor(target, key)) : desc, d; for (var i = decorators.length - 1; i >= 0; i--) if ((d = decorators[i])) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r; return c > 3 && r && Object.defineProperty(target, key, r), r; };`,
+          `function twice${i}(target${any}, key${any}, descriptor${any})${any} { const inner = descriptor.value; descriptor.value = function (${this.isTypeScript ? "this: any" : ""}) { return [inner.call(this), inner.call(this)]; }; return descriptor; }`,
+          `function marked${i}(target${any})${any} { target.marked${i} = true; return target; }`,
+        ],
+        members: [`d${i}()${any} { return ${value()}; }`],
+        behind: made => [
+          `decorate${i}([twice${i}], ${made}.prototype, "d${i}", null);`,
+          `${made} = decorate${i}([marked${i}], ${made});`,
+        ],
+        looks: (K, o) => [`note(${o}.d${i}());`, `note(${K}.marked${i});`],
+      }),
+    ];
+    this.lines.push("{");
+    this.emit(
+      1,
+      `let out = "";`,
+      `function note(value${any})${this.typed("void")} { out += (typeof value === "function" ? "function " + value.name : typeof value === "object" && value !== null ? JSON.stringify(value) : typeof value + " " + String(value)) + ";"; }`,
+    );
+    for (let index = this.pick([1, 1, 2, 3]); index > 0; index--) {
+      const id = `${number}_${index}`;
+      const chosen = this.several(1, 3, () => this.pick(parts)).map((part, at) => part(`${id}_${at}`));
+      const isMixin = this.chance(50);
+      const built = chosen.flatMap(part => part.built ?? []);
+      const members = [
+        ...(built.length || this.chance(30)
+          ? [`constructor(v${this.isTypeScript ? "?: any" : ""}) { ${isMixin ? "super(); " : ""}${built.join(" ")} }`]
+          : []),
+        ...chosen.flatMap(part => part.members),
+      ];
+      const written = `class ${this.pick(["", "", `Named${id} `])}${isMixin ? "extends Base " : ""}{ ${members.join(" ")} }`;
+      const variables = chosen.flatMap(part => part.variables ?? []);
+      const behind = chosen.flatMap(part => part.behind?.("made") ?? []);
+      const parameter = isMixin ? `Base${any}` : "";
+      const isShort = variables.length === 0 && behind.length === 0;
+      const body = behind.length
+        ? `{ ${variables.join(" ")} let made${any} = ${written}; ${behind.join(" ")} return made; }`
+        : `{ ${variables.join(" ")} return ${written}; }`;
+      const base = isMixin
+        ? this.pick(["Object", "Object", `P${id}`, `P${id}`, "Array", "class { base() { return 1; } }"])
+        : "";
+      this.emit(
+        1,
+        ...chosen.flatMap(part => part.top ?? []),
+        ...(base === `P${id}` ? [`class P${id} {}`] : []),
+        this.pick([
+          isShort
+            ? `const make${id} = (${parameter})${any} => ${written};`
+            : `const make${id} = (${parameter})${any} => ${body};`,
+          isShort
+            ? `const make${id} = (${parameter})${any} => ${written};`
+            : `const make${id} = (${parameter})${any} => ${body};`,
+          `function make${id}(${parameter})${any} ${body}`,
+          `const make${id} = function (${parameter})${any} ${body};`,
+        ]),
+      );
+      const call = `make${id}(${base})`;
+      const [K, Other] = [`K${id}`, `Other${id}`];
+      this.emit(
+        1,
+        ...this.pick<() => string[]>([
+          () => [`class ${K} extends ${call} {}`],
+          () => [`class ${K} extends ${call} {}`],
+          () => [`const ${K}${any} = ${call};`],
+          () => [`const ${K}${any} = ${call};`],
+          () => [`class ${K} extends ${call} { constructor(v${this.isTypeScript ? "?: any" : ""}) { super(v); } }`],
+          () => [`let ${K}${any}; for (let turn = 0; turn < 3; turn++) ${K} = ${call};`],
+          () => [`class Between${id} extends ${call} {}`, `class ${K} extends Between${id} {}`],
+        ])(),
+        `const ${Other}${any} = ${call};`,
+      );
+      const looks = chosen.flatMap(part => part.looks(this.isTypeScript ? `(${K} as any)` : K, `o${id}`, Other));
+      this.emit(
+        1,
+        ...this.pick<() => string[]>([
+          () => [
+            `let o${id}${any}; try { o${id} = new ${K}(7); } ${caught}`,
+            ...looks.map(look => `try { ${look} } ${caught}`),
+          ],
+          () => [
+            `let o${id}${any}; try { o${id} = new ${K}(7); } ${caught}`,
+            ...looks.map(look => `try { ${look} } ${caught}`),
+          ],
+          () => [
+            `function use${id}()${this.typed("void")} { const o${id}${any} = new ${K}(7); ${looks.join(" ")} }`,
+            `try { use${id}(); } ${caught}`,
+          ],
+          () => [
+            `function use${id}()${this.typed("void")} { const o${id}${any} = new ${K}(7); ${looks.join(" ")} }`,
+            `for (let turn = 0; turn < 2; turn++) { try { use${id}(); } ${caught} }`,
+          ],
+        ])(),
+      );
+      if (this.chance(40))
+        this.emit(
+          1,
+          `try { note(${K} === ${Other}); note(new ${K}(1) instanceof ${Other}); note(Object.getOwnPropertyNames(${K}).sort().join()); note(Object.getOwnPropertyNames(${Other}.prototype).sort().join()); } ${caught}`,
+        );
+    }
+    this.emit(1, `printValue("factories ${number}", out);`);
+    this.lines.push("}");
+  }
 }
 
 /**
@@ -2664,6 +3002,17 @@ export function writeOrdinaryScenes(text: string, isTypeScript: boolean, only?: 
         () => scenes.sceneOfWalks(),
         () => scenes.sceneOfWalks(),
         () => scenes.sceneOfIdioms(),
+        () => scenes.sceneOfClassesOutOfFactories(),
+        () => scenes.sceneOfClassesOutOfFactories(),
+        () => scenes.sceneOfClassesOutOfFactories(),
+        () => scenes.sceneOfClassesOutOfFactories(),
+        () => scenes.sceneOfClassesOutOfFactories(),
+        () => scenes.sceneOfClassesOutOfFactories(),
+        () => scenes.sceneOfNativeStoresOverFunctions(),
+        () => scenes.sceneOfNativeStoresOverFunctions(),
+        () => scenes.sceneOfNativeStoresOverFunctions(),
+        () => scenes.sceneOfNativeStoresOverFunctions(),
+        () => scenes.sceneOfNativeStoresOverFunctions(),
         () => scenes.sceneOfASmallPackage(),
         () => scenes.sceneOfASmallPackage(),
         () => scenes.sceneOfASmallPackage(),

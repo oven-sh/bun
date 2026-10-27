@@ -24,6 +24,12 @@ const texts = new Map(
   ),
 );
 
+/** Where plain Bun's own answer is not one answer: the reads that the program leaves out. */
+const plainBunVaries: Record<string, string[]> = {
+  // The child ends by itself or is ended for its output, whichever comes first.
+  "Bun-spawnSync-5": ["made.exitCode", "made.signalCode"],
+};
+
 const isIdentifier = (key: string) => /^[A-Za-z_$][\w$]*$/.test(key);
 const isObject = (value: unknown): value is object => Object(value) === value;
 const symbols = Symbol as unknown as Record<string, unknown>;
@@ -86,7 +92,9 @@ async function textOf(name: string): Promise<string> {
     [],
     10000,
   )) as [unknown, unknown];
-  const reads = [...readsOf(made, "made"), ...readsOf(held, "held")];
+  const reads = [...readsOf(made, "made"), ...readsOf(held, "held")].filter(
+    read => !plainBunVaries[name]?.includes(read),
+  );
   return [
     ...head,
     'const typeOf = value => (value === null ? "null" : typeof value);',

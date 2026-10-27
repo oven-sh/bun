@@ -350,8 +350,7 @@ pub(super) fn find_binding_initializer(
     if bound.binding_kind(symbol) == BindingKind::Import {
         return BindingInitializer::Import;
     }
-    let recorded = bound.runtime.stability.initializers.get(symbol.idx());
-    let Some(decl) = recorded.copied().flatten() else {
+    let Some(decl) = bound.initializing_declaration(symbol) else {
         return BindingInitializer::Opaque;
     };
     match decl {

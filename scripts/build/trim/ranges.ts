@@ -6,9 +6,11 @@ import type { SectionGraph } from "./graph.ts";
 import { elfImage, machOImage, peImage, type LinkedImage } from "./linked-image.ts";
 import {
   EdgeKind,
+  type EntryPointNeeds,
   type FeatureModel,
   type FeatureName,
   type ModuleTextRange,
+  type NeededFeatures,
   type ObjectFormat,
   type Partition,
   type RemovableRange,
@@ -160,6 +162,18 @@ export function removableRanges(graph: SectionGraph, partition: Partition, polic
     droppedRanges: fillOnly.droppedRanges + unfillable.length,
     droppedBytes: fillOnly.droppedBytes + unfillable.reduce((sum, range) => sum + rangeBytes(range), 0),
   };
+}
+
+// Ascending and disjoint. `needed` is what findFeaturesThatEntryPointsNeed found.
+export function entryPointNeedsOf(graph: SectionGraph, needed: Map<number, NeededFeatures>): EntryPointNeeds[] {
+  return [...needed]
+    .filter(([entry]) => entry < graph.placedCount && graph.size[entry]! > 0)
+    .map(([entry, needs]) => ({
+      start: graph.address[entry]!,
+      end: graph.address[entry]! + graph.size[entry]!,
+      ...needs,
+    }))
+    .sort((a, b) => a.start - b.start);
 }
 
 function findTableEntries(graph: SectionGraph, partition: Partition): Uint8Array {

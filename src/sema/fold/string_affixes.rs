@@ -2,8 +2,8 @@ use super::Constant;
 use super::evaluate::{Primitive, Value};
 use super::folder::Folder;
 use crate::atom::{Atom, known};
-use crate::bind::{BindingInitializer, CommonJsVariable};
-use crate::hir::{BinOp, Branches, Call, Chain, ExprId, ExprKind, IdList, MemberKey};
+use crate::bind::{BindingInitializer, Bound, CommonJsVariable};
+use crate::hir::{BinOp, Branches, Call, Chain, ExprId, ExprKind, File, IdList, MemberKey};
 use crate::import_sites::{
     ImportSiteKind, ImportSpecifier, call_site_kind, find_imported_export, settled_symbol,
 };
@@ -193,13 +193,12 @@ impl<'s> Folder<'_, 's> {
 
     fn expand_path_from_own_directory(&self, call: Call, function: Atom) -> Option<Expansion> {
         let is_join = function == known::join;
-        let mut ends_with_slash = false;
         let mut arguments = self.hir.ids(call.args);
         let first = arguments.next()?;
         if !matches!(self.expand(first), Expansion::OwnDirectory) {
             return None;
         }
-        let mut segments: Vec<Vec<u8>> = Vec::new();
+        let mut path = PathBelowFolder::default();
         let mut computed = None;
         for argument in arguments.by_ref() {
             let Value::Known(value) = self.folded(argument).value else {
@@ -211,35 +210,12 @@ impl<'s> Folder<'_, 's> {
             }
             let mut text = Vec::new();
             self.evaluator.push_text(&mut text, value);
-            if !is_join && text.starts_with(b"/") || bun_core::strings::contains_char(&text, b'\\')
-            {
-                return None;
-            }
-            if !text.is_empty() {
-                ends_with_slash = text.ends_with(b"/");
-            }
-            for segment in bun_core::strings::split(&text, b"/") {
-                match segment {
-                    b"" | b"." => {}
-                    b".." if segments.last().is_some_and(|last| last != b"..") => {
-                        segments.pop();
-                    }
-                    _ => segments.push(segment.to_vec()),
-                }
-            }
+            path.push(&text, is_join)?;
         }
-        let leaves_folder = segments.first().is_some_and(|first| first == b"..");
-        if computed.is_some() && (leaves_folder || arguments.next().is_some()) {
+        if computed.is_some() && (path.leaves_folder() || arguments.next().is_some()) {
             return None;
         }
-        let mut written = Vec::new();
-        for segment in &segments {
-            written.push(b'/');
-            written.extend_from_slice(segment);
-        }
-        if computed.is_some() || is_join && ends_with_slash {
-            written.push(b'/');
-        }
+        let written = path.write(is_join, computed.is_some());
         let written = Constant::String(self.atoms.intern(&written));
         let mut parts = vec![Part::Expr(first), Part::Known(Primitive::Constant(written))];
         parts.extend(computed.map(Part::Expr));
@@ -505,91 +481,151 @@ impl<'s> Folder<'_, 's> {
     }
 
     fn find_path_joining_function(&self, callee: ExprId) -> Option<Atom> {
-        let (hir, bound) = (self.hir, self.bound);
-        let mut pending_members: SmallVec<[Atom; 4]> = SmallVec::new();
-        let mut e = callee;
-        let is_path_module = loop {
-            e = hir.skip_type_assertions(e);
-            match hir[e].kind {
-                ExprKind::Dot {
-                    chain: Chain::No, ..
-                }
-                | ExprKind::Index {
-                    chain: Chain::No, ..
-                } => match hir.member_key(e) {
-                    Some((object, MemberKey::Name(name))) => {
-                        pending_members.push(name);
-                        e = object;
-                    }
-                    Some((_, MemberKey::PrivateName(_) | MemberKey::Computed(_))) | None => {
-                        break false;
-                    }
-                },
-                ExprKind::Ident(_) => {
-                    let Some(symbol) = settled_symbol(hir, bound, e) else {
-                        break false;
-                    };
-                    match bound.binding_initializer(hir, symbol) {
-                        BindingInitializer::Expression(source) if source < e => e = source,
-                        BindingInitializer::PatternProperty { source, path } if source < e => {
-                            pending_members.extend(path.iter().rev().copied());
-                            e = source;
-                        }
-                        BindingInitializer::Import => {
-                            let imported = find_imported_export(hir, bound, symbol);
-                            let Some((specifier, export)) = imported else {
-                                break false;
-                            };
-                            pending_members.extend(export);
-                            break is_path_specifier(specifier);
-                        }
-                        _ => break false,
-                    }
-                }
-                ExprKind::Call(call) => break self.is_path_module_request(e, hir[call]),
-                _ => break false,
-            }
-        };
-        let joins_paths = |member: Atom| member == known::join || member == known::resolve;
-        match pending_members[..] {
-            [member] if is_path_module && joins_paths(member) => Some(member),
-            _ => None,
+        find_path_joining_function(self.hir, self.bound, callee, &|argument| match self
+            .folded(argument)
+            .value
+        {
+            Value::Known(specifier) => Some(self.evaluator.to_constant(specifier)),
+            Value::Unknown => None,
+        })
+    }
+}
+
+/// What `path.join` or `path.resolve` makes of the texts that follow the folder of the file.
+#[derive(Default)]
+pub(crate) struct PathBelowFolder {
+    segments: Vec<Vec<u8>>,
+    ends_with_slash: bool,
+}
+
+impl PathBelowFolder {
+    /// `None`: the text leads somewhere else.
+    pub(crate) fn push(&mut self, text: &[u8], is_join: bool) -> Option<()> {
+        if !is_join && text.starts_with(b"/") || strings::contains_char(text, b'\\') {
+            return None;
         }
+        if !text.is_empty() {
+            self.ends_with_slash = text.ends_with(b"/");
+        }
+        for segment in strings::split(text, b"/") {
+            match segment {
+                b"" | b"." => {}
+                b".." if self.segments.last().is_some_and(|last| last != b"..") => {
+                    self.segments.pop();
+                }
+                _ => self.segments.push(segment.to_vec()),
+            }
+        }
+        Some(())
     }
 
-    fn is_path_module_request(&self, request: ExprId, call: Call) -> bool {
-        let returns_exports = match call_site_kind(self.hir, self.bound, request) {
-            Some(
-                ImportSiteKind::Require(_)
-                | ImportSiteKind::ImportMetaRequire(_)
-                | ImportSiteKind::GetBuiltinModule(_),
-            ) => true,
-            Some(
-                ImportSiteKind::JsxRuntime
-                | ImportSiteKind::JsxPackage
-                | ImportSiteKind::Import(_)
-                | ImportSiteKind::ExportFrom(_)
-                | ImportSiteKind::ExportStar(_)
-                | ImportSiteKind::ImportEquals(_)
-                | ImportSiteKind::ImportCall(_)
-                | ImportSiteKind::RequireResolve(_)
-                | ImportSiteKind::ImportMetaResolve(_),
-            )
-            | None => false,
-        };
-        if !returns_exports {
-            return false;
-        }
-        let argument = self.hir.ids(call.args).next();
-        let Some(Value::Known(specifier)) = argument.map(|argument| self.folded(argument).value)
-        else {
-            return false;
-        };
-        match self.evaluator.to_constant(specifier) {
-            Constant::String(text) => is_path_specifier(text),
-            _ => false,
-        }
+    pub(crate) fn leaves_folder(&self) -> bool {
+        self.segments.first().is_some_and(|first| first == b"..")
     }
+
+    /// `/lib/a.js`
+    pub(crate) fn write(&self, is_join: bool, is_followed: bool) -> Vec<u8> {
+        let mut written = Vec::new();
+        for segment in &self.segments {
+            written.push(b'/');
+            written.extend_from_slice(segment);
+        }
+        if is_followed || is_join && self.ends_with_slash {
+            written.push(b'/');
+        }
+        written
+    }
+}
+
+/// `join` or `resolve`, where `callee` is that function of `node:path`. `find_constant` answers with what folding makes of an expression.
+pub(crate) fn find_path_joining_function(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    callee: ExprId,
+    find_constant: &dyn Fn(ExprId) -> Option<Constant>,
+) -> Option<Atom> {
+    let mut pending_members: SmallVec<[Atom; 4]> = SmallVec::new();
+    let mut e = callee;
+    let is_path_module = loop {
+        e = hir.skip_type_assertions(e);
+        match hir[e].kind {
+            ExprKind::Dot {
+                chain: Chain::No, ..
+            }
+            | ExprKind::Index {
+                chain: Chain::No, ..
+            } => match hir.member_key(e) {
+                Some((object, MemberKey::Name(name))) => {
+                    pending_members.push(name);
+                    e = object;
+                }
+                Some((_, MemberKey::PrivateName(_) | MemberKey::Computed(_))) | None => {
+                    break false;
+                }
+            },
+            ExprKind::Ident(_) => {
+                let Some(symbol) = settled_symbol(hir, bound, e) else {
+                    break false;
+                };
+                match bound.binding_initializer(hir, symbol) {
+                    BindingInitializer::Expression(source) if source < e => e = source,
+                    BindingInitializer::PatternProperty { source, path } if source < e => {
+                        pending_members.extend(path.iter().rev().copied());
+                        e = source;
+                    }
+                    BindingInitializer::Import => {
+                        let imported = find_imported_export(hir, bound, symbol);
+                        let Some((specifier, export)) = imported else {
+                            break false;
+                        };
+                        pending_members.extend(export);
+                        break is_path_specifier(specifier);
+                    }
+                    _ => break false,
+                }
+            }
+            ExprKind::Call(call) => {
+                break is_path_module_request(hir, bound, e, hir[call], find_constant);
+            }
+            _ => break false,
+        }
+    };
+    let joins_paths = |member: Atom| member == known::join || member == known::resolve;
+    match pending_members[..] {
+        [member] if is_path_module && joins_paths(member) => Some(member),
+        _ => None,
+    }
+}
+
+fn is_path_module_request(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    request: ExprId,
+    call: Call,
+    find_constant: &dyn Fn(ExprId) -> Option<Constant>,
+) -> bool {
+    let returns_exports = match call_site_kind(hir, bound, request) {
+        Some(
+            ImportSiteKind::Require(_)
+            | ImportSiteKind::ImportMetaRequire(_)
+            | ImportSiteKind::GetBuiltinModule(_),
+        ) => true,
+        Some(
+            ImportSiteKind::JsxRuntime
+            | ImportSiteKind::JsxPackage
+            | ImportSiteKind::Import(_)
+            | ImportSiteKind::ExportFrom(_)
+            | ImportSiteKind::ExportStar(_)
+            | ImportSiteKind::ImportEquals(_)
+            | ImportSiteKind::ImportCall(_)
+            | ImportSiteKind::RequireResolve(_)
+            | ImportSiteKind::ImportMetaResolve(_),
+        )
+        | None => false,
+    };
+    let argument = hir.ids(call.args).next();
+    returns_exports
+        && matches!(argument.and_then(find_constant), Some(Constant::String(text)) if is_path_specifier(text))
 }
 
 fn is_path_specifier(specifier: Atom) -> bool {
@@ -645,13 +681,13 @@ fn shared_suffix_length(first: &[u8], second: &[u8], max_length: usize) -> usize
     length
 }
 
-fn trim_lead_surrogate_at_end(text: &mut Vec<u8>) {
+pub(crate) fn trim_lead_surrogate_at_end(text: &mut Vec<u8>) {
     if matches!(text[..], [.., 0xED, 0xA0..=0xAF, _]) {
         text.truncate(text.len() - 3);
     }
 }
 
-fn trim_trail_surrogate_at_start(text: &mut Vec<u8>) {
+pub(crate) fn trim_trail_surrogate_at_start(text: &mut Vec<u8>) {
     if matches!(text[..], [0xED, 0xB0..=0xBF, _, ..]) {
         text.drain(..3);
     }

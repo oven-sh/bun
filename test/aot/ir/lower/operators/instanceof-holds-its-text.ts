@@ -2,9 +2,13 @@
 // CHECK-LABEL: function {{*}}name="ofACall"
 // CHECK: = InstanceOf
 // CHECK-NOT: writtenExpression
-// CHECK-LABEL: function {{*}}name="ofAVariableUsedOnce"
+// CHECK-LABEL: function {{*}}name="ofAVariableReplacedByACall"
 // CHECK: = InstanceOf
 // CHECK-NOT: writtenExpression
+// CHECK-LABEL: function {{*}}name="ofAVariableReplacedByAName"
+// CHECK: = InstanceOf {{*}} writtenExpression="1 instanceof right"
+// CHECK-LABEL: function {{*}}name="ofAVariableUsedOnce"
+// CHECK: = InstanceOf {{*}} writtenExpression="left instanceof local"
 // CHECK-LABEL: function {{*}}name="ofAVariableUsedTwice"
 // CHECK: = InstanceOf {{*}} writtenExpression="left instanceof local"
 // CHECK-LABEL: function {{*}}name="ofLiterals"
@@ -19,7 +23,7 @@
 // CHECK: = InstanceOf {{*}} writtenExpression="left instanceof right"
 
 // `instanceof` holds its text, as Bun's transpiler prints it, where both operands consist of names or are one of a few literals: a message quotes it.
-// The transpiler may print the initializer of a local variable in place of its only use: no text then.
+// Where the transpiler prints the initializer of a local variable in place of its only use, the text holds the initializer, and a call has no text.
 export function ofNames(left: any, right: any) {
   return left instanceof right;
 }
@@ -34,6 +38,14 @@ export function ofLiterals(right: any) {
 }
 export function ofACall(left: any, right: () => any) {
   return left instanceof right();
+}
+export function ofAVariableReplacedByACall(right: () => any) {
+  const local = right();
+  return (1 as any) instanceof local;
+}
+export function ofAVariableReplacedByAName(right: any) {
+  const local = right;
+  return (1 as any) instanceof local;
 }
 export function ofAVariableUsedOnce(left: any, right: () => any) {
   const local = right();

@@ -10,3 +10,4 @@ modules/data-urls-are-imported-as-data	data-urls-are-imported-as-data.mjs:elemen
 modules/data-urls-are-imported-as-data	data-urls-are-imported-as-data.mjs:field@2999-3015
 modules/data-urls-are-imported-as-data	data-urls-are-imported-as-data.mjs:written@3098-3104
 modules/data-urls-are-imported-as-data	data-urls-are-imported-as-data.mjs:handed@3007-3013
+awaited-objects/made-by-builtins-the-promise-of-catch-gets-an-own-constructor-with-a-species	made-by-builtins-the-promise-of-catch-gets-an-own-constructor-with-a-species.ts:comes@696-710=2

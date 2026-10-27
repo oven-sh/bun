@@ -20,8 +20,9 @@
 //   field       ({ held: E }).held
 //   element     [E][0]
 //   inline      E is the one use of a `const` or `let` of the same function: it becomes the initializer, and the declaration goes
-// Something else comes, and E may:
-//   comes=n     (never ? E : <kinds[n]>)
+// Something else comes, and E may. E still does what it does:
+//   comes=n     (never ? E : (void (E), <kinds[n]>))
+//               not where the end of the program hangs on E: in what decides that a loop or an iteration has a last turn, and in what has to be called for a promise to be settled
 // The file reads less off values that nobody knows:
 //   caught@0-0  the name and the message of what a `catch` has caught are taken out of `${caught}`, everywhere in the file
 //               (not out of a function that was thrown: `bun run` keeps another text of it than an executable)
@@ -49,7 +50,14 @@ export const formsOfOnePlace = ["unknown", "handed", "written", "variable", "par
 /** In these the program does what it does as it is stored. */
 export const doesAsStored = (variant: string) => !/^(inline|comes|caught)\b/.test(variant);
 
-type Place = { start: number; end: number; isShorthand: boolean; beginsStatement: boolean; takesItsName?: boolean };
+type Place = {
+  start: number;
+  end: number;
+  isShorthand: boolean;
+  beginsStatement: boolean;
+  takesItsName?: boolean;
+  endHangsOnIt: boolean;
+};
 type Inlining = { use: Place; initializer: [number, number]; statement: [number, number] };
 type Edit = { start: number; end: number; text: string };
 export type Variants = {
@@ -115,6 +123,251 @@ const functionAround = (node: ts.Node) =>
       ts.isSourceFile(at),
   );
 
+const passesItsValueOn = (parent: ts.Node, child: ts.Node) =>
+  ts.isParenthesizedExpression(parent) ||
+  ts.isAsExpression(parent) ||
+  ts.isNonNullExpression(parent) ||
+  ts.isSatisfiesExpression(parent) ||
+  ts.isArrayLiteralExpression(parent) ||
+  ts.isObjectLiteralExpression(parent) ||
+  ts.isPropertyAssignment(parent) ||
+  ts.isShorthandPropertyAssignment(parent) ||
+  ts.isSpreadElement(parent) ||
+  ts.isSpreadAssignment(parent) ||
+  (ts.isConditionalExpression(parent) && parent.condition !== child) ||
+  (ts.isBinaryExpression(parent) && operatorsWithAnyResult.has(parent.operatorToken.kind));
+const isWrittenFunction = (node: ts.Node | undefined): node is ts.ArrowFunction | ts.FunctionExpression =>
+  !!node && (ts.isArrowFunction(node) || ts.isFunctionExpression(node));
+const isStep = (node: ts.Node): node is ts.PrefixUnaryExpression | ts.PostfixUnaryExpression =>
+  (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+  (node.operator === K.PlusPlusToken || node.operator === K.MinusMinusToken);
+
+/**
+ * What the end of the program hangs on. With something else in its place a loop has no last turn, or nobody settles a promise that the program waits for.
+ * `within`: all that is written in these. `itself`: these, but not what is written in them. `before`: all that is written from the one offset to the other.
+ */
+function whatTheEndHangsOn(source: ts.SourceFile) {
+  const within = new Set<ts.Node>();
+  const itself = new Set<ts.Node>();
+  const before: [number, number][] = [];
+
+  /** A variable by its name, a member by a dot and its name. */
+  function namesIn(node: ts.Node, into: Set<string>): void {
+    if (ts.isIdentifier(node)) return void into.add(node.text);
+    if (ts.isPropertyAccessExpression(node)) {
+      into.add("." + node.name.text);
+      return namesIn(node.expression, into);
+    }
+    ts.forEachChild(node, child => namesIn(child, into));
+  }
+  function nameOfTarget(target: ts.Node): string | undefined {
+    while (ts.isParenthesizedExpression(target) || ts.isNonNullExpression(target) || ts.isAsExpression(target))
+      target = target.expression;
+    return ts.isIdentifier(target)
+      ? target.text
+      : ts.isPropertyAccessExpression(target)
+        ? "." + target.name.text
+        : undefined;
+  }
+  /** `deciding`, and what is stored in `where` under a name that they read, or under a name that such a value is made of. */
+  function follow(deciding: ts.Node[], where: ts.Node[]) {
+    const names = new Set<string>();
+    for (const node of deciding) {
+      within.add(node);
+      namesIn(node, names);
+    }
+    // Each with the tests behind which it stands.
+    const stores: { name: string | undefined; parts: ts.Node[] }[] = [];
+    for (const node of where)
+      (function collect(node: ts.Node, tests: ts.Node[]): void {
+        if (ts.isBinaryExpression(node) && isAssignment(node.operatorToken.kind))
+          stores.push({ name: nameOfTarget(node.left), parts: [node.left, node.right, ...tests] });
+        else if (isStep(node)) stores.push({ name: nameOfTarget(node.operand), parts: [node.operand, ...tests] });
+        else if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer)
+          stores.push({ name: node.name.text, parts: [node.initializer, ...tests] });
+        const test =
+          ts.isIfStatement(node) || ts.isSwitchStatement(node)
+            ? node.expression
+            : ts.isConditionalExpression(node)
+              ? node.condition
+              : undefined;
+        ts.forEachChild(node, child => collect(child, test && child !== test ? [...tests, test] : tests));
+      })(node, []);
+    for (let known = -1; known !== names.size; ) {
+      known = names.size;
+      for (const { name, parts } of stores)
+        if (name !== undefined && names.has(name)) for (const part of parts) namesIn(part, names);
+    }
+    for (const { name, parts } of stores)
+      if (name !== undefined && names.has(name)) for (const part of parts) within.add(part);
+  }
+  /** The tests in `body`, but not in a function that is written there, behind which it is left. */
+  function testsOfWaysOut(body: ts.Node): ts.Node[] {
+    const tests: ts.Node[] = [];
+    const leaves = (node: ts.Node): boolean =>
+      ts.isBreakStatement(node) ||
+      ts.isReturnStatement(node) ||
+      ts.isThrowStatement(node) ||
+      (!ts.isFunctionLike(node) && !!ts.forEachChild(node, leaves));
+    (function look(node: ts.Node): void {
+      if (ts.isFunctionLike(node)) return;
+      if ((ts.isIfStatement(node) || ts.isSwitchStatement(node)) && leaves(node)) tests.push(node.expression);
+      else if (ts.isConditionalExpression(node)) tests.push(node.condition);
+      ts.forEachChild(node, look);
+    })(body);
+    return tests;
+  }
+  function nameOfFunction(node: ts.Node | undefined): string | undefined {
+    if (!node || !ts.isFunctionLike(node)) return undefined;
+    if (node.name) return node.name.getText();
+    const holder = node.parent;
+    return ts.isVariableDeclaration(holder) || ts.isPropertyAssignment(holder)
+      ? holder.name.getText()
+      : ts.isBinaryExpression(holder) && holder.right === node
+        ? nameOfTarget(holder.left)?.replace(/^\./, "")
+        : undefined;
+  }
+  /** The calls whose answer is the answer of `node`. */
+  function lastCalls(node: ts.Node): ts.CallExpression[] {
+    if (ts.isCallExpression(node)) return [node];
+    if (ts.isParenthesizedExpression(node) || ts.isAsExpression(node) || ts.isNonNullExpression(node))
+      return lastCalls(node.expression);
+    if (ts.isConditionalExpression(node)) return [...lastCalls(node.whenTrue), ...lastCalls(node.whenFalse)];
+    if (ts.isBinaryExpression(node) && node.operatorToken.kind !== K.PlusToken && passesItsValueOn(node, node.right))
+      return lastCalls(node.right);
+    return [];
+  }
+
+  // What has to be called for a promise to be settled, by the name that holds it and by where the name holds it.
+  const followed = new Set<string>();
+  // `leads`: it is a function or an object of the program through which such a one is reached.
+  const settling: { scope: ts.Node; name: string; leads: boolean }[] = [];
+  function settles(scope: ts.Node, name: ts.Node | undefined, leads = true) {
+    if (!name || !ts.isIdentifier(name) || followed.has(`${scope.pos} ${scope.end} ${name.text}`)) return;
+    followed.add(`${scope.pos} ${scope.end} ${name.text}`);
+    settling.push({ scope, name: name.text, leads });
+  }
+  const takesWhatSettles = (taker: ts.SignatureDeclaration) =>
+    taker.parameters.slice(0, 2).forEach(parameter => settles(taker, parameter.name, false));
+  const receiverOf = (node: ts.Node) => (isAccess(node) ? node.expression : undefined);
+
+  const lastCallsOf = new Map<ts.Node, ts.CallExpression[]>();
+  ts.forEachChild(source, function look(node): void {
+    if (ts.isWhileStatement(node) || ts.isDoStatement(node) || ts.isForStatement(node)) {
+      const condition = ts.isForStatement(node) ? node.condition : node.expression;
+      const parts: ts.Node[] = [node.statement];
+      if (ts.isForStatement(node)) for (const part of [node.initializer, node.incrementor]) if (part) parts.push(part);
+      follow([...(condition ? [condition] : []), ...testsOfWaysOut(node.statement)], parts);
+    }
+    const around = () => functionAround(node) ?? source;
+    // What an iterator answers.
+    if (
+      ts.isObjectLiteralExpression(node) &&
+      node.properties.some(({ name }) => name && ts.isIdentifier(name) && name.text === "done")
+    ) {
+      follow([node], [around()]);
+      for (let at: ts.Node = node; passesItsValueOn(at.parent, at); at = at.parent) itself.add(at.parent);
+    }
+    // Whoever asks `exec` for all matches asks until it answers null.
+    if (ts.isReturnStatement(node) && node.expression && /^(next|exec)$/.test(nameOfFunction(around()) ?? ""))
+      follow([node.expression], [around()]);
+    // What a stream is made of.
+    if (ts.isNewExpression(node) && /(Stream|Readable|Writable|Transform|Duplex)$/.test(node.expression.getText()))
+      follow([...(node.arguments ?? [])], [around()]);
+    const answer = ts.isReturnStatement(node) ? node.expression : ts.isArrowFunction(node) ? node.body : undefined;
+    const answering = ts.isArrowFunction(node) ? node : around();
+    if (answer && !ts.isBlock(answer) && lastCalls(answer).length)
+      lastCallsOf.set(answering, [...(lastCallsOf.get(answering) ?? []), ...lastCalls(answer)]);
+    // Who waits for an event waits for this one.
+    if (ts.isCallExpression(node) && /^\.(emit|dispatchEvent|postMessage)$/.test(nameOfTarget(node.expression) ?? ""))
+      follow([node.expression, ...node.arguments], []);
+    // A race of nobody has no winner.
+    if (ts.isCallExpression(node) && nameOfTarget(node.expression) === ".race") follow([...node.arguments], [around()]);
+    const handed = ts.isNewExpression(node) || ts.isCallExpression(node) ? node.arguments?.[0] : undefined;
+    if (
+      (ts.isNewExpression(node) || (node as ts.CallExpression).expression?.kind === K.SuperKeyword) &&
+      isWrittenFunction(handed)
+    ) {
+      itself.add(handed);
+      takesWhatSettles(handed);
+    }
+    if (ts.isMethodDeclaration(node) && node.name.getText() === "then") takesWhatSettles(node);
+    if (ts.isPropertyAssignment(node) && node.name.getText() === "then" && isWrittenFunction(node.initializer))
+      takesWhatSettles(node.initializer);
+    if (ts.isBinaryExpression(node) && nameOfTarget(node.left) === ".then" && isWrittenFunction(node.right))
+      takesWhatSettles(node.right);
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isObjectBindingPattern(node.name) &&
+      /\.withResolvers\(\)$/.test(node.initializer?.getText() ?? "")
+    )
+      for (const element of node.name.elements)
+        if (/^(resolve|reject)$/.test((element.propertyName ?? element.name).getText()))
+          settles(around(), element.name, false);
+    ts.forEachChild(node, look);
+  });
+
+  // A function that ends in a call may be a turn of a loop: such a call leaves no frame behind.
+  for (const [caller, calls] of lastCallsOf) {
+    const body = (caller as ts.FunctionLikeDeclaration).body;
+    if (body && testsOfWaysOut(body).length)
+      follow([...testsOfWaysOut(body), ...calls.flatMap(call => [...call.arguments])], [body]);
+  }
+
+  for (let next; (next = settling.pop()); ) {
+    const { scope, name, leads } = next;
+    ts.forEachChild(scope, function look(node): void {
+      const isRead =
+        ts.isIdentifier(node) &&
+        node.text === name &&
+        ((node.parent as ts.NamedDeclaration).name !== node || ts.isShorthandPropertyAssignment(node.parent)) &&
+        !(ts.isBindingElement(node.parent) && node.parent.propertyName === node);
+      // Whether the value of `at` holds what has yet to be called.
+      let holds = true;
+      for (let at = node; isRead && at !== scope; at = at.parent) {
+        if (holds) itself.add(at);
+        const parent = at.parent;
+        if (ts.isFunctionLike(parent)) {
+          holds = !ts.isFunctionDeclaration(parent);
+          if (ts.isFunctionDeclaration(parent)) settles(functionAround(parent) ?? source, parent.name);
+        } else if (!holds || (isAccess(parent) && parent.expression === at)) continue;
+        else if ((ts.isCallExpression(parent) || ts.isNewExpression(parent)) && parent.expression === at) {
+          // What throws on the way to the call is caught by nobody who would settle the promise, but in the function that is handed what settles it and in an async function.
+          const caller = functionAround(parent) as ts.FunctionLikeDeclaration;
+          const isAsync = ts
+            .getModifiers(caller as ts.FunctionDeclaration)
+            ?.some(({ kind }) => kind === K.AsyncKeyword);
+          if (ts.isFunctionLike(caller) && caller.body && !isAsync && (leads || caller !== scope)) {
+            const from = parent.getStart();
+            before.push([caller.body.getStart(), from]);
+            if (ts.isBlock(caller.body))
+              follow(
+                caller.body.statements.filter(statement => statement.getEnd() <= from),
+                [source],
+              );
+          }
+          if (leads || isAccess(at)) for (const argument of parent.arguments ?? []) within.add(argument);
+          holds = isAccess(at);
+        } else if (ts.isCallExpression(parent) || ts.isNewExpression(parent)) {
+          for (const part of [parent.expression, ...(parent.arguments ?? [])])
+            if (part !== at && !isWrittenFunction(part)) within.add(part);
+          settles(source, receiverOf(parent.expression));
+          holds = false;
+        } else if (ts.isBinaryExpression(parent) && isAssignment(parent.operatorToken.kind)) {
+          within.add(parent.left);
+          settles(source, receiverOf(parent.left) ?? parent.left);
+          holds = false;
+        } else if (ts.isVariableDeclaration(parent)) {
+          settles(functionAround(parent) ?? source, parent.name);
+          holds = false;
+        } else holds = passesItsValueOn(parent, at);
+      }
+      ts.forEachChild(node, look);
+    });
+  }
+  return { within, itself, before };
+}
+
 /** Reads the file: where its values stand. */
 export function read(path: string, text: string): Variants {
   const source = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true, scriptKindOf(path));
@@ -124,9 +377,11 @@ export function read(path: string, text: string): Variants {
   const used = new Map<string, { node: ts.Identifier; place: Place | undefined }[]>();
   const note = (node: ts.Identifier, place: Place | undefined) =>
     void (used.get(node.text) ?? used.set(node.text, []).get(node.text)!).push({ node, place });
+  const { within, itself, before } = whatTheEndHangsOn(source);
 
-  function visit(node: ts.Node, mayBeWrapped: boolean) {
+  function visit(node: ts.Node, mayBeWrapped: boolean, endHangsOnIt: boolean) {
     if (ts.isTypeNode(node) && !ts.isExpressionWithTypeArguments(node)) return;
+    endHangsOnIt ||= within.has(node) || before.some(([from, to]) => from <= node.getStart() && node.getEnd() <= to);
     if (
       ts.isEnumDeclaration(node) ||
       ts.isDecorator(node) ||
@@ -147,7 +402,13 @@ export function read(path: string, text: string): Variants {
       return;
     if (ts.isHeritageClause(node) && node.token !== K.ExtendsKeyword) return;
     if (ts.isShorthandPropertyAssignment(node)) {
-      const place = { start: node.name.getStart(), end: node.name.getEnd(), isShorthand: true, beginsStatement: false };
+      const place = {
+        start: node.name.getStart(),
+        end: node.name.getEnd(),
+        isShorthand: true,
+        beginsStatement: false,
+        endHangsOnIt: endHangsOnIt || itself.has(node.name),
+      };
       if (mayBeWrapped) places.push(place);
       return note(node.name, mayBeWrapped ? place : undefined);
     }
@@ -189,6 +450,7 @@ export function read(path: string, text: string): Variants {
           isShorthand: false,
           beginsStatement: beginsStatement(node),
           takesItsName: ts.isArrowFunction(node) || ts.isFunctionExpression(node) || ts.isClassExpression(node),
+          endHangsOnIt: endHangsOnIt || itself.has(node),
         }
       : undefined;
     if (place) places.push(place);
@@ -209,13 +471,15 @@ export function read(path: string, text: string): Variants {
           (node.operator === K.PlusPlusToken || node.operator === K.MinusMinusToken)) ||
         ts.isDeleteExpression(node) ||
         ((ts.isForInStatement(node) || ts.isForOfStatement(node)) && node.initializer === child);
-      if (!isTarget) return visit(child, true);
+      if (!isTarget) return visit(child, true, endHangsOnIt);
       let inner = child;
       while (ts.isParenthesizedExpression(inner) || ts.isNonNullExpression(inner) || ts.isAsExpression(inner))
         inner = inner.expression;
       if (isAccess(inner))
-        return ts.forEachChild(inner, part => visit(part, part !== (inner as ts.PropertyAccessExpression).name));
-      if (ts.isVariableDeclarationList(child)) return visit(child, true);
+        return ts.forEachChild(inner, part =>
+          visit(part, part !== (inner as ts.PropertyAccessExpression).name, endHangsOnIt || within.has(child)),
+        );
+      if (ts.isVariableDeclarationList(child)) return visit(child, true, endHangsOnIt);
       // What is stored to is no use that an initializer can stand in for.
       ts.forEachChild(child, function mark(part): void {
         if (ts.isIdentifier(part)) note(part, undefined);
@@ -224,7 +488,7 @@ export function read(path: string, text: string): Variants {
       if (ts.isIdentifier(child)) note(child, undefined);
     });
   }
-  visit(source, true);
+  visit(source, true, false);
 
   const inlinings: Inlining[] = [];
   for (const [name, declarations] of declared) {
@@ -317,7 +581,7 @@ export function list({ places, names, inlinings, readsOfCaught }: Variants, turn
       : []),
     ...places.flatMap((place, index) => [
       `kind@${spell(place)}=${(index + turn) % kinds.length}`,
-      `comes@${spell(place)}=${(index + turn) % kinds.length}`,
+      ...(place.endHangsOnIt ? [] : [`comes@${spell(place)}=${(index + turn) % kinds.length}`]),
     ]),
     ...inlinings.map(({ use }) => `inline@${spell(use)}`),
     ...(readsOfCaught.length ? ["caught@0-0"] : []),
@@ -377,8 +641,8 @@ export function write(file: Variants, variant: string): string | undefined {
       put(place, inner => `(${never} ? ${any(which)} : ${inner})`);
     else if (form === "kind" && kinds[Number(which)])
       put(place, inner => `(${never} ? ${any(kinds[Number(which)])} : ${inner})`);
-    else if (form === "comes" && kinds[Number(which)])
-      put(place, inner => `(${never} ? ${inner} : ${any(kinds[Number(which)])})`);
+    else if (form === "comes" && kinds[Number(which)] && !place.endHangsOnIt)
+      put(place, inner => `(${never} ? ${inner} : (void (${inner}), ${any(kinds[Number(which)])}))`);
     else if (form === "variable") put(place, inner => ((usesHeld = true), `(held$ = ${inner}, held$)`));
     else if (form === "parameter")
       put(place, inner => `((${isTyped ? "<T,>(value: T): T" : "value"} => value)(${inner}))`);

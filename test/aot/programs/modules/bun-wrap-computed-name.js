@@ -1,7 +1,7 @@
 // "bun:wrap" by a name computed at run time is the module that is compiled with the program: one namespace, one state, nothing interpreted.
 import * as written from "bun:wrap";
 import { createRequire } from "node:module";
-const name = "bun:" + ["wr", "ap"].join("");
+const name = "bun:" + "wr ap".split(" ").join("");
 const imported = await import(name), again = await import(name), literal = await import("bun:wrap");
 const required = import.meta.require(name), created = createRequire(import.meta.url)(name);
 const say = (what, ...values) => console.log(what + ":", values.join(" "));

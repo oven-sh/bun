@@ -8,7 +8,7 @@
 // CHECK: variable {{*}}name="f" module=[[entry]] declared={type=undefined|int[1, 3]|absent site=[[f]]}
 // CHECK: variable {{*}}name="g" module=[[entry]] declared={type=undefined|null|true|1|absent|"a" site=[[g]] flags=[OmitsNull]}
 // CHECK: variable {{*}}name="h" module=[[entry]] declared={type=undefined|number|absent site=[[h]]}
-// CHECK: variable {{*}}name="i" module=[[entry]] declared={type=undefined|number|absent site=[[i]]}
+// CHECK: variable {{*}}name="i" module=[[entry]] declared={type=undefined|0|absent site=[[i]]}
 // CHECK: variable {{*}}name="j" module=[[entry]] declared={type=undefined|null|bigint|absent site=[[j]] flags=[OmitsNull]}
 // CHECK: variable {{*}}name="k" module=[[entry]] declared={type=undefined|null|string|absent site=[[k]] flags=[OmitsNull]}
 

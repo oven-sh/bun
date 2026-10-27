@@ -266,6 +266,13 @@ impl<T: From<u32>> Span<T> {
         debug_assert!(i < self.len());
         T::from(self.start + i as u32)
     }
+    /// The `i` for which `at(i)` is the id with this `idx()`.
+    #[inline]
+    pub fn position_of(self, idx: usize) -> Option<usize> {
+        self.range()
+            .contains(&idx)
+            .then(|| idx - self.start as usize)
+    }
 }
 
 /// A list that's empty in most files, stored at its final size in an arena. It's one word instead of three. A file has

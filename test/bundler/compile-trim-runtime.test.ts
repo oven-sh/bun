@@ -161,7 +161,7 @@ const programs = {
     }
   `,
   "loads-a-removed-module.ts": `
-    const name = ["bun", "sqlite"].join(":");
+    const name = process.argv[2];
     for (const load of [() => require(name), () => import(name)]) {
       try {
         console.log(typeof (await load()));
@@ -770,7 +770,8 @@ describe.skipIf(!canTrim)("--trim", () => {
           "loads",
         ];
         expect(await run(build, folder)).toMatchObject({ exitCode: 0 });
-        expect(await run([join(folder, "loads")], folder)).toEqual({
+        // The build follows a name that the program puts together out of constants, so the name comes from outside.
+        expect(await run([join(folder, "loads"), "bun:sqlite"], folder)).toEqual({
           stdout: "MODULE_NOT_FOUND\nERR_MODULE_NOT_FOUND\n",
           stderr: "",
           exitCode: 0,

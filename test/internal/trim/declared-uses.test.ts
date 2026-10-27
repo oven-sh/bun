@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import {
   checkDeclaredUses,
+  findFeaturesThatEntryPointsNeed,
   findUsedFeaturesWithoutGuard,
   findWayToGuard,
   guardedFeaturesReachedFrom,
@@ -60,6 +61,112 @@ const callsCGuards: Guard[] = [
   ["guardA", "entryA", A, { builtin: 7 }],
   ["entryA", "entryC", C, { stub: "Throw" }],
 ];
+
+describe("findFeaturesThatEntryPointsNeed", () => {
+  const needed = (sections: Record<string, Section>, guards: Guard[], entries: BuiltinEntry[]) => {
+    const result = partitioned(sections, guards);
+    expect(result.failures).toEqual([]);
+    const names = Object.keys(sections);
+    return Object.fromEntries(
+      Array.from(findFeaturesThatEntryPointsNeed(inputOf(result, entries)), ([entry, needs]) => [names[entry], needs]),
+    );
+  };
+  const entersB: Record<string, Section> = {
+    main: { root: true, to: ["guardA"] },
+    guardA: { to: ["entryA"] },
+    entryA: { to: ["helper"] },
+    helper: { to: ["entryB"] },
+    entryB: {},
+  };
+  const pointerToA: Guard = ["guardA", "entryA", A, { builtin: 7 }];
+
+  test("is the feature of a guard that aborts, if naming the built-in keeps it", () => {
+    const guards: Guard[] = [pointerToA, ["helper", "entryB", B]];
+    expect(needed(entersB, guards, [builtin(7, "A", "B")])).toEqual({
+      entryA: { own: [A], always: [B], sometimes: [] },
+    });
+    expect(needed(entersB, guards, [builtin(7, "A", { conditional: "B" })])).toEqual({
+      entryA: { own: [A], always: [], sometimes: [B] },
+    });
+    expect(needed(entersB, guards, [builtin(7, "A")])).toEqual({});
+  });
+
+  test("is not the feature of a guard that asks", () => {
+    for (const stub of ["Throw", "ReturnUndefined", "ReturnDefault"] as const) {
+      expect(needed(entersB, [pointerToA, ["helper", "entryB", B, { stub }]], [builtin(7, "A", "B")])).toEqual({});
+    }
+  });
+
+  test("counts a guard at the definition of a function", () => {
+    const guards: Guard[] = [pointerToA, ["helper", "entryB", B, { origin: "Definition" }]];
+    expect(needed(entersB, guards, [builtin(7, "A", "B")])).toEqual({
+      entryA: { own: [A], always: [B], sometimes: [] },
+    });
+  });
+
+  test("looks behind the guards on the way", () => {
+    const sections: Record<string, Section> = { ...entersB, entryB: { to: ["entryC"] }, entryC: {} };
+    for (const stub of ["Abort", "ReturnDefault"] as const) {
+      const guards: Guard[] = [pointerToA, ["helper", "entryB", B, { stub }], ["entryB", "entryC", C]];
+      expect(needed(sections, guards, [builtin(7, "A", "C")])).toEqual({
+        entryA: { own: [A], always: [C], sometimes: [] },
+      });
+    }
+  });
+
+  test("does not enter the functions that a table lists", () => {
+    const sections: Record<string, Section> = {
+      ...entersB,
+      helper: { to: ["table"] },
+      table: { output: tableOutput, to: ["entryB"] },
+      entryB: { to: ["entryC"] },
+      entryC: {},
+    };
+    const guards: Guard[] = [pointerToA, ["table", "entryB", B, { builtin: 8 }], ["entryB", "entryC", C]];
+    expect(needed(sections, guards, [builtin(7, "A", "B", "C"), builtin(8, "B", "C")])).toEqual({
+      entryB: { own: [B], always: [C], sometimes: [] },
+    });
+  });
+
+  test("is what every built-in behind the pointer keeps", () => {
+    const sections: Record<string, Section> = {
+      ...entersB,
+      main: { root: true, to: ["guardA", "otherGuard"] },
+      otherGuard: { to: ["entryA"] },
+      helper: { to: ["entryB", "entryC"] },
+      entryC: {},
+    };
+    const guards: Guard[] = [
+      pointerToA,
+      ["otherGuard", "entryA", A, { builtin: 8 }],
+      ["helper", "entryB", B],
+      ["helper", "entryC", C],
+    ];
+    expect(needed(sections, guards, [builtin(7, "A", "B", "C"), builtin(8, "A", "B", { conditional: "C" })])).toEqual({
+      entryA: { own: [A], always: [B], sometimes: [C] },
+    });
+    expect(needed(sections, guards, [builtin(7, "A", "B", "C"), builtin(8, "A", "C")])).toEqual({
+      entryA: { own: [A], always: [C], sometimes: [] },
+    });
+    const withPlainGuard: Guard[] = [pointerToA, ["otherGuard", "entryA", A], ...guards.slice(2)];
+    expect(needed(sections, withPlainGuard, [builtin(7, "A", "B", "C")])).toEqual({});
+  });
+
+  test("leaves out what a program cannot enter, and an entry point without a built-in", () => {
+    const guards: Guard[] = [pointerToA, ["helper", "entryB", Tools]];
+    expect(needed(entersB, guards, [builtin(7, "A", "Tools")])).toEqual({});
+    expect(
+      needed(
+        entersB,
+        [
+          ["guardA", "entryA", A],
+          ["helper", "entryB", B],
+        ],
+        [],
+      ),
+    ).toEqual({});
+  });
+});
 
 describe("guardedFeaturesReachedFrom", () => {
   const reachedFrom = (result: Partitioned, name: string) => {

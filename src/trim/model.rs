@@ -165,6 +165,8 @@ bun_removable_features::trim_table_records!();
 #[derive(Clone, PartialEq, Eq, Debug, Default)]
 pub struct FeatureEdges {
     pub(crate) edges: Vec<FeatureEdge>,
+    /// A feature, and what one of its built-ins always needs.
+    pub(crate) needs_of_builtins: Vec<(Feature, Feature)>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
@@ -261,6 +263,7 @@ pub struct TrimTable {
     pub icu_packages: Vec<IcuPackage>,
     pub icu_languages: Vec<IcuLanguage>,
     pub module_texts: Vec<ModuleText>,
+    pub entry_point_needs: Vec<EntryPointNeeds>,
 }
 
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -278,6 +281,13 @@ pub(crate) struct PlannedRange {
     pub(crate) named_feature: Feature,
 }
 
+/// Its bytes stay. Who holds a pointer to it refuses the pointer like one into a removed range.
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub(crate) struct RefusedEntryPoint {
+    pub(crate) range: AddressRange,
+    pub(crate) named_feature: Feature,
+}
+
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub(crate) struct PlannedIcuPackage {
     pub(crate) range: AddressRange,
@@ -289,6 +299,8 @@ pub(crate) struct PlannedIcuPackage {
 pub struct TrimPlan {
     pub(crate) decision: Decision,
     pub(crate) ranges: Vec<PlannedRange>,
+    /// Outside `ranges`.
+    pub(crate) refused_entry_points: Vec<RefusedEntryPoint>,
     pub(crate) icu_packages: Vec<PlannedIcuPackage>,
     pub(crate) keeps_table: bool,
 }
@@ -298,6 +310,7 @@ impl TrimPlan {
         TrimPlan {
             decision: Decision::empty(),
             ranges: Vec::new(),
+            refused_entry_points: Vec::new(),
             icu_packages: Vec::new(),
             keeps_table: false,
         }

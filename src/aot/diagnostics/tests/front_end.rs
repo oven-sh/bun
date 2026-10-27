@@ -289,18 +289,25 @@ fn macro_exports_stop_load() {
 
 #[test]
 fn incomplete_files_stop_build() {
-    let written_for = |is_nested_too_deeply: bool| {
+    let written_for_depth = |is_nested_too_deeply: bool, deepest_nesting: u32| {
         let mut diagnostics = Diagnostics::new();
-        diagnostics.add_incomplete_files(&[Incomplete {
+        let incomplete = Incomplete {
             path: b"/project/a.ts".to_vec(),
             is_nested_too_deeply,
-        }]);
+            deepest_nesting,
+        };
+        diagnostics.add_incomplete_files(&[incomplete], 2000);
         let is_internal = diagnostics.has_internal_errors();
         (is_internal, kinds_and_texts(&written(diagnostics)))
     };
+    let written_for = |is_nested_too_deeply: bool| written_for_depth(is_nested_too_deeply, 2000);
     let nested = "TS100060: The code in \"/project/a.ts\" is nested too deeply to be compiled";
     assert_eq!(
         written_for(true),
+        (false, vec![(Kind::Err, nested.to_string())])
+    );
+    assert_eq!(
+        written_for_depth(false, 2001),
         (false, vec![(Kind::Err, nested.to_string())])
     );
     let out_of_stack = "internal compiler error (Check): \

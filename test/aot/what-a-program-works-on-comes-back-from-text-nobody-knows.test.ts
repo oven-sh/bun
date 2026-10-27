@@ -1,7 +1,7 @@
 // fuzz/what-a-program-works-on-comes-back-from-text-nobody-knows.ts writes a program again so that what it works on has been handed to text that no build knows. Held to here: what each kind takes, what none takes,
 // and that the program still does what it did, in plain Bun and compiled.
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { Random } from "./fuzz/random";
 import { laundered, whatIsLaundered, type WhatIsLaundered } from "./fuzz/what-a-program-works-on-comes-back-from-text-nobody-knows"; // prettier-ignore
@@ -99,11 +99,12 @@ testThatCompiles.concurrent.each([...whatIsLaundered])(
       ]);
       return { stdout, stderr: exitCode ? stderr : "", exitCode };
     };
-    const expected = { stdout: "2 4 1 6 2 x/y undefined 4,5\n", stderr: "", exitCode: 0 };
+    const expected = { stdout: `2 4 1 6 2 ${join("x", "y")} undefined 4,5\n`, stderr: "", exitCode: 0 };
     expect(await run(bunExe(), "as-written.mjs")).toEqual(expected);
     expect(await run(bunExe(), "main.mjs")).toEqual(expected);
-    expect((await run(bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", "program")).exitCode).toBe(0);
-    expect(await run(join(String(folder), "program"))).toEqual(expected);
+    const executable = join(String(folder), isWindows ? "program.exe" : "program");
+    expect((await run(bunExe(), "build", "--compile", "--aot", "main.mjs", "--outfile", executable)).exitCode).toBe(0);
+    expect(await run(executable)).toEqual(expected);
   },
   300_000,
 );

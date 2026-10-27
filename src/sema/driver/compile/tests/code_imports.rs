@@ -132,7 +132,9 @@ import(name);
         assert_eq!(compiled.code_answers.len(), sites.len());
         let specifiers = sites.iter().map(|site| match site.specifier {
             ImportSpecifier::Constant(specifier) => Some(atoms.bytes(specifier)),
-            ImportSpecifier::Pattern { .. } | ImportSpecifier::Unknown => None,
+            ImportSpecifier::Pattern { .. }
+            | ImportSpecifier::OneOf(_)
+            | ImportSpecifier::Unknown => None,
         });
         let answers: Vec<(Option<&[u8]>, CodeAnswer<'_>)> = specifiers
             .zip(compiled.code_answers.iter().copied())

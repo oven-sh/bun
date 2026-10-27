@@ -517,6 +517,7 @@ describe("layOut", () => {
     expect(readdirSync(session.reviewDirectory).sort()).toEqual([
       "entry-points.txt",
       "groups.txt",
+      "needs.txt",
       "requires.txt",
       "retained-by.txt",
     ]);

@@ -11,12 +11,12 @@ use crate::load::{PerProject, ProjectId, Sources};
 use crate::lower::LeftOutDeclarations;
 use crate::lower::{
     DefinedObjectTypes, FileInputs, LibraryFunctions, LoweredFile, LoweringInputs, LoweringOptions,
-    lower_file,
+    RuntimeTranspiler, lower_file,
 };
 use crate::modules::{ApplicationGraph, Library, LinkedProject, ModuleGraph, ModuleRef, Shape};
 use crate::package_diagnostics::report_package_errors;
 use crate::report;
-use crate::statistics::{Counters, Stage, StatisticId, Statistics};
+use crate::statistics::{Counters, LimitId, Stage, StatisticId, Statistics};
 use bun_core::current_work;
 use bun_sema::atom::{Interner, known};
 use bun_sema::check::aot::{
@@ -827,7 +827,8 @@ impl Build<'_> {
         self.has_withdrawn_trust |= errors.has_withdrawn_trust;
         self.diagnostics
             .add_build_diagnostics(Stage::Check, errors.remaining);
-        self.diagnostics.add_incomplete_files(incomplete);
+        self.diagnostics
+            .add_incomplete_files(incomplete, self.limits.get(LimitId::MaxNestingDepth));
     }
 
     pub(crate) fn lowering_options(&self) -> LoweringOptions {
@@ -944,6 +945,7 @@ impl Build<'_> {
         let compiled = files.compiled_files().iter().copied();
         let mut files_of_dependencies: Vec<FileId> = compiled.filter(is_in_dependency).collect();
         files_of_dependencies.sort_unstable();
+        let transpiler = RuntimeTranspiler::default();
         then(&LoweringInputs {
             roles: &lowering_roles,
             checked_elsewhere: match project {
@@ -964,6 +966,7 @@ impl Build<'_> {
             defined_object_types: &defined_object_types,
             files: &file_inputs,
             limits: &self.limits,
+            transpiler: &transpiler,
             options: self.lowering_options(),
         });
     }

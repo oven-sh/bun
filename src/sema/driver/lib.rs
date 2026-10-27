@@ -1269,6 +1269,8 @@ pub struct Incomplete {
     /// `hir::File::ran_out_of_stack`: the stack was too small for the tree. Otherwise it was too small for a checker
     /// query, which was abandoned.
     pub is_nested_too_deeply: bool,
+    /// `hir::File::deepest_nesting`, where the tree is whole.
+    pub deepest_nesting: u32,
 }
 
 impl Incomplete {
@@ -4558,9 +4560,14 @@ fn check_loaded_files<'s>(loaded: LoadedFiles<'_, 's>) -> Report {
         // The diagnostics that were found are reported. Others may be missing, so the report lists the file as
         // incomplete.
         for file in outcome.incomplete {
+            let hir = program.files.hir(file);
             incomplete.lock().push(Incomplete {
                 path: program.files.modules[file.idx()].file_name().to_vec(),
-                is_nested_too_deeply: program.files.hir(file).ran_out_of_stack,
+                is_nested_too_deeply: hir.ran_out_of_stack,
+                deepest_nesting: match hir.ran_out_of_stack {
+                    true => 0,
+                    false => hir.deepest_nesting(),
+                },
             });
         }
         unfinished.lock().extend(outcome.checked);

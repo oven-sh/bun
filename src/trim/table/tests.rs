@@ -10,11 +10,12 @@ const ICU_PACKAGES: usize = 4;
 const ICU_RUNS: usize = 5;
 const ICU_LANGUAGES: usize = 6;
 const MODULE_TEXTS: usize = 7;
-const RECORD_BYTES: [usize; 8] = [6, 8, 2, 12, 16, 12, 8, 16];
+const ENTRY_POINT_NEEDS: usize = 8;
+const RECORD_BYTES: [usize; 9] = [6, 8, 2, 12, 16, 12, 8, 16, 16];
 const BASE_ADDRESS: u64 = 0x1_0000;
 
 #[derive(Default)]
-struct SectionBytes([Vec<u8>; 8]);
+struct SectionBytes([Vec<u8>; 9]);
 
 impl SectionBytes {
     fn push_u16s(&mut self, section: usize, values: &[u16]) {
@@ -87,6 +88,19 @@ pub(crate) fn encode_table(table: &TrimTable) -> Vec<u8> {
         let methods = encode_removal_methods(text.can_be_cut, text.can_be_filled);
         sections.0[MODULE_TEXTS].extend([methods, 0]);
     }
+    for entry in &table.entry_point_needs {
+        let AddressRange { start, end } = entry.range;
+        let range = [(start - base) as u32, (end - start) as u32];
+        sections.push_u32s(ENTRY_POINT_NEEDS, &range);
+        let optional = |set: Option<SetIndex>| set.map_or(0, |set| set.0 + 1);
+        let sets = [
+            entry.own.0,
+            optional(entry.always),
+            optional(entry.sometimes),
+            0,
+        ];
+        sections.push_u16s(ENTRY_POINT_NEEDS, &sets);
+    }
     let mut bytes = vec![0u8; TABLE_HEADER_BYTES];
     for (section, records) in sections.0.iter().enumerate() {
         let offset = bytes.len() as u32;
@@ -119,6 +133,7 @@ fn empty_table() -> TrimTable {
         icu_packages: Vec::new(),
         icu_languages: Vec::new(),
         module_texts: Vec::new(),
+        entry_point_needs: Vec::new(),
     }
 }
 
@@ -194,6 +209,20 @@ fn sample_table() -> TrimTable {
             module_text(0x2000, 0x2020, 7, 1, Some(0), true),
             module_text(0x2020, 0x2030, 3, 2, None, false),
         ],
+        entry_point_needs: vec![
+            EntryPointNeeds {
+                range: address_range(0x120, 0x140),
+                own: SetIndex(0),
+                always: Some(SetIndex(2)),
+                sometimes: None,
+            },
+            EntryPointNeeds {
+                range: address_range(0x140, 0x150),
+                own: SetIndex(0),
+                always: Some(SetIndex(2)),
+                sometimes: Some(SetIndex(1)),
+            },
+        ],
     }
 }
 
@@ -237,7 +266,7 @@ malformed_table_tests! {
     overlapping_sections: directory_entry(EDGES) + 4, 3u32 => Directory;
     maximum_record_count: directory_entry(EDGES) + 4, u32::MAX => Directory;
     section_size_wrapping_u32: directory_entry(EDGES) + 4, (1u32 << 31) + 2 => Directory;
-    module_texts_past_byte_length: directory_entry(MODULE_TEXTS) + 4, 3u32 => Directory;
+    last_section_past_byte_length: directory_entry(ENTRY_POINT_NEEDS) + 4, 3u32 => Directory;
     unsorted_edges: record_field(EDGES, 0, 0), feature(2).index() => Edges;
     repeated_edge: record_field(EDGES, 1, 2), feature(1).index() => Edges;
     edge_to_itself: record_field(EDGES, 0, 2), feature(0).index() => Edges;
@@ -289,6 +318,13 @@ malformed_table_tests! {
     readers_outside_set: record_field(MODULE_TEXTS, 0, 12), 3u16 => ModuleTexts;
     invalid_module_text_removal_methods: record_field(MODULE_TEXTS, 0, 14), 3u8 => ModuleTexts;
     nonzero_reserved_module_text_field: record_field(MODULE_TEXTS, 0, 15), 1u8 => ModuleTexts;
+    overlapping_entry_points: record_field(ENTRY_POINT_NEEDS, 1, 0), 0x13fu32 => EntryPointNeeds;
+    empty_entry_point: record_field(ENTRY_POINT_NEEDS, 0, 4), 0u32 => EntryPointNeeds;
+    invalid_set_of_own_features: record_field(ENTRY_POINT_NEEDS, 0, 8), 3u16 => EntryPointNeeds;
+    invalid_set_always_needed: record_field(ENTRY_POINT_NEEDS, 0, 10), 4u16 => EntryPointNeeds;
+    invalid_set_sometimes_needed: record_field(ENTRY_POINT_NEEDS, 0, 12), 4u16 => EntryPointNeeds;
+    entry_point_that_needs_nothing: record_field(ENTRY_POINT_NEEDS, 0, 10), 0u16 => EntryPointNeeds;
+    nonzero_reserved_entry_point_field: record_field(ENTRY_POINT_NEEDS, 0, 14), 1u16 => EntryPointNeeds;
 }
 
 #[test]
@@ -299,7 +335,7 @@ fn four_letter_language() {
 
 #[test]
 fn tables_round_trip() {
-    assert_eq!(encode_table(&empty_table()).len(), 96);
+    assert_eq!(encode_table(&empty_table()).len(), 104);
     for table in [empty_table(), sample_table()] {
         assert_eq!(parse_trim_table(&encode_table(&table)), Ok(table));
     }
@@ -416,7 +452,7 @@ fn truncated_table_is_rejected() {
     for length in (16..bytes.len()).step_by(4) {
         assert_malformed(parse_trim_table(&bytes[..length]), MalformedTable::Length);
     }
-    for length in (96..bytes.len()).step_by(4) {
+    for length in (TABLE_HEADER_BYTES..bytes.len()).step_by(4) {
         let mut truncated = bytes[..length].to_vec();
         let byte_length = (length as u32).to_le_bytes();
         write_bytes(&mut truncated, BYTE_LENGTH_OFFSET, &byte_length);

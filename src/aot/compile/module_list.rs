@@ -164,7 +164,9 @@ impl Collector<'_, '_> {
         };
         let written = match site.specifier {
             ImportSpecifier::Constant(specifier) => Some(specifier),
-            ImportSpecifier::Pattern { .. } | ImportSpecifier::Unknown => None,
+            ImportSpecifier::Pattern { .. }
+            | ImportSpecifier::OneOf(_)
+            | ImportSpecifier::Unknown => None,
         };
         match self.graph.find_site_answer(file, site.kind) {
             Some(SiteAnswer::Module(module)) => {

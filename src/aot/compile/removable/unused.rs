@@ -108,11 +108,9 @@ impl Removable<'_, '_> {
             ExprKind::Unary { op, operand } => match op {
                 UnOp::Void | UnOp::Not => self.simplify_unused(operand, simplified),
                 UnOp::Typeof => {
-                    if matches!(
-                        hir[hir.skip_type_assertions(operand)].kind,
-                        ExprKind::Ident(_)
-                    ) {
-                        return true;
+                    let name = hir.skip_type_assertions(operand);
+                    if matches!(hir[name].kind, ExprKind::Ident(_)) {
+                        return self.is_name_initialized(name);
                     }
                     simplified.push(expression);
                     self.simplify_unused(operand, simplified)

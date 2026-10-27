@@ -17,7 +17,7 @@ tell("integers, then a string", filled(new Heir<unknown>(), 1, "b"));
 tell("objects", filled(new Heir<object>(), { a: 1 }, { a: 2 }));
 tell("an heir of an heir", filled(new HeirOfHeir<string>(), "a", "b"));
 tell("with fields", filled(new WithField<string>(), "a", "b"));
-tell("many", filled(new Heir<number>(), ...Array.from({ length: 300 }, (_, i) => i)).slice(298));
+tell("many", (() => { const list = new Heir<number>(); for (let i = 0; i < 300; i++) list.push(i); return list; })().slice(298));
 tell("a length", new Heir<string>(3));
 tell("a length, then stored to", (() => { const list = new Heir<string>(3); list[0] = "a"; list[1] = "b"; list[2] = "c"; return list; })());
 tell("values", new Heir<string>("a", "b", "c"));

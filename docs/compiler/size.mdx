@@ -432,6 +432,8 @@ Bun.color was removed by --trim because your code never uses it by name. A name 
 
 To keep an API, use it by name somewhere in your code or add it to [`compile.trim.allow`](#keep-a-feature). A small feature has no name there, and its error only mentions the first way.
 
+An API can need more than its own feature: `Bun.S3Client.list()` also needs the HTTP client, TLS and Brotli. Using the API by name keeps all of them, and so does `allow: ["s3"]`.
+
 Your own code gets there in one way: through a name that it only has at run time. The members of `Bun`, and methods such as `toLocaleString` and `localeCompare` that need [`Intl`](#intl-temporal-and-webassembly), are kept when something names them. In `(1234.5)[name]("de-DE")`, nothing does if `name` comes from `process.argv`, a config file or `Object.getOwnPropertyNames(Number.prototype)`. Without `--trim` the call returns `"1.234,5"`. With `--trim` it throws `toLocaleString was removed by --trim because your code never uses it by name`. [`--explain=trim`](#intl-temporal-and-webassembly) lists the place of each such call. It has no line for `Bun[name]`. There are two ways out. Name the method in code that runs, for example by checking the name first with `["toLocaleString", "toFixed"].includes(name)` or `name === "toLocaleString"`. Or add `"intl"` to `compile.trim.allow`.
 
 ```txt

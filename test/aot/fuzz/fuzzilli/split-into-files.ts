@@ -711,7 +711,9 @@ export function splitIntoFiles(text: string, extension: string) {
     };
     const erased = (typed: string) =>
       isTypeScript ? new Bun.Transpiler({ loader: "ts" }).transformSync(typed) : typed;
+    // The code comes out of a module, which is strict: `arguments` does not follow the parameters, and `this` of a plain call is undefined.
     const asCommonJs = (code: string) =>
+      '"use strict";\n' +
       code.replace(/^export (?=(?:async )?function|class |const |let )/gm, "") +
       exportsOfPart
         .map(name =>

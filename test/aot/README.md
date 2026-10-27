@@ -145,7 +145,9 @@ so that `bun test test/aot` never needs more than a Bun. The top of each test fi
   caught. What a build no longer knows it must do without, and what it now knows it may use: each variant prints what plain Bun prints for the same text. The variants of a program are the
   entry points of one executable. A program has thousands, so a run takes a few programs by the day and the lane, and of each as many variants of one form as of another. The name of a
   variant says how to write it again. `programs-whose-values-may-be-something-else.fixed.txt` lists the variants that every run takes, and `.known.txt` those that do not print what is
-  expected today, which are todos. What is drawn is in the step that holds up nothing.
+  expected today, which are todos. Every part gets as many of the programs of the day as any other. Whatever is killed at its time limit is a red: the tool writes no variant on whose changed
+  value the end of the program hangs (`tools/let-values-be-something-else.test.ts`), and plain Bun runs a variant that does something else than its program before anything is built. What is
+  drawn is in the step that holds up nothing.
 - **The check of references.** `run-programs.ts` builds every program with `--aot-check=validate-references`.
 - **What the back end is told.** `--aot-check=ClaimsToBackEnd` leaves the code of an ordinary build as it is up to the last phase that moves a value and adds code that finds out in
   the run whether a word that was said never to change has changed, a number lies in its range, a cell in the frame is read before it is filled. An ASAN or debug build of Bun builds

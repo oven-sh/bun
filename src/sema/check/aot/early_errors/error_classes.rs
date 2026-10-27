@@ -61,6 +61,14 @@ impl Checker<'_, '_> {
                         | Kind::Constructor
                 )
         };
+        let is_in_enum = |node| match node == container {
+            true => ControlFlow::Break(false),
+            false if hir.kind(node) == Kind::EnumDeclaration => ControlFlow::Break(true),
+            false => ControlFlow::Continue(()),
+        };
+        if is_legal && hir.find_ancestor_or_quit(sup, is_in_enum).is_some() {
+            return Some(2338);
+        }
         if is_legal {
             let has_no_heritage = class.is_some_and(|class| hir[class].extends.is_none());
             return (is_call && has_no_heritage).then_some(2335);

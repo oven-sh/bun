@@ -51,6 +51,7 @@ const small: TrimTable = {
     { name: "fil", group: 1 },
   ],
   moduleTexts: [],
+  entryPointNeeds: [],
 };
 
 const withModuleTexts: TrimTable = {
@@ -58,6 +59,14 @@ const withModuleTexts: TrimTable = {
   moduleTexts: [
     { start: 0x500000, end: 0x500040, module: 7, set: 1, readers: 0, canBeCut: true, canBeFilled: true },
     { start: 0x500040, end: 0x500050, module: 3, set: 2, readers: undefined, canBeCut: false, canBeFilled: true },
+  ],
+};
+
+const withEntryPointNeeds: TrimTable = {
+  ...small,
+  entryPointNeeds: [
+    { start: 0x204100, end: 0x204140, own: 0, always: 2, sometimes: undefined },
+    { start: 0x204140, end: 0x204148, own: 0, always: undefined, sometimes: 1 },
   ],
 };
 
@@ -70,6 +79,7 @@ const empty: TrimTable = {
   icuPackages: [],
   icuLanguages: [],
   moduleTexts: [],
+  entryPointNeeds: [],
 };
 
 function large(): TrimTable {
@@ -147,6 +157,14 @@ function large(): TrimTable {
     };
   });
 
+  const entryPointNeeds = ranges
+    .filter(range => range.isCode && below(4) === 0)
+    .map(({ start }) => {
+      const always = below(3) === 0 ? undefined : anySet();
+      const sometimes = always === undefined || below(2) === 0 ? anySet() : undefined;
+      return { start, end: start + 1 + below(8), own: anySet(), always, sometimes };
+    });
+
   return {
     featuresHash: model.hash,
     baseAddress: 0x200000,
@@ -156,19 +174,21 @@ function large(): TrimTable {
     icuPackages,
     icuLanguages,
     moduleTexts,
+    entryPointNeeds,
   };
 }
 
 const tables: [name: string, table: TrimTable][] = [
   ["small", small],
   ["small with module texts", withModuleTexts],
+  ["small with entry points that need features", withEntryPointNeeds],
   ["empty", empty],
   ["large", large()],
 ];
 
 const inRoom = (bytes: Buffer) => Buffer.concat([bytes, Buffer.alloc(roomFor(bytes.length) - bytes.length)]);
 const directoryOf = (bytes: Buffer) =>
-  Array.from({ length: 8 }, (_, index) => [bytes.readUInt32LE(32 + index * 8), bytes.readUInt32LE(36 + index * 8)]);
+  Array.from({ length: 9 }, (_, index) => [bytes.readUInt32LE(32 + index * 8), bytes.readUInt32LE(36 + index * 8)]);
 
 function elfWith(section: Buffer | undefined): Buffer {
   const contents = section ?? Buffer.alloc(0);
@@ -215,44 +235,57 @@ const read = (bytes: Buffer) => {
 
 describe("encodeTable", () => {
   test("byte layout of the small table", () => {
-    expect([trimTableMagic, trimTableVersion, trimTableHeaderBytes]).toEqual(["BUNTRIM\0", 4, 96]);
+    expect([trimTableMagic, trimTableVersion, trimTableHeaderBytes]).toEqual(["BUNTRIM\0", 5, 104]);
     const bytes = encodeTable(small);
-    expect(bytes.length).toBe(240);
-    expect(bytes.readUInt32LE(12)).toBe(240);
+    expect(bytes.length).toBe(248);
+    expect(bytes.readUInt32LE(12)).toBe(248);
     expect(bytes.toString("latin1", 0, 8)).toBe("BUNTRIM\0");
-    expect(bytes.readUInt32LE(8)).toBe(4);
+    expect(bytes.readUInt32LE(8)).toBe(5);
     expect(bytes.readBigUInt64LE(16)).toBe(model.hash);
     expect(bytes.readBigUInt64LE(24)).toBe(0x200000n);
     expect(directoryOf(bytes)).toEqual([
-      [96, 3],
-      [116, 3],
-      [140, 4],
-      [148, 3],
-      [184, 1],
-      [200, 2],
-      [224, 2],
-      [240, 0],
+      [104, 3],
+      [124, 3],
+      [148, 4],
+      [156, 3],
+      [192, 1],
+      [208, 2],
+      [232, 2],
+      [248, 0],
+      [248, 0],
     ]);
-    expect(bytes.toString("hex", 96, 116)).toBe("000001000001" + "010080000101" + "800000000200" + "0000");
-    expect(bytes.toString("hex", 148, 160)).toBe("004000000040000000000101");
-    expect([bytes[159], bytes[171], bytes[183]]).toEqual([1, 2, 0]);
-    expect(bytes.toString("hex", 200, 224)).toBe("020000000300000000000000" + "050000000100000001000200");
-    expect(bytes.toString("hex", 224, 240)).toBe("6465000000000000" + "66696c0001000000");
+    expect(bytes.toString("hex", 104, 124)).toBe("000001000001" + "010080000101" + "800000000200" + "0000");
+    expect(bytes.toString("hex", 156, 168)).toBe("004000000040000000000101");
+    expect([bytes[167], bytes[179], bytes[191]]).toEqual([1, 2, 0]);
+    expect(bytes.toString("hex", 208, 232)).toBe("020000000300000000000000" + "050000000100000001000200");
+    expect(bytes.toString("hex", 232, 248)).toBe("6465000000000000" + "66696c0001000000");
   });
 
   test("byte layout of the module texts", () => {
     const bytes = encodeTable(withModuleTexts);
-    expect(bytes.length).toBe(272);
-    expect(directoryOf(bytes).at(-1)).toEqual([240, 2]);
-    expect(bytes.subarray(96, 240).equals(encodeTable(small).subarray(96, 240))).toBe(true);
-    expect(bytes.toString("hex", 240, 256)).toBe("00003000" + "40000000" + "0700" + "0100" + "0100" + "01" + "00");
-    expect(bytes.toString("hex", 256, 272)).toBe("40003000" + "10000000" + "0300" + "0200" + "0000" + "00" + "00");
+    expect(bytes.length).toBe(280);
+    expect(directoryOf(bytes).slice(-2)).toEqual([
+      [248, 2],
+      [280, 0],
+    ]);
+    expect(bytes.subarray(104, 248).equals(encodeTable(small).subarray(104, 248))).toBe(true);
+    expect(bytes.toString("hex", 248, 264)).toBe("00003000" + "40000000" + "0700" + "0100" + "0100" + "01" + "00");
+    expect(bytes.toString("hex", 264, 280)).toBe("40003000" + "10000000" + "0300" + "0200" + "0000" + "00" + "00");
   });
 
-  test("the empty table is a header with eight empty sections", () => {
+  test("byte layout of the entry points that need features", () => {
+    const bytes = encodeTable(withEntryPointNeeds);
+    expect(bytes.length).toBe(280);
+    expect(directoryOf(bytes).at(-1)).toEqual([248, 2]);
+    expect(bytes.subarray(104, 248).equals(encodeTable(small).subarray(104, 248))).toBe(true);
+    expect(bytes.toString("hex", 248, 264)).toBe("00410000" + "40000000" + "0000" + "0300" + "0000" + "0000");
+    expect(bytes.toString("hex", 264, 280)).toBe("40410000" + "08000000" + "0000" + "0000" + "0200" + "0000");
+  });
+
+  test("the empty table is a header with nine empty sections", () => {
     const bytes = encodeTable(empty);
-    expect(bytes.length).toBe(96);
-    expect(directoryOf(bytes)).toEqual(Array.from({ length: 8 }, () => [96, 0]));
+    expect(bytes.length).toBe(104);
+    expect(directoryOf(bytes)).toEqual(Array.from({ length: 9 }, () => [104, 0]));
   });
 
   test("roomFor adds one sixteenth and rounds up to whole kilobytes", () => {
@@ -319,6 +352,7 @@ describe("assembleTable", () => {
     ],
     icuLanguages: [{ name: "de", group: 0 }],
     moduleTexts: [],
+    entryPointNeeds: [],
   };
 
   test("numbers feature sets by first use: ranges, ICU runs", () => {
@@ -379,6 +413,19 @@ describe("assembleTable", () => {
     expect(assembleTable({ ...parts, ranges: [], icuPackages: [], moduleTexts }).baseAddress).toBe(0x340000);
   });
 
+  test("what an entry point needs is a set like any other, and the entry points ascend", () => {
+    const entryPointNeeds = [
+      { start: 0x210070, end: 0x210078, own: [0, 128], always: [], sometimes: [1, 2] },
+      { start: 0x210040, end: 0x210060, own: [128], always: [0], sometimes: [] },
+    ];
+    const table = assembleTable({ ...parts, entryPointNeeds });
+    expect(table.sets).toEqual([[0, 128], [0], [1], [128], [1, 2]]);
+    expect(table.entryPointNeeds).toEqual([
+      { start: 0x210040, end: 0x210060, own: 3, always: 1, sometimes: undefined },
+      { start: 0x210070, end: 0x210078, own: 0, always: undefined, sometimes: 4 },
+    ]);
+  });
+
   test("the base address is 0 without ranges and ICU packages", () => {
     expect(assembleTable({ ...parts, ranges: [], icuPackages: [] }).baseAddress).toBe(0);
   });
@@ -413,7 +460,7 @@ describe("readTrimTable", () => {
     expect(() => read(elfWith(bytes))).toThrow("(FeatureListMismatch)");
   });
 
-  test.each([3, 5])("a table of version %d is unusable by this Bun", version => {
+  test.each([4, 6])("a table of version %d is unusable by this Bun", version => {
     const bytes = encodeTable(small);
     bytes.writeUInt32LE(version, 8);
     expect(() => read(elfWith(bytes))).toThrow("(FeatureListMismatch)");
@@ -421,13 +468,13 @@ describe("readTrimTable", () => {
 
   test("the reader rejects an undeclared feature index in a set", () => {
     const bytes = encodeTable(small);
-    bytes.writeUInt16LE(127, 144);
+    bytes.writeUInt16LE(127, 152);
     expect(() => read(elfWith(bytes))).toThrow("(MalformedTable)");
   });
 
   test("the reader rejects an undeclared feature index in an edge", () => {
     const bytes = encodeTable(small);
-    bytes.writeUInt16LE(127, 104);
+    bytes.writeUInt16LE(127, 112);
     expect(() => read(elfWith(bytes))).toThrow("(MalformedTable)");
   });
 });

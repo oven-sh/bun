@@ -874,7 +874,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let otherwise = self.create_block();
         let done = self.create_block();
         let edges: Vec<Edge<'static>> = arms.iter().map(|&arm| Edge::to(arm)).collect();
-        let spelled = match self.file.decisions().is_path_from_own_directory(node) {
+        let spelled = match self.file.is_path_from_own_directory(node) {
             true => self.emit_path_from_own_directory(specifier),
             false => specifier,
         };
@@ -975,7 +975,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 self.builder
                     .resolve_dynamic(specifier, referrer, false, is_for_require);
             }
-            ImportSpecifier::Pattern { .. } | ImportSpecifier::Unknown => {}
+            ImportSpecifier::Pattern { .. }
+            | ImportSpecifier::OneOf(_)
+            | ImportSpecifier::Unknown => {}
         }
         self.emit_module_failure(failure, true)
     }

@@ -129,22 +129,6 @@ impl FileLowering<'_, '_, '_, '_> {
         self.object_type_layout(written).is_none()
     }
 
-    // `{ ...all, [key]: value }` where `all` is a dictionary too: the copy of a dictionary is one.
-    fn begins_with_spread_of_dictionary(&mut self, literal: ExprId) -> bool {
-        let hir = self.hir;
-        let ExprKind::Object(properties) = hir[literal].kind else {
-            return false;
-        };
-        let Some(first) = properties.iter().next().map(|first| hir[first]) else {
-            return false;
-        };
-        first.kind == PropKind::Spread
-            && self
-                .queries
-                .expression_type(first.value)
-                .is_ok_and(|ty| self.is_dictionary_type(ty))
-    }
-
     // `Point.prototype = { .. }`: the run time watches the members of a class on an ordinary object alone.
     fn is_stored_as_prototype_object(&self, literal: ExprId) -> bool {
         let hir = self.hir;
@@ -553,9 +537,6 @@ pub(crate) fn lower_object_literal(
     } else {
         lowering.file.find_dictionary(literal)
     };
-    let copies_dictionary = dictionary.is_some()
-        && !is_prototype_object
-        && lowering.file.begins_with_spread_of_dictionary(literal);
     let mut rest = props.iter();
     let mut object = match dictionary {
         // `const levels: Record<string, number> = { debug: 0, info: 1 }`: the type allows any name, and the names that the object has are written.
@@ -570,16 +551,16 @@ pub(crate) fn lower_object_literal(
             lowering.open_head(&mut object);
             object
         }
-        Some(_) if !copies_dictionary => lowering.begin_dictionary(),
+        Some(_) => lowering.begin_dictionary(),
         None if is_prototype_object => lowering.begin_dictionary(),
-        _ if is_copy || copies_dictionary => {
+        None if is_copy => {
             let first = hir[rest.next().expect("a literal that begins with a spread")];
             lowering.set_position(first.pos);
             let source = lowering.lower_expression(first.value);
             lowering.set_position(hir[literal].pos);
             lowering.begin_copy(source)
         }
-        _ => {
+        None => {
             let layout = lowering.file.literal_layout(literal);
             lowering.begin_object(layout)
         }

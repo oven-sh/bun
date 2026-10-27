@@ -92,6 +92,17 @@ console.log("reached the end");
 process.exit(0);
 `;
 
+// Streams need parts of Bun.serve, so a stream keeps those parts. It keeps nothing of what else Bun.serve needs.
+const evaluatesBesideStream = `new ReadableStream({ start(controller) { controller.close(); } });
+try {
+  new Function(process.argv[2])();
+  console.log("returned");
+} catch (error) {
+  console.log("threw", error.code);
+}
+process.exit(0);
+`;
+
 if (!canTrim)
   console.error(
     "SKIPPED: names-from-run-time-in-a-trimmed-executable.test.ts: this build of Bun doesn't support --trim",
@@ -113,6 +124,36 @@ if (!canTrim)
         const inWhole = new Set(whole.stdout.split("\n"));
         expect(trimmed.stdout.split("\n").filter(line => !inWhole.has(line))).toEqual([]);
         expect({ stdout: trimmed.stdout, exitCode: trimmed.exitCode }).toEqual({ stdout: whole.stdout, exitCode: 0 });
+      }),
+    600_000,
+  );
+
+  test(
+    "a function that stays and would come to what is removed throws",
+    () =>
+      slot(async () => {
+        using dir = tempDir("names-from-run-time", { "program.js": evaluatesBesideStream });
+        const folder = String(dir);
+        built(
+          await spawned(
+            [bunExe(), "build", "--compile", "--aot", "--trim", "program.js", "--outfile", "trimmed"],
+            folder,
+            bunEnv,
+          ),
+        );
+        const serves = ["", 'tls: { key: "x", cert: "y" }, ', "development: true, "].map(
+          options => `Bun.serve({ port: 0, ${options}fetch() { return new Response("x"); } }).stop();`,
+        );
+        // console.table is the engine's function, and what prints the table is Bun's.
+        for (const text of [...serves, "console.table([{ a: 1 }]);"]) {
+          const ran = await spawned([join(folder, "trimmed"), text], folder, bunEnv);
+          expect({ text, stdout: ran.stdout, stderr: ran.stderr, exitCode: ran.exitCode }).toEqual({
+            text,
+            stdout: "threw ERR_FEATURE_REMOVED\n",
+            stderr: "",
+            exitCode: 0,
+          });
+        }
       }),
     600_000,
   );

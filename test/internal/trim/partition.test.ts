@@ -688,13 +688,19 @@ describe("failure reports and review files", () => {
     );
   }
 
-  test("writeReviewFiles writes four files, each ending in a newline", () => {
+  test("writeReviewFiles writes five files, each ending in a newline", () => {
     const result = partitioned(
       { ...twoFeatures, entryA: { to: ["entryB", "onlyA2"] }, onlyA2: { to: ["entryB"] } },
       twoFeaturesGuards,
     );
     const files = reviewFilesOf(result);
-    expect(Object.keys(files)).toEqual(["entry-points.txt", "groups.txt", "requires.txt", "retained-by.txt"]);
+    expect(Object.keys(files)).toEqual([
+      "entry-points.txt",
+      "groups.txt",
+      "needs.txt",
+      "requires.txt",
+      "retained-by.txt",
+    ]);
     for (const text of Object.values(files)) expect(text).toEndWith("\n");
     expect(files["requires.txt"]).toBe(
       [

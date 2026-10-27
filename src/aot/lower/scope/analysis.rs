@@ -143,7 +143,6 @@ pub(crate) struct ScopeAnalysis {
     pub(super) loops: LoopStores,
     pub(super) field_initializers: Vec<(MemberId, FunctionKey)>,
     pub(super) initialized_holders: Vec<(FunctionKey, SymbolId)>,
-    pub(super) use_counts: Vec<u8>,
     pub(super) symbols_read_by_enums: Vec<SymbolId>,
     pub(super) symbols_in_export_lists: Vec<SymbolId>,
     pub(super) symbols_named_elsewhere_only_in_unprinted_statements: Vec<SymbolId>,
@@ -164,10 +163,6 @@ impl ScopeAnalysis {
     pub(in crate::lower) fn form(&self, symbol: SymbolId) -> BindingForm {
         let form = self.forms.get(symbol.idx());
         form.copied().unwrap_or(BindingForm::NotAValue)
-    }
-
-    pub(in crate::lower) fn is_used_once(&self, symbol: SymbolId) -> bool {
-        self.use_counts.get(symbol.idx()) == Some(&1)
     }
 
     pub(in crate::lower) fn is_read_by_enum(&self, symbol: SymbolId) -> bool {

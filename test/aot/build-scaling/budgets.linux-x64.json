@@ -299,25 +299,42 @@
     "megabytes": 280
   },
   "names that a list pattern takes from a typed array or a list": {
-    "millionInstructions": 35630,
-    "megabytes": 425,
-    "growth": {
-      "instructions": 2.75
-    }
+    "millionInstructions": 16333,
+    "megabytes": 322
   },
   "names with defaults that a list pattern takes from a typed array or a list": {
-    "millionInstructions": 44343,
-    "megabytes": 370,
-    "growth": {
-      "instructions": 3.02
-    }
+    "millionInstructions": 16832,
+    "megabytes": 329
   },
   "names that a list pattern takes from a typed array or a list, in front of a rest element": {
-    "millionInstructions": 39030,
-    "megabytes": 384,
+    "millionInstructions": 19990,
+    "megabytes": 316
+  },
+  "very many names that a list pattern takes from a typed array or a list": {
+    "millionInstructions": 88685,
+    "megabytes": 1621
+  },
+  "list patterns nested in one another": {
+    "millionInstructions": 11352,
+    "megabytes": 136,
     "growth": {
-      "instructions": 2.67
+      "instructions": 3.97
     }
+  },
+  "names that an object pattern takes, all read at the end": {
+    "millionInstructions": 56869,
+    "megabytes": 595
+  },
+  "parameters of one function, all read at the end": {
+    "millionInstructions": 28689,
+    "megabytes": 197,
+    "growth": {
+      "instructions": 3.5
+    }
+  },
+  "arguments of one call, each a sum": {
+    "millionInstructions": 19959,
+    "megabytes": 504
   },
   "TypeScript packages that each have a tsconfig.json with different compiler options": {
     "millionInstructions": 6476,

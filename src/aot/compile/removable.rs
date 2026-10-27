@@ -1,3 +1,4 @@
+mod dead_zone;
 #[cfg(test)]
 mod tests;
 mod unused;
@@ -13,7 +14,7 @@ use bun_js_parser::defines_table::{
 use bun_sema::atom::{Atom, Interner, known};
 use bun_sema::bind::{Binding, BindingStability, Bound, CodeUnit, CommonJsVariable, Decl};
 use bun_sema::file_analysis::FileAnalysis;
-use bun_sema::fold::{Constant, Decision, FoldedValue};
+use bun_sema::fold::{Constant, Decision, FoldedValue, TreeNode, push_children};
 use bun_sema::hir::{
     self, BinOp, Chain, ClassId, EnumId, EnumMemberId, ExprId, ExprKind, Flags, FnBody,
     ImportEqualsId, ImportEqualsTarget, JsxId, MemberId, MemberKey, MemberKind, ModifierId,
@@ -21,13 +22,14 @@ use bun_sema::hir::{
     StmtKind, UnOp, VarDeclId, VarKind,
 };
 use bun_sema::module_format::ModuleFormat;
-use bun_sema::program::{FileId, Files};
+use bun_sema::program::{FileId, Files, Sym};
 use rustc_hash::FxHashMap;
 
 use crate::builtins::table::{self, BuiltinFlags};
 use crate::builtins::{BuiltinId, BuiltinKind, ResolvedBuiltins};
 use crate::load::sources::parsed_source;
-use crate::modules::{Member, ModuleGraph};
+use crate::lower::SourceKind;
+use crate::modules::{ImportBinding, Member, ModuleGraph, ModuleRef};
 use crate::options::RemovableOptions;
 
 // `known_primitive` of src/ast/expr.rs.
@@ -143,12 +145,14 @@ fn find_written_name(key: PropKey, name_kind: NameKind) -> Option<Atom> {
 
 // Whether evaluating a piece of a file's top level can be left out when nothing uses what it declares, by the rules of src/js_parser/p.rs.
 pub(crate) struct Removable<'a, 's> {
+    files: &'a Files<'s>,
     pub hir: &'a hir::File<'s>,
     pub bound: &'a Bound<'s>,
     pub analysis: &'a FileAnalysis<'s>,
     pub builtins: &'a ResolvedBuiltins,
     pub atoms: &'a Interner<'s>,
     pub options: RemovableOptions,
+    hoists_classes: bool,
     modules: Option<(&'a ModuleGraph, FileId)>,
     stack: StackCheck,
     member_constants: RefCell<FxHashMap<EnumMemberId, Option<Primitive>>>,
@@ -172,13 +176,16 @@ impl<'a, 's> Removable<'a, 's> {
         builtins: &'a ResolvedBuiltins,
         options: RemovableOptions,
     ) -> Removable<'a, 's> {
+        let kind = parsed_source(files, file).and_then(|source| source.kind.lowering_kind());
         Removable {
+            files,
             hir: files.hir(file),
             bound: files.bound(file),
             analysis,
             builtins,
             atoms: &files.atoms,
             options,
+            hoists_classes: kind == Some(SourceKind::Program),
             modules: None,
             stack: StackCheck::init(),
             member_constants: RefCell::default(),
@@ -583,7 +590,10 @@ impl<'a, 's> Removable<'a, 's> {
             UnOp::Void | UnOp::Not => self.expression(operand),
             UnOp::Typeof => {
                 let name = self.hir.skip_type_assertions(operand);
-                self.find_static_binding(name).is_some() || self.expression(operand)
+                match self.find_static_binding(name) {
+                    Some(_) => self.is_name_initialized(name),
+                    None => self.expression(operand),
+                }
             }
             UnOp::Plus | UnOp::Minus => self.has_folded_sign(operand),
             _ => false,
@@ -630,10 +640,10 @@ impl<'a, 's> Removable<'a, 's> {
             return true;
         }
         match self.find_static_binding(identifier) {
-            Some(Binding::Symbol(symbol)) => {
-                self.bound.binding_stability(symbol) != BindingStability::ContainerMember
-                    || self.inlined_member(identifier).is_some()
-            }
+            Some(Binding::Symbol(symbol)) => match self.bound.binding_stability(symbol) {
+                BindingStability::ContainerMember => self.inlined_member(identifier).is_some(),
+                _ => self.is_initialized_at(identifier, symbol),
+            },
             Some(Binding::Arguments(unit)) => match unit {
                 CodeUnit::Function(_) => true,
                 CodeUnit::File | CodeUnit::FieldInitializer(_) => false,
@@ -700,8 +710,8 @@ impl<'a, 's> Removable<'a, 's> {
             }
             Some(Binding::Arguments(_) | Binding::CommonJs(_) | Binding::Free) | None => false,
         };
-        is_export_of_namespace
-            || self.is_bound_to_binding(expression, object)
+        ((is_export_of_namespace || self.is_bound_to_binding(expression, object))
+            && self.is_member_initialized(expression))
             || self.inlined_member(expression).is_some()
             || self.is_builtin_read(expression)
     }
@@ -778,12 +788,12 @@ impl<'a, 's> Removable<'a, 's> {
         }
     }
 
-    // The bundler ignores the dead zone of a binding.
     fn find_constant(&self, expression: ExprId) -> Option<Constant> {
         match self.analysis.decisions.constant(self.hir, expression) {
-            FoldedValue::Constant(constant) | FoldedValue::ConstantOutsideDeadZone(constant) => {
-                Some(constant)
-            }
+            FoldedValue::Constant(constant) => Some(constant),
+            FoldedValue::ConstantOutsideDeadZone(constant) => self
+                .reads_only_initialized_names(expression)
+                .then_some(constant),
             FoldedValue::Unknown => None,
         }
     }

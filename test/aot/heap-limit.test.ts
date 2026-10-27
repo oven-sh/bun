@@ -1332,6 +1332,234 @@ for (let attempt = 0; attempt < 2; attempt++) {
     240_000,
   );
 
+  test.skipIf(!isLinux || isASAN)(
+    "an object with thousands of members gets its first element where no address space is left",
+    async () => {
+      using folder = tempDir("aot-heap-limit", {
+        "program.js": `const kinds = new Set();
+const note = error =>
+  kinds.add(!(error instanceof RangeError) ? String(error) : error.message.includes("address space") ? "address space" : error.message);
+
+function withManyMembers(object) {
+  for (let member = 0; member < 6000; member++) object["m" + member] = member;
+  return object;
+}
+const objects = [];
+for (let i = 0; i < 4; i++) objects.push(withManyMembers({}));
+const views = [];
+for (let i = 0; i < 4; i++) views.push(withManyMembers(new Uint8Array(8)));
+
+// All the address space, and then what malloc still holds.
+Bun.gc(true);
+const taken = [];
+for (let size = 64 * 1024 * 1024; size >= 64 * 1024; size /= 2) {
+  try {
+    for (;;) taken.push(new ArrayBuffer(size));
+  } catch (error) {
+    note(error);
+  }
+}
+for (let size = 16 * 1024 * 1024; size >= 8 * 1024; size /= 2) {
+  try {
+    for (;;) taken.push("x".repeat(size));
+  } catch (error) {
+    note(error);
+  }
+}
+
+let turns = 0;
+function pause() {
+  for (let i = 0; i < 3; i++) turns += i;
+}
+function attempt(run) {
+  for (let i = 0; i < 4; i++) {
+    try {
+      run(i);
+      pause();
+    } catch (error) {
+      note(error);
+    }
+  }
+}
+// The members and the elements of an object share one piece of storage.
+attempt(i => {
+  objects[i][3] = i;
+});
+attempt(i => {
+  turns += views[i].buffer.byteLength;
+});
+if (taken.length < 100) console.log("not held");
+taken.fill(null);
+Bun.gc(true);
+// Not every run is told that address space has run out.
+kinds.delete("address space");
+console.log([...kinds].join(", "));
+console.log(objects.map(object => object[3] + " " + object.m5999).join(", "));
+console.log(views.map(view => view.buffer.byteLength + " " + view.m5999).join(", "));
+`,
+      });
+      const built = await run(
+        [bunExe(), "build", "--compile", "--aot", "program.js", "--outfile", "program"],
+        String(folder),
+      );
+      expect(built.exitCode).toBe(0);
+      const { stdout, stderr, exitCode } = await run(
+        ["sh", "-c", "ulimit -c 0 && ulimit -v 1048576 && exec ./program"],
+        String(folder),
+      );
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "Out of memory\n0 5999, 1 5999, 2 5999, 3 5999\n8 5999, 8 5999, 8 5999, 8 5999\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    120_000,
+  );
+
+  test.skipIf(!isLinux || isASAN)(
+    "an object with thousands of members is copied by a spread where no address space is left",
+    async () => {
+      using folder = tempDir("aot-heap-limit", {
+        "program.js": `const kinds = new Set();
+const note = error =>
+  kinds.add(!(error instanceof RangeError) ? String(error) : error.message.includes("address space") ? "address space" : error.message);
+
+function withManyMembers(object) {
+  for (let member = 0; member < 6000; member++) object["m" + member] = member;
+  return object;
+}
+const objects = [];
+for (let i = 0; i < 8; i++) objects.push(withManyMembers({}));
+for (let i = 4; i < 8; i++) objects[i][Symbol.iterator] = 1;
+const copies = [null, null, null, null];
+
+// All the address space, and then what malloc still holds.
+Bun.gc(true);
+const taken = [];
+for (let size = 64 * 1024 * 1024; size >= 64 * 1024; size /= 2) {
+  try {
+    for (;;) taken.push(new ArrayBuffer(size));
+  } catch (error) {
+    note(error);
+  }
+}
+for (let size = 16 * 1024 * 1024; size >= 8 * 1024; size /= 2) {
+  try {
+    for (;;) taken.push("x".repeat(size));
+  } catch (error) {
+    note(error);
+  }
+}
+
+let turns = 0;
+function pause() {
+  for (let i = 0; i < 3; i++) turns += i;
+}
+for (let i = 0; i < 4; i++) {
+  try {
+    copies[i] = { ...objects[i] };
+    pause();
+  } catch (error) {
+    note(error);
+  }
+}
+if (taken.length < 100) console.log("not held");
+taken.fill(null);
+Bun.gc(true);
+// Not every run is told that address space has run out.
+kinds.delete("address space");
+console.log([...kinds].join(", "));
+console.log(copies.map(copy => copy.m0 + " " + copy.m5999 + " " + Object.keys(copy).length).join(", "));
+`,
+      });
+      const built = await run(
+        [bunExe(), "build", "--compile", "--aot", "program.js", "--outfile", "program"],
+        String(folder),
+      );
+      expect(built.exitCode).toBe(0);
+      const { stdout, stderr, exitCode } = await run(
+        ["sh", "-c", "ulimit -c 0 && ulimit -v 1048576 && exec ./program"],
+        String(folder),
+      );
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "Out of memory\n0 5999 6000, 0 5999 6000, 0 5999 6000, 0 5999 6000\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    120_000,
+  );
+
+  test.skipIf(!isLinux || isASAN)(
+    "a Blob is made of a long text where no address space is left",
+    async () => {
+      using folder = tempDir("aot-heap-limit", {
+        "program.js": `const kinds = new Set();
+const note = error =>
+  kinds.add(!(error instanceof RangeError) ? String(error) : error.message.includes("address space") ? "address space" : error.message);
+
+const text = Array.from({ length: 16000 }, (_, i) => "line " + (10000 + i)).join("\\n");
+const blobs = [null, null, null, null];
+
+// All the address space, and then what malloc still holds, in blocks of every size.
+Bun.gc(true);
+const taken = [];
+for (let size = 64 * 1024 * 1024; size >= 64 * 1024; size /= 2) {
+  try {
+    for (;;) taken.push(new ArrayBuffer(size));
+  } catch (error) {
+    note(error);
+  }
+}
+for (let size = 16 * 1024 * 1024; size >= 8 * 1024; size /= 2) {
+  for (const eighths of [14, 12, 10, 8]) {
+    try {
+      for (;;) taken.push("x".repeat((size / 8) * eighths));
+    } catch (error) {
+      note(error);
+    }
+  }
+}
+
+let turns = 0;
+function pause() {
+  for (let i = 0; i < 3; i++) turns += i;
+}
+for (let i = 0; i < 4; i++) {
+  try {
+    blobs[i] = new Blob([text]);
+    pause();
+  } catch (error) {
+    note(error);
+  }
+}
+if (taken.length < 100) console.log("not held");
+taken.fill(null);
+Bun.gc(true);
+// Not every run is told that address space has run out.
+kinds.delete("address space");
+console.log([...kinds].join(", "));
+console.log(text.length, blobs.map(blob => blob.size).join(", "));
+`,
+      });
+      const built = await run(
+        [bunExe(), "build", "--compile", "--aot", "program.js", "--outfile", "program"],
+        String(folder),
+      );
+      expect(built.exitCode).toBe(0);
+      const { stdout, stderr, exitCode } = await run(
+        ["sh", "-c", "ulimit -c 0 && ulimit -v 1048576 && exec ./program"],
+        String(folder),
+      );
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "Out of memory\n175999 175999, 175999, 175999, 175999\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+    120_000,
+  );
+
   test.skipIf(!isLinux)(
     "the range of a Worker that has ended is given back",
     async () => {

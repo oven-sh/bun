@@ -521,7 +521,7 @@ export const rows: Row[] = [
   ["aot/perf/pinned-applications", 0, "./perf/pinned-applications", "pinnedApplications"],
   ["aot/perf/pinned-everyday-idioms", 4, "./perf/pinned-everyday-idioms", "pinnedEverydayIdioms"],
   ["aot/process-platform-folds", 4, "./process-platform-folds-cases", "processPlatformFolds"],
-  ["aot/programs-in-every-run", 32, "./run-programs", "programsInEveryRun"],
+  ["aot/programs-in-every-run", 64, "./run-programs", "programsInEveryRun"],
   ["aot/programs-marked-as-failing", 0, "./run-programs", "programsMarkedAsFailing"],
   ["aot/programs-that-ask-the-shell", 4, "./programs-that-ask-the-shell", "programsThatAskTheShell"],
   [

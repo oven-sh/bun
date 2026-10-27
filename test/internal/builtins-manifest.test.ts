@@ -33,6 +33,11 @@ const textsForTheCompiler = readdirSync(join(root, "src", "js", "ahead-of-time")
   .map(entry =>
     relative(join(root, "src", "js", "ahead-of-time"), join(entry.parentPath, entry.name)).replaceAll("\\", "/"),
   );
+// A module of those, and a word that both of its texts have. The first comment of the text that is bundled is not in the other.
+const moduleOfTwoTexts = "internal/primordials.js";
+const wordOfBothTexts = "ObjectSetPrototypeOf = Object.setPrototypeOf;";
+const offsetOfWordOfBothTexts = (...folders: string[]) =>
+  readFileSync(join(root, "src", "js", ...folders, moduleOfTwoTexts)).indexOf(wordOfBothTexts);
 const script = join(root, "src", "codegen", "builtins-manifest.ts");
 // A debug build takes seconds to load the script and to compress the archive.
 const generatorTimeout = 120_000;
@@ -75,8 +80,9 @@ function createFixture(engine: EngineFunctions = engineFunctions) {
     "bundled_names_of_modules.txt": [
       `name\tnode/fs.ts\t12\tread2\town`,
       `positions\tnode/fs.ts\t${Buffer.from([1, 2, 3]).toString("base64")}`,
-      `name\t${textsForTheCompiler[0]}\t3\tcall2\tvariable`,
-      `positions\t${textsForTheCompiler[0]}\t${Buffer.from([4]).toString("base64")}`,
+      `name\t${moduleOfTwoTexts}\t3\tcall2\tvariable`,
+      `name\t${moduleOfTwoTexts}\t${offsetOfWordOfBothTexts()}\tset2\tvariable`,
+      `positions\t${moduleOfTwoTexts}\t${Buffer.from([4]).toString("base64")}`,
       `positions\tnode/os.ts\t${Buffer.from([5, 6]).toString("base64")}`,
       ``,
     ].join("\n"),
@@ -143,8 +149,12 @@ describe("builtins-manifest.ts", () => {
     ]);
   });
 
-  test("the names are those of the bundled texts, but for a module that the compiler reads in a second text", () => {
-    expect(records.filter(([kind]) => kind === "name")).toEqual([["name", "node/fs.ts", "12", "read2", "own"]]);
+  test("the names are those of the bundled texts, at the words of a second text that stand for their identifiers", () => {
+    expect(records.filter(([kind]) => kind === "name")).toEqual([
+      ["name", "node/fs.ts", "12", "read2", "own"],
+      ["name", moduleOfTwoTexts, String(offsetOfWordOfBothTexts("ahead-of-time")), "set2", "variable"],
+    ]);
+    expect(offsetOfWordOfBothTexts("ahead-of-time")).not.toBe(offsetOfWordOfBothTexts());
   });
 
   test("the positions of all modules are one file of the archive, each part behind the id of its module and its length", () => {
@@ -156,7 +166,7 @@ describe("builtins-manifest.ts", () => {
     };
     expect([...readArchive(fixture.archive).frames.get("positions")!.text()]).toEqual([
       ...[...idOf("node/fs.ts"), 3, 1, 2, 3],
-      ...[...idOf(textsForTheCompiler[0]), 1, 4],
+      ...[...idOf(moduleOfTwoTexts), 1, 4],
       ...[...idOf("node/os.ts"), 2, 5, 6],
     ]);
   });

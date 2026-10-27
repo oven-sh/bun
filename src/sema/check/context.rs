@@ -655,6 +655,17 @@ impl<'p, 's> Checker<'p, 's> {
         e: ExprId,
         context_flags: ContextFlags,
     ) -> Option<TypeId> {
+        let ty = self.contextual_type_or_unresolved(file, e, context_flags)?;
+        (ty != TypeId::UNRESOLVED).then_some(ty)
+    }
+
+    /// Same, but `UNRESOLVED` where what says it is being resolved.
+    pub(super) fn contextual_type_or_unresolved(
+        &mut self,
+        file: FileId,
+        e: ExprId,
+        context_flags: ContextFlags,
+    ) -> Option<TypeId> {
         let hir = self.hir(file);
         // `getContextualType`: a node inside a `with` statement has no contextual type.
         if hir.is_in_with(hir[e].pos) {
@@ -665,8 +676,7 @@ impl<'p, 's> Checker<'p, 's> {
         if let Some(info) = self.find_contextual_node(file, e, context_flags.is_empty()) {
             return info.t;
         }
-        let ty = self.contextual_type_from_parent(file, e, context_flags)?;
-        (ty != TypeId::UNRESOLVED).then_some(ty)
+        self.contextual_type_from_parent(file, e, context_flags)
     }
 
     /// `getContextualTypeForDecorator`
@@ -2246,15 +2256,39 @@ impl<'p, 's> Checker<'p, 's> {
             return false;
         };
         let (hir, bound) = (self.hir(file), self.bound(file));
+        let literal_around = |inner: ExprId| match bound.parent_of_expr(inner) {
+            Parent::Prop(p) => Some(bound.prop_owner[p.idx()]),
+            Parent::Expr(list) if matches!(hir[list].kind, ExprKind::Array(_)) => Some(list),
+            _ => None,
+        };
         loop {
             if let Some(context) = self.contextual_type(file, given, ContextFlags::empty()) {
-                return context == TypeId::ANY;
+                if context != TypeId::ANY {
+                    return false;
+                }
+                while let Some(literal) = literal_around(given) {
+                    given = literal;
+                }
+                return !self.is_argument_of_declared_signature(file, given);
             }
-            given = match bound.parent_of_expr(given) {
-                Parent::Prop(p) => bound.prop_owner[p.idx()],
-                Parent::Expr(list) if matches!(hir[list].kind, ExprKind::Array(_)) => list,
-                _ => return false,
+            let Some(literal) = literal_around(given) else {
+                return false;
             };
+            given = literal;
+        }
+    }
+
+    // A signature that declares a parameter as `any` does so with Bun's types too.
+    fn is_argument_of_declared_signature(&mut self, file: FileId, given: ExprId) -> bool {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let Parent::Expr(call) = bound.parent_of_expr(given) else {
+            return false;
+        };
+        match hir[call].kind {
+            ExprKind::Call(c) | ExprKind::New(c) | ExprKind::TaggedTemplate(c) => {
+                hir[c].callee != given && self.resolved_signature(file, call).sig.is_some()
+            }
+            _ => false,
         }
     }
 

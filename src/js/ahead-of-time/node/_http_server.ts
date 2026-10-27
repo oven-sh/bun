@@ -3346,103 +3346,60 @@ let renderedKeepAliveSecs = 0;
 let lastKeepAliveTimeout = -1;
 let lastKeepAliveSecs = 0;
 
-function renderNativeHeadersOf(res: $Node.ServerResponse, exchange: Exchange | undefined): unknown[] {
-  return exchange !== undefined && exchange.response === res
-    ? renderNativeHeaders(res, exchange)
-    : renderNativeHeadersInFull(res, exchange);
+// Every response without a header has one and the same array.
+function withRoomFor(flat: unknown[]): unknown[] {
+  return flat.length === 0 ? [] : flat;
 }
 
-function renderNativeHeaders(res: $Node.ServerResponse, exchange: Exchange): unknown[] {
-  if (!IS_COMPILED_AHEAD_OF_TIME) {
-    const entries = headerEntriesOf(exchange, res);
-    if (entries === undefined || entries.length !== 0) return renderNativeHeadersInFull(res, exchange, true, entries);
-  }
-  const bits = IS_COMPILED_AHEAD_OF_TIME ? exchange.headerBits : 0;
-  const keepAliveTimeout = res._keepAliveTimeout;
-  const req = res.req;
-  if (
-    req != null &&
-    (bits & HEADER_UNUSUAL) === 0 &&
-    res.sendDate === true &&
-    res._hasBody === true &&
-    res.useChunkedEncodingByDefault === true &&
-    ((bits & HEADER_CONTENT_LENGTH) !== 0 || !res._removedTE) &&
-    !res._removedConnection &&
-    !res.maxRequestsOnConnectionReached &&
-    res[kShouldKeepAlive] === true &&
-    reachesShouldKeepAlive(res) &&
-    req[kReqShouldKeepAlive] === true &&
-    res._maxRequestsPerSocket === undefined &&
-    typeof keepAliveTimeout === "number" &&
-    keepAliveTimeout > 0
-  ) {
-    if (keepAliveTimeout !== lastKeepAliveTimeout) {
-      lastKeepAliveSecs = MathFloor(keepAliveTimeout / 1000);
-      lastKeepAliveTimeout = keepAliveTimeout;
-    }
-    const keepAliveSecs = lastKeepAliveSecs;
-    if (keepAliveSecs <= kMaxNativeKeepAliveSecs) {
-      // A header value's toString() can send another response, so the results are set after flatHeadersOf().
-      if ((bits & HEADER_CONTENT_LENGTH) !== 0 || (!res._removedContLen && !exchange.isFrozenChunked)) {
-        const headers = flatHeadersOf(exchange);
-        renderedAutoHeaders = AUTO_HEADER_DATE | AUTO_HEADER_CONN_KEEP_ALIVE | AUTO_HEADER_KEEP_ALIVE_TIMEOUT;
-        renderedKeepAliveSecs = keepAliveSecs;
-        return headers;
-      }
-      if (req.httpVersionMajor! >= 1 && req.httpVersionMinor! >= 1) {
-        const headers = flatHeadersOf(exchange);
-        renderedAutoHeaders =
-          AUTO_HEADER_DATE |
-          AUTO_HEADER_CONN_KEEP_ALIVE |
-          AUTO_HEADER_KEEP_ALIVE_TIMEOUT |
-          AUTO_HEADER_TRANSFER_ENCODING_CHUNKED;
-        renderedKeepAliveSecs = keepAliveSecs;
-        return headers;
-      }
-    }
-  }
-  return IS_COMPILED_AHEAD_OF_TIME
-    ? renderNativeHeadersInFull(res, exchange)
-    : renderNativeHeadersInFull(res, exchange, true, []);
+// A request of HTTP/1.1 finds both numbers on its prototype.
+function takesChunks(req: $Node.IncomingMessage): boolean {
+  return req.httpVersionMajor! >= 1 && req.httpVersionMinor! >= 1;
 }
 
-function renderNativeHeadersInFull(
-  res: $Node.ServerResponse,
-  exchange: Exchange | undefined,
-  isRead?: boolean,
-  entriesRead?: unknown[],
-): unknown[] {
+function renderNativeHeaders(res: $Node.ServerResponse, exchange: Exchange | undefined): unknown[] {
   let autoHeaders = 0;
   let keepAliveSecs = 0;
-  const entries = !IS_COMPILED_AHEAD_OF_TIME && isRead ? entriesRead : headerEntriesOf(exchange, res);
-  const flat: unknown[] = [];
-  let hasDate = false;
-  let hasConnection = false;
-  let hasKeepAlive = false;
-  let hasTransferEncoding = false;
-  let hasContentLength = false;
-  const entriesLength = entries === undefined ? 0 : entries.length;
-  for (let i = 0; i < entriesLength; i += 3) {
-    const key = entries![i] as string;
-    const value = entries![i + 2] as $Node.HttpHeaderValue;
-    if (key === "date") hasDate = true;
-    else if (key === "connection") {
-      hasConnection = true;
-      if (RE_CONN_CLOSE.test($isArray(value) ? value.join(", ") : String(value))) {
-        storeMustClose(res, exchange);
-      }
-    } else if (key === "keep-alive") hasKeepAlive = true;
-    else if (key === "transfer-encoding") hasTransferEncoding = true;
-    else if (key === "content-length") hasContentLength = true;
-    pushRenderedHeader(flat, res, key, entries![i + 1] as string, value);
+  let flat: unknown[];
+  let bits: number;
+  let hasNoMapOfHeaders = false;
+  const bitsOfExchange = exchange !== undefined && exchange.response === res ? exchange.headerBits : HEADER_SPILLED;
+  if ((bitsOfExchange & HEADER_UNUSUAL) === 0) {
+    // The bits of headers in the compact form say which of them frame the response: nobody walks them.
+    bits = bitsOfExchange;
+    flat = flatHeadersOf(exchange!);
+  } else {
+    const entries = headerEntriesOf(exchange, res);
+    hasNoMapOfHeaders = entries === undefined;
+    flat = [];
+    bits = 0;
+    const entriesLength = entries === undefined ? 0 : entries.length;
+    for (let i = 0; i < entriesLength; i += 3) {
+      const key = entries![i] as string;
+      const value = entries![i + 2] as $Node.HttpHeaderValue;
+      if (key === "date") bits |= HEADER_DATE;
+      else if (key === "connection") {
+        bits |= HEADER_CONNECTION;
+        if (RE_CONN_CLOSE.test($isArray(value) ? value.join(", ") : String(value))) {
+          storeMustClose(res, exchange);
+        }
+      } else if (key === "keep-alive") bits |= HEADER_KEEP_ALIVE;
+      else if (key === "transfer-encoding") bits |= HEADER_TRANSFER_ENCODING;
+      else if (key === "content-length") bits |= HEADER_CONTENT_LENGTH;
+      pushRenderedHeader(flat, res, key, entries![i + 1] as string, value);
+    }
   }
+  const hasDate = (bits & HEADER_DATE) !== 0;
+  const hasConnection = (bits & HEADER_CONNECTION) !== 0;
+  const hasKeepAlive = (bits & HEADER_KEEP_ALIVE) !== 0;
+  const hasTransferEncoding = (bits & HEADER_TRANSFER_ENCODING) !== 0;
+  const hasContentLength = (bits & HEADER_CONTENT_LENGTH) !== 0;
 
   if (res.sendDate && !hasDate) {
     autoHeaders |= AUTO_HEADER_DATE;
   }
 
   // The headers that frame the body are looked for in the map of headers.
-  if (entries === undefined) throw new TypeError("undefined is not an object (evaluating 'headers[name]')");
+  if (hasNoMapOfHeaders) throw new TypeError("undefined is not an object (evaluating 'headers[name]')");
 
   let defectiveNoBodyResponse = false;
   if (hasTransferEncoding) {
@@ -3469,8 +3426,7 @@ function renderNativeHeadersInFull(
       res._removedContLen ||
       (exchange !== undefined && exchange.response === res ? exchange.isFrozenChunked : res[kFramingFrozenChunked])
     ) {
-      const req = res.req;
-      if (req.httpVersionMajor! >= 1 && req.httpVersionMinor! >= 1) {
+      if ($callNoInline(takesChunks, undefined, res.req)) {
         forceChunked = true;
       } else {
         closeDelimited = true;
@@ -3489,18 +3445,26 @@ function renderNativeHeadersInFull(
       !closeDelimited &&
       canPersist &&
       !res.maxRequestsOnConnectionReached &&
-      res.shouldKeepAlive !== false &&
+      (reachesShouldKeepAlive(res) ? res[kShouldKeepAlive] : res.shouldKeepAlive) !== false &&
       requestShouldKeepAlive(res.req)
     ) {
       const keepAliveTimeout = res._keepAliveTimeout;
       const maxRequestsPerSocket = res._maxRequestsPerSocket;
       if (keepAliveTimeout && !hasKeepAlive) {
-        const timeoutSecs = MathFloor(keepAliveTimeout / 1000);
-        const hasMax = ~~maxRequestsPerSocket! > 0;
+        let timeoutSecs = lastKeepAliveSecs;
+        if (keepAliveTimeout !== lastKeepAliveTimeout) {
+          timeoutSecs = MathFloor(keepAliveTimeout / 1000);
+          if (typeof keepAliveTimeout === "number") {
+            lastKeepAliveSecs = timeoutSecs;
+            lastKeepAliveTimeout = keepAliveTimeout;
+          }
+        }
+        const hasMax = maxRequestsPerSocket != null && ~~maxRequestsPerSocket > 0;
         if (!hasMax && timeoutSecs >= 0 && timeoutSecs <= kMaxNativeKeepAliveSecs) {
           autoHeaders |= AUTO_HEADER_CONN_KEEP_ALIVE | AUTO_HEADER_KEEP_ALIVE_TIMEOUT;
           keepAliveSecs = timeoutSecs;
         } else {
+          flat = withRoomFor(flat);
           flat.push("Connection", "keep-alive");
           flat.push(
             "Keep-Alive",
@@ -3519,10 +3483,12 @@ function renderNativeHeadersInFull(
   }
 
   if (res._hasBody === false) {
+    flat = withRoomFor(flat);
     flat.push("\u0000", "2");
   }
 
   if (closeDelimited) {
+    flat = withRoomFor(flat);
     flat.push("\u0000", "1");
   } else if (forceChunked) {
     autoHeaders |= AUTO_HEADER_TRANSFER_ENCODING_CHUNKED;
@@ -6090,7 +6056,7 @@ function writeHeadToHandle(
   exchange: Exchange | undefined,
   handle: $Node.NodeHTTPResponse | $Node.Http1ResponseHandle,
 ): void {
-  const renderedHeaders = renderNativeHeadersOf(res, exchange);
+  const renderedHeaders = renderNativeHeaders(res, exchange);
   const statusCode = statusCodeToSend(res);
   const statusMessage = statusMessageToSend(res);
   handle.writeHead(statusCode, statusMessage, renderedHeaders as string[], renderedAutoHeaders, renderedKeepAliveSecs);
@@ -6145,7 +6111,7 @@ function endInFull(
   }
   let draining = false;
   if (headerState !== NodeHTTPHeaderState.sent) {
-    const renderedHeaders = renderNativeHeadersOf(res, exchange) as string[];
+    const renderedHeaders = renderNativeHeaders(res, exchange) as string[];
     let contentLength: number;
     try {
       contentLength = handle.writeHeadAndEnd(

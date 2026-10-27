@@ -42,9 +42,8 @@
 // VALUES: Call {{*}}calleeName="Object.create"
 // VALUES-LABEL: function {{*}}name="extended"
 // VALUES-NOT: = NewObject
-// VALUES-NOT: = NewDictionary
-// VALUES: [[copy]] = CopyObject
-// VALUES-NOT: CopyDataProperties
+// VALUES: [[copy]] = NewDictionary
+// VALUES: CopyDataProperties [[copy]],
 // VALUES: ElemDefine [[copy]],
 // VALUES-NOT: = FinishObject
 // VALUES: Return

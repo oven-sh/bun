@@ -21,8 +21,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         if function == FnId::NONE {
             return TypeId::ANY;
         }
-        let mut written = self.hir()[function].params.iter();
-        let Some(index) = written.position(|other| other == parameter) else {
+        let Some(index) = self.hir()[function].params.position_of(parameter.idx()) else {
             return TypeId::ANY;
         };
         let declared = self.declared_signatures();

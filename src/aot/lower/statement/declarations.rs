@@ -70,7 +70,7 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 let key = self
                     .file
                     .function_name_key(binding, name, hir[decl.pat].pos);
-                let is_returned = matches!(self.returned_declaration, Some((returned, _)) if returned == declaration);
+                let is_returned = self.file.find_return_printed_with(declaration).is_some();
                 let is_tail = is_returned && control::allows_tail_call(self);
                 let is_annotated = decl.ty.is_some() && self.file.is_checked();
                 let annotation = (is_tail && is_annotated).then(|| TailCast {
@@ -94,9 +94,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 let records = self.builder.number_of_records();
                 let value = self.lower_expression_in(initializer, evaluation);
                 let recorded = self.builder.last_recorded_position();
-                if let (Binding::Symbol(symbol), Some(recorded)) = (binding, recorded)
+                if let Some(recorded) = recorded
                     && self.builder.number_of_records() != records
-                    && self.file.scopes.is_used_once(symbol)
+                    && self.file.is_initializer_moved(declaration)
                 {
                     self.records_of_initializers.insert(initializer, recorded);
                 }

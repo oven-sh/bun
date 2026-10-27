@@ -465,6 +465,12 @@ impl Bound<'_> {
         stability::find_binding_initializer(hir, self, symbol)
     }
 
+    /// `None` if several declarations initialize the binding, or none does.
+    pub fn initializing_declaration(&self, symbol: SymbolId) -> Option<Decl> {
+        let recorded = self.runtime.stability.initializers.get(symbol.idx());
+        recorded.copied().flatten()
+    }
+
     pub fn private_name(&self, name: PrivateNameId) -> &PrivateName {
         &self.runtime.private_names.names[name.idx()]
     }

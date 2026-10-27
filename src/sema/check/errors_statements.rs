@@ -371,6 +371,12 @@ impl Checker<'_, '_> {
         });
     }
 
+    fn is_in_namespace(&self, file: FileId, s: StmtId) -> bool {
+        let hir = self.hir(file);
+        let is_namespace = |node| hir.kind(node) == Kind::ModuleDeclaration;
+        hir.find_ancestor(hir.node(s), is_namespace).is_some()
+    }
+
     /// The start of `checkReturnStatement`: 1108 18041. Returns the containing function if the returned expression
     /// should be checked.
     pub(super) fn check_grammar_return_statement(
@@ -384,8 +390,10 @@ impl Checker<'_, '_> {
             match self.enclosing_fn(file, Parent::Stmt(s)) {
                 Some(func) if hir[func].kind != FnKind::StaticBlock => return Some(func),
                 Some(_) => self.early_grammar_error_at(at, 18041, &[]),
-                // `bun run` wraps a CommonJS module in a function.
-                None if self.is_compiled_as_commonjs(file) => self.grammar_error_at(at, 1108, &[]),
+                // `bun run` wraps a CommonJS module in a function, which the body of a namespace is not part of.
+                None if self.is_compiled_as_commonjs(file) && !self.is_in_namespace(file, s) => {
+                    self.grammar_error_at(at, 1108, &[])
+                }
                 None => self.early_grammar_error_at(at, 1108, &[]),
             };
         }

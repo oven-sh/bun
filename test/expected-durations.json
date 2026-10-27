@@ -6193,132 +6193,260 @@
     "default": 45387
   },
   "aot/programs-in-every-run-1.test.ts": {
-    "default": 47000,
-    "asan": 212000
+    "default": 23500,
+    "asan": 106000
   },
   "aot/programs-in-every-run-10.test.ts": {
-    "default": 47000,
-    "asan": 212000
+    "default": 23500,
+    "asan": 106000
   },
   "aot/programs-in-every-run-11.test.ts": {
-    "default": 47000,
-    "asan": 212000
+    "default": 23500,
+    "asan": 106000
   },
   "aot/programs-in-every-run-12.test.ts": {
-    "default": 47000,
-    "asan": 212000
+    "default": 23500,
+    "asan": 106000
   },
   "aot/programs-in-every-run-13.test.ts": {
-    "default": 47000,
-    "asan": 212000
+    "default": 23500,
+    "asan": 106000
   },
   "aot/programs-in-every-run-14.test.ts": {
-    "default": 47000,
-    "asan": 212000
+    "default": 23500,
+    "asan": 106000
   },
   "aot/programs-in-every-run-15.test.ts": {
-    "default": 47000,
-    "asan": 212000
+    "default": 23500,
+    "asan": 106000
   },
   "aot/programs-in-every-run-16.test.ts": {
-    "default": 47000,
-    "asan": 212000
+    "default": 23500,
+    "asan": 106000
   },
   "aot/programs-in-every-run-17.test.ts": {
-    "default": 47000,
-    "asan": 212000
+    "default": 23500,
+    "asan": 106000
   },
   "aot/programs-in-every-run-18.test.ts": {
-    "default": 47000,
-    "asan": 212000
+    "default": 23500,
+    "asan": 106000
   },
   "aot/programs-in-every-run-19.test.ts": {
-    "default": 47000,
-    "asan": 212000
+    "default": 23500,
+    "asan": 106000
   },
   "aot/programs-in-every-run-2.test.ts": {
-    "default": 47000,
-    "asan": 212000
+    "default": 23500,
+    "asan": 106000
   },
   "aot/programs-in-every-run-20.test.ts": {
-    "default": 47000,
-    "asan": 212000
+    "default": 23500,
+    "asan": 106000
   },
   "aot/programs-in-every-run-21.test.ts": {
-    "default": 47000,
-    "asan": 212000
+    "default": 23500,
+    "asan": 106000
   },
   "aot/programs-in-every-run-22.test.ts": {
-    "default": 47000,
-    "asan": 212000
+    "default": 23500,
+    "asan": 106000
   },
   "aot/programs-in-every-run-23.test.ts": {
-    "default": 47000,
-    "asan": 212000
+    "default": 23500,
+    "asan": 106000
   },
   "aot/programs-in-every-run-24.test.ts": {
-    "default": 47000,
-    "asan": 212000
+    "default": 23500,
+    "asan": 106000
   },
   "aot/programs-in-every-run-25.test.ts": {
-    "default": 47000,
-    "asan": 212000
+    "default": 23500,
+    "asan": 106000
   },
   "aot/programs-in-every-run-26.test.ts": {
-    "default": 47000,
-    "asan": 212000
+    "default": 23500,
+    "asan": 106000
   },
   "aot/programs-in-every-run-27.test.ts": {
-    "default": 47000,
-    "asan": 212000
+    "default": 23500,
+    "asan": 106000
   },
   "aot/programs-in-every-run-28.test.ts": {
-    "default": 47000,
-    "asan": 212000
+    "default": 23500,
+    "asan": 106000
   },
   "aot/programs-in-every-run-29.test.ts": {
-    "default": 47000,
-    "asan": 212000
+    "default": 23500,
+    "asan": 106000
   },
   "aot/programs-in-every-run-3.test.ts": {
-    "default": 47000,
-    "asan": 212000
+    "default": 23500,
+    "asan": 106000
   },
   "aot/programs-in-every-run-30.test.ts": {
-    "default": 47000,
-    "asan": 212000
+    "default": 23500,
+    "asan": 106000
   },
   "aot/programs-in-every-run-31.test.ts": {
-    "default": 47000,
-    "asan": 212000
+    "default": 23500,
+    "asan": 106000
   },
   "aot/programs-in-every-run-32.test.ts": {
-    "default": 47000,
-    "asan": 212000
+    "default": 23500,
+    "asan": 106000
+  },
+  "aot/programs-in-every-run-33.test.ts": {
+    "default": 23500,
+    "asan": 106000
+  },
+  "aot/programs-in-every-run-34.test.ts": {
+    "default": 23500,
+    "asan": 106000
+  },
+  "aot/programs-in-every-run-35.test.ts": {
+    "default": 23500,
+    "asan": 106000
+  },
+  "aot/programs-in-every-run-36.test.ts": {
+    "default": 23500,
+    "asan": 106000
+  },
+  "aot/programs-in-every-run-37.test.ts": {
+    "default": 23500,
+    "asan": 106000
+  },
+  "aot/programs-in-every-run-38.test.ts": {
+    "default": 23500,
+    "asan": 106000
+  },
+  "aot/programs-in-every-run-39.test.ts": {
+    "default": 23500,
+    "asan": 106000
   },
   "aot/programs-in-every-run-4.test.ts": {
-    "default": 47000,
-    "asan": 212000
+    "default": 23500,
+    "asan": 106000
+  },
+  "aot/programs-in-every-run-40.test.ts": {
+    "default": 23500,
+    "asan": 106000
+  },
+  "aot/programs-in-every-run-41.test.ts": {
+    "default": 23500,
+    "asan": 106000
+  },
+  "aot/programs-in-every-run-42.test.ts": {
+    "default": 23500,
+    "asan": 106000
+  },
+  "aot/programs-in-every-run-43.test.ts": {
+    "default": 23500,
+    "asan": 106000
+  },
+  "aot/programs-in-every-run-44.test.ts": {
+    "default": 23500,
+    "asan": 106000
+  },
+  "aot/programs-in-every-run-45.test.ts": {
+    "default": 23500,
+    "asan": 106000
+  },
+  "aot/programs-in-every-run-46.test.ts": {
+    "default": 23500,
+    "asan": 106000
+  },
+  "aot/programs-in-every-run-47.test.ts": {
+    "default": 23500,
+    "asan": 106000
+  },
+  "aot/programs-in-every-run-48.test.ts": {
+    "default": 23500,
+    "asan": 106000
+  },
+  "aot/programs-in-every-run-49.test.ts": {
+    "default": 23500,
+    "asan": 106000
   },
   "aot/programs-in-every-run-5.test.ts": {
-    "default": 47000,
-    "asan": 212000
+    "default": 23500,
+    "asan": 106000
+  },
+  "aot/programs-in-every-run-50.test.ts": {
+    "default": 23500,
+    "asan": 106000
+  },
+  "aot/programs-in-every-run-51.test.ts": {
+    "default": 23500,
+    "asan": 106000
+  },
+  "aot/programs-in-every-run-52.test.ts": {
+    "default": 23500,
+    "asan": 106000
+  },
+  "aot/programs-in-every-run-53.test.ts": {
+    "default": 23500,
+    "asan": 106000
+  },
+  "aot/programs-in-every-run-54.test.ts": {
+    "default": 23500,
+    "asan": 106000
+  },
+  "aot/programs-in-every-run-55.test.ts": {
+    "default": 23500,
+    "asan": 106000
+  },
+  "aot/programs-in-every-run-56.test.ts": {
+    "default": 23500,
+    "asan": 106000
+  },
+  "aot/programs-in-every-run-57.test.ts": {
+    "default": 23500,
+    "asan": 106000
+  },
+  "aot/programs-in-every-run-58.test.ts": {
+    "default": 23500,
+    "asan": 106000
+  },
+  "aot/programs-in-every-run-59.test.ts": {
+    "default": 23500,
+    "asan": 106000
   },
   "aot/programs-in-every-run-6.test.ts": {
-    "default": 47000,
-    "asan": 212000
+    "default": 23500,
+    "asan": 106000
+  },
+  "aot/programs-in-every-run-60.test.ts": {
+    "default": 23500,
+    "asan": 106000
+  },
+  "aot/programs-in-every-run-61.test.ts": {
+    "default": 23500,
+    "asan": 106000
+  },
+  "aot/programs-in-every-run-62.test.ts": {
+    "default": 23500,
+    "asan": 106000
+  },
+  "aot/programs-in-every-run-63.test.ts": {
+    "default": 23500,
+    "asan": 106000
+  },
+  "aot/programs-in-every-run-64.test.ts": {
+    "default": 23500,
+    "asan": 106000
   },
   "aot/programs-in-every-run-7.test.ts": {
-    "default": 47000,
-    "asan": 212000
+    "default": 23500,
+    "asan": 106000
   },
   "aot/programs-in-every-run-8.test.ts": {
-    "default": 47000,
-    "asan": 212000
+    "default": 23500,
+    "asan": 106000
   },
   "aot/programs-in-every-run-9.test.ts": {
-    "default": 47000,
-    "asan": 212000
+    "default": 23500,
+    "asan": 106000
   },
   "aot/programs-marked-as-failing.test.ts": {
     "default": 150000,

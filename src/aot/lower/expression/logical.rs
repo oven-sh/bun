@@ -62,7 +62,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 BinOp::Nullish => LogicalOperator::Nullish,
                 _ => break,
             };
-            if innermost != expression && is_decided(self.file, innermost) {
+            let is_lowered_alone =
+                is_decided(self.file, innermost) || self.printed_part == Some(innermost);
+            if innermost != expression && is_lowered_alone {
                 break;
             }
             spine.push((innermost, operator, right));

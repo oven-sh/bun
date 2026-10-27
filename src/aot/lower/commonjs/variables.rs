@@ -220,7 +220,7 @@ impl FileLowering<'_, '_, '_, '_> {
             BuiltinId::ImportMetaPath => Some(path.to_vec()),
             BuiltinId::ImportMetaDir => {
                 let end = bun_core::strings::last_index_of_char(path, b'/');
-                Some(path[..end.or(is_commonjs_text.then_some(0))?].to_vec())
+                Some(path[..end.or_else(|| is_commonjs_text.then_some(0))?].to_vec())
             }
             _ => None,
         }

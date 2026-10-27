@@ -11,7 +11,7 @@ use crate::bind::{BindOptions, Binding, Bound, Decl, SymbolId};
 use crate::fold::{Decisions, FoldError, FoldInputs};
 use crate::hir::{ExprId, File, ImportEqualsId, ImportedName, NodeData};
 use crate::hir_from_data::HostValue;
-use crate::import_sites::{ImportSite, ImportSiteKind, JsxImportSet, JsxMode};
+use crate::import_sites::{ImportSite, ImportSiteKind, ImportSpecifier, JsxImportSet, JsxMode};
 use crate::module_format::{DeclaredModuleType, ModuleFormat};
 use crate::session::Arena;
 
@@ -30,6 +30,8 @@ pub struct FileAnalysis<'s> {
     pub module_format: ModuleFormat,
     pub has_esm_syntax: bool,
     pub import_sites: &'s [ImportSite],
+    alternatives: &'s [ImportSpecifier],
+    paths_from_own_directory: &'s [ExprId],
     pub jsx_imports: JsxImportSet,
     pub unused_import_symbols: &'s [SymbolId],
     pub imports_used_only_in_dead_code: &'s [SymbolId],
@@ -53,6 +55,31 @@ const _: fn() = || {
 };
 
 impl FileAnalysis<'_> {
+    /// What the specifier of a site may be, each a `Constant`, a `Pattern` or `Unknown`.
+    pub fn alternatives_of<'a>(&'a self, specifier: &'a ImportSpecifier) -> &'a [ImportSpecifier] {
+        match *specifier {
+            ImportSpecifier::OneOf(range) => {
+                &self.alternatives[range.first as usize..][..range.count as usize]
+            }
+            _ => std::slice::from_ref(specifier),
+        }
+    }
+
+    /// The specifier of the site is written from the folder of the file, `./lib/a.js`, where `argument` makes the whole path.
+    pub fn is_path_from_own_directory(&self, argument: ExprId) -> bool {
+        self.decisions.is_path_from_own_directory(argument)
+            || self
+                .paths_from_own_directory
+                .binary_search(&argument)
+                .is_ok()
+    }
+
+    /// What a name that is no constant may be hangs on more of a folding than the specifiers that it finds.
+    pub(crate) fn names_every_file_by_a_constant(&self) -> bool {
+        let mut sites = self.import_sites.iter();
+        sites.all(|site| matches!(site.specifier, ImportSpecifier::Constant(_)))
+    }
+
     pub fn import_site_index(&self, kind: ImportSiteKind) -> Option<usize> {
         let sites = self.import_sites;
         let found = self

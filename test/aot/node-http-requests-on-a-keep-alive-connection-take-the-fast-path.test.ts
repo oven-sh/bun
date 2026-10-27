@@ -1,6 +1,10 @@
 // In an executable the node:http server dispatches a request on its fast path, keeps the headers of the response in their compact
-// form and finishes it in a single process.nextTick(). This pins how many requests of ordinary applications take each of the three.
-// test/js/node/http/node-http-fast-path-coverage.test.ts says how the fixture tells them apart, and measures it under `bun run`.
+// form and finishes it in a single process.nextTick(). This pins how many requests of ordinary applications take each of the three,
+// so that a change which quietly pushes a framework onto the slow path fails here. The functions of the fast path have the names of
+// those they stand in for, so the fixture tells them apart by the place of the onNodeHTTPRequest frame, what node:http itself finds
+// under the kOutHeaders symbol and the number of arguments of the emitResponseFinished tick: changing one means updating it. A
+// program that looks under the symbol finds the map, whichever form the headers had. `bun run` evaluates another text of node:http,
+// which has none of the three.
 import { afterAll, expect, setDefaultTimeout } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { rmSync } from "node:fs";

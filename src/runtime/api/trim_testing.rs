@@ -8,11 +8,12 @@ use bun_jsc::{JSGlobalObject, JsError, JsResult};
 use bun_options_types::trim::TrimRequest;
 use bun_sys::{Fd, File, O};
 use bun_trim::table::{
-    self, IcuItemRun, IcuLanguage, IcuPackage, ModuleText, RemovableRange, TrimTable,
+    self, EntryPointNeeds, IcuItemRun, IcuLanguage, IcuPackage, ModuleText, RemovableRange,
+    TrimTable,
 };
 use bun_trim::{
-    ExecutableSettings, Feature, FeatureEdge, TrimError, TrimInput, TrimSummary, UsedFeatures,
-    apply, plan,
+    ExecutableSettings, Feature, FeatureEdge, TrimError, TrimInput, TrimSummary, UsedFeature,
+    UsedFeatures, UsedLocales, apply, plan,
 };
 
 pub(crate) fn trim_executable(
@@ -20,16 +21,28 @@ pub(crate) fn trim_executable(
     path: &[u8],
     out: &[u8],
     feature_names: &[u8],
+    used_feature_names: &[u8],
 ) -> JsResult<Vec<u8>> {
     let global = cx.global();
     let features = parse_feature_names(global, feature_names)?;
+    let used_features = parse_feature_names(global, used_feature_names)?;
     let mut bytes = read_executable(global, path)?;
 
     let request = TrimRequest {
         remove_internal: features,
+        removes_unused: !used_features.is_empty(),
         ..Default::default()
     };
-    let summary = trim_in_memory(global, &mut bytes, &UsedFeatures::default(), &request)?;
+    let used = if used_features.is_empty() {
+        UsedFeatures::default()
+    } else {
+        UsedFeatures {
+            features: used_features.into_iter().map(named_use_of).collect(),
+            causes: Vec::new(),
+            locales: UsedLocales::Unknown(None),
+        }
+    };
+    let summary = trim_in_memory(global, &mut bytes, &used, &request)?;
 
     if summary.format == Some(ExecutableFormat::MachO) {
         bytes =
@@ -38,6 +51,14 @@ pub(crate) fn trim_executable(
     write_executable(out, &bytes).map_err(|error| global.throw(format_args!("{error}")))?;
 
     Ok(describe_summary(&summary))
+}
+
+fn named_use_of(feature: Feature) -> UsedFeature {
+    UsedFeature {
+        feature,
+        witness: None,
+        is_named: true,
+    }
 }
 
 pub(crate) fn read_trim_table(cx: &mut JsScope<'_>, path: &[u8]) -> JsResult<Vec<u8>> {
@@ -223,6 +244,25 @@ fn write_module_text(out: &mut Vec<u8>, text: &ModuleText) {
     out.push(b'}');
 }
 
+#[allow(clippy::trivially_copy_pass_by_ref)] // what `write_array` calls
+fn write_entry_point_needs(out: &mut Vec<u8>, entry: &EntryPointNeeds) {
+    out.extend_from_slice(b"{\"start\":");
+    write_number(out, entry.range.start);
+    out.extend_from_slice(b",\"end\":");
+    write_number(out, entry.range.end);
+    out.extend_from_slice(b",\"own\":");
+    write_number(out, u64::from(entry.own.0));
+    for (name, set) in [("always", entry.always), ("sometimes", entry.sometimes)] {
+        if let Some(set) = set {
+            out.extend_from_slice(b",\"");
+            out.extend_from_slice(name.as_bytes());
+            out.extend_from_slice(b"\":");
+            write_number(out, u64::from(set.0));
+        }
+    }
+    out.push(b'}');
+}
+
 fn describe_summary(summary: &TrimSummary) -> Vec<u8> {
     let mut out = Vec::new();
     out.extend_from_slice(b"{\"removed\":");
@@ -262,6 +302,8 @@ fn describe_table(table: &TrimTable) -> Vec<u8> {
     write_array(&mut out, &table.icu_languages, write_icu_language);
     out.extend_from_slice(b",\"moduleTexts\":");
     write_array(&mut out, &table.module_texts, write_module_text);
+    out.extend_from_slice(b",\"entryPointNeeds\":");
+    write_array(&mut out, &table.entry_point_needs, write_entry_point_needs);
     out.push(b'}');
     out
 }

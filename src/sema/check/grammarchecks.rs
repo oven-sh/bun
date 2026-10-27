@@ -210,7 +210,7 @@ impl Checker<'_, '_> {
         let pos = skip_trivia_back(text, greater_than as usize);
         let end = skip_trivia(text, pos) + 1;
         text[..pos].ends_with(b"<")
-            && self.grammar_error_at((file, pos as u32 - 1, end as u32), 1098, &[])
+            && self.early_grammar_error_at((file, pos as u32 - 1, end as u32), 1098, &[])
     }
 
     /// `checkGrammarParameterList`

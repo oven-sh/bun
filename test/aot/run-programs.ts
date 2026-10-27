@@ -784,7 +784,9 @@ async function expectBuildErrors(program: CompiledProgram, stored: string) {
   const build = await buildCompiled(program);
   try {
     // Each distinct error counts once; how often it is repeated for different positions is not what is tested.
-    const errors = [...new Set(build.stderr.split("\n").filter(line => line.startsWith("error: ")))].join("\n") + "\n";
+    // A Bun built with assertions names the token behind some of the parser's messages.
+    const lines = build.stderr.split("\n").filter(line => line.startsWith("error: "));
+    const errors = [...new Set(lines.map(line => line.replace(/ \(token: T\w+\)$/, "")))].join("\n") + "\n";
     if (updates) writeFileSync(stored, errors);
     expect({ errors, exitCode: build.exitCode }).toEqual({ errors: readFileSync(stored, "utf8"), exitCode: 1 });
   } finally {

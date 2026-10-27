@@ -201,7 +201,11 @@ fn diagnostic_classes() {
         ("let [...a,] = b", 1013, EarlyError),
         ("let { ...a, } = b", 1013, EarlyError),
         (r#"export { "a" as b }"#, 1003, EarlyError),
-        ("class A<> {}", 1098, TypeScriptGrammar),
+        ("class A<> {}", 1098, EarlyError),
+        ("class A extends B<> {}", 1099, EarlyError),
+        ("class A extends B<C,> {}", 1009, EarlyError),
+        ("a?.<>()", 1099, EarlyError),
+        ("a<>()", 1099, TypeScriptGrammar),
         ("type A = [a: ...B[]];", 5087, TypeScriptGrammar),
         (
             "interface A { [a: string, b: string]: C }",

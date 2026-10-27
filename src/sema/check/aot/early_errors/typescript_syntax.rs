@@ -1,6 +1,6 @@
 use crate::bind::Parent;
 use crate::check::errors_declaration_emit::is_reserved_word;
-use crate::check::spans::skip_trivia;
+use crate::check::spans::{is_word_at, skip_trivia};
 use crate::check::*;
 use bun_core::strings::contains_char;
 use smallvec::SmallVec;
@@ -36,6 +36,26 @@ impl Checker<'_, '_> {
                     }
                 }
             }
+        }
+    }
+
+    /// `declare a;`: TypeScript's parser reads the name `declare` and then another statement, and leaves it to whoever reads the declaration to
+    /// say that no `;` stands between them. `bun run` takes a decorated class for a declaration.
+    pub(super) fn check_end_of_declare(&mut self, file: FileId, e: ExprId) {
+        let hir = self.hir(file);
+        let (text, start) = (&hir.text, hir[e].pos as usize);
+        if hir.is_js
+            || !matches!(hir[e].kind, ExprKind::Ident(_))
+            || !is_word_at(text, start, b"declare")
+        {
+            return;
+        }
+        let end = start + b"declare".len();
+        let next = skip_trivia(text, end);
+        let is_ended = matches!(text.get(next), None | Some(b';' | b'}' | b'@'))
+            || (text.get(end..next)).is_some_and(|between| contains_char(between, b'\n'));
+        if !is_ended && !is_parenthesized(hir, e) {
+            self.early_grammar_error_at((file, next as u32, 0), 1005, &[Arg::Text(";")]);
         }
     }
 

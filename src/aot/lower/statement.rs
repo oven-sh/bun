@@ -2,13 +2,12 @@ mod declarations;
 mod loops;
 mod substitution;
 
-pub(in crate::lower) use substitution::{ConstantsNamedByValue, Printed, StatementsAround};
+pub(in crate::lower) use substitution::Printed;
 
-use bun_sema::bind::{Binding, ScopeId, SymbolId};
-use bun_sema::fold::{Decision, is_removed_where_never_run};
+use bun_sema::bind::ScopeId;
+use bun_sema::fold::is_removed_where_never_run;
 use bun_sema::hir::{
-    ExprId, ExprKind, Flags, FnBody, FnId, IdList, PatKind, StmtId, StmtKind, UnOp, VarDeclId,
-    VarKind,
+    ExprId, ExprKind, Flags, FnBody, FnId, IdList, PatKind, StmtId, StmtKind, VarKind,
 };
 
 use super::control::BreakTargetKind;
@@ -19,19 +18,11 @@ use crate::ir::BlockId;
 impl FunctionLowering<'_, '_, '_, '_, '_> {
     pub(crate) fn lower_statements(&mut self, statements: IdList<StmtId>) {
         let hir = self.file.hir;
-        let mut looked_ahead_to = 0;
         for index in 0..statements.len {
             let statement = hir.id_at(statements, index as usize);
             if self.file.decisions().is_dead_stmt(statement) {
                 self.hold_names_of_removed_statement(statement);
                 continue;
-            }
-            self.returned_declaration = None;
-            if index >= looked_ahead_to {
-                let rest = IdList::new(statements.start + index, statements.len - index);
-                let (returned, count) = self.file.find_returned_declaration(rest);
-                self.returned_declaration = returned;
-                looked_ahead_to = index + count;
             }
             if dispose::find_resource_declarations(hir, statement).is_some() {
                 let rest = IdList::new(statements.start + index, statements.len - index);
@@ -88,16 +79,21 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             | StmtKind::ExportStar { .. }
             | StmtKind::ExportAsNamespace(_) => {}
             StmtKind::Expr(expression) => {
+                let were_suspended = self.builder.suspend_records(true);
+                if self.file.is_left_by_transpiler(statement) {
+                    self.builder.suspend_records(were_suspended);
+                }
                 if !self.try_lower_exports_statement(expression) {
                     self.lower_expression_for_effect(expression);
                 }
+                self.builder.suspend_records(were_suspended);
             }
             StmtKind::Var(declarations) => {
                 let has_pattern = self.file.declares_pattern(statement);
                 let mut mapped = joined_declarations_end.unwrap_or(stmt.start);
                 for declaration in declarations.iter() {
                     self.lower_variable_declaration(declaration, mapped);
-                    if has_pattern && !self.file.is_replaced_by_its_value(declaration) {
+                    if has_pattern && !self.file.is_initializer_moved(declaration) {
                         mapped = self
                             .file
                             .last_mapped_declaration_position(declaration, mapped);
@@ -250,107 +246,59 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
 }
 
 impl FileLowering<'_, '_, '_, '_> {
-    // The last variable of a `let` or `const` statement, if Bun's transpiler prints its initializer in place of its only use.
-    fn find_variable_used_once(&self, statement: StmtId) -> Option<(VarDeclId, SymbolId)> {
-        let StmtKind::Var(declarations) = self.hir[statement].kind else {
-            return None;
-        };
-        let declaration = declarations.iter().last()?;
-        Some((declaration, self.find_symbol_used_once(declaration)?))
-    }
-
-    fn find_symbol_used_once(&self, declaration: VarDeclId) -> Option<SymbolId> {
-        let (hir, bound) = (self.hir, self.bound);
-        let decl = hir[declaration];
-        let is_plain = matches!(hir[decl.pat].kind, PatKind::Ident(_))
-            && matches!(
-                bound.variable_kind(hir, declaration),
-                VarKind::Let | VarKind::Const
-            )
-            && decl.init.is_some()
-            && !decl.flags.intersects(Flags::AMBIENT | Flags::EXPORT);
-        let Binding::Symbol(symbol) = bound.initialized_binding(decl.pat) else {
-            return None;
-        };
-        let is_substituted = is_plain
-            && self.scopes.is_used_once(symbol)
-            && !bound.is_visible_to_eval(symbol)
-            && bound.symbol_scope(symbol) != module::file_scope(self)
-            && !self.runs_as_written();
-        is_substituted.then_some(symbol)
-    }
-
-    fn reads_variable(&self, expression: ExprId, symbol: SymbolId) -> bool {
-        let name = self.skip_unprinted_syntax(expression);
-        matches!(self.hir[name].kind, ExprKind::Ident(_))
-            && self.bound.binding(name) == Binding::Symbol(symbol)
-    }
-
-    // `const a = f(); const b = a; return b;` is printed `return f();`, which has `f()` in tail position.
-    // The declaration of `a` with the position of the `return`, and how many statements have been looked at.
-    fn find_returned_declaration(
-        &self,
-        statements: IdList<StmtId>,
-    ) -> (Option<(VarDeclId, u32)>, u32) {
-        let hir = self.hir;
-        let Some((first, mut symbol)) = self.find_variable_used_once(hir.id_at(statements, 0))
-        else {
-            return (None, 1);
-        };
-        for index in 1..statements.len {
-            let statement = hir.id_at(statements, index as usize);
-            if !self.is_printed(statement) {
-                continue;
-            }
-            match hir[statement].kind {
-                StmtKind::Return(value)
-                    if value.is_some() && self.reads_variable(value, symbol) =>
-                {
-                    // The transpiler counts the uses in the statements behind the `return` too, which nothing here has counted.
-                    let mut later = (index + 1..statements.len)
-                        .map(|later| hir.id_at(statements, later as usize));
-                    if later.any(|later| self.decisions().is_dead_stmt(later)) {
-                        return (None, index);
-                    }
-                    return (Some((first, hir[statement].start)), index);
-                }
-                StmtKind::Var(declarations) if declarations.len() == 1 => {
-                    let Some((declaration, next)) = self.find_variable_used_once(statement) else {
-                        return (None, index);
-                    };
-                    if !self.reads_variable(hir[declaration].init, symbol) {
-                        return (None, index);
-                    }
-                    symbol = next;
-                }
-                _ => return (None, index),
-            }
-        }
-        (None, statements.len)
+    fn is_left_by_transpiler(&self, statement: StmtId) -> bool {
+        let position = self.hir[statement].start;
+        let transpiled = self.transpiled.as_ref();
+        transpiled.is_none_or(|transpiled| transpiled.has_statement_at(position))
     }
 
     // Whether Bun's transpiler prints anything for the statement.
     fn is_printed(&self, statement: StmtId) -> bool {
-        if self.decisions().is_dead_stmt(statement) {
-            return !is_removed_where_never_run(self.hir, statement);
-        }
         match self.hir[statement].kind {
             StmtKind::Interface(_) | StmtKind::TypeAlias(_) | StmtKind::Empty => false,
-            StmtKind::Expr(expression) => !self.is_dropped_when_unused(expression),
             StmtKind::Var(declarations) => {
                 let mut declarations = declarations.iter();
-                declarations.any(|declaration| !self.is_replaced_by_its_value(declaration))
+                declarations.any(|declaration| !self.is_initializer_moved(declaration))
             }
             StmtKind::Block(statements) => {
                 let mut inner = self.hir.ids(statements);
                 inner.any(|inner| self.is_printed(inner))
             }
-            StmtKind::If { test, yes, no } => {
-                !self.is_dropped_when_unused(test)
+            StmtKind::If { yes, no, .. } => {
+                self.is_left_by_transpiler(statement)
                     || self.is_printed(yes)
                     || (no.is_some() && self.is_printed(no))
             }
-            _ => true,
+            StmtKind::Fn(_)
+            | StmtKind::Class(_)
+            | StmtKind::Enum(_)
+            | StmtKind::Module(_)
+            | StmtKind::Import(_)
+            | StmtKind::ImportEquals(_)
+            | StmtKind::ExportNamed(_)
+            | StmtKind::ExportStar { .. }
+            | StmtKind::ExportDefault(_)
+            | StmtKind::ExportAssign(_)
+            | StmtKind::ExportAsNamespace(_)
+            | StmtKind::Directive { .. } => {
+                !self.decisions().is_dead_stmt(statement)
+                    || !is_removed_where_never_run(self.hir, statement)
+            }
+            StmtKind::Debugger
+            | StmtKind::Expr(_)
+            | StmtKind::Return(_)
+            | StmtKind::For { .. }
+            | StmtKind::ForIn { .. }
+            | StmtKind::ForOf { .. }
+            | StmtKind::While { .. }
+            | StmtKind::DoWhile { .. }
+            | StmtKind::Switch { .. }
+            | StmtKind::Try { .. }
+            | StmtKind::Throw(_)
+            | StmtKind::Break(_)
+            | StmtKind::Continue(_)
+            | StmtKind::Labeled { .. }
+            | StmtKind::With { .. } => self.is_left_by_transpiler(statement),
         }
     }
 
@@ -426,29 +374,31 @@ impl FileLowering<'_, '_, '_, '_> {
         let stmt = hir[statement];
         let last_of = |expression: ExprId| self.last_mapped_position(expression);
         let is_printed = |inner: StmtId| self.last_mapped_statement_position(inner).is_some();
+        if !self.is_printed(statement) {
+            return None;
+        }
         let position = match stmt.kind {
             StmtKind::Empty
             | StmtKind::Directive { .. }
             | StmtKind::Interface(_)
             | StmtKind::TypeAlias(_) => return None,
-            StmtKind::Expr(value) if self.is_removed_when_unused(value) => return None,
-            StmtKind::Expr(value) => last_of(self.skip_operators_dropped_when_unused(value)),
+            StmtKind::Expr(value) => last_of(value),
             StmtKind::Throw(value) => last_of(value),
             StmtKind::Return(value) => value.some().map_or(stmt.start, last_of),
             StmtKind::Var(declarations) => {
                 let mut declarations = declarations.iter().rev();
-                let last = declarations.find(|&last| !self.is_replaced_by_its_value(last))?;
+                let last = declarations.find(|&last| !self.is_initializer_moved(last))?;
                 self.last_mapped_declaration_position(last, stmt.start)
             }
             StmtKind::Fn(function) => return self.last_mapped_function_position(function),
-            StmtKind::If { test, yes, no } => match self.find_printed_condition(test) {
-                Some(true) => return self.last_mapped_statement_position(yes),
-                Some(false) => return self.last_mapped_statement_position(no.some()?),
-                None => match no.some().filter(|&no| is_printed(no)) {
-                    Some(no) => self.last_mapped_body_position(no, stmt.start),
-                    None if self.is_removed_when_unused(test) && !is_printed(yes) => return None,
-                    None => self.last_mapped_body_position(yes, last_of(test)),
-                },
+            // One branch is printed in place of the statement, or nothing.
+            StmtKind::If { yes, no, .. } if !self.is_left_by_transpiler(statement) => {
+                let branch = self.last_mapped_statement_position(yes);
+                return branch.or_else(|| self.last_mapped_statement_position(no.some()?));
+            }
+            StmtKind::If { test, yes, no } => match no.some().filter(|&no| is_printed(no)) {
+                Some(no) => self.last_mapped_body_position(no, stmt.start),
+                None => self.last_mapped_body_position(yes, last_of(test)),
             },
             StmtKind::For {
                 init,
@@ -522,19 +472,6 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    fn is_dropped_when_unused(&self, expression: ExprId) -> bool {
-        let inner = self.skip_type_syntax(expression);
-        if let ExprKind::Unary {
-            op: UnOp::Void | UnOp::Not,
-            operand,
-        } = self.hir[inner].kind
-        {
-            return self.is_dropped_when_unused(operand);
-        }
-        matches!(self.decisions().decision(inner), Decision::Constant(_))
-            || self.is_removed_when_unused(inner)
-    }
-
     fn declares_pattern(&self, statement: StmtId) -> bool {
         let hir = self.hir;
         let StmtKind::Var(declarations) = hir[statement].kind else {
@@ -578,7 +515,7 @@ impl FileLowering<'_, '_, '_, '_> {
             return None;
         };
         let mut declarations = declarations.iter().rev();
-        let last = declarations.find(|&last| !self.is_replaced_by_its_value(last))?;
+        let last = declarations.find(|&last| !self.is_initializer_moved(last))?;
         Some(self.last_mapped_declaration_position(last, hir[previous].start))
     }
 }

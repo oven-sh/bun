@@ -513,13 +513,15 @@ if (Bun.isMainThread) {
 }
 `;
 
-// Four Workers start and wait. A fifth keeps objects until it catches a RangeError, and goes on holding them. Then the four keep lists, objects with many
-// properties, typed arrays or long texts every millisecond.
+// Some Workers start and wait, four unless the second argument says how many. One more keeps objects until it catches a RangeError, and goes on holding them.
+// Then the others keep lists, objects with many properties, typed arrays, long texts and so on every millisecond.
 const workersThatKeepListsRunOutOfRoom = `declare var self: Worker;
 type Link = { next: Link | null; a: number; b: number };
 let head: Link | null = null;
 const keep: unknown[] = [];
 const numbers = Array.from({ length: 6000 }, (_, i) => i);
+const json = JSON.stringify(Array.from({ length: 2000 }, (_, i) => ({ id: i, name: "n" + i, tags: ["a", String(i)], nested: { x: i, y: [i, i + 1] } })));
+const count = Number(process.argv[3] ?? 4);
 function takesMany(...all: number[]) {
   return all;
 }
@@ -541,6 +543,32 @@ function keepMore(kind: string) {
     case "typed arrays":
       keep.push(new Uint8Array(48000), new Float64Array(6000), new ArrayBuffer(30000));
       break;
+    case "maps and sets": {
+      const map = new Map<number, number>();
+      const set = new Set<number>();
+      for (let i = 0; i < 3000; i++) {
+        map.set(i, i);
+        set.add(i);
+      }
+      keep.push(map, set);
+      break;
+    }
+    case "buffers":
+      keep.push(Buffer.alloc(48000), Buffer.from(json), new TextEncoder().encode(json));
+      break;
+    case "copies of what a text holds":
+      keep.push(structuredClone(JSON.parse(json)));
+      break;
+    case "lists of arguments and of keys":
+      keep.push(
+        (function (..._: number[]) {
+          arguments[0] = keep.length;
+          return arguments;
+        })(...numbers),
+        Object.keys(numbers),
+        Object.entries(numbers.slice(0, 500)),
+      );
+      break;
     default:
       keep.push("x".repeat(50000) + keep.length, numbers.join(","), String(keep.length).padStart(30000, "y").toUpperCase());
   }
@@ -552,13 +580,13 @@ if (Bun.isMainThread) {
   };
   const ends: string[] = [];
   const workers: Worker[] = [];
-  for (let i = 0; i < 4; i++) {
+  for (let i = 0; i < count; i++) {
     const worker = await start();
     let message = "no error";
     worker.addEventListener("error", event => (message = String((event as ErrorEvent).message).slice(0, 25)));
     worker.addEventListener("close", event => {
       ends.push(message + ", code " + (event as unknown as { code: number }).code);
-      if (ends.length < 4) return;
+      if (ends.length < count) return;
       console.log(ends.join("\\n"));
       process.exit(0);
     });
@@ -907,10 +935,40 @@ describe.concurrent("Workers of a compiled program within a limit on the address
     240_000,
   );
 
+  test
+    .skipIf(!isLinux || isASAN)
+    .each([
+      "lists",
+      "lists that built-ins make",
+      "typed arrays",
+      "long texts",
+      "maps and sets",
+      "buffers",
+      "copies of what a text holds",
+      "lists of arguments and of keys",
+    ])(
+    "24 Workers that keep %s find no room at once, each gets its error, and the program goes on",
+    async kind => {
+      const places = ["1", "33", "65", "97"];
+      const results = await runEach(
+        places.map(place => ({ limitInKB: 2048 * 1024, env: { BUN_JSC_seedOfVMRandomForFuzzer: place } })),
+        workersThatKeepListsRunOutOfRoom,
+        kind,
+        "24",
+      );
+      const stdout = "RangeError: Out of memory, code 1\n".repeat(24);
+      expect(results.map((result, i) => ({ place: places[i], ...result }))).toEqual(
+        places.map(place => ({ place, stdout, stderr: "", exitCode: 0 })),
+      );
+    },
+    240_000,
+  );
+
   test.skipIf(!isLinux || isASAN)(
     "a program that keeps lists until there is no room catches a RangeError, twice",
     async () => {
-      const limits = [512, 768, 1024, 2048].map(megabytes => megabytes * 1024);
+      // What the program first needs when it ends, it needs where no room is left. Whether there is some left differs from run to run.
+      const limits = [512, 768, 1024, 2048].flatMap(megabytes => Array.from({ length: 3 }, () => megabytes * 1024));
       const results = await runWithinEach(limits, keepsListsUntilThereIsNoRoom);
       expect(results.map((result, i) => ({ limit: limits[i], ...result }))).toEqual(
         limits.map(limit => ({ limit, stdout: "[ true, true ] [ true, true ]\n", stderr: "", exitCode: 0 })),

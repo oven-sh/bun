@@ -40,6 +40,27 @@ pub fn describe_difference_of_runtime(description: &[u8]) -> Option<Vec<u8>> {
     (length > 0).then_some(sentence)
 }
 
+/// What the engine's parser says of the literal `/pattern/flags`, for which it refuses the file that holds it. `None`: nothing.
+pub fn describe_regexp_syntax_error(pattern: &[u8], flags: &[u8]) -> Option<Vec<u8>> {
+    if !has_compiler() {
+        return None;
+    }
+    let mut sentence = vec![0u8; 128];
+    // SAFETY: the engine reads the bytes of the two slices and writes at most `sentence.len()`.
+    let length = unsafe {
+        Bun__AOT__describeRegExpSyntaxError(
+            pattern.as_ptr(),
+            pattern.len(),
+            flags.as_ptr(),
+            flags.len(),
+            sentence.as_mut_ptr(),
+            sentence.len(),
+        )
+    };
+    sentence.truncate(length);
+    (length > 0).then_some(sentence)
+}
+
 /// Makes the addresses in `image` those of an image whose first byte the loader puts at `address`.
 pub fn relocate_image(image: &mut [u8], address: u64) {
     // SAFETY: the engine reads and writes `image.len()` bytes from the pointer, which the exclusive borrow covers.
@@ -53,6 +74,14 @@ unsafe extern "C" {
     fn Bun__AOT__describeDifferenceOfRuntime(
         description: *const u8,
         size: usize,
+        message: *mut u8,
+        capacity: usize,
+    ) -> usize;
+    fn Bun__AOT__describeRegExpSyntaxError(
+        pattern: *const u8,
+        pattern_size: usize,
+        flags: *const u8,
+        flags_size: usize,
         message: *mut u8,
         capacity: usize,
     ) -> usize;

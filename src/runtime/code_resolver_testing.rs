@@ -493,7 +493,7 @@ impl GraphDescriber<'_, '_> {
                 ("prefix", self.text(prefix)),
                 ("suffix", self.text(suffix)),
             ],
-            ImportSpecifier::Unknown => vec![("specifier", Json::Null)],
+            ImportSpecifier::OneOf(_) | ImportSpecifier::Unknown => vec![("specifier", Json::Null)],
         };
         let external_kind = match answer {
             CodeAnswer::External { kind, .. } => debug_name(&kind),

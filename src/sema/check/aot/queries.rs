@@ -52,6 +52,10 @@ pub struct Queries<'c, 'p, 's> {
     flow_analysis_was_disabled: Vec<FileId>,
     had_run_out_of_stack: bool,
     pub(super) infers_nothing_from_use: bool,
+    answers_nothing: bool,
+    /// A question since `note_idle` ran out of stack. What it computed on the way isn't kept, so the questions about the
+    /// code nested in what it was about would each compute most of it again, with less stack.
+    lacks_stack: bool,
 }
 
 #[derive(Default)]
@@ -68,7 +72,7 @@ pub(super) struct Memo<'c> {
     member_accesses: FxHashMap<ExprId, Result<MemberLookup, GaveUp>>,
     resolved_calls: FxHashMap<ExprId, Result<Option<CallTarget>, GaveUp>>,
     contextual_types: FxHashMap<ExprId, Result<Option<TypeId>, GaveUp>>,
-    literal_contexts: FxHashMap<ExprId, TypeId>,
+    literal_contexts: FxHashMap<ExprId, Option<TypeId>>,
     pub(super) unwritten_forms: FxHashMap<(FileId, TypeNodeId), GaveUp>,
     pub(super) alias_forms: FxHashMap<Sym, AliasForm>,
     pub(super) reference_index: Option<ReferenceIndex<'c>>,
@@ -141,6 +145,8 @@ impl<'p, 's> Checker<'p, 's> {
             flow_analysis_was_disabled,
             had_run_out_of_stack,
             infers_nothing_from_use: false,
+            answers_nothing: false,
+            lacks_stack: false,
         };
         let answer = then(&mut queries);
         let memo_of_checker = std::mem::take(&mut queries.kept);
@@ -181,7 +187,15 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
 
     pub fn note_idle(&mut self) {
         debug_assert!(self.depth == 0);
+        self.lacks_stack = false;
         self.c.idle_between_statements();
+    }
+
+    /// For a file that the build refuses. An answer about code that is nested too deeply is given up on for lack of stack
+    /// and not kept, so each level would ask about all the levels below it again.
+    pub fn answer_nothing_from_now_on(&mut self) {
+        self.answers_nothing = true;
+        self.infers_nothing_from_use = true;
     }
 
     pub fn find_chain_longer_than(&mut self, maximum: u64) -> Option<u32> {
@@ -202,7 +216,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             };
             links[index] = links_of_base + link;
             if u64::from(links[index]) > maximum {
-                self.infers_nothing_from_use = true;
+                self.answer_nothing_from_now_on();
                 return Some(expression.pos);
             }
         }
@@ -234,6 +248,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
                 enclosing.flow_analysis_disabled,
             ),
         };
+        self.lacks_stack |= own.ran_out_of_stack;
         own.reason()
     }
 
@@ -243,6 +258,10 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
     ) -> Result<T, GaveUp> {
         debug_assert!(self.c.stack.is_empty());
         let is_outermost = self.depth == 0;
+        if self.answers_nothing || self.lacks_stack {
+            self.note_gave_up(GaveUp::Unresolved, is_outermost);
+            return Err(GaveUp::Unresolved);
+        }
         let enclosing = self.take_cut_state();
         self.depth += 1;
         let computed = compute(self);
@@ -629,11 +648,12 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             return false;
         };
         self.c
-            .push_contextual_type(self.file, literal, Some(expected), true);
+            .push_contextual_type(self.file, literal, expected, true);
         true
     }
 
-    fn literal_context(&mut self, literal: ExprId) -> Option<TypeId> {
+    /// What is expected of `literal`, which may be nothing. `None`: that isn't known for good.
+    fn literal_context(&mut self, literal: ExprId) -> Option<Option<TypeId>> {
         if let Some(&known) = self.memo.literal_contexts.get(&literal) {
             return Some(known);
         }
@@ -641,16 +661,15 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
             return None;
         }
         let is_pushed = self.push_enclosing_literal_context(literal);
-        let expected = self
-            .c
-            .contextual_type(self.file, literal, ContextFlags::empty());
+        let expected =
+            self.c
+                .contextual_type_or_unresolved(self.file, literal, ContextFlags::empty());
         if is_pushed {
             self.c.pop_contextual_type();
         }
-        let expected = expected?;
         let is_final = self.c.flow_analysis_disabled.is_empty()
             && !self.c.ran_out_of_stack.get()
-            && expected != TypeId::UNRESOLVED;
+            && expected != Some(TypeId::UNRESOLVED);
         if !is_final {
             return None;
         }

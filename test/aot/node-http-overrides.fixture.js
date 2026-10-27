@@ -111,7 +111,17 @@ const patches = {
     return () => { Object.defineProperty(http.IncomingMessage.prototype, "url", before); };
   },
   newMethodOnPrototype() { http.ServerResponse.prototype.extraMethod = function () {}; return () => { delete http.ServerResponse.prototype.extraMethod; }; },
-  nextTick: () => wrap(process, "nextTick", "patched"),
+  // How many ticks a module asks for is its own affair. That it asks the function which the program has stored is not.
+  nextTick() {
+    const original = process.nextTick;
+    let isCalled = false;
+    process.nextTick = function (...list) {
+      if (!isCalled) say("patched nextTick", typeof list[0]);
+      isCalled = true;
+      return original.apply(this, list);
+    };
+    return () => { process.nextTick = original; };
+  },
   readableResume: () => wrap(Readable.prototype, "resume", "patched"),
   duplexResume: () => wrap(Duplex.prototype, "resume", "patched duplex"),
   netSocketResume: () => wrap(net.Socket.prototype, "resume", "patched net"),

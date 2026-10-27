@@ -258,13 +258,39 @@ function openObjects(chunks: Chunk[], members: Map<string, ArchiveMember[]>, fil
   return { objects, nameInSymbolMap, unreadReasons };
 }
 
+function groupObjectsByNameInSymbolMap({ objects, nameInSymbolMap }: InputObjects): Map<string, CoffObject[]> {
+  const objectsNamed = new Map<string, CoffObject[]>();
+  for (const [name, nameInMap] of nameInSymbolMap) {
+    const object = objects.get(name);
+    if (object === undefined) continue;
+    const list = objectsNamed.get(nameInMap);
+    if (list === undefined) objectsNamed.set(nameInMap, [object]);
+    else list.push(object);
+  }
+  return objectsNamed;
+}
+
 function tieSymbolsToChunks(
   chunks: Chunk[],
   placedNodes: PlacedNodes,
   symbols: MapSymbol[],
-  { objects, nameInSymbolMap }: InputObjects,
+  inputs: InputObjects,
   alternateNames: Set<string>,
 ): SymbolTies {
+  const { objects, nameInSymbolMap } = inputs;
+  const objectsNamed = groupObjectsByNameInSymbolMap(inputs);
+  // A symbol at the end of its section has the address of the chunk that follows.
+  const isDefinedOutside = (chunk: Chunk, symbol: MapSymbol) => {
+    let isDefined = false;
+    for (const object of objectsNamed.get(symbol.object.toLowerCase()) ?? []) {
+      for (const index of object.byName.get(symbol.name) ?? []) {
+        const section = object.sections[object.symbolSection[index]! - 1]!;
+        if (object.symbolValue[index] === 0 && section.size === chunk.size) return false;
+        isDefined = true;
+      }
+    }
+    return isDefined;
+  };
   const placed = new Map<CoffObject, Map<number, number>>();
   const placedSectionsOf = (object: CoffObject) => {
     let sections = placed.get(object);
@@ -281,6 +307,7 @@ function tieSymbolsToChunks(
     const node = nodeAt(placedNodes, symbol.address);
     if (node < 0) continue;
     const chunk = chunks[node]!;
+    if (symbol.address === chunk.address && isDefinedOutside(chunk, symbol)) continue;
     if (symbol.isStatic) {
       const key = symbol.object.toLowerCase() + "\0" + symbol.name;
       const list = staticNodes.get(key);

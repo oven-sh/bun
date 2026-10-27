@@ -51,6 +51,7 @@ const countMappedBytes = (file: Buffer) => getMappedSegments(file).reduce((sum, 
 
 // What an executable maps whatever its program is, on Linux x64 with glibc. These bounds only go down.
 const mostMappedBytes: Record<string, number> = { "": 68_440_000, "--trim": 27_800_000 };
+const mostBytesOfCompiler = 22_480_000;
 
 const importsItsArguments = `
   import { join } from "node:path";
@@ -75,6 +76,12 @@ describe.skipIf(!canTrim)("bun build --compile --aot", () => {
     const { totalBytes, removedBytes } = measureFeature(feature);
     expect(totalBytes).toBeGreaterThan(0);
     expect(removedBytes / totalBytes).toBeGreaterThanOrEqual(minimumShare);
+  });
+
+  test.skipIf(!isGlibc || process.arch !== "x64")("the compiler takes no more bytes of Bun than it did", () => {
+    const { totalBytes } = measureFeature("ImageCompiler");
+    console.log("the compiler takes", totalBytes, "bytes");
+    expect(totalBytes).toBeLessThanOrEqual(mostBytesOfCompiler);
   });
 
   describe.skipIf(!!unsupported).each([[[] as string[]], [["--trim"]]])("with %j", flags => {

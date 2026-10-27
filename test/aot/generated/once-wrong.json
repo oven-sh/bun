@@ -76,6 +76,28 @@
     "spread-of-literal null function hot given-a-number-by-key-then-a-function-and-deleted, alone.",
     "spread-of-literal null method hot given-a-number-by-key-then-a-function-and-deleted, alone."
   ],
+  "a member is given a value that the build knows nothing about": [
+    "duplicate-key boolean function hot given-by-reflection, alone.",
+    "duplicate-key boolean function twice given-by-key, alone.",
+    "duplicate-key boolean method once given-by-key, alone.",
+    "duplicate-key boolean method twice given-by-reflection, alone.",
+    "duplicate-key number arrow hot given-by-reflection, alone.",
+    "duplicate-key number arrow twice given-by-key, alone.",
+    "spread boolean function twice given-by-reflection, alone.",
+    "spread null arrow hot given-by-key, alone.",
+    "spread number arrow twice given-by-reflection, alone.",
+    "spread object function hot given-by-key, alone.",
+    "spread object method hot given-by-reflection, alone.",
+    "spread object method twice given-by-key, alone.",
+    "spread-of-frozen null method hot given-by-key, alone.",
+    "spread-of-frozen number method twice given-by-reflection, alone.",
+    "spread-of-literal boolean arrow hot given-by-reflection, alone.",
+    "spread-of-literal boolean arrow twice given-by-key, alone.",
+    "spread-of-literal number function hot given-by-key, alone.",
+    "spread-of-literal number method hot given-by-reflection, alone.",
+    "spread-of-literal number method twice given-by-key, alone.",
+    "spread-of-literal object function twice given-by-reflection, alone."
+  ],
   "a property that typed code has just stored is there": [
     "over-a-literal parsed-fractions filled-where-has-own-finds-nothing closure, alone.",
     "over-a-literal parsed-numbers-then-texts filled-where-in-finds-nothing method, alone.",

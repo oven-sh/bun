@@ -5,7 +5,12 @@ import { join, resolve } from "node:path";
 import { BuildError } from "../error.ts";
 import { isBitcode } from "./binary-reader.ts";
 import { checkBuiltinUses, readBuiltinUses } from "./builtin-uses.ts";
-import { checkDeclaredUses, findUsedFeaturesWithoutGuard } from "./declared-uses.ts";
+import {
+  checkDeclaredUses,
+  findFeaturesThatEntryPointsNeed,
+  findUsedFeaturesWithoutGuard,
+  type DeclaredUseInput,
+} from "./declared-uses.ts";
 import {
   findCFunctionEntryPoints,
   findCxxFunctionEntryPoints,
@@ -25,6 +30,7 @@ import type { Link, Linker, LinkerFormat, LinkName, LinkRequest, SectionOrder } 
 import { partition } from "./partition.ts";
 import {
   checkRanges,
+  entryPointNeedsOf,
   fillOnlyRanges,
   linkedImageOf,
   moduleTextRanges,
@@ -306,17 +312,18 @@ function analyze(link: Link, session: LinkSession): Analysis {
     isCode: output => format.isCode(output),
   });
   stopwatch.lap("partition");
-  const context: ReportContext = { ...unpartitioned, partition: result, entryPoints: entries.entryPoints };
-  ensureNoFailures(result.failures, context);
-  const declaredUseFailures = checkDeclaredUses({
+  const partitioned: ReportContext = { ...unpartitioned, partition: result, entryPoints: entries.entryPoints };
+  ensureNoFailures(result.failures, partitioned);
+  const declared: DeclaredUseInput = {
     graph: reading.graph,
     model,
     uses,
     entryPoints: entries.entryPoints,
     partition: result,
-  });
+  };
+  ensureNoFailures(checkDeclaredUses(declared), partitioned);
+  const context: ReportContext = { ...partitioned, neededFeatures: findFeaturesThatEntryPointsNeed(declared) };
   stopwatch.lap("declared uses");
-  ensureNoFailures(declaredUseFailures, context);
   return { reading, entries, partition: result, context };
 }
 
@@ -341,6 +348,7 @@ function encodeTrimTable(
       icuPackages: packages,
       icuLanguages: languages,
       moduleTexts,
+      entryPointNeeds: entryPointNeedsOf(analysis.reading.graph, analysis.context.neededFeatures ?? new Map()),
     }),
   );
 }
@@ -362,9 +370,11 @@ function estimateRoom(first: Link, analysis: Analysis, order: SectionOrder, sess
   const sets = new Set([...partition.groups, ...unordered].map(({ set }) => set));
   const openImage = () => linkedImageOf(graph.format, first.executable);
   const moduleTextCount = readBuiltinModuleTexts(graph, session.format.builtinModulesOutput, openImage).length;
-  const rangeCount = rangeCountMargin * (orderedRuns.size + unordered.length) + 2 * moduleTextCount;
+  const entryPointCount = analysis.context.neededFeatures?.size ?? 0;
+  const rangeCount = rangeCountMargin * (orderedRuns.size + unordered.length) + 2 * moduleTextCount + entryPointCount;
   let bytes = encodeTrimTable(analysis, [], findIcuPackages(first, analysis, session), [], session).length;
-  bytes += Math.ceil(recordBytes("ranges") * rangeCount) + recordBytes("moduleTexts") * moduleTextCount;
+  bytes +=
+    Math.ceil(recordBytes("ranges") * (rangeCount - entryPointCount)) + recordBytes("moduleTexts") * moduleTextCount;
   for (const set of sets) bytes += recordBytes("featureSets") + recordBytes("setMembers") * partition.sets[set]!.length;
   return roomFor(Math.max(bytes, removedRangeListBytes(Math.ceil(rangeCount))));
 }
@@ -473,7 +483,11 @@ function linkUntilTableFits(plan: SecondLinkPlan, session: LinkSession): Layout 
     const table = encodeTrimTable(analysis, ranges, icuData, moduleTexts, session);
     stopwatch.lap("ranges and table");
     // A module text splits at most one range in two.
-    const neededRoom = Math.max(table.length, removedRangeListBytes(ranges.length + 2 * moduleTexts.length));
+    const listedEntryPoints = analysis.context.neededFeatures?.size ?? 0;
+    const neededRoom = Math.max(
+      table.length,
+      removedRangeListBytes(ranges.length + 2 * moduleTexts.length + listedEntryPoints),
+    );
     if (neededRoom <= room) {
       return {
         link,

@@ -1013,8 +1013,7 @@ impl<'c, 'p, 's> Queries<'c, 'p, 's> {
         if function == FnId::NONE || hir[parameter].flags.contains(Flags::REST) {
             return TypeId::ANY;
         }
-        let mut parameters = hir[function].params.iter();
-        let Some(index) = parameters.position(|other| other == parameter) else {
+        let Some(index) = hir[function].params.position_of(parameter.idx()) else {
             return TypeId::ANY;
         };
         let Some(callee) = find_name_of_function(hir, bound, function) else {

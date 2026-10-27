@@ -1,4 +1,4 @@
-import { entriesById, featuresWithDeclaredUse, guardFeatureOf } from "./builtin-uses.ts";
+import { entriesById, featuresUsedWhateverTheCall, featuresWithDeclaredUse, guardFeatureOf } from "./builtin-uses.ts";
 import { sortedUnique } from "./entry-points.ts";
 import { featureNamed } from "./features.ts";
 import { findEdge, propagateFeatureSets, reverseEdges, type SectionGraph } from "./graph.ts";
@@ -10,6 +10,7 @@ import {
   type EntryPoint,
   type FeatureModel,
   type FeatureName,
+  type NeededFeatures,
   type Partition,
 } from "./types.ts";
 
@@ -64,17 +65,100 @@ export function findWayToGuard(search: GuardSearch, from: number, feature: numbe
   return [];
 }
 
-export function guardedFeaturesReachedFrom(input: DeclaredUseInput): FeatureSets {
-  const { graph, partition } = input;
+function featuresReachedThrough(
+  guards: EntryPoint[],
+  { graph, partition }: GuardSearch,
+  edgesNotTaken: Uint8Array,
+): FeatureSets {
   const seeds = new Map<number, number[]>();
-  for (const { guard, feature } of guardsThatCount(input)) {
+  for (const { guard, feature } of guards) {
     const features = seeds.get(guard);
     if (features === undefined) seeds.set(guard, [feature]);
     else if (!features.includes(feature)) features.push(feature);
   }
   for (const features of seeds.values()) features.sort((a, b) => a - b);
-  const reversed = reverseEdges(graph, partition.edgeKind);
+  const reversed = reverseEdges(graph, edgesNotTaken);
   return propagateFeatureSets(reversed, seeds, new Uint8Array(reversed.successors.length), partition.isRetained);
+}
+
+export function guardedFeaturesReachedFrom(input: DeclaredUseInput): FeatureSets {
+  return featuresReachedThrough(guardsThatCount(input), input, input.partition.edgeKind);
+}
+
+const intersectionOf = (a: Set<number>, b: Set<number>) => new Set([...a].filter(member => b.has(member)));
+
+interface FeaturesBehindPointers {
+  own: Set<number>;
+  usedWhateverTheCall: Set<number>;
+  used: Set<number>;
+}
+
+// What every pointer to an entry point of a built-in stands for. A pointer that is no built-in's stands for the feature of its guard.
+function collectFeaturesBehindPointers({
+  model,
+  uses,
+  entryPoints,
+}: DeclaredUseInput): Map<number, FeaturesBehindPointers> {
+  const entries = entriesById(uses);
+  const indexesOf = (names: FeatureName[]) => new Set(names.map(name => featureNamed(model, name).index));
+  const isEntryOfBuiltin = new Set(
+    entryPoints.filter(record => record.builtin !== undefined).map(({ entry }) => entry),
+  );
+  const featuresOf = new Map<number, FeaturesBehindPointers>();
+  for (const { entry, feature, builtin } of entryPoints) {
+    if (!isEntryOfBuiltin.has(entry)) continue;
+    const declaration = builtin === undefined ? undefined : entries.get(builtin);
+    const usedWhateverTheCall =
+      declaration === undefined ? new Set([feature]) : indexesOf(featuresUsedWhateverTheCall(declaration));
+    const used = declaration === undefined ? new Set([feature]) : new Set(declaredFeatures(model, declaration));
+    const others = featuresOf.get(entry);
+    if (others === undefined) featuresOf.set(entry, { own: new Set([feature]), usedWhateverTheCall, used });
+    else {
+      others.own.add(feature);
+      others.usedWhateverTheCall = intersectionOf(others.usedWhateverTheCall, usedWhateverTheCall);
+      others.used = intersectionOf(others.used, used);
+    }
+  }
+  return featuresOf;
+}
+
+// A guard that aborts does not ask whether its feature is there: the built-ins table answers for it, with the features that a program
+// keeps by naming the built-in. A program that has the name only at run time keeps none of them. So the pointer of the built-in has to
+// be refused where one of them is gone. The result has the entry points that come to such a guard, and the features of those guards.
+// A guard lets through to a feature that is there, so the way to a guard leads through other guards too.
+export function findFeaturesThatEntryPointsNeed(input: DeclaredUseInput): Map<number, NeededFeatures> {
+  const { graph, model, entryPoints, partition } = input;
+  const foldedEntries = new Set(partition.foldedEntryPoints.map(record => record.entry));
+  const abortingGuards = entryPoints.filter(
+    ({ guard, entry, stub }) =>
+      stub === "Abort" &&
+      !foldedEntries.has(entry) &&
+      partition.isRetained[guard] === 0 &&
+      partition.edgeKind[findEdge(graph, guard, entry)] !== EdgeKind.Soft,
+  );
+  const reached = featuresReachedThrough(
+    abortingGuards,
+    input,
+    partition.edgeKind.map(kind => Number(kind === EdgeKind.Soft)),
+  );
+  const programFeatures = new Set(
+    model.features.filter(feature => feature.enteredFrom === "program").map(feature => feature.index),
+  );
+  const needed = new Map<number, NeededFeatures>();
+  for (const [entry, { own, usedWhateverTheCall, used }] of collectFeaturesBehindPointers(input)) {
+    if (foldedEntries.has(entry) || partition.isRetained[entry] !== 0) continue;
+    const leavesWith = partition.sets[partition.exactSetOf[entry]!]!;
+    const features = reached.sets[reached.setOf[entry]!]!.filter(
+      feature => used.has(feature) && programFeatures.has(feature) && !leavesWith.includes(feature),
+    );
+    if (features.length === 0) continue;
+    needed.set(entry, {
+      own: [...own].sort((a, b) => a - b),
+      always: features.filter(feature => usedWhateverTheCall.has(feature)),
+      sometimes: features.filter(feature => !usedWhateverTheCall.has(feature)),
+    });
+  }
+  return needed;
 }
 
 function declaredFeatures(model: FeatureModel, entry: BuiltinEntry): number[] {

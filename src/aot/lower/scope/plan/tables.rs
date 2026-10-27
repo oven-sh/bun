@@ -59,7 +59,6 @@ pub(super) fn build_analysis(context: &Context<'_, '_>, parts: Parts) -> ScopeAn
         lexical_owners: parts.lexical_owners,
         arguments_objects: parts.arguments_objects,
         initialized_holders,
-        use_counts: walk.use_counts.clone(),
         symbols_read_by_enums: walk.symbols_read_by_enums.clone(),
         symbols_in_export_lists: walk.symbols_in_export_lists.clone(),
         symbols_named_elsewhere_only_in_unprinted_statements: named_elsewhere_only_there

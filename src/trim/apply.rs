@@ -391,20 +391,20 @@ fn push_removed_range(
     }
 }
 
-fn collect_removed_ranges(
-    planned_ranges: &[PlannedRange],
-    state_address: u64,
-) -> Vec<RemovedRange> {
-    let mut ascending: Vec<&PlannedRange> = planned_ranges.iter().collect();
-    ascending.sort_by_key(|planned| planned.range.start);
+fn collect_removed_ranges(plan: &TrimPlan, state_address: u64) -> Vec<RemovedRange> {
+    let removed = plan
+        .ranges
+        .iter()
+        .map(|planned| (planned.range, planned.named_feature));
+    let refused = plan
+        .refused_entry_points
+        .iter()
+        .map(|entry| (entry.range, entry.named_feature));
+    let mut ascending: Vec<(AddressRange, Feature)> = removed.chain(refused).collect();
+    ascending.sort_by_key(|(range, _)| range.start);
     let mut records = Vec::with_capacity(ascending.len());
-    for planned in ascending {
-        push_removed_range(
-            &mut records,
-            planned.range,
-            planned.named_feature,
-            state_address,
-        );
+    for (range, feature) in ascending {
+        push_removed_range(&mut records, range, feature, state_address);
     }
     records
 }
@@ -414,7 +414,7 @@ fn write_removed_ranges(
     plan: &TrimPlan,
     sections: TrimSections,
 ) -> Result<(), TrimInternalError> {
-    let records = collect_removed_ranges(&plan.ranges, sections.state.start);
+    let records = collect_removed_ranges(plan, sections.state.start);
     let table = editor
         .bytes_at_mut(sections.table)
         .ok_or(TrimInternalError::RangeOutsideImage)?;
@@ -453,7 +453,7 @@ mod tests {
 
     use super::*;
     use crate::icu_data::tests::package_of;
-    use crate::model::{Decision, PlannedIcuPackage};
+    use crate::model::{Decision, PlannedIcuPackage, RefusedEntryPoint};
     use crate::table::TRIMMED_MAGIC;
 
     const EM_X86_64: u16 = 62;
@@ -726,6 +726,7 @@ mod tests {
                 requirements: Vec::new(),
             },
             ranges,
+            refused_entry_points: Vec::new(),
             icu_packages: Vec::new(),
             keeps_table: false,
         }
@@ -1109,12 +1110,12 @@ mod tests {
 
     #[test]
     fn adjacent_ranges_of_one_feature_merge() {
-        let ranges = [
+        let plan = create_plan(vec![
             planned(0x4000, 0x4100, false, false, named_feature()),
             planned(0x4100, 0x4200, false, false, named_feature()),
             planned(0x4200, 0x4300, false, false, unused_feature()),
-        ];
-        let records = collect_removed_ranges(&ranges, STATE_ADDRESS);
+        ]);
+        let records = collect_removed_ranges(&plan, STATE_ADDRESS);
         assert_eq!(records.len(), 2);
         assert_eq!(records[0].start, 0x3000);
         assert_eq!(records[0].size, 0x200);
@@ -1123,11 +1124,11 @@ mod tests {
 
     #[test]
     fn separate_ranges_of_one_feature_stay_separate() {
-        let ranges = [
+        let plan = create_plan(vec![
             planned(0x4000, 0x4100, false, false, named_feature()),
             planned(0x4101, 0x4200, false, false, named_feature()),
-        ];
-        let records = collect_removed_ranges(&ranges, STATE_ADDRESS);
+        ]);
+        let records = collect_removed_ranges(&plan, STATE_ADDRESS);
         assert_eq!(records.len(), 2);
         assert_eq!(feature_at(&records, 0x4100), None);
     }
@@ -1135,14 +1136,14 @@ mod tests {
     #[test]
     fn record_stops_at_size_limit() {
         let limit = u64::from(u32::MAX);
-        let ranges = [planned(
+        let plan = create_plan(vec![planned(
             0x4000,
             0x4000 + limit + 1,
             false,
             false,
             named_feature(),
-        )];
-        let records = collect_removed_ranges(&ranges, STATE_ADDRESS);
+        )]);
+        let records = collect_removed_ranges(&plan, STATE_ADDRESS);
         assert_eq!(records.len(), 2);
         assert_eq!(records[0].size, u32::MAX);
         assert_eq!(records[1].size, 1);
@@ -1305,6 +1306,29 @@ mod tests {
                 .iter()
                 .all(|byte| *byte == 0)
         );
+    }
+
+    #[test]
+    fn refused_entry_point_is_recorded_and_keeps_its_bytes() {
+        let mut executable = toy_elf(EM_X86_64, TABLE_BYTES);
+        let entry = range(0x5000, 0x5040);
+        let bytes = read_at(&mut executable, entry);
+        let plan = TrimPlan {
+            refused_entry_points: vec![RefusedEntryPoint {
+                range: entry,
+                named_feature: named_feature(),
+            }],
+            ..two_record_plan()
+        };
+        apply(&mut executable, &plan).unwrap();
+        let records = read_records(&mut executable, TABLE_BYTES);
+        assert_eq!(records.len(), 3);
+        assert!(records.is_sorted_by_key(|record| record.start));
+        assert_eq!(feature_at(&records, 0x4fff), None);
+        assert_eq!(feature_at(&records, 0x5000), Some(named_feature().index()));
+        assert_eq!(feature_at(&records, 0x503f), Some(named_feature().index()));
+        assert_eq!(feature_at(&records, 0x5040), None);
+        assert_eq!(read_at(&mut executable, entry), bytes);
     }
 
     #[test]

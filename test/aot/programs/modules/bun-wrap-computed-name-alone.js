@@ -1,6 +1,6 @@
 // A program that names "bun:wrap" only by names computed at run time: the build sees nobody who names the module, so it is not in the executable. Every loader refuses it as it refuses any other module of Bun's that was left out, and nothing is interpreted.
 import { createRequire } from "node:module";
-const name = "bun:" + ["wr", "ap"].join("");
+const name = "bun:" + "wr ap".split(" ").join("");
 async function attempt(what, load) {
   try {
     console.log(what, typeof (await load()).__toESM);

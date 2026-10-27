@@ -109,7 +109,7 @@ console.log(JSON.stringify([load("./lib.cjs").name, load("./lib").name, load("./
   "computed-import.mjs": {
     source: `import "./esm.mjs";
 import "./lib.cjs";
-const names = [["./esm", ".mjs"], ["./lib", ".cjs"]].map(parts => parts.join(""));
+const names = ["./esm .mjs", "./lib .cjs"].map(text => text.split(" ").join(""));
 ${answerOf}
 console.log(JSON.stringify(await Promise.all(names.map(name => answerOf(() => import(name))))));`,
     prints: [refusal, refusal],

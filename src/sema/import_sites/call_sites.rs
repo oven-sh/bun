@@ -1,9 +1,10 @@
+use super::alternatives::{WrittenNames, find_alternatives};
 use super::made_requires::{
     OwnRequire, StepsLeft, Text, find_imported_export, find_own_require, follow_settled_bindings,
     follow_to_own_require, holds_import_meta_require, may_be_modified, may_require_get_members,
     settled_symbol,
 };
-use super::{ImportSite, ImportSiteKind, ImportSpecifier, ScanInputs};
+use super::{Alternatives, ImportSite, ImportSiteKind, ImportSpecifier, ScanInputs};
 use crate::atom::{Atom, Interner, known};
 use crate::bind::{Binding, Bound, CommonJsVariable, Parent, ScopeKind};
 use crate::fold::Decisions;
@@ -246,13 +247,18 @@ fn find_call_site(
     None
 }
 
-fn is_free_name(hir: &File<'_>, bound: &Bound<'_>, e: ExprId, names: &[Atom]) -> bool {
+pub(super) fn is_free_name(hir: &File<'_>, bound: &Bound<'_>, e: ExprId, names: &[Atom]) -> bool {
     matches!(expr_kind(hir, e), Some(ExprKind::Ident(name)) if names.contains(&name))
         && bound.binding(e) == Binding::Free
         && bound.dynamic_lookup_scope(NodeData::Expr(e)).is_none()
 }
 
-fn is_process(hir: &File<'_>, bound: &Bound<'_>, e: ExprId, global_objects: &[Atom]) -> bool {
+pub(super) fn is_process(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    e: ExprId,
+    global_objects: &[Atom],
+) -> bool {
     let e = follow_settled_bindings(hir, bound, e);
     if is_free_name(hir, bound, e, &[known::process]) {
         return true;
@@ -313,6 +319,8 @@ fn find_path_to_resolve_from(inputs: &ScanInputs<'_, '_>, call: ExprId) -> Optio
 }
 
 pub(super) struct ScannedCalls {
+    pub(super) alternatives: Vec<ImportSpecifier>,
+    pub(super) paths_from_own_directory: Vec<ExprId>,
     pub(super) module_require_objects: Vec<ExprId>,
     pub(super) requires_of_other_files: Vec<(u32, Atom)>,
 }
@@ -324,6 +332,7 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
         decisions,
         ..
     } = inputs;
+    let mut alternatives = FoundAlternatives::default();
     let mut module_require_objects = Vec::new();
     let mut requires_of_other_files = Vec::new();
     for index in 0..hir.exprs.len() {
@@ -344,7 +353,7 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
             module_require_objects.extend(found.module_require_object);
             continue;
         }
-        let site = create_call_site(inputs, &found);
+        let site = create_call_site(inputs, &found, &mut alternatives);
         if !is_ordinary_builtin_call(&site) {
             module_require_objects.extend(found.module_require_object);
             if !hir.imported_requires.is_empty()
@@ -356,7 +365,10 @@ pub(super) fn scan_calls(inputs: &ScanInputs<'_, '_>, sites: &mut Vec<ImportSite
         }
     }
     module_require_objects.shared_sort_unstable();
+    alternatives.paths_from_own_directory.shared_sort_unstable();
     ScannedCalls {
+        alternatives: alternatives.found,
+        paths_from_own_directory: alternatives.paths_from_own_directory,
         module_require_objects,
         requires_of_other_files,
     }
@@ -367,19 +379,18 @@ fn is_ordinary_builtin_call(site: &ImportSite) -> bool {
         && !matches!(site.specifier, ImportSpecifier::Constant(_))
 }
 
-fn create_call_site(inputs: &ScanInputs<'_, '_>, found: &CallSite) -> ImportSite {
-    let &ScanInputs {
-        hir,
-        decisions,
-        atoms,
-        ..
-    } = inputs;
+fn create_call_site(
+    inputs: &ScanInputs<'_, '_>,
+    found: &CallSite,
+    alternatives: &mut FoundAlternatives,
+) -> ImportSite {
+    let &ScanInputs { hir, atoms, .. } = inputs;
     let kind = found.kind;
     let mut arguments = hir.ids(found.args);
     let specifier_node = arguments.next();
     let options = arguments.next();
     let specifier = specifier_node.map_or(ImportSpecifier::Unknown, |argument| {
-        call_specifier(hir, decisions, argument)
+        call_specifier(inputs, argument, alternatives)
     });
     let is_resolved_at_runtime = kind.call().is_some_and(|call| {
         let flags = hir.expr_flags(call);
@@ -411,17 +422,54 @@ fn consults_resolver(
                 let mut prefixes = UNRESOLVED_SPECIFIER_PREFIXES.iter();
                 !prefixes.any(|prefix| text.starts_with(prefix))
             }
-            ImportSpecifier::Pattern { .. } | ImportSpecifier::Unknown => false,
+            ImportSpecifier::Pattern { .. }
+            | ImportSpecifier::OneOf(_)
+            | ImportSpecifier::Unknown => false,
         },
         _ => true,
     }
 }
 
-fn call_specifier(hir: &File<'_>, decisions: &Decisions<'_>, argument: ExprId) -> ImportSpecifier {
-    if let Some(ExprKind::String(text)) = expr_kind(hir, argument) {
+#[derive(Default)]
+struct FoundAlternatives {
+    found: Vec<ImportSpecifier>,
+    paths_from_own_directory: Vec<ExprId>,
+    written_names: WrittenNames,
+}
+
+fn call_specifier(
+    inputs: &ScanInputs<'_, '_>,
+    argument: ExprId,
+    alternatives: &mut FoundAlternatives,
+) -> ImportSpecifier {
+    if let Some(ExprKind::String(text)) = expr_kind(inputs.hir, argument) {
         return ImportSpecifier::Constant(text);
     }
-    decisions.specifier(argument)
+    let folded = inputs.decisions.specifier(argument);
+    if let ImportSpecifier::Constant(_) = folded {
+        return folded;
+    }
+    let Some(found) = find_alternatives(inputs, &alternatives.written_names, argument) else {
+        return folded;
+    };
+    let only_pattern = match found.alternatives[..] {
+        [pattern @ ImportSpecifier::Pattern { .. }] => Some(pattern),
+        _ => None,
+    };
+    if only_pattern.is_some() && folded != ImportSpecifier::Unknown {
+        return folded;
+    }
+    if found.start_at_own_directory {
+        alternatives.paths_from_own_directory.push(argument);
+    }
+    only_pattern.unwrap_or_else(|| {
+        let first = alternatives.found.len() as u32;
+        alternatives.found.extend_from_slice(&found.alternatives);
+        ImportSpecifier::OneOf(Alternatives {
+            first,
+            count: found.alternatives.len() as u32,
+        })
+    })
 }
 
 fn call_attributes(hir: &File<'_>, kind: ImportSiteKind, options: ExprId) -> ExprId {

@@ -226,17 +226,15 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         while let Parent::Expr(parent) = self.file.bound.parent_of_expr(operand) {
             match hir[parent].kind {
                 ExprKind::Binary {
-                    op: BinOp::Comma,
-                    left,
-                    right,
+                    op: BinOp::Comma, ..
                 } => {
-                    if right != operand || !self.file.is_removed_when_unused(left) {
+                    if self.file.find_operand_printed_alone(parent) != Some(operand) {
                         return None;
                     }
                     operand = parent;
                 }
-                ExprKind::Binary { op, left, right } => {
-                    let is_left_operand = self.file.printed_operands(op, left, right).0 == operand;
+                ExprKind::Binary { op, .. } => {
+                    let is_left_operand = self.file.printed_operands(parent).0 == operand;
                     return (!needs_parentheses(op, inner, is_left_operand)).then_some(parent);
                 }
                 _ if hir.type_assertion_operand(parent).is_some() => operand = parent,
@@ -255,14 +253,15 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let mut first = expression;
         loop {
             let (next, outer) = match hir[first].kind {
-                ExprKind::Binary { op, left, right } => {
-                    (self.file.printed_operands(op, left, right).0, Some(op))
-                }
+                ExprKind::Binary { op, .. } => (self.file.printed_operands(first).0, Some(op)),
                 ExprKind::Dot { obj, .. } | ExprKind::Index { obj, .. } => (obj, None),
                 ExprKind::Call(site) => (hir[site].callee, None),
                 _ => return false,
             };
             let next = self.file.skip_unprinted_syntax(next);
+            if self.file.is_literal_operand(next) {
+                return false;
+            }
             match (hir[next].kind, outer) {
                 (ExprKind::Binary { op: inner, .. }, Some(outer)) => {
                     if inner == BinOp::Comma || needs_parentheses(outer, inner, true) {
@@ -313,10 +312,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 }
                 Parent::FnBody(function) => return Some(file.parameters_position(function)),
                 Parent::VarInit(declaration) => {
-                    return Some(match self.returned_declaration {
-                        Some((returned, position)) if returned == declaration => position,
-                        _ => hir[hir[declaration].pat].pos,
-                    });
+                    let position = file.find_return_printed_with(declaration);
+                    return Some(position.unwrap_or(hir[hir[declaration].pat].pos));
                 }
                 Parent::Prop(property) => return Some(hir[property].pos),
                 Parent::Expr(parent) => parent,
@@ -326,9 +323,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
                 ExprKind::Assign { target, value, .. } if value == first => {
                     return Some(file.last_mapped_position(target));
                 }
-                ExprKind::Binary { op, left, right } => {
-                    let printed_left = file.printed_operands(op, left, right).0;
-                    let is_dropped = op == BinOp::Comma && file.is_removed_when_unused(left);
+                ExprKind::Binary { .. } => {
+                    let printed_left = file.printed_operands(parent).0;
+                    let is_dropped = file.find_operand_printed_alone(parent).is_some();
                     if printed_left != first && !is_dropped {
                         return Some(file.last_mapped_position(printed_left));
                     }

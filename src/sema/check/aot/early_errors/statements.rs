@@ -108,9 +108,9 @@ impl Checker<'_, '_> {
             | StmtKind::ExportAsNamespace(_) => {
                 self.check_typescript_statement_position(file, s);
             }
+            StmtKind::Expr(e) => self.check_end_of_declare(file, e),
             StmtKind::Empty
             | StmtKind::Debugger
-            | StmtKind::Expr(_)
             | StmtKind::Directive { .. }
             | StmtKind::Block(_)
             | StmtKind::If { .. }

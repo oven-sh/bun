@@ -55,5 +55,21 @@ enum E8 { A = new.target }
 enum eval {}
 namespace arguments { var a = 1; }
 let x1!;
+function g1<>() {}
+class G2<> {}
+var g3 = class <> {};
+class G4 { m<>() {} }
+var g5 = { m<>() {} };
+class G6 extends Array<> {}
+class G7 extends Array<number,> {}
+var g8: any; g8?.<>();
+declare g9;
+declare g10 = 1;
+declare {}
+declare 1;
+declare if (1) {}
+declare global;
+class S1 { m() { enum E9 { A = super.x } } }
+var t1: any = {}; t1?.b!`x`;
 function dec(...a) {}
 console.log("ran");

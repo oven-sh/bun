@@ -184,6 +184,22 @@ export interface RemovableRange {
   canBeFilled: boolean;
 }
 
+/** What an entry point of a built-in comes to through guards that abort. `Features` is a list of features or the number of a set. */
+export interface NeededFeatures<Features = number[]> {
+  /** The features of the guards of the entry point itself. */
+  own: Features;
+  /** Whatever the built-in is called with. */
+  always: Features;
+  /** Under a condition of the built-ins table. */
+  sometimes: Features;
+}
+
+/** What holds a pointer to the entry point refuses it once nothing uses a feature that the entry point needs: `plan_table` in src/trim/plan.rs. */
+export interface EntryPointNeeds<Features = number[]> extends NeededFeatures<Features> {
+  start: number;
+  end: number;
+}
+
 export interface IcuItemRun {
   firstItem: number;
   itemCount: number;
@@ -231,4 +247,5 @@ export interface TrimTable {
   icuPackages: IcuPackage[];
   icuLanguages: IcuLanguage[];
   moduleTexts: ModuleText[];
+  entryPointNeeds: EntryPointNeeds<number | undefined>[];
 }

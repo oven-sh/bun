@@ -157,8 +157,16 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         let root_name = self
             .file
             .intern_binding_name(reference.binding, reference.name);
+        // Bun's transpiler prints the first name of a pragma as it is written there, so a quoted text is a string.
+        let function = match find_quoted_text(&path[0]) {
+            Some(text) => {
+                let text = self.file.intern_bytes(text);
+                self.builder.string(text)
+            }
+            None => self.get_binding_without_expression(reference.binding, reference.name),
+        };
         let mut callee = Callee {
-            function: self.get_binding_without_expression(reference.binding, reference.name),
+            function,
             this: None,
             key: None,
             name: Some(root_name),
@@ -233,6 +241,14 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         arguments.extend(children.iter().map(|&child| self.lower_expression(child)));
         Arguments::Values(arguments)
     }
+}
+
+fn find_quoted_text(name: &[u8]) -> Option<&[u8]> {
+    let [quote @ (b'"' | b'\''), text @ .., last] = name else {
+        return None;
+    };
+    let is_plain = |byte: &u8| byte != quote && !matches!(byte, b'\\' | b'\n' | b'\r');
+    (quote == last && text.iter().all(is_plain)).then_some(text)
 }
 
 #[cfg(test)]

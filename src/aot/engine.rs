@@ -26,7 +26,8 @@ pub use self::records::{Position, Witness, builtin_of, feature_of, position_of, 
 pub use self::registry::{is_optional_pass, operation_names};
 pub use self::shared::{
     EngineModuleId, ExecutableIdentity, RejectedOptionWord, TargetImageForm,
-    describe_difference_of_runtime, has_compiler, image_alignment, relocate_image,
+    describe_difference_of_runtime, describe_regexp_syntax_error, has_compiler, image_alignment,
+    relocate_image,
 };
 pub use self::used_features::used_features;
 use crate::emit::{ExternalBodies, ExternalFunctionBodies, ProgramBytes};

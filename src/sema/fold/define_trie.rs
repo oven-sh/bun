@@ -118,6 +118,24 @@ impl<'s> FoldInputs<'s> {
     pub(crate) fn preserves_unused_imports(&self) -> bool {
         self.preserves_unused_imports
     }
+
+    #[inline]
+    pub(crate) fn max_string_bytes(&self) -> usize {
+        self.max_string_bytes
+    }
+
+    /// What a build knows `root.member` to be, where `root` is the global of that name.
+    pub(crate) fn constant_of_member(&self, root: Atom, member: Atom) -> Option<Constant> {
+        let root = self.root(DefineRoot::Global(root))?;
+        match self.value_of(self.child(root, member, LinkForm::DOT)?)? {
+            DefineValue::Constant(constant) | DefineValue::RuntimeConstant(constant) => {
+                Some(constant)
+            }
+            DefineValue::GlobalPath(_) | DefineValue::Data(_) | DefineValue::RuntimeValue(_) => {
+                None
+            }
+        }
+    }
 }
 
 #[derive(Default)]

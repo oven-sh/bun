@@ -940,3 +940,207 @@ fn parsed_call_is_no_host_value() {
         });
     }
 }
+
+const TARGET: Fold<'static> = Fold {
+    defines: &[
+        (
+            Path::Global(&["process", "platform"]),
+            Defined::Value(Data::String("linux")),
+        ),
+        (
+            Path::Global(&["process", "arch"]),
+            Defined::Value(Data::String("x64")),
+        ),
+    ],
+    ..Fold::NONE
+};
+
+/// The last call names one of these. A text with `*` stands for its start and its end. That two arms of a condition exclude each other is not looked at.
+const NAMES_THAT_ARE_ONE_OF_A_FEW: &[(&str, &[&str])] = &[
+    (
+        "const names = { linux: `./a-${process.arch}`, darwin: './b' }; require(names[process.platform]);",
+        &["./a-x64"],
+    ),
+    (
+        "const names = { linux: './a', darwin: './b' }; require(names[key]);",
+        &["./a", "./b"],
+    ),
+    (
+        "const names = { linux: { x64: { base: 'gnu', musl: 'musl' } } };
+         function find() { const found = names[process.platform]?.[process.arch]; if (!found) throw 1; if ('musl' in found && c) return found.musl; return found.base; }
+         const target = find(); require(`./a.${target}.node`);",
+        &["./a.gnu.node", "./a.musl.node"],
+    ),
+    (
+        "const { platform, arch } = require('node:process'); require(`./a.${platform}-${arch}.node`);",
+        &["./a.linux-x64.node"],
+    ),
+    (
+        "const load = id => { try { return require(id); } catch { throw 1; } }; load(c ? './a' : `@b/${process.platform}`);",
+        &["./a", "@b/linux"],
+    ),
+    (
+        "const paths = ['./a', `./b-${process.arch}`, `./c/${x}.node`]; for (const path of paths) { try { require(path); } catch {} }",
+        &["./a", "./b-x64", "./c/*.node"],
+    ),
+    (
+        "let name = `@a/b-${process.platform}`; if (c) { if (d) name += '-musl'; else name += '-glibc'; } require(name);",
+        &[
+            "@a/b-linux",
+            "@a/b-linux-glibc",
+            "@a/b-linux-musl",
+            "@a/b-linux-musl-glibc",
+        ],
+    ),
+    (
+        "let name = './a'; if (c) name = './b'; require(name);",
+        &["./a", "./b"],
+    ),
+    (
+        "const parts = [process.platform, process.arch]; if (c) parts.push('musl'); else if (d) parts.push('gnu'); require(`a-${parts.join('-')}`);",
+        &[
+            "a-linux-x64",
+            "a-linux-x64-gnu",
+            "a-linux-x64-musl",
+            "a-linux-x64-musl-gnu",
+        ],
+    ),
+    (
+        "const name = c ? 'a' : 'b'; require(`${__dirname}/lib/${name}.js`);",
+        &["./lib/a.js", "./lib/b.js"],
+    ),
+    (
+        "const { join } = require('path'); const name = c ? 'a' : '../b'; require(join(__dirname, 'lib', name + '.js'));",
+        &["./b.js", "./lib/a.js"],
+    ),
+    (
+        "const path = require('node:path'); const folder = c ? 'a' : 'b'; require(path.resolve(__dirname, folder, `${x}.js`));",
+        &["./a/*.js", "./b/*.js"],
+    ),
+    (
+        "const os = require('node:os'); require(`./a.${os.platform()}-${os.arch()}.node`);",
+        &["./a.linux-x64.node"],
+    ),
+    (
+        "const { platform } = require('os'); require(`./a.${platform()}.node`);",
+        &["./a.linux.node"],
+    ),
+    (
+        "['a', 'b'].forEach(name => { try { require(`./${name}.node`); } catch {} });",
+        &["./a.node", "./b.node"],
+    ),
+    (
+        "const paths = ['a', 'b'].map(name => `./${name}.node`); for (const path of paths) require(path);",
+        &["./a.node", "./b.node"],
+    ),
+    (
+        "const name = ['a', 'b'].find(name => exists(name)); require(`./${name}.node`);",
+        &["./a.node", "./b.node", "./undefined.node"],
+    ),
+    (
+        "const names = ['a', 'b'].filter(name => exists(name)); require(`./${names[0]}.node`);",
+        &["./a.node", "./b.node", "./undefined.node"],
+    ),
+    (
+        "const table = { first: 'a', second: 'b' }; for (const name of Object.values(table)) require(`./${name}.node`);",
+        &["./a.node", "./b.node"],
+    ),
+    (
+        "const table = { a: 1, b: 2 }; for (const name of Object.keys(table)) require(`./${name}.node`);",
+        &["./a.node", "./b.node"],
+    ),
+    (
+        "const name = a || './a'; require(name ?? './b');",
+        &[],
+    ),
+    (
+        "const name = (c ? './a' : null) || './b'; require(name);",
+        &["./a", "./b"],
+    ),
+];
+
+/// Something may change the list, the object or the variable in a way that the build does not follow.
+const NAMES_THAT_ARE_NOT_FOLLOWED: &[&str] = &[
+    "const names = { linux: './a' }; names.linux = x; require(names[process.platform]);",
+    "const names = { linux: './a' }; change(names); require(names[process.platform]);",
+    "const names = { linux: './a' }; const other = names; other[k] = x; require(names[process.platform]);",
+    "const names = { linux: './a' }; delete names.linux; require(names[process.platform]);",
+    "const names = { linux: { x64: './a' } }; change(names.linux); require(names.linux.x64);",
+    "const names = { linux: './a', ...more }; require(names[process.platform]);",
+    "const names = { get linux() { return x; } }; require(names[process.platform]);",
+    "export const names = { linux: './a' }; require(names[process.platform]);",
+    "const parts = ['a']; for (const x of y) parts.push('b'); require(parts.join('-'));",
+    "const parts = ['a']; function more() { parts.push('b'); } require(parts.join('-'));",
+    "const parts = ['a']; const count = parts.push('b'); require(parts.join('-'));",
+    "const parts = ['a']; parts.pop(); require(parts.join('-'));",
+    "const parts = ['a', ...more]; require(parts.join('-'));",
+    "const parts = ['a'].map(name => name); require(parts.join('-'));",
+    "const names = ['./a']; names.forEach(function (name) { arguments[0] = x; require(name); });",
+    "const names = ['./a']; names.forEach((name = x) => require(name));",
+    "const names = ['./a']; names.forEach((index, name) => require(name));",
+    "const names = [{ a: './a' }]; names.forEach(name => change(name)); require(names[0].a);",
+    "function f(Object) { const table = { a: './a' }; for (const name of Object.values(table)) require(name); }",
+    "const table = { a: { b: './a' } }; for (const inner of Object.values(table)) change(inner); require(table.a.b);",
+    "for (const name in table) require(name);",
+    "for await (const name of ['./a']) require(name);",
+    "let name = './a'; while (c) name += 'b'; require(name);",
+    "let name = './a'; const grow = () => { name += 'b'; }; require(name);",
+    "let name = './a'; name += name; require(name);",
+    "let name = './a'; [name] = x; require(name);",
+    "const load = id => require(id); load('./a'); hand(load);",
+    "function find() { return find(); } require(find());",
+    "async function find() { return './a'; } require(find());",
+];
+
+fn describe_alternatives(s: &Analyzed<'_>, site: &ImportSite) -> Vec<String> {
+    let alternatives = s.analysis.alternatives_of(&site.specifier).iter();
+    let described = alternatives.filter_map(|&it| match it {
+        ImportSpecifier::Constant(text) => Some(s.workspace.text(text).to_owned()),
+        ImportSpecifier::Pattern { prefix, suffix } => {
+            let (prefix, suffix) = (s.workspace.text(prefix), s.workspace.text(suffix));
+            Some(format!("{prefix}*{suffix}"))
+        }
+        ImportSpecifier::OneOf(_) | ImportSpecifier::Unknown => None,
+    });
+    described.collect()
+}
+
+fn with_last_site(text: &str, test: impl for<'s> FnOnce(&Analyzed<'s>, &ImportSite) + Send) {
+    with_workspace(|w| {
+        let inputs = w.fold_inputs(&TARGET);
+        let path = if text.starts_with("export") {
+            "a.mjs"
+        } else {
+            "a.cjs"
+        };
+        let s = w.analyze(&Source::new(path, text), &inputs);
+        let site = s.analysis.import_sites.last();
+        test(&s, site.unwrap_or_else(|| panic!("{text}: no import site")));
+    });
+}
+
+#[test]
+fn name_is_one_of_a_few_texts() {
+    for &(text, names) in NAMES_THAT_ARE_ONE_OF_A_FEW {
+        with_last_site(text, |s, site| {
+            assert_eq!(describe_alternatives(s, site), names, "{text}");
+        });
+    }
+}
+
+#[test]
+fn name_out_of_what_may_change_is_not_followed() {
+    for &text in NAMES_THAT_ARE_NOT_FOLLOWED {
+        with_last_site(text, |_, site| {
+            assert_eq!(site.specifier, ImportSpecifier::Unknown, "{text}");
+        });
+    }
+}
+
+#[test]
+fn name_that_a_loop_takes_out_of_an_object_is_known_by_its_start_and_end() {
+    let text = "for (const name in table) require(`./lib/${name}.js`);";
+    with_last_site(text, |s, site| {
+        assert_eq!(describe_alternatives(s, site), ["./lib/*.js"], "{text}");
+    });
+}

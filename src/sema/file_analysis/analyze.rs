@@ -58,6 +58,7 @@ pub(super) fn run_again<'s>(
     let has_same_import_sites = previous.errors.is_empty()
         && folded.errors.is_empty()
         && previous.pending_macro_calls.is_empty()
+        && previous.names_every_file_by_a_constant()
         && (folded.decisions).has_same_code_and_specifiers(&previous.decisions);
     if has_same_import_sites {
         let analysis = FileAnalysis {
@@ -111,6 +112,8 @@ fn create_analysis<'s>(
         module_format: decision.format,
         has_esm_syntax: file_esm_syntax(hir) != EsmSyntax::None,
         import_sites: scan.sites,
+        alternatives: scan.alternatives,
+        paths_from_own_directory: scan.paths_from_own_directory,
         jsx_imports: scan.jsx_imports,
         unused_import_symbols: scan.unused_import_symbols,
         imports_used_only_in_dead_code: scan.imports_used_only_in_dead_code,

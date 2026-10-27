@@ -1,14 +1,14 @@
 use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{
-    Binding, BindingKind, BindingStability, Bound, Decl, FnOwner, FunctionFlags, Parent, PatParent,
-    StoreKind, SymbolId,
+    Binding, BindingKind, BindingStability, Bound, Decl, Parent, StoreKind, SymbolId,
 };
-use bun_sema::fold::{Constant, Decisions, FoldedValue};
+use bun_sema::fold::{Constant, FoldedValue};
 use bun_sema::hir::{
-    BinOp, Branches, ExportSpecId, ExprId, ExprKind, File, Flags, FnId, FnKind, ImportEqualsId,
-    ImportId, NodeData, PatId, PatKind, StmtKind, UnOp,
+    BinOp, Branches, ExprId, ExprKind, File, ImportId, NodeData, PatId, PatKind, StmtKind, UnOp,
 };
-use bun_sema::import_sites::{ImportSiteKind, ImportSpecifier};
+use bun_sema::import_sites::{
+    ImportSiteKind, ImportSpecifier, find_values_of_parameter, is_exported,
+};
 use bun_sema::program::{CodeAnswer, FileId, Files};
 use bun_sema::resolve::FinishedFile;
 use bun_sema::util::SharedSort;
@@ -255,101 +255,6 @@ fn way_into_pattern(hir: &File<'_>, bound: &Bound<'_>, pattern: PatId, held: Hel
     }
 }
 
-fn is_exported(hir: &File<'_>, bound: &Bound<'_>, symbol: SymbolId) -> bool {
-    let binding = Binding::Symbol(symbol);
-    let mut declarations = bound.symbol(symbol).decls.iter();
-    let mut specifiers = (0..hir.export_specs.len() as u32).map(ExportSpecId);
-    let mut entity_names = (0..hir.import_equals.len() as u32).map(ImportEqualsId);
-    declarations.any(|&it| bound.modifier_flags(hir, it).contains(Flags::EXPORT))
-        || specifiers.any(|it| bound.exported_binding(it) == binding)
-        || entity_names.any(|it| bound.entity_root_binding(it) == binding)
-}
-
-fn find_only_name_of(hir: &File<'_>, bound: &Bound<'_>, function: FnId) -> Option<SymbolId> {
-    let name = match (hir[function].kind, bound.fns[function.idx()].owner) {
-        (FnKind::Decl, _) => bound.declared_symbol(Decl::Fn(function)),
-        (FnKind::Expr | FnKind::Arrow, FnOwner::Expr(expression))
-            if !bound.finds_itself(hir, function) =>
-        {
-            let Parent::VarInit(declaration) = bound.parent_of_expr(expression) else {
-                return None;
-            };
-            match way_into_pattern(hir, bound, hir[declaration].pat, Held::Text) {
-                Way::Variable(name, _) => name,
-                Way::Anywhere | Way::Nowhere => return None,
-            }
-        }
-        _ => return None,
-    };
-    let mut hoisted = bound.runtime.annex_b_functions().iter();
-    // `arguments.callee` and evaluated text hand the function on without its name.
-    let other_ways = FunctionFlags::USES_ARGUMENTS | FunctionFlags::HAS_DIRECT_EVAL;
-    let is_only_name = name.is_some()
-        && !bound.function_flags(function).intersects(other_ways)
-        && bound.is_stable_binding(name)
-        && !bound.is_visible_to_eval(name)
-        && !hoisted.any(|it| it.function == function)
-        && !is_exported(hir, bound, name);
-    is_only_name.then_some(name)
-}
-
-// `function load(name) { return require(name); }`, where every mention of `load` calls it: what the calls pass for `name`.
-pub(crate) fn find_values_of_parameter(
-    hir: &File<'_>,
-    bound: &Bound<'_>,
-    decisions: &Decisions<'_>,
-    mention: ExprId,
-) -> Option<SmallVec<[ExprId; 4]>> {
-    let Binding::Symbol(parameter) = bound.binding(mention) else {
-        return None;
-    };
-    let &[Decl::Param(pattern)] = bound.symbol(parameter).decls else {
-        return None;
-    };
-    let PatParent::Param(id) = bound.pat_parent[pattern.idx()] else {
-        return None;
-    };
-    let function = bound.param_fn[id.idx()];
-    let index = hir[function].params.iter().position(|it| it == id)?;
-    let is_settled = matches!(
-        bound.binding_stability(parameter),
-        BindingStability::Stable | BindingStability::NotInitializedOnce
-    ) && bound.stores_to(parameter).is_empty()
-        && !bound.is_visible_to_eval(parameter)
-        && bound
-            .dynamic_lookup_scope(NodeData::Expr(mention))
-            .is_none()
-        && !hir[id].flags.contains(Flags::REST);
-    let name = find_only_name_of(hir, bound, function).filter(|_| is_settled)?;
-    let text = bound.symbol(name).name;
-    let mut values: SmallVec<[ExprId; 4]> = SmallVec::new();
-    if hir[id].default.is_some() {
-        values.push(hir[id].default);
-    }
-    for callee in (0..hir.exprs.len() as u32).map(ExprId) {
-        let is_mention = matches!(hir[callee].kind, ExprKind::Ident(it) if it == text)
-            && bound.is_evaluated_ident(callee)
-            && !decisions.is_dead_expr(callee)
-            && bound.binding(callee) == Binding::Symbol(name);
-        if !is_mention {
-            continue;
-        }
-        let Parent::Expr(above) = bound.parent_of_expr(callee) else {
-            return None;
-        };
-        let ExprKind::Call(call) = hir[above].kind else {
-            return None;
-        };
-        let mut passed = hir.ids(hir[call].args).take(index + 1);
-        let is_spread = |it: ExprId| matches!(hir[it].kind, ExprKind::Spread(_));
-        if hir[call].callee != callee || passed.clone().any(is_spread) {
-            return None;
-        }
-        values.extend(passed.nth(index));
-    }
-    Some(values)
-}
-
 impl Scan<'_, '_> {
     fn visit_import_sites(&mut self) {
         for site in self.request.analysis.import_sites {
@@ -360,23 +265,42 @@ impl Scan<'_, '_> {
                     | ImportSiteKind::ImportMetaRequire(_)
             );
             // `require("./locales/" + name)` finds no module of the library, whatever the name is.
-            let may_name_library_module = match site.specifier {
+            let alternatives = self.request.analysis.alternatives_of(&site.specifier);
+            let may_name_library_module = alternatives.iter().any(|&it| match it {
                 ImportSpecifier::Constant(_) => false,
                 ImportSpecifier::Pattern { prefix, suffix } => {
                     let atoms = self.request.atoms;
                     let (prefix, suffix) = (atoms.bytes(prefix), atoms.bytes(suffix));
                     !self.runtime_modules.find_modules(prefix, suffix).is_empty()
                 }
-                ImportSpecifier::Unknown => true,
-            };
+                ImportSpecifier::OneOf(_) | ImportSpecifier::Unknown => true,
+            });
             if !loads || site.specifier_node.is_none() {
                 continue;
             }
+            if let ImportSpecifier::OneOf(_) = site.specifier {
+                self.add_library_modules_among(site.specifier_node, alternatives);
+            }
+            let is_constant = |it: &ImportSpecifier| matches!(it, ImportSpecifier::Constant(_));
             if may_name_library_module {
                 self.add_names_given_to_loader(site.specifier_node);
-            } else if !matches!(site.specifier, ImportSpecifier::Constant(_)) {
+            } else if !alternatives.iter().all(is_constant) {
                 let position = self.request.hir[site.specifier_node].pos;
                 self.found.unknown_names_at.push(position);
+            }
+        }
+    }
+
+    fn add_library_modules_among(&mut self, argument: ExprId, alternatives: &[ImportSpecifier]) {
+        for &alternative in alternatives {
+            if let ImportSpecifier::Constant(name) = alternative
+                && let Some(module) = self.find_module(name)
+            {
+                self.found.modules.push(NamedModule {
+                    argument,
+                    name,
+                    module,
+                });
             }
         }
     }

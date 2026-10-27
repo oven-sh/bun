@@ -272,11 +272,11 @@
     "callsNotExpected": 1
   },
   "lists-of-numbers-come-in-storage-for-any-value": {
-    "millionInstructions": 111,
-    "testsFailed": 1079417,
+    "millionInstructions": 92,
+    "testsFailed": 719433,
     "alwaysFailing": 0,
-    "accessesByName": 8,
-    "runtimeOperations": 609,
+    "accessesByName": 0,
+    "runtimeOperations": 589,
     "callsNotExpected": 0
   }
 }

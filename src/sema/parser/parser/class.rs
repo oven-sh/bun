@@ -306,11 +306,13 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                     };
                     self.flag_early_error(1097, at, &[keyword]);
                 }
-                None => {
-                    if let Some((at, code)) = element_error {
-                        self.flag(DiagnosticKind::Grammar, code, at, &[]);
+                None => match element_error {
+                    Some((at, code @ (1009 | 1099))) if is_extends => {
+                        self.flag_early_error(code, at, &[]);
                     }
-                }
+                    Some((at, code)) => self.flag(DiagnosticKind::Grammar, code, at, &[]),
+                    None => {}
+                },
             }
             match (is_extends, has_implements) {
                 (true, _) => has_extends = true,
@@ -371,7 +373,7 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         if let Some(empty_list) = empty_list
             && !heritage.has_error
         {
-            self.flag(DiagnosticKind::Grammar, 1098, empty_list, &[]);
+            self.flag_early_error(1098, empty_list, &[]);
         }
         // Private names scanned from here to the `}` are inside the class. Those in its `extends` clause and decorators
         // aren't.

@@ -1,6 +1,6 @@
 use std::mem::take;
 
-use bun_sema::hir::{ExprId, VarDeclId};
+use bun_sema::hir::ExprId;
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::FileLowering;
@@ -35,7 +35,6 @@ pub(crate) struct FunctionLowering<'f, 'a, 'c, 'p, 's> {
     // Where the declarations end that Bun's transpiler prints in one statement with the next one.
     pub(in crate::lower) joined_declarations_end: Option<u32>,
     // The declaration whose initializer Bun's transpiler prints in the `return` statement behind it, and where that statement starts.
-    pub(in crate::lower) returned_declaration: Option<(VarDeclId, u32)>,
     // Where the operators of a binary expression are reported, for the expressions that have operands with operators of their own.
     pub(in crate::lower) operator_positions: FxHashMap<ExprId, u32>,
     // The last position that the initializer of a variable that is used once has recorded.
@@ -77,7 +76,6 @@ impl<'f, 'a, 'c, 'p, 's> FunctionLowering<'f, 'a, 'c, 'p, 's> {
             unclaimed_narrowings: FxHashMap::default(),
             enum_constants: FxHashSet::default(),
             joined_declarations_end: None,
-            returned_declaration: None,
             operator_positions: FxHashMap::default(),
             records_of_initializers: FxHashMap::default(),
             printed_part: None,
@@ -237,6 +235,7 @@ impl<'f, 'a, 'c, 'p, 's> FunctionLowering<'f, 'a, 'c, 'p, 's> {
         }
         if !self.has_reported_nesting {
             self.has_reported_nesting = true;
+            self.file.queries.answer_nothing_from_now_on();
             self.file.gave_up(LimitId::MaxNestingDepth, position);
             let span = self.file.span_at(position);
             let depth = maximum.to_string();

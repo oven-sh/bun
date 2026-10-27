@@ -49,7 +49,7 @@ function findGuardHeader(): GuardHeader | undefined {
     const engine = join(checkout, "Source", "JavaScriptCore", "aot");
     // A build writes what the generators make into a folder of its own: scripts/build/aot-paths.ts prints which.
     const generated = process.env.AOT_BUILTINS_GENERATED ?? join(engine, "builtins", "generated");
-    const folders = [join(engine, "runtime"), join(engine, "builtins"), generated];
+    const folders = [join(engine, "runtime"), join(engine, "builtins"), generated, join(engine, "support")];
     const path = join(folders[0]!, "AOTRemovableFeature.h");
     const featureListPath = join(folders[2]!, "AOTBuiltinFeatures.h");
     if (existsSync(path) && existsSync(featureListPath)) {
@@ -357,6 +357,30 @@ int main(int argc, char**) { return argc > 5 ? JSC::callRemovableBuiltin<JSC::Re
 `,
 };
 export const builtinEnteringOtherObjects: string[] = ["feature_code", "guarding", "other", "embedder", "main"];
+
+export const pointerToBuiltinEnteringOtherSources: Record<string, string> = {
+  "toy.h": toyHeader,
+  "other.c": otherSource,
+  "main.cpp": String.raw`#include "toy.h"
+extern "C" { int feature_code(int); int entry_of_other(int); int printf(const char*, ...); extern int toy_thrown; }
+using namespace JSC;
+using HostFunction = EncodedJSValue (JSC_HOST_CALL_ATTRIBUTES *)(JSGlobalObject*, CallFrame*);
+static NEVER_INLINE EncodedJSValue JSC_HOST_CALL_ATTRIBUTES entersOther(JSGlobalObject*, CallFrame*) { return (feature_code(2) + callRemovable<RemovableFeature::${Other}, RemovedFeatureStub::Abort, entry_of_other>(3)) | 1; }
+static uint16_t featureOfReplacedFunction;
+static EncodedJSValue JSC_HOST_CALL_ATTRIBUTES throwsInstead(JSGlobalObject* realm, CallFrame*) { return Bun__throwForRemovedFeature(realm, featureOfReplacedFunction); }
+template<> HostFunction JSC::functionUnlessRemovedSlow(HostFunction function) {
+    auto feature = removedFeatureAt(reinterpret_cast<const void*>(function));
+    if (!feature) return function;
+    featureOfReplacedFunction = static_cast<uint16_t>(*feature);
+    return throwsInstead;
+}
+int main() {
+    long long result = functionUnlessRemoved(removableBuiltinFunction<RemovableFeature::${Extra}, RemovedFeatureStub::Throw, entersOther, ${spelledBuiltin}>())(nullptr, nullptr);
+    printf("%d %d\n", result != 0, toy_thrown);
+}
+`,
+};
+export const pointerToBuiltinEnteringOtherObjects: string[] = ["feature_code", "other", "embedder", "main"];
 
 export const spellingsEntryPoints: string[] = [
   "aborts",

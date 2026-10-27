@@ -246,7 +246,7 @@ impl Checker<'_, '_> {
         let close = skip_trivia(text, open + 1);
         text.get(open) == Some(&b'<')
             && text.get(close) == Some(&b'>')
-            && self.grammar_error_at((file, open as u32, close as u32 + 1), 1098, &[])
+            && self.early_grammar_error_at((file, open as u32, close as u32 + 1), 1098, &[])
     }
 
     /// Same as `check_grammar_modifiers`, for a member that has modifiers.

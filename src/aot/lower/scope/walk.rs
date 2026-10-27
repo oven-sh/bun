@@ -108,8 +108,6 @@ pub(super) struct ScopeWalk {
     pub(super) symbol_stores: Vec<(SymbolId, ExprId, WalkedFunctionId)>,
     // The time behind which none of those stores runs in the activation that owns the symbol, as long as they all stand in its own function.
     pub(super) last_store_times: Vec<u32>,
-    // How often each symbol is named, up to two.
-    pub(super) use_counts: Vec<u8>,
     // What the members of enums read.
     pub(super) symbols_read_by_enums: Vec<SymbolId>,
     // What `export { .. }` lists of the file's own.

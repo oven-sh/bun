@@ -4,11 +4,12 @@
 // CHECK: = Call
 // CHECK-LABEL: function {{*}}name="definition"
 // CHECK: b0([[definition_target]]: {{*}}, [[definition_source]]: {{*}}):
-// CHECK-NOT: ObjectGetOwnPropertyDescriptors
-// CHECK: [[definition_describe]] = Builtin builtin=CompilerHelpersDescribeUnlessOrdinary
+// CHECK: = Builtin builtin=ObjectGetOwnPropertyDescriptors
+// CHECK-NEXT: [[definition_describe]] = Builtin builtin=CompilerHelpersDescribeUnlessOrdinary
 // CHECK-NEXT: [[definition_described]] = Call [[definition_describe]], -, [[definition_source]]
-// CHECK: [[definition_define]] = Builtin builtin=CompilerHelpersDefinePropertiesFrom
+// CHECK-NEXT: [[definition_define]] = Builtin builtin=CompilerHelpersDefinePropertiesFrom
 // CHECK-NEXT: = Call [[definition_define]], -, [[definition_target]], [[definition_described]], [[definition_source]]
+// CHECK-NEXT: Return
 // CHECK-LABEL: function {{*}}name="descriptorsThatSomebodyHolds"
 // CHECK: = Builtin builtin=ObjectGetOwnPropertyDescriptors
 // CHECK: = Builtin builtin=ObjectDefineProperties

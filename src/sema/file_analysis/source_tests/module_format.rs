@@ -713,6 +713,7 @@ fn sites(s: &Analyzed<'_>) -> Vec<(ImportSiteKind, String)> {
         ImportSpecifier::Pattern { prefix, suffix } => {
             format!("{}*{}", s.workspace.text(prefix), s.workspace.text(suffix))
         }
+        ImportSpecifier::OneOf(_) => "<one of a few>".to_owned(),
         ImportSpecifier::Unknown => "<unknown>".to_owned(),
     };
     s.analysis
@@ -1172,7 +1173,6 @@ fn own_directory_at_the_head_of_a_specifier_is_the_folder_of_the_file() {
         r#"require("./a" + __dirname + "/b.js");"#,
         r#"function f(__dirname) { return require(__dirname + "/b.js"); }"#,
         r#"function f(o) { with (o) { return import(__dirname + "/b.js"); } }"#,
-        r#"require((x ? __dirname + "/a" : __dirname + "/c") + "/b.js");"#,
         r#"__dirname = x; require(__dirname + "/b.js");"#,
         r#"__dirname += "/other"; require(__dirname + "/b.js");"#,
         r#"function f() { __dirname = x; } require(__dirname + "/b.js");"#,
@@ -1189,6 +1189,14 @@ fn own_directory_at_the_head_of_a_specifier_is_the_folder_of_the_file() {
             assert_eq!(s.workspace.text(suffix), "/b.js", "{text}");
         });
     }
+    let text = r#"require((x ? __dirname + "/a" : __dirname + "/c") + "/b.js");"#;
+    analyzed("a.cjs", text, |s| {
+        let site = only_site(s, text);
+        let expected =
+            ["./a/b.js", "./c/b.js"].map(|it| ImportSpecifier::Constant(s.workspace.atom(it)));
+        assert_eq!(s.analysis.alternatives_of(&site.specifier), expected);
+        assert!(s.analysis.is_path_from_own_directory(site.specifier_node));
+    });
 }
 
 #[test]

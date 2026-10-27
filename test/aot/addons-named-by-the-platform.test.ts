@@ -202,8 +202,8 @@ for (const [title, loader] of [
   );
 }
 
-// The build does not follow these names yet. It says so, and the executable throws where plain Bun loads the addon, unless the addon is passed to the build as another entry point.
-const notFollowed: Record<string, Program> = {
+// No folding makes one text of these names. Each is one of a few: an entry of a table, what a function returns, an element of a list that a loop walks, a variable that grows in one arm of a condition. The build follows every one of them, and of one that it knows in part it takes the start and the end.
+const oneOfFew: Record<string, Program> = {
   "a name out of a table under the platform": written(
     "main.cjs",
     "const names = {\n" +
@@ -214,6 +214,33 @@ const notFollowed: Record<string, Program> = {
       prints("out of a table", "addon"),
     false,
   ),
+  // Of the files beside it the executable holds the one that the table names. The other one is no program, and a build that took it in would say so.
+  "a name out of a table, joined to __dirname": {
+    entry: "main.cjs",
+    files: {
+      "main.cjs":
+        `const { join } = require("node:path");\nconst names = {\n` +
+        ["linux", "darwin", "win32", "freebsd", "android"]
+          .map(platform => `  ${platform}: \`my-app.${platform}-\${process.arch}.node\`,\n`)
+          .join("") +
+        "};\nconst addon = require(join(__dirname, names[process.platform]));\n" +
+        prints("joined to __dirname", "addon"),
+      "no-program.js": "this is no program (\n",
+    },
+    addons: [beside],
+  },
+  "names that a list hands to a function, made of what node:os answers": {
+    entry: "main.cjs",
+    files: {
+      "main.cjs":
+        `const os = require("node:os");\nlet addon;\n` +
+        "[`nothing.${os.platform()}`, `my-app.${os.platform()}-${os.arch()}`].forEach(name => {\n" +
+        "  try {\n    addon ??= require(`./${name}.node`);\n  } catch {}\n});\n" +
+        prints("handed to a function", "addon"),
+      "no-program.js": "this is no program (\n",
+    },
+    addons: [beside],
+  },
   "a table of targets, and the file beside it": inPackage(
     "my-table",
     { "package.json": manifest("my-table"), "index.js": loaderWithTable("my-table", "@my") },
@@ -225,7 +252,7 @@ const notFollowed: Record<string, Program> = {
     names.map(name => `@my/my-table-${name}`),
     name => name.replace("@my/my-table-", "my-table.") + ".node",
   );
-  notFollowed["a table of targets, and the package of the platform"] = inPackage(
+  oneOfFew["a table of targets, and the package of the platform"] = inPackage(
     "my-table",
     { "package.json": manifest("my-table"), "index.js": loaderWithTable("my-table", "@my") },
     ofTable.addons,
@@ -235,7 +262,7 @@ const notFollowed: Record<string, Program> = {
     libraries(["", "musl"]).map(library => `@my/my-list-${process.platform}${library}-${process.arch}`),
     () => "my-list.node",
   );
-  notFollowed["a list of names that a loop tries"] = inPackage(
+  oneOfFew["a list of names that a loop tries"] = inPackage(
     "my-list",
     {
       "package.json": manifest("my-list", "lib/index.js"),
@@ -249,7 +276,7 @@ const notFollowed: Record<string, Program> = {
     libraries(["-glibc", "-musl"]).map(library => `@my/my-grown-${process.platform}-${process.arch}${library}`),
     () => "my-grown.node",
   );
-  notFollowed["a name that grows in one arm of a condition"] = inPackage(
+  oneOfFew["a name that grows in one arm of a condition"] = inPackage(
     "my-grown",
     { "package.json": manifest("my-grown"), "index.js": loaderWithNameThatGrows("my-grown", "@my") },
     ofGrown.addons,
@@ -344,22 +371,22 @@ describe.skipIf(!systemCC || !target || !!unsupported)("compile/aot/addons-named
     600_000,
   );
 
-  test.concurrent.each(Object.keys(notFollowed))(
+  test.concurrent.each(Object.keys(oneOfFew))(
     "%s, with the addon passed as another entry point",
     title =>
       slot(async () => {
-        const { plain, build, compiled } = await run(title, notFollowed[title], { passesAddons: true });
+        const { plain, build, compiled } = await run(title, oneOfFew[title], { passesAddons: true });
         expect(build.stderr).toContain("isn't a constant");
         expect(compiled).toEqual(plain);
       }),
     600_000,
   );
 
-  test.todo.each(Object.keys(notFollowed))(
+  test.concurrent.each(Object.keys(oneOfFew))(
     "%s",
     title =>
       slot(async () => {
-        const { plain, compiled } = await run(title, notFollowed[title]);
+        const { plain, compiled } = await run(title, oneOfFew[title]);
         expect(compiled).toEqual(plain);
       }),
     600_000,

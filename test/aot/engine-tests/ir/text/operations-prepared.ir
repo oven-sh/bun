@@ -7,7 +7,7 @@
 # CHECK-NEXT: layout L2 kind=Environment fields=[{key="c" declared={type=anything}}]
 # CHECK-NEXT: layout L3 kind=Instance name="C" module=m0
 # CHECK-NEXT: layout L4 kind=Instance name="D" module=m0 base=L3 flags=[HasHeritage]
-# CHECK-NEXT: layout L5 name="Handlers" fields=[{key="m" declared={type=function} flags=[IsRequired] flow={location={initialization=SetAtCreation deferral=CapturesObject deferredFunction=f13} occupancy=AlwaysFilled}}]
+# CHECK-NEXT: layout L5 name="Handlers" fields=[{key="m" declared={type=function} flags=[IsRequired] flow={location={initialization=SetAtCreation deferral=CapturesObject deferredFunction=f13} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
 # CHECK-NEXT: variable g0 name="ran" module=m0 declared={type=anything}
 # CHECK-NEXT: module m0 path="main.js" displayPath="main.js"
 # CHECK-NEXT: module m1 path="other.cjs" displayPath="other.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f1
@@ -426,7 +426,7 @@ layout L1 name="Size" fields=[{key="x" declared={type=anything}}]
 layout L2 kind=Environment fields=[{key="c" declared={type=anything}}]
 layout L3 kind=Instance name="C" module=m0
 layout L4 kind=Instance name="D" module=m0 base=L3 flags=[HasHeritage]
-layout L5 name="Handlers" fields=[{key="m" declared={type=function} flags=[IsRequired] flow={location={initialization=SetAtCreation deferral=CapturesObject deferredFunction=f13} occupancy=AlwaysFilled}}]
+layout L5 name="Handlers" fields=[{key="m" declared={type=function} flags=[IsRequired] flow={location={initialization=SetAtCreation deferral=CapturesObject deferredFunction=f13} occupancy=AlwaysFilled stability=[IsNeverDeleted, IsNeverRedefined, IsNeverStoredWithOtherType]}}]
 variable g0 name="ran" module=m0 declared={type=anything}
 module m0 path="main.js" displayPath="main.js"
 module m1 path="other.cjs" displayPath="other.cjs" kind=CommonJs exportRule=CommonJs requireResult=ModuleExports body=f1

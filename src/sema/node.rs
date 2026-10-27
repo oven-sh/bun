@@ -1249,6 +1249,35 @@ impl<'s> File<'s> {
         }
     }
 
+    /// How many HIR nodes the most deeply nested one has above it.
+    pub fn deepest_nesting(&self) -> u32 {
+        const UNKNOWN: u32 = u32::MAX;
+        let rows = &self.parents().rows;
+        let mut depths = vec![UNKNOWN; rows.len()];
+        let mut below: Vec<usize> = Vec::new();
+        let mut deepest = 0;
+        for start in 0..rows.len() {
+            let mut at = start;
+            let mut above = loop {
+                if depths[at] != UNKNOWN {
+                    break Some(depths[at]);
+                }
+                below.push(at);
+                match rows[at] {
+                    Node::NONE => break None,
+                    parent => at = parent.row().idx(),
+                }
+            };
+            while let Some(node) = below.pop() {
+                let depth = above.map_or(0, |above| above + 1);
+                depths[node] = depth;
+                above = Some(depth);
+            }
+            deepest = deepest.max(depths[start]);
+        }
+        deepest
+    }
+
     fn parent_of_part(&self, node: Node) -> Node {
         let row = node.row();
         let is_import = || matches!(self.data(row), NodeData::Stmt(s) if matches!(self[s].kind, StmtKind::Import(_)));

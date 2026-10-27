@@ -122,7 +122,7 @@ impl<'s> Folder<'_, 's> {
                     self.paths_from_own_directory.push(argument);
                 }
             }
-            ImportSpecifier::Unknown => {}
+            ImportSpecifier::OneOf(_) | ImportSpecifier::Unknown => {}
         }
     }
 }

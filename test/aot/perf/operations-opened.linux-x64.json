@@ -42,7 +42,7 @@
   "field_add_assign": 2,
   "field_increment": 2,
   "field_read": 3,
-  "field_read_any": 9,
+  "field_read_any": 7,
   "field_read_any_twin": 11,
   "field_read_builtin_parent": 55,
   "field_read_int": 1,

@@ -569,7 +569,7 @@ const trimScripts = (cfg: Config) => [
     .map(name => trimScript(cfg, name)),
   resolve(cfg.cwd, "scripts", "build", "error.ts"),
 ];
-const trimReviewFiles = ["entry-points.txt", "requires.txt", "groups.txt", "retained-by.txt"];
+const trimReviewFiles = ["entry-points.txt", "requires.txt", "needs.txt", "groups.txt", "retained-by.txt"];
 
 /**
  * Link an executable. Returns absolute path to output (with cfg.exeSuffix

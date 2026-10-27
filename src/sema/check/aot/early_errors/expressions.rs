@@ -121,6 +121,9 @@ impl Checker<'_, '_> {
         for &e in index.of(ExprTag::Regex).iter().filter(reached) {
             self.check_regexp_flag_early_errors(file, e);
         }
+        for &e in index.of(ExprTag::TaggedTemplate).iter().filter(reached) {
+            self.check_tag_behind_assertion(file, e);
+        }
         for &e in index.of(ExprTag::Jsx).iter().filter(reached) {
             if let ExprKind::Jsx(j) = hir[e].kind {
                 self.check_jsx_attribute_early_errors(file, j);
@@ -139,6 +142,26 @@ impl Checker<'_, '_> {
         };
         if let Some(code) = code {
             self.early_error_at(self.span_of_expr(file, e), code, &[]);
+        }
+    }
+
+    /// `a?.b!`x``: what runs has no `!`, and an optional chain is no tag of a template.
+    fn check_tag_behind_assertion(&mut self, file: FileId, e: ExprId) {
+        let hir = self.hir(file);
+        let ExprKind::TaggedTemplate(call) = hir[e].kind else {
+            return;
+        };
+        let tag = hir[call].callee;
+        let ExprKind::NonNull(operand) = hir[tag].kind else {
+            return;
+        };
+        let chain = match hir[operand].kind {
+            ExprKind::Dot { chain, .. } | ExprKind::Index { chain, .. } => chain,
+            ExprKind::Call(call) => hir[call].chain,
+            _ => Chain::No,
+        };
+        if chain != Chain::No && !is_parenthesized(hir, operand) && !is_parenthesized(hir, tag) {
+            self.early_error_at(self.span_of_expr(file, e), 1358, &[]);
         }
     }
 

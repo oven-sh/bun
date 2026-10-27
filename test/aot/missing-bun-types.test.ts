@@ -783,6 +783,63 @@ describe.concurrent("without Bun's type declarations", () => {
     buildTimeout,
   );
 
+  // `any` as the type of a declared parameter says as little with Bun's types installed, so TypeScript's error stays one.
+  test(
+    "a parameter without a type in a function that is handed to what the program declares stops the build, as it stops bun check",
+    () =>
+      slot(async () => {
+        const callees = [
+          "ofJavaScript(",
+          "declared(",
+          "arrow(",
+          "withRest(0, ",
+          "holder.method(",
+          "new Holder(",
+          "Holder.made(",
+          "generic<number>(",
+          "overloaded(",
+        ];
+        const given = [
+          "x => x",
+          "function (x) { return x; }",
+          "(x, y) => [x, y]",
+          "(...all) => all",
+          "({ a }) => a",
+          "([a]) => a",
+          "{ run: x => x }",
+          "{ run(x) { return x; } }",
+          "{ deep: { run: x => x } }",
+          "[x => x]",
+          "[{ run: x => x }]",
+        ];
+        const calls = callees.flatMap(callee => given.map(argument => `results.push(${callee}${argument}));`));
+        using dir = tempDir("aot-missing-bun-types", {
+          "own.js": `export function ofJavaScript(run) { return typeof run; }\n`,
+          "main.ts": `import { ofJavaScript } from "./own.js";
+function declared(run: any) { return typeof run; }
+const arrow = (run: any) => typeof run;
+function withRest(first: number, ...rest: any[]) { return first + rest.length; }
+class Holder { constructor(run?: any) { this.kind = typeof run; } kind: string; method(run: any) { return typeof run; } static made(run: any) { return typeof run; } }
+const holder = new Holder();
+function generic<T>(run: any): T | string { return typeof run; }
+function overloaded(run: any): string;
+function overloaded(run: any, more: number): string;
+function overloaded(run: any) { return typeof run; }
+export const results: unknown[] = [];
+${calls.join("\n")}
+`,
+          "tsconfig.json": JSON.stringify({
+            compilerOptions: { lib: ["esnext"], strict: true, allowJs: true, types: [] },
+          }),
+        });
+        const checked = await check(String(dir));
+        expect(checked.errors.length).toBeGreaterThanOrEqual(calls.length);
+        expect(new Set(checked.errors)).toEqual(new Set(["TS7006", "TS7019", "TS7031"]));
+        expect(await build(String(dir))).toEqual({ errors: checked.errors, warnings: [], exitCode: 1, signal: null });
+      }),
+    buildTimeout,
+  );
+
   test(
     "a parameter without a type stops the build of a project whose tsconfig.json is strict",
     () =>

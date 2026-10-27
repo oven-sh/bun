@@ -735,6 +735,10 @@
     "typed": 35.1,
     "untyped": 33.1
   },
+  "everyday-downleveled/derived.object-create-prototype": {
+    "typed": 7.1,
+    "untyped": 7.1
+  },
   "everyday-downleveled/field.define-property": {
     "typed": 2664.5,
     "untyped": 2664.6
@@ -795,9 +799,37 @@
     "typed": 13.0,
     "untyped": 13.0
   },
+  "everyday-downleveled/two-classes.assign-to-prototype": {
+    "typed": 92.5,
+    "untyped": 94
+  },
+  "everyday-downleveled/two-classes.babel-create-class": {
+    "typed": 125.4,
+    "untyped": 116.9
+  },
+  "everyday-downleveled/two-classes.prototype-literal": {
+    "typed": 10,
+    "untyped": 10
+  },
+  "everyday-downleveled/variant.direct-create-with-descriptor": {
+    "typed": 7.1,
+    "untyped": 7.1
+  },
   "everyday-downleveled/variant.direct-plain-create-two-levels": {
     "typed": 75.8,
     "untyped": 73.2
+  },
+  "everyday-downleveled/variant.helper-create-with-descriptor-one-class": {
+    "typed": 7.1,
+    "untyped": 7.1
+  },
+  "everyday-downleveled/variant.helper-create-with-descriptor-two-classes": {
+    "typed": 10,
+    "untyped": 10
+  },
+  "everyday-downleveled/variant.helper-plain-create-two-classes": {
+    "typed": 10,
+    "untyped": 10
   },
   "everyday-downleveled/variant.helper-plain-create-two-levels": {
     "typed": 76.0,

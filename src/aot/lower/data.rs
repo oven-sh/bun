@@ -99,6 +99,7 @@ fn add_record(
     let maximum = file.inputs.limits.get(LimitId::MaxNestingDepth);
     if nesting_depth(&root) > maximum {
         let position = file.hir[expression].pos;
+        file.queries.answer_nothing_from_now_on();
         file.gave_up(LimitId::MaxNestingDepth, position);
         let span = file.span_at(position);
         let depth = maximum.to_string();

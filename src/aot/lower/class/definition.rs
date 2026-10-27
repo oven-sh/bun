@@ -209,16 +209,18 @@ impl FileLowering<'_, '_, '_, '_> {
         if self.runs_as_written() {
             return start_of(hir, node.extends);
         }
-        let is_printed_in_parentheses = matches!(
-            hir[self.skip_type_syntax(node.extends)].kind,
-            ExprKind::Binary { .. }
-                | ExprKind::Cond { .. }
-                | ExprKind::Assign { .. }
-                | ExprKind::Unary { .. }
-                | ExprKind::Await(_)
-                | ExprKind::Yield { .. }
-                | ExprKind::Fn(_)
-        );
+        let printed = self.skip_unprinted_syntax(node.extends);
+        let is_printed_in_parentheses = !self.is_literal_operand(printed)
+            && matches!(
+                hir[printed].kind,
+                ExprKind::Binary { .. }
+                    | ExprKind::Cond { .. }
+                    | ExprKind::Assign { .. }
+                    | ExprKind::Unary { .. }
+                    | ExprKind::Await(_)
+                    | ExprKind::Yield { .. }
+                    | ExprKind::Fn(_)
+            );
         match is_printed_in_parentheses {
             true if node.name.is_some() => node.name_pos,
             true => node.text_start,

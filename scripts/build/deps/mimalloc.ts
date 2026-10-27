@@ -81,6 +81,10 @@ export const mimalloc: Dependency = {
     "patches/mimalloc/secure-guard-pages-are-protected.patch",
     "patches/mimalloc/out-of-memory-is-no-corruption.patch",
     "patches/mimalloc/remember-the-request-that-found-no-memory.patch",
+    "patches/mimalloc/ask-who-may-take-address-space.patch",
+    "patches/mimalloc/new-uses-address-space-kept-aside.patch",
+    "patches/mimalloc/entry-points-that-use-address-space-kept-aside.patch",
+    "patches/mimalloc/page-map-covers-the-arenas.patch",
     ...(cfg.lockEnvironment ? ["patches/mimalloc/environment-sets-sizes-and-pace-only.patch"] : []),
   ],
 

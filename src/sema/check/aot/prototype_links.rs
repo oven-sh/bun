@@ -168,8 +168,7 @@ impl EndFinder<'_, '_, '_> {
         if !is_plain_name || function == FnId::NONE {
             return None;
         }
-        let mut parameters = self.hir[function].params.iter();
-        let index = parameters.position(|it| it == parameter)? as u32;
+        let index = self.hir[function].params.position_of(parameter.idx())? as u32;
         Some(LinkEnd::Parameter { function, index })
     }
 

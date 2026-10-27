@@ -18,7 +18,15 @@ export type FieldKind =
   | { tiles: SectionName };
 
 export type SectionName =
-  "edges" | "featureSets" | "setMembers" | "ranges" | "icuPackages" | "icuRuns" | "icuLanguages" | "moduleTexts";
+  | "edges"
+  | "featureSets"
+  | "setMembers"
+  | "ranges"
+  | "icuPackages"
+  | "icuRuns"
+  | "icuLanguages"
+  | "moduleTexts"
+  | "entryPointNeeds";
 
 export interface Section {
   /** The record in Rust. Without one, src/trim/table.rs reads the section by hand. */
@@ -79,6 +87,13 @@ export const sections: Readonly<Record<SectionName, Section>> = {
       methods: "removalMethods",
       reserved: "reserved8",
     },
+  },
+  entryPointNeeds: {
+    record: "EntryPointNeeds",
+    isCopy: true,
+    hasRule: true,
+    malformed: "EntryPointNeeds",
+    fields: { range: "range", own: "set", always: "optionalSet", sometimes: "optionalSet", reserved: "reserved16" },
   },
 };
 

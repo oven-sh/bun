@@ -1,44 +1,8 @@
-use std::cell::{Cell, RefCell};
+use bun_sema::bind::{Binding, Decl, PatParent};
+use bun_sema::hir::{ExprId, ExprKind, FnBody, FnId, VarDeclId};
 
-use bun_sema::bind::{Binding, Decl, Parent, PatParent, SymbolId};
-use bun_sema::hir::{
-    Chain, ExprId, ExprKind, Flags, FnBody, FnId, IdList, NameKind, PatKind, PropKey, PropKind,
-    StmtId, StmtKind, UnOp, VarDeclId, VarKind,
-};
-use smallvec::SmallVec;
-
-use crate::ir::generated::LimitId;
 use crate::lower::FileLowering;
-
-// How many expressions and declarations one question may still look at. Behind the last the answer is that nothing is moved.
-struct Budget(Cell<u64>);
-
-impl Budget {
-    fn take_step(&self) -> bool {
-        let left = self.0.get();
-        self.0.set(left.saturating_sub(1));
-        left > 0
-    }
-}
-
-#[derive(Copy, Clone, PartialEq, Eq)]
-enum Substitution {
-    Continue,
-    Success,
-    Failure,
-}
-
-// A variable that is used once, on its way into the statement behind its declaration.
-struct Replacement<'a> {
-    symbol: SymbolId,
-    is_access: bool,
-    can_be_removed: bool,
-    // The variables that are declared behind it, with their initializers. They are in the statement already.
-    printed: &'a [(SymbolId, Printed)],
-    budget: &'a Budget,
-    // The name of the variable, once it has been reached.
-    found: Cell<Option<ExprId>>,
-}
+use crate::lower::transpiled::{Rewrite, TranspiledFile};
 
 // What Bun's transpiler prints in place of a name.
 #[derive(Copy, Clone)]
@@ -48,47 +12,43 @@ pub(in crate::lower) enum Printed {
     Function(FnId),
 }
 
-#[derive(Copy, Clone)]
-struct Found {
-    initializer: Printed,
-    // The initializer, or what is printed in its place if it is such a name itself.
-    written: Printed,
-}
-
-// The statement around each expression on the way from a name out to its statement. Every name of a long row of operators goes out through the same operators.
-// By expression: 0 where nothing is remembered yet, 1 where no statement is around it, or else the number of the statement and 2.
-#[derive(Default)]
-pub(in crate::lower) struct StatementsAround(RefCell<Vec<u32>>);
-
-// Whether Bun's transpiler prints the value of a constant in place of its name. Each constant is asked once, however many constants are named after it.
-// By declaration: the answer to a question about a variable that is used once stands apart, since that is answered without other such variables.
-#[derive(Default)]
-pub(in crate::lower) struct ConstantsNamedByValue(RefCell<Vec<[Option<bool>; 2]>>);
-
-// What stands around an expression.
-enum Around {
-    Expression(ExprId),
-    Statement(Option<StmtId>),
-}
-
-// The statements of one list around one of them.
-#[derive(Copy, Clone)]
-struct Siblings {
-    earlier: IdList<StmtId>,
-    all: IdList<StmtId>,
-    is_block: bool,
-}
-
-// `substitute_single_use_symbol_in_stmt` of Bun's transpiler changes the syntax tree. This asks the same of a tree that stays as it is.
 impl FileLowering<'_, '_, '_, '_> {
-    // What Bun's transpiler prints in place of a name, which is the only use of a `let` or `const` variable or of a function that a block declares.
+    // What Bun's transpiler prints in place of the name of a constant, of the only use of a `let` or `const` variable or of a function that a block declares.
+    // An initializer that replaces a name ends in front of the name, so following names to their initializers comes to an end.
+    // A function may be declared behind the name: `last_mapped_position_in` enters none that it is in already.
     pub(in crate::lower) fn find_printed_in_place(&self, name: ExprId) -> Option<Printed> {
-        let steps = self
-            .inputs
-            .limits
-            .get(LimitId::MaxStepsToPrintedInitializer);
-        let budget = Budget(Cell::new(steps));
-        Some(self.find_printed(name, &budget)?.initializer)
+        let hir = self.hir;
+        let transpiled = self.transpiled.as_ref()?;
+        if transpiled.has_identifier_at(hir[name].pos) {
+            return None;
+        }
+        let Binding::Symbol(symbol) = self.bound.binding(name) else {
+            return None;
+        };
+        match *self.bound.symbol(symbol).decls {
+            [Decl::Var(pattern) | Decl::Require(pattern)] => {
+                let PatParent::Var(declaration) = self.bound.pat_parent[pattern.idx()] else {
+                    return None;
+                };
+                // A name in code that the transpiler drops is gone too. Its declaration stays.
+                let is_replaced = hir[declaration].loc.end <= hir[name].pos
+                    && (!transpiled.has_binding_at(hir[pattern].pos)
+                        || matches!(transpiled.find_rewrite(name), Some(Rewrite::Operand(_))));
+                let initializer = hir[declaration].init.some().filter(|_| is_replaced);
+                initializer.map(Printed::Initializer)
+            }
+            ref functions => {
+                let mut functions = functions.iter().rev();
+                let last = functions.find_map(|&declaration| match declaration {
+                    Decl::Fn(function) if !matches!(hir[function].body, FnBody::None) => {
+                        Some(function)
+                    }
+                    _ => None,
+                });
+                last.filter(|&last| !transpiled.has_binding_at(hir[last].name_pos))
+                    .map(Printed::Function)
+            }
+        }
     }
 
     pub(in crate::lower) fn find_printed_initializer(&self, name: ExprId) -> Option<ExprId> {
@@ -98,635 +58,29 @@ impl FileLowering<'_, '_, '_, '_> {
         }
     }
 
-    // The same where the statement that holds the name begins with an operator or a condition.
-    pub(in crate::lower) fn find_initializer_visited_again(&self, name: ExprId) -> Option<ExprId> {
-        let statement = self.find_statement_around(name)?;
-        let first = self.find_first_expression(statement)?;
-        let first = match self.hir[statement].kind {
-            StmtKind::Expr(_) => self.skip_operators_dropped_when_unused(first),
-            _ => self.skip_type_syntax(first),
-        };
-        matches!(
-            self.hir[first].kind,
-            ExprKind::Binary { .. } | ExprKind::Unary { .. } | ExprKind::Cond { .. }
-        )
-        .then(|| self.find_printed_initializer(name))?
+    // The transpiler prints no declaration of the variable.
+    pub(in crate::lower) fn is_initializer_moved(&self, declaration: VarDeclId) -> bool {
+        let position = self.hir[self.hir[declaration].pat].pos;
+        let is_printed = |transpiled: &TranspiledFile| transpiled.has_binding_at(position);
+        !self.transpiled.as_ref().is_none_or(is_printed)
     }
 
-    // The name in whose place Bun's transpiler prints the initializer of a variable.
-    pub(in crate::lower) fn find_name_replaced_by(&self, initializer: ExprId) -> Option<ExprId> {
-        let hir = self.hir;
-        let Parent::VarInit(declaration) = self.bound.parent_of_expr(initializer) else {
-            return None;
-        };
-        let symbol = self.find_symbol_used_once(declaration)?;
-        let siblings = self.find_siblings(self.bound.var_stmt[declaration.idx()])?;
-        let steps = self
-            .inputs
-            .limits
-            .get(LimitId::MaxStepsToPrintedInitializer);
-        let budget = Budget(Cell::new(steps));
-        for later in hir
-            .ids(siblings.all)
-            .skip(siblings.earlier.len as usize + 1)
+    // `const a = f(); const b = a; return b;` is printed `return f();`. The position of that `return`.
+    pub(in crate::lower) fn find_return_printed_with(&self, declaration: VarDeclId) -> Option<u32> {
+        let transpiled = self.transpiled.as_ref()?;
+        let mut value = self.skip_unprinted_syntax(self.hir[declaration].init);
+        while let ExprKind::Ident(_) = self.hir[value].kind
+            && let Some(initializer) = self.find_printed_initializer(value)
         {
-            if !budget.take_step() {
-                return None;
-            }
-            if !self.is_printed(later) {
-                continue;
-            }
-            let replacement = Replacement {
-                symbol,
-                is_access: false,
-                can_be_removed: true,
-                printed: &[],
-                budget: &budget,
-                found: Cell::new(None),
-            };
-            let target = self.find_first_expression(later)?;
-            if self.substitute(target, &replacement, false) == Substitution::Success {
-                let name = replacement.found.get()?;
-                let printed = self.find_printed(name, &budget)?.initializer;
-                let is_moved = matches!(printed, Printed::Initializer(moved) if moved == hir[declaration].init);
-                return is_moved.then_some(name);
-            }
-            if !matches!(hir[later].kind, StmtKind::Var(_)) {
-                return None;
-            }
+            value = self.skip_unprinted_syntax(initializer);
         }
-        None
+        transpiled.find_return_of_moved_value_at(self.parsed_position(value))
     }
 
-    // The literal that Bun's transpiler prints in place of the name of a constant.
-    pub(in crate::lower) fn find_printed_value(&self, name: ExprId) -> Option<ExprId> {
-        if self.runs_as_written() {
-            return None;
-        }
-        let Binding::Symbol(symbol) = self.bound.binding(name) else {
-            return None;
-        };
-        let &[Decl::Var(pattern)] = self.bound.symbol(symbol).decls else {
-            return None;
-        };
-        let PatParent::Var(declaration) = self.bound.pat_parent[pattern.idx()] else {
-            return None;
-        };
-        // The transpiler knows the value from the end of the declaration on.
-        let is_declared = self.hir[declaration].loc.end <= self.hir[name].pos;
-        (is_declared && self.is_named_by_its_value(declaration))
-            .then_some(self.hir[declaration].init)
-    }
-
-    // At the top of a file the transpiler keeps the declaration.
     pub(in crate::lower) fn is_replaced_by_its_value(&self, declaration: VarDeclId) -> bool {
-        let statement = self.bound.var_stmt[declaration.idx()];
-        self.bound.parent_of_stmt(statement) != Parent::File
-            && self.is_named_by_its_value(declaration)
-    }
-
-    fn is_named_by_its_value(&self, declaration: VarDeclId) -> bool {
-        let question = usize::from(self.printed_operators.is_asking_about_variable_used_once());
-        let remembered = {
-            let mut answers = self.constants_named_by_value.0.borrow_mut();
-            if answers.is_empty() {
-                answers.resize(self.bound.var_stmt.len(), [None; 2]);
-            }
-            answers[declaration.idx()][question]
-        };
-        remembered.unwrap_or_else(|| {
-            let answer = self.is_constant_behind_constants(declaration);
-            let mut answers = self.constants_named_by_value.0.borrow_mut();
-            answers[declaration.idx()][question] = Some(answer);
-            answer
-        })
-    }
-
-    fn is_constant_behind_constants(&self, declaration: VarDeclId) -> bool {
-        if !self.is_constant_with_literal(declaration) {
-            return false;
-        }
-        let statement = self.bound.var_stmt[declaration.idx()];
-        let siblings = match self.bound.parent_of_stmt(statement) {
-            Parent::File => self.find_among(self.hir.body, false, statement),
-            _ => self.find_siblings(statement),
-        };
-        let Some(siblings) = siblings else {
-            return false;
-        };
-        let steps = self
-            .inputs
-            .limits
-            .get(LimitId::MaxStepsToPrintedInitializer);
-        let budget = Budget(Cell::new(steps));
-        self.is_behind_constants(siblings, &budget)
-    }
-
-    fn find_printed(&self, name: ExprId, budget: &Budget) -> Option<Found> {
-        let hir = self.hir;
-        let Binding::Symbol(symbol) = self.bound.binding(name) else {
-            return None;
-        };
-        if !self.scopes.is_used_once(symbol) {
-            return None;
-        }
-        let statement = self.find_statement_around(name)?;
-        let target = self.find_first_expression(statement)?;
-        let mut printed: SmallVec<[(SymbolId, Printed); 4]> = SmallVec::new();
-        let siblings = self.find_siblings(statement)?;
-        let list = siblings.earlier;
-        for index in (0..list.len).rev() {
-            let earlier = hir.id_at(list, index as usize);
-            let is_moved =
-                siblings.is_block && self.find_function_moved_to_start(earlier).is_some();
-            if is_moved || !self.is_printed(earlier) {
-                continue;
-            }
-            let StmtKind::Var(declarations) = hir[earlier].kind else {
-                return None;
-            };
-            for declaration in declarations.iter().rev() {
-                if !budget.take_step() {
-                    return None;
-                }
-                let before = Siblings {
-                    earlier: IdList::new(list.start, index),
-                    ..siblings
-                };
-                if self.is_printed_as_its_value(declaration, before, budget) {
-                    continue;
-                }
-                let candidate = self.find_symbol_used_once(declaration)?;
-                let initializer = hir[declaration].init;
-                let written = self.find_written(initializer, budget);
-                let replacement = Replacement {
-                    symbol: candidate,
-                    is_access: match written {
-                        Printed::Initializer(written) => matches!(
-                            hir[written].kind,
-                            ExprKind::Dot { .. } | ExprKind::Index { .. }
-                        ),
-                        Printed::Function(_) => false,
-                    },
-                    can_be_removed: match written {
-                        Printed::Initializer(written) => {
-                            self.is_written_without_effects(written, budget)
-                        }
-                        Printed::Function(_) => true,
-                    },
-                    printed: &printed,
-                    budget,
-                    found: Cell::new(None),
-                };
-                if self.substitute(target, &replacement, false) != Substitution::Success {
-                    return None;
-                }
-                let initializer = Printed::Initializer(initializer);
-                if candidate == symbol {
-                    return Some(Found {
-                        initializer,
-                        written,
-                    });
-                }
-                printed.push((candidate, initializer));
-            }
-        }
-        if !siblings.is_block {
-            return None;
-        }
-        // One `let` statement declares them all, each where its name is declared first, with the last function of that name.
-        let mut moved: SmallVec<[(SymbolId, FnId); 4]> = SmallVec::new();
-        for declared in hir.ids(siblings.all).rev() {
-            if !budget.take_step() {
-                return None;
-            }
-            if let Some(function) = self.find_function_moved_to_start(declared) {
-                moved.push((self.bound.fn_symbol[function.idx()], function));
-            }
-        }
-        for index in 0..moved.len() {
-            let (candidate, _) = moved[index];
-            let is_first = !moved[index + 1..].iter().any(|later| later.0 == candidate);
-            if !is_first {
-                continue;
-            }
-            let last = moved.iter().find(|entry| entry.0 == candidate)?.1;
-            let is_substituted = self.scopes.is_used_once(candidate)
-                && !self.bound.is_visible_to_eval(candidate)
-                && !self.runs_as_written();
-            if !is_substituted {
-                return None;
-            }
-            let replacement = Replacement {
-                symbol: candidate,
-                is_access: false,
-                can_be_removed: true,
-                printed: &printed,
-                budget,
-                found: Cell::new(None),
-            };
-            if self.substitute(target, &replacement, false) != Substitution::Success {
-                return None;
-            }
-            let function = Printed::Function(last);
-            if candidate == symbol {
-                return Some(Found {
-                    initializer: function,
-                    written: function,
-                });
-            }
-            printed.push((candidate, function));
-        }
-        None
-    }
-
-    // The function of a declaration that the transpiler moves to the start of the block around it.
-    fn find_function_moved_to_start(&self, statement: StmtId) -> Option<FnId> {
-        let StmtKind::Fn(function) = self.hir[statement].kind else {
-            return None;
-        };
-        let declared = self.hir[function];
-        let is_moved = !matches!(declared.body, FnBody::None)
-            && !declared
-                .flags
-                .intersects(Flags::ASYNC | Flags::GENERATOR | Flags::AMBIENT);
-        is_moved.then_some(function)
-    }
-
-    // The transpiler prints the value of such a constant wherever its name is written, and no declaration: a `const` with a literal, with nothing but `const` statements in front of it in its block.
-    fn is_printed_as_its_value(
-        &self,
-        declaration: VarDeclId,
-        siblings: Siblings,
-        budget: &Budget,
-    ) -> bool {
-        self.is_constant_with_literal(declaration) && self.is_behind_constants(siblings, budget)
-    }
-
-    fn is_behind_constants(&self, siblings: Siblings, budget: &Budget) -> bool {
-        let hir = self.hir;
-        let is_constant =
-            |declaration: VarDeclId| self.bound.variable_kind(hir, declaration) == VarKind::Const;
-        let is_behind_moved_function = || {
-            let mut all = hir.ids(siblings.all);
-            siblings.is_block
-                && all.any(|other| {
-                    !budget.take_step() || self.find_function_moved_to_start(other).is_some()
-                })
-        };
-        hir.ids(siblings.earlier).rev().all(|earlier| {
-            budget.take_step()
-                && match hir[earlier].kind {
-                    StmtKind::Var(declarations) => declarations.iter().all(is_constant),
-                    StmtKind::Directive { .. } | StmtKind::Enum(_) => true,
-                    _ => !self.is_printed(earlier),
-                }
-        }) && !is_behind_moved_function()
-    }
-
-    fn is_constant_with_literal(&self, declaration: VarDeclId) -> bool {
-        let hir = self.hir;
-        let decl = hir[declaration];
-        matches!(hir[decl.pat].kind, PatKind::Ident(_))
-            && self.bound.variable_kind(hir, declaration) == VarKind::Const
-            && decl.init.is_some()
-            && self.can_be_constant_value(decl.init)
-    }
-
-    fn find_statement_around(&self, expression: ExprId) -> Option<StmtId> {
-        let mut remembered = self.statements_around.0.borrow_mut();
-        if remembered.is_empty() {
-            remembered.resize(self.hir.exprs.len(), 0);
-        }
-        let mut child = expression;
-        let found = loop {
-            if remembered[child.idx()] != 0 {
-                break remembered[child.idx()];
-            }
-            child = match self.find_around(child) {
-                Around::Expression(parent) => parent,
-                Around::Statement(statement) => break statement.map_or(1, |it| it.0 + 2),
-            };
-        };
-        let mut child = expression;
-        while remembered[child.idx()] == 0 {
-            remembered[child.idx()] = found;
-            let Around::Expression(parent) = self.find_around(child) else {
-                break;
-            };
-            child = parent;
-        }
-        found.checked_sub(2).map(StmtId)
-    }
-
-    fn find_around(&self, expression: ExprId) -> Around {
-        let bound = self.bound;
-        match bound.parent_of_expr(expression) {
-            Parent::Expr(parent) => Around::Expression(parent),
-            Parent::Prop(property) | Parent::PropKey(property) | Parent::MethodKey(property) => {
-                Around::Expression(bound.prop_owner[property.idx()])
-            }
-            Parent::Stmt(statement) => Around::Statement(Some(statement)),
-            Parent::VarInit(declaration) => {
-                Around::Statement(Some(bound.var_stmt[declaration.idx()]))
-            }
-            _ => Around::Statement(None),
-        }
-    }
-
-    // The expression of a statement that is evaluated first, if the transpiler looks for the variable there.
-    fn find_first_expression(&self, statement: StmtId) -> Option<ExprId> {
-        let hir = self.hir;
-        match hir[statement].kind {
-            StmtKind::Expr(value)
-            | StmtKind::Throw(value)
-            | StmtKind::Return(value)
-            | StmtKind::If { test: value, .. }
-            | StmtKind::Switch { expr: value, .. } => value.some(),
-            StmtKind::Var(declarations) => {
-                let first = hir[declarations.iter().next()?];
-                let is_name = matches!(hir[first.pat].kind, PatKind::Ident(_));
-                first.init.some().filter(|_| is_name)
-            }
-            _ => None,
-        }
-    }
-
-    fn find_siblings(&self, statement: StmtId) -> Option<Siblings> {
-        let hir = self.hir;
-        let (list, is_block) = match self.bound.parent_of_stmt(statement) {
-            Parent::Stmt(parent) => match hir[parent].kind {
-                StmtKind::Block(list) => (list, true),
-                StmtKind::Switch { cases, .. } => {
-                    let start = hir[statement].start;
-                    let (mut low, mut high) = (0, cases.len as usize);
-                    while low < high {
-                        let middle = low + (high - low) / 2;
-                        match hir[cases.at(middle)].end <= start {
-                            true => low = middle + 1,
-                            false => high = middle,
-                        }
-                    }
-                    if low == cases.len as usize {
-                        return None;
-                    }
-                    (hir[cases.at(low)].body, true)
-                }
-                _ => return None,
-            },
-            Parent::FnBody(function) => match hir[function].body {
-                FnBody::Block(list) => (list, false),
-                FnBody::None | FnBody::Expr(_) => return None,
-            },
-            _ => return None,
-        };
-        self.find_among(list, is_block, statement)
-    }
-
-    fn find_among(
-        &self,
-        list: IdList<StmtId>,
-        is_block: bool,
-        statement: StmtId,
-    ) -> Option<Siblings> {
-        let siblings = &self.hir.ids[list.range()];
-        let index = siblings.partition_point(|&sibling| StmtId::from(sibling) < statement);
-        let is_found = siblings
-            .get(index)
-            .is_some_and(|&sibling| StmtId::from(sibling) == statement);
-        is_found.then(|| Siblings {
-            earlier: IdList::new(list.start, index as u32),
-            all: list,
-            is_block,
-        })
-    }
-
-    fn find_written(&self, expression: ExprId, budget: &Budget) -> Printed {
-        let inner = self.skip_unprinted_syntax(expression);
-        match self.hir[inner].kind {
-            ExprKind::Ident(_) => match self.find_printed(inner, budget) {
-                Some(printed) => printed.written,
-                None => Printed::Initializer(inner),
-            },
-            _ => Printed::Initializer(inner),
-        }
-    }
-
-    fn is_written_without_effects(&self, written: ExprId, budget: &Budget) -> bool {
-        let is_operand_replaced = match self.hir[written].kind {
-            ExprKind::Unary {
-                op: UnOp::Typeof,
-                operand,
-            } => {
-                let name = self.skip_type_syntax(operand);
-                self.find_printed(name, budget).is_some()
-            }
-            _ => false,
-        };
-        !is_operand_replaced && self.can_be_removed_when_unused(written, budget)
-    }
-
-    // A list or an object literal does nothing if none of its parts does.
-    fn can_be_removed_when_unused(&self, expression: ExprId, budget: &Budget) -> bool {
-        let hir = self.hir;
-        if !budget.take_step() {
-            return false;
-        }
-        let Printed::Initializer(written) = self.find_written(expression, budget) else {
-            return true;
-        };
-        match hir[written].kind {
-            ExprKind::Missing => true,
-            ExprKind::Array(elements) => {
-                let mut elements = hir.ids(elements);
-                elements.all(|element| self.can_be_removed_when_unused(element, budget))
-            }
-            ExprKind::Object(properties) => properties.iter().all(|property| {
-                let property = hir[property];
-                !matches!(property.key, PropKey::Computed(_))
-                    && property.kind != PropKind::Spread
-                    && (property.value.is_none()
-                        || self.can_be_removed_when_unused(property.value, budget))
-            }),
-            _ => self.is_removed_when_unused(written),
-        }
-    }
-
-    fn substitute_in_each(
-        &self,
-        expressions: IdList<ExprId>,
-        replacement: &Replacement<'_>,
-        is_in_initializer: bool,
-    ) -> Substitution {
-        for expression in self.hir.ids(expressions) {
-            let found = self.substitute(expression, replacement, is_in_initializer);
-            if found != Substitution::Continue {
-                return found;
-            }
-        }
-        Substitution::Continue
-    }
-
-    fn substitute_in_name(
-        &self,
-        name: ExprId,
-        replacement: &Replacement<'_>,
-        is_in_initializer: bool,
-    ) -> Substitution {
-        let Binding::Symbol(symbol) = self.bound.binding(name) else {
-            return self.continue_behind(name, replacement);
-        };
-        if symbol == replacement.symbol {
-            replacement.found.set(Some(name));
-            return Substitution::Success;
-        }
-        let listed = replacement.printed.iter().find(|entry| entry.0 == symbol);
-        let initializer = match listed {
-            Some(&(_, initializer)) => Some(initializer),
-            None if is_in_initializer => self
-                .find_printed(name, replacement.budget)
-                .map(|printed| printed.initializer),
-            None => None,
-        };
-        match initializer {
-            Some(Printed::Initializer(initializer)) => {
-                self.substitute(initializer, replacement, true)
-            }
-            Some(Printed::Function(_)) if replacement.can_be_removed => Substitution::Continue,
-            Some(Printed::Function(_)) => Substitution::Failure,
-            // It is still a name when the transpiler looks for the variable.
-            None if replacement.can_be_removed || self.is_literal_operand(name) => {
-                Substitution::Continue
-            }
-            None => Substitution::Failure,
-        }
-    }
-
-    fn substitute(
-        &self,
-        expression: ExprId,
-        replacement: &Replacement<'_>,
-        is_in_initializer: bool,
-    ) -> Substitution {
-        let hir = self.hir;
-        if !replacement.budget.take_step() {
-            return Substitution::Failure;
-        }
-        let inner = self.skip_unprinted_syntax(expression);
-        let can_be_removed = replacement.can_be_removed;
-        let one = |child: ExprId| self.substitute(child, replacement, is_in_initializer);
-        let each = |children: IdList<ExprId>| {
-            self.substitute_in_each(children, replacement, is_in_initializer)
-        };
-        let then =
-            |first: Substitution, is_followed: bool, rest: &dyn Fn() -> Substitution| match first {
-                Substitution::Continue if is_followed => rest(),
-                found => found,
-            };
-        let found = match hir[inner].kind {
-            ExprKind::Ident(_) => {
-                return self.substitute_in_name(inner, replacement, is_in_initializer);
-            }
-            ExprKind::New(site) => {
-                let site = hir[site];
-                then(one(site.callee), can_be_removed, &|| each(site.args))
-            }
-            ExprKind::Call(site) => {
-                let site = hir[site];
-                let callee = self.skip_unprinted_syntax(site.callee);
-                let is_replaced = matches!(hir[callee].kind, ExprKind::Ident(_))
-                    && self.bound.binding(callee) == Binding::Symbol(replacement.symbol);
-                // `const f = a.b; f()` does not pass `a` for `this`.
-                match is_replaced && replacement.is_access {
-                    true => Substitution::Continue,
-                    false => {
-                        let reaches_arguments = can_be_removed || site.chain == Chain::No;
-                        then(one(site.callee), reaches_arguments, &|| each(site.args))
-                    }
-                }
-            }
-            ExprKind::Spread(operand) | ExprKind::Await(operand) => one(operand),
-            ExprKind::Yield { value, .. } if value.is_some() => one(value),
-            ExprKind::Unary { op, operand } => match op {
-                UnOp::PreInc | UnOp::PostInc | UnOp::PreDec | UnOp::PostDec | UnOp::Delete => {
-                    Substitution::Continue
-                }
-                _ => one(operand),
-            },
-            ExprKind::Dot { obj, .. } => one(obj),
-            ExprKind::Index { obj, index, chain } => {
-                then(one(obj), can_be_removed || chain == Chain::No, &|| {
-                    one(index)
-                })
-            }
-            ExprKind::Binary { left, right, .. } => then(one(left), true, &|| one(right)),
-            ExprKind::Assign { op, target, value } => {
-                if !self.is_removed_when_unused(target) || (op.is_some() && !can_be_removed) {
-                    return Substitution::Failure;
-                }
-                one(value)
-            }
-            ExprKind::Cond { test, branches } => then(one(test), can_be_removed, &|| {
-                let branches = hir.branches(branches);
-                match (one(branches.yes), one(branches.no)) {
-                    (Substitution::Success, _) | (_, Substitution::Success) => {
-                        Substitution::Success
-                    }
-                    (Substitution::Continue, Substitution::Continue) => Substitution::Continue,
-                    _ => Substitution::Failure,
-                }
-            }),
-            ExprKind::Array(elements) => each(elements),
-            ExprKind::Template { exprs } => each(exprs),
-            ExprKind::TaggedTemplate(site) => {
-                let site = hir[site];
-                then(one(site.callee), true, &|| each(site.args))
-            }
-            ExprKind::Object(properties) => {
-                let mut found = Substitution::Continue;
-                for property in properties.iter() {
-                    let property = hir[property];
-                    if let PropKey::Computed(key) = property.key {
-                        return match one(key) {
-                            Substitution::Continue => Substitution::Failure,
-                            found => found,
-                        };
-                    }
-                    if matches!(
-                        property.name_kind,
-                        NameKind::ComputedString | NameKind::ComputedNumber
-                    ) {
-                        return Substitution::Failure;
-                    }
-                    let is_value = matches!(
-                        property.kind,
-                        PropKind::Init | PropKind::Shorthand | PropKind::Spread
-                    );
-                    if is_value && property.value.is_some() {
-                        found = one(property.value);
-                    }
-                    if found != Substitution::Continue {
-                        break;
-                    }
-                }
-                found
-            }
-            _ => Substitution::Continue,
-        };
-        match found {
-            Substitution::Continue => self.continue_behind(inner, replacement),
-            found => found,
-        }
-    }
-
-    // Whether the initializer may be evaluated behind the expression instead of in front of it.
-    fn continue_behind(&self, expression: ExprId, replacement: &Replacement<'_>) -> Substitution {
-        let changes_nothing = (replacement.can_be_removed
-            && self.can_be_removed_when_unused(expression, replacement.budget))
-            || self.is_literal_operand(expression);
-        match changes_nothing {
-            true => Substitution::Continue,
-            false => Substitution::Failure,
-        }
+        let initializer = self.hir[declaration].init;
+        self.is_initializer_moved(declaration)
+            && initializer.is_some()
+            && self.is_literal_operand(initializer)
     }
 }

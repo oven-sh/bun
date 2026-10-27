@@ -74,6 +74,7 @@ pub fn decide(input: &TrimInput<'_>, edges: &FeatureEdges) -> Decision {
     let request = input.request;
     let requirements = collect_requirements(input.settings);
     let mut retained = compute_seed(input, &requirements);
+    retain_what_allowed_builtins_need(&mut retained, edges);
     if !request.removes_unused {
         retain_all_a_program_can_enter(&mut retained);
     }
@@ -138,6 +139,23 @@ fn compute_seed(input: &TrimInput<'_>, requirements: &[OptionRequirement]) -> Re
         seed.insert_set(&features, RetainReason::ReachableByUnseenCode(index));
     }
     seed
+}
+
+// The request allows a feature for code that the compiler does not see. That code names no built-in, so no use keeps what the built-ins of the feature need.
+fn retain_what_allowed_builtins_need(retained: &mut RetainedFeatures, edges: &FeatureEdges) {
+    for &(feature, needed) in &edges.needs_of_builtins {
+        let is_allowed = retained
+            .reasons
+            .iter()
+            .any(|kept| kept.feature == feature && matches!(kept.reason, RetainReason::Allowed(_)));
+        if is_allowed {
+            let reason = RetainReason::NeededBy {
+                feature,
+                strength: EdgeStrength::AbortingGuard,
+            };
+            retained.insert(needed, reason);
+        }
+    }
 }
 
 fn retain_all_a_program_can_enter(retained: &mut RetainedFeatures) {

@@ -4,12 +4,12 @@ mod shown_names;
 #[cfg(test)]
 mod tests;
 
-use bun_sema::atom::Atom;
+use bun_sema::atom::{Atom, known};
 use bun_sema::bind::{Binding, Bound};
 use bun_sema::check::aot::{BuiltinTypeSymbols, FunctionRef, NamedValues, Queries, QueryInputs};
 use bun_sema::erasure::{TypeRanges, find_type_ranges};
 use bun_sema::fold::Decisions;
-use bun_sema::hir::{self, ExprId, NodeData};
+use bun_sema::hir::{self, ExprId, ExprKind, NodeData};
 use bun_sema::program::{CompiledModule, FileId, FileRole};
 use rustc_hash::FxHashMap;
 
@@ -22,13 +22,14 @@ use super::fragment::{FragmentBuilder, ModuleFragment};
 use super::layouts::{DefinedObjectTypes, LayoutState};
 use super::module::{LibraryFunctions, ModuleState};
 use super::scope::{ScopeAnalysis, ScopeInput, analyze_scopes};
-use super::statement::{ConstantsNamedByValue, StatementsAround};
+use super::transpiled::{ParsedText, RuntimeTranspiler, TranspileRequest, TranspiledFile};
 use super::types::TypeState;
 use crate::builtins::id::RuntimeModule;
 use crate::builtins::{BuiltinNames, Platforms, ResolvedBuiltins, SourceDialect, table};
 use crate::compile::removable::Removable;
 use crate::diagnostic_codes::Code;
 use crate::diagnostics::{DiagnosticBuffer, Span};
+use crate::engine::describe_regexp_syntax_error;
 use crate::ir::generated::FunctionRole;
 use crate::ir::types::release_spare_capacity;
 use crate::ir::{BuilderScratch, ModuleId, PropertyKey, PropertyKeyId, StringId, WellKnownSymbol};
@@ -99,6 +100,7 @@ pub struct LoweringInputs<'a> {
     pub defined_object_types: &'a DefinedObjectTypes,
     pub files: &'a [Option<FileInputs<'a>>],
     pub limits: &'a LimitValues,
+    pub transpiler: &'a RuntimeTranspiler,
     pub options: LoweringOptions,
 }
 
@@ -147,9 +149,8 @@ pub(crate) struct FileLowering<'a, 'c, 'p, 's> {
     shown_names: ShownNames,
     has_bundled_positions: bool,
     runs_as_written: bool,
+    pub(in crate::lower) transpiled: Option<TranspiledFile>,
     pub(in crate::lower) printed_operators: PrintedOperators,
-    pub(in crate::lower) statements_around: StatementsAround,
-    pub(in crate::lower) constants_named_by_value: ConstantsNamedByValue,
     counters: Counters,
     scratch: BuilderScratch,
     pub(crate) has_chain_past_nesting_limit: bool,
@@ -165,6 +166,66 @@ fn runs_file_as_written(kind: load::SourceKind, hir: &hir::File<'_>) -> bool {
         | load::SourceKind::TypesOnly
         | load::SourceKind::RuntimeFunctions => hir::find_transpiled_mark(&hir.text).is_some(),
     }
+}
+
+/// The build runs the macros of a file itself, so the transpiler is asked without them and cannot tell what `bun run` says of such a file.
+fn imports_macro(hir: &hir::File<'_>) -> bool {
+    hir.imports.iter().any(|import| {
+        !import.type_only
+            && hir.import_attribute(import.attributes, known::r#type) == Some(known::r#macro)
+    })
+}
+
+/// What `bun run` reports of TypeScript's own syntax in a file of the program is an error of the build too: nothing else says what that syntax is.
+/// What is JavaScript, the grammar that has read the file has said. So the transpiler's errors count where it reads the text once all that
+/// TypeScript erases is taken out.
+fn transpile_file(
+    inputs: &LoweringInputs<'_>,
+    file: FileId,
+    queries: &Queries<'_, '_, '_>,
+    diagnostics: &mut DiagnosticBuffer,
+) -> Option<TranspiledFile> {
+    let hir = queries.hir();
+    let request = TranspileRequest {
+        path: inputs.sources.diagnostic_path(file),
+        text: &hir.text,
+        loader: inputs.sources.loader(file),
+        has_legacy_decorators: hir.legacy_decorators,
+        parsed: Some(ParsedText {
+            hir,
+            bound: queries.bound(),
+            atoms: &queries.files().atoms,
+            max_steps: inputs.limits.get(LimitId::MaxStepsToPrintedInitializer),
+        }),
+    };
+    let errors = match inputs.transpiler.transpile(&request) {
+        Ok(transpiled) => return Some(transpiled),
+        Err(errors) => errors,
+    };
+    if inputs.sources.kind(file) != load::SourceKind::Program || imports_macro(hir) {
+        return None;
+    }
+    let erased = find_type_ranges(hir);
+    if errors.is_empty() || erased.is_empty() {
+        return None;
+    }
+    let text = &erased.remove_from(&hir.text);
+    let without_types = TranspileRequest {
+        text,
+        parsed: None,
+        ..request
+    };
+    if inputs.transpiler.transpile(&without_types).is_ok() {
+        for error in errors {
+            let span = Span {
+                file,
+                start: error.start,
+                end: error.end,
+            };
+            diagnostics.report(Code::RefusedByTranspiler, span, &[&error.message]);
+        }
+    }
+    None
 }
 
 impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
@@ -202,6 +263,21 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             file_inputs.builtins,
             inputs.options.removable,
         );
+        let runs_as_written = runs_file_as_written(inputs.sources.kind(file), hir);
+        let mut diagnostics = DiagnosticBuffer::default();
+        // The positions in Bun's own modules come from a table.
+        let is_transpiled_at_run_time = match inputs.sources.kind(file) {
+            load::SourceKind::Program | load::SourceKind::Data | load::SourceKind::TypesOnly => {
+                !runs_as_written
+            }
+            load::SourceKind::EvaluatedText
+            | load::SourceKind::RuntimeModule(_)
+            | load::SourceKind::RuntimeFunctions => false,
+        };
+        let transpiled = match is_transpiled_at_run_time {
+            true => transpile_file(inputs, file, queries, &mut diagnostics),
+            false => None,
+        };
         FileLowering {
             inputs,
             file,
@@ -215,7 +291,7 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
             simplified_expressions: removable.find_simplified_expressions(),
             queries,
             fragment: FragmentBuilder::new(file),
-            diagnostics: DiagnosticBuffer::default(),
+            diagnostics,
             scopes,
             types: TypeState::default(),
             layouts: LayoutState::default(),
@@ -232,10 +308,9 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
                 inputs.sources.bundled_names(file),
             ),
             has_bundled_positions: inputs.sources.bundled_positions(file).is_some(),
-            runs_as_written: runs_file_as_written(inputs.sources.kind(file), hir),
+            runs_as_written,
+            transpiled,
             printed_operators: PrintedOperators::default(),
-            statements_around: StatementsAround::default(),
-            constants_named_by_value: ConstantsNamedByValue::default(),
             counters: Counters::default(),
             scratch: BuilderScratch::default(),
             has_chain_past_nesting_limit: false,
@@ -253,6 +328,30 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
         let depth = maximum.to_string();
         self.diagnostics
             .report(Code::NestedTooDeeply, span, &[depth.as_bytes()]);
+    }
+
+    /// `bun run` reports a file that holds such a literal and runs nothing of it, whether or not anything reads the literal. The engine sees the
+    /// literals that the transpiler prints.
+    pub(super) fn refuse_invalid_regexp_literals(&mut self) {
+        if self.inputs.sources.kind(self.file) != load::SourceKind::Program {
+            return;
+        }
+        for (index, expression) in self.hir.exprs.iter().enumerate() {
+            let ExprKind::Regex { pattern, flags } = expression.kind else {
+                continue;
+            };
+            let transpiled = self.transpiled.as_ref();
+            if transpiled.is_some_and(|it| !it.has_regexp_literal_at(expression.pos)) {
+                continue;
+            }
+            let pattern = self.queries.atom_bytes(pattern);
+            let flags = self.queries.atom_bytes(flags);
+            if let Some(sentence) = describe_regexp_syntax_error(pattern, flags) {
+                let span = self.span_of(NodeData::Expr(ExprId(index as u32)));
+                self.diagnostics
+                    .report(Code::InvalidRegExp, span, &[&sentence]);
+            }
+        }
     }
 
     pub(super) fn finish(mut self, module: ModuleFragment) -> LoweredFile {
@@ -286,6 +385,10 @@ impl<'a, 'c, 'p, 's> FileLowering<'a, 'c, 'p, 's> {
         self.simplified_expressions
             .binary_search(&expression)
             .is_ok()
+    }
+
+    pub(crate) fn is_path_from_own_directory(&self, argument: ExprId) -> bool {
+        self.compiled.analysis.is_path_from_own_directory(argument)
     }
 
     pub(crate) fn decisions(&self) -> &'p Decisions<'s> {

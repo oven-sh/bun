@@ -1650,6 +1650,9 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
                             let Some(type_args) = type_args else {
                                 return self.missing_name_after_question_dot(start, expression);
                             };
+                            if type_args.is_empty() {
+                                self.count_empty_type_arguments_as_early_error();
+                            }
                             expression = match self.token() {
                                 T::OpenParen => {
                                     self.call(start, expression, type_args, Chain::Start)
@@ -2269,6 +2272,16 @@ impl<const GENERAL: bool, const COMMENTS: bool> Parser<'_, GENERAL, COMMENTS> {
         self.s.ids.truncate(base);
         self.take_template_parts(parts_base);
         (IdList::new(start, count), is_incomplete)
+    }
+
+    /// `a?.<>()`
+    #[cold]
+    fn count_empty_type_arguments_as_early_error(&mut self) {
+        if let Some(last) = self.f.diagnostics.last_mut()
+            && last.code == 1099
+        {
+            last.class = DiagnosticClass::EarlyError;
+        }
     }
 
     /// `parseTaggedTemplateRest`

@@ -168,9 +168,9 @@ impl FileScanner<'_, '_> {
             ImportSpecifier::Constant(specifier) => {
                 self.scan_constant_site(index, site, specifier, answer)
             }
-            ImportSpecifier::Pattern { .. } | ImportSpecifier::Unknown => {
-                self.scan_computed_site(site, answer)
-            }
+            ImportSpecifier::Pattern { .. }
+            | ImportSpecifier::OneOf(_)
+            | ImportSpecifier::Unknown => self.scan_computed_site(site, answer),
         }
     }
 
@@ -198,7 +198,7 @@ impl FileScanner<'_, '_> {
                 let start = self.spellings.len() as u32;
                 self.spellings
                     .extend(spellings.iter().filter_map(find_spelled_module));
-                self.add_spellings_named_in(site.specifier_node);
+                self.add_spellings_named_in(site.specifier_node, start);
                 ScannedSite::Candidates(start..self.spellings.len() as u32)
             }
             ComputedTargets::All { cause, .. } => {
@@ -215,7 +215,7 @@ impl FileScanner<'_, '_> {
                     | ComputedUnknown::ExternalCandidate => {}
                 }
                 let start = self.spellings.len() as u32;
-                self.add_spellings_named_in(site.specifier_node);
+                self.add_spellings_named_in(site.specifier_node, start);
                 match self.spellings.len() as u32 {
                     end if end == start => ScannedSite::AllModules,
                     end => ScannedSite::Candidates(start..end),
@@ -224,12 +224,17 @@ impl FileScanner<'_, '_> {
         }
     }
 
-    fn add_spellings_named_in(&mut self, argument: ExprId) {
-        let named = modules_named_in(self.named_in_choices, argument).iter();
-        self.spellings.extend(named.map(|it| SpelledModule {
-            spelling: it.name,
-            module: ModuleRef::Runtime(it.module),
-        }));
+    /// The spellings of the site begin at `start`. Each stands there once.
+    fn add_spellings_named_in(&mut self, argument: ExprId, start: u32) {
+        for named in modules_named_in(self.named_in_choices, argument) {
+            let mut spelled = self.spellings[start as usize..].iter();
+            if !spelled.any(|it| it.spelling == named.name) {
+                self.spellings.push(SpelledModule {
+                    spelling: named.name,
+                    module: ModuleRef::Runtime(named.module),
+                });
+            }
+        }
     }
 
     fn scan_constant_site(

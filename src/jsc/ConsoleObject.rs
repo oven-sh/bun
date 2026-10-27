@@ -348,6 +348,18 @@ impl Drop for FlushOnDrop<'_> {
     }
 }
 
+#[cold]
+fn throw_for_removed_table_printer(global: &JSGlobalObject) -> jsc::JsError {
+    unsafe extern "C" {
+        safe fn Bun__throwForRemovedFeature(global: &JSGlobalObject, feature: u16) -> JSValue;
+    }
+    Bun__throwForRemovedFeature(
+        global,
+        bun_removable_features::Feature::ConsoleTable.index(),
+    );
+    jsc::JsError::Thrown
+}
+
 /// <https://console.spec.whatwg.org/#formatter>
 #[crate::host_call]
 pub extern "C" fn message_with_type_and_level(
@@ -498,6 +510,10 @@ fn message_with_type_and_level_(
         // if value is not an object/array/iterable, don't print a table and just print it
         let tabular_data = vals_slice[0];
         if tabular_data.is_object() {
+            // The function that the program calls is the engine's, which every executable has.
+            if bun_removable_features::is_removed(bun_removable_features::Feature::ConsoleTable) {
+                return Err(throw_for_removed_table_printer(global));
+            }
             let properties: JSValue = if len >= 2 && vals_slice[1].js_type().is_array() {
                 vals_slice[1]
             } else {

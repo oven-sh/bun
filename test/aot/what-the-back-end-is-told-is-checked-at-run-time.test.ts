@@ -41,6 +41,12 @@ const rows: [sabotage: string, flags: string[], program: string, named: string][
     "a-closure-that-is-only-lent-reads-what-it-captured.ts",
     "StackSlotIsWrittenBeforeRead",
   ],
+  [
+    "ClosureInFrameKeepsNoCaptures",
+    [claims, everyPass],
+    "closures-that-are-only-lent-ahead-of-an-await-read-what-they-captured.js",
+    "StackSlotIsWrittenBeforeRead",
+  ],
   ["RangesEndOneEarly", [claims], "flags-and-small-counters-come-out-of-fields.ts", "ValueIsInRange"],
 ];
 
@@ -83,8 +89,12 @@ describe.skipIf(!listed?.includes("NoCallWrites"))(
       600_000,
     );
 
-    // A second read goes in only where the word is still there to be read.
-    test.concurrent.each(["what-was-read-from-a-text-is-used-when-the-text-is-gone.js"])(
+    // A second read goes in only where the word is still there to be read. What a call that has returned left on the stack says nothing about a later call.
+    test.concurrent.each([
+      "what-was-read-from-a-text-is-used-when-the-text-is-gone.js",
+      "the-first-line-of-a-text-of-one-line-is-taken-where-other-calls-have-returned.js",
+      "the-first-line-of-a-text-of-one-line-is-taken-ahead-of-the-first-await.js",
+    ])(
       "%s",
       async program => {
         const path = join(import.meta.dir, "programs", "claims-to-the-back-end", program);

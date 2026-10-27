@@ -384,6 +384,15 @@ impl ModuleGraph {
         self.plan.has(&self.plan.order.is_half, module)
     }
 
+    /// The body of `importer` may run before the body of `exporter`, which it imports, has finished.
+    pub fn may_run_before(&self, importer: ModuleRef, exporter: ModuleRef) -> bool {
+        let order = &self.plan.order;
+        let component =
+            |module: ModuleRef| Some(order.component_of[order.numbers.number_of(module)?]);
+        component(importer) == component(exporter)
+            || self.plan.has(&order.is_required_at_any_time, importer)
+    }
+
     /// The loader of the run time loads the module and what it imports one by one, as `bun run` does.
     pub fn is_loaded_by_loader(&self, module: ModuleRef) -> bool {
         matches!(module, ModuleRef::File(_))

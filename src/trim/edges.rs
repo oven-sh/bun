@@ -17,7 +17,17 @@ impl FeatureEdges {
         for edge in &mut edges {
             edge.is_followed |= edge.strength == EdgeStrength::Reference;
         }
-        FeatureEdges { edges }
+        FeatureEdges {
+            edges,
+            needs_of_builtins: Vec::new(),
+        }
+    }
+
+    pub(crate) fn with_needs_of_builtins(self, needs: Vec<(Feature, Feature)>) -> FeatureEdges {
+        FeatureEdges {
+            needs_of_builtins: needs,
+            ..self
+        }
     }
 
     pub fn as_slice(&self) -> &[FeatureEdge] {

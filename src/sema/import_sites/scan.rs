@@ -43,6 +43,8 @@ pub(crate) fn collect_import_sites<'s>(
     let unused_import_symbols = uses.map_or_else(Vec::new, |uses| uses.unused_symbols());
     ImportScan {
         sites: slice_in(&sites, arena),
+        alternatives: slice_in(&calls.alternatives, arena),
+        paths_from_own_directory: slice_in(&calls.paths_from_own_directory, arena),
         first_call_site,
         sites_by_kind: slice_in(&sites_by_kind, arena),
         jsx_imports,

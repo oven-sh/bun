@@ -47,6 +47,11 @@ export function guardFeatureOf(entry: BuiltinEntry): FeatureName | undefined {
   return entry.isReadByName ? undefined : entry.uses.find(use => !use.isConditional)?.feature;
 }
 
+// What a program keeps by naming the entry, whichever overload it calls and whatever it passes.
+export function featuresUsedWhateverTheCall(entry: BuiltinEntry): FeatureName[] {
+  return entry.uses.filter(use => !use.isConditional).map(use => use.feature);
+}
+
 export function featuresWithDeclaredUse(uses: BuiltinUses, model: FeatureModel): Set<number> {
   const indexOf = new Map(model.features.map(feature => [feature.name, feature.index]));
   const used = new Set<number>();

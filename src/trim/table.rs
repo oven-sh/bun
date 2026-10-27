@@ -12,12 +12,12 @@ use crate::error::{TrimError, TrimInternalError, UnsupportedReason};
 use crate::model::{EdgeStrength, FeatureEdge, FeatureEdges};
 
 pub use crate::model::{
-    IcuItemRun, IcuLanguage, IcuPackage, LocaleGroup, ModuleText, RemovableRange, SetIndex,
-    TrimTable,
+    EntryPointNeeds, IcuItemRun, IcuLanguage, IcuPackage, LocaleGroup, ModuleText, RemovableRange,
+    SetIndex, TrimTable,
 };
 
 pub const TABLE_MAGIC: [u8; 8] = *b"BUNTRIM\0";
-pub const TABLE_VERSION: u32 = 4;
+pub const TABLE_VERSION: u32 = 5;
 pub const TRIMMED_MAGIC: [u8; 8] = *b"BUNTRMD\0";
 pub const REMOVED_RANGES_HEADER_BYTES: usize = 16;
 pub const MAX_TABLE_BYTES: u64 = 16 << 20;
@@ -59,6 +59,7 @@ pub enum MalformedTable {
     IcuRuns,
     IcuLanguages,
     ModuleTexts,
+    EntryPointNeeds,
     TrailingBytes,
 }
 
@@ -277,6 +278,12 @@ impl IcuItemRun {
     }
 }
 
+impl EntryPointNeeds {
+    fn may_follow(self, _: Option<&EntryPointNeeds>, _: &Context<'_>) -> bool {
+        self.always.is_some() || self.sometimes.is_some()
+    }
+}
+
 impl ModuleText {
     fn may_follow(&self, _: Option<&ModuleText>, context: &Context<'_>) -> bool {
         self.readers
@@ -362,6 +369,7 @@ pub fn parse_trim_table(section: &[u8]) -> Result<TrimTable, TableError> {
     if !have_distinct_modules(&module_texts) {
         return Err(TableError::Malformed(MalformedTable::ModuleTexts));
     }
+    let entry_point_needs = parse_entry_point_needs(sections.entry_point_needs, &context)?;
     Ok(TrimTable {
         features_hash: read_u64(table, FEATURES_HASH_OFFSET),
         base_address: context.base_address,
@@ -371,6 +379,7 @@ pub fn parse_trim_table(section: &[u8]) -> Result<TrimTable, TableError> {
         icu_packages,
         icu_languages,
         module_texts,
+        entry_point_needs,
     })
 }
 

@@ -24,6 +24,7 @@ import {
   type EdgeStrength,
   type EntryPoint,
   type FeatureModel,
+  type NeededFeatures,
   type Partition,
   type PartitionFailure,
 } from "./types.ts";
@@ -37,6 +38,8 @@ export interface ReportContext {
   demangler: string | undefined;
   partition: Partition | undefined;
   entryPoints?: EntryPoint[];
+  /** What findFeaturesThatEntryPointsNeed found. */
+  neededFeatures?: Map<number, NeededFeatures>;
 }
 
 export const maxPrintedFailures = 20;
@@ -385,6 +388,17 @@ function describeRetainedReference(
   return chain.length === 0 ? text : `${text}\n  ${printer.describeChain(chain)}`;
 }
 
+function describeFoldedEntryPoints(feature: number, { graph, partition }: ReportContext, printer: Printer): string {
+  const records = partition?.foldedEntryPoints.filter(record => record.feature === feature) ?? [];
+  return [...new Set(records.map(record => record.entry))]
+    .slice(0, maxListedPerFeature)
+    .map(entry => {
+      const aliases = aliasNames(graph, entry).map(name => printer.demangledSymbol(name));
+      return `\n  its entry point ${printer.describe(entry)} is folded with other code, so it stays: ${aliases.join(", ")}`;
+    })
+    .join("");
+}
+
 function describeFailure(
   failure: LinkFailure,
   printer: Printer,
@@ -404,8 +418,10 @@ function describeFailure(
       const text =
         `${megabytes(failure.bytes)} can be removed with ${printer.featureName(failure.feature)}, ` +
         `below its minimum of ${megabytes(failure.minimum)}: retained code refers to the rest`;
-      if (details.retained === undefined) return text;
-      return text + describeRetained(details.retained.shares.get(failure.feature), details.retained.previous, printer);
+      const folded = describeFoldedEntryPoints(failure.feature, context, printer);
+      if (details.retained === undefined) return text + folded;
+      const share = details.retained.shares.get(failure.feature);
+      return text + folded + describeRetained(share, details.retained.previous, printer);
     }
     case "GuardOfUnknownBuiltin":
       return (
@@ -572,6 +588,21 @@ function retainedByLines(features: number[], retained: RetainedWithFeature, prin
   ]);
 }
 
+function neededFeatureLines(context: ReportContext, entryPoints: EntryPoint[], printer: Printer): string[] {
+  const pathOf = new Map(context.uses?.entries.map(({ id, path }) => [id, path]));
+  return [...(context.neededFeatures ?? [])]
+    .sort(([a], [b]) => a - b)
+    .map(([entry, { always, sometimes }]) => {
+      const builtins = entryPoints.flatMap(record => (record.entry === entry ? (record.builtin ?? []) : []));
+      const paths = [...new Set(builtins.map(builtin => pathOf.get(builtin) ?? String(builtin)))].sort();
+      const needs = [
+        ...(always.length > 0 ? [`always ${printer.featureNames(always, ",")}`] : []),
+        ...(sometimes.length > 0 ? [`sometimes ${printer.featureNames(sometimes, ",")}`] : []),
+      ];
+      return `${paths.join(", ")} needs ${needs.join(", ")}: ${printer.describe(entry)}`;
+    });
+}
+
 function featuresByIndex(model: FeatureModel): number[] {
   return model.features.map(feature => feature.index).sort((a, b) => a - b);
 }
@@ -591,6 +622,7 @@ export function writeReviewFiles(directory: string, context: ReportContext, entr
   const nodes = [
     ...entryPoints.flatMap(({ entry, guard }) => [entry, guard]),
     ...partition.foldedEntryPoints.map(({ entry }) => entry),
+    ...(context.neededFeatures?.keys() ?? []),
     ...[...references.values()].flatMap(pair => pair.listed.flat()),
     ...listedFeatures.flatMap(feature => retainedShareNodes(retained.shares.get(feature), retained.previous)),
   ];
@@ -598,6 +630,7 @@ export function writeReviewFiles(directory: string, context: ReportContext, entr
   const printer = new Printer(context, nodes, aliases);
   writeLines(join(directory, "entry-points.txt"), entryPointLines(graph, partition, entryPoints, printer));
   writeLines(join(directory, "requires.txt"), requiresLines(partition, references, printer));
+  writeLines(join(directory, "needs.txt"), neededFeatureLines(context, entryPoints, printer));
   writeLines(join(directory, "groups.txt"), groupLines(context, partition, printer));
   writeLines(join(directory, "retained-by.txt"), retainedByLines(listedFeatures, retained, printer));
 }

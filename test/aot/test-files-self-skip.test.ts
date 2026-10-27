@@ -73,6 +73,7 @@ const needNoCompiler = [
   "aot/plain-bun-is-unchanged.test.ts",
   "aot/shell-completions-list-flags.test.ts",
   "aot/test-files-self-skip.test.ts",
+  "aot/tools/let-values-be-something-else.test.ts",
   "aot/the-fuzzer-judges-as-it-says.test.ts",
   "aot/the-fuzzer-keeps-a-wrong-answer-beside-a-clock.test.ts",
   "cli/aot-compile-executable-path.test.ts",

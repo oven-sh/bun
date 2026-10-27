@@ -177,7 +177,7 @@ for (const list of [
 // TODO: a new list, which came in the same way. What it asks of an operation goes into the schema, and this line out of here.
 known["valueflow/AOTValueFlowUnobservedDefinitions.cpp keepsObjectToItself"] = 5;
 // TODO: three more new lists, which came in the same way, and go out the same way.
-known["passes/AOTCopyClosureFactories.cpp definesWhatStandsAtOnePlace"] = 5;
+known["passes/AOTCopyClosureFactories.cpp definesWhatStandsAtOnePlace"] = 4;
 known["passes/AOTTypeTestOperatorRule.cpp isWantedAsInteger"] = 4;
 known["represent/AOTChooseRepresentations.cpp isSumOfWhichOnlyLowBitsAreUsed"] = 5;
 // TODO: two more, which only guess: what the back end folds on constants costs no code. A wrong guess moves an estimate of code size. The schema already says natural(Bitwise), natural(Addition).

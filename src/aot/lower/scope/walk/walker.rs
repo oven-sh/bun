@@ -121,7 +121,6 @@ impl<'x, 's> Walker<'x, 's> {
                 function_of_fn: vec![None; hir.fns.len()],
                 symbol_initializations: vec![None; bound.symbols.len()],
                 last_store_times: vec![0; bound.symbols.len()],
-                use_counts: vec![0; bound.symbols.len()],
                 symbols_read_by_enums: Vec::new(),
                 symbols_in_export_lists: Vec::new(),
                 is_initialized_conditionally: vec![false; bound.symbols.len()],
@@ -320,8 +319,6 @@ impl<'x, 's> Walker<'x, 's> {
     }
 
     pub(super) fn record_symbol_use(&mut self, context: Context, symbol: SymbolId) {
-        let use_count = &mut self.walk.use_counts[symbol.idx()];
-        *use_count = (*use_count + 1).min(2);
         if context.is_unprinted {
             self.unprinted_uses.push((context.function, symbol));
             return;

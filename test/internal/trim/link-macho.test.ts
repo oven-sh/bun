@@ -99,6 +99,7 @@ describeEachMachine("Mach-O $name", machine => {
       expect(reviewFiles(folder, "program")).toEqual([
         "entry-points.txt",
         "groups.txt",
+        "needs.txt",
         "requires.txt",
         "retained-by.txt",
       ]);

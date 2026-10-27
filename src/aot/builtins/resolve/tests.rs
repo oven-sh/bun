@@ -135,7 +135,9 @@ fn create_fold_inputs<'s>(setup: Setup, atoms: &Interner<'s>, arena: &'s Arena) 
 fn find_target(atoms: &Interner<'_>, specifier: ImportSpecifier) -> Option<RuntimeModule> {
     let text = match specifier {
         ImportSpecifier::Constant(text) => atoms.bytes(text),
-        ImportSpecifier::Pattern { .. } | ImportSpecifier::Unknown => return None,
+        ImportSpecifier::Pattern { .. } | ImportSpecifier::OneOf(_) | ImportSpecifier::Unknown => {
+            return None;
+        }
     };
     let module = MODULES.iter().find(|module| module.0.as_bytes() == text);
     module.map(|module| module.1)

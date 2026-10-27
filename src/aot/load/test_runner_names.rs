@@ -27,7 +27,9 @@ fn loads_test_runner(request: &TransformRequest<'_, '_>, atoms: &Interner<'_>) -
         ImportSpecifier::Constant(specifier) => {
             MODULES_OF_TEST_RUNNERS.contains(&atoms.bytes(specifier))
         }
-        ImportSpecifier::Pattern { .. } | ImportSpecifier::Unknown => false,
+        ImportSpecifier::Pattern { .. } | ImportSpecifier::OneOf(_) | ImportSpecifier::Unknown => {
+            false
+        }
     })
 }
 

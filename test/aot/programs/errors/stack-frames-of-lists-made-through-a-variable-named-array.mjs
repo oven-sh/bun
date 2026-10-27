@@ -1,5 +1,5 @@
 // What a stack trace lists where a list is made with a length that is refused, through a variable of the program that is named Array.
-const framesIn = stack => String(stack).split("\n").slice(1).map(line => line.trim().replace(/^at /, "").replace(/\/.*\//, "").replace(/native:\d+:\d+/, "native")).join(" < ");
+const framesIn = stack => String(stack).split("\n").slice(1).map(line => line.trim().replace(/^at /, "").replace(/(?:[A-Z]:)?[\\/].*[\\/]/, "").replace(/native:\d+:\d+/, "native")).join(" < ");
 const Array = globalThis.Array;
 const rows = {
   moduleCall(n) { const made = Array(n); return [made]; },

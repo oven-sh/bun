@@ -23,6 +23,7 @@ import {
   entryCalling,
   entryGuarding,
   entryPointsText,
+  equalFunction,
   expectLinkFailure,
   Extra,
   indexOf,
@@ -80,7 +81,13 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
     using dir = tempDir("trim-coff-freestanding", sources);
     const folder = String(dir);
     const { executable, table } = await linked(folder, optionsWith());
-    expect(reviewFiles(folder, output)).toEqual(["entry-points.txt", "groups.txt", "requires.txt", "retained-by.txt"]);
+    expect(reviewFiles(folder, output)).toEqual([
+      "entry-points.txt",
+      "groups.txt",
+      "needs.txt",
+      "requires.txt",
+      "retained-by.txt",
+    ]);
     const entryPoints = entryPointsText(folder, output).trimEnd().split("\n");
     expect(entryPoints).toHaveLength(1);
     expect(entryPoints[0]).toStartWith(`${Extra} Abort `);
@@ -214,6 +221,31 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
       expect(["entered", "entry_of_other"].map(featuresOf)).toEqual([[Extra], [Other]]);
     },
   );
+
+  testLink("removes an entry point that begins where a symbol marks the end of the function before it", async () => {
+    using dir = tempDir("trim-coff-freestanding", {
+      ...sources,
+      "entry.c": `
+        int feature_code(int);
+        __attribute__((noinline, cold)) int entered(int x) { return feature_code(x) * 3 + feature_code(x + 1); }
+      `,
+      "assembled.c": `__asm__(
+        ".section .text$mn,\\"xr\\"\\n.p2align 4\\n"
+        ".globl assembled\\n.def assembled\\n.scl 2\\n.type 32\\n.endef\\nassembled:\\n"
+        ".fill 4, 4, ${machine === "arm64" ? "0xd65f03c0" : "0xc3c3c3c3"}\\n"
+        ".def .ef\\n.scl 101\\n.endef\\n.ef:\\n.text\\n");
+      `,
+      "main.c": `
+        ${start}
+        int assembled(int);
+        int main(int argc, char **argv) { return argc > 5 ? GUARDED(Extra, entered, argc) & 63 : assembled(argc) & 0; }
+      `,
+    });
+    const objects = ["feature_code", "entry", "assembled", "embedder", "main"];
+    const { addressOf, featuresOf } = await linked(String(dir), optionsWith({ objects }));
+    expect(addressOf(".ef")).toBe(addressOf("entered"));
+    expect(["entered", "feature_code", "assembled"].map(featuresOf)).toEqual([[Extra], [Extra], undefined]);
+  });
 
   describe("a table in data that holds the address of a built-in's C++ function", () => {
     const builtins = [{ ...builtinUsing(spelledBuiltin, "toy.extra", Extra), nativeSymbols: ["Toy::entersFeature"] }];
@@ -350,6 +382,25 @@ describe.concurrent.each(machines)("a trimmable link with lld-link and no librar
       "FeatureBelowMinimum",
       Extra,
     ]);
+  });
+
+  testLink("names an entry point folded with retained code where its feature is below its minimum", async () => {
+    using dir = tempDir("trim-coff-freestanding", {
+      ...sources,
+      "entry.c": equalFunction("entered"),
+      "main.c": `
+        ${start}
+        ${equalFunction("retained_equal")}
+        int main(int argc, char **argv) { return argc > 5 ? GUARDED(Extra, entered, argc) & 63 : retained_equal(argc) & 0; }
+      `,
+    });
+    const folder = String(dir);
+    const options = optionsWith({ objects: ["entry", "embedder", "main"], minimums: { [Extra]: 1 } });
+    const linkResult = await wrapped(folder, options);
+    expectLinkFailure(folder, output, linkResult, ["FeatureBelowMinimum"]);
+    expect(linkResult.stderr).toMatch(
+      /\n  its entry point (entered|retained_equal) \(\w+\.obj, \d+ bytes\) is folded with other code, so it stays: (entered|retained_equal)\n/,
+    );
   });
 
   testLink("fails when nothing can ever mark a guarded feature as used", async () => {

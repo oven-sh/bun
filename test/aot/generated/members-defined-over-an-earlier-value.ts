@@ -3,7 +3,7 @@
 //
 //   bun members-defined-over-an-earlier-value.ts <folder> [--sample=<how many>] [--only=<regex over names>]
 //
-// writes <folder>/over-<earlier>-<runs>.mjs.
+// writes <folder>/over-<earlier>-<runs>.mjs and <folder>/unknown-over-<earlier>.mjs.
 import { writeCaseFiles, type CaseFile } from "./case-files";
 
 const values = [
@@ -93,24 +93,46 @@ const show = v => JSON.stringify(v, (k, each) => each === undefined ? "undefined
 function t(name, f) { let r; try { r = show(f()); } catch (e) { r = "threw " + e.name; } console.log(name, r); }
 `;
 
+/** What is stored comes out of a function made of text: the build knows nothing about it, nor about what else that function may do. */
+const eventsWithUnknownValues = [
+  { name: "given-by-key", text: "(o[key] = launder(5), [o.f, o.v, Object.keys(o).join()])" },
+  { name: "given-by-reflection", text: `(Reflect.set(o, "f", launder(5)), [o.f, o.v])` },
+  { name: "given-a-text-by-reflection", text: `(Reflect.set(o, "f", launder("")), [o.f, o.v])` },
+  { name: "given-by-a-copy", text: "(Object.assign(o, launder({ f: 5 })), [o.f, o.v])" },
+  { name: "given-by-key-and-deleted", text: "(o[key] = launder(5), delete o.f, o.f)" },
+  { name: "given-by-key-then-a-function-and-deleted", text: "(o[key] = launder(5), o.f = () => 8, delete o.f, o.f)" },
+];
+
+const headWithUnknownValues = head + `const launder = new Function("value", process.argv[9] ?? "return value");
+`;
+
+type Part = { name: string; text: string };
+
+const caseOf = (before: Part, value: Part, member: (typeof members)[number], run: Part, event: Part) => {
+  const name = `${before.name} ${value.name} ${member.name} ${run.name} ${event.name}`;
+  const definition = before.text
+    .replace("VALUE", () => value.text)
+    .replace("MEMBER", () => member.inLiteral)
+    .replace("STATEMENT", () => member.statement);
+  return { name, line: `t("${name}", () => { ${definition} ${run.text} return ${event.text}; });` };
+};
+
 export const membersDefinedOverAnEarlierValue = (): CaseFile[] =>
   earlier.flatMap(before =>
     runs.map(run => ({
       name: `over-${before.name}-${run.name}.mjs`,
       head,
-      cases: values.flatMap(value =>
-        members.flatMap(member =>
-          events.map(event => {
-            const name = `${before.name} ${value.name} ${member.name} ${run.name} ${event.name}`;
-            const definition = before.text
-              .replace("VALUE", () => value.text)
-              .replace("MEMBER", () => member.inLiteral)
-              .replace("STATEMENT", () => member.statement);
-            return { name, line: `t("${name}", () => { ${definition} ${run.text} return ${event.text}; });` };
-          }),
-        ),
-      ),
+      cases: values.flatMap(value => members.flatMap(member => events.map(event => caseOf(before, value, member, run, event)))),
     })),
   );
 
-if (import.meta.main) writeCaseFiles(membersDefinedOverAnEarlierValue());
+export const membersGivenUnknownValues = (): CaseFile[] =>
+  earlier.map(before => ({
+    name: `unknown-over-${before.name}.mjs`,
+    head: headWithUnknownValues,
+    cases: values.flatMap(value =>
+      members.flatMap(member => runs.flatMap(run => eventsWithUnknownValues.map(event => caseOf(before, value, member, run, event)))),
+    ),
+  }));
+
+if (import.meta.main) writeCaseFiles([...membersDefinedOverAnEarlierValue(), ...membersGivenUnknownValues()]);

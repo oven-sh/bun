@@ -70,6 +70,8 @@ import {
   model,
   Other,
   otherSource,
+  pointerToBuiltinEnteringOtherObjects,
+  pointerToBuiltinEnteringOtherSources,
   reviewFiles,
   run,
   rustSource,
@@ -344,11 +346,11 @@ describeLink("a trimmable link", () => {
     expect(() => format.writeTable(Buffer.alloc(8))).toThrow("has no section .bun_trim");
   });
 
-  test("writes the four review files and lists the entry point", async () => {
+  test("writes the five review files and lists the entry point", async () => {
     using dir = tempDir("trim-elf", sources);
     const folder = String(dir);
     await linked(folder);
-    const reviewFileNames = ["entry-points.txt", "groups.txt", "requires.txt", "retained-by.txt"];
+    const reviewFileNames = ["entry-points.txt", "groups.txt", "needs.txt", "requires.txt", "retained-by.txt"];
     expect(reviewFiles(folder, "program")).toEqual(reviewFileNames);
     const lines = entryPointsText(folder, "program").split("\n");
     expect(lines.filter(line => line.startsWith(`${Extra} Abort `))).toHaveLength(1);
@@ -664,6 +666,34 @@ describeLink("two features", () => {
         ],
       );
     });
+
+    test.skipIf(!canUseGuardHeader)(
+      "have the pointer of the built-in refused where nothing uses the feature behind the guard that aborts",
+      async () => {
+        const { "main.c": _, ...withoutMain } = sources;
+        using dir = tempDir("trim-elf-two", { ...withoutMain, ...pointerToBuiltinEnteringOtherSources });
+        const folder = String(dir);
+        const objects = pointerToBuiltinEnteringOtherObjects;
+        const always = [builtinUsing(spelledBuiltin, "toy.extra", Extra, Other)];
+        const { table, programResult } = await linked(folder, { objects, builtins: always });
+        expect(table.entryPointNeeds.map(({ own, always, sometimes }) => [own, always, sometimes])).toEqual([
+          [table.sets.findIndex(set => set.join() === `${indexOf(Extra)}`), expect.any(Number), undefined],
+        ]);
+        expect(table.sets[table.entryPointNeeds[0]!.always!]).toEqual([indexOf(Other)]);
+        expect(programResult).toEqual({ ...cleanExit, stdout: "1 0\n" });
+        trimExecutable(join(folder, "program"), join(folder, "without-other"), [], [Extra]);
+        expect(await run([join(folder, "without-other")], folder)).toEqual({
+          ...cleanExit,
+          stdout: `0 ${indexOf(Other) + 1}\n`,
+        });
+        // A program that uses both may have named the built-in, so the pointer stays where the second is forced out.
+        trimExecutable(join(folder, "program"), join(folder, "forced-out"), [Other], [Extra, Other]);
+        expect(await exitCodeOf(folder, "forced-out", [])).toBe(endedByTrap);
+        expect(readFileSync(join(folder, "program.trim", "needs.txt"), "utf8")).toStartWith(
+          `toy.extra needs always ${Other}: entersOther(`,
+        );
+      },
+    );
 
     test("fail the link when the table does not list the built-in", async () => {
       using dir = tempDir("trim-elf-two", files);

@@ -325,13 +325,6 @@ impl RuntimeTranspilerStore {
         package_json: Option<&PackageJSON>,
         module_loader: JSValue,
     ) -> *mut c_void {
-        // The path text is heap-duplicated here and freed in `reset_for_pool` via
-        // heap::take on `path.text`.
-        let owned_text: *mut [u8] = bun_core::heap::into_raw(Box::<[u8]>::from(path.text));
-        // SAFETY: owned_text was just allocated via heap::alloc and lives until
-        // `reset_for_pool` reconstructs and drops the Box. The unbounded
-        // lifetime from raw-ptr deref coerces to `'static` for `bun_paths::fs::Path<'static>`.
-        let owned_path = bun_paths::fs::Path::init(unsafe { &*owned_text.cast_const() });
         let promise: *mut JSInternalPromise = JSInternalPromise::create(global_object);
 
         // NOTE: DirInfo should already be cached since module loading happens
@@ -358,7 +351,7 @@ impl RuntimeTranspilerStore {
             .store
             .get_init(TranspilerJob {
                 non_threadsafe_input_specifier: input_specifier,
-                path: owned_path,
+                path_text: Box::from(path.text),
                 global_this: BackRef::new(global_object),
                 non_threadsafe_referrer: referrer,
                 vm,
@@ -409,10 +402,8 @@ const TRANSPILER_JOB_HIVE_CAP: usize = 64;
 pub(crate) type TranspilerJobStore = HiveArrayFallback<TranspilerJob, TRANSPILER_JOB_HIVE_CAP>;
 
 pub struct TranspilerJob {
-    // Note: stored as the lower-tier `bun_paths::fs::Path<'static>` (the type
-    // `ParseOptions.path` / `bun_ast::Source.path` use). The slices borrow the
-    // Box'd buffer allocated in `transpile()` and freed in `reset_for_pool()`.
-    pub path: bun_paths::fs::Path<'static>,
+    /// The module's path. `run()` builds the `Path` it parses under from it.
+    pub(crate) path_text: Box<[u8]>,
     pub(crate) non_threadsafe_input_specifier: bun_core::String,
     pub(crate) non_threadsafe_referrer: bun_core::String,
     pub(crate) loader: Loader,
@@ -491,21 +482,10 @@ impl TranspilerJob {
     ///
     /// Note: `HiveArrayFallback::put` runs `drop_in_place` on the slot (see
     /// hive_array.rs note), so the Drop-carrying fields — `bun_core::String` ×2,
-    /// `ResolvedSource`, `Log`, `StrongOptional` — are torn down
+    /// `ResolvedSource`, `Log`, `StrongOptional`, `path_text` — are torn down
     /// *there*, not here. This function handles only the teardown that field
-    /// drop glue does **not** cover: the leaked `path.text` Box and
-    /// `poll_ref.disable()`.
+    /// drop glue does **not** cover: `poll_ref.disable()`.
     fn reset_for_pool(&mut self) {
-        // bun.default_allocator.free(this.path.text) — `path.text` was Box-duplicated in
-        // `transpile()`; reconstruct the Box and drop it.
-        let old_path = core::mem::take(&mut self.path);
-        if !old_path.text.is_empty() {
-            // SAFETY: `text` is exactly the `&[u8]` view of the `Box<[u8]>`
-            // produced by `heap::into_raw` in `transpile()`; the fat-pointer
-            // cast preserves length, and this is the unique owner.
-            drop(unsafe { bun_core::heap::take(ptr::from_ref::<[u8]>(old_path.text).cast_mut()) });
-        }
-
         self.poll_ref.disable();
         // Remaining fields with Drop glue are handled by `store.put()` →
         // `drop_in_place`; do NOT `take()` them here (would drop the empty
@@ -540,18 +520,18 @@ impl TranspilerJob {
         let referrer = core::mem::take(&mut self.non_threadsafe_referrer);
         let mut log = core::mem::replace(&mut self.log, bun_ast::Log::init());
         let (specifier, result) = match self.parse_error {
-            Some(e) => (String::clone_utf8(self.path.text), Err(e)),
+            Some(e) => (String::clone_utf8(&self.path_text), Err(e)),
             None => {
                 let mut resolved_source = core::mem::take(&mut self.resolved_source);
                 let out = core::mem::take(&mut self.non_threadsafe_input_specifier);
                 debug_assert!(resolved_source.source_url.is_empty());
-                resolved_source.source_url = out.create_if_different(self.path.text);
+                resolved_source.source_url = out.create_if_different(&self.path_text);
                 // A job reads a file: `Bun__transpileFile` gives it no blob and no plugin's text.
                 // SAFETY: vm outlives the job, and this is its thread. One field: `self` is in `vm.transpiler_store`.
                 let in_standalone_executable = unsafe { (*vm).standalone_module_graph.is_some() };
                 resolved_source.is_static = VirtualMachine::is_file_on_disk_static(
                     in_standalone_executable,
-                    self.path.text,
+                    &self.path_text,
                 );
                 (out, Ok(resolved_source))
             }
@@ -667,8 +647,8 @@ impl TranspilerJob {
         let mut ast_memory_store = ASTMemoryAllocator::borrowing(&arena);
         let _ast_scope = ast_memory_store.enter();
 
-        let path = self.path;
-        let specifier = self.path.text;
+        let specifier: &[u8] = &self.path_text;
+        let path = bun_paths::fs::Path::init(specifier);
         let loader = self.loader;
         let this_tag = self.resolved_source.tag;
 

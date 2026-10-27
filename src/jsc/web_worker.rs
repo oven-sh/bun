@@ -38,7 +38,7 @@
 //! a pointer to it.
 
 use crate::JsCell;
-use core::cell::Cell;
+use core::cell::{Cell, OnceCell};
 use core::ffi::c_void;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, Ordering};
@@ -330,10 +330,12 @@ impl WebWorker {
                 preloads.push(utf8_slice.slice().to_vec().into_boxed_slice());
                 continue;
             }
+            let dot_slash = OnceCell::new();
             // SAFETY: `parent` is the live VM on the calling (parent) thread;
             // `resolve_entry_point_specifier` takes the raw pointer.
-            let preload =
-                unsafe { resolve_entry_point_specifier(parent, utf8_slice.slice(), error_message) };
+            let preload = unsafe {
+                resolve_entry_point_specifier(parent, utf8_slice.slice(), &dot_slash, error_message)
+            };
             if let Some(preload) = preload {
                 preloads.push(preload.to_vec().into_boxed_slice());
             }
@@ -811,9 +813,15 @@ impl WebWorker {
         // spin() goes through shutdown() which is noreturn, so a `defer free`
         // here would never run anyway.
         let mut resolve_error = BunString::EMPTY;
+        let dot_slash = OnceCell::new();
         // SAFETY: `vm_ptr` is the live worker-thread VM.
         let path = match unsafe {
-            resolve_entry_point_specifier(vm_ptr, &self.unresolved_specifier, &mut resolve_error)
+            resolve_entry_point_specifier(
+                vm_ptr,
+                &self.unresolved_specifier,
+                &dot_slash,
+                &mut resolve_error,
+            )
         } {
             Some(p) => p,
             None => {
@@ -856,7 +864,7 @@ impl WebWorker {
         }
 
         // `path` borrows the resolver's process-lifetime string store, the
-        // standalone module graph, or `self.unresolved_specifier` — all of
+        // standalone module graph, `self.unresolved_specifier` or `dot_slash` — all of
         // which outlive the worker VM. `vm.main` stores it as a raw BACKREF
         // (see `VirtualMachine::set_main`); no lifetime extension needed.
         let promise = match vm.as_mut().load_entry_point_for_web_worker(path) {
@@ -1238,7 +1246,7 @@ fn on_unhandled_rejection(
 }
 
 /// Resolve a worker entry-point specifier to a path the module loader can
-/// consume. The returned slice is BORROWED — it aliases `str`, the
+/// consume. The returned slice is BORROWED — it aliases `str`, `dot_slash`, the
 /// standalone module graph, or the resolver's arena; the caller must NOT
 /// free it.
 ///
@@ -1250,6 +1258,7 @@ fn on_unhandled_rejection(
 unsafe fn resolve_entry_point_specifier<'s>(
     parent: *mut VirtualMachine,
     str: &'s [u8],
+    dot_slash: &'s OnceCell<Vec<u8>>,
     error_message: &mut BunString,
 ) -> Option<&'s [u8]> {
     // In a `bun build --compile` executable, a relative specifier names an embedded entry point (relative to the
@@ -1291,7 +1300,9 @@ unsafe fn resolve_entry_point_specifier<'s>(
     let global = unsafe { (*parent).global };
     // SAFETY: same as above — `parent`'s `transpiler` is mutated only on its
     // owning thread (the caller's thread per fn contract).
-    let resolved_entry_point = match unsafe { (*parent).transpiler.resolve_entry_point(str) } {
+    let resolved_entry_point = match unsafe {
+        (*parent).transpiler.resolve_entry_point(str, dot_slash)
+    } {
         Ok(r) => r,
         Err(_) => {
             // `global` valid for VM lifetime; safe ZST-handle deref (panics on null).
@@ -1317,9 +1328,6 @@ unsafe fn resolve_entry_point_specifier<'s>(
         }
     };
 
-    // `Path::text` borrows the resolver's process-lifetime `dirname_store` /
-    // `filename_store` (`Path<'static>`), NOT `resolved_entry_point` itself —
-    // copy the slice out and let `resolved_entry_point` drop on the stack.
     Some(
         resolved_entry_point
             .path_const()

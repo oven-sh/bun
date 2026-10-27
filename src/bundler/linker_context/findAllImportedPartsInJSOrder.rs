@@ -460,9 +460,7 @@ impl LoadTimeReads {
             for_each_live_part(&mut |file, id, part| {
                 for dependency in part.dependencies.iter() {
                     let other = dependency.source_index.get() as usize;
-                    // A read of a run-time name (`exports_other.name`) depends on the part that declares
-                    // `exports_other`, to keep that file. It reads none of the bindings that the getters of
-                    // the object name. A part that uses the object itself can read each of them.
+                    // A read of a run-time name (`exports_other.name`) keeps that file and names none of its bindings.
                     if dependency.part_index == bun_ast::NAMESPACE_EXPORT_PART_INDEX
                         && other != file
                     {

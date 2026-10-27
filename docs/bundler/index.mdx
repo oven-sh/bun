@@ -1580,6 +1580,14 @@ interface BuildMetafile {
 }
 ```
 
+A build for `target: "bun"` or `"node"` bundles an HTML file for the browser: a page that server code [imports](/bundler/fullstack), or a page in `entrypoints`. A file that server code and the page both import is then two modules, and `inputs` has a record for each:
+
+- The server's module has the file path as its key.
+- The browser's module has the key `<path> (browser)`, for example `shared.ts (browser)`.
+- `imports[].path`, `imports[].entryPoint`, `outputs[...].inputs`, and `outputs[...].entryPoint` name a module by its key.
+
+A module that tree shaking removes has no record. The manifest that the server bundle holds in place of an imported HTML file has none either: `outputs[...].inputs` lists the manifest under the key of the HTML file.
+
 ## Outputs
 
 The `Bun.build` function returns a `Promise<BuildOutput>`, defined as:

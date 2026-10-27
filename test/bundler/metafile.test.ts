@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { tempDir } from "harness";
 import { statSync } from "node:fs";
+import { basename } from "node:path";
 
 // Type definitions for metafile structure
 interface MetafileImport {
@@ -1413,6 +1414,41 @@ describe("bun build --metafile-md", () => {
     expect(content).toContain("[NODE_MODULES:");
     expect(content).toContain("node_modules/lodash");
   });
+
+  // Tree shaking removes the package file, so the import of it names no module in the report.
+  // The path of index.js is the end of that name.
+  test("markdown lists an import under the module that has its exact name", async () => {
+    using dir = tempDir("metafile-md-exact-name", {
+      "entry.js": `import { unused } from "lib";\nimport { a } from "./a.js";\nconsole.log(a);\n`,
+      "a.js": `import { root } from "./index.js";\nexport const a = root;\n`,
+      "index.js": `export const root = "root";\n`,
+      "node_modules/lib/package.json": JSON.stringify({ name: "lib", main: "./index.js", sideEffects: false }),
+      "node_modules/lib/index.js": `export const unused = "unused";\n`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "entry.js", "--metafile-md", "--outdir=dist"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+
+    const content = await Bun.file(`${dir}/meta.md`).text();
+    expect({
+      imports: content.match(/^\[IMPORT: .*\]$/gm)?.sort(),
+      importedBy: content.match(/^\[IMPORTED_BY: .*\]$/gm)?.sort(),
+    }).toEqual({
+      imports: [
+        "[IMPORT: a.js -> index.js]",
+        "[IMPORT: entry.js -> a.js]",
+        "[IMPORT: entry.js -> node_modules/lib/index.js]",
+      ],
+      importedBy: ["[IMPORTED_BY: a.js <- entry.js]", "[IMPORTED_BY: index.js <- a.js]"],
+    });
+  });
 });
 
 describe("bun build --metafile", () => {
@@ -1652,5 +1688,547 @@ describe("metafile outputs[..].bytes is the size of the emitted file", () => {
       json: onDisk(Object.keys(outputs)),
       markdown: onDisk(entryKeys),
     });
+  });
+});
+
+// A build can have more than one graph: server code that imports an HTML page also bundles the page
+// for the browser. A file that both sides load is a module of each graph, and each module has a record.
+// The module of the build's target keeps the path as its key. The browser's module is `<path> (browser)`.
+describe("metafile of a build with more than one graph", () => {
+  // The two modules of shared.js do not import the same file.
+  const shared = {
+    "shared.js": `import { side } from "pkg";\nexport const shared = "shared on the " + side;\n`,
+    "node_modules/pkg/package.json": JSON.stringify({
+      name: "pkg",
+      exports: { ".": { browser: "./browser.js", default: "./server.js" } },
+    }),
+    "node_modules/pkg/browser.js": `export const side = "browser";\n`,
+    "node_modules/pkg/server.js": `export const side = "server";\n`,
+  };
+  const fullstack = {
+    "server.ts": `import page from "./index.html";\nimport "./shared.css";\nimport { shared } from "./shared.js";\nconsole.log(page, shared);\n`,
+    "index.html": `<!DOCTYPE html><html><head><link rel="stylesheet" href="./shared.css"></head><body><script type="module" src="./client.ts"></script></body></html>\n`,
+    "client.ts": `import { shared } from "./shared.js";\nconsole.log("client", shared);\n`,
+    "shared.css": `.shared { color: red; }\n`,
+    ...shared,
+  };
+  const page = (script: string) =>
+    `<!DOCTYPE html><html><body><script type="module" src="./${script}"></script></body></html>\n`;
+
+  // JSON.parse keeps one record of a repeated key, so the keys are read from the text. A record of
+  // `inputs` or `outputs` starts with "bytes", a member of an output's `inputs` with "bytesInOutput".
+  function recordKeys(text: string, firstMember: "bytes" | "bytesInOutput") {
+    const record = new RegExp(`("(?:[^"\\\\]|\\\\.)*"):\\s*\\{\\s*"${firstMember}":`, "g");
+    return Array.from(text.matchAll(record), match => JSON.parse(match[1]) as string).sort();
+  }
+
+  /** The names in the metafile that have to be a key of `inputs` and are not one. */
+  function namesWithoutRecord({ inputs, outputs }: Metafile) {
+    const imports = Object.values(inputs).flatMap(input => input.imports);
+    const names = [
+      ...imports.filter(imp => !imp.external).map(imp => imp.path),
+      ...imports.map(imp => imp.entryPoint),
+      ...Object.values(outputs).flatMap(output => [...Object.keys(output.inputs), output.entryPoint]),
+    ];
+    return names.filter(name => name !== undefined && !(name in inputs));
+  }
+
+  /** Parses the text of a metafile, after a check that no object in it has a key twice. */
+  function parseMetafile(text: string) {
+    const metafile = JSON.parse(text) as Metafile;
+    expect({
+      records: recordKeys(text, "bytes"),
+      outputInputs: recordKeys(text, "bytesInOutput"),
+    }).toEqual({
+      records: [...Object.keys(metafile.inputs), ...Object.keys(metafile.outputs)].sort(),
+      outputInputs: Object.values(metafile.outputs)
+        .flatMap(output => Object.keys(output.inputs))
+        .sort(),
+    });
+    return metafile;
+  }
+
+  /** Runs bun in the fixture, then reads the metafile that the build wrote. */
+  async function run(dir: string, cmd: string[], metafilePath: string) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), ...cmd], env: bunEnv, cwd: dir, stderr: "pipe", stdout: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    const metafile = parseMetafile(await Bun.file(`${dir}/${metafilePath}`).text());
+    return { ...metafile, withoutRecord: namesWithoutRecord(metafile), stdout };
+  }
+
+  async function build(dir: string, args: string[]) {
+    const cmd = ["build", ...args, "--metafile=meta.json", "--metafile-md=meta.md"];
+    return { ...(await run(dir, cmd, "meta.json")), markdown: await Bun.file(`${dir}/meta.md`).text() };
+  }
+
+  // `build.ts` in a fixture: `Bun.build` of server.ts with a plugin. It writes dist/meta.json.
+  const buildScript = (setup: string) => `
+    await Bun.build({
+      entrypoints: ["./server.ts"],
+      outdir: "./dist",
+      target: "bun",
+      metafile: "meta.json",
+      plugins: [{ name: "plugin", setup(build) {${setup}} }],
+    });
+  `;
+
+  const importsOf = (input: MetafileInput) => input.imports.map(imp => imp.path);
+  const bytes = (file: keyof typeof fullstack) => Buffer.byteLength(fullstack[file]);
+
+  test.concurrent.each([
+    { name: "target bun", args: ["server.ts", "--target=bun", "--outdir=dist"] },
+    { name: "target node", args: ["server.ts", "--target=node", "--outdir=dist"] },
+    { name: "the page is the first entry point", args: ["index.html", "server.ts", "--target=bun", "--outdir=dist"] },
+    { name: "the page is the last entry point", args: ["server.ts", "index.html", "--target=bun", "--outdir=dist"] },
+  ])("bun build --metafile --metafile-md ($name)", async ({ args }) => {
+    using dir = tempDir("metafile-two-graphs", fullstack);
+    const { inputs, outputs, withoutRecord, markdown } = await build(String(dir), args);
+
+    expect(withoutRecord).toEqual([]);
+    expect(inputs).toEqual({
+      "server.ts": {
+        bytes: bytes("server.ts"),
+        imports: [
+          { path: "index.html", kind: "html_manifest", original: "./index.html" },
+          { path: "shared.css", kind: "import-statement", original: "./shared.css" },
+          { path: "shared.js", kind: "import-statement", original: "./shared.js" },
+        ],
+        format: "esm",
+      },
+      // The page. The stub that stands for it in the server bundle has no record.
+      "index.html": {
+        bytes: bytes("index.html"),
+        imports: [
+          { path: "shared.css (browser)", kind: "import-rule", original: "./shared.css" },
+          { path: "client.ts", kind: "import-statement", original: "./client.ts" },
+        ],
+      },
+      "client.ts": {
+        bytes: bytes("client.ts"),
+        imports: [{ path: "shared.js (browser)", kind: "import-statement", original: "./shared.js" }],
+        format: "esm",
+      },
+      "shared.css": { bytes: bytes("shared.css"), imports: [], format: "css" },
+      "shared.css (browser)": { bytes: bytes("shared.css"), imports: [], format: "css" },
+      "shared.js": {
+        bytes: bytes("shared.js"),
+        imports: [{ path: "node_modules/pkg/server.js", kind: "import-statement", original: "pkg" }],
+        format: "esm",
+      },
+      "shared.js (browser)": {
+        bytes: bytes("shared.js"),
+        imports: [{ path: "node_modules/pkg/browser.js", kind: "import-statement", original: "pkg" }],
+        format: "esm",
+      },
+      "node_modules/pkg/server.js": { bytes: bytes("node_modules/pkg/server.js"), imports: [], format: "esm" },
+      "node_modules/pkg/browser.js": { bytes: bytes("node_modules/pkg/browser.js"), imports: [], format: "esm" },
+    });
+
+    // Each output holds the modules of its own side. The stub is listed under the key of the page.
+    const inputsOfOutputsFor = (entryPoint: string) =>
+      Object.values(outputs)
+        .filter(output => output.entryPoint === entryPoint)
+        .flatMap(output => Object.keys(output.inputs))
+        .sort();
+    expect({ "server.ts": inputsOfOutputsFor("server.ts"), "index.html": inputsOfOutputsFor("index.html") }).toEqual({
+      "server.ts": ["index.html", "node_modules/pkg/server.js", "server.ts", "shared.css", "shared.js"],
+      "index.html": [
+        "client.ts",
+        "index.html",
+        "node_modules/pkg/browser.js",
+        "shared.css (browser)",
+        "shared.js (browser)",
+      ],
+    });
+    const serverBundle = Object.values(outputs).find(output => "server.ts" in output.inputs)!;
+    expect(serverBundle.inputs["index.html"].bytesInOutput).toBeGreaterThan(0);
+
+    // The report is made from the same text: it has each module once.
+    const keys = Object.keys(inputs);
+    expect({
+      count: markdown.match(/^\| Input modules \| (\d+) \|$/m)?.[1],
+      sections: markdown.match(/^### `.*`$/gm)?.sort(),
+      modules: markdown.match(/^\[MODULE: .*\]$/gm)?.sort(),
+    }).toEqual({
+      count: String(keys.length),
+      sections: keys.map(key => `### \`${key}\``).sort(),
+      modules: keys.map(key => `[MODULE: ${key}]`).sort(),
+    });
+  });
+
+  // Server code does not import the page here, so the server bundle has no stub.
+  test.concurrent("a page that is an entry point beside server code", async () => {
+    using dir = tempDir("metafile-two-graphs-entry", {
+      ...fullstack,
+      "server.ts": `import "./shared.css";\nimport { shared } from "./shared.js";\nconsole.log(shared);\n`,
+    });
+    const { inputs, withoutRecord } = await build(String(dir), [
+      "server.ts",
+      "index.html",
+      "--target=bun",
+      "--outdir=dist",
+    ]);
+
+    expect({
+      keys: Object.keys(inputs).sort(),
+      "server.ts": importsOf(inputs["server.ts"]),
+      "shared.js": importsOf(inputs["shared.js"]),
+      "shared.js (browser)": importsOf(inputs["shared.js (browser)"]),
+      withoutRecord,
+    }).toEqual({
+      keys: [
+        "client.ts",
+        "index.html",
+        "node_modules/pkg/browser.js",
+        "node_modules/pkg/server.js",
+        "server.ts",
+        "shared.css",
+        "shared.css (browser)",
+        "shared.js",
+        "shared.js (browser)",
+      ],
+      "server.ts": ["shared.css", "shared.js"],
+      "shared.js": ["node_modules/pkg/server.js"],
+      "shared.js (browser)": ["node_modules/pkg/browser.js"],
+      withoutRecord: [],
+    });
+  });
+
+  test.concurrent.each(["bun", "node"] as const)("Bun.build (target %s)", async target => {
+    using dir = tempDir("metafile-two-graphs-api", fullstack);
+    const result = await Bun.build({
+      entrypoints: [`${dir}/server.ts`],
+      outdir: `${dir}/dist`,
+      target,
+      metafile: { json: "meta.json", markdown: "meta.md" } as any,
+    });
+    expect(result.success).toBe(true);
+
+    const metafile = parseMetafile(await Bun.file(`${dir}/dist/meta.json`).text());
+    expect(result.metafile as Metafile).toEqual(metafile);
+    expect(namesWithoutRecord(metafile)).toEqual([]);
+    // The keys are relative to the working directory of this process.
+    expect(
+      Object.keys(metafile.inputs)
+        .map(key => basename(key))
+        .sort(),
+    ).toEqual([
+      "browser.js",
+      "client.ts",
+      "index.html",
+      "server.js",
+      "server.ts",
+      "shared.css",
+      "shared.css (browser)",
+      "shared.js",
+      "shared.js (browser)",
+    ]);
+    expect(await Bun.file(`${dir}/dist/meta.md`).text()).toContain("| Input modules | 9 |");
+  });
+
+  // A plugin holds late.js until shared.js is loaded for the other graph, so the two modules of
+  // shared.js are parsed in a known order. The records are written in that order.
+  test.concurrent.each(["browser", "server"] as const)(
+    "the module of the build's target keeps the path when the %s module is parsed first",
+    async first => {
+      const throughLate = `import { shared } from "./late.js";\n`;
+      const direct = `import { shared } from "./shared.js";\n`;
+      using dir = tempDir("metafile-two-graphs-order", {
+        ...shared,
+        "server.ts": `import page from "./index.html";\n${first === "browser" ? throughLate : direct}console.log(page, shared);\n`,
+        "index.html": page("client.ts"),
+        "client.ts": `${first === "browser" ? direct : throughLate}console.log("client", shared);\n`,
+        "late.js": `export * from "./shared.js";\n`,
+        "build.ts": `
+          const loads: string[] = [];
+          const sharedIsLoaded = Promise.withResolvers<void>();
+          const load = async (path: string) => ({ contents: await Bun.file(path).text(), loader: "js" as const });
+          ${buildScript(`
+            build.onLoad({ filter: /shared\\.js$/ }, ({ path }) => {
+              loads.push("shared.js");
+              sharedIsLoaded.resolve();
+              return load(path);
+            });
+            build.onLoad({ filter: /late\\.js$/ }, async ({ path }) => {
+              await sharedIsLoaded.promise;
+              loads.push("late.js");
+              return load(path);
+            });
+          `)}
+          console.log(JSON.stringify(loads));
+        `,
+      });
+      const { inputs, withoutRecord, stdout } = await run(String(dir), ["build.ts"], "dist/meta.json");
+
+      expect({
+        loads: JSON.parse(stdout),
+        records: Object.keys(inputs).filter(key => key.startsWith("shared.js")),
+        "shared.js": importsOf(inputs["shared.js"]),
+        "shared.js (browser)": importsOf(inputs["shared.js (browser)"]),
+        withoutRecord,
+      }).toEqual({
+        loads: ["shared.js", "late.js", "shared.js"],
+        records: first === "browser" ? ["shared.js (browser)", "shared.js"] : ["shared.js", "shared.js (browser)"],
+        "shared.js": ["node_modules/pkg/server.js"],
+        "shared.js (browser)": ["node_modules/pkg/browser.js"],
+        withoutRecord: [],
+      });
+    },
+  );
+
+  test.concurrent("a split import() names the module that its chunk holds", async () => {
+    using dir = tempDir("metafile-two-graphs-splitting", {
+      "server.ts": `import page from "./index.html";\nconsole.log(page, await import("./lazy.js"));\n`,
+      "index.html": page("client.ts"),
+      "client.ts": `console.log("client", await import("./lazy.js"));\n`,
+      "lazy.js": `export const lazy = "lazy";\n`,
+    });
+    const { inputs, outputs, withoutRecord } = await build(String(dir), [
+      "server.ts",
+      "--target=bun",
+      "--splitting",
+      "--outdir=dist",
+    ]);
+
+    expect(withoutRecord).toEqual([]);
+    const splitImports = (key: string) =>
+      inputs[key].imports
+        .filter(imp => imp.kind === "dynamic-import")
+        .map(imp => ({ entryPoint: imp.entryPoint, entryPointOfChunk: outputs[imp.path]?.entryPoint }));
+    expect({ "server.ts": splitImports("server.ts"), "client.ts": splitImports("client.ts") }).toEqual({
+      "server.ts": [{ entryPoint: "lazy.js", entryPointOfChunk: "lazy.js" }],
+      "client.ts": [{ entryPoint: "lazy.js (browser)", entryPointOfChunk: "lazy.js (browser)" }],
+    });
+  });
+
+  // A module with every part tree-shaken has no record. An import of it still names that module, and
+  // not the module of the other graph: each side loads both files of the package and uses one.
+  test.concurrent("a module beside a tree-shaken module of the other graph", async () => {
+    using dir = tempDir("metafile-two-graphs-tree-shaken", {
+      "server.js": `import { onClient } from "lib/on-client.js";\nimport { onServer } from "lib/on-server.js";\nconsole.log(onServer);\n`,
+      "index.html": page("client.js"),
+      "client.js": `import { onClient } from "lib/on-client.js";\nimport { onServer } from "lib/on-server.js";\nimport { root } from "./on-client.js";\nconsole.log(onClient, root);\n`,
+      // The path of this file is the end of the path of a file of the package.
+      "on-client.js": `export const root = "root";\n`,
+      "node_modules/lib/package.json": JSON.stringify({ name: "lib", sideEffects: false }),
+      "node_modules/lib/on-client.js": `export const onClient = "client";\n`,
+      "node_modules/lib/on-server.js": `export const onServer = "server";\n`,
+    });
+    const { inputs, withoutRecord, markdown } = await build(String(dir), [
+      "server.js",
+      "index.html",
+      "--target=bun",
+      "--outdir=dist",
+    ]);
+
+    expect({
+      keys: Object.keys(inputs).sort(),
+      "server.js": importsOf(inputs["server.js"]),
+      "client.js": importsOf(inputs["client.js"]),
+      withoutRecord: withoutRecord.sort(),
+      // The report lists an import under the record that has its exact name.
+      importedBy: markdown.match(/^\[IMPORTED_BY: .*\]$/gm)?.sort(),
+    }).toEqual({
+      keys: [
+        "client.js",
+        "index.html",
+        "node_modules/lib/on-client.js (browser)",
+        "node_modules/lib/on-server.js",
+        "on-client.js",
+        "server.js",
+      ],
+      "server.js": ["node_modules/lib/on-client.js", "node_modules/lib/on-server.js"],
+      "client.js": [
+        "node_modules/lib/on-client.js (browser)",
+        "node_modules/lib/on-server.js (browser)",
+        "on-client.js",
+      ],
+      withoutRecord: ["node_modules/lib/on-client.js", "node_modules/lib/on-server.js (browser)"],
+      importedBy: [
+        "[IMPORTED_BY: client.js <- index.html]",
+        "[IMPORTED_BY: node_modules/lib/on-client.js (browser) <- client.js]",
+        "[IMPORTED_BY: node_modules/lib/on-server.js <- server.js]",
+        "[IMPORTED_BY: on-client.js <- client.js]",
+      ],
+    });
+  });
+
+  // The server imports and requires the package, so its import goes to the "main" file. The server
+  // graph resolved the "module" file and does not load it: it has no module for that path.
+  test.concurrent("a file that the other graph resolved and does not load", async () => {
+    using dir = tempDir("metafile-two-graphs-dual-package", {
+      "server.js": `import page from "./index.html";\nimport { dual } from "dual";\nconsole.log(page, dual, require("dual"));\n`,
+      "index.html": page("client.ts"),
+      "client.ts": `import { dual } from "dual";\nconsole.log("client", dual);\n`,
+      "node_modules/dual/package.json": JSON.stringify({ name: "dual", main: "./main.js", module: "./module.js" }),
+      "node_modules/dual/main.js": `exports.dual = "main";\n`,
+      "node_modules/dual/module.js": `export const dual = "module";\n`,
+    });
+    const { inputs, withoutRecord } = await build(String(dir), ["server.js", "--target=bun", "--outdir=dist"]);
+
+    expect({
+      keys: Object.keys(inputs).sort(),
+      "server.js": importsOf(inputs["server.js"]),
+      "client.ts": importsOf(inputs["client.ts"]),
+      withoutRecord,
+    }).toEqual({
+      keys: ["client.ts", "index.html", "node_modules/dual/main.js", "node_modules/dual/module.js", "server.js"],
+      "server.js": ["index.html", "node_modules/dual/main.js", "node_modules/dual/main.js"],
+      "client.ts": ["node_modules/dual/module.js"],
+      withoutRecord: [],
+    });
+  });
+
+  // Two files have the names that the browser's modules would get. Their file extension makes them assets.
+  test.concurrent("files with the names that the browser's modules would get", async () => {
+    using dir = tempDir("metafile-two-graphs-names", {
+      "server.ts": `import page from "./index.html";\nimport { shared } from "./shared.js";\nimport one from "./shared.js (browser)";\nimport two from "./shared.js (browser) (browser)";\nconsole.log(page, shared, one, two);\n`,
+      "index.html": page("client.ts"),
+      "client.ts": `import { shared } from "./shared.js";\nimport one from "./shared.js (browser)";\nconsole.log("client", shared, one);\n`,
+      "shared.js": `export const shared = "shared";\n`,
+      "shared.js (browser)": `one\n`,
+      "shared.js (browser) (browser)": `two\n`,
+    });
+    const { inputs, withoutRecord } = await build(String(dir), ["server.ts", "--target=bun", "--outdir=dist"]);
+
+    expect({ keys: Object.keys(inputs).sort(), withoutRecord }).toEqual({
+      keys: [
+        "client.ts",
+        "index.html",
+        "server.ts",
+        "shared.js",
+        "shared.js (browser)",
+        "shared.js (browser) (browser)",
+        "shared.js (browser) (browser) (browser)",
+        "shared.js (browser) (browser) (browser) (browser)",
+      ],
+      withoutRecord: [],
+    });
+  });
+
+  // The key of a plugin module is `<namespace>:<path>`, and a file has the name that the browser's
+  // module of `virtual:cfg` would get. Windows has no `:` in a file name.
+  test.skipIf(isWindows).concurrent("a file with the name that the browser's plugin module would get", async () => {
+    using dir = tempDir("metafile-two-graphs-namespace", {
+      "server.ts": `import page from "./index.html";\nimport cfg from "virtual:cfg";\nimport asset from "./virtual:cfg (browser)";\nconsole.log(page, cfg, asset);\n`,
+      "index.html": page("client.ts"),
+      "client.ts": `import cfg from "virtual:cfg";\nconsole.log("client", cfg);\n`,
+      "virtual:cfg (browser)": `asset\n`,
+      "build.ts": buildScript(`
+        build.onResolve({ filter: /^virtual:cfg$/ }, () => ({ path: "cfg", namespace: "virtual" }));
+        build.onLoad({ filter: /.*/, namespace: "virtual" }, () => ({ contents: "export default 'cfg';", loader: "js" }));
+      `),
+    });
+    const { inputs, withoutRecord } = await run(String(dir), ["build.ts"], "dist/meta.json");
+
+    expect({
+      keys: Object.keys(inputs).sort(),
+      "server.ts": importsOf(inputs["server.ts"]),
+      "client.ts": importsOf(inputs["client.ts"]),
+      withoutRecord,
+    }).toEqual({
+      keys: [
+        "client.ts",
+        "index.html",
+        "server.ts",
+        "virtual:cfg",
+        "virtual:cfg (browser)",
+        "virtual:cfg (browser) (browser)",
+      ],
+      "server.ts": ["index.html", "virtual:cfg", "virtual:cfg (browser)"],
+      "client.ts": ["virtual:cfg (browser) (browser)"],
+      withoutRecord: [],
+    });
+  });
+
+  // An entry point that starts with `#!/usr/bin/env bun` is bundled for Bun whatever the target of the
+  // build is, and the files that it imports are a graph of their own (#25767). One output can then hold
+  // a file two times, or two stubs of one page, or a stub and its page.
+  test.concurrent.each([
+    {
+      name: "a file two times in one output",
+      args: ["cli.js", "--outdir=dist"],
+      files: {
+        "cli.js": `#!/usr/bin/env bun\nimport { shared } from "./shared.js";\nimport { mid } from "./mid.js";\nconsole.log(shared, mid);\n`,
+        "mid.js": `import { shared } from "./shared.js";\nexport const mid = "mid " + shared;\n`,
+        "shared.js": `export const shared = "shared";\n`,
+      },
+    },
+    {
+      name: "two stubs of one page in one output",
+      args: ["cli.js", "--target=node", "--outdir=dist"],
+      files: {
+        "cli.js": `#!/usr/bin/env bun\nimport page from "./index.html";\nimport { mid } from "./mid.js";\nconsole.log(page, mid);\n`,
+        "mid.js": `import page from "./index.html";\nexport const mid = page;\n`,
+        "index.html": page("client.ts"),
+        "client.ts": `console.log("client");\n`,
+      },
+    },
+    {
+      name: "a stub and its page in one output",
+      args: ["cli.js", "--outdir=dist"],
+      files: {
+        "cli.js": `#!/usr/bin/env bun\nimport page from "./index.html";\nimport { mid } from "./mid.js";\nconsole.log(page, mid);\n`,
+        "mid.js": `import "./index.html";\nexport const mid = "mid";\n`,
+        "index.html": page("client.ts"),
+        "client.ts": `console.log("client");\n`,
+      },
+    },
+  ])("an entry point with a Bun hashbang: $name", async ({ files, args }) => {
+    using dir = tempDir("metafile-two-graphs-hashbang", files);
+    const { withoutRecord } = await build(String(dir), args);
+
+    expect(withoutRecord).toEqual([]);
+  });
+
+  test("a build with one graph has the same text as before", async () => {
+    using dir = tempDir("metafile-one-graph-text", {
+      "entry.js": `import { foo } from "./foo.js";\nconsole.log(foo);\n`,
+      "foo.js": `export const foo = "foo";\n`,
+    });
+    await build(String(dir), ["entry.js", "--outdir=dist"]);
+
+    expect(await Bun.file(`${dir}/meta.json`).text()).toMatchInlineSnapshot(`
+      "{
+        "inputs": {
+          "entry.js": {
+            "bytes": 50,
+            "imports": [
+              {
+                "path": "foo.js",
+                "kind": "import-statement",
+                "original": "./foo.js"
+              }
+            ],
+            "format": "esm"
+          },
+          "foo.js": {
+            "bytes": 26,
+            "imports": [
+            ],
+            "format": "esm"
+          }
+        },
+        "outputs": {
+          "./entry.js": {
+            "bytes": 58,
+            "inputs": {
+              "foo.js": {
+                "bytesInOutput": 17
+              },
+              "entry.js": {
+                "bytesInOutput": 18
+              }
+            },
+            "imports": [
+            ],
+            "exports": [],
+            "entryPoint": "entry.js"
+          }
+        }
+      }
+      "
+    `);
   });
 });

@@ -4430,14 +4430,31 @@ declare module "bun" {
    * @category Bundler
    */
   interface BuildMetafile {
-    /** Input source files, keyed by path */
+    /**
+     * Input source files, keyed by path.
+     *
+     * A build for `target: "bun"` or `"node"` bundles an HTML file for the
+     * browser: a page that server code imports, or a page in `entrypoints`.
+     * A file that server code and the page both import is then two modules.
+     * The server's module has the path as its key. The browser's module has
+     * the key `<path> (browser)`, for example `shared.ts (browser)`. The
+     * fields that name an input use these keys.
+     *
+     * A module that tree shaking removes has no record. The manifest that
+     * the server bundle holds in place of an imported HTML file has none
+     * either: `outputs[...].inputs` lists it under the key of the HTML file.
+     */
     inputs: {
       [path: string]: {
         /** Size of the input file in bytes */
         bytes: number;
         /** List of imports from this file */
         imports: Array<{
-          /** Resolved path of the imported file */
+          /**
+           * Resolved path of the imported file. A bundled file is named by
+           * its key in `inputs`. A file that tree shaking removes has no
+           * record there.
+           */
           path: string;
           /** Type of import statement */
           kind: ImportKind;
@@ -4482,7 +4499,7 @@ declare module "bun" {
         }>;
         /** List of exported names from this output */
         exports: string[];
-        /** Entrypoint path, if this output is an entrypoint */
+        /** Key in `inputs` of the entry point, if this output is an entrypoint */
         entryPoint?: string;
         /** Path to the associated CSS bundle (for JS entrypoints with CSS) */
         cssBundle?: string;

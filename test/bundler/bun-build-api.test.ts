@@ -1,6 +1,6 @@
 import assert from "assert";
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "fs";
 import {
   bunEnv,
   bunExe,
@@ -702,8 +702,7 @@ describe("Bun.build", () => {
   test.concurrent("an entry point that resolves to a builtin or to a non-code data: URL is a build error", async () => {
     // Runs in a child: unfixed, "bun:wrap" was dropped (the bundler registers its runtime under that
     // name) and the others were scheduled as files. The data: URL is an image, which resolves as
-    // external like a builtin does, and was emitted as a module exporting "". It is listed next to a
-    // file because a lone data: entry point fails earlier, when the build opens its directory.
+    // external like a builtin does, and was emitted as a module exporting "".
     using dir = tempDir("build-api-builtin-entrypoint", { "valid.js": "console.log(1);" });
     const image = "data:image/png;base64,iVBORw0KGgo=";
     const fixture = /* ts */ `
@@ -733,6 +732,457 @@ describe("Bun.build", () => {
       failedWith(`ModuleNotFound resolving "${image}" (entry point)`),
     ]);
     expect(exitCode).toBe(0);
+  });
+
+  // Without `root`, the root is the directory that the entry point names share. Unfixed, a build
+  // whose root did not open threw at the call, before the promise, the plugins and the resolver.
+  // These tests run in a child: the entry points are relative to the working directory. They are
+  // not concurrent: each child runs up to 12 builds, and side by side on a debug build some of them
+  // exceed the default timeout.
+  describe("an entry point name whose directory does not exist", () => {
+    const scopedPackage = {
+      "node_modules/@scope/pkg/package.json": JSON.stringify({
+        name: "@scope/pkg",
+        version: "1.0.0",
+        main: "index.js",
+      }),
+      "node_modules/@scope/pkg/index.js": `console.log("scoped");`,
+    };
+    const prelude = `
+      const cwd = process.cwd();
+      const routes = {
+        name: "routes",
+        setup(build) {
+          build.onResolve({ filter: /routes/ }, args => ({ path: args.path, namespace: "routes" }));
+          build.onLoad({ filter: /.*/, namespace: "routes" }, args => ({
+            contents: "console.log(" + JSON.stringify(args.path) + ")",
+            loader: "js",
+          }));
+        },
+      };
+      const paths = async config => {
+        const { success, outputs, logs } = await Bun.build({ throw: false, ...config });
+        return success ? outputs.map(output => output.path.replaceAll("\\\\", "/")) : logs.map(log => log.message);
+      };
+      // [with the default root, with root: "."]
+      const bothRoots = async config => [await paths(config), await paths({ ...config, root: "." })];
+      const thrown = config => {
+        try {
+          Bun.build({ throw: false, ...config });
+        } catch (e) {
+          return e.message;
+        }
+      };
+    `;
+    const runBuildScript = async (cwd: string, script: string) => {
+      await using proc = Bun.spawn({ cmd: [bunExe(), script], env: bunEnv, cwd, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      return JSON.parse(stdout);
+    };
+    const buildInChild = async (files: Record<string, string>, script: string) => {
+      using dir = tempDir("build-api-entrypoint-without-directory", { ...files, "build.mjs": prelude + script });
+      return await runBuildScript(String(dir), "build.mjs");
+    };
+    const twice = (...paths: string[]) => [paths, paths];
+
+    test("a file that is not there is reported like any other missing one", async () => {
+      const result = await buildInChild(
+        { "valid.js": "console.log(1);" },
+        `
+          const ended = [];
+          const onEnd = { name: "on-end", setup(build) { build.onEnd(result => { ended.push(result.success); }); } };
+          // Longer than a path buffer on Linux and macOS.
+          const long = "nodir/" + Buffer.alloc(60_000, "b").toString() + ".js";
+          const report = async config => {
+            const { success, outputs, logs } = await Bun.build({ throw: false, ...config });
+            const text = log => log.message.replaceAll(cwd, "<cwd>").replaceAll(long, "<60,000 bytes>");
+            return { success, outputs: outputs.length, logs: logs.map(log => [log.name, text(log)]) };
+          };
+          const rejected = await Bun.build({ entrypoints: ["./nodir/index.ts"], plugins: [onEnd] }).then(
+            () => null,
+            e => ({ isAggregateError: e instanceof AggregateError, errors: e.errors.map(error => [error.name, error.message]) }),
+          );
+          console.log(JSON.stringify({
+            one: await report({ entrypoints: ["./nodir/index.ts"], plugins: [onEnd] }),
+            two: await report({ entrypoints: ["./nodir/a.ts", "./nodir/b.ts"] }),
+            absolute: await report({ entrypoints: [cwd + "/nodir/index.ts"] }),
+            notADirectory: await report({ entrypoints: ["./valid.js/index.ts"] }),
+            longName: await report({ entrypoints: [long] }),
+            dataUrl: await report({ entrypoints: ["data:image/png;base64,iVBORw0KGgo="] }),
+            builtin: await report({ entrypoints: ["node:fs/promises"], target: "bun" }),
+            rejected,
+            ended,
+          }));
+        `,
+      );
+
+      const notFound = (entry: string) => ["BuildMessage", `ModuleNotFound resolving "${entry}" (entry point)`];
+      const failedWith = (...logs: string[][]) => ({ success: false, outputs: 0, logs });
+      expect(result).toEqual({
+        one: failedWith(notFound("./nodir/index.ts")),
+        two: failedWith(notFound("./nodir/a.ts"), notFound("./nodir/b.ts")),
+        absolute: failedWith(notFound("<cwd>/nodir/index.ts")),
+        notADirectory: failedWith(notFound("./valid.js/index.ts")),
+        longName: failedWith(notFound("<60,000 bytes>")),
+        dataUrl: failedWith(notFound("data:image/png;base64,iVBORw0KGgo=")),
+        builtin: failedWith([
+          "BuildMessage",
+          'Cannot use "node:fs/promises" as an entry point: it resolves to a builtin module',
+        ]),
+        rejected: { isAggregateError: true, errors: [notFound("./nodir/index.ts")] },
+        // onEnd of the rejected build, then of "one".
+        ended: [false, false],
+      });
+    });
+
+    test("a root that the caller named, and a permission error, fail at the call", async () => {
+      const result = await buildInChild(
+        { "valid.js": "console.log(1);" },
+        `
+          import { chmodSync, mkdirSync } from "node:fs";
+          const result = { namedRoot: thrown({ entrypoints: ["./valid.js"], root: "./nodir" }) };
+          if (process.platform !== "win32" && process.getuid() !== 0) {
+            // EACCES does not say that the directory is not there.
+            mkdirSync("locked/inner", { recursive: true });
+            chmodSync("locked", 0o000);
+            try {
+              result.noPermission = thrown({ entrypoints: ["locked/inner/index.ts"] });
+            } finally {
+              chmodSync("locked", 0o755);
+            }
+          }
+          console.log(JSON.stringify(result));
+        `,
+      );
+
+      expect(result).toEqual({
+        namedRoot: "ENOENT: failed to open root directory: ./nodir",
+        ...(!isWindows &&
+          process.getuid!() !== 0 && { noPermission: "EACCES: failed to open root directory: locked/inner" }),
+      });
+    });
+
+    test("a name that a plugin resolves is built from the directory of that name", async () => {
+      // The output is named from the entry point as typed. When a plugin was asked for every entry
+      // point, the root is the directory that the names share, also when it does not exist.
+      const result = await buildInChild(
+        scopedPackage,
+        `
+          import { mkdirSync, symlinkSync } from "node:fs";
+          const declines = { name: "declines", setup(build) { build.onResolve({ filter: /.*/ }, () => undefined); } };
+          const one = { entrypoints: ["routes/home.js"], plugins: [routes] };
+          const many = length => ({ entrypoints: Array.from({ length }, (_, i) => "routes/p" + i + ".js"), plugins: [routes] });
+          const result = {
+            one: await bothRoots(one),
+            two: await paths({ entrypoints: ["routes/home.js", "routes/admin/users.js"], plugins: [routes] }),
+            eight: (await paths(many(8))).sort(),
+            // Nine or more names have "." for the root: this one built before.
+            nine: (await paths(many(9))).sort(),
+            // A plugin was asked and did not answer: the package is still named from "@scope/pkg".
+            declined: await paths({ entrypoints: ["@scope/pkg"], plugins: [declines] }),
+          };
+          if (process.platform !== "win32") {
+            // The root fails to open with ELOOP, and with ENAMETOOLONG.
+            symlinkSync("loop", "loop");
+            const long = Buffer.alloc(300, "a").toString();
+            result.symlinkLoop = await paths({ entrypoints: ["loop/routes.js"], plugins: [routes] });
+            result.longComponent = await paths({ entrypoints: [long + "/routes.js"], plugins: [routes] });
+          }
+          // Unchanged: the root is ./routes when that directory is there.
+          mkdirSync("routes");
+          result.oneBesideDirectory = await paths(one);
+          console.log(JSON.stringify(result));
+        `,
+      );
+
+      expect(result).toEqual({
+        one: [["./home.js"], ["routes/home.js"]],
+        two: ["./home.js", "admin/users.js"],
+        eight: [0, 1, 2, 3, 4, 5, 6, 7].map(i => `./p${i}.js`),
+        nine: [0, 1, 2, 3, 4, 5, 6, 7, 8].map(i => `routes/p${i}.js`),
+        declined: ["./pkg.js"],
+        ...(!isWindows && {
+          symlinkLoop: ["./routes.js"],
+          longComponent: ["./routes.js"],
+        }),
+        oneBesideDirectory: ["./home.js"],
+      });
+    });
+
+    test("the working directory is the root for a name that leaves it, an absolute name, and a key of the files map", async () => {
+      const { parentDirectory, absolute, withFiles } = await buildInChild(
+        {},
+        `
+          const inMemory = cwd + "/virtual/in-memory.js";
+          console.log(JSON.stringify({
+            parentDirectory: await bothRoots({ entrypoints: ["../routes/home.js"], plugins: [routes] }),
+            absolute: await bothRoots({ entrypoints: [cwd + "/virtual/routes/home.js"], plugins: [routes] }),
+            withFiles: await bothRoots({
+              entrypoints: [inMemory, cwd + "/virtual/routes.js"],
+              files: { [inMemory]: "console.log(1)" },
+              plugins: [routes],
+            }),
+          }));
+        `,
+      );
+
+      expect(parentDirectory).toEqual(twice("routes/home.js"));
+      // On POSIX these names hold the working directory.
+      expect(absolute[0]).toEqual([expect.stringMatching(/(^|\/)virtual\/routes\/home\.js$/)]);
+      expect(absolute[1]).toEqual(absolute[0]);
+      expect(withFiles[0]).toEqual([
+        expect.stringMatching(/(^|\/)virtual\/in-memory\.js$/),
+        expect.stringMatching(/(^|\/)virtual\/routes\.js$/),
+      ]);
+      expect(withFiles[1]).toEqual(withFiles[0]);
+    });
+
+    test("what a plugin entry point imports has the same name with and without the directory", async () => {
+      const result = await buildInChild(
+        {
+          "pages/index.html": "<!doctype html><html><body><h1>hi</h1></body></html>",
+          "assets/logo.svg": "<svg></svg>",
+        },
+        `
+          import { mkdirSync } from "node:fs";
+          import { join } from "node:path";
+          const imports = file => ({
+            name: "imports",
+            setup(build) {
+              build.onResolve({ filter: /^routes/ }, args => ({ path: args.path, namespace: "routes" }));
+              build.onLoad({ filter: /.*/, namespace: "routes" }, () => ({
+                contents: "import it from " + JSON.stringify(join(cwd, file)) + "; console.log(it);",
+                loader: "js",
+              }));
+            },
+          });
+          // The server entry point holds a manifest of the page, with the "input" of each file.
+          const page = async () => {
+            const { outputs } = await Bun.build({
+              entrypoints: ["routes/server.js"],
+              target: "bun",
+              plugins: [imports("pages/index.html")],
+            });
+            const server = await outputs.find(output => output.path.endsWith("server.js")).text();
+            return {
+              outputs: outputs.map(output => output.path.replaceAll("\\\\", "/").replace(/chunk-[a-z0-9]+/, "chunk-[hash]")),
+              inputs: [...new Set(server.match(/\\\\"input\\\\":\\\\"[^"\\\\]*\\\\"/g))].map(pair => pair.replaceAll("\\\\", "")),
+            };
+          };
+          const asset = () =>
+            paths({
+              entrypoints: ["routes/home.js"],
+              naming: { asset: "[dir]/[name].[ext]" },
+              plugins: [imports("assets/logo.svg")],
+            });
+          const result = { page: [await page()], asset: [await asset()] };
+          mkdirSync("routes");
+          result.page.push(await page());
+          result.asset.push(await asset());
+          console.log(JSON.stringify(result));
+        `,
+      );
+
+      const page = {
+        outputs: ["./server.js", "./chunk-[hash].js", "_.._/pages/index.html"],
+        inputs: ['"input":"../pages/index.html"'],
+      };
+      expect(result).toEqual({
+        page: [page, page],
+        asset: twice("./home.js", "./_.._/assets/logo.svg"),
+      });
+    });
+
+    test("a directory that a plugin creates while it resolves is the root in that build and in the next", async () => {
+      const result = await buildInChild(
+        {},
+        `
+          import { existsSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
+          import { dirname, join } from "node:path";
+          // Writes the file that it resolves to, as a code generator does.
+          const creates = {
+            name: "creates",
+            setup(build) {
+              build.onResolve({ filter: /^(generated|linked)/ }, args => {
+                if (args.path.startsWith("linked") && !existsSync("linked")) {
+                  mkdirSync("real");
+                  symlinkSync("real", "linked");
+                }
+                mkdirSync(dirname(args.path), { recursive: true });
+                writeFileSync(args.path, "console.log(1)");
+                return { path: join(cwd, args.path) };
+              });
+            },
+          };
+          const twoRuns = async entrypoint => {
+            const config = { entrypoints: [entrypoint], plugins: [creates] };
+            return [await paths(config), await paths(config)];
+          };
+          const result = { created: await twoRuns("generated/routes/home.js") };
+          // The directory is reached through a symbolic link.
+          if (process.platform !== "win32") result.linked = await twoRuns("linked/routes/home.js");
+          console.log(JSON.stringify(result));
+        `,
+      );
+
+      expect(result).toEqual({
+        created: twice("./home.js"),
+        ...(!isWindows && { linked: twice("./home.js") }),
+      });
+    });
+
+    test("a name that resolves to a file is built from the working directory", async () => {
+      // The output is named from the file. The directory part of the name ("@scope", "some-pkg",
+      // "@app", "data:text") is not a directory, so the root is the one that root: "." gives.
+      const result = await buildInChild(
+        {
+          ...scopedPackage,
+          "src/ok.ts": "console.log(1);",
+          "sub/keep": "",
+          "tsconfig.json": JSON.stringify({ compilerOptions: { paths: { "@app/*": ["./src/*"] } } }),
+          "node_modules/some-pkg/package.json": JSON.stringify({
+            name: "some-pkg",
+            version: "1.0.0",
+            exports: { "./sub": "./sub/index.js" },
+          }),
+          "node_modules/some-pkg/sub/index.js": `console.log("sub");`,
+        },
+        `
+          import { mkdirSync } from "node:fs";
+          import { join } from "node:path";
+          // Changes the working directory while the build runs.
+          const hops = { name: "hops", setup(build) { build.onLoad({ filter: /index\\.js$/ }, () => { process.chdir(cwd + "/sub"); }); } };
+          const answersOther = {
+            name: "answers-other",
+            setup(build) {
+              build.onResolve({ filter: /other/ }, args => ({ path: args.path, namespace: "other" }));
+              build.onLoad({ filter: /.*/, namespace: "other" }, () => ({ contents: "console.log(2)", loader: "js" }));
+            },
+          };
+          // Resolves a second name to the file of the package.
+          const answersAlias = {
+            name: "answers-alias",
+            setup(build) {
+              build.onResolve({ filter: /alias/ }, () => ({ path: join(cwd, "node_modules/@scope/pkg/index.js") }));
+            },
+          };
+          const fromCwd = config => (process.chdir(cwd), paths(config));
+          const pkg = { entrypoints: ["@scope/pkg"] };
+          const pkgAndOther = { entrypoints: ["@scope/pkg", "@scope/other.js"], plugins: [answersOther] };
+          const pkgAndAlias = { entrypoints: ["@scope/pkg", "@scope/alias"], plugins: [answersAlias] };
+          const result = {
+            scopedPackage: await bothRoots(pkg),
+            packageSubpath: await paths({ entrypoints: ["some-pkg/sub"] }),
+            tsconfigPath: await paths({ entrypoints: ["@app/ok.ts"] }),
+            dataUrl: await paths({ entrypoints: ["data:text/javascript,console.log(1)"] }),
+            chdirDuringBuild: [await fromCwd({ ...pkg, plugins: [hops] }), await fromCwd({ ...pkg, plugins: [hops], root: "." })],
+            // One name is from the file and one is from the name as typed.
+            pkgAndOther: await fromCwd(pkgAndOther),
+            // Two names for one file: its one output is named from the name that the plugin resolved.
+            pkgAndAlias: await fromCwd(pkgAndAlias),
+          };
+          // Unchanged: the root is ./@scope when that directory is there.
+          mkdirSync("@scope");
+          result.besideDirectory = [await paths(pkg), await paths(pkgAndOther), await paths(pkgAndAlias)];
+          console.log(JSON.stringify(result));
+        `,
+      );
+
+      expect(result).toEqual({
+        scopedPackage: twice("node_modules/@scope/pkg/index.js"),
+        packageSubpath: ["node_modules/some-pkg/sub/index.js"],
+        tsconfigPath: ["src/ok.js"],
+        dataUrl: ["data:text/javascript,console.js"],
+        chdirDuringBuild: twice("node_modules/@scope/pkg/index.js"),
+        pkgAndOther: ["node_modules/@scope/pkg/index.js", "@scope/other.js"],
+        pkgAndAlias: ["./alias.js"],
+        besideDirectory: [
+          ["_.._/node_modules/@scope/pkg/index.js"],
+          ["_.._/node_modules/@scope/pkg/index.js", "./other.js"],
+          ["./alias.js"],
+        ],
+      });
+    });
+
+    test("an output is not written over a file that it is built from", async () => {
+      // From the working directory, an output of a package is named from a path in node_modules.
+      const files = {
+        ...scopedPackage,
+        // The CSS that index.tsx imports is built to src/index.css.
+        "node_modules/@scope/styled/package.json": JSON.stringify({ name: "@scope/styled", main: "src/index.tsx" }),
+        "node_modules/@scope/styled/src/index.tsx": `import "./index.css";`,
+        "node_modules/@scope/styled/src/index.css": `.a { color: red }`,
+        "node_modules/@scope/logo/package.json": JSON.stringify({ name: "@scope/logo", main: "src/index.tsx" }),
+        "node_modules/@scope/logo/src/index.tsx": `import logo from "./logo.svg"; console.log(logo);`,
+        "node_modules/@scope/logo/src/logo.svg": `<svg></svg>`,
+        // The source map and the bytecode of index.tsx are built to src/index.js.map and src/index.js.jsc.
+        "node_modules/@scope/mapped/package.json": JSON.stringify({ name: "@scope/mapped", main: "src/index.tsx" }),
+        "node_modules/@scope/mapped/src/index.tsx": `import map from "./index.js.map" with { type: "text" }; console.log(map);`,
+        "node_modules/@scope/mapped/src/index.js.map": `{}`,
+        "node_modules/@scope/cached/package.json": JSON.stringify({ name: "@scope/cached", main: "src/index.tsx" }),
+        "node_modules/@scope/cached/src/index.tsx": `import cache from "./index.js.jsc" with { type: "text" }; console.log(cache);`,
+        "node_modules/@scope/cached/src/index.js.jsc": `cache`,
+      };
+      const result = await buildInChild(
+        files,
+        `
+          import { readFileSync } from "node:fs";
+          const built = async (entrypoint, config) => {
+            const { success, logs } = await Bun.build({ entrypoints: [entrypoint], throw: false, ...config });
+            return { success, logs: logs.map(log => log.message) };
+          };
+          const result = {
+            entryPoint: await built("@scope/pkg", { outdir: "." }),
+            entryPointByPath: await built("@scope/pkg", { outdir: cwd }),
+            stylesheet: await built("@scope/styled", { outdir: "." }),
+            asset: await built("@scope/logo", { outdir: ".", naming: { asset: "[dir]/[name].[ext]" } }),
+            sourceMap: await built("@scope/mapped", { outdir: ".", sourcemap: "linked" }),
+            bytecode: await built("@scope/cached", { outdir: ".", bytecode: true, target: "bun", format: "cjs" }),
+            toAnotherDirectory: await built("@scope/pkg", { outdir: "out" }),
+          };
+          result.inputs = ${JSON.stringify(Object.keys(files))}.map(file => readFileSync(file, "utf8"));
+          console.log(JSON.stringify(result));
+        `,
+      );
+
+      const refused = (input: string) => ({
+        success: false,
+        logs: [`Refusing to overwrite input file "node_modules/@scope/${input}"`],
+      });
+      expect(result).toEqual({
+        entryPoint: refused("pkg/index.js"),
+        entryPointByPath: refused("pkg/index.js"),
+        stylesheet: refused("styled/src/index.css"),
+        asset: refused("logo/src/logo.svg"),
+        sourceMap: refused("mapped/src/index.js.map"),
+        bytecode: refused("cached/src/index.js.jsc"),
+        toAnotherDirectory: { success: true, logs: [] },
+        inputs: Object.values(files),
+      });
+    });
+
+    // `LONG-D~1` is what NTFS calls `long-directory-name`, unless short names are off for the volume.
+    const hasShortNames =
+      isWindows &&
+      (() => {
+        using probe = tempDir("build-api-short-name-probe", { "long-directory-name/keep": "" });
+        return existsSync(join(String(probe), "LONG-D~1"));
+      })();
+    test.skipIf(!hasShortNames)(
+      "a working directory that is reached by its 8.3 short name is the root that root: '.' gives",
+      async () => {
+        const files = Object.entries(scopedPackage).map(([path, text]) => [`long-directory-name/${path}`, text]);
+        using dir = tempDir("build-api-entrypoint-short-cwd", {
+          ...Object.fromEntries(files),
+          "build.mjs": prelude + `console.log(JSON.stringify(await bothRoots({ entrypoints: ["@scope/pkg"] })));`,
+        });
+        const short = join(String(dir), "LONG-D~1");
+        const [defaultRoot, rootDot] = await runBuildScript(short, join(String(dir), "build.mjs"));
+        expect(defaultRoot).toEqual([expect.stringMatching(/index\.js$/)]);
+        expect(defaultRoot).toEqual(rootDot);
+      },
+    );
   });
 
   test("returns output files", async () => {

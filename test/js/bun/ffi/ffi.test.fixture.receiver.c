@@ -161,6 +161,13 @@ static int64_t* Bun_FFI_padArguments(int64_t* passed, int32_t passedCount, int64
 // An int32 or a double.
 #define JSVALUE_BITS_ARE_NUMBER(bits) ((uint64_t)(bits) >= (uint64_t)DoubleEncodeOffset)
 
+// Tests of the bits of a JSValue after DoubleEncodeOffset is subtracted. For a double, those are the bits of the
+// double. Each test is false for a JSValue that is not a double.
+// Above -2^63 and below 2^63. For these, (int64_t) gives what the engine gives.
+#define DOUBLE_BITS_FIT_INT64(bits) (((uint64_t)(bits) << 1) < 0x87c0000000000000ull)
+// From +0 to +Infinity.
+#define DOUBLE_BITS_ARE_ZERO_TO_INFINITY(bits) ((uint64_t)(bits) <= 0x7ff0000000000000ull)
+
 // The wrapper converts an argument of these types in place, in an EncodedJSValue. Each macro is true for a JSValue
 // that needs no call, and `val` then holds the C value. JSVALUE_TO_SLOT_SLOW converts every other JSValue.
 
@@ -168,7 +175,7 @@ static int64_t* Bun_FFI_padArguments(int64_t* passed, int32_t passedCount, int64
 #define JSVALUE_INT32_IN_PLACE(val) JSVALUE_BITS_ARE_INT32((val).asInt64)
 // `true` and `false` differ in the lowest bit only.
 #define JSVALUE_BOOL_IN_PLACE(val) (((val).asInt64 & ~1ll) == TagValueFalse)
-// A number that fits in an int32 is stored as an int32, not as a double.
+// JavaScriptCore stores a number as an int32 or as a double, whatever its value.
 #define JSVALUE_DOUBLE_IN_PLACE(val) \
   (JSVALUE_BITS_ARE_INT32((val).asInt64) ? ((val).asDouble = (int32_t)(val).asInt64, true) \
    : JSVALUE_BITS_ARE_NUMBER((val).asInt64) ? ((val).asInt64 -= DoubleEncodeOffset, true) \
@@ -180,7 +187,6 @@ static int64_t* Bun_FFI_padArguments(int64_t* passed, int32_t passedCount, int64
 
 static bool JSVALUE_IS_CELL(EncodedJSValue val) __attribute__((__always_inline__));
 static bool JSVALUE_IS_INT32(EncodedJSValue val) __attribute__((__always_inline__)); 
-static bool JSVALUE_IS_NUMBER(EncodedJSValue val) __attribute__((__always_inline__));
 
 // Converts an argument to the ABIType `abiType` the way dlopen() does. If it throws, it sets `*threw` and the wrapper must return.
 uint64_t JSVALUE_TO_SLOT_SLOW(void* jsGlobalObject, int32_t abiType, bool* threw, int64_t value);
@@ -215,10 +221,6 @@ static bool JSVALUE_IS_CELL(EncodedJSValue val) {
 
 static bool JSVALUE_IS_INT32(EncodedJSValue val) {
   return (val.asInt64 & NumberTag) == NumberTag;
-}
-
-static bool JSVALUE_IS_NUMBER(EncodedJSValue val) {
-  return val.asInt64 & NumberTag;
 }
 
 static uint8_t GET_JSTYPE(EncodedJSValue val) {
@@ -259,12 +261,20 @@ static void* JSVALUE_TO_PTR(void* jsGlobalObject, int32_t abiType, bool* threw, 
     return (void*)(uintptr_t)JSVALUE_TO_INT32(val);
   }
 
-  if (JSVALUE_IS_NUMBER(val)) {
-    val.asInt64 -= DoubleEncodeOffset;
-    return (void*)(uintptr_t)val.asDouble;
+  // A number that an int64_t can hold takes the conversion that the engine uses. A cast to an unsigned type gives
+  // a negative number its magnitude on x64 and 0 on arm64, and is a call on x64.
+  EncodedJSValue number;
+  number.asInt64 = val.asInt64 - DoubleEncodeOffset;
+  if (DOUBLE_BITS_FIT_INT64(number.asInt64)) {
+    return (void*)(int64_t)number.asDouble;
   }
 
-  // Accepts a JSCallback, an ArrayBuffer, a BigInt or an object with its own `ptr` data property. Throws on anything else.
+  // From 2^63 the number stays as it is, up to all ones. The engine converts the other numbers.
+  if (DOUBLE_BITS_ARE_ZERO_TO_INFINITY(number.asInt64)) {
+    return (void*)(uintptr_t)number.asDouble;
+  }
+
+  // Accepts a number, a JSCallback, an ArrayBuffer, a BigInt or an object with its own `ptr` data property. Throws on anything else.
   return (void*)JSVALUE_TO_SLOT_SLOW(jsGlobalObject, abiType, threw, val.asInt64);
 }
 
@@ -329,16 +339,22 @@ static uint64_t JSVALUE_TO_UINT64(void* jsGlobalObject, int32_t abiType, bool* t
     return (uint64_t)JSVALUE_TO_INT32(value);
   }
 
-  if (JSVALUE_IS_NUMBER(value)) {
-    value.asInt64 -= DoubleEncodeOffset;
-    return (uint64_t)value.asDouble;
+  // The same three ranges of numbers as for a pointer.
+  EncodedJSValue number;
+  number.asInt64 = value.asInt64 - DoubleEncodeOffset;
+  if (DOUBLE_BITS_FIT_INT64(number.asInt64)) {
+    return (uint64_t)(int64_t)number.asDouble;
+  }
+
+  if (DOUBLE_BITS_ARE_ZERO_TO_INFINITY(number.asInt64)) {
+    return (uint64_t)number.asDouble;
   }
 
   if (JSCELL_IS_TYPED_ARRAY(value)) {
     return (uint64_t)JSVALUE_TO_TYPED_ARRAY_LENGTH(value);
   }
 
-  // Accepts a BigInt. Throws on anything else.
+  // Accepts a number or a BigInt. Throws on anything else.
   return JSVALUE_TO_SLOT_SLOW(jsGlobalObject, abiType, threw, value.asInt64);
 }
 static int64_t JSVALUE_TO_INT64(void* jsGlobalObject, int32_t abiType, bool* threw, EncodedJSValue value) {
@@ -346,11 +362,15 @@ static int64_t JSVALUE_TO_INT64(void* jsGlobalObject, int32_t abiType, bool* thr
     return (int64_t)JSVALUE_TO_INT32(value);
   }
 
-  if (JSVALUE_IS_NUMBER(value)) {
-    value.asInt64 -= DoubleEncodeOffset;
-    return (int64_t)value.asDouble;
+  // The engine converts NaN and a number that an int64_t cannot hold. The result of the cast for those depends on
+  // the CPU.
+  EncodedJSValue number;
+  number.asInt64 = value.asInt64 - DoubleEncodeOffset;
+  if (DOUBLE_BITS_FIT_INT64(number.asInt64)) {
+    return (int64_t)number.asDouble;
   }
 
+  // Accepts a number or a BigInt. Throws on anything else.
   return (int64_t)JSVALUE_TO_SLOT_SLOW(jsGlobalObject, abiType, threw, value.asInt64);
 }
 

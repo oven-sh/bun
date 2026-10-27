@@ -408,8 +408,8 @@ it.concurrent("a symbol returns what dlopen() returns for the same C function", 
 });
 
 // Each C function is called through its cc() symbol and through CFunction, which is the path dlopen() and linkSymbols() use.
-it.concurrent("a bool, float or small integer argument reaches C as it does through dlopen()", async () => {
-  using dir = tempDir("bun-ffi-cc-scalar-args", {
+it.concurrent("an argument reaches C as it does through dlopen()", async () => {
+  using dir = tempDir("bun-ffi-cc-args", {
     "args.c": /* c */ `
       static int native_calls = 0;
       int get_native_calls(void) { return native_calls; }
@@ -426,6 +426,13 @@ it.concurrent("a bool, float or small integer argument reaches C as it does thro
       // These two return the bits of the float or double.
       long long a_f32(float x) { native_calls++; union caster c; c.bits = 0; c.f = x; return c.bits; }
       long long a_f64(double x) { native_calls++; union caster c; c.d = x; return c.bits; }
+      unsigned long long a_i64(long long x) { native_calls++; return x; }
+      unsigned long long a_u64(unsigned long long x) { native_calls++; return x; }
+      unsigned long long a_i64_fast(long long x) { native_calls++; return x; }
+      unsigned long long a_u64_fast(unsigned long long x) { native_calls++; return x; }
+      unsigned long long a_ptr(void* x) { native_calls++; return (unsigned long long)x; }
+      unsigned long long a_cstring(void* x) { native_calls++; return (unsigned long long)x; }
+      unsigned long long a_function(void* x) { native_calls++; return (unsigned long long)x; }
       unsigned int r_u32(unsigned long long v) { return (unsigned int)v; }
       // One digit per argument.
       double mixed(_Bool a, void* b, float c, long long d, int e, double f) {
@@ -438,9 +445,13 @@ it.concurrent("a bool, float or small integer argument reaches C as it does thro
       import { jscDescribe } from "bun:jsc";
       import path from "path";
 
-      const types = ["char", "i8", "u8", "i16", "u16", "i32", "u32", "bool", "f32", "f64"];
+      // dlopen() converts an object to one of these with valueOf(). A cc() wrapper holds pointers into earlier arguments,
+      // so it cannot run JS, and throws.
+      const numbers = ["char", "i8", "u8", "i16", "u16", "i32", "u32", "f32", "f64"];
+      const wide = ["i64", "u64", "i64_fast", "u64_fast", "ptr", "cstring", "function"];
+      const types = [...numbers, "bool", ...wide];
       const symbols = { get_native_calls: { args: [], returns: "i32" }, r_u32: { args: ["u64"], returns: "u32" } };
-      for (const type of types) symbols["a_" + type] = { args: [type], returns: "i64" };
+      for (const type of types) symbols["a_" + type] = { args: [type], returns: wide.includes(type) ? "u64" : "i64" };
       const mixed = { args: ["bool", "ptr", "f32", "i64", "i32", "f64"], returns: "f64" };
       symbols.mixed = mixed;
       const compiled = cc({ source: path.join(import.meta.dir, "args.c"), symbols }).symbols;
@@ -467,23 +478,38 @@ it.concurrent("a bool, float or small integer argument reaches C as it does thro
       };
       const show = value => (typeof value === "bigint" ? value + "n" : Object.is(value, -0) ? "-0" : String(value));
 
+      // Where cc() keeps its own result. The test pins each one.
+      const keeps = (type, value) => {
+        const isPointer = type === "ptr" || type === "cstring" || type === "function";
+        // From 2 ** 64 a u64 is all ones, and dlopen() wraps. From 2 ** 63 a pointer is the number up to all ones,
+        // and the CPU decides what dlopen() passes.
+        if (typeof value === "number") return (type.startsWith("u64") && value >= 2 ** 64) || (isPointer && value >= 2 ** 63);
+        // cc() passes NULL. dlopen() throws.
+        if (value == null) return type === "function";
+        // dlopen() passes a copy of the string in UTF-8, which cc() could not free. cc() throws.
+        return typeof value === "string" && type === "cstring";
+      };
+
       let calls = 0;
       const differences = [];
+      const kept = {};
       const objectOutcomes = new Set();
       for (const type of types) {
         const viaCompiled = compiled["a_" + type];
-        const viaEngine = new CFunction({ ptr: viaCompiled.ptr, args: [type], returns: "i64" });
-        // dlopen() converts an object to a number with valueOf(). A cc() wrapper holds pointers into earlier arguments,
-        // so it cannot run JS. No JS runs to convert an object to a bool.
-        for (const value of type === "bool" ? [...values, ...objects] : values) {
-          calls++;
+        const viaEngine = new CFunction({ ptr: viaCompiled.ptr, ...symbols["a_" + type] });
+        for (const value of numbers.includes(type) ? values : [...values, ...objects]) {
           const fromCompiled = outcome(viaCompiled, value);
+          if (keeps(type, value)) {
+            kept[type + " " + show(value)] = fromCompiled;
+            continue;
+          }
+          calls++;
           const fromEngine = outcome(viaEngine, value);
           if (fromCompiled !== fromEngine) {
             differences.push(type + " " + show(value) + ": cc() " + fromCompiled + ", dlopen() " + fromEngine);
           }
         }
-        if (type !== "bool") for (const object of objects) objectOutcomes.add(outcome(viaCompiled, object));
+        if (numbers.includes(type)) for (const object of objects) objectOutcomes.add(outcome(viaCompiled, object));
       }
 
       // The wrapper converts every argument before the call, each in its own way.
@@ -524,7 +550,10 @@ it.concurrent("a bool, float or small integer argument reaches C as it does thro
           Number(compiled.a_bool(value)),
         ),
         f64: [5, 1.5, 5n, true, null].map(value => compiled.a_f64(value).toString(16)),
+        // -5 as an int32 and as a double.
+        negative: ["u64", "ptr"].map(type => [-5, fromFloat64Array[3]].map(value => compiled["a_" + type](value).toString(16))),
         mixed: mixedOutcomes,
+        kept,
       }));
     `,
   });
@@ -536,8 +565,10 @@ it.concurrent("a bool, float or small integer argument reaches C as it does thro
     stderr: "inherit",
   });
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  const allOnes = "18446744073709551615";
   expect(JSON.parse(stdout)).toEqual({
-    calls: 10 * 49 + 4 + 8,
+    // 9 number types with 49 values. 8 other types with these and 4 objects. 8 calls of mixed().
+    calls: 9 * 49 + 8 * 53 - 17 + 8,
     differences: [],
     objects: ["TypeError"],
     fromFloat64Array: {
@@ -550,8 +581,31 @@ it.concurrent("a bool, float or small integer argument reaches C as it does thro
     bool: [1, 0, 1, 0, 1, 1, 0, 1, 0, 0, 0, 1, 0, 1],
     // The bits of 5, 1.5, 5, 1 and 0 as a double.
     f64: ["4014000000000000", "3ff8000000000000", "4014000000000000", "3ff0000000000000", "0"],
+    negative: [
+      ["fffffffffffffffb", "fffffffffffffffb"],
+      ["fffffffffffffffb", "fffffffffffffffb"],
+    ],
     // A string is true as a bool. It throws for every other type, before the call.
     mixed: ["123456", "123470", "123456", "TypeError", "TypeError", "TypeError", "TypeError", "TypeError"],
+    kept: {
+      "u64 1e+300": allOnes,
+      "u64 Infinity": allOnes,
+      "u64_fast 1e+300": allOnes,
+      "u64_fast Infinity": allOnes,
+      "ptr 10000000000000000000": "10000000000000000000",
+      "ptr 1e+300": allOnes,
+      "ptr Infinity": allOnes,
+      "cstring 10000000000000000000": "10000000000000000000",
+      "cstring 1e+300": allOnes,
+      "cstring Infinity": allOnes,
+      "cstring ": "TypeError",
+      "cstring 5": "TypeError",
+      "function 10000000000000000000": "10000000000000000000",
+      "function 1e+300": allOnes,
+      "function Infinity": allOnes,
+      "function undefined": "0",
+      "function null": "0",
+    },
   });
   expect(exitCode).toBe(0);
 });
@@ -1403,8 +1457,9 @@ describe("double <-> JSValue conversions", () => {
     });
   });
 
-  // JSVALUE_TO_DOUBLE must decode int32-tagged JSValues: JSC tags integral
-  // numbers as int32, so treating every numeric JSValue as double-encoded
+  // An f64 or f32 argument conversion (JSVALUE_DOUBLE_IN_PLACE and
+  // JSVALUE_FLOAT_IN_PLACE in FFI.h) must decode int32-tagged JSValues: JSC tags
+  // integral numbers as int32, so treating every numeric JSValue as double-encoded
   // hands C an impure NaN instead of the number. The C-side observers report
   // what the native code actually received, so these cannot pass by a
   // JS -> C -> JS round trip cancelling an encode bug against a decode bug.
@@ -1571,10 +1626,10 @@ describe("double <-> JSValue conversions", () => {
     });
   });
 
-  // JSVALUE_TO_INT32 must decode double-encoded JSValues: whether a JS number
-  // is int32-tagged or double-encoded is the engine's choice (JIT tier, double
-  // speculation, Math.* provenance), so an int-typed JSCallback return that
-  // truncates the raw encoded bits hands C 0 once the callback tiers up.
+  // An int-typed JSCallback return must decode double-encoded JSValues: whether
+  // a JS number is int32-tagged or double-encoded is the engine's choice (JIT
+  // tier, double speculation, Math.* provenance), so a return that truncates the
+  // raw encoded bits hands C 0 once the callback tiers up.
   it("double-encoded JS numbers returned from an int-typed JSCallback reach C as the integer", async () => {
     using dir = tempDir("bun-ffi-int32-cb-return", {
       "cb.c": /* c */ `

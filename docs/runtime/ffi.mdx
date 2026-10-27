@@ -380,7 +380,7 @@ setOnResolve(onResolve);
 
 Bun represents [pointers](<https://en.wikipedia.org/wiki/Pointer_(computer_programming)>) as a `number` in JavaScript.
 
-A native function with `returns: "ptr"` returns `null` for a null pointer. It returns a `BigInt` for a value above `Number.MAX_SAFE_INTEGER`, because a `number` cannot hold that value exactly. `ptr()`, `read.ptr()` and `read.intptr()` always return a `number`.
+A native function with `returns: "ptr"` returns `null` for a null pointer. It returns a `BigInt` for a value above `Number.MAX_SAFE_INTEGER`, because a `number` cannot hold that value exactly. `ptr()` always returns a `number`. `read.ptr()` and `read.intptr()` return a `number` too, so they round a value above `Number.MAX_SAFE_INTEGER`. To read such a value exactly, use `read.u64()` or `read.i64()`.
 
 <Accordion title="How does a 64 bit pointer fit in a JavaScript number?">
 

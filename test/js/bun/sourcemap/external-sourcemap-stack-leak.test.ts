@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, MAX_PATH_BYTES, tempDir } from "harness";
+import { join } from "node:path";
 
 // Formatting a stack trace hands one ZigStackFrame per frame to
 // Bun__remapStackFramePositions. When the frame's file has an external source
@@ -124,4 +125,33 @@ describe.concurrent("error.stack with an external source map does not leak the r
     },
     CHILD_TIMEOUT_MS,
   );
+});
+
+// A frame's path is the `sources` entry joined onto the file's directory. Without `sourcesContent`, the source preview
+// for an uncaught error reads that path from disk.
+test("prints the stack trace when a `sources` entry is longer than a path buffer", async () => {
+  const sourceName = Buffer.alloc(MAX_PATH_BYTES + 104, "x").toString() + ".ts";
+  const code = `// @bun\nfunction t() {\n  return new Error("LONGSRC");\n}\nthrow t();\n//# sourceMappingURL=entry.js.map\n`;
+  using dir = tempDir("sourcemap-long-source", {
+    "entry.js": code,
+    "entry.js.map": JSON.stringify({
+      version: 3,
+      sources: [sourceName],
+      sourcesContent: [""],
+      names: [],
+      mappings: "AAAA" + ";AACA".repeat(code.split("\n").length - 1),
+    }),
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("");
+  expect(stderr).toContain("LONGSRC");
+  expect(stderr).toContain(`at t (${join(String(dir), sourceName)}:`);
+  expect(exitCode).toBe(1);
 });

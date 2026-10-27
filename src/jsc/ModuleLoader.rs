@@ -6,7 +6,6 @@
 //! `extern "Rust"` decls.
 
 use bun_alloc::Arena as ArenaAllocator;
-use bun_bundler::transpiler::PluginRunner;
 use bun_options_types::LoaderExt as _;
 
 use crate::virtual_machine::VirtualMachine;
@@ -25,17 +24,24 @@ bun_core::declare_scope!(ModuleLoader, hidden);
 #[derive(Default)]
 pub struct ModuleLoader {
     pub transpile_source_code_arena: Option<Box<ArenaAllocator>>,
-    pub eval_source: Option<Box<bun_ast::Source>>,
+    pub eval_source: Option<Box<bun_ast::Source<'static>>>,
     /// User's `-e` bytes under `--interactive` (see `Eval::interactive_script`).
     pub interactive_eval_script: Option<Box<[u8]>>,
 }
 
-pub static IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS: core::sync::atomic::AtomicBool =
+static IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
 #[inline]
-pub(crate) fn set_is_allowed_to_use_internal_testing_apis(v: bool) {
+pub fn set_is_allowed_to_use_internal_testing_apis(v: bool) {
     IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS.store(v, core::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether `bun:internal-for-testing` resolves: `--expose-internals` in release builds, always in debug builds.
+#[inline]
+pub fn is_allowed_to_use_internal_testing_apis() -> bool {
+    bun_core::env::IS_DEBUG
+        || IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS.load(core::sync::atomic::Ordering::Relaxed)
 }
 
 impl ModuleLoader {
@@ -112,15 +118,15 @@ pub struct TranspileArgs<'a> {
     pub referrer: &'a [u8],
     pub input_specifier: &'a bun_core::String,
     pub log: *mut bun_ast::Log,
-    pub virtual_source: Option<&'a bun_ast::Source>,
+    pub virtual_source: Option<&'a bun_ast::Source<'a>>,
     pub global_object: &'a JSGlobalObject,
     pub flags: FetchFlags,
     /// Raw so the `.wasm` re-entry can mutate `loader` and recurse.
-    pub extra: *mut TranspileExtra,
+    pub extra: *mut TranspileExtra<'a>,
 }
 
-pub struct TranspileExtra {
-    pub path: bun_resolver::fs::Path<'static>,
+pub struct TranspileExtra<'a> {
+    pub path: bun_resolver::fs::Path<'a>,
     pub loader: bun_ast::Loader,
     pub module_type: bun_bundler::options::ModuleType,
     /// `*js_printer.BufferPrinter` — the per-VM shared printer. Never null.
@@ -237,36 +243,75 @@ extern "C" fn Bun__getDefaultLoader(
     loader
 }
 
-/// C++ entry point: runs the plugin for a virtual-module specifier, returning its exports (or zero when no plugin runner is set).
+/// The namespace (`b""` for `file`) and path that plugins are asked about for `specifier`, if they are asked.
+pub(crate) fn plugin_namespace_and_path(specifier: &[u8]) -> Option<(&[u8], &[u8])> {
+    if !could_be_plugin(specifier) {
+        return None;
+    }
+    let namespace = extract_namespace(specifier);
+    Some(if namespace.is_empty() {
+        (namespace, specifier)
+    } else {
+        (namespace, &specifier[namespace.len() + 1..])
+    })
+}
+
+/// The `namespace:` prefix of `specifier`, or `b""` if it has none
+/// (Windows drive-letter prefixes are not namespaces).
+fn extract_namespace(specifier: &[u8]) -> &[u8] {
+    let Some(colon) = bun_core::strings::index_of_char_usize(specifier, b':') else {
+        return b"";
+    };
+    if cfg!(windows)
+        && colon == 1
+        && specifier.len() > 3
+        && bun_paths::resolve_path::is_sep_any(specifier[2])
+        && ((specifier[0] > b'a' && specifier[0] < b'z')
+            || (specifier[0] > b'A' && specifier[0] < b'Z'))
+    {
+        return b"";
+    }
+    &specifier[..colon]
+}
+
+/// Cheap pre-filter before calling into a plugin: has a file extension or a `namespace:`.
+fn could_be_plugin(specifier: &[u8]) -> bool {
+    if let Some(last_dot) = bun_core::strings::last_index_of_char(specifier, b'.') {
+        let ext = &specifier[last_dot + 1..];
+        // '.' followed by either a letter or a non-ascii character
+        // maybe there are non-ascii file extensions?
+        // we mostly want to cheaply rule out "../" and ".." and "./"
+        if !ext.is_empty()
+            && (ext[0].is_ascii_lowercase() || ext[0].is_ascii_uppercase() || ext[0] > 127)
+        {
+            return true;
+        }
+    }
+    !bun_paths::is_absolute(specifier)
+        && bun_core::strings::index_of_char_usize(specifier, b':').is_some()
+}
+
+/// C++ entry point: runs the plugin for a virtual-module specifier, returning its exports (or zero when no plugin serves it).
 #[unsafe(no_mangle)]
 unsafe extern "C" fn Bun__runVirtualModule(
     global: &JSGlobalObject,
     specifier_ptr: *const bun_core::String,
 ) -> JSValue {
     jsc::mark_binding();
-    if global.bun_vm().plugin_runner.is_none() {
+    if !global.has_plugins() {
         return JSValue::ZERO;
     }
 
     // SAFETY: C++ passed a valid `bun.String*`.
     let specifier_slice = unsafe { &*specifier_ptr }.to_utf8();
-    let specifier = specifier_slice.slice();
-
-    if !PluginRunner::could_be_plugin(specifier) {
+    let Some((namespace, after_namespace)) = plugin_namespace_and_path(specifier_slice.slice())
+    else {
         return JSValue::ZERO;
-    }
-
-    let namespace = PluginRunner::extract_namespace(specifier);
-    let after_namespace = if namespace.is_empty() {
-        specifier
-    } else {
-        &specifier[(namespace.len() + 1).min(specifier.len())..]
     };
 
     match global.run_on_load_plugins(
-        &bun_core::String::from_bytes(namespace),
-        &bun_core::String::from_bytes(after_namespace),
-        crate::BunPluginTarget::Bun,
+        &bun_core::StringView::from_bytes(namespace),
+        &bun_core::StringView::from_bytes(after_namespace),
     ) {
         Ok(Some(v)) => v,
         Ok(None) | Err(_) => JSValue::ZERO,

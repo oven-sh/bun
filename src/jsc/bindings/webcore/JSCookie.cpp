@@ -295,6 +295,11 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieDOMConstructor::
     if (!callFrame->thisValue().isObject()) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotAConstructorError(lexicalGlobalObject, callFrame->jsCallee()));
 
+    auto* structure = structureForNewTarget<Cookie>(lexicalGlobalObject, callFrame);
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    RefPtr<Cookie> cookie;
+
     // Static method: parse(cookieString)
     if (callFrame->argumentCount() == 1 && callFrame->argument(0).isString()) {
         // new Bun.Cookie.parse("foo=bar")
@@ -311,10 +316,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieDOMConstructor::
             WebCore::propagateException(lexicalGlobalObject, throwScope, cookie_exception.releaseException());
             RELEASE_AND_RETURN(throwScope, {});
         }
-        auto cookie = cookie_exception.releaseReturnValue();
-
-        auto* globalObject = castedThis->globalObject();
-        RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS(lexicalGlobalObject, globalObject, WTF::move(cookie))));
+        cookie = cookie_exception.releaseReturnValue();
     } else if (callFrame->argumentCount() == 1 && callFrame->argument(0).isObject()) {
         // new Bun.Cooke({
         //     name: "name",
@@ -333,9 +335,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieDOMConstructor::
             WebCore::propagateException(lexicalGlobalObject, throwScope, cookie_exception.releaseException());
             RELEASE_AND_RETURN(throwScope, {});
         }
-        auto cookie = cookie_exception.releaseReturnValue();
-        auto* globalObject = castedThis->globalObject();
-        RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS(lexicalGlobalObject, globalObject, WTF::move(cookie))));
+        cookie = cookie_exception.releaseReturnValue();
     } else if (callFrame->argumentCount() >= 2) {
         // new Bun.Cookie("name", "value", {
         //     domain: "domain",
@@ -368,13 +368,12 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCookieDOMConstructor::
             WebCore::propagateException(lexicalGlobalObject, throwScope, cookie_exception.releaseException());
             RELEASE_AND_RETURN(throwScope, {});
         }
-        auto cookie = cookie_exception.releaseReturnValue();
-
-        auto* globalObject = castedThis->globalObject();
-        RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS(lexicalGlobalObject, globalObject, WTF::move(cookie))));
+        cookie = cookie_exception.releaseReturnValue();
+    } else {
+        return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     }
 
-    return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
+    return JSValue::encode(createWrapper<Cookie>(castedThis->globalObject(), structure, cookie.releaseNonNull()));
 }
 
 JSC_ANNOTATE_HOST_FUNCTION(JSCookieDOMConstructorConstruct, JSCookieDOMConstructor::construct);

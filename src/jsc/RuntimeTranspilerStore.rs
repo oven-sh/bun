@@ -1,4 +1,3 @@
-#![allow(clippy::needless_return)]
 #![warn(unused_must_use)]
 
 use core::cell::Cell;
@@ -221,6 +220,10 @@ impl Taskable for RuntimeTranspilerStore {
     /// The "drain my finished jobs" ping owns nothing (`this` is the VM's
     /// store); the jobs themselves are released by `release_queued_jobs_for_teardown`.
     unsafe fn release_unrun(_: *mut Self) {}
+    /// A ping to the VM's own store.
+    unsafe fn context(_: *const Self) -> bun_event_loop::ContextId {
+        bun_event_loop::ContextId::NONE
+    }
 }
 
 impl RuntimeTranspilerStore {
@@ -246,6 +249,7 @@ impl RuntimeTranspilerStore {
             // SAFETY: a live job popped from the intrusive queue; see fn doc.
             unsafe {
                 (*job).promise.deinit();
+                (*job).module_loader.deinit();
                 (*job).reset_for_pool();
                 self.store.put(job);
             }
@@ -319,6 +323,7 @@ impl RuntimeTranspilerStore {
         referrer: String,
         loader: Loader,
         package_json: Option<&PackageJSON>,
+        module_loader: JSValue,
     ) -> *mut c_void {
         // The path text is heap-duplicated here and freed in `reset_for_pool` via
         // heap::take on `path.text`.
@@ -361,6 +366,11 @@ impl RuntimeTranspilerStore {
                 log: bun_ast::Log::init(),
                 loader,
                 promise: StrongOptional::create(JSValue::from_cell(promise), global_object),
+                module_loader: if module_loader.is_empty() {
+                    StrongOptional::empty()
+                } else {
+                    StrongOptional::create(module_loader, global_object)
+                },
                 poll_ref: KeepAlive::default(),
                 resolved_source,
                 generation_number: self.generation_number.load(Ordering::SeqCst),
@@ -407,6 +417,9 @@ pub struct TranspilerJob {
     pub(crate) non_threadsafe_referrer: bun_core::String,
     pub(crate) loader: Loader,
     pub(crate) promise: StrongOptional,
+    /// The `JSModuleLoader` that is fetching, when it is not the global object's (a
+    /// `Bun.ModuleGraph`'s): handed back with the result. Empty otherwise.
+    pub(crate) module_loader: StrongOptional,
     // Note: struct is stored in a HiveArray and crosses to a worker thread;
     // raw pointers/BackRefs are used (BACKREF — VM owns the
     // store and outlives every job).
@@ -515,6 +528,7 @@ impl TranspilerJob {
     fn run_from_js_thread(&mut self) -> JsResult<()> {
         let vm = self.vm;
         let promise = self.promise.swap();
+        let module_loader = self.module_loader.swap();
         // Copy the BackRef out (it is `Copy`) so the borrow of `*self` ends
         // before `reset_for_pool`/`put` need `&mut *self` below; deref at the
         // `fulfill` call site instead.
@@ -532,11 +546,19 @@ impl TranspilerJob {
                 let out = core::mem::take(&mut self.non_threadsafe_input_specifier);
                 debug_assert!(resolved_source.source_url.is_empty());
                 resolved_source.source_url = out.create_if_different(self.path.text);
+                // A job reads a file: `Bun__transpileFile` gives it no blob and no plugin's text.
+                // SAFETY: vm outlives the job, and this is its thread. One field: `self` is in `vm.transpiler_store`.
+                let in_standalone_executable = unsafe { (*vm).standalone_module_graph.is_some() };
+                resolved_source.is_static = VirtualMachine::is_file_on_disk_static(
+                    in_standalone_executable,
+                    self.path.text,
+                );
                 (out, Ok(resolved_source))
             }
         };
 
         self.promise.deinit();
+        self.module_loader.deinit();
         self.reset_for_pool();
 
         // SAFETY: vm outlives the job; transpiler_store.store.put recycles the slot.
@@ -550,6 +572,7 @@ impl TranspilerJob {
         AsyncModule::fulfill(
             &global_this,
             promise,
+            module_loader,
             result,
             &specifier,
             &referrer,
@@ -660,14 +683,13 @@ impl TranspilerJob {
         };
 
         let mut log = bun_ast::Log::init();
-        // `defer { this.log = ...; log.cloneToWithRecycled(&this.log, true) }`
         let _log_clone_guard = scopeguard::guard(
             (ptr::addr_of_mut!(self.log), ptr::addr_of_mut!(log)),
             |(dst, src)| {
                 // SAFETY: dst/src point at locals that outlive this guard; no aliases at drop.
                 unsafe {
                     *dst = bun_ast::Log::init();
-                    (*src).clone_to_with_recycled(&mut *dst, true);
+                    (*src).append_to(&mut *dst);
                 }
             },
         );
@@ -698,7 +720,7 @@ impl TranspilerJob {
         // Note: `parse_maybe` re-creates the macro context per-iteration
         // when `macro_context.is_none()`. It boxes a
         // higher-tier `MacroContext` via `__bun_macro_context_init`; that Box
-        // is intentionally leaked for the long-lived `vm.transpiler`, but here
+        // stays with the long-lived `vm.transpiler`, but here
         // we operate on a per-iteration `ManuallyDrop` bytewise copy, so we
         // MUST free what `parse_maybe` allocates or every dynamic `import()`
         // leaks one `Box<MacroContext>` (require-cache.test.ts "files
@@ -776,9 +798,11 @@ impl TranspilerJob {
 
         // SAFETY: leaf scalar field reads on `*vm`; see `vm` note above.
         let (vm_main, vm_main_hash) = unsafe { ((*vm).main(), (*vm).main_hash) };
-        let is_main = vm_main.len() == path.text.len()
-            && vm_main_hash == hash
-            && strings::eql_long(vm_main, path.text, false);
+        let is_main = vm_main.is_some_and(|vm_main| {
+            vm_main.len() == path.text.len()
+                && vm_main_hash == hash
+                && strings::eql_long(vm_main, path.text, false)
+        });
 
         let module_type: ModuleType = match this_tag {
             ResolvedSourceTag::PackageJsonTypeCommonjs => ModuleType::Cjs,
@@ -1011,10 +1035,8 @@ impl TranspilerJob {
                 continue;
             }
 
-            if strings::has_prefix_comptime(import_record.path.text, b"bun:") {
-                import_record.path =
-                    bun_paths::fs::Path::init(&import_record.path.text[b"bun:".len()..]);
-                import_record.path.namespace = b"bun";
+            if let Some(builtin) = HardcodedAlias::bun_prefixed_builtin(import_record.path.text) {
+                import_record.path = bun_paths::fs::Path::init(builtin);
                 import_record
                     .flags
                     .insert(ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
@@ -1023,9 +1045,7 @@ impl TranspilerJob {
 
         let source_code_printer = tls_get_or_leak(&SOURCE_CODE_PRINTER, || {
             let writer = BufferWriter::init();
-            let mut bp = Box::new(BufferPrinter::init(writer));
-            bp.ctx.append_null_byte = false;
-            bp
+            Box::new(BufferPrinter::init(writer))
         });
 
         // Swap the buffer out and write it back via the
@@ -1042,7 +1062,6 @@ impl TranspilerJob {
             // printer.ctx.buffer.deinit() → Drop
             let writer = BufferWriter::init();
             *source_code_printer = BufferPrinter::init(writer);
-            source_code_printer.ctx.append_null_byte = false;
             printer = core::mem::replace(
                 source_code_printer,
                 BufferPrinter::init(BufferWriter::init()),
@@ -1133,7 +1152,6 @@ impl TranspilerJob {
                 // printer.ctx.buffer.deinit() → Drop
                 let writer = BufferWriter::init();
                 *source_code_printer = BufferPrinter::init(writer);
-                source_code_printer.ctx.append_null_byte = false;
             }
             // else: writeback guard already restored `printer` into the thread-local.
 

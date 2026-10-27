@@ -28,6 +28,7 @@ import { basename, join } from "node:path";
 import { downloadWithRetry, extractTarGz, fetchPrebuilt } from "./download.ts";
 import { BuildError, assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
+import { formatElapsed } from "./tty.ts";
 
 /**
  * Absolute path to this file. Ninja rules use this in their command strings.
@@ -69,7 +70,7 @@ async function main(): Promise<void> {
         text = text.split(pairs[i]!).join(pairs[i + 1]!);
       }
       // dep_subst is restat=1 — preserve mtime when the rendered text is
-      // unchanged so depfile-tracked .o files (libarchive ← zlib.h) don't
+      // unchanged so depfile-tracked .o files (libspng ← zlib.h) don't
       // recompile after a no-op re-fetch.
       writeIfChanged(outPath, text);
       return;
@@ -152,7 +153,7 @@ function checkUndefined(name: string, nm: string, rspfile: string, stamp: string
   const forbidden = new Set(symbols);
   let undefinedSymbols = 0;
   const offenders: string[] = [];
-  for (let start = 0; start < objects.length; ) {
+  for (let start = 0; start < objects.length;) {
     let end = start;
     let length = 0;
     do {
@@ -244,6 +245,7 @@ async function fetchDep(
   }
 
   console.log(`fetching ${repo}@${commit.slice(0, 8)}`);
+  const started = performance.now();
 
   // ─── Download (with cache) ───
   const url = `https://github.com/${repo}/archive/${commit}.tar.gz`;
@@ -282,7 +284,7 @@ async function fetchDep(
   // ─── Write stamp ───
   // Written LAST — if anything above failed, no stamp means next build retries.
   await writeFile(refPath, identity + "\n");
-  console.log(`done → ${dest}`);
+  console.log(`done → ${dest} (${formatElapsed(performance.now() - started)})`);
 }
 
 /**

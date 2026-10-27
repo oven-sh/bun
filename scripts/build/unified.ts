@@ -167,7 +167,7 @@ const noUnifyDirs: readonly string[] = [
  * How many .cpp files per bundle. WebKit defaults to 8.
  *
  * Release (incl. release-asan): 32. Measured 701s vs 866s @ 16 vs 1532s @ 8
- * release cpp-only — frontend parsing dominates, so more dedup wins. ~70 TUs
+ * release, C/C++ objects only — frontend parsing dominates, so more dedup wins. ~70 TUs
  * still keeps CI's 16–32 cores saturated.
  *
  * Debug: 8. Local iteration cares about incremental blast radius — editing
@@ -200,8 +200,7 @@ export interface UnifiedSplit {
  *
  * `cxxSources` must be absolute paths (the glob output). Generated codegen
  * .cpp files should NOT be passed here — those are already large single TUs
- * (ZigGeneratedClasses.cpp etc.) and are added to the compile list separately
- * in bun.ts.
+ * and are added to the compile list separately in bun.ts.
  */
 export function generateUnifiedSources(cfg: Config, cxxSources: readonly string[]): UnifiedSplit {
   const outDir = resolve(cfg.buildDir, "unified");

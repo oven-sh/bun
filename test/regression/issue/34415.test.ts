@@ -19,7 +19,7 @@ async function rawRequest(port: number, request: string): Promise<string> {
   await once(sock, "connect");
   sock.write(request);
   const chunks: Buffer[] = [];
-  sock.on("data", c => chunks.push(c));
+  sock.on("data", (c: Buffer) => chunks.push(c));
   await once(sock, "close");
   return Buffer.concat(chunks).toString("latin1");
 }
@@ -28,7 +28,7 @@ function parseResponse(raw: string) {
   const idx = raw.indexOf("\r\n\r\n");
   expect(idx).toBeGreaterThan(0);
   const [statusLine, ...headerLines] = raw.slice(0, idx).split("\r\n");
-  const headers: Record<string, string> = {};
+  const headers: Record<string, string | undefined> = {};
   for (const line of headerLines) {
     const sep = line.indexOf(": ");
     headers[line.slice(0, sep).toLowerCase()] = line.slice(sep + 2);

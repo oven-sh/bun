@@ -556,7 +556,6 @@ dependencies = [
  "bun_paths",
  "bun_ptr",
  "bun_wyhash",
- "scopeguard",
  "strum",
  "thiserror",
 ]

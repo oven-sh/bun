@@ -52,7 +52,7 @@ pub fn parse_response<'a, H: From<Header<'a>>>(
         + u16::from(digit(*tens)?) * 10
         + u16::from(digit(*ones)?);
 
-    let (reason, mut rest) = line(after_status)?;
+    let (reason, mut at) = line(buf, buf.len() - after_status.len())?;
     if !matches!(reason, [] | [b' ', ..]) {
         return Err(ParseError::Malformed);
     }
@@ -61,32 +61,35 @@ pub fn parse_response<'a, H: From<Header<'a>>>(
     let mut header_count = 0;
     let mut has_folded_line = false;
     loop {
-        match rest {
-            [] | [b'\r'] => return Err(ParseError::Incomplete),
-            [b'\r', b'\n', after @ ..] | [b'\n', after @ ..] => {
-                rest = after;
+        let is_folded = match buf.get(at..) {
+            None | Some([] | [b'\r']) => return Err(ParseError::Incomplete),
+            Some([b'\r', b'\n', ..]) => {
+                at += 2;
                 break;
             }
-            [b'\r', ..] => return Err(ParseError::Malformed),
-            _ => {}
-        }
+            Some([b'\n', ..]) => {
+                at += 1;
+                break;
+            }
+            Some([b'\r', ..]) => return Err(ParseError::Malformed),
+            Some([first, ..]) => header_count > 0 && matches!(first, b' ' | b'\t'),
+        };
         // A folded line takes a slot too, so that it counts towards the limit.
         let Some(slot) = headers.get_mut(header_count) else {
             return Err(ParseError::Malformed);
         };
         header_count += 1;
-        if header_count > 1 && matches!(rest, [b' ' | b'\t', ..]) {
+        let mut name = &[][..];
+        if is_folded {
             has_folded_line = true;
-            (_, rest) = line(rest)?;
-            continue;
-        }
-        let (name, after_colon) = field_name(rest)?;
-        let value_start = skip_blanks(after_colon);
-        if value_start.is_empty() {
-            return Err(ParseError::Incomplete);
+        } else {
+            (name, at) = field_name(buf, at)?;
+            while let Some(b' ' | b'\t') = buf.get(at) {
+                at += 1;
+            }
         }
         let value;
-        (value, rest) = line(value_start)?;
+        (value, at) = line(buf, at)?;
         *slot = H::from(Header {
             name,
             value: trim_blanks_end(value),
@@ -101,7 +104,7 @@ pub fn parse_response<'a, H: From<Header<'a>>>(
         status_code,
         reason,
         header_count,
-        len: buf.len() - rest.len(),
+        len: at,
     })
 }
 
@@ -123,19 +126,24 @@ fn digit(byte: u8) -> Result<u8, ParseError> {
     }
 }
 
-/// The name before the colon, and what follows the colon.
-fn field_name(buf: &[u8]) -> Result<(&[u8], &[u8]), ParseError> {
+/// The name that starts at `from`, and where the byte after its colon is.
+#[inline(always)]
+fn field_name(buf: &[u8], from: usize) -> Result<(&[u8], usize), ParseError> {
     // Nearly every name is letters, digits and hyphens, and that takes far fewer compares than all of `is_token`.
-    let common = index_of(buf, |byte| {
+    let mut end = index_of(buf, from, |byte| {
         !(byte.is_ascii_alphabetic() | byte.is_ascii_digit() | (byte == b'-'))
     })
     .ok_or(ParseError::Incomplete)?;
-    let uncommon = buf
-        .get(common..)
-        .and_then(|rest| rest.iter().position(|&byte| !is_token(byte)))
-        .ok_or(ParseError::Incomplete)?;
-    match buf.split_at_checked(common + uncommon) {
-        Some((name @ [_, ..], [b':', rest @ ..])) => Ok((name, rest)),
+    loop {
+        match buf.get(end) {
+            None => return Err(ParseError::Incomplete),
+            Some(b':') => break,
+            Some(&byte) if is_token(byte) => end += 1,
+            Some(_) => return Err(ParseError::Malformed),
+        }
+    }
+    match buf.get(from..end) {
+        Some(name @ [_, ..]) => Ok((name, end + 1)),
         _ => Err(ParseError::Malformed),
     }
 }
@@ -161,47 +169,56 @@ fn is_token(byte: u8) -> bool {
     byte.is_ascii() && (TOKENS >> byte) & 1 != 0
 }
 
-/// The bytes up to the end of the line, and the bytes of the next lines. The only control character a line may hold
-/// is a tab.
-fn line(buf: &[u8]) -> Result<(&[u8], &[u8]), ParseError> {
-    let len = index_of(buf, |byte| {
+/// The bytes from `from` up to the end of the line, and where the next line starts. The only control character a line
+/// may hold is a tab.
+#[inline(always)]
+fn line(buf: &[u8], from: usize) -> Result<(&[u8], usize), ParseError> {
+    let end = index_of(buf, from, |byte| {
         ((byte < b' ') & (byte != b'\t')) | (byte == 0x7f)
     })
     .ok_or(ParseError::Incomplete)?;
-    match buf.split_at_checked(len) {
-        Some((line, [b'\r', b'\n', rest @ ..] | [b'\n', rest @ ..])) => Ok((line, rest)),
-        Some((_, [b'\r'])) => Err(ParseError::Incomplete),
+    match (buf.get(from..end), buf.get(end..)) {
+        (Some(line), Some([b'\r', b'\n', ..])) => Ok((line, end + 2)),
+        (Some(line), Some([b'\n', ..])) => Ok((line, end + 1)),
+        (_, Some([b'\r'])) => Err(ParseError::Incomplete),
         _ => Err(ParseError::Malformed),
     }
 }
 
-/// The first byte for which `predicate` holds. Parsing a head spends its time here.
+/// Where the first byte at or after `from` is for which `predicate` holds. Parsing a head spends its time here.
 #[inline(always)]
-fn index_of(buf: &[u8], predicate: impl Fn(u8) -> bool) -> Option<usize> {
-    let (blocks, tail) = buf.as_chunks::<16>();
+fn index_of(buf: &[u8], from: usize, predicate: impl Fn(u8) -> bool) -> Option<usize> {
+    let (blocks, tail) = buf.get(from..)?.as_chunks::<16>();
     for (i, block) in blocks.iter().enumerate() {
-        // Without a branch per byte, here or in `predicate`, this compiles to vector compares and a move-mask.
-        let mut matches = 0u16;
-        for (bit, &byte) in block.iter().enumerate() {
-            matches |= u16::from(predicate(byte)) << bit;
-        }
+        let matches = matches_in(block, &predicate);
         if matches != 0 {
-            return Some(i * 16 + matches.trailing_zeros() as usize);
+            return Some(from + i * 16 + matches.trailing_zeros() as usize);
         }
     }
-    let in_tail = tail.iter().position(|&byte| predicate(byte))?;
-    Some(blocks.len() * 16 + in_tail)
+    let in_tail = match buf.last_chunk() {
+        // The bytes before the tail fill up a block, and the shift drops them again.
+        Some(block) => match matches_in(block, &predicate) >> (16 - tail.len()) {
+            0 => return None,
+            matches => matches.trailing_zeros() as usize,
+        },
+        None => tail.iter().position(|&byte| predicate(byte))?,
+    };
+    Some(buf.len() - tail.len() + in_tail)
+}
+
+/// A bit for each byte for which `predicate` holds, the lowest for the first.
+#[inline(always)]
+fn matches_in(block: &[u8; 16], predicate: impl Fn(u8) -> bool) -> u32 {
+    // Without a branch per byte, here or in `predicate`, this compiles to vector compares and a move-mask.
+    let mut matches = 0;
+    for (bit, &byte) in block.iter().enumerate() {
+        matches |= u32::from(predicate(byte)) << bit;
+    }
+    matches
 }
 
 fn skip_spaces(mut buf: &[u8]) -> &[u8] {
     while let [b' ', rest @ ..] = buf {
-        buf = rest;
-    }
-    buf
-}
-
-fn skip_blanks(mut buf: &[u8]) -> &[u8] {
-    while let [b' ' | b'\t', rest @ ..] = buf {
         buf = rest;
     }
     buf

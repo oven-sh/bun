@@ -4434,12 +4434,46 @@ mod windows_impl {
         Ok(size.max(0) as u64)
     }
     pub fn realpath<'a>(path: &ZStr, buf: &'a mut bun_core::PathBuffer) -> Maybe<&'a [u8]> {
-        // sys_uv.rs:216 — open + GetFinalPathNameByHandle (uv_fs_realpath edge cases).
-        let fd = open(path, O::RDONLY, 0)?;
-        let r = super::get_fd_path(fd, buf);
-        let _ = close(fd);
-        // get_fd_path yields `&mut [u8]`; coerce to shared.
-        r.map(|s| &*s)
+        let to_error = |e: w::Win32Error| Error::from_win32(e, Tag::realpath);
+        let bytes = path.as_bytes();
+        if !bun_paths::string_paths::fits_in_wide_path_buffer(bytes) {
+            return Err(Error::from_code(E::ENAMETOOLONG, Tag::realpath));
+        }
+        let mut wpath = bun_paths::w_path_buffer_pool::get();
+        let wpath = bun_paths::string_paths::to_w_path(&mut wpath.0[..], bytes);
+        // SAFETY: `wpath` is NUL-terminated UTF-16; null security attributes
+        // and template handle are allowed.
+        let handle = unsafe {
+            w::CreateFileW(
+                wpath.as_ptr(),
+                0,
+                0,
+                core::ptr::null_mut(),
+                w::OPEN_EXISTING,
+                w::FILE_FLAG_BACKUP_SEMANTICS,
+                core::ptr::null_mut(),
+            )
+        };
+        if handle == w::INVALID_HANDLE_VALUE {
+            return Err(to_error(w::Win32Error::get()));
+        }
+        let _close = scopeguard::guard(handle, |handle| {
+            // SAFETY: `handle` is the live handle opened above.
+            unsafe {
+                let _ = w::CloseHandle(handle);
+            }
+        });
+        let mut wide = bun_paths::w_path_buffer_pool::get();
+        let resolved =
+            match w::GetFinalPathNameByHandle(handle, Default::default(), &mut wide.0[..]) {
+                Ok(p) => p,
+                Err(w::GetFinalPathNameByHandleError::NameTooLong) => {
+                    return Err(Error::from_code(E::ENAMETOOLONG, Tag::realpath));
+                }
+                Err(w::GetFinalPathNameByHandleError::Failed(e)) => return Err(to_error(e)),
+            };
+        let len = bun_paths::string_paths::from_w_path(&mut buf.0[..], resolved).len();
+        Ok(&buf.0[..len])
     }
     pub fn pipe() -> Maybe<[Fd; 2]> {
         // uv_pipe(fds, 0, 0).
@@ -7622,7 +7656,16 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
             &mut wide_buf.0[..],
         ) {
             Ok(p) => p,
-            Err(_) => return Err(Error::from_code(E::EBADF, Tag::GetFinalPathNameByHandle)),
+            Err(e) => {
+                use crate::windows::GetFinalPathNameByHandleError as GE;
+                return Err(match e {
+                    GE::Failed(e) => Error::from_win32(e, Tag::GetFinalPathNameByHandle),
+                    GE::NameTooLong => {
+                        Error::from_code(E::ENAMETOOLONG, Tag::GetFinalPathNameByHandle)
+                    }
+                }
+                .with_fd(fd));
+            }
         };
         // Trust that Windows gives us valid UTF-16LE.
         let len = bun_paths::string_paths::from_w_path(&mut out.0[..], wide_slice).len();
@@ -7676,13 +7719,10 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
 pub fn get_fd_path_w(fd: Fd, out: &mut [u16]) -> Maybe<&mut [u16]> {
     crate::windows::GetFinalPathNameByHandle(fd.native(), Default::default(), out).map_err(|e| {
         use crate::windows::GetFinalPathNameByHandleError as GE;
-        Error::from_code(
-            match e {
-                GE::FileNotFound => E::ENOENT,
-                GE::NameTooLong => E::ENAMETOOLONG,
-            },
-            Tag::GetFinalPathNameByHandle,
-        )
+        match e {
+            GE::Failed(e) => Error::from_win32(e, Tag::GetFinalPathNameByHandle),
+            GE::NameTooLong => Error::from_code(E::ENAMETOOLONG, Tag::GetFinalPathNameByHandle),
+        }
     })
 }
 

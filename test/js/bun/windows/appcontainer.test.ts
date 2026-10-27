@@ -1,12 +1,13 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { execSync } from "child_process";
-import { existsSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { existsSync, readFileSync, realpathSync, rmSync, writeFileSync } from "fs";
 import { bunExe, isWindows, tempDirWithFiles } from "harness";
 import { dirname, join } from "path";
 
 // Launches bun inside a real Windows AppContainer (lowbox token) and asserts
 // the sandbox-only behaviors: spawn with piped stdio, the LOCAL\ pipe
-// namespace, realpath denial, and the rewritten TEMP. No admin rights needed.
+// namespace, realpath inside the sandbox, and the rewritten TEMP. No admin
+// rights needed.
 //
 // The launch is done with bun:ffi (CreateAppContainerProfile +
 // PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES); results are written by the
@@ -252,12 +253,21 @@ async function main() {
   const s = Bun.spawnSync({ cmd: [process.execPath, "-e", "console.log('SPAWN_OK')"], stdio: ["inherit", "pipe", "pipe"] });
   r.spawnPiped = s.exitCode === 0 && s.stdout.toString().includes("SPAWN_OK");
 
-  // User-facing fs.realpath stays Node-parity: the component walk lstats the
-  // drive root (denied), and uv_fs_realpath's mount-manager query is denied.
-  // Bun internals go through get_fd_path, not these.
-  r.realpath = (() => {
-    const errno = fn => { try { fn(); return "OK"; } catch (e) { return e.code || e.name; } };
-    return { sync: errno(() => fs.realpathSync(".")), native: errno(() => fs.realpathSync.native(".")) };
+  // The native realpath variants open the path attribute-only and take the
+  // final name from the handle, with the system-volume fallback for the
+  // denied mount-manager query, so they answer inside the container. The
+  // Node-ported component walk (fs.realpathSync, callback fs.realpath) lstats
+  // the drive root, which the container cannot read, and stays at EPERM.
+  // Each entry is the resolved path, or the error code. The parent compares
+  // against the answer it gets outside the container.
+  r.realpath = await (async () => {
+    const result = async fn => { try { return await fn(); } catch (e) { return e.code || e.name; } };
+    return {
+      sync: await result(() => fs.realpathSync(".")),
+      native: await result(() => fs.realpathSync.native(".")),
+      nativeCallback: await result(() => new Promise((res, rej) => fs.realpath.native(".", (e, p) => (e ? rej(e) : res(p))))),
+      promises: await result(() => fs.promises.realpath(".")),
+    };
   })();
 
   r.pipeNonLocal = await new Promise(resolve => {
@@ -367,7 +377,20 @@ main().then(
       // AppContainer children to the package's AC\Temp.
       expect(r.tempRewritten).toBe(true);
       expect(r.spawnPiped).toBe(true);
-      expect(r.realpath).toEqual({ sync: "EPERM", native: "EPERM" });
+      // The container's cwd is workDir; the native variants resolve it to the
+      // same final path the host sees. The fallback for the denied DOS volume
+      // name answers only on the system volume, so a temp directory on another
+      // drive still gets EPERM. The Node-ported component walk stays at EPERM
+      // everywhere: it lstats the drive root, which the container cannot read.
+      const hostRealpath = realpathSync.native(workDir);
+      const systemDrive = (process.env.SystemDrive ?? "C:").toUpperCase();
+      const nativeExpected = hostRealpath.toUpperCase().startsWith(systemDrive + "\\") ? hostRealpath : "EPERM";
+      expect(r.realpath).toEqual({
+        sync: "EPERM",
+        native: nativeExpected,
+        nativeCallback: nativeExpected,
+        promises: nativeExpected,
+      });
       // Namespace denial vs name collision both surface as ERROR_ACCESS_DENIED;
       // stock uv_pipe_bind2 maps that to EADDRINUSE. Tighten to EACCES once
       // the disambiguation probe lands on the libuv side.

@@ -651,8 +651,9 @@ pub use bun_windows_sys::externs::CreateDirectoryExW;
 
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
 pub enum GetFinalPathNameByHandleError {
-    #[error("FileNotFound")]
-    FileNotFound,
+    /// `GetFinalPathNameByHandleW` returned 0; the thread's last error.
+    #[error("{0:?}")]
+    Failed(Win32Error),
     #[error("NameTooLong")]
     NameTooLong,
 }
@@ -767,7 +768,9 @@ fn lowbox_dos_name_fallback(
             "GetFinalPathNameByHandleW({:p}) = denied (no NT name)",
             hFile
         );
-        return Err(GetFinalPathNameByHandleError::FileNotFound);
+        return Err(GetFinalPathNameByHandleError::Failed(
+            Win32Error::ACCESS_DENIED,
+        ));
     };
     let nt = &nt_buf.0[..nt_len];
     let Some((device, letter)) = system_volume_device() else {
@@ -775,7 +778,9 @@ fn lowbox_dos_name_fallback(
             "GetFinalPathNameByHandleW({:p}) = denied (system volume unresolved)",
             hFile
         );
-        return Err(GetFinalPathNameByHandleError::FileNotFound);
+        return Err(GetFinalPathNameByHandleError::Failed(
+            Win32Error::ACCESS_DENIED,
+        ));
     };
     if !(nt.len() > device.len()
         && nt[..device.len()] == device[..]
@@ -786,7 +791,9 @@ fn lowbox_dos_name_fallback(
             hFile,
             bun_core::fmt::utf16(nt)
         );
-        return Err(GetFinalPathNameByHandleError::FileNotFound);
+        return Err(GetFinalPathNameByHandleError::Failed(
+            Win32Error::ACCESS_DENIED,
+        ));
     }
     let rest = &nt[device.len()..];
     let total = 2 + rest.len();
@@ -889,7 +896,9 @@ pub(crate) fn GetFinalPathNameByHandle(
         {
             return lowbox_dos_name_fallback(hFile, out_buffer);
         }
-        return Err(GetFinalPathNameByHandleError::FileNotFound);
+        return Err(GetFinalPathNameByHandleError::Failed(Win32Error::from_u32(
+            err,
+        )));
     }
 
     if (return_length as usize) >= out_buffer.len() {

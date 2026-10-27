@@ -124,7 +124,8 @@ RUN bun install --production --frozen-lockfile
 # Copy the rest of the application into the container
 COPY . .
 
-# Run the application
+# Run the application in production mode
+ENV NODE_ENV=production
 CMD ["bun", "index.ts"]
 ```
 

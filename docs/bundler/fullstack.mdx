@@ -1018,6 +1018,7 @@ RUN bun build --target=bun --production --outdir=dist ./server/index.ts
 # Production stage
 FROM oven/bun:1-slim
 WORKDIR /usr/src/app
+ENV NODE_ENV=production
 COPY --from=base /usr/src/app/dist ./
 COPY --from=base /usr/src/app/public ./public
 

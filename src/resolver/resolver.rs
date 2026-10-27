@@ -1888,22 +1888,14 @@ impl<'a> Resolver<'a> {
             if let Some(custom_paths) = self.custom_dir_paths {
                 // @branchHint(.unlikely)
                 bun_core::hint::cold();
-                for custom_path in custom_paths {
-                    let custom_utf8 = custom_path.to_utf8();
-                    match self.check_relative_path(
-                        custom_utf8.slice(),
-                        import_path,
-                        kind,
-                        global_cache,
-                    ) {
-                        ResultUnion::Success(res) => return ResultUnion::Success(res),
-                        ResultUnion::Pending(p) => return ResultUnion::Pending(p),
-                        ResultUnion::Failure(p) => return ResultUnion::Failure(p),
-                        ResultUnion::NotFound => {}
-                    }
-                }
                 debug_assert!(!check_package); // always from JavaScript
-                return ResultUnion::NotFound; // bail out now since there isn't anywhere else to check
+                // bail out after this since there isn't anywhere else to check
+                return self.check_relative_path_in_custom_dirs(
+                    custom_paths,
+                    import_path,
+                    kind,
+                    global_cache,
+                );
             } else {
                 match self.check_relative_path(source_dir, import_path, kind, global_cache) {
                     ResultUnion::Success(res) => return ResultUnion::Success(res),
@@ -2073,6 +2065,185 @@ impl<'a> Resolver<'a> {
             return false;
         };
         rest.is_empty() || ResolvePath::is_sep_any(rest[rest.len() - 1])
+    }
+
+    /// Node's `Module._findPath` over the `paths` entries, for a relative request.
+    /// https://github.com/nodejs/node/blob/v26.3.0/lib/internal/modules/cjs/loader.js#L728-L839
+    #[cold]
+    #[inline(never)]
+    fn check_relative_path_in_custom_dirs(
+        &mut self,
+        custom_paths: &[bun_core::String],
+        import_path: &[u8],
+        kind: ast::ImportKind,
+        global_cache: GlobalCache,
+    ) -> ResultUnion<'static> {
+        #[cfg(not(windows))]
+        let mut buf = bun_paths::path_buffer_pool::get();
+        // Node's `insidePath`: false when `path.normalize(request)` starts with "..".
+        #[cfg(not(windows))]
+        let inside_path = !(strings::contains(import_path, b"..")
+            && ::bun_paths::resolve_path::join_z_buf_checked::<
+                ::bun_paths::resolve_path::platform::Posix,
+            >(&mut buf[..], &[import_path])
+            .is_some_and(|normalized| normalized.as_bytes().starts_with(b"..")));
+        #[cfg(not(windows))]
+        let names_directory = Self::import_path_names_directory(import_path);
+
+        for custom_path in custom_paths {
+            let custom_utf8 = custom_path.to_utf8();
+            // On Windows the loose join of `check_relative_path` is the host's join.
+            #[cfg(windows)]
+            let result =
+                self.check_relative_path(custom_utf8.slice(), import_path, kind, global_cache);
+            #[cfg(not(windows))]
+            let result = match self.find_path_candidate(
+                custom_utf8.slice(),
+                import_path,
+                inside_path,
+                names_directory,
+                &mut buf,
+            ) {
+                Some(candidate) => self.check_relative_path(candidate, b"", kind, global_cache),
+                None => continue,
+            };
+            match result {
+                ResultUnion::NotFound => {}
+                found => return found,
+            }
+        }
+        ResultUnion::NotFound
+    }
+
+    /// One `paths` entry of Node's `Module._findPath` on POSIX: the absolute path at which to
+    /// look `request` up, or `None` when Node skips the entry.
+    #[cfg(not(windows))]
+    fn find_path_candidate<'b>(
+        &mut self,
+        entry: &[u8],
+        request: &[u8],
+        inside_path: bool,
+        names_directory: bool,
+        buf: &'b mut PathBuffer,
+    ) -> Option<&'b [u8]> {
+        use ::bun_paths::resolve_path::{join_z_buf_checked, platform};
+
+        let cwd: &[u8] = if entry.first() == Some(&b'/') {
+            b""
+        } else {
+            self.fs_ref().top_level_dir()
+        };
+
+        // `if (insidePath && curPath && _stat(curPath) < 1) continue;`
+        if inside_path && !entry.is_empty() {
+            // The OS and `path.resolve()` read an entry without ".." alike, so the cache can
+            // answer. An absolute entry is looked up as it is written.
+            let is_cached = entry.len() < buf.len()
+                && strings::index_of_any(entry, b"\\\0").is_none()
+                && !strings::contains(entry, b"..")
+                && if cwd.is_empty() {
+                    self.is_cached_directory(entry)
+                } else {
+                    join_z_buf_checked::<platform::Posix>(&mut buf[..], &[cwd, entry])
+                        .is_some_and(|dir| self.is_cached_directory(dir.as_bytes()))
+                };
+            if !is_cached {
+                // `_stat` hands the entry to the OS as a C string, which ends at the first NUL.
+                let as_written = bun_core::slice_to_nul(entry);
+                if as_written.len() >= buf.len() {
+                    return None;
+                }
+                buf[..as_written.len()].copy_from_slice(as_written);
+                buf[as_written.len()] = 0;
+                let as_written = bun_core::ZStr::from_buf(&buf[..], as_written.len());
+                if !bun_sys::directory_exists_at(FD::cwd(), as_written).unwrap_or(false) {
+                    return None;
+                }
+            }
+        }
+
+        // `path.resolve(curPath, request)`
+        let mut len =
+            join_z_buf_checked::<platform::Posix>(&mut buf[..], &[cwd, entry, request])?.len();
+
+        // The lookup reads a NUL as the end of a path and a backslash as a separator.
+        if strings::index_of_any(&buf[..len], b"\\\0").is_some() {
+            len = Self::real_path_of_backslash_components(buf, len, names_directory)?;
+        }
+
+        // Node's `trailingSlash`: only a directory answers a request that names one.
+        if names_directory {
+            let candidate = bun_core::ZStr::from_buf(&buf[..], len);
+            if !self.is_cached_directory(candidate.as_bytes())
+                && !bun_sys::directory_exists_at(FD::cwd(), candidate).unwrap_or(false)
+            {
+                return None;
+            }
+            if buf[len - 1] != b'/' {
+                if len + 1 >= buf.len() {
+                    return None;
+                }
+                buf[len] = b'/';
+                len += 1;
+            }
+        }
+        Some(&buf[..len])
+    }
+
+    /// `buf[..len]` is a candidate that holds a NUL or a backslash. A component that holds a
+    /// backslash can be a symlink to a directory that the lookup can read. Then the real path of
+    /// the components up to it takes their place, and this returns the new length.
+    #[cfg(not(windows))]
+    fn real_path_of_backslash_components(
+        buf: &mut PathBuffer,
+        len: usize,
+        names_directory: bool,
+    ) -> Option<usize> {
+        if strings::contains_char(&buf[..len], 0) {
+            return None;
+        }
+        let last = strings::last_index_of_char(&buf[..len], b'\\')?;
+        let prefix_len =
+            strings::index_of_char_usize(&buf[last..len], b'/').map_or(len, |slash| last + slash);
+        // The lookup cannot read a file name that holds a backslash.
+        if prefix_len == len && !names_directory {
+            return None;
+        }
+        let mut real_buf = bun_paths::path_buffer_pool::get();
+        let after_prefix = buf[prefix_len];
+        buf[prefix_len] = 0;
+        let real = bun_sys::realpath(
+            bun_core::ZStr::from_buf(&buf[..], prefix_len),
+            &mut real_buf,
+        );
+        buf[prefix_len] = after_prefix;
+        let real = real.ok()?;
+        let rest_len = len - prefix_len;
+        if strings::contains_char(real, b'\\') || real.len() + rest_len >= buf.len() {
+            return None;
+        }
+        buf.copy_within(prefix_len..len, real.len());
+        buf[..real.len()].copy_from_slice(real);
+        buf[real.len() + rest_len] = 0;
+        Some(real.len() + rest_len)
+    }
+
+    /// Whether the directory cache holds a directory whose path is `dir`, a trailing "/" aside.
+    /// This never adds to the cache, and a miss that the cache remembers is not an answer.
+    #[cfg(not(windows))]
+    fn is_cached_directory(&mut self, dir: &[u8]) -> bool {
+        fn without_trailing_slash(path: &[u8]) -> &[u8] {
+            match path {
+                [parent @ .., b'/'] if !parent.is_empty() => parent,
+                _ => path,
+            }
+        }
+        let dir = without_trailing_slash(dir);
+        let _unlock = self.mutex.lock_guard();
+        // The cache key drops a trailing backslash, so the slot can be another directory's.
+        self.dir_cache_mut()
+            .get(dir)
+            .is_some_and(|info| without_trailing_slash(info.abs_path) == dir)
     }
 
     pub(crate) fn check_relative_path(

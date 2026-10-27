@@ -582,6 +582,7 @@ describe("Bun.Transpiler", () => {
       // The body of an arrow function with a return type. Without the rule this
       // printed "x = a ? b : (T) => (c) => e".
       exp("x = a ? (b): T => (c) : d => e", "x = a ? (b) => c : (d) => e;\n");
+      exp("x = a ? (b): T => ({ c }) : d => ({ d })", "x = a ? (b) => ({ c }) : (d) => ({ d });\n");
       exp("x = a ? (b): T => (c) : d => e : f", "x = a ? (b) => (c) => e : f;\n");
       exp("x = a ? async (b): T => (c) : d => e", "x = a ? async (b) => c : (d) => e;\n");
       exp("x = a ? (b): T => (c): U => d : e", "x = a ? (b) => (c) => d : e;\n");
@@ -665,12 +666,17 @@ describe("Bun.Transpiler", () => {
       exp("x = a ? (b?) => (c): T => d : e", "x = a ? (b) => (c) => d : e;\n");
       exp("x = a ? async () => (b): T => c : d", "x = a ? async () => (b) => c : d;\n");
       exp("x = a ? (): T => (b): U => c : d", "x = a ? () => (b) => c : d;\n");
+      // So "(b) : c => d" in such a body is an arrow function. TypeScript 6.0 reports the same error for these,
+      // valid JavaScript among them.
       err("x = a ? () => (b) : c => d", 'Expected ":" but found end of file');
       err("x = a ? (b: B) => (c) : d => e", 'Expected ":" but found end of file');
       err("x = a ? (...b) => (c) : d => e", 'Expected ":" but found end of file');
       err("x = a ? (b?) => (c) : d => e", 'Expected ":" but found end of file');
       err("x = a ? async () => (b) : c => d", 'Expected ":" but found end of file');
       err("x = a ? b => () => (c) : d => e", 'Expected ":" but found end of file');
+
+      // Nothing is between a "?" and ":" after "case", so "(b): d => e" is an arrow function there, as in TypeScript
+      err("switch (x) { case (b): d => e; }", 'Expected ":" but found ";"');
 
       // Such a body takes "(d) : e => f" as an arrow function, so no ":" is left for "(b)"
       exp("x = a ? (b) : c => () => (d) : e => f", "x = a ? b : (c) => () => (d) => f;\n");
@@ -1259,8 +1265,34 @@ export const next = byId ? (n) => n : (n) => n + 1;
     });
 
     // TypeScript is the oracle: no expectation is stored. Loading it takes a debug build about a minute.
-    it.skipIf(isDebug || isASAN)("prints what TypeScript prints for parentheses that hold a cast", () => {
+    // Returns the inputs that TypeScript accepts and that are refused here or printed as another program.
+    const printedUnlikeTypeScript = inputs => {
       const typescript = require("typescript");
+      const accepted = inputs.filter(
+        code => typescript.createSourceFile("x.ts", code, typescript.ScriptTarget.ESNext).parseDiagnostics.length === 0,
+      );
+      expect(accepted.length).toBeGreaterThan(inputs.length / 2);
+      const emitted = typescript
+        .transpileModule(accepted.map((code, i) => `"#${i}";\n${code}\n`).join(""), {
+          compilerOptions: { target: "esnext", module: "esnext" },
+        })
+        .outputText.split(/^"#\d+";\n/m)
+        .slice(1);
+      expect(emitted.length).toBe(accepted.length);
+
+      const asTypeScript = new Bun.Transpiler({ loader: "ts", deadCodeElimination: false });
+      const asJavaScript = new Bun.Transpiler({ loader: "js", deadCodeElimination: false });
+      const print = (transpiler, code) => {
+        try {
+          return transpiler.transformSync(code);
+        } catch (e) {
+          return `error: ${(e instanceof AggregateError ? e.errors[0] : e).message}`;
+        }
+      };
+      return accepted.filter((code, i) => print(asTypeScript, code) !== print(asJavaScript, emitted[i]));
+    };
+
+    it.skipIf(isDebug || isASAN)("prints what TypeScript prints for parentheses that hold a cast", () => {
       const wrapped = item => [
         `${item} as B`,
         `${item} satisfies B`,
@@ -1301,29 +1333,73 @@ export const next = byId ? (n) => n : (n) => n + 1;
         head => `x = ${head};`,
       ];
       const inputs = heads.flatMap(head => positions.map(position => position(head)));
-      const accepted = inputs.filter(
-        code => typescript.createSourceFile("x.ts", code, typescript.ScriptTarget.ESNext).parseDiagnostics.length === 0,
-      );
-      expect(accepted.length).toBeGreaterThan(inputs.length / 2);
-      const emitted = typescript
-        .transpileModule(accepted.map((code, i) => `"#${i}";\n${code}\n`).join(""), {
-          compilerOptions: { target: "esnext", module: "esnext" },
-        })
-        .outputText.split(/^"#\d+";\n/m)
-        .slice(1);
-      expect(emitted.length).toBe(accepted.length);
+      expect(printedUnlikeTypeScript(inputs)).toEqual([]);
+    });
 
-      const asTypeScript = new Bun.Transpiler({ loader: "ts", deadCodeElimination: false });
-      const asJavaScript = new Bun.Transpiler({ loader: "js", deadCodeElimination: false });
-      const print = (transpiler, code) => {
-        try {
-          return transpiler.transformSync(code);
-        } catch (e) {
-          return `error: ${(e instanceof AggregateError ? e.errors[0] : e).message}`;
-        }
-      };
-      const different = accepted.filter((code, i) => print(asTypeScript, code) !== print(asJavaScript, emitted[i]));
-      expect(different).toEqual([]);
+    it.skipIf(isDebug || isASAN)("prints what TypeScript prints between the ? and : of a conditional", () => {
+      const heads = [
+        "(b)",
+        "(b, c)",
+        "({ b })",
+        "([b])",
+        "(b = 1)",
+        "()",
+        "(...b)",
+        "(b: B)",
+        "(b?)",
+        "({ b }: B)",
+        "async (b)",
+        "async ()",
+        "async (...b)",
+        "async (b: B)",
+        "<T>(b)",
+        "<T>()",
+        "<T>(b: B)",
+        "async <T>(b)",
+      ];
+      const tails = [
+        head => `${head} : d => e`,
+        head => `${head} : d => e : f`,
+        head => `${head}: T => (d) : e => f`,
+        head => `${head}: T => d : e`,
+        head => `${head} => (d) : e => f`,
+        head => `${head} => d : e`,
+        head => `${head} : d`,
+      ];
+      // Where TypeScript hands `allowReturnTypeInArrowFunction` on
+      const carriers = [
+        branch => branch,
+        branch => `q => ${branch}`,
+        branch => `(q) => ${branch}`,
+        branch => `async q => ${branch}`,
+        branch => `(q): Q => ${branch}`,
+        branch => `() => ${branch}`,
+        branch => `(q: Q) => ${branch}`,
+        branch => `q => r => ${branch}`,
+        branch => `q = ${branch}`,
+        branch => `q += ${branch}`,
+        branch => `q ??= ${branch}`,
+        branch => `q = r => ${branch}`,
+        branch => `q => r = ${branch}`,
+        branch => `p ? r : ${branch}`,
+        branch => `q => p ? r : ${branch}`,
+      ];
+      // ... and where it starts again
+      const enclosedTails = [head => head, head => `${head}: T => d`, head => `${head} => d`];
+      const enclosures = [
+        inner => `q => [${inner}] : z`,
+        inner => `q => f(${inner}) : z`,
+        inner => `q => { return ${inner} } : z`,
+        inner => `q => (${inner}) : z`,
+        inner => `q => \`\${${inner}}\` : z`,
+        inner => `q => ({ k: ${inner} }) : z`,
+        inner => `q = [${inner}] : z`,
+      ];
+      const inputs = heads.flatMap(head => [
+        ...tails.flatMap(tail => carriers.map(carrier => `x = a ? ${carrier(tail(head))};`)),
+        ...enclosedTails.flatMap(tail => enclosures.map(enclosure => `x = a ? ${enclosure(tail(head))};`)),
+      ]);
+      expect(printedUnlikeTypeScript(inputs)).toEqual([]);
     });
 
     it("type-only import syntax", () => {

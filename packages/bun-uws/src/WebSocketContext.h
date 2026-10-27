@@ -199,7 +199,7 @@ private:
                     if (webSocketData->compressionStatus == WebSocketData::CompressionStatus::COMPRESSED_FRAME) {
                             webSocketData->compressionStatus = WebSocketData::CompressionStatus::ENABLED;
 
-                            /* 9 bytes of padding for libdeflate, 4 for zlib */
+                            /* 9 bytes of padding for the one-shot inflater, 4 for zlib */
                             if (!webSocketData->fragmentBuffer.tryAppend("123456789", 9)) {
                                 return failOutOfMemory(s);
                             }

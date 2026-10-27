@@ -16,7 +16,6 @@ use bun_install::resolution::Tag as ResolutionTag;
 use bun_install::{
     CommandLineArguments, Dependency, LogLevel, PackageManager, PackageNameHash, Subcommand,
 };
-use bun_libdeflate_sys::libdeflate;
 use bun_parsers::json as bun_json;
 use bun_url::URL;
 
@@ -645,12 +644,11 @@ fn send_audit_request(
     body: &[u8],
     echo_json: bool,
 ) -> Result<Result<Box<[u8]>, SkipReason>, bun_alloc::AllocError> {
-    libdeflate::load();
-    let mut compressor = libdeflate::OwnedCompressor::new(6).ok_or(bun_alloc::AllocError)?;
-
     let mut compressed_body = Vec::new();
-    let _ = compressor.compress_to_vec(body, &mut compressed_body, libdeflate::Encoding::Gzip)?;
-    drop(compressor);
+    bun_libdeflate::Compressor::new(6)
+        .ok_or(bun_alloc::AllocError)?
+        .compress_to_vec(body, &mut compressed_body, bun_libdeflate::Encoding::Gzip)
+        .map_err(|_| bun_alloc::AllocError)?;
 
     let mut pairs: Vec<(&[u8], &[u8])> = vec![
         (b"accept", b"application/json"),

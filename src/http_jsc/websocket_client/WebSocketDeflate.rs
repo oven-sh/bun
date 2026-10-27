@@ -3,7 +3,6 @@
 use core::ffi::c_int;
 
 use bun_core::{feature_flag, handle_oom};
-use bun_libdeflate_sys::libdeflate as libdeflate_sys;
 use bun_zlib as zlib;
 
 #[repr(C)]
@@ -139,11 +138,10 @@ impl PerMessageDeflate {
         len < INFLATE_BUFFER_SIZE
     }
 
-    /// Inflate one message onto `out`, failing if it exceeds `max_len` bytes. `decompressor`
-    /// is the thread's shared libdeflate handle (`None` when it could not be allocated).
+    /// Inflate one message onto `out`, failing if it exceeds `max_len` bytes.
     pub(crate) fn decompress(
         &mut self,
-        decompressor: Option<&mut libdeflate_sys::Decompressor>,
+        decompressor: &mut bun_libdeflate::Decompressor,
         in_buf: &[u8],
         out: &mut Vec<u8>,
         max_len: usize,
@@ -162,26 +160,23 @@ impl PerMessageDeflate {
         // libdeflate is faster than zlib, but it only inflates a finished stream, so it needs a final
         // block. It also can't see earlier messages, so it only works without context takeover.
         if self.decompress_no_context_takeover && Self::can_use_libdeflate(in_buf.len()) {
-            if let Some(decompressor) = decompressor {
-                in_with_trailer.extend_from_slice(&FINAL_EMPTY_BLOCK);
-                let result = decompressor.decompress_to_vec(
-                    &in_with_trailer,
-                    out,
-                    libdeflate_sys::Encoding::Deflate,
-                );
-                if result.status == libdeflate_sys::Status::Success {
-                    // Stopping before the appended block means the peer sent a final block of its own.
-                    // Leave that case to zlib.
-                    if result.read == in_with_trailer.len() {
-                        if out.len() - initial_len > max_len {
-                            return Err(DecompressError::TooLarge);
-                        }
-                        return Ok(());
+            in_with_trailer.extend_from_slice(&FINAL_EMPTY_BLOCK);
+            let result = decompressor.decompress_to_vec(
+                &in_with_trailer,
+                out,
+                bun_libdeflate::Encoding::Deflate,
+            );
+            if let Ok(decompressed) = result {
+                // Stopping before the appended block means the peer sent a final block of its own. That is left to zlib.
+                if decompressed.read == in_with_trailer.len() {
+                    if out.len() - initial_len > max_len {
+                        return Err(DecompressError::TooLarge);
                     }
-                    out.truncate(initial_len);
+                    return Ok(());
                 }
-                in_with_trailer.truncate(in_buf.len() + DEFLATE_TRAILER.len());
+                out.truncate(initial_len);
             }
+            in_with_trailer.truncate(in_buf.len() + DEFLATE_TRAILER.len());
         }
 
         let mut remaining = in_with_trailer.as_slice();

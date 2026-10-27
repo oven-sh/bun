@@ -1035,20 +1035,15 @@ impl CompressError {
 }
 
 fn compress_gzip(data: &[u8], level: u8) -> Result<Vec<u8>, CompressError> {
-    use bun_libdeflate_sys::libdeflate;
-    libdeflate::load();
-
     let mut compressor =
-        libdeflate::OwnedCompressor::new(i32::from(level)).ok_or(CompressError::GzipInitFailed)?;
+        bun_libdeflate::Compressor::new(i32::from(level)).ok_or(CompressError::GzipInitFailed)?;
 
     let mut output = Vec::new();
-    let result = compressor
-        .compress_to_vec(data, &mut output, libdeflate::Encoding::Gzip)
-        .map_err(|_| CompressError::OutOfMemory)?;
-    if result.status != libdeflate::Status::Success {
-        return Err(CompressError::GzipCompressFailed);
+    match compressor.compress_to_vec(data, &mut output, bun_libdeflate::Encoding::Gzip) {
+        Ok(_) => Ok(output),
+        Err(bun_libdeflate::Error::Alloc(_)) => Err(CompressError::OutOfMemory),
+        Err(_) => Err(CompressError::GzipCompressFailed),
     }
-    Ok(output)
 }
 
 /// Check if a path is safe (no absolute paths or path traversal)

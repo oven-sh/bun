@@ -13,7 +13,6 @@ use bun_core::strings;
 use bun_core::{Mutex, Output};
 use bun_event_loop::MiniEventLoop::__bun_stdio_blob_store_new;
 use bun_io::{self as Async};
-use bun_libdeflate_sys::libdeflate;
 use bun_paths::MAX_PATH_BYTES;
 use bun_sys::{self as syscall, Fd, Mode};
 use bun_uws::{self as uws, SocketGroup};
@@ -258,7 +257,7 @@ pub struct RareData {
     /// Inflated payload of one `new WebSocket()` client message; see [`Self::take_websocket_inflate_scratch`].
     websocket_inflate_scratch: Option<Vec<u8>>,
     /// One libdeflate handle for every JS-thread one-shot inflate; see [`Self::libdeflate_decompressor`].
-    libdeflate_decompressor: Option<libdeflate::OwnedDecompressor>,
+    libdeflate_decompressor: Option<bun_libdeflate::Decompressor>,
 
     // There is intentionally no `aws_signature_cache` field — storage lives in
     // `bun_s3_signing::credentials::AWS_SIGNATURE_CACHE` (process static; it
@@ -778,13 +777,10 @@ impl RareData {
         }
     }
 
-    /// libdeflate keeps no state between calls, so one handle serves every one-shot inflate on
-    /// this thread. `None` when libdeflate cannot allocate it; callers fall back to zlib.
-    pub fn libdeflate_decompressor(&mut self) -> Option<&mut libdeflate::Decompressor> {
-        if self.libdeflate_decompressor.is_none() {
-            self.libdeflate_decompressor = libdeflate::OwnedDecompressor::new();
-        }
-        self.libdeflate_decompressor.as_deref_mut()
+    /// It keeps no state between calls, so one serves every one-shot inflate on this thread.
+    pub fn libdeflate_decompressor(&mut self) -> &mut bun_libdeflate::Decompressor {
+        self.libdeflate_decompressor
+            .get_or_insert_with(bun_libdeflate::Decompressor::new)
     }
 
     pub fn boring_engine(&mut self) -> *mut boring::ENGINE {

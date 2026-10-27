@@ -1640,20 +1640,8 @@ extern "C" fn Bun__reportError(global_object: &JSGlobalObject, err: JSValue) {
 #[allow(non_snake_case)]
 pub(crate) mod JSZlib {
     use super::*;
-    use bun_libdeflate_sys::libdeflate as bun_libdeflate;
 
     type BufferResult<'a> = bindgen::Result<'a, JsLocal<'a, BufferSource>>;
-
-    /// Local shim: libdeflate's `Status` has no `Into<&str>` upstream.
-    #[inline]
-    fn libdeflate_status_str(s: bun_libdeflate::Status) -> &'static str {
-        match s {
-            bun_libdeflate::Status::Success => "success",
-            bun_libdeflate::Status::BadData => "bad data",
-            bun_libdeflate::Status::ShortOutput => "short output",
-            bun_libdeflate::Status::InsufficientSpace => "insufficient space",
-        }
-    }
 
     enum Library {
         Zlib,
@@ -1781,31 +1769,25 @@ pub(crate) mod JSZlib {
                 heap.create_uint8_array_from_box(list.into_boxed_slice())
             }
             Library::Libdeflate => {
-                let Some(mut decompressor) = bun_libdeflate::OwnedDecompressor::new() else {
-                    return Err(bun_alloc::AllocError.into());
-                };
                 let encoding = if is_gzip {
                     bun_libdeflate::Encoding::Gzip
                 } else {
                     bun_libdeflate::Encoding::Deflate
                 };
                 let max_output = ArrayBuffer::MAX_SIZE as usize;
-                let result = decompressor
+                match bun_libdeflate::Decompressor::new()
                     .decompress_to_vec_grow(compressed, &mut list, encoding, max_output)
-                    .map_err(|_| bun_alloc::AllocError)?;
-                match result.status {
-                    bun_libdeflate::Status::Success if list.len() <= max_output => {}
-                    bun_libdeflate::Status::Success | bun_libdeflate::Status::InsufficientSpace => {
+                {
+                    Ok(_) => {}
+                    Err(bun_libdeflate::Error::Alloc(err)) => return Err(err.into()),
+                    Err(bun_libdeflate::Error::InsufficientSpace) => {
                         return Err(heap.error_with_code(
                             jsc::ErrorCode::BUFFER_TOO_LARGE,
                             format_args!("Cannot create a Buffer larger than {max_output} bytes"),
                         ));
                     }
-                    _ => {
-                        return Err(heap.error(format_args!(
-                            "libdeflate returned an error: {}",
-                            libdeflate_status_str(result.status),
-                        )));
+                    Err(err @ bun_libdeflate::Error::BadData) => {
+                        return Err(heap.error(format_args!("libdeflate returned an error: {err}")));
                     }
                 }
                 heap.create_uint8_array_from_box(list.into_boxed_slice())
@@ -1856,7 +1838,7 @@ pub(crate) mod JSZlib {
                         bun_libdeflate::MAX_COMPRESSION_LEVEL,
                     )));
                 }
-                let Some(mut compressor) = bun_libdeflate::OwnedCompressor::new(level) else {
+                let Some(mut compressor) = bun_libdeflate::Compressor::new(level) else {
                     return Err(bun_alloc::AllocError.into());
                 };
                 let encoding = if is_gzip {
@@ -1866,14 +1848,10 @@ pub(crate) mod JSZlib {
                 };
 
                 let mut list: Vec<u8> = Vec::new();
-                let result = compressor
-                    .compress_to_vec(data, &mut list, encoding)
-                    .map_err(|_| bun_alloc::AllocError)?;
-                if result.status != bun_libdeflate::Status::Success {
-                    return Err(heap.error(format_args!(
-                        "libdeflate error: {}",
-                        libdeflate_status_str(result.status),
-                    )));
+                match compressor.compress_to_vec(data, &mut list, encoding) {
+                    Ok(_) => {}
+                    Err(bun_libdeflate::Error::Alloc(err)) => return Err(err.into()),
+                    Err(err) => return Err(heap.error(format_args!("libdeflate error: {err}"))),
                 }
                 heap.create_uint8_array_from_box(list.into_boxed_slice())
             }

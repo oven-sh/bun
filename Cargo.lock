@@ -652,7 +652,7 @@ dependencies = [
  "bun_event_loop",
  "bun_http_types",
  "bun_io",
- "bun_libdeflate_sys",
+ "bun_libdeflate",
  "bun_picohttp",
  "bun_ptr",
  "bun_sys",
@@ -684,7 +684,7 @@ dependencies = [
  "bun_http_types",
  "bun_io",
  "bun_jsc",
- "bun_libdeflate_sys",
+ "bun_libdeflate",
  "bun_opaque",
  "bun_picohttp",
  "bun_ptr",
@@ -756,7 +756,7 @@ dependencies = [
  "bun_io",
  "bun_js_parser",
  "bun_js_printer",
- "bun_libdeflate_sys",
+ "bun_libdeflate",
  "bun_options_types",
  "bun_parsers",
  "bun_patch",
@@ -936,7 +936,7 @@ dependencies = [
  "bun_js_parser",
  "bun_js_printer",
  "bun_jsc_macros",
- "bun_libdeflate_sys",
+ "bun_libdeflate",
  "bun_opaque",
  "bun_options_types",
  "bun_patch",
@@ -970,11 +970,13 @@ dependencies = [
 ]
 
 [[package]]
-name = "bun_libdeflate_sys"
+name = "bun_libdeflate"
 version = "0.0.0"
 dependencies = [
  "bun_alloc",
- "bun_opaque",
+ "bun_core",
+ "bun_zlib",
+ "thiserror",
 ]
 
 [[package]]
@@ -1506,7 +1508,7 @@ dependencies = [
  "bun_js_parser_jsc",
  "bun_js_printer",
  "bun_jsc",
- "bun_libdeflate_sys",
+ "bun_libdeflate",
  "bun_libuv_sys",
  "bun_lint_driver",
  "bun_lsquic_sys",
@@ -2003,6 +2005,7 @@ dependencies = [
  "bun_core",
  "bun_errno",
  "bun_http_types",
+ "bun_libdeflate",
  "bun_libuv_sys",
  "bun_opaque",
  "bun_paths",

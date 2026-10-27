@@ -437,6 +437,74 @@ describe("bundler", () => {
     outfile: "dist/out",
     run: { stdout: "Hello, world!" },
   });
+  // https://github.com/oven-sh/bun/issues/44095
+  // A run-time require() or import() of an embedded asset goes through the
+  // loader its extension gets on disk, not the JS parser.
+  itBundled("compile/EmbeddedAssetRequireUsesLoader", {
+    compile: true,
+    assetNaming: "[name].[ext]",
+    files: {
+      "/entry.ts": /* js */ `
+        import json from "./data.json" with { type: "file" };
+        import toml from "./config.toml" with { type: "file" };
+        import txt from "./note.txt" with { type: "file" };
+        import js from "./mod.js" with { type: "file" };
+        import ts from "./typed.ts" with { type: "file" };
+        import pkg from "./package.json" with { type: "file" };
+        import { readFileSync } from "node:fs";
+        if (readFileSync(json, "utf8") !== '{"a":1,"b":[2,3]}') throw new Error("readFileSync: " + readFileSync(json, "utf8"));
+        const out = {
+          require: require(json),
+          import: (await import(json)).default,
+          toml: require(toml),
+          txt: require(txt),
+          js: require(js).value,
+          ts: (await import(ts)).default,
+          pkg: require(pkg),
+        };
+        console.log(JSON.stringify(out));
+      `,
+      "/data.json": '{"a":1,"b":[2,3]}',
+      "/config.toml": "name = 'bun'\n[nested]\nx = 1\n",
+      "/note.txt": "plain text",
+      "/mod.js": "module.exports = { value: 1 + 1 };",
+      "/typed.ts": "const n: number = 3; export default n;",
+      "/package.json": '{ /* a comment */ "name": "pkg", }',
+    },
+    run: {
+      stdout: JSON.stringify({
+        require: { a: 1, b: [2, 3] },
+        import: { a: 1, b: [2, 3] },
+        toml: { name: "bun", nested: { x: 1 } },
+        txt: { default: "plain text" },
+        js: 2,
+        ts: 3,
+        pkg: { name: "pkg" },
+      }),
+    },
+  });
+  // A preload runs before the entry point, when the concurrent transpiler is
+  // allowed. An embedded JS asset still transpiles from the graph bytes there.
+  itBundled("compile/EmbeddedAssetImportFromPreload", {
+    compile: true,
+    assetNaming: "[name].[ext]",
+    files: {
+      "/entry.ts": /* js */ `
+        import js from "./mod.js" with { type: "file" };
+        console.log("ENTRY", require(js).value);
+      `,
+      "/mod.js": "module.exports = { value: 1 + 1 };",
+    },
+    runtimeFiles: {
+      "/bunfig.toml": `preload = ["./preload.ts"]`,
+      "/preload.ts": /* js */ `
+        import { dirname, join } from "node:path";
+        const mod = await import(join(dirname(Bun.main), "mod.js"));
+        console.log("PRELOAD", mod.default.value);
+      `,
+    },
+    run: { stdout: "PRELOAD 2\nENTRY 2", setCwd: true },
+  });
   itBundled("compile/WorkerRelativePathNoExtension", {
     backend: "cli",
     compile: true,

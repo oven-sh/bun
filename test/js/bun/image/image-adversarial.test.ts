@@ -526,9 +526,8 @@ describe("malformed JPEG", () => {
 // ─── 5b. JPEG that libjpeg decodes with a warning ────────────────────────────
 //
 // libjpeg finishes these decodes and only warns (djpeg: exit status 2, whole
-// image written), so Bun.Image returns the pixels. A fatal error (djpeg: exit
-// status 1) rejects, also when a warning came first: TurboJPEG returns -1 for
-// both, and after a fatal error the output rows were never written.
+// image written), so Bun.Image returns the pixels. What is a fatal error to
+// libjpeg (djpeg: exit status 1) rejects, also when a warning came first.
 
 const warnW = 96;
 const warnH = 64;
@@ -609,9 +608,9 @@ function countPixels(rgba: Uint8Array, pixel: [number, number, number, number]):
 }
 
 /**
- * libjpeg writes 255 into every alpha byte it outputs. A row it never wrote shows up here
+ * The decoder writes 255 into every alpha byte it outputs. A row it never wrote shows up here
  * only if the allocator did not hand back a block that held a decoded image before, so in
- * this process the check is a cheap extra. "commits no byte that libjpeg did not write"
+ * this process the check is a cheap extra. "commits no byte that the decoder did not write"
  * below runs it where every new allocation is filled with another byte.
  */
 function everyAlphaOpaque(rgba: Uint8Array): boolean {
@@ -630,7 +629,7 @@ describe.each(["baseline", "progressive"] as const)("%s JPEG that libjpeg decode
   const scanStart = markers[firstSos].end;
   const scanEnd = markers[firstSos + 1].offset;
   const junk = (n: number) => new Array<number>(n).fill(0);
-  const sof5 = [0xff, 0xc5]; // differential sequential DCT: libjpeg's fatal JERR_SOF_UNSUPPORTED
+  const sof5 = [0xff, 0xc5]; // differential sequential DCT: `bun_jpeg::Error::SofUnsupported`
   const decodeFailed = { code: "ERR_IMAGE_DECODE_FAILED" };
   const metadata: Bun.Image.Metadata = { width: warnW, height: warnH, format: "jpeg" };
 
@@ -667,12 +666,12 @@ describe.each(["baseline", "progressive"] as const)("%s JPEG that libjpeg decode
     expect(Buffer.compare(await small(insertBytes(clean, eoi, junk(16))), await small(clean))).toBe(0);
   });
 
-  // "Premature end of JPEG file": libjpeg acts as if EOI were there. All the scan data is present.
+  // The decoder acts as if EOI were there. All the scan data is present.
   test("EOI removed decodes to the clean file's pixels", async () => {
     expect(Buffer.compare(await rgbaOf(clean.subarray(0, eoi)), cleanRgba)).toBe(0);
   });
 
-  // The same warning, but scan data is missing. libjpeg decodes what it has and
+  // The same, but scan data is missing. The decoder decodes what it has and
   // fills the rest, so the output is complete and the pixels are not.
   test("truncated at 95%: the output is complete and the pixels differ", async () => {
     const rgba = await rgbaOf(clean.subarray(0, cutInsideScanData(markers, Math.floor(clean.length * 0.95))));
@@ -692,8 +691,7 @@ describe.each(["baseline", "progressive"] as const)("%s JPEG that libjpeg decode
     expect(partlyWritten).toEqual([]);
   });
 
-  // TurboJPEG keeps its warning flag after a fatal error. In the progressive file the fatal
-  // error comes before any row is written, so to accept it would return heap garbage.
+  // In the progressive file the fatal error comes before any row is written.
   test("warning, then a fatal error after the first scan: rejects", async () => {
     expect(Buffer.compare(await rgbaOf(insertBytes(clean, scanEnd, junk(16))), cleanRgba)).toBe(0);
     const warnThenFatal = insertBytes(clean, scanEnd, [...junk(16), ...sof5]);
@@ -713,7 +711,7 @@ describe.each(["baseline", "progressive"] as const)("%s JPEG that libjpeg decode
     expect(await new Bun.Image(unsupportedSof).metadata()).toEqual(metadata);
     await expect(new Bun.Image(unsupportedSof).png().bytes()).rejects.toMatchObject(decodeFailed);
 
-    // DQT segment length one byte short: JERR_BAD_LENGTH in the header parse.
+    // DQT segment length one byte short: `bun_jpeg::Error::BadLength` in the header parse.
     const badDqt = Buffer.from(clean);
     badDqt[firstDqt + 3] -= 1;
     await expect(new Bun.Image(badDqt).metadata()).rejects.toMatchObject(decodeFailed);
@@ -748,14 +746,14 @@ describe("JPEG truncated inside its scan data", () => {
   });
 });
 
-// Each of these warns and then hits a fatal error, which TurboJPEG reports as a warning
-// unless the fatal exit clears its warning flag. One test per function that clears it.
+// Damage that the decoder goes on from does not excuse damage that it rejects. One test for
+// `Decoder::decode` and one for `Decoder::new`.
 describe("JPEG that warns and then fails", () => {
   const decodeFailed = { code: "ERR_IMAGE_DECODE_FAILED" };
 
-  // tj3Decompress8, the way a real file gets there: a progressive download that stops inside
-  // the DHT or the SOS after the first scan. "Premature end of JPEG file", then "Bogus Huffman
-  // table definition" or "Invalid component ID 255 in SOS", before any row is written.
+  // The way a real file gets there: a progressive download that stops inside the DHT or the SOS
+  // after the first scan. The data ends early, then comes "Bogus Huffman table definition" or
+  // "Invalid component ID 255 in SOS", before any row is written.
   test("a progressive file cut inside the segments after its first scan rejects", async () => {
     const clean = warnJpegs.progressive;
     const markers = jpegMarkers(clean);
@@ -767,9 +765,8 @@ describe("JPEG that warns and then fails", () => {
     await expect(new Bun.Image(clean.subarray(0, sos.offset + 5)).png().bytes()).rejects.toMatchObject(decodeFailed);
   });
 
-  // tj3DecompressHeader. Its fatal exits through libjpeg leave the dimensions unset, which
-  // rejects on its own. "Could not determine colorspace of JPEG image" comes after they are
-  // set: a 2-component frame, built from the baseline fixture's SOF0 and SOS.
+  // "Could not determine colorspace of JPEG image" comes after the dimensions are known:
+  // a 2-component frame, built from the baseline fixture's SOF0 and SOS.
   test("a header that warns and then fails the colorspace check rejects in metadata()", async () => {
     const clean = warnJpegs.baseline;
     const markers = jpegMarkers(clean);
@@ -798,12 +795,9 @@ describe("JPEG that warns and then fails", () => {
 
 // ─── 5c. lossless JPEG (SOF3) ────────────────────────────────────────────────
 //
-// TurboJPEG refuses a cropping region for a lossless stream, and libjpeg
-// ignores the scaling factor for one, so the DCT-scaled decode path has to
-// fall back to the source size. A narrow fixture is what makes the two
-// disagree: the row-width check inside the library catches a wider one first.
-// Bun's encoder writes baseline or progressive only, so the bytes are an
-// encode by TurboJPEG itself (TJPARAM_LOSSLESS, PSV 1), 2x64, one gradient.
+// A lossless stream has no DCT to scale in, so a resize decodes it at the
+// source size. Bun's encoder writes baseline or progressive only, so the bytes
+// are an encode by TurboJPEG (TJPARAM_LOSSLESS, PSV 1), 2x64, one gradient.
 const losslessJpeg = Buffer.from(
   "/9j/7gAOQWRvYmUAZAAAAAAA/8MAEQgAQAACA1IRAEcRAEIRAP/EABwAAAMBAQEBAQEAAAAAAAAAAAADCAQFAgEGB//aAAwDUgBHAEIAAQAAn+" +
     "f/AON3+cMZxL/NIzrX+ckYm/z6MRf48Zuv8xDObf54Gab/ABAz9Vf5zhhf5mGeb/PIzl3+NGar/PYzXf5yxnMv87IzpX+PGfob/Pgx1/mMYi/x" +
@@ -815,7 +809,7 @@ const losslessJpeg = Buffer.from(
 
 describe("lossless JPEG", () => {
   const sof3 = losslessJpeg.indexOf(Buffer.from([0xff, 0xc3]));
-  // 16 junk bytes before SOF3: a header warning, which the decode now accepts.
+  // 16 junk bytes before SOF3, which the decoder skips.
   const headerWarning = insertBytes(losslessJpeg, sof3, new Array<number>(16).fill(0));
 
   test("metadata reports the SOF3 dimensions", async () => {
@@ -828,9 +822,8 @@ describe("lossless JPEG", () => {
     expect(await rgbaOf(headerWarning)).toEqual(await rgbaOf(losslessJpeg));
   });
 
-  // A decode that asks libjpeg for a scaling factor it ignores writes more rows
-  // than the buffer holds, so a build without the fix dies here. Run it in a
-  // child, or it takes the whole test file with it.
+  // A decode into a buffer of the scaled size would write more rows than it holds.
+  // In a child, so that a crash does not take the whole test file with it.
   test("a scaled decode stays inside the buffer", async () => {
     await using proc = Bun.spawn({
       cmd: [
@@ -863,8 +856,8 @@ describe("lossless JPEG", () => {
   });
 });
 
-// TurboJPEG also refuses a cropping region for sampling factors outside its table. Here the
-// luma is 3x1, which libjpeg decodes and, unlike a lossless stream, also scales. The bytes are
+// Sampling factors other than the usual ones decode at the source size too (`Decoder::scalable`).
+// Here the luma is 3x1. The bytes are
 // `cjpeg -quality 90 -sample 3x1,1x1,1x1` of a 24x16 gradient: Bun's encoder writes 4:2:0 only.
 const unknownSubsamplingJpeg = Buffer.from(
   "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAMCAgMCAgMDAwMEAwMEBQgFBQQEBQoHBwYIDAoMDAsKCwsNDhIQDQ4RDgsLEBYQERMUFRUVDA8XGB" +
@@ -880,7 +873,7 @@ const unknownSubsamplingJpeg = Buffer.from(
   "base64",
 );
 
-describe("JPEG with sampling factors TurboJPEG cannot classify", () => {
+describe("JPEG with unusual sampling factors", () => {
   test("the SOF0 luma factors are 3x1", async () => {
     const sof0 = unknownSubsamplingJpeg.indexOf(Buffer.from([0xff, 0xc0]));
     expect([...unknownSubsamplingJpeg.subarray(sof0 + 10, sof0 + 12)]).toEqual([1, 0x31]);
@@ -903,14 +896,14 @@ describe("JPEG with sampling factors TurboJPEG cannot classify", () => {
   });
 });
 
-// The decoder's output buffer is uninitialised capacity, so an accepted decode must not
-// leave a byte of it unwritten. ASAN can fill every new allocation with a chosen byte:
-// an alpha byte that libjpeg never wrote then reads as that byte, whatever the block held
-// before. The child decodes under that fill, and this process reads the alpha back.
-test.skipIf(!isASAN)("an accepted JPEG decode commits no byte that libjpeg did not write", async () => {
+// An accepted decode must not leave a byte of its output unwritten. ASAN can fill every new
+// allocation with a chosen byte: an alpha byte that the decoder never wrote then reads as that
+// byte, whatever the block held before. The child decodes under that fill, and this process
+// reads the alpha back.
+test.skipIf(!isASAN)("an accepted JPEG decode commits no byte that the decoder did not write", async () => {
   type Case = { name: string; kind: string; cut?: number; insert?: [number, number[]]; resize?: [number, number] };
   const cases: Case[] = [
-    // TurboJPEG refuses a cropping region for these two, so the decoder sizes the buffer itself.
+    // These two decode at the source size whatever the target.
     { name: "lossless resized to 2x50", kind: "lossless", resize: [2, 50] },
     { name: "unknown subsampling resized to 12x8", kind: "unknownSubsampling", resize: [12, 8] },
   ];
@@ -927,7 +920,6 @@ test.skipIf(!isASAN)("an accepted JPEG decode commits no byte that libjpeg did n
     cases.push({
       name: `${kind} junk and SOF5 after the first scan`,
       kind,
-      // 16 junk bytes: libjpeg swallows a few without a warning.
       insert: [scanEnd, [...new Array<number>(16).fill(0), 0xff, 0xc5]],
     });
   }

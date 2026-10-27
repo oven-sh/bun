@@ -1,4 +1,4 @@
-//! The encoder: what `tj3Compress8` did with RGBA pixels, 4:2:0 subsampling and otherwise default parameters
+//! The encoder: what `tj3Compress8` does with RGBA pixels, 4:2:0 subsampling and otherwise default parameters
 //! (turbojpeg.c, jcparam.c, jcmaster.c, jccoefct.c).
 
 mod fdct;
@@ -86,7 +86,7 @@ const COMPONENTS: [Component; 3] = [
 
 struct Scan {
     /// Indexes into `COMPONENTS`.
-    comps: &'static [usize],
+    components: &'static [usize],
     /// The first and the last coefficient, in zigzag order.
     ss: u8,
     se: u8,
@@ -96,9 +96,9 @@ struct Scan {
     al: u8,
 }
 
-const fn scan(comps: &'static [usize], ss: u8, se: u8, ah: u8, al: u8) -> Scan {
+const fn scan(components: &'static [usize], ss: u8, se: u8, ah: u8, al: u8) -> Scan {
     Scan {
-        comps,
+        components,
         ss,
         se,
         ah,
@@ -357,7 +357,7 @@ impl Encoder<'_> {
         for (index, scan) in PROGRESSIVE_SCANS.iter().enumerate() {
             let al = u32::from(scan.al);
             let is_dc = scan.ss == 0;
-            let run = |sink: &mut Sink| match *scan.comps {
+            let run = |sink: &mut Sink| match *scan.components {
                 // Only a scan of one component leaves out the blocks that are not image.
                 [ci] => {
                     let (blocks, extent, table) = match ci {
@@ -401,7 +401,7 @@ impl Encoder<'_> {
             if !is_dc || scan.ah == 0 {
                 let mut counts: [Counts; 2] = [[0; 257]; 2];
                 run(&mut Sink::Count(&mut counts));
-                for comp in scan.comps.iter().filter_map(|&ci| COMPONENTS.get(ci)) {
+                for comp in scan.components.iter().filter_map(|&ci| COMPONENTS.get(ci)) {
                     let table = usize::from(comp.table);
                     let (Some(spec), Some(counts)) = (specs.get_mut(table), counts.get(table))
                     else {

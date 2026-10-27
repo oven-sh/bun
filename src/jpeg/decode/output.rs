@@ -76,7 +76,7 @@ impl Decoder<'_> {
             Source::Lossy(CoefController::new(&self, entropy)?)
         };
 
-        let new_planes = |d: &Self| -> Result<Vec<Plane>> {
+        let new_planes = |decoder: &Self| -> Result<Vec<Plane>> {
             let plane = |comp: &super::Component| {
                 let size = comp.dct_scaled_size as usize;
                 Plane::new(
@@ -84,10 +84,12 @@ impl Decoder<'_> {
                     comp.v_samp as usize * size,
                 )
             };
-            d.comps.iter().map(plane).collect()
+            decoder.components.iter().map(plane).collect()
         };
         let mut current = new_planes(&self)?;
-        let need_context = upsamplers.iter().any(|up| up.method.needs_context());
+        let need_context = upsamplers
+            .iter()
+            .any(|upsampler| upsampler.method.needs_context());
         let mut next = if need_context {
             new_planes(&self)?
         } else {
@@ -112,7 +114,7 @@ impl Decoder<'_> {
         }
 
         let idcts: Vec<Idct> = self
-            .comps
+            .components
             .iter()
             .map(|comp| Idct::new(comp.dct_scaled_size, comp.quant_table.as_ref()))
             .collect();
@@ -157,10 +159,12 @@ impl Decoder<'_> {
                 )?;
             } else if imcu_row > 0 {
                 emitter.emit(&mut upsamplers, &current, Some(&next), imcu_row == 1, false)?;
-                for (up, plane) in upsamplers.iter_mut().zip(&current) {
-                    if up.method.needs_context() {
-                        up.above.clear();
-                        up.above.extend_from_slice(plane.row(up.rows - 1)?);
+                for (upsampler, plane) in upsamplers.iter_mut().zip(&current) {
+                    if upsampler.method.needs_context() {
+                        upsampler.above.clear();
+                        upsampler
+                            .above
+                            .extend_from_slice(plane.row(upsampler.rows - 1)?);
                     }
                 }
                 core::mem::swap(&mut current, &mut next);
@@ -180,7 +184,7 @@ impl Decoder<'_> {
     /// A subsampled component is brought closer to full size by a larger inverse DCT where that works out, which saves
     /// upsampling.
     fn scale_components(&mut self, min_dct_scaled_size: u32) {
-        for comp in &mut self.comps {
+        for comp in &mut self.components {
             let mut ssize = min_dct_scaled_size;
             while ssize < DCTSIZE
                 && (self.max_h_samp * min_dct_scaled_size).is_multiple_of(comp.h_samp * ssize * 2)
@@ -217,7 +221,7 @@ impl Decoder<'_> {
         let fancy = min_dct_scaled_size > 1;
         let (h_out, v_out) = (self.max_h_samp, self.max_v_samp);
         let mut upsamplers = Vec::new();
-        for comp in &self.comps {
+        for comp in &self.components {
             let h_in = comp.h_samp * comp.dct_scaled_size / min_dct_scaled_size;
             let v_in = comp.v_samp * comp.dct_scaled_size / min_dct_scaled_size;
             let replicate = Method::Replicate {
@@ -308,10 +312,10 @@ impl Emitter<'_> {
             if self.rows_left == 0 {
                 break;
             }
-            for (ci, (up, plane)) in upsamplers.iter_mut().zip(current).enumerate() {
-                let Upsampler { above, buffer, .. } = up;
-                let (width, rows) = (up.width, up.rows);
-                let limit = if bottom { up.last_rows } else { rows };
+            for (ci, (upsampler, plane)) in upsamplers.iter_mut().zip(current).enumerate() {
+                let Upsampler { above, buffer, .. } = upsampler;
+                let (width, rows) = (upsampler.width, upsampler.rows);
+                let limit = if bottom { upsampler.last_rows } else { rows };
                 // `y` is one more than the row within the iMCU row, so that 0 is the row above it.
                 let row = |y: usize| -> Result<&[u8]> {
                     let row = match y.checked_sub(1) {
@@ -326,33 +330,33 @@ impl Emitter<'_> {
                     };
                     row.get(..width).ok_or(Error::Internal)
                 };
-                let first = rowgroup * up.rowgroup_height + 1;
+                let first = rowgroup * upsampler.rowgroup_height + 1;
                 let stride = buffer.stride.max(1);
                 let mut out_rows = buffer.data.chunks_exact_mut(stride);
                 let mut out_row = || out_rows.next().ok_or(Error::Internal);
 
-                match up.method {
+                match upsampler.method {
                     Method::FullSize => {}
                     Method::H2V1Fancy => {
-                        for y in first..first + up.rowgroup_height {
+                        for y in first..first + upsampler.rowgroup_height {
                             upsample::h2v1_fancy(row(y)?, out_row()?);
                         }
                     }
                     Method::H1V2Fancy => {
-                        for y in first..first + up.rowgroup_height {
+                        for y in first..first + upsampler.rowgroup_height {
                             upsample::h1v2_fancy(row(y)?, row(y - 1)?, true, out_row()?);
                             upsample::h1v2_fancy(row(y)?, row(y + 1)?, false, out_row()?);
                         }
                     }
                     Method::H2V2Fancy => {
-                        for y in first..first + up.rowgroup_height {
+                        for y in first..first + upsampler.rowgroup_height {
                             let sums = &mut self.column_sums;
                             upsample::h2v2_fancy(row(y)?, row(y - 1)?, sums, out_row()?);
                             upsample::h2v2_fancy(row(y)?, row(y + 1)?, sums, out_row()?);
                         }
                     }
                     Method::Replicate { h_expand, v_expand } => {
-                        for y in first..first + up.rowgroup_height {
+                        for y in first..first + upsampler.rowgroup_height {
                             let out = out_row()?;
                             upsample::replicate(row(y)?, h_expand, out);
                             for _ in 1..v_expand {
@@ -369,11 +373,13 @@ impl Emitter<'_> {
                 }
                 self.rows_left -= 1;
                 let mut planes: [&[u8]; 4] = [&[]; 4];
-                for ((input, up), plane) in planes.iter_mut().zip(upsamplers.iter()).zip(current) {
-                    *input = if up.method == Method::FullSize {
-                        plane.row(rowgroup * up.rowgroup_height + r)?
+                for ((input, upsampler), plane) in
+                    planes.iter_mut().zip(upsamplers.iter()).zip(current)
+                {
+                    *input = if upsampler.method == Method::FullSize {
+                        plane.row(rowgroup * upsampler.rowgroup_height + r)?
                     } else {
-                        up.buffer.row(r)?
+                        upsampler.buffer.row(r)?
                     };
                 }
                 color::convert(self.conversion, planes, self.output_width, self.pixels);

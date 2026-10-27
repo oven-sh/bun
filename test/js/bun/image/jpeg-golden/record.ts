@@ -1,10 +1,15 @@
-// Fills in the expected results from the Bun that runs this script:
+// Fills in the expected results from the Bun that runs this script, which has to be the last one that used
+// libjpeg-turbo, on x86-64:
 //
-//   bun record.ts
-//
-// The results in the repository come from the last Bun that used libjpeg-turbo (1.4.4, x86-64).
+//   bunx bun@1.4.3 record.ts
 import { join } from "node:path";
 import { encodeCases, load, observeDecodeCase, observeEncode, store, type DecodeCase } from "./observe";
+
+if (Bun.version !== "1.4.3" || process.arch !== "x64") {
+  throw new Error(
+    `Bun ${Bun.version} on ${process.arch} would record its own results. Run this with Bun 1.4.3 on x64.`,
+  );
+}
 
 Bun.Image.backend = "bun";
 

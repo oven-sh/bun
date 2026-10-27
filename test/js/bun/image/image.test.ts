@@ -534,7 +534,7 @@ describe("Bun.Image", () => {
     }
 
     // Walk a JPEG byte-stream and concatenate every APP2 `ICC_PROFILE\0`
-    // segment's payload. libjpeg-turbo splits profiles above 65 519 bytes
+    // segment's payload. The encoder splits profiles above 65 519 bytes
     // into multiple APP2 markers with sequence + total-count header; this
     // helper reassembles them regardless of whether the source needed
     // splitting. Returns null when no ICC_PROFILE APP2 is found.
@@ -578,8 +578,8 @@ describe("Bun.Image", () => {
     }
 
     // Distinctive binary payload that round-trips through libspng's
-    // deflate/inflate and libjpeg-turbo's APP2 chunking without
-    // modification. Neither library validates ICC internals. The wide byte
+    // deflate/inflate and the JPEG encoder's APP2 chunking without
+    // modification. Neither validates ICC internals. The wide byte
     // range (0-255, prime-step LCG) exercises binary-safe transport so a
     // stray text-mode decode would corrupt and fail the round-trip. 384
     // bytes fits comfortably in a single APP2 segment; the multi-segment
@@ -587,7 +587,7 @@ describe("Bun.Image", () => {
     const fakeProfile = new Uint8Array(384);
     for (let i = 0; i < fakeProfile.length; i++) fakeProfile[i] = (i * 37 + 11) & 0xff;
 
-    // Above libjpeg-turbo's 65 519-byte per-APP2 split threshold so the
+    // Above the 65 519-byte per-APP2 split threshold so the
     // PNG → JPEG path emits two APP2 segments and exercises the
     // reassembly loop in `extractJpegIcc`. Built once for the multi-
     // segment test only — most tests use the small profile to keep the
@@ -665,11 +665,9 @@ describe("Bun.Image", () => {
     });
 
     test("> 64 KiB profile splits across multiple APP2 segments and reassembles", async () => {
-      // libjpeg-turbo splits at 65 519 bytes per APP2; 70 000 forces two
+      // An APP2 segment holds 65 519 bytes of profile; 70 000 forces two
       // segments and exercises the seq/total header ordering the extractor
-      // loop walks across. If this breaks because libjpeg-turbo's cap
-      // changes, shift the threshold — the goal is "> one segment", not
-      // the exact number.
+      // loop walks across.
       const src = pngWithIccp(cornersPng, bigProfile);
       const jpg = await new Bun.Image(src).jpeg({ quality: 90 }).bytes();
       // Count the APP2 ICC_PROFILE segments to confirm the split happened
@@ -846,7 +844,7 @@ describe("Bun.Image", () => {
       expectQuadrants(data, w, 0.5);
     });
 
-    // libjpeg warns "extraneous bytes before marker 0xd9" and finishes the decode.
+    // The decoder skips the extraneous bytes before EOI and finishes.
     test.each([
       ["CMYK", cmykJpeg],
       ["YCCK", ycckJpeg],
@@ -887,7 +885,7 @@ describe("Bun.Image", () => {
     expect(raw).toEqual({ width: 4, height: 2, format: "jpeg" });
   });
 
-  // libjpeg skips stray bytes before a marker with a warning, so the decode accepts this file.
+  // The decoder skips stray bytes before a marker, so it accepts this file.
   // The orientation reader has to skip them too, or the picture comes out sideways with no error.
   test("EXIF Orientation=6 survives junk bytes before the APP1 segment", async () => {
     const jpg = await new Bun.Image(makePng(4, 2, (x, y) => [x * 60, y * 200, 128, 255])).jpeg({ quality: 90 }).bytes();
@@ -904,7 +902,7 @@ describe("Bun.Image", () => {
     expect([jpg[2], jpg[3]]).toEqual([0xff, 0xe0]);
     const app0End = 4 + ((jpg[4] << 8) | jpg[5]);
     const withExif = Buffer.concat([jpg.subarray(0, app0End), app1, jpg.subarray(app0End)]);
-    // Zero bytes, then 0xFF00: libjpeg's next_marker() discards both kinds.
+    // Zero bytes, then 0xFF00: the decoder's `next_marker` discards both kinds.
     const junk = Buffer.from([...new Array<number>(14).fill(0), 0xff, 0x00]);
     const withJunk = Buffer.concat([jpg.subarray(0, app0End), junk, app1, jpg.subarray(app0End)]);
 

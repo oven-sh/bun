@@ -19,10 +19,10 @@ use input::Input;
 use marker::Reached;
 use std::borrow::Cow;
 
-pub(crate) const NUM_QUANT_TBLS: usize = 4;
-pub(crate) const NUM_HUFF_TBLS: usize = 4;
-pub(crate) const NUM_ARITH_TBLS: usize = 16;
-pub(crate) const MAX_COMPS_IN_SCAN: usize = 4;
+pub(crate) const NUM_QUANT_TABLES: usize = 4;
+pub(crate) const NUM_HUFF_TABLES: usize = 4;
+pub(crate) const NUM_ARITH_TABLES: usize = 16;
+pub(crate) const MAX_COMPONENTS_IN_SCAN: usize = 4;
 pub(crate) const MAX_SAMP_FACTOR: u32 = 4;
 pub(crate) const MAX_COMPONENTS: usize = 10;
 pub(crate) const MAX_BLOCKS_IN_MCU: usize = 10;
@@ -52,9 +52,9 @@ pub(crate) struct Component {
     pub(crate) id: u8,
     pub(crate) h_samp: u32,
     pub(crate) v_samp: u32,
-    pub(crate) quant_tbl_no: u8,
-    pub(crate) dc_tbl_no: u8,
-    pub(crate) ac_tbl_no: u8,
+    pub(crate) quant_selector: u8,
+    pub(crate) dc_selector: u8,
+    pub(crate) ac_selector: u8,
 
     /// In data units: 8x8 blocks, or single samples in a lossless stream.
     pub(crate) width_in_blocks: u32,
@@ -76,16 +76,16 @@ pub(crate) struct Component {
 }
 
 pub struct Decoder<'a> {
-    pub(crate) inp: Input<'a>,
+    pub(crate) input: Input<'a>,
     saw_soi: bool,
     saw_sof: bool,
 
-    quant_tbls: [Option<[u16; 64]>; NUM_QUANT_TBLS],
-    pub(crate) dc_huff: [Option<Box<HuffSpec>>; NUM_HUFF_TBLS],
-    pub(crate) ac_huff: [Option<Box<HuffSpec>>; NUM_HUFF_TBLS],
-    pub(crate) arith_dc_l: [u8; NUM_ARITH_TBLS],
-    pub(crate) arith_dc_u: [u8; NUM_ARITH_TBLS],
-    pub(crate) arith_ac_k: [u8; NUM_ARITH_TBLS],
+    quant_tables: [Option<[u16; 64]>; NUM_QUANT_TABLES],
+    pub(crate) dc_huff: [Option<Box<HuffSpec>>; NUM_HUFF_TABLES],
+    pub(crate) ac_huff: [Option<Box<HuffSpec>>; NUM_HUFF_TABLES],
+    pub(crate) arith_dc_l: [u8; NUM_ARITH_TABLES],
+    pub(crate) arith_dc_u: [u8; NUM_ARITH_TABLES],
+    pub(crate) arith_ac_k: [u8; NUM_ARITH_TABLES],
     pub(crate) restart_interval: u32,
 
     pub(crate) progressive: bool,
@@ -94,7 +94,7 @@ pub struct Decoder<'a> {
     pub(crate) precision: u8,
     pub(crate) width: u32,
     pub(crate) height: u32,
-    pub(crate) comps: Vec<Component>,
+    pub(crate) components: Vec<Component>,
 
     saw_jfif: bool,
     /// From the Adobe APP14 segment, if there is one.
@@ -104,9 +104,9 @@ pub struct Decoder<'a> {
     app2: Vec<Cow<'a, [u8]>>,
     in_header: bool,
 
-    pub(crate) comps_in_scan: usize,
-    /// Indexes into `comps`.
-    pub(crate) cur_comp: [Option<usize>; MAX_COMPS_IN_SCAN],
+    pub(crate) components_in_scan: usize,
+    /// Indexes into `components`.
+    pub(crate) scan_components: [Option<usize>; MAX_COMPONENTS_IN_SCAN],
     pub(crate) ss: u8,
     pub(crate) se: u8,
     pub(crate) ah: u8,
@@ -121,7 +121,7 @@ pub struct Decoder<'a> {
 
     pub(crate) mcus_per_row: u32,
     pub(crate) blocks_in_mcu: usize,
-    /// For each block of an MCU, the index into `cur_comp` of its component.
+    /// For each block of an MCU, the index into `scan_components` of its component.
     pub(crate) mcu_membership: [u8; MAX_BLOCKS_IN_MCU],
 }
 
@@ -140,15 +140,15 @@ impl<'a> Decoder<'a> {
             return Err(Error::InputEmpty);
         }
         let mut this = Decoder {
-            inp: Input::new(data),
+            input: Input::new(data),
             saw_soi: false,
             saw_sof: false,
-            quant_tbls: [None; NUM_QUANT_TBLS],
-            dc_huff: [const { None }; NUM_HUFF_TBLS],
-            ac_huff: [const { None }; NUM_HUFF_TBLS],
-            arith_dc_l: [0; NUM_ARITH_TBLS],
-            arith_dc_u: [1; NUM_ARITH_TBLS],
-            arith_ac_k: [5; NUM_ARITH_TBLS],
+            quant_tables: [None; NUM_QUANT_TABLES],
+            dc_huff: [const { None }; NUM_HUFF_TABLES],
+            ac_huff: [const { None }; NUM_HUFF_TABLES],
+            arith_dc_l: [0; NUM_ARITH_TABLES],
+            arith_dc_u: [1; NUM_ARITH_TABLES],
+            arith_ac_k: [5; NUM_ARITH_TABLES],
             restart_interval: 0,
             progressive: false,
             lossless: false,
@@ -156,14 +156,14 @@ impl<'a> Decoder<'a> {
             precision: 0,
             width: 0,
             height: 0,
-            comps: Vec::new(),
+            components: Vec::new(),
             saw_jfif: false,
             adobe_transform: None,
             color_space: ColorSpace::Grayscale,
             app2: Vec::new(),
             in_header: true,
-            comps_in_scan: 0,
-            cur_comp: [None; MAX_COMPS_IN_SCAN],
+            components_in_scan: 0,
+            scan_components: [None; MAX_COMPONENTS_IN_SCAN],
             ss: 0,
             se: 0,
             ah: 0,
@@ -200,15 +200,14 @@ impl<'a> Decoder<'a> {
         self.color_space
     }
 
-    /// Whether `decode` takes a `scale` other than 8. TurboJPEG allowed a cropping region, which Bun relied on when it
-    /// scaled, for exactly these streams.
+    /// Whether `decode` takes fewer than 8 eighths: the streams for which TurboJPEG takes a cropping region.
     pub fn scalable(&self) -> bool {
         !self.lossless && self.precision == 8 && self.subsampling_known()
     }
 
     /// Whether the sampling factors are one of 4:4:4, 4:2:2, 4:2:0, 4:4:0, 4:1:1 and 4:4:1, or the image is gray.
     fn subsampling_known(&self) -> bool {
-        let Some((first, others)) = self.comps.split_first() else {
+        let Some((first, others)) = self.components.split_first() else {
             return false;
         };
         if others.is_empty() {
@@ -232,20 +231,20 @@ impl<'a> Decoder<'a> {
     }
 
     pub(crate) fn comp(&self, ci: usize) -> Result<&Component> {
-        self.comps.get(ci).ok_or(Error::Internal)
+        self.components.get(ci).ok_or(Error::Internal)
     }
 
-    /// The component in slot `i` of the scan, as an index into `comps`.
-    pub(crate) fn scan_comp_index(&self, i: usize) -> Result<usize> {
-        self.cur_comp
+    /// The component in slot `i` of the scan, as an index into `components`.
+    pub(crate) fn scan_component_index(&self, i: usize) -> Result<usize> {
+        self.scan_components
             .get(i)
             .copied()
             .flatten()
             .ok_or(Error::Internal)
     }
 
-    pub(crate) fn scan_comp(&self, i: usize) -> Result<&Component> {
-        self.comp(self.scan_comp_index(i)?)
+    pub(crate) fn scan_component(&self, i: usize) -> Result<&Component> {
+        self.comp(self.scan_component_index(i)?)
     }
 
     /// Once, when the first SOS has been read.
@@ -262,14 +261,14 @@ impl<'a> Decoder<'a> {
         } else if self.precision != 8 && self.precision != 12 {
             return Err(Error::BadPrecision(self.precision));
         }
-        if self.comps.len() > MAX_COMPONENTS {
+        if self.components.len() > MAX_COMPONENTS {
             return Err(Error::ComponentCount(
-                self.comps.len() as u32,
+                self.components.len() as u32,
                 MAX_COMPONENTS as u32,
             ));
         }
 
-        for comp in &self.comps {
+        for comp in &self.components {
             if !(1..=MAX_SAMP_FACTOR).contains(&comp.h_samp)
                 || !(1..=MAX_SAMP_FACTOR).contains(&comp.v_samp)
             {
@@ -279,7 +278,7 @@ impl<'a> Decoder<'a> {
             self.max_v_samp = self.max_v_samp.max(comp.v_samp);
         }
 
-        for comp in &mut self.comps {
+        for comp in &mut self.components {
             comp.dct_scaled_size = data_unit;
             comp.width_in_blocks = (self.width * comp.h_samp).div_ceil(self.max_h_samp * data_unit);
             comp.height_in_blocks =
@@ -289,12 +288,13 @@ impl<'a> Decoder<'a> {
             comp.last_row_height = last_group(comp.height_in_blocks, comp.v_samp);
         }
         self.total_imcu_rows = self.height.div_ceil(self.max_v_samp * data_unit);
-        self.has_multiple_scans = self.comps_in_scan < self.comps.len() || self.progressive;
+        self.has_multiple_scans =
+            self.components_in_scan < self.components.len() || self.progressive;
         Ok(())
     }
 
     fn guess_color_space(&self) -> Result<ColorSpace> {
-        Ok(match (self.comps.as_slice(), self.adobe_transform) {
+        Ok(match (self.components.as_slice(), self.adobe_transform) {
             ([_], _) => ColorSpace::Grayscale,
             ([_, _, _], _) if self.saw_jfif => ColorSpace::YCbCr,
             ([_, _, _], Some(0)) => ColorSpace::Rgb,
@@ -312,9 +312,9 @@ impl<'a> Decoder<'a> {
     pub(crate) fn per_scan_setup(&mut self) -> Result<()> {
         let data_unit = if self.lossless { 1 } else { DCTSIZE };
 
-        if self.comps_in_scan == 1 {
-            let ci = self.scan_comp_index(0)?;
-            let comp = self.comps.get_mut(ci).ok_or(Error::Internal)?;
+        if self.components_in_scan == 1 {
+            let ci = self.scan_component_index(0)?;
+            let comp = self.components.get_mut(ci).ok_or(Error::Internal)?;
             self.mcus_per_row = comp.width_in_blocks;
             comp.mcu_width = 1;
             comp.mcu_height = 1;
@@ -324,9 +324,9 @@ impl<'a> Decoder<'a> {
         } else {
             self.mcus_per_row = self.width.div_ceil(self.max_h_samp * data_unit);
             self.blocks_in_mcu = 0;
-            for i in 0..self.comps_in_scan {
-                let ci = self.scan_comp_index(i)?;
-                let comp = self.comps.get_mut(ci).ok_or(Error::Internal)?;
+            for i in 0..self.components_in_scan {
+                let ci = self.scan_component_index(i)?;
+                let comp = self.components.get_mut(ci).ok_or(Error::Internal)?;
                 comp.mcu_width = comp.h_samp;
                 comp.mcu_height = comp.v_samp;
                 comp.last_col_width = last_group(comp.width_in_blocks, comp.mcu_width);
@@ -344,30 +344,30 @@ impl<'a> Decoder<'a> {
 
     /// An iMCU row of a scan with one component has as many rows of MCUs as the component has rows of data units in it.
     pub(crate) fn mcu_rows_in_imcu_row(&self, imcu_row: u32) -> Result<u32> {
-        Ok(if self.comps_in_scan > 1 {
+        Ok(if self.components_in_scan > 1 {
             1
         } else if imcu_row + 1 < self.total_imcu_rows {
-            self.scan_comp(0)?.v_samp
+            self.scan_component(0)?.v_samp
         } else {
-            self.scan_comp(0)?.last_row_height
+            self.scan_component(0)?.last_row_height
         })
     }
 
     /// A later scan may come after the slot of a quantization table was redefined, so each component keeps the table
     /// its first scan began with.
     pub(crate) fn latch_quant_tables(&mut self) -> Result<()> {
-        for i in 0..self.comps_in_scan {
-            let ci = self.scan_comp_index(i)?;
-            let comp = self.comps.get_mut(ci).ok_or(Error::Internal)?;
+        for i in 0..self.components_in_scan {
+            let ci = self.scan_component_index(i)?;
+            let comp = self.components.get_mut(ci).ok_or(Error::Internal)?;
             if comp.quant_table.is_some() {
                 continue;
             }
             let table = self
-                .quant_tbls
-                .get(usize::from(comp.quant_tbl_no))
+                .quant_tables
+                .get(usize::from(comp.quant_selector))
                 .copied()
                 .flatten();
-            comp.quant_table = Some(table.ok_or(Error::NoQuantTable(comp.quant_tbl_no))?);
+            comp.quant_table = Some(table.ok_or(Error::NoQuantTable(comp.quant_selector))?);
         }
         Ok(())
     }

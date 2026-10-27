@@ -26,7 +26,7 @@ pub(crate) fn decode(
     let decoder = Decoder::new(bytes).map_err(decode_error)?;
     let (src_w, src_h) = (decoder.width(), decoder.height());
     codecs::guard(src_w, src_h, max_pixels)?;
-    // However high `max_pixels` is set. TurboJPEG took its own limit as an `int`.
+    // However high `max_pixels` is set.
     if u64::from(src_w) * u64::from(src_h) > i32::MAX as u64 {
         return Err(codecs::Error::DecodeFailed);
     }

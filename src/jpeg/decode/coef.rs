@@ -12,13 +12,13 @@ use crate::tables::natural_order;
 
 /// Where an entropy decoder finds the blocks of the MCU it is decoding.
 pub(crate) trait McuBlocks {
-    fn block(&mut self, blkn: usize) -> Option<&mut Block>;
+    fn block(&mut self, index: usize) -> Option<&mut Block>;
 }
 
 impl McuBlocks for [Block; MAX_BLOCKS_IN_MCU] {
     #[inline(always)]
-    fn block(&mut self, blkn: usize) -> Option<&mut Block> {
-        self.get_mut(blkn)
+    fn block(&mut self, index: usize) -> Option<&mut Block> {
+        self.get_mut(index)
     }
 }
 
@@ -29,20 +29,20 @@ pub(crate) enum Entropy {
 }
 
 impl Entropy {
-    pub(crate) fn start_pass(&mut self, d: &mut Decoder) -> Result<()> {
+    pub(crate) fn start_pass(&mut self, decoder: &mut Decoder) -> Result<()> {
         match self {
-            Entropy::Huff(e) => e.start_pass(d),
-            Entropy::PHuff(e) => e.start_pass(d),
-            Entropy::Arith(e) => e.start_pass(d),
+            Entropy::Huff(e) => e.start_pass(decoder),
+            Entropy::PHuff(e) => e.start_pass(decoder),
+            Entropy::Arith(e) => e.start_pass(decoder),
         }
     }
 
     #[inline(always)]
-    fn decode_mcu(&mut self, inp: &mut Input, mcu: &mut impl McuBlocks) -> Result<()> {
+    fn decode_mcu(&mut self, input: &mut Input, mcu: &mut impl McuBlocks) -> Result<()> {
         match self {
-            Entropy::Huff(e) => e.decode_mcu(inp, mcu),
-            Entropy::PHuff(e) => e.decode_mcu(inp, mcu),
-            Entropy::Arith(e) => e.decode_mcu(inp, mcu),
+            Entropy::Huff(e) => e.decode_mcu(input, mcu),
+            Entropy::PHuff(e) => e.decode_mcu(input, mcu),
+            Entropy::Arith(e) => e.decode_mcu(input, mcu),
         }
     }
 
@@ -169,9 +169,9 @@ struct McuInImage<'a> {
 
 impl McuBlocks for McuInImage<'_> {
     #[inline(always)]
-    fn block(&mut self, blkn: usize) -> Option<&mut Block> {
-        let &(ci, index) = self.at.get(blkn)?;
-        self.arrays.get_mut(ci)?.blocks.get_mut(index)
+    fn block(&mut self, index: usize) -> Option<&mut Block> {
+        let &(ci, position) = self.at.get(index)?;
+        self.arrays.get_mut(ci)?.blocks.get_mut(position)
     }
 }
 
@@ -196,10 +196,10 @@ pub(crate) struct CoefController {
 }
 
 impl CoefController {
-    pub(crate) fn new(d: &Decoder, entropy: Entropy) -> Result<Self> {
+    pub(crate) fn new(decoder: &Decoder, entropy: Entropy) -> Result<Self> {
         let mut whole_image = Vec::new();
-        if d.has_multiple_scans {
-            for comp in &d.comps {
+        if decoder.has_multiple_scans {
+            for comp in &decoder.components {
                 let blocks_per_row = comp.width_in_blocks.next_multiple_of(comp.h_samp) as usize;
                 let rows = comp.height_in_blocks.next_multiple_of(comp.v_samp) as usize;
                 let blocks = try_vec([0; 64], blocks_per_row * rows)?;
@@ -226,25 +226,26 @@ impl CoefController {
     /// Decodes the next iMCU row of a stream with a single scan straight into samples.
     pub(crate) fn decompress_onepass(
         &mut self,
-        d: &mut Decoder,
+        decoder: &mut Decoder,
         idcts: &[Idct],
         planes: &mut [Plane],
     ) -> Result<()> {
-        let last_mcu_col = d.mcus_per_row - 1;
-        let last_imcu_row = d.total_imcu_rows - 1;
+        let last_mcu_col = decoder.mcus_per_row - 1;
+        let last_imcu_row = decoder.total_imcu_rows - 1;
 
-        for yoffset in 0..d.mcu_rows_in_imcu_row(self.input_imcu_row)? {
+        for yoffset in 0..decoder.mcu_rows_in_imcu_row(self.input_imcu_row)? {
             for mcu_col_num in 0..=last_mcu_col {
-                for block in self.mcu_buffer.iter_mut().take(d.blocks_in_mcu) {
+                for block in self.mcu_buffer.iter_mut().take(decoder.blocks_in_mcu) {
                     *block = [0; 64];
                 }
-                self.entropy.decode_mcu(&mut d.inp, &mut *self.mcu_buffer)?;
+                self.entropy
+                    .decode_mcu(&mut decoder.input, &mut *self.mcu_buffer)?;
 
                 // Blocks past the right and bottom edges of the component are only there to fill up the MCU.
-                let mut blkn = 0;
-                for i in 0..d.comps_in_scan {
-                    let ci = d.scan_comp_index(i)?;
-                    let comp = d.comp(ci)?;
+                let mut index = 0;
+                for i in 0..decoder.components_in_scan {
+                    let ci = decoder.scan_component_index(i)?;
+                    let comp = decoder.comp(ci)?;
                     let (Some(idct), Some(plane)) = (idcts.get(ci), planes.get_mut(ci)) else {
                         return Err(Error::Internal);
                     };
@@ -263,13 +264,13 @@ impl CoefController {
                             let blocks = self
                                 .mcu_buffer
                                 .iter()
-                                .skip(blkn)
+                                .skip(index)
                                 .take(useful_width as usize);
                             for (xindex, block) in blocks.enumerate() {
                                 idct.run(block, plane, y, start_col + xindex * size)?;
                             }
                         }
-                        blkn += comp.mcu_width as usize;
+                        index += comp.mcu_width as usize;
                     }
                 }
             }
@@ -280,18 +281,18 @@ impl CoefController {
     }
 
     /// Decodes a whole scan into the coefficient arrays.
-    pub(crate) fn consume_scan(&mut self, d: &mut Decoder) -> Result<()> {
-        while self.input_imcu_row < d.total_imcu_rows {
+    pub(crate) fn consume_scan(&mut self, decoder: &mut Decoder) -> Result<()> {
+        while self.input_imcu_row < decoder.total_imcu_rows {
             let mut mcu = McuInImage {
                 arrays: &mut self.whole_image,
                 at: [(0, 0); MAX_BLOCKS_IN_MCU],
             };
-            for yoffset in 0..d.mcu_rows_in_imcu_row(self.input_imcu_row)? {
-                for mcu_col_num in 0..d.mcus_per_row {
+            for yoffset in 0..decoder.mcu_rows_in_imcu_row(self.input_imcu_row)? {
+                for mcu_col_num in 0..decoder.mcus_per_row {
                     let mut at = mcu.at.iter_mut();
-                    for i in 0..d.comps_in_scan {
-                        let ci = d.scan_comp_index(i)?;
-                        let comp = d.comp(ci)?;
+                    for i in 0..decoder.components_in_scan {
+                        let ci = decoder.scan_component_index(i)?;
+                        let comp = decoder.comp(ci)?;
                         let blocks_per_row =
                             mcu.arrays.get(ci).ok_or(Error::Internal)?.blocks_per_row;
                         let start_col = (mcu_col_num * comp.mcu_width) as usize;
@@ -304,10 +305,10 @@ impl CoefController {
                             }
                         }
                     }
-                    if !d.inp.insufficient_data {
+                    if !decoder.input.insufficient_data {
                         self.last_good_imcu_row = self.input_imcu_row;
                     }
-                    self.entropy.decode_mcu(&mut d.inp, &mut mcu)?;
+                    self.entropy.decode_mcu(&mut decoder.input, &mut mcu)?;
                 }
             }
             self.input_imcu_row += 1;
@@ -317,19 +318,19 @@ impl CoefController {
 
     /// Smoothing estimates the low AC coefficients that a progressive stream has not delivered in full, which only
     /// happens if it breaks off early.
-    pub(crate) fn start_output_pass(&mut self, d: &Decoder) {
-        self.smoothing = self.smoothing_latch(d);
+    pub(crate) fn start_output_pass(&mut self, decoder: &Decoder) {
+        self.smoothing = self.smoothing_latch(decoder);
     }
 
-    fn smoothing_latch(&self, d: &Decoder) -> Option<Vec<[[i32; SAVED_COEFS]; 2]>> {
-        if self.whole_image.is_empty() || !d.progressive {
+    fn smoothing_latch(&self, decoder: &Decoder) -> Option<Vec<[[i32; SAVED_COEFS]; 2]>> {
+        if self.whole_image.is_empty() || !decoder.progressive {
             return None;
         }
         let coef_bits = self.entropy.coef_bits()?;
         let mut useful = false;
         let mut latch = Vec::new();
-        for ((comp, current), previous) in d
-            .comps
+        for ((comp, current), previous) in decoder
+            .components
             .iter()
             .zip(&coef_bits.current)
             .zip(&coef_bits.previous)
@@ -344,7 +345,7 @@ impl CoefController {
             if dc < 0 {
                 return None;
             }
-            if d.input_scan_number <= 1 {
+            if decoder.input_scan_number <= 1 {
                 previous = [-1; SAVED_COEFS];
             }
             useful |= ac.iter().any(|&bits| bits != 0);
@@ -356,14 +357,14 @@ impl CoefController {
     /// Turns the coefficients of iMCU row `output_imcu_row` into samples.
     pub(crate) fn decompress_data(
         &mut self,
-        d: &Decoder,
+        decoder: &Decoder,
         output_imcu_row: u32,
         idcts: &[Idct],
         planes: &mut [Plane],
     ) -> Result<()> {
-        let last_imcu_row = d.total_imcu_rows - 1;
-        let components = d
-            .comps
+        let last_imcu_row = decoder.total_imcu_rows - 1;
+        let components = decoder
+            .components
             .iter()
             .zip(&self.whole_image)
             .zip(idcts)
@@ -403,7 +404,7 @@ impl CoefController {
                 Smoother::new(coef_bits, comp.quant_table.as_ref().ok_or(Error::Internal)?);
 
             // As in libjpeg, these count in the block rows of this iMCU row, of which the last one may have fewer.
-            let image_block_rows = block_rows * d.total_imcu_rows;
+            let image_block_rows = block_rows * decoder.total_imcu_rows;
             for block_row in 0..block_rows {
                 let image_block_row = output_imcu_row * block_rows + block_row;
                 let y = first_row + block_row as usize;

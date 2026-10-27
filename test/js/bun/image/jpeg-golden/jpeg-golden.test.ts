@@ -1,10 +1,14 @@
 // `Bun.Image` decodes and encodes JPEG as it did when it used libjpeg-turbo. See record.ts.
-import { beforeAll, expect, test } from "bun:test";
+import { afterAll, beforeAll, expect, test } from "bun:test";
 import { join } from "node:path";
 import { encodeCases, load, observeDecodeCase, observeEncode, type DecodeCase } from "./observe";
 
+const defaultBackend = Bun.Image.backend;
 beforeAll(() => {
   Bun.Image.backend = "bun";
+});
+afterAll(() => {
+  Bun.Image.backend = defaultBackend;
 });
 
 /** Runs `run` on every item, several at a time: the work is done on other threads. */

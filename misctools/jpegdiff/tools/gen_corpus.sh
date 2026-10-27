@@ -44,6 +44,14 @@ for f in /root/ref/corpus/ppm/*.ppm; do
   cj ${b}_q1base.jpg -quality 1 -baseline $f
   for p in 1 2 3 4 5 6 7; do cj ${b}_ll$p.jpg -lossless $p $f; cj ${b}_ll${p}pt2.jpg -lossless $p,2 $f; done
   cj ${b}_llrst.jpg -lossless 4 -restart 1 $f
+  for p in 1 4 7; do for pt in 0 2; do
+    printf "0: $p 0 0 $pt;\n1: $p 0 0 $pt;\n2: $p 0 0 $pt;\n" > /tmp/s3.scan
+    printf "0: $p 0 0 $pt;\n1 2: $p 0 0 $pt;\n" > /tmp/s2.scan
+    for sc in s3 s2; do
+      cj ${b}_ll${p}pt${pt}_$sc.jpg -lossless $p,$pt -scans /tmp/$sc.scan $f
+      cj ${b}_ll${p}pt${pt}_${sc}rst.jpg -lossless $p,$pt -scans /tmp/$sc.scan -restart 1 $f
+    done
+  done; done
   for pr in 2 3 4 5 6 7; do cj ${b}_llprec$pr.jpg -lossless 1 -precision $pr $f; done
   cj ${b}_p12.jpg -precision 12 $f
   cj ${b}_ll12.jpg -precision 12 -lossless 1 $f

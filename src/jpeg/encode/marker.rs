@@ -92,9 +92,9 @@ impl Output {
     }
 
     pub(crate) fn scan_header(&mut self, scan: &Scan) {
-        self.segment(M_SOS, 1 + 2 * scan.comps.len() + 3);
-        self.extend(&[scan.comps.len() as u8]);
-        for comp in scan.comps.iter().filter_map(|&ci| COMPONENTS.get(ci)) {
+        self.segment(M_SOS, 1 + 2 * scan.components.len() + 3);
+        self.extend(&[scan.components.len() as u8]);
+        for comp in scan.components.iter().filter_map(|&ci| COMPONENTS.get(ci)) {
             // A table that the scan does not use is given as 0.
             let dc = if scan.ss == 0 && scan.ah == 0 {
                 comp.table

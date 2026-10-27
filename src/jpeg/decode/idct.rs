@@ -1,11 +1,11 @@
 //! Dequantization and the inverse DCT, at every output size from 1x1 to 14x14 that scaling needs (jddctmgr.c,
 //! jidctint.c, jidctred.c).
 //!
-//! All sizes give what libjpeg-turbo gave on x86-64, bit for bit, whatever the coefficients. For coefficients that an
+//! All sizes give what libjpeg-turbo gives on x86-64, bit for bit, whatever the coefficients. For coefficients that an
 //! encoder can produce there is only one answer. For others it depends on where the arithmetic wraps or saturates:
-//! - 8x8, 4x4 and 2x2 ran as SSE2 or AVX2 assembly, which works on 16-bit lanes. `idct8x8`, `idct4x4` and `idct2x2` do
-//!   what those instructions do, lane by lane, in a form that compilers turn back into vector code.
-//! - The other sizes ran as C with 64-bit `long`.
+//! - 8x8, 4x4 and 2x2 are SSE2 or AVX2 assembly there, which works on 16-bit lanes. `idct8x8`, `idct4x4` and `idct2x2`
+//!   do what those instructions do, lane by lane, in a form that compilers turn back into vector code.
+//! - The other sizes are C with a 64-bit `long`.
 
 use super::Block;
 use crate::lanes::{column, descale, from_columns, map, transpose};
@@ -27,7 +27,7 @@ fn rows<T>(block: &[T; 64]) -> &[[T; 8]] {
     block.as_chunks::<8>().0
 }
 
-// ---- The sizes that ran as assembly. See `lanes`.
+// ---- The sizes that are assembly in libjpeg-turbo. See `lanes`.
 
 /// packsswb and paddb with 128.
 #[inline(always)]
@@ -256,7 +256,7 @@ pub(crate) fn idct2x2(coefs: &Block, table: &DctTable) -> [[u8; 2]; 2] {
     })
 }
 
-// ---- The sizes that ran as C.
+// ---- The sizes that are C in libjpeg-turbo.
 
 /// `sample_range_limit[CENTERJSAMPLE + (x & RANGE_MASK)]`: `x + 128` clamped to a byte, for the `x` from -512 to 511 that
 /// has the same low 10 bits.

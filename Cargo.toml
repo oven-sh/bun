@@ -497,8 +497,8 @@ bun_simdutf_sys = { path = "src/simdutf_sys" }
 bun_which = { path = "src/which" }
 bun_transpiler = { path = "src/transpiler" }
 
-# Debug builds compiled libjpeg-turbo with optimization, as they do every C dependency. Without it a test that decodes a
-# large image takes minutes. The overflow checks and debug assertions stay.
+# Optimized in debug builds too, as every C dependency is: without it a test that decodes a large image takes minutes.
+# The overflow checks and debug assertions stay.
 [profile.dev.package.bun_jpeg]
 opt-level = 3
 

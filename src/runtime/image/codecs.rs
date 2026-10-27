@@ -35,11 +35,10 @@ const HAS_SYSTEM_BACKEND: bool = cfg!(any(target_os = "macos", windows));
 ///
 /// `.system` (default on darwin/windows) is the perf-optimal hybrid:
 ///   • jpeg/png/webp decode+encode → static codecs (bun_jpeg/spng/libwebp),
-///     so that output bytes and the `quality` scale match Linux. Profiling
-///     on M-series found ImageIO no faster: Huffman/inflate dominate and
-///     aren't AMX-amenable, and ImageIO bottoms out in stock libz vs our
-///     zlib-ng. (For JPEG that was measured against libjpeg-turbo, which
-///     bun_jpeg has since replaced.)
+///     so that output bytes and the `quality` scale match Linux. For PNG,
+///     profiling on M-series found ImageIO no faster: inflate dominates,
+///     isn't AMX-amenable, and ImageIO bottoms out in stock libz vs our
+///     zlib-ng.
 ///   • lanczos3 resize, rotate90, flip → vImage (AMX, ~3-6× the Highway
 ///     kernel on the geometry step).
 ///   • heic/avif decode+encode → ImageIO/WIC (no static codec).

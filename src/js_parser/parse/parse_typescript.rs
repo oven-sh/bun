@@ -4,7 +4,9 @@ use bun_collections::VecExt;
 use crate::Error;
 use crate::lexer::{self as js_lexer, T};
 use crate::p::P;
-use crate::parser::{FnOrArrowDataParse, ParseStatementOptions, Ref, ScopeOrder, StatementScope};
+use crate::parser::{
+    FnOrArrowDataParse, ParseStatementOptions, Ref, ScopeOrder, StatementScope, TypeNameDeclaration,
+};
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast::expr::EFlags;
 use bun_ast::flags;
@@ -212,6 +214,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let name_loc = p.lexer.loc();
         let name_text = p.lexer.identifier;
         p.lexer.next()?;
+        p.declare_type_name(name_text, TypeNameDeclaration::Other);
 
         // Generate the namespace object
         // Arena-owned `StoreRef<TSNamespaceScope>`.
@@ -488,6 +491,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<Stmt, Error> {
         let p = self;
         p.lexer.expect(T::TEquals)?;
+        p.declare_type_name(default_name, TypeNameDeclaration::Other);
 
         let kind = js_ast::LocalKind::KConst;
         let name = p.lexer.identifier;
@@ -583,6 +587,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let name_loc = p.lexer.loc();
         let name_text = p.lexer.identifier;
         p.lexer.expect(T::TIdentifier)?;
+        p.declare_type_name(name_text, TypeNameDeclaration::Other);
         let mut name = LocRef {
             loc: name_loc,
             ref_: Ref::NONE,

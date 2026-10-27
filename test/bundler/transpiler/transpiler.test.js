@@ -353,6 +353,18 @@ describe("Bun.Transpiler", () => {
       ts.expectPrinted_("import Foo = Baz.Bar;\nexport default Foo;", "const Foo = Baz.Bar;\nexport default Foo");
     });
 
+    it.each([
+      // tsc removes these two imports as well.
+      [`import { Baz } from "baz";`, `import { Baz } from "baz";`],
+      [`import * as Baz from "baz";`, `import * as Baz from "baz";`],
+      [`namespace Baz { export const Bar = 1; }`, `var Baz;\n((Baz) => Baz.Bar = 1)(Baz ||= {});`],
+    ])("declarations next to an unused import Foo = Baz.Bar, %s", (Baz, printed) => {
+      ts.expectPrintedMin_(
+        `${Baz}\nconst a = 1;\nimport Foo = Baz.Bar;\nconst b = 2;\nexport { a, b };`,
+        `${printed}\nconst a = 1;\nconst b = 2;\n\nexport { a, b }`,
+      );
+    });
+
     it("ternary should parse correctly when parsing typescript fails", () => {
       ts.expectPrinted_(
         "var c = Math.random() ? ({ ...{} }) : ({ ...{} })",

@@ -108,6 +108,7 @@ pub struct ParseTask<'a> {
     pub(crate) emit_decorator_metadata: bool,
     pub(crate) experimental_decorators: bool,
     pub(crate) use_define_for_class_fields: bool,
+    pub(crate) strict_null_checks: bool,
     // BACKREF; `None` only before enqueue (`Default`, runtime source).
     pub ctx: Option<bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>>,
     // Borrows package_json (resolver arena); valid for the bundle pass.
@@ -292,6 +293,7 @@ impl<'a> ParseTask<'a> {
             emit_decorator_metadata: resolve_result.flags.emit_decorator_metadata(),
             experimental_decorators: resolve_result.flags.experimental_decorators(),
             use_define_for_class_fields: resolve_result.flags.use_define_for_class_fields(),
+            strict_null_checks: resolve_result.flags.strict_null_checks(),
             package_version,
             package_name,
             known_target,
@@ -348,6 +350,7 @@ impl Default for ParseTask<'_> {
             emit_decorator_metadata: false,
             experimental_decorators: false,
             use_define_for_class_fields: true,
+            strict_null_checks: false,
             package_version: ast::StoreStr::EMPTY,
             package_name: ast::StoreStr::EMPTY,
             is_entry_point: false,
@@ -639,6 +642,7 @@ pub mod parse_worker {
             emit_decorator_metadata: false,
             experimental_decorators: false,
             use_define_for_class_fields: true,
+            strict_null_checks: false,
             package_version: ast::StoreStr::EMPTY,
             package_name: ast::StoreStr::EMPTY,
             is_entry_point: false,
@@ -2520,6 +2524,7 @@ pub mod parse_worker {
         opts.features.minify_whitespace = topts.minify_whitespace;
         opts.use_define_for_class_fields = task.use_define_for_class_fields;
         opts.features.emit_decorator_metadata = task.emit_decorator_metadata;
+        opts.features.strict_null_checks = task.strict_null_checks;
         // emitDecoratorMetadata implies legacy/experimental decorators, as it only
         // makes sense with TypeScript's legacy decorator system (reflect-metadata).
         // TC39 standard decorators have their own metadata mechanism.

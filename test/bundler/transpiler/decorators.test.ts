@@ -1,8 +1,13 @@
 // @ts-nocheck
-import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
+import { afterAll, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { endChildren, longLimit } from "../../cli/children";
+import { canCompareWithTypeScript, differencesFromTypeScript } from "./decorator-differential";
 import DecoratedClass from "./decorator-export-default-class-fixture";
 import DecoratedAnonClass from "./decorator-export-default-class-fixture-anon";
+import { cases } from "./decorator-lowering-cases";
+
+afterAll(endChildren);
 
 test("decorator order of evaluation", () => {
   let counter = 0;
@@ -367,193 +372,6 @@ test("decorators random", () => {
   }
 
   expect(Object.isFrozen(IceCream)).toBe(true);
-
-  class IceCreamComponent {
-    @Emoji()
-    flavor = "vanilla";
-  }
-
-  // Property Decorator
-  function Emoji() {
-    return function (target: Object, key: string | symbol) {
-      let val = target[key];
-
-      const getter = () => {
-        return val;
-      };
-      const setter = next => {
-        val = `🍦 ${next} 🍦`;
-      };
-
-      Object.defineProperty(target, key, {
-        get: getter,
-        set: setter,
-        enumerable: true,
-        configurable: true,
-      });
-    };
-  }
-
-  const iceCream = new IceCreamComponent();
-  expect(iceCream.flavor === "🍦 vanilla 🍦").toBe(true);
-  iceCream.flavor = "chocolate";
-  expect(iceCream.flavor === "🍦 chocolate 🍦").toBe(true);
-
-  const i: unique symbol = Symbol.for("i");
-  const h: unique symbol = Symbol.for("h");
-  const t: unique symbol = Symbol.for("t");
-  const q: unique symbol = Symbol.for("q");
-  const p: unique symbol = Symbol.for("p");
-  const u3: unique symbol = Symbol.for("u3");
-  const u5: unique symbol = Symbol.for("u5");
-  const u6: unique symbol = Symbol.for("u6");
-  const u8: unique symbol = Symbol.for("u8");
-
-  class S {
-    @StringAppender("😛") k = 35;
-    @StringAppender("🤠") static j = 4;
-    @StringAppender("😵‍💫") private static [h] = 30;
-    @StringAppender("🤯") private static u = 60;
-    @StringAppender("🤪") private [t] = 32;
-    @StringAppender("🤑") [i] = 8;
-    @StringAppender("🎃") private e = 10;
-    @StringAppender("👻") static [q] = 202;
-    @StringAppender("😇") r = S[h];
-    _y: number;
-    @StringAppender("🤡") get y() {
-      return this._y;
-    }
-    set y(next) {
-      this._y = next;
-    }
-    #o = 100;
-
-    @StringAppender("😍") u1: number;
-    @StringAppender("🥳") static u2: number;
-    @StringAppender("🤓") private static [u3]: number;
-    @StringAppender("🥺") private static u4: number;
-    @StringAppender("🤯") private [u5]: number;
-    @StringAppender("🤩") [u6]: number;
-    @StringAppender("☹️") private u7: number;
-    @StringAppender("🙃") static [u8]: number;
-
-    @StringAppender("🤔") u9 = this.u1;
-    @StringAppender("🤨") u10 = this.u2;
-    @StringAppender("🙂") u11 = S[u3];
-    @StringAppender("🙁") u12 = S.u4;
-    @StringAppender("😐") u13 = this[u5];
-    @StringAppender("😑") u14 = this[u6];
-    @StringAppender("😶") u15 = this.u7;
-    @StringAppender("😏") u16 = S[u8];
-
-    constructor() {
-      this.k = 3;
-      expect(this.k).toBe("3 😛");
-      expect(S.j).toBe(4);
-      expect(this[i]).toBe("8 🤑");
-      expect(this.e).toBe("10 🎃");
-      expect(S[h]).toBe(30);
-      expect(S.u).toBe(60);
-      expect(this[t]).toBe("32 🤪");
-      expect(S[q]).toBe(202);
-      expect(this.#o).toBe(100);
-      expect(this.r).toBe("30 😇");
-      expect(this.y).toBe(undefined);
-      this.y = 100;
-      expect(this.y).toBe(100);
-
-      expect(this.u1).toBe(undefined);
-      expect(S.u2).toBe(undefined);
-      expect(S[u3]).toBe(undefined);
-      expect(S.u4).toBe(undefined);
-      expect(this[u5]).toBe(undefined);
-      expect(this[u6]).toBe(undefined);
-      expect(this.u7).toBe(undefined);
-      expect(S[u8]).toBe(undefined);
-
-      expect(this.u9).toBe("undefined 🤔");
-      expect(this.u10).toBe("undefined 🤨");
-      expect(this.u11).toBe("undefined 🙂");
-      expect(this.u12).toBe("undefined 🙁");
-      expect(this.u13).toBe("undefined 😐");
-      expect(this.u14).toBe("undefined 😑");
-      expect(this.u15).toBe("undefined 😶");
-      expect(this.u16).toBe("undefined 😏");
-
-      this.u1 = 100;
-      expect(this.u1).toBe("100 😍");
-      S.u2 = 100;
-      expect(S.u2).toBe("100 🥳");
-      S[u3] = 100;
-      expect(S[u3]).toBe("100 🤓");
-      S.u4 = 100;
-      expect(S.u4).toBe("100 🥺");
-      this[u5] = 100;
-      expect(this[u5]).toBe("100 🤯");
-      this[u6] = 100;
-      expect(this[u6]).toBe("100 🤩");
-      this.u7 = 100;
-      expect(this.u7).toBe("100 ☹️");
-      S[u8] = 100;
-      expect(S[u8]).toBe("100 🙃");
-
-      expect(this.u9).toBe("undefined 🤔");
-      expect(this.u10).toBe("undefined 🤨");
-      expect(this.u11).toBe("undefined 🙂");
-      expect(this.u12).toBe("undefined 🙁");
-      expect(this.u13).toBe("undefined 😐");
-      expect(this.u14).toBe("undefined 😑");
-      expect(this.u15).toBe("undefined 😶");
-      expect(this.u16).toBe("undefined 😏");
-    }
-  }
-
-  let s = new S();
-  expect(s.u9).toBe("undefined 🤔");
-  expect(s.u10).toBe("undefined 🤨");
-  expect(s.u11).toBe("undefined 🙂");
-  expect(s.u12).toBe("undefined 🙁");
-  expect(s.u13).toBe("undefined 😐");
-  expect(s.u14).toBe("undefined 😑");
-  expect(s.u15).toBe("undefined 😶");
-  expect(s.u16).toBe("undefined 😏");
-
-  s.u9 = 35;
-  expect(s.u9).toBe("35 🤔");
-  s.u10 = 36;
-  expect(s.u10).toBe("36 🤨");
-  s.u11 = 37;
-  expect(s.u11).toBe("37 🙂");
-  s.u12 = 38;
-  expect(s.u12).toBe("38 🙁");
-  s.u13 = 39;
-  expect(s.u13).toBe("39 😐");
-  s.u14 = 40;
-  expect(s.u14).toBe("40 😑");
-  s.u15 = 41;
-  expect(s.u15).toBe("41 😶");
-  s.u16 = 42;
-  expect(s.u16).toBe("42 😏");
-
-  function StringAppender(emoji: string) {
-    return function (target: Object, key: string | symbol) {
-      let val = target[key];
-
-      const getter = () => {
-        return val;
-      };
-      const setter = value => {
-        val = `${value} ${emoji}`;
-      };
-
-      Object.defineProperty(target, key, {
-        get: getter,
-        set: setter,
-        enumerable: true,
-        configurable: true,
-      });
-    };
-  }
 });
 
 test("class field order", () => {
@@ -1116,7 +934,7 @@ test("lowering many decorated instance fields into a large constructor body stay
         }
         const t = new Bun.Transpiler({
           loader: "ts",
-          tsconfig: { compilerOptions: { experimentalDecorators: true } },
+          tsconfig: { compilerOptions: { experimentalDecorators: true, useDefineForClassFields: false } },
         });
         function time(M) {
           const src = gen(M);
@@ -1146,3 +964,72 @@ test("lowering many decorated instance fields into a large constructor body stay
   const { tSmall, tLarge } = JSON.parse(stdout);
   expect(tLarge).toBeLessThan(tSmall * 3);
 }, 90_000);
+
+test.concurrent.each([
+  {
+    base: { target: "es2022", useDefineForClassFields: true },
+    middle: { experimentalDecorators: true, strict: true },
+    last: { useDefineForClassFields: false },
+    stdout: "Object\nlegacy\n[]\n",
+  },
+  {
+    base: { experimentalDecorators: true },
+    middle: {},
+    last: {},
+    stdout: 'Object\nlegacy\n[ "x" ]\n',
+  },
+  {
+    base: { experimentalDecorators: true },
+    middle: { emitDecoratorMetadata: false },
+    last: { experimentalDecorators: false },
+    stdout: 'standard\n[ "x" ]\n',
+  },
+  {
+    base: { target: "es2021", strict: false, experimentalDecorators: true },
+    middle: {},
+    last: {},
+    stdout: "String\nlegacy\n[]\n",
+  },
+  {
+    base: { target: "es2021", strictNullChecks: false, experimentalDecorators: true },
+    middle: { target: "es2022", strict: true },
+    last: { target: "not a target" },
+    stdout: 'String\nlegacy\n[ "x" ]\n',
+  },
+])("options of a tsconfig.json that extends another, %#", async ({ base, middle, last, stdout }) => {
+  using dir = tempDir("decorators-extends", {
+    "base.json": JSON.stringify({ compilerOptions: { emitDecoratorMetadata: true, ...base } }),
+    "middle.json": JSON.stringify({ extends: "./base.json", compilerOptions: middle }),
+    "tsconfig.json": JSON.stringify({ extends: "./middle.json", compilerOptions: last }),
+    "index.ts": `
+      (Reflect as any).metadata = (key: string, value: any) => () => console.log(value.name);
+      const d = (...args: any[]) => console.log(typeof args[1] === "string" ? "legacy" : "standard");
+      class A { @d x?: string | null; }
+      console.log(Object.keys(new A()));
+    `,
+  });
+  await using proc = Bun.spawn({ cmd: [bunExe(), "index.ts"], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+  const [out, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: out, stderr, exitCode }).toEqual({ stdout, stderr: "", exitCode: 0 });
+});
+
+test.concurrent("a variable called await in the key of a field that is assigned", async () => {
+  using dir = tempDir("decorators-await-name", {
+    "tsconfig.json": `{ "compilerOptions": { "useDefineForClassFields": false } }`,
+    "index.cts": `
+      function f() { var await = "k"; class A { [await] = 1 } return Object.keys(new A()); }
+      console.log(f());
+    `,
+  });
+  await using proc = Bun.spawn({ cmd: [bunExe(), "index.cts"], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: '[ "k" ]\n', stderr: "", exitCode: 0 });
+});
+
+test.concurrent.skipIf(!canCompareWithTypeScript).each([false, true])(
+  "classes run as those that TypeScript compiles, bundled: %p",
+  async bundle => {
+    expect(await differencesFromTypeScript(cases, {}, { bundle })).toEqual([]);
+  },
+  longLimit,
+);

@@ -628,11 +628,11 @@ impl<'a> Transpiler<'a> {
                     if self.options.transform_options.jsx.is_none() {
                         self.options.jsx = jsx_pragma_from_resolver(&tsconfig.jsx);
                     }
-                    self.options.emit_decorator_metadata = tsconfig.emit_decorator_metadata;
-                    self.options.experimental_decorators = tsconfig.experimental_decorators;
-                    if let Some(v) = tsconfig.use_define_for_class_fields {
-                        self.options.use_define_for_class_fields = v;
-                    }
+                    self.options.emit_decorator_metadata = tsconfig.emit_decorator_metadata();
+                    self.options.experimental_decorators = tsconfig.experimental_decorators();
+                    self.options.use_define_for_class_fields =
+                        tsconfig.use_define_for_class_fields();
+                    self.options.strict_null_checks = tsconfig.strict_null_checks();
                 }
             }
         }
@@ -891,6 +891,7 @@ pub struct ParseOptions<'a, 'b> {
     pub emit_decorator_metadata: bool,
     pub experimental_decorators: bool,
     pub use_define_for_class_fields: bool,
+    pub strict_null_checks: bool,
     pub remove_cjs_module_wrapper: bool,
 
     pub dont_bundle_twice: bool,
@@ -1499,6 +1500,7 @@ impl<'a> Transpiler<'a> {
                 };
 
                 opts.features.emit_decorator_metadata = this_parse.emit_decorator_metadata;
+                opts.features.strict_null_checks = this_parse.strict_null_checks;
                 // emitDecoratorMetadata implies legacy/experimental decorators, as it only
                 // makes sense with TypeScript's legacy decorator system (reflect-metadata).
                 // TC39 standard decorators have their own metadata mechanism.
@@ -2844,6 +2846,7 @@ impl<'a> Transpiler<'a> {
                 let experimental_decorators = resolve_result.flags.experimental_decorators();
                 let use_define_for_class_fields =
                     resolve_result.flags.use_define_for_class_fields();
+                let strict_null_checks = resolve_result.flags.strict_null_checks();
                 // `MacroRemap` (StringArrayHashMap of StringArrayHashMap) has
                 // no nested `Clone` impl (the inner clone is fallible).
                 // Rebuild the outer map, deep-cloning
@@ -2873,6 +2876,7 @@ impl<'a> Transpiler<'a> {
                     emit_decorator_metadata,
                     experimental_decorators,
                     use_define_for_class_fields,
+                    strict_null_checks,
                     virtual_source: None,
                     replace_exports: Default::default(),
                     inject_jest_globals: false,

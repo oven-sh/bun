@@ -890,53 +890,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         None
     }
 
-    pub(crate) fn check_if_defined_helper(&mut self, expr: Expr) -> Result<Expr, crate::Error> {
-        let p = self;
-        let flags = if matches!(expr.data, js_ast::ExprData::EIdentifier(_)) {
-            E::UnaryFlags::WAS_ORIGINALLY_TYPEOF_IDENTIFIER
-        } else {
-            E::UnaryFlags::empty()
-        };
-        let left = p.new_expr(
-            E::Unary {
-                op: js_ast::OpCode::UnTypeof,
-                value: expr,
-                flags,
-            },
-            bun_ast::Loc::EMPTY,
-        );
-        let right = p.new_expr(E::EString::from_static(b"undefined"), bun_ast::Loc::EMPTY);
-        Ok(p.new_expr(
-            E::Binary {
-                op: js_ast::OpCode::BinStrictEq,
-                left,
-                right,
-            },
-            bun_ast::Loc::EMPTY,
-        ))
-    }
-
-    pub(crate) fn maybe_defined_helper(
-        &mut self,
-        identifier_expr: Expr,
-    ) -> Result<Expr, crate::Error> {
-        let p = self;
-        let test = Self::check_if_defined_helper(p, identifier_expr)?;
-        let object_ref = p
-            .find_symbol(bun_ast::Loc::EMPTY, b"Object")
-            .expect("unreachable")
-            .r#ref;
-        let yes = p.new_expr(E::Identifier::init(object_ref), bun_ast::Loc::EMPTY);
-        Ok(p.new_expr(
-            E::If {
-                test,
-                yes,
-                no: identifier_expr,
-            },
-            bun_ast::Loc::EMPTY,
-        ))
-    }
-
     pub(crate) fn maybe_comma_spread_error(&mut self, comma_after_spread: bun_ast::Loc) {
         let p = self;
         if comma_after_spread.is_empty() {

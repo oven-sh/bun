@@ -266,6 +266,10 @@ impl Local {
         if self.kind.is_using() {
             return false;
         }
+        // An unused `import a = b.c` is removed later, as a whole statement.
+        if self.origin.is_ts_import_equals() || other.origin.is_ts_import_equals() {
+            return false;
+        }
         self.kind == other.kind
             && self.is_export == other.is_export
             && self.origin.is_commonjs_export() == other.origin.is_commonjs_export()

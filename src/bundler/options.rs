@@ -1209,6 +1209,7 @@ pub struct BundleOptions<'a> {
     pub emit_decorator_metadata: bool,
     pub experimental_decorators: bool,
     pub use_define_for_class_fields: bool,
+    pub strict_null_checks: bool,
     pub auto_import_jsx: bool,
     pub allow_runtime: bool,
 
@@ -1467,6 +1468,7 @@ impl<'a> BundleOptions<'a> {
             emit_decorator_metadata: self.emit_decorator_metadata,
             experimental_decorators: self.experimental_decorators,
             use_define_for_class_fields: self.use_define_for_class_fields,
+            strict_null_checks: self.strict_null_checks,
             auto_import_jsx: self.auto_import_jsx,
             allow_runtime: self.allow_runtime,
             trim_unused_imports: self.trim_unused_imports,
@@ -1736,6 +1738,7 @@ impl<'a> BundleOptions<'a> {
             emit_decorator_metadata: false,
             experimental_decorators: false,
             use_define_for_class_fields: true,
+            strict_null_checks: false,
             auto_import_jsx: true,
             allow_runtime: true,
             trim_unused_imports: None,

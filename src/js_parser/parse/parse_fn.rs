@@ -1,5 +1,4 @@
 use bun_alloc::ArenaVecExt as _;
-use bun_collections::VecExt;
 
 use crate::js_lexer;
 use crate::js_lexer::T;
@@ -186,7 +185,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Await and yield are not allowed in function arguments
         // `FnOrArrowDataParse` is `Clone`, so save/restore is a clone.
-        let old_fn_or_arrow_data = p.fn_or_arrow_data_parse.clone();
+        let mut old_fn_or_arrow_data = p.fn_or_arrow_data_parse.clone();
 
         p.fn_or_arrow_data_parse.allow_await = if opts.allow_await == AwaitOrYield::AllowExpr {
             AwaitOrYield::ForbidAll
@@ -207,7 +206,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.fn_or_arrow_data_parse.allow_super_call = opts.allow_super_call;
         p.fn_or_arrow_data_parse.allow_super_property = opts.allow_super_property;
 
-        let mut rest_arg: bool = false;
         let mut arg_has_decorators: bool = false;
         let mut args = bun_alloc::ArenaVec::<G::Arg>::new_in(p.arena);
         while p.lexer.token != T::TCloseParen {
@@ -227,17 +225,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             let mut ts_decorators = bun_alloc::AstAlloc::vec();
-            if opts.allow_ts_decorators {
+            if opts.allow_ts_decorators && p.lexer.token == T::TAt {
+                // The scope of a parameter decorator is the one that the method's own decorators have.
+                let function_args = p.current_scope;
+                p.current_scope = function_args
+                    .parent
+                    .expect("infallible: not the module scope");
+                core::mem::swap(&mut p.fn_or_arrow_data_parse, &mut old_fn_or_arrow_data);
                 ts_decorators = p.parse_type_script_decorators()?;
-                if ts_decorators.len_u32() > 0 {
-                    arg_has_decorators = true;
-                }
+                core::mem::swap(&mut p.fn_or_arrow_data_parse, &mut old_fn_or_arrow_data);
+                p.current_scope = function_args;
+                arg_has_decorators = true;
             }
 
             if !func.flags.contains(Flags::Function::HasRestArg) && p.lexer.token == T::TDotDotDot {
                 // p.markSyntaxFeature
                 p.lexer.next()?;
-                rest_arg = true;
                 func.flags.insert(Flags::Function::HasRestArg);
             }
 
@@ -285,19 +288,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // "function foo(a: any) {}"
                 if p.lexer.token == T::TColon {
                     p.lexer.next()?;
-                    if !rest_arg {
-                        if p.options.features.emit_decorator_metadata
-                            && opts.allow_ts_decorators
-                            && (opts.has_argument_decorators
-                                || opts.has_decorators
-                                || arg_has_decorators)
-                        {
-                            ts_metadata = p.skip_type_script_type_with_metadata(Level::Lowest)?;
-                        } else {
-                            p.skip_type_script_type(Level::Lowest)?;
-                        }
+                    // A decorator on a later parameter or on the other accessor describes this one too.
+                    if p.options.features.emit_decorator_metadata && opts.allow_ts_decorators {
+                        ts_metadata = p.skip_type_script_type_with_metadata(Level::Lowest)?;
                     } else {
-                        // rest parameter is always object, leave metadata as m_none
                         p.skip_type_script_type(Level::Lowest)?;
                     }
                 }
@@ -341,7 +335,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             p.lexer.next()?;
-            rest_arg = false;
         }
         if !args.is_empty() {
             func.args = bun_ast::StoreSlice::new_mut(args.into_bump_slice_mut());
@@ -372,22 +365,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if p.lexer.token == T::TColon {
                 p.lexer.next()?;
 
-                if p.options.features.emit_decorator_metadata
-                    && opts.allow_ts_decorators
-                    && (opts.has_argument_decorators || opts.has_decorators)
-                {
+                if p.options.features.emit_decorator_metadata && opts.allow_ts_decorators {
                     func.return_ts_metadata = p.skip_typescript_return_type_with_metadata()?;
                 } else {
                     p.skip_typescript_return_type()?;
-                }
-            } else if p.options.features.emit_decorator_metadata
-                && opts.allow_ts_decorators
-                && (opts.has_argument_decorators || opts.has_decorators)
-            {
-                if func.flags.contains(Flags::Function::IsAsync) {
-                    func.return_ts_metadata = bun_ast::ts::Metadata::MPromise;
-                } else {
-                    func.return_ts_metadata = bun_ast::ts::Metadata::MUndefined;
                 }
             }
         }

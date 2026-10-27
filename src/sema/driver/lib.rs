@@ -3,6 +3,7 @@
 //! `bun check`, `bun build --check` and `bun run --check` all use this, with different roots and different output
 //! formatting.
 
+mod decorator_metadata;
 pub mod format;
 pub mod host;
 pub mod outline;

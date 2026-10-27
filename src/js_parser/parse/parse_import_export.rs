@@ -1,7 +1,7 @@
 use crate::Error;
 use crate::lexer::{self as js_lexer, T};
 use crate::p::P;
-use crate::parser::{ExportClauseResult, ImportClause, is_eval_or_arguments};
+use crate::parser::{ExportClauseResult, ImportClause, TypeNameDeclaration, is_eval_or_arguments};
 use bun_alloc::ArenaVecExt as _;
 use bun_ast::LexerLog as _;
 use bun_ast::expr::Data as ExprData;
@@ -161,6 +161,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             // "import { type as as as } from 'mod'"
                             // "import { type as as foo } from 'mod'"
                             had_type_only_imports = true;
+                            p.declare_type_name(
+                                p.lexer.identifier,
+                                TypeNameDeclaration::TypeOnlyImport,
+                            );
                             p.lexer.next()?;
                         } else {
                             // "import { type as as } from 'mod'"
@@ -209,18 +213,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // "import { type xx as yy } from 'mod'"
                     // "import { type if as yy } from 'mod'"
                     // "import { type 'xx' as yy } from 'mod'"
-                    let _ = p.parse_clause_alias(b"import")?;
+                    let mut local_name = p.parse_clause_alias(b"import")?;
                     p.lexer.next()?;
 
                     if p.lexer.is_contextual_keyword(b"as") {
                         p.lexer.next()?;
 
+                        local_name = p.lexer.identifier;
                         p.lexer.expect(T::TIdentifier)?;
                     } else if !is_identifier_inner {
                         // An import where the name is a keyword must have an alias
                         p.lexer.expected_string(b"\"as\"")?;
                     }
                     had_type_only_imports = true;
+                    p.declare_type_name(local_name, TypeNameDeclaration::TypeOnlyImport);
                 }
             } else {
                 if p.lexer.is_contextual_keyword(b"as") {

@@ -292,6 +292,35 @@ describe("transpiler cache", () => {
     expect(statSync(entry).isFile()).toBeTrue();
     expect(readFileSync(entry).equals(good)).toBeTrue();
   });
+  test("strictNullChecks is part of the key only with emitDecoratorMetadata", async () => {
+    const run = (compilerOptions: object) => {
+      writeFileSync(join(temp_dir, "tsconfig.json"), JSON.stringify({ compilerOptions }));
+      return bunRun(join(temp_dir, "a.ts"), env);
+    };
+    const entry = () => {
+      const entries = readdirSync(cache_dir).filter(f => f.endsWith(".pile"));
+      expect(entries).toHaveLength(1);
+      return readFileSync(join(cache_dir, entries[0]));
+    };
+    const code = `(() => {
+      let type;
+      (Reflect as any).metadata = (key: string, value: any) => () => { type = value.name; };
+      const d: any = () => {};
+      class A { @d x: string | null; }
+      return type;
+    })()`;
+    writeFileSync(join(temp_dir, "a.ts"), dummyFile((50 * 1024 * 1.5) | 0, "1", { code }));
+
+    const metadata = { experimentalDecorators: true, emitDecoratorMetadata: true };
+    expect(await run({ ...metadata, strictNullChecks: true })).toSpawn("Object");
+    expect(await run({ ...metadata, strictNullChecks: false })).toSpawn("String");
+    expect(await run({ ...metadata, strictNullChecks: true })).toSpawn("Object");
+
+    expect(await run({ experimentalDecorators: true, strictNullChecks: true })).toSpawn("undefined");
+    const before = entry();
+    expect(await run({ experimentalDecorators: true, strictNullChecks: false })).toSpawn("undefined");
+    expect(entry().equals(before)).toBeTrue();
+  });
   test("does not inline process.env", async () => {
     writeFileSync(
       join(temp_dir, "a.js"),

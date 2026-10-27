@@ -2937,7 +2937,27 @@ declare module "bun" {
       jsxFactory?: string;
       jsxFragmentFactory?: string;
       jsxImportSource?: string;
+      /**
+       * If `false`, `x = 1` in a class is `this.x = 1` in its constructor, which calls a setter that the class inherits.
+       * A class with standard decorators keeps its fields.
+       *
+       * @default false if `target` is older than ES2022, or else true
+       */
       useDefineForClassFields?: boolean;
+      /** Only sets the default of `useDefineForClassFields`. Bun does not compile syntax for older engines. */
+      target?: string;
+      /** Compile decorators as TypeScript did before the standard ones. */
+      experimentalDecorators?: boolean;
+      /** Give decorators `design:type`, `design:paramtypes` and `design:returntype`. Turns on `experimentalDecorators`. */
+      emitDecoratorMetadata?: boolean;
+      /** To run code, it only sets the default of `strictNullChecks`. */
+      strict?: boolean;
+      /**
+       * If `true`, the `design:type` of `string | null` is `Object`, and if `false` it is `String`.
+       *
+       * @default the value of `strict`, or else true
+       */
+      strictNullChecks?: boolean;
       importsNotUsedAsValues?: "remove" | "preserve" | "error";
       /** moduleSuffixes is not supported yet */
       moduleSuffixes?: any;

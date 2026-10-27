@@ -467,7 +467,7 @@ it.concurrent("an argument reaches C as it does through dlopen()", async () => {
         0n, 5n, -5n, 2n ** 31n, 2n ** 64n - 1n, 2n ** 64n + 7n, 2n ** 1024n,
         "", "5", Symbol("s"),
       ];
-      const objects = [{}, [5], new Number(5), { valueOf: () => 5 }];
+      const objects = [{}, [5], new Number(5), { valueOf: () => 5 }, new Uint16Array(5)];
       const outcome = (fn, value) => {
         const before = compiled.get_native_calls();
         try {
@@ -476,7 +476,11 @@ it.concurrent("an argument reaches C as it does through dlopen()", async () => {
           return error.name + (compiled.get_native_calls() === before ? "" : " after the call");
         }
       };
-      const show = value => (typeof value === "bigint" ? value + "n" : Object.is(value, -0) ? "-0" : String(value));
+      const show = value => {
+        if (typeof value === "bigint") return value + "n";
+        if (ArrayBuffer.isView(value)) return "Uint16Array";
+        return Object.is(value, -0) ? "-0" : String(value);
+      };
 
       // Where cc() keeps its own result. The test pins each one.
       const keeps = (type, value) => {
@@ -486,6 +490,8 @@ it.concurrent("an argument reaches C as it does through dlopen()", async () => {
         if (typeof value === "number") return (type.startsWith("u64") && value >= 2 ** 64) || (isPointer && value >= 2 ** 63);
         // cc() passes NULL. dlopen() throws.
         if (value == null) return type === "function";
+        // cc() passes the number of elements. dlopen() throws.
+        if (ArrayBuffer.isView(value)) return type.startsWith("u64");
         // dlopen() passes a copy of the string in UTF-8, which cc() could not free. cc() throws.
         return typeof value === "string" && type === "cstring";
       };
@@ -567,8 +573,8 @@ it.concurrent("an argument reaches C as it does through dlopen()", async () => {
   const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
   const allOnes = "18446744073709551615";
   expect(JSON.parse(stdout)).toEqual({
-    // 9 number types with 49 values. 8 other types with these and 4 objects. 8 calls of mixed().
-    calls: 9 * 49 + 8 * 53 - 17 + 8,
+    // 9 number types with 49 values. 8 other types with these and 5 objects. 8 calls of mixed().
+    calls: 9 * 49 + 8 * 54 - 19 + 8,
     differences: [],
     objects: ["TypeError"],
     fromFloat64Array: {
@@ -590,8 +596,10 @@ it.concurrent("an argument reaches C as it does through dlopen()", async () => {
     kept: {
       "u64 1e+300": allOnes,
       "u64 Infinity": allOnes,
+      "u64 Uint16Array": "5",
       "u64_fast 1e+300": allOnes,
       "u64_fast Infinity": allOnes,
+      "u64_fast Uint16Array": "5",
       "ptr 10000000000000000000": "10000000000000000000",
       "ptr 1e+300": allOnes,
       "ptr Infinity": allOnes,

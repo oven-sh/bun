@@ -752,8 +752,7 @@ pub mod fs {
     /// NOTE: distinct from `crate::Path` (the buffer-backed AbsPath/RelPath). This is
     /// the *resolver* `Path`; addressed as `bun_paths::fs::Path`.
     ///
-    /// CANONICAL: `bun_paths::fs::Path<'static>` / `bun_resolver::fs::Path` are re-exports
-    /// of this type (D090). Resolver-tier methods (`dupe_alloc`, `loader`, `hash_key`,
+    /// CANONICAL: `bun_resolver::fs::Path` is a re-export of this type (D090). Resolver-tier methods (`dupe_alloc`, `loader`, `hash_key`,
     /// …) live on `bun_resolver::fs::PathResolverExt`.
     #[repr(C)]
     #[derive(Debug, Clone, Copy)]
@@ -783,32 +782,6 @@ pub mod fs {
     }
 
     impl<'a> Path<'a> {
-        /// Erase the borrow lifetime — some storage types
-        /// (`ImportRecord.path`, `Graph.input_files`) are pinned to
-        /// `Path<'static>` until the arena lifetime is re-threaded crate-wide.
-        ///
-        /// # Safety
-        /// Every borrowed slice in `self` (text/pretty/namespace) must outlive
-        /// every read through the returned `Path<'static>`.
-        #[inline]
-        pub unsafe fn into_static(self) -> Path<'static> {
-            #[inline(always)]
-            unsafe fn d(s: &[u8]) -> &'static [u8] {
-                // SAFETY: caller contract on `into_static`.
-                unsafe { &*core::ptr::from_ref::<[u8]>(s) }
-            }
-            // SAFETY: caller contract — see fn doc.
-            unsafe {
-                Path {
-                    pretty: d(self.pretty),
-                    text: d(self.text),
-                    namespace: d(self.namespace),
-                    is_disabled: self.is_disabled,
-                    is_symlink: self.is_symlink,
-                }
-            }
-        }
-
         pub(crate) const EMPTY: Path<'static> = Path {
             pretty: b"",
             text: b"",

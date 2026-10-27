@@ -225,8 +225,7 @@ export function nodeExeAtLeast(version: string): string | null {
 
 /**
  * Runs `file` in `cwd` once for each of `args`, each run in a fresh process: under this Bun, and under Node.js
- * `nodeVersion` or later when one is installed. For a fixture that Bun and Node.js must answer alike. A run keeps
- * its stderr only when it fails.
+ * `nodeVersion` or later when one is installed. For a fixture that Bun and Node.js must answer alike.
  */
 export async function runInBunAndNode(cwd: string, file: string, args: string[], nodeVersion: string) {
   const node = nodeExeAtLeast(nodeVersion);
@@ -235,7 +234,7 @@ export async function runInBunAndNode(cwd: string, file: string, args: string[],
     cases.map(async ({ exe, arg }) => {
       await using proc = Bun.spawn({ cmd: [exe, file, arg], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      return { exe, arg, stdout: stdout.trim(), stderr: exitCode === 0 ? "" : stderr, exitCode };
+      return { exe, arg, stdout: stdout.trim(), stderr, exitCode };
     }),
   );
 }

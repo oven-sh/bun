@@ -7,6 +7,7 @@
     macro(resolve, resolve) \
     macro(mockedFunction, mockedFunction) \
     macro(binaryTypeBlob, blob) \
+    macro(Buffer, Buffer) \
     macro(close, close) \
     macro(end, end) \
     macro(flush, flush) \

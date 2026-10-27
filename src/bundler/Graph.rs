@@ -91,6 +91,10 @@ pub struct Graph<'a> {
     ///
     /// Helps skip a loop.
     pub(crate) has_any_secondary_paths: bool,
+
+    /// The imports that made a file a CSS module script, as (importer source index,
+    /// import record index). See `css_module_script`.
+    pub(crate) css_module_script_imports: Vec<(IndexInt, u32)>,
 }
 
 #[derive(Default)]
@@ -179,6 +183,7 @@ impl<'a> Graph<'a> {
             kit_referenced_server_data: false,
             kit_referenced_client_data: false,
             has_any_secondary_paths: false,
+            css_module_script_imports: Vec::new(),
         }
     }
 }

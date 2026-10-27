@@ -5642,6 +5642,9 @@ pub(crate) mod __gated_printer {
 
                     let import_record = self.import_record(s.import_record_index as usize);
                     self.print_import_record_path(import_record);
+                    if !IS_BUN_PLATFORM {
+                        self.print_css_type_attribute(import_record);
+                    }
                     self.print_semicolon_after_statement();
 
                     if Self::MAY_HAVE_MODULE_INFO {
@@ -5823,6 +5826,9 @@ pub(crate) mod __gated_printer {
 
                     self.print_whitespacer(ws!(b"} from "));
                     self.print_import_record_path(import_record);
+                    if !IS_BUN_PLATFORM {
+                        self.print_css_type_attribute(import_record);
+                    }
                     self.print_semicolon_after_statement();
 
                     if Self::MAY_HAVE_MODULE_INFO && self.module_info.is_some() {
@@ -6296,7 +6302,7 @@ pub(crate) mod __gated_printer {
                                 Loader::Tsx => {
                                     self.print_whitespacer(ws!(b" with { type: \"tsx\" }"))
                                 }
-                                Loader::Css => {
+                                Loader::Css | Loader::CssModuleScript => {
                                     self.print_whitespacer(ws!(b" with { type: \"css\" }"))
                                 }
                                 Loader::File => {
@@ -6349,6 +6355,8 @@ pub(crate) mod __gated_printer {
                                 }
                             }
                         }
+                    } else {
+                        self.print_css_type_attribute(record);
                     }
                     self.print_semicolon_after_statement();
 
@@ -6369,7 +6377,9 @@ pub(crate) mod __gated_printer {
                                         Loader::Js => FP::host_defined(mi.str(b"js")),
                                         Loader::Ts => FP::host_defined(mi.str(b"ts")),
                                         Loader::Tsx => FP::host_defined(mi.str(b"tsx")),
-                                        Loader::Css => FP::host_defined(mi.str(b"css")),
+                                        Loader::Css | Loader::CssModuleScript => {
+                                            FP::host_defined(mi.str(b"css"))
+                                        }
                                         Loader::File => FP::host_defined(mi.str(b"file")),
                                         Loader::Jsonc => FP::host_defined(mi.str(b"jsonc")),
                                         Loader::Toml => FP::host_defined(mi.str(b"toml")),
@@ -6544,6 +6554,17 @@ pub(crate) mod __gated_printer {
             self.print(quote);
             self.print_string_characters_utf8(import_record.path.text, quote);
             self.print(quote);
+        }
+
+        /// Targets other than Bun drop the `type` of an import that stays in the output,
+        /// except `css`: a browser runs that import as a CSS module script.
+        fn print_css_type_attribute(&mut self, import_record: &ImportRecord) {
+            if matches!(
+                import_record.loader,
+                Some(bun_ast::Loader::Css | bun_ast::Loader::CssModuleScript)
+            ) {
+                self.print_whitespacer(ws!(b" with { type: \"css\" }"));
+            }
         }
 
         #[inline]

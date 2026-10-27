@@ -1742,7 +1742,7 @@ impl<'a> Transpiler<'a> {
                     log,
                 );
             }
-            options::Loader::Css => {}
+            options::Loader::Css | options::Loader::CssModuleScript => {}
             options::Loader::File
             | options::Loader::Napi
             | options::Loader::Base64
@@ -2944,7 +2944,7 @@ impl<'a> Transpiler<'a> {
                 );
                 return Ok(None);
             }
-            options::Loader::Css => {
+            options::Loader::Css | options::Loader::CssModuleScript => {
                 match self.build_css_output(
                     file_path_text,
                     resolve_result.dirname_fd,

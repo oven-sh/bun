@@ -1090,6 +1090,7 @@ static JSValue processBindingConstantsGetZlib(VM& vm, JSObject* bindingObject)
         { "Z_MIN_LEVEL", static_cast<double>(-1) },
         { "Z_MAX_LEVEL", static_cast<double>(9) },
         { "Z_DEFAULT_LEVEL", static_cast<double>(Z_DEFAULT_COMPRESSION) },
+        // The enums and constants of src/brotli/enc/mod.rs and src/brotli/dec/mod.rs. zlib.test.js has the values.
         { "BROTLI_OPERATION_PROCESS", static_cast<double>(0) },
         { "BROTLI_OPERATION_FLUSH", static_cast<double>(1) },
         { "BROTLI_OPERATION_FINISH", static_cast<double>(2) },

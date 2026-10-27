@@ -2,7 +2,7 @@ import { deflateSync, gunzipSync, gzipSync, inflateSync } from "bun";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir, tmpdirSync } from "harness";
 import * as buffer from "node:buffer";
-import { randomFillSync } from "node:crypto";
+import { pbkdf2Sync, randomFillSync } from "node:crypto";
 import * as fs from "node:fs";
 import { resolve } from "node:path";
 import * as stream from "node:stream";
@@ -619,6 +619,122 @@ describe("zlib.brotli", () => {
       });
       expect(compressed.toString()).toEqual(Buffer.from(compressedString3, "base64").toString());
     }
+  });
+
+  // The thread pool reads the caller's buffer, which JS can still write to.
+  describe("with an input that changes while it is read", () => {
+    const noise = pbkdf2Sync("noise", "", 1, 64 * 1024, "sha256");
+    const contents = [
+      noise,
+      Buffer.from(noise.toString("hex")).subarray(noise.length),
+      Buffer.alloc(noise.length, "abcdefgh "),
+    ];
+
+    async function whileItChanges(contents, start) {
+      const input = Buffer.from(contents[0]);
+      let result;
+      start(input, (error, output) => (result = { error, output }));
+      for (let i = 1; !result; i++) {
+        input.set(contents[i % contents.length]);
+        await new Promise(setImmediate);
+      }
+      return result;
+    }
+
+    it.each([1, 5, 11])("brotliCompress at quality %i writes a stream that is as long as the input", async quality => {
+      const params = { [zlib.constants.BROTLI_PARAM_QUALITY]: quality };
+      for (let round = 0; round < 4; round++) {
+        const { error, output } = await whileItChanges(contents, (input, done) =>
+          zlib.brotliCompress(input, { params }, done),
+        );
+        expect(error).toBeNull();
+        expect(zlib.brotliDecompressSync(output).length).toBe(noise.length);
+      }
+    });
+
+    it("brotliDecompress ends with output or with an error in the stream", async () => {
+      const streams = contents.map(content => {
+        const stream = Buffer.alloc(noise.length + 16);
+        zlib.brotliCompressSync(content, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 1 } }).copy(stream);
+        return stream;
+      });
+      for (let round = 0; round < 8; round++) {
+        const { error } = await whileItChanges(streams, (input, done) =>
+          zlib.brotliDecompress(input, { maxOutputLength: 1 << 24 }, done),
+        );
+        expect(error?.code ?? "").toMatch(/^(|ERR__ERROR_FORMAT_[A-Z0-9_]+|Z_BUF_ERROR|ERR_BUFFER_TOO_LARGE)$/);
+      }
+    });
+  });
+
+  it("has the constants of brotli", () => {
+    const brotli = Object.fromEntries(Object.entries(zlib.constants).filter(([name]) => name.startsWith("BROTLI_")));
+    expect(brotli).toEqual({
+      BROTLI_DECODE: 8,
+      BROTLI_ENCODE: 9,
+      BROTLI_OPERATION_PROCESS: 0,
+      BROTLI_OPERATION_FLUSH: 1,
+      BROTLI_OPERATION_FINISH: 2,
+      BROTLI_OPERATION_EMIT_METADATA: 3,
+      BROTLI_PARAM_MODE: 0,
+      BROTLI_MODE_GENERIC: 0,
+      BROTLI_MODE_TEXT: 1,
+      BROTLI_MODE_FONT: 2,
+      BROTLI_DEFAULT_MODE: 0,
+      BROTLI_PARAM_QUALITY: 1,
+      BROTLI_MIN_QUALITY: 0,
+      BROTLI_MAX_QUALITY: 11,
+      BROTLI_DEFAULT_QUALITY: 11,
+      BROTLI_PARAM_LGWIN: 2,
+      BROTLI_MIN_WINDOW_BITS: 10,
+      BROTLI_MAX_WINDOW_BITS: 24,
+      BROTLI_LARGE_MAX_WINDOW_BITS: 30,
+      BROTLI_DEFAULT_WINDOW: 22,
+      BROTLI_PARAM_LGBLOCK: 3,
+      BROTLI_MIN_INPUT_BLOCK_BITS: 16,
+      BROTLI_MAX_INPUT_BLOCK_BITS: 24,
+      BROTLI_PARAM_DISABLE_LITERAL_CONTEXT_MODELING: 4,
+      BROTLI_PARAM_SIZE_HINT: 5,
+      BROTLI_PARAM_LARGE_WINDOW: 6,
+      BROTLI_PARAM_NPOSTFIX: 7,
+      BROTLI_PARAM_NDIRECT: 8,
+      BROTLI_DECODER_RESULT_ERROR: 0,
+      BROTLI_DECODER_RESULT_SUCCESS: 1,
+      BROTLI_DECODER_RESULT_NEEDS_MORE_INPUT: 2,
+      BROTLI_DECODER_RESULT_NEEDS_MORE_OUTPUT: 3,
+      BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION: 0,
+      BROTLI_DECODER_PARAM_LARGE_WINDOW: 1,
+      BROTLI_DECODER_NO_ERROR: 0,
+      BROTLI_DECODER_SUCCESS: 1,
+      BROTLI_DECODER_NEEDS_MORE_INPUT: 2,
+      BROTLI_DECODER_NEEDS_MORE_OUTPUT: 3,
+      BROTLI_DECODER_ERROR_FORMAT_EXUBERANT_NIBBLE: -1,
+      BROTLI_DECODER_ERROR_FORMAT_RESERVED: -2,
+      BROTLI_DECODER_ERROR_FORMAT_EXUBERANT_META_NIBBLE: -3,
+      BROTLI_DECODER_ERROR_FORMAT_SIMPLE_HUFFMAN_ALPHABET: -4,
+      BROTLI_DECODER_ERROR_FORMAT_SIMPLE_HUFFMAN_SAME: -5,
+      BROTLI_DECODER_ERROR_FORMAT_CL_SPACE: -6,
+      BROTLI_DECODER_ERROR_FORMAT_HUFFMAN_SPACE: -7,
+      BROTLI_DECODER_ERROR_FORMAT_CONTEXT_MAP_REPEAT: -8,
+      BROTLI_DECODER_ERROR_FORMAT_BLOCK_LENGTH_1: -9,
+      BROTLI_DECODER_ERROR_FORMAT_BLOCK_LENGTH_2: -10,
+      BROTLI_DECODER_ERROR_FORMAT_TRANSFORM: -11,
+      BROTLI_DECODER_ERROR_FORMAT_DICTIONARY: -12,
+      BROTLI_DECODER_ERROR_FORMAT_WINDOW_BITS: -13,
+      BROTLI_DECODER_ERROR_FORMAT_PADDING_1: -14,
+      BROTLI_DECODER_ERROR_FORMAT_PADDING_2: -15,
+      BROTLI_DECODER_ERROR_FORMAT_DISTANCE: -16,
+      BROTLI_DECODER_ERROR_FORMAT_BLOCK_SWITCH: -17,
+      BROTLI_DECODER_ERROR_DICTIONARY_NOT_SET: -19,
+      BROTLI_DECODER_ERROR_INVALID_ARGUMENTS: -20,
+      BROTLI_DECODER_ERROR_ALLOC_CONTEXT_MODES: -21,
+      BROTLI_DECODER_ERROR_ALLOC_TREE_GROUPS: -22,
+      BROTLI_DECODER_ERROR_ALLOC_CONTEXT_MAP: -25,
+      BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_1: -26,
+      BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_2: -27,
+      BROTLI_DECODER_ERROR_ALLOC_BLOCK_TYPE_TREES: -30,
+      BROTLI_DECODER_ERROR_UNREACHABLE: -31,
+    });
   });
 });
 

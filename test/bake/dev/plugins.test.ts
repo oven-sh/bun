@@ -1,5 +1,6 @@
 // Plugin tests concern plugins in development mode.
-import { devTest, minimalFramework } from "../bake-harness";
+import { expect } from "bun:test";
+import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 // Note: more in depth testing of plugins is done in test/bundler/bundler_plugin.test.ts
 devTest("onResolve", {
@@ -110,6 +111,101 @@ devTest("onResolve + onLoad virtual file", {
     ]);
   },
 });
+// A module in a plugin namespace is not a file. Each case has a build error in such a module: the entry file
+// of the page that imports it (NAME is "same" or "alias"), the `onLoad` of the module, and the error.
+const virtualModuleErrors = {
+  "a syntax error in a virtual module": {
+    extension: "ts",
+    entry: `import "NAME.ts";`,
+    onLoad: `() => ({ contents: "export const value = ;", loader: "ts" })`,
+    message: /Unexpected ;/,
+  },
+  "an import that does not resolve in a virtual module": {
+    extension: "ts",
+    entry: `import "NAME.ts";`,
+    onLoad: `() => ({ contents: 'import "./missing.ts";', loader: "ts" })`,
+    message: /Could not resolve: "\.\/missing\.ts"/,
+  },
+  "a plugin error for an import in a virtual module": {
+    extension: "ts",
+    entry: `import "NAME.ts";`,
+    onLoad: `() => ({ contents: 'import "./throws.ts";', loader: "ts" })`,
+    message: /the plugin throws for this import/,
+  },
+  "a syntax error in a virtual stylesheet": {
+    extension: "css",
+    entry: `@import "NAME.css";`,
+    onLoad: `() => ({ contents: ".virtual { width: 1px; }}}", loader: "css" })`,
+    message: /Unexpected end of input/,
+  },
+  "a url() that does not resolve in a virtual stylesheet": {
+    extension: "css",
+    entry: `@import "NAME.css";`,
+    onLoad: `() => ({ contents: '.virtual { background: url("./missing.png"); }', loader: "css" })`,
+    message: /Could not resolve: "\.\/missing\.png"/,
+  },
+  "a declined url() that does not resolve in a virtual stylesheet": {
+    extension: "css",
+    entry: `@import "NAME.css";`,
+    onLoad: `() => ({ contents: '.virtual { background: url("./declined.png"); }', loader: "css" })`,
+    message: /Could not resolve: "\.\/declined\.png"/,
+  },
+  "a script import in a virtual stylesheet": {
+    extension: "css",
+    entry: `@import "NAME.css";`,
+    onLoad: `args => args.path.endsWith(".ts") ? { contents: "export {};", loader: "ts" } : { contents: '@import "same.ts";', loader: "css" }`,
+    message: /Cannot import a "\.ts" file into a CSS file/,
+  },
+  "a syntax error in a virtual file that a stylesheet uses": {
+    extension: "css",
+    entry: `.entry { background: url("NAME.toml"); }`,
+    onLoad: `() => ({ contents: "key = ", loader: "toml" })`,
+    message: /Missing value after '='/,
+  },
+};
+for (const [error, { extension, entry, onLoad, message }] of Object.entries(virtualModuleErrors)) {
+  const page = (name: string) => ({
+    [`${name}.html`]: emptyHtmlFile(
+      extension === "css" ? { styles: [`${name}-entry.css`] } : { scripts: [`${name}-entry.ts`] },
+    ),
+    [`${name}-entry.${extension}`]: entry.replace("NAME", name),
+  });
+  devTest(`a page keeps reporting ${error}`, {
+    files: {
+      "bunfig.toml": `
+        [serve.static]
+        plugins = ["./virtual-modules.ts"]
+      `,
+      // "same.*" keeps the import as written as its path. "alias.*" gets the path "other.*".
+      // The plugin declines "./declined.*", so the resolver gets it after the plugins.
+      "virtual-modules.ts": `
+        export default {
+          name: "virtual-modules",
+          setup(build) {
+            build.onResolve({ filter: /^same\\./ }, args => ({ path: args.path, namespace: "virtual" }));
+            build.onResolve({ filter: /^alias\\./ }, args => ({ path: args.path.replace("alias", "other"), namespace: "virtual" }));
+            build.onResolve({ filter: /^\\.\\/declined\\./ }, () => undefined);
+            build.onResolve({ filter: /^\\.\\/throws\\./ }, () => {
+              throw new Error("the plugin throws for this import");
+            });
+            build.onLoad({ filter: /.*/, namespace: "virtual" }, ${onLoad});
+          },
+        };
+      `,
+      ...page("same"),
+      ...page("alias"),
+    },
+    async test(dev) {
+      // The first response reports the errors of its own build. The second one has to find them from the page.
+      const statusOfTwoLoads = async (url: string) => [(await dev.fetch(url)).status, (await dev.fetch(url)).status];
+      expect({
+        same: await statusOfTwoLoads("/same"),
+        alias: await statusOfTwoLoads("/alias"),
+      }).toEqual({ same: [500, 500], alias: [500, 500] });
+      await dev.output.waitForLine(message);
+    },
+  });
+}
 // devTest("onLoad with watchFile", {
 //   framework: minimalFramework,
 //   pluginFile: `

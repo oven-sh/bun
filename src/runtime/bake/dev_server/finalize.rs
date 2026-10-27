@@ -64,6 +64,18 @@ impl<'a> HotUpdateContext<'a> {
 
         &mut self.resolved_index_cache[start..][..len][i.get() as usize]
     }
+
+    /// The graph key of the file that `record` imports. A record that has a source is named by it:
+    /// its own path can still be the specifier, for example after an `onResolve` plugin.
+    pub(crate) fn import_key(&self, record: &bun_ast::ImportRecord) -> &'static [u8] {
+        if record.source_index.is_valid() {
+            self.sources[record.source_index.get() as usize]
+                .path
+                .key_for_incremental_graph()
+        } else {
+            record.path.key_for_incremental_graph()
+        }
+    }
 }
 
 fn finalize_bundle_cleanup(dev: &mut DevServer, bv2: &mut BundleV2, had_sent_hmr_event: bool) {

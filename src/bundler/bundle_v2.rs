@@ -2075,6 +2075,20 @@ pub mod bv2_impl {
             // outlives `BundleV2`.
             self.transpiler.log_mut()
         }
+
+        /// The dev server's graph key of the file that gets the errors of `import_record`: its
+        /// importer. The record of an entry point has no importer and an empty `source_file`.
+        fn importer_graph_key<'r>(
+            &self,
+            import_record: &'r jsc_api::JSBundler::MiniImportRecord,
+        ) -> &'r [u8] {
+            if import_record.kind == ImportKind::EntryPointBuild {
+                return &import_record.source_file;
+            }
+            self.graph.input_files.items_source()[import_record.importer_source_index as usize]
+                .path
+                .key_for_incremental_graph()
+        }
     }
 
     pub(crate) struct ReachableFileVisitor<'a> {
@@ -2814,16 +2828,16 @@ pub mod bv2_impl {
                         }
 
                         let handles_import_errors;
+                        let importer_key = self.importer_graph_key(import_record);
                         // reshaped for borrowck — `log_for_resolution_failures` borrows
                         // `&mut self`; the returned log is backed by either a DevServer-owned slot or
                         // `*self.transpiler.log` (both raw-pointer-derived), so detach the lifetime
                         // so `self.graph.*` / `self.transpiler.*` reads below type-check.
                         // SAFETY: log lives in DevServer / transpiler, disjoint from `self.graph`.
                         let log: &mut bun_ast::Log = unsafe {
-                            bun_ptr::detach_lifetime_mut(self.log_for_resolution_failures(
-                                &import_record.source_file,
-                                target.bake_graph(),
-                            ))
+                            bun_ptr::detach_lifetime_mut(
+                                self.log_for_resolution_failures(importer_key, target.bake_graph()),
+                            )
                         };
 
                         {
@@ -5313,7 +5327,7 @@ pub mod bv2_impl {
                     // `graph.input_files`.
                     let log: &mut bun_ast::Log = unsafe {
                         bun_ptr::detach_lifetime_mut(this.log_for_resolution_failures(
-                            &resolve.import_record.source_file,
+                            this.importer_graph_key(&resolve.import_record),
                             resolve.import_record.original_target.bake_graph(),
                         ))
                     };
@@ -5558,7 +5572,7 @@ pub mod bv2_impl {
                 }
                 jsc_api::JSBundler::ResolveValue::Err(err) => {
                     let log = this.log_for_resolution_failures(
-                        &resolve.import_record.source_file,
+                        this.importer_graph_key(&resolve.import_record),
                         resolve.import_record.original_target.bake_graph(),
                     );
                     let kind = err.kind;
@@ -6026,7 +6040,7 @@ pub mod bv2_impl {
                                     .handle_parse_task_failure(
                                         crate::Error::InvalidCssImport,
                                         bake::Graph::Client,
-                                        sources[index].path.text,
+                                        sources[index].path.key_for_incremental_graph(),
                                         &raw const log,
                                         self,
                                     )
@@ -6238,7 +6252,9 @@ pub mod bv2_impl {
                     .handle_parse_task_failure(
                         crate::Error::InvalidCssImport,
                         bake::Graph::Client,
-                        sources[entry_point.get() as usize].path.text,
+                        sources[entry_point.get() as usize]
+                            .path
+                            .key_for_incremental_graph(),
                         &raw const log,
                         self,
                     )
@@ -6866,7 +6882,7 @@ pub mod bv2_impl {
                     options::Target,
                 ) = if import_record.tag == bun_ast::ImportRecordTag::BakeResolveToSsrGraph {
                     if self.framework.is_none() {
-                        self.log_for_resolution_failures(source.path.text, ctx.target.bake_graph()).add_error_fmt(
+                        self.log_for_resolution_failures(source.path.key_for_incremental_graph(), ctx.target.bake_graph()).add_error_fmt(
                             Some(source),
                             import_record.range.loc,
                             format_args!("The 'bunBakeGraph' import attribute cannot be used outside of a Bun Bake bundle"),
@@ -6884,7 +6900,7 @@ pub mod bv2_impl {
                             .unwrap()
                             .separate_ssr_graph;
                     if !is_supported {
-                        self.log_for_resolution_failures(source.path.text, ctx.target.bake_graph()).add_error_fmt(
+                        self.log_for_resolution_failures(source.path.key_for_incremental_graph(), ctx.target.bake_graph()).add_error_fmt(
                             Some(source),
                             import_record.range.loc,
                             format_args!("Framework does not have a separate SSR graph to put this import into"),
@@ -6990,7 +7006,7 @@ pub mod bv2_impl {
                             let log: &mut bun_ast::Log = unsafe {
                                 &mut *std::ptr::from_mut::<bun_ast::Log>(
                                     self.log_for_resolution_failures(
-                                        source.path.text,
+                                        source.path.key_for_incremental_graph(),
                                         ctx.target.bake_graph(),
                                     ),
                                 )
@@ -7217,7 +7233,7 @@ pub mod bv2_impl {
                             // reserves the HTML file's spot in IncrementalGraph for the
                             // route definition.
                             let log = self.log_for_resolution_failures(
-                                source.path.text,
+                                source.path.key_for_incremental_graph(),
                                 ctx.target.bake_graph(),
                             );
                             log.add_range_error_fmt(
@@ -8100,15 +8116,15 @@ pub mod bv2_impl {
                         if let Some(dev_server) = this.dev_server {
                             // Copy out the `'static` path slice so the `input_files`
                             // borrow ends before we coerce `this` to `*mut _`.
-                            let abs_path: &'static [u8] = this.graph.input_files.items_source()
+                            let graph_key: &'static [u8] = this.graph.input_files.items_source()
                                 [err.source_index.get() as usize]
                                 .path
-                                .text;
+                                .key_for_incremental_graph();
                             dev_server
                                 .handle_parse_task_failure(
                                     err.err,
                                     err.target.bake_graph(),
-                                    abs_path,
+                                    graph_key,
                                     &raw const err.log,
                                     std::ptr::from_mut(this),
                                 )

@@ -417,7 +417,8 @@ impl Default for Decoder {
     }
 }
 
-/// A Huffman table: the part of `codes` from `start` on.
+/// A Huffman table: the part of `codes` from `start` on. Taking that part as a slice is one more bounds check, for
+/// every symbol where each one has a table of its own.
 #[derive(Clone, Copy)]
 struct Tree<'a> {
     codes: &'a [HuffmanCode],
@@ -1893,6 +1894,16 @@ impl Decoder {
         Ok(pos + len)
     }
 
+    /// A meta-block can end after the insert or after the copy of a command.
+    #[inline(always)]
+    fn end_meta_block_if_complete(&mut self) -> bool {
+        let complete = self.meta_block_remaining_len <= 0;
+        if complete {
+            self.state = State::MetaBlockDone;
+        }
+        complete
+    }
+
     /// 10. Decodes commands until the meta-block ends, the ring buffer is full, or the input runs out. `pos` is the
     /// position in the ring buffer and `remaining` how much is left of the insert or copy in progress.
     #[inline(always)]
@@ -1912,6 +1923,22 @@ impl Decoder {
                 *br = self.br;
                 result
             }};
+        }
+        // Writes a literal of the insert in progress. Leaves the loop around it after the last one.
+        macro_rules! put_literal {
+            ($literal:expr) => {
+                ringbuffer.put(*pos as usize, $literal)?;
+                self.block_length[LITERAL] -= 1;
+                *pos += 1;
+                *remaining -= 1;
+                if *pos == self.ringbuffer_size {
+                    self.state = State::WriteDuringInsert;
+                    return Ok(());
+                }
+                if *remaining == 0 {
+                    break;
+                }
+            };
         }
 
         if !(SAFE || br.has_fast_input()) {
@@ -1994,18 +2021,7 @@ impl Decoder {
                                 }
                                 let literal =
                                     read_preloaded_symbol(literal_tree, br, input, &mut preloaded)?;
-                                ringbuffer.put(*pos as usize, literal as u8)?;
-                                self.block_length[LITERAL] -= 1;
-                                *pos += 1;
-                                if *pos == self.ringbuffer_size {
-                                    self.state = State::WriteDuringInsert;
-                                    *remaining -= 1;
-                                    return Ok(());
-                                }
-                                *remaining -= 1;
-                                if *remaining == 0 {
-                                    break;
-                                }
+                                put_literal!(literal as u8);
                             }
                         } else {
                             loop {
@@ -2016,18 +2032,7 @@ impl Decoder {
                                 let literal =
                                     safe_read_symbol(Tree::new(literal_tree, 0), br, input)?
                                         .ok_or(E::NeedsMoreInput)?;
-                                ringbuffer.put(*pos as usize, literal as u8)?;
-                                self.block_length[LITERAL] -= 1;
-                                *pos += 1;
-                                if *pos == self.ringbuffer_size {
-                                    self.state = State::WriteDuringInsert;
-                                    *remaining -= 1;
-                                    return Ok(());
-                                }
-                                *remaining -= 1;
-                                if *remaining == 0 {
-                                    break;
-                                }
+                                put_literal!(literal as u8);
                             }
                         }
                     } else {
@@ -2052,25 +2057,13 @@ impl Decoder {
                             );
                             p2 = p1;
                             p1 = read_symbol_maybe_safe::<SAFE>(tree, br, input)? as u8;
-                            ringbuffer.put(*pos as usize, p1)?;
-                            self.block_length[LITERAL] -= 1;
-                            *pos += 1;
-                            if *pos == self.ringbuffer_size {
-                                self.state = State::WriteDuringInsert;
-                                *remaining -= 1;
-                                return Ok(());
-                            }
-                            *remaining -= 1;
-                            if *remaining == 0 {
-                                break;
-                            }
+                            put_literal!(p1);
                         }
                     }
                     if matches!(label, Label::NextLiteralBlock) {
                         continue;
                     }
-                    if self.meta_block_remaining_len <= 0 {
-                        self.state = State::MetaBlockDone;
+                    if self.end_meta_block_if_complete() {
                         return Ok(());
                     }
                     label = Label::CommandPostDecodeLiterals;
@@ -2137,8 +2130,7 @@ impl Decoder {
                             }
                         }
                     }
-                    if self.meta_block_remaining_len <= 0 {
-                        self.state = State::MetaBlockDone;
+                    if self.end_meta_block_if_complete() {
                         return Ok(());
                     }
                     label = Label::CommandBegin;
@@ -2161,8 +2153,7 @@ impl Decoder {
                             return Ok(());
                         }
                     }
-                    if self.meta_block_remaining_len <= 0 {
-                        self.state = State::MetaBlockDone;
+                    if self.end_meta_block_if_complete() {
                         return Ok(());
                     }
                     label = Label::CommandBegin;

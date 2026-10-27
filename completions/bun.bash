@@ -6,7 +6,7 @@ _file_arguments() {
     local reset=$(shopt -p extglob)
     shopt -s extglob
 
-    COMPREPLY=( $(compgen -f -X "${extensions}" -- "${cur_word}") );
+    readarray -t COMPREPLY < <(compgen -f -X "${extensions}" -- "${cur_word}");
 
     $reset
 }
@@ -42,7 +42,7 @@ _read_scripts_in_package_json() {
         local package_json_compreply;
         local matched="${BASH_REMATCH[@]:1}";
         local scripts="${matched%%\}*}";
-        scripts="${scripts//@(\"|\')/}";
+        scripts="${scripts//[\"\']/}";
         readarray -td, scripts <<<"${scripts}";
         for completion in "${scripts[@]}"; do
             [[ "${completion}" =~ ^[[:space:]]*([[:alnum:]@/:._-]+)[[:space:]]*: ]] && package_json_compreply+=( "${BASH_REMATCH[1]}" );
@@ -111,8 +111,8 @@ _bun_completions() {
     PM_OPTIONS[LONG_OPTIONS]="--config --yarn --production --frozen-lockfile --no-save --dry-run --force --cache-dir --no-cache --silent --verbose --no-progress --no-summary --no-verify --ignore-scripts --global --cwd --backend --json --help"
     PM_OPTIONS[SHORT_OPTIONS]="-c -y -p -f -g"
 
-    TEST_OPTIONS[LONG_OPTIONS]="--timeout --update-snapshots --rerun-each --retry --todo --only --pass-with-no-tests --concurrent --randomize --seed --coverage --coverage-reporter --coverage-dir --bail --test-name-pattern --grep --reporter --reporter-outfile --dots --only-failures --max-concurrency --path-ignore-patterns --changed --isolate --no-isolate --parallel --parallel-delay --shard --timings --update-timings --no-orphans --watch --hot --no-clear-screen --smol --preload --require --import --inspect --inspect-wait --inspect-brk --env-file --no-env-file --cwd --config --bun --define --loader --tsconfig-override --help"
-    TEST_OPTIONS[SHORT_OPTIONS]="-u -t -r -c -b -d -l -h"
+    TEST_OPTIONS[LONG_OPTIONS]="--timeout --update-snapshots --rerun-each --retry --todo --only --pass-with-no-tests --concurrent --randomize --seed --coverage --coverage-reporter --coverage-dir --bail --test-name-pattern --grep --reporter --reporter-outfile --dots --only-failures --max-concurrency --path-ignore-patterns --changed --isolate --no-isolate --parallel --parallel-delay --shard --timings --update-timings --no-orphans --watch --hot --no-clear-screen --check --smol --preload --require --import --inspect --inspect-wait --inspect-brk --env-file --no-env-file --cwd --config --define --loader --tsconfig-override --help"
+    TEST_OPTIONS[SHORT_OPTIONS]="-u -t -r -c -d -l -h"
 
     local cur_word="${COMP_WORDS[${COMP_CWORD}]}";
     local prev="${COMP_WORDS[$(( COMP_CWORD - 1 ))]}";
@@ -143,14 +143,8 @@ _bun_completions() {
         --libc)
             COMPREPLY=( $(compgen -W "glibc musl" -- "${cur_word}") );
             return;;
-        --cwd|--public-dir|--coverage-dir)
+        --cwd|--public-dir)
             COMPREPLY=( $(compgen -d -- "${cur_word}" ));
-            return;;
-        --reporter)
-            [[ "${COMP_WORDS[1]}" == "test" ]] && COMPREPLY=( $(compgen -W "junit dots" -- "${cur_word}") );
-            return;;
-        --coverage-reporter)
-            [[ "${COMP_WORDS[1]}" == "test" ]] && COMPREPLY=( $(compgen -W "text lcov" -- "${cur_word}") );
             return;;
         --jsx-runtime)
             COMPREPLY=( $(compgen -W "automatic classic" -- "${cur_word}") );
@@ -226,7 +220,7 @@ _bun_completions() {
             COMPREPLY=( $(compgen -W "--help -h --eval -e --print -p --preload -r --smol --config -c --cwd --env-file --no-env-file" -- "${cur_word}") );
             return;;
         run)
-            _file_arguments "!(*.@(js|ts|jsx|tsx|mjs|cjs)?($|))";
+            _file_arguments "!*.@(js|ts|jsx|tsx|mjs|cjs|mts|cts)";
             COMPREPLY+=( $(compgen -W "--version --cwd --help --silent -v -h" -- "${cur_word}" ) );
             _read_scripts_in_package_json;
             return;;
@@ -235,11 +229,20 @@ _bun_completions() {
                 # these flags take a value that is not a file: offer nothing for it
                 --timeout|--rerun-each|--retry|--seed|--max-concurrency|--parallel-delay|--shard|-t|--test-name-pattern|--grep|--path-ignore-patterns|--define|-d) return;;
                 # these flags take any file, not only a test file
-                -r|--preload|--require|--import|--reporter-outfile|--timings|--env-file)
-                    COMPREPLY=( $(compgen -f -- "${cur_word}") );
+                -r|--preload|--require|--import|--reporter-outfile|--timings|--env-file|--tsconfig-override)
+                    readarray -t COMPREPLY < <(compgen -f -- "${cur_word}");
+                    return;;
+                --coverage-dir)
+                    readarray -t COMPREPLY < <(compgen -d -- "${cur_word}");
+                    return;;
+                --reporter)
+                    COMPREPLY=( $(compgen -W "junit dots" -- "${cur_word}") );
+                    return;;
+                --coverage-reporter)
+                    COMPREPLY=( $(compgen -W "text lcov" -- "${cur_word}") );
                     return;;
             esac
-            _file_arguments "!(*@(.test|_test|.spec|_spec).@(js|jsx|ts|tsx|mjs|cjs|mts|cts))";
+            _file_arguments "!*@(.test|_test|.spec|_spec).@(js|jsx|ts|tsx|mjs|cjs|mts|cts)";
             COMPREPLY+=( $(compgen -W "${TEST_OPTIONS[LONG_OPTIONS]} ${TEST_OPTIONS[SHORT_OPTIONS]}" -- "${cur_word}" ) );
             return;;
         pm)

@@ -454,34 +454,48 @@ describe("bun", () => {
         using dir = tempDir("completions-bash-test", {
           "foo.test.ts": "",
           "bar_spec.js": "",
+          "my feature.test.ts": "",
           "helper.ts": "",
           "notes.txt": "",
+          "tsconfig.build.json": "{}",
           "sub": { "nested.test.js": "" },
         });
         const cwd = String(dir);
 
-        // `bun test -<TAB>`: the test flags, not the global bun flags
+        // `bun test -<TAB>`: every flag of `bun test --help` (except the internal --test-worker) and
+        // none of the global bun flags
         const flags = await complete(cwd, "test", "-");
+        await using help = Bun.spawn({
+          cmd: [bunExe(), "test", "--help"],
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const helpText = await help.stdout.text();
+        const helpFlags = [...helpText.matchAll(/^\s+(?:(-[a-zA-Z]), )?(--[a-z-]+)/gm)]
+          .flatMap(m => [m[1], m[2]])
+          .filter(flag => flag && flag !== "--test-worker");
+        expect(helpFlags).toContain("--bail");
+        expect(flags).toEqual(expect.arrayContaining(helpFlags));
         expect(flags).toEqual(
           expect.arrayContaining([
-            "--bail",
-            "--timeout",
-            "--update-snapshots",
-            "-u",
-            "--coverage",
-            "--only",
-            "--todo",
-            "--concurrent",
-            "--max-concurrency",
-            "--test-name-pattern",
-            "-t",
             "--watch",
             "--preload",
+            "-r",
+            "--env-file",
+            "--cwd",
+            "--config",
+            "-c",
+            "--help",
+            "-h",
           ]),
         );
-        expect(flags).not.toContain("--bunfile");
-        expect(flags).not.toContain("--jsx-runtime");
-        expect(flags).not.toContain("--public-dir");
+        for (const global of ["--bunfile", "--jsx-runtime", "--public-dir", "--bun", "-b"]) {
+          expect(flags).not.toContain(global);
+        }
+        // every offered flag starts with a dash and appears once
+        expect(flags.every(flag => flag.startsWith("-"))).toBe(true);
+        expect(new Set(flags).size).toBe(flags.length);
 
         // `bun test --co<TAB>`
         expect((await complete(cwd, "test", "--co")).sort()).toEqual([
@@ -494,7 +508,11 @@ describe("bun", () => {
 
         // `bun test <TAB>`: the test files in cwd and the flags, not the other files
         const empty = await complete(cwd, "test", "");
-        expect(empty.filter(word => !word.startsWith("-")).sort()).toEqual(["bar_spec.js", "foo.test.ts"]);
+        expect(empty.filter(word => !word.startsWith("-")).sort()).toEqual([
+          "bar_spec.js",
+          "foo.test.ts",
+          "my feature.test.ts",
+        ]);
         expect(empty).toContain("--bail");
 
         // `bun test f<TAB>`
@@ -505,12 +523,15 @@ describe("bun", () => {
         expect((await complete(cwd, "test", "--coverage-reporter", "")).sort()).toEqual(["lcov", "text"]);
         expect(await complete(cwd, "test", "--coverage-dir", "")).toEqual(["sub"]);
         expect(await complete(cwd, "test", "--timeout", "")).toEqual([]);
+        expect(await complete(cwd, "test", "--tsconfig-override", "t")).toEqual(["tsconfig.build.json"]);
         expect((await complete(cwd, "test", "--preload", "")).sort()).toEqual([
           "bar_spec.js",
           "foo.test.ts",
           "helper.ts",
+          "my feature.test.ts",
           "notes.txt",
           "sub",
+          "tsconfig.build.json",
         ]);
       });
 

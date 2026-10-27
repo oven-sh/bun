@@ -508,6 +508,6 @@ opt-level = "z"
 opt-level = "z"
 
 # All of its time goes into tight loops, which take 20 times as long without optimization, and so do the tests that
-# compress. The C library it replaces was optimized in debug builds too. Overflow checks and debug assertions stay on.
+# compress. Overflow checks and debug assertions stay on.
 [profile.dev.package.bun_brotli]
 opt-level = 3

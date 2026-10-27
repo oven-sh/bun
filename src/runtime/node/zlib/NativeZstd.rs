@@ -288,7 +288,7 @@ mod _impl {
 
     impl Context {
         /// zstd copies the dictionary into the context, so `dictionary` does not
-        /// need to outlive this call (unlike brotli's attach APIs).
+        /// need to outlive this call.
         fn load_dictionary(
             dictionary: Option<&[u8]>,
             load: impl FnOnce(*const c_void, usize) -> usize,

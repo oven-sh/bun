@@ -88,10 +88,10 @@ size_t HpackHuffmanDecodeShortImpl(const uint8_t* HWY_RESTRICT src, size_t src_l
     const auto symbols2 = hn::Load(d, kTables.symbol + 128);
     const auto symbols3 = hn::Load(d, kTables.symbol + 192);
     const auto in_block = hn::FirstN(d, kBlockBits);
-    const auto odd1 = hn::TestBit(offsets, hn::Set(d, uint8_t { 1 }));
-    const auto odd2 = hn::TestBit(offsets, hn::Set(d, uint8_t { 2 }));
-    const auto odd4 = hn::TestBit(offsets, hn::Set(d, uint8_t { 4 }));
-    const auto odd8 = hn::TestBit(offsets, hn::Set(d, uint8_t { 8 }));
+    const auto uses_jump1 = hn::TestBit(offsets, hn::Set(d, uint8_t { 1 }));
+    const auto uses_jump2 = hn::TestBit(offsets, hn::Set(d, uint8_t { 2 }));
+    const auto uses_jump4 = hn::TestBit(offsets, hn::Set(d, uint8_t { 4 }));
+    const auto uses_jump8 = hn::TestBit(offsets, hn::Set(d, uint8_t { 8 }));
 
     size_t base = *bit_pos / 8;
     size_t first = *bit_pos % 8;
@@ -114,10 +114,10 @@ size_t HpackHuffmanDecodeShortImpl(const uint8_t* HWY_RESTRICT src, size_t src_l
             break;
 
         auto starts = hn::Set(d, static_cast<uint8_t>(first));
-        starts = hn::IfThenElse(odd1, lookup(jump1, starts), starts);
-        starts = hn::IfThenElse(odd2, lookup(jump2, starts), starts);
-        starts = hn::IfThenElse(odd4, lookup(jump4, starts), starts);
-        starts = hn::IfThenElse(odd8, lookup(jump8, starts), starts);
+        starts = hn::IfThenElse(uses_jump1, lookup(jump1, starts), starts);
+        starts = hn::IfThenElse(uses_jump2, lookup(jump2, starts), starts);
+        starts = hn::IfThenElse(uses_jump4, lookup(jump4, starts), starts);
+        starts = hn::IfThenElse(uses_jump8, lookup(jump8, starts), starts);
 
         const auto low7 = hn::And(bits, hn::Set(d, uint8_t { 0x7f }));
         const auto symbols = hn::IfThenElse(hn::MaskFromVec(bits), lookup2(symbols2, symbols3, low7), lookup2(symbols0, symbols1, low7));

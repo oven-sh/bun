@@ -208,14 +208,12 @@ mod tests {
             );
             assert!(decode(&mut decoder, &block).is_ok());
             assert_eq!(decoder.table_size(), encoder.table_size());
-            // What the large field took is given back with the next one.
-            if i != 80 {
-                let heap_sizes = (encoder.heap_size(), decoder.heap_size());
-                assert!(
-                    heap_sizes.0 < 24 * 1024 && heap_sizes.1 < 24 * 1024,
-                    "{i}: {heap_sizes:?}"
-                );
-            }
+            // What the large field took is given back at the end of its block.
+            let heap_sizes = (encoder.heap_size(), decoder.heap_size());
+            assert!(
+                heap_sizes.0 < 24 * 1024 && heap_sizes.1 < 24 * 1024,
+                "{i}: {heap_sizes:?}"
+            );
         }
     }
 

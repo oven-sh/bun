@@ -53,7 +53,7 @@ impl Decoder {
         }
     }
 
-    /// For when the peer has acknowledged another SETTINGS_HEADER_TABLE_SIZE.
+    /// Takes the SETTINGS_HEADER_TABLE_SIZE that the peer has acknowledged.
     pub fn set_max_capacity(&mut self, max_capacity: u32) {
         self.max_capacity = max_capacity;
         // Not every encoder says so when it grows its table. More room than it uses does no harm: its entries are the newest.
@@ -73,18 +73,20 @@ impl Decoder {
     /// The field at `*pos`, 0 at first, of a whole header block. `None` at its end. An error is fatal to the connection.
     pub fn next(&mut self, block: &[u8], pos: &mut usize) -> Option<Result<Field<'_>>> {
         if *pos == 0
-            && let Err(error) = self.size_updates(block, pos)
+            && let Err(error) = self.decode_size_updates(block, pos)
         {
             return Some(Err(error));
         }
         if *pos >= block.len() {
+            // The connection may send no block for a long time, so the room the last field took is given back now.
+            self.storage.clear_scratch();
             return None;
         }
         Some(self.decode_field(block, pos))
     }
 
     /// The dynamic table size updates (§6.3) that a block may begin with.
-    fn size_updates(&mut self, src: &[u8], pos: &mut usize) -> Result<()> {
+    fn decode_size_updates(&mut self, src: &[u8], pos: &mut usize) -> Result<()> {
         while src.get(*pos).is_some_and(|first| first & 0xe0 == 0x20) {
             let capacity = integer::decode(src, pos, 5).ok_or(Error::Invalid)?;
             if capacity > self.max_capacity {
@@ -121,7 +123,7 @@ impl Decoder {
         let start = self.storage.len();
         let mut static_index = 0;
         if index == 0 {
-            self.string(src, &mut pos, MAX_FIELD_LEN)?;
+            self.decode_string(src, &mut pos, MAX_FIELD_LEN)?;
             if self.storage.len() == start {
                 return Err(Invalid);
             }
@@ -138,7 +140,7 @@ impl Decoder {
         let room = MAX_FIELD_LEN
             .checked_sub(value_start - start)
             .ok_or(Error::TooLarge)?;
-        self.string(src, &mut pos, room)?;
+        self.decode_string(src, &mut pos, room)?;
         let end = self.storage.len();
 
         if indexing == Indexing::Add {
@@ -184,7 +186,7 @@ impl Decoder {
     }
 
     /// Appends a string literal (§5.2) of at most `max_len` bytes to the scratch space.
-    fn string(&mut self, src: &[u8], pos: &mut usize, max_len: usize) -> Result<()> {
+    fn decode_string(&mut self, src: &[u8], pos: &mut usize, max_len: usize) -> Result<()> {
         let huffman = *src.get(*pos).ok_or(Error::Invalid)? & 0x80 != 0;
         let len = integer::decode(src, pos, 7).ok_or(Error::Invalid)? as usize;
         let end = pos.checked_add(len).ok_or(Error::Invalid)?;

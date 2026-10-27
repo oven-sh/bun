@@ -52,44 +52,44 @@ struct Bucket {
     by_name: Chain,
 }
 
-/// The hashes of the `len` fields sent last. Once full, only a field found here enters the table.
+/// The hashes of the `max_len` fields sent last. Once full, only a field found here enters the table.
 struct History {
     hashes: Vec<u32>,
-    len: usize,
+    max_len: usize,
     /// Where the oldest hash is.
     oldest: usize,
 }
 
 impl History {
-    fn new(capacity: u32) -> Self {
+    fn new(table_capacity: u32) -> Self {
         let mut history = Self {
             hashes: Vec::new(),
-            len: 0,
+            max_len: 0,
             oldest: 0,
         };
-        history.resize(capacity);
+        history.resize(table_capacity);
         history
     }
 
-    fn resize(&mut self, capacity: u32) {
+    fn resize(&mut self, table_capacity: u32) {
         // A third of the entries the table has room for if they are all empty.
-        self.len = capacity as usize / ENTRY_OVERHEAD / 3;
+        self.max_len = table_capacity as usize / ENTRY_OVERHEAD / 3;
         self.hashes.rotate_left(self.oldest);
         self.oldest = 0;
         self.hashes
-            .drain(..self.hashes.len().saturating_sub(self.len));
+            .drain(..self.hashes.len().saturating_sub(self.max_len));
     }
 
     /// Takes note of a field. Returns whether it may enter the table.
     fn add(&mut self, hash: u32) -> bool {
         let seen = self.hashes.contains(&hash);
-        if self.hashes.len() < self.len {
+        if self.hashes.len() < self.max_len {
             self.hashes.push(hash);
         } else if let Some(oldest) = self.hashes.get_mut(self.oldest) {
             *oldest = hash;
             self.oldest = (self.oldest + 1) % self.hashes.len();
         }
-        seen || self.hashes.len() < self.len || self.len == 0
+        seen || self.hashes.len() < self.max_len || self.max_len == 0
     }
 }
 
@@ -199,7 +199,7 @@ impl Encoder {
         let field_hash = bun_wyhash::hash_with_seed(u64::from(name_hash), value) as u32;
 
         // A reference to an entry with the same value would not say "never indexed".
-        let whole = if indexing == Indexing::Never {
+        let field_index = if indexing == Indexing::Never {
             None
         } else {
             static_name
@@ -216,7 +216,7 @@ impl Encoder {
                 indexing = Indexing::Skip;
             }
         }
-        if let Some(index) = whole {
+        if let Some(index) = field_index {
             integer::encode(out, 0x80, 7, index);
             return Ok(());
         }
@@ -230,10 +230,10 @@ impl Encoder {
             Some(index) => integer::encode(out, flags, prefix_bits, index),
             None => {
                 out.push(flags);
-                string(out, name);
+                encode_string(out, name);
             }
         }
-        string(out, value);
+        encode_string(out, value);
 
         if indexing == Indexing::Add {
             self.add(name, value, name_hash, field_hash);
@@ -406,7 +406,7 @@ fn unlink_first(chain: &mut Chain, next: Option<Id>) {
 }
 
 /// A string literal (§5.2), Huffman coded unless that makes it longer.
-fn string(out: &mut Vec<u8>, bytes: &[u8]) {
+fn encode_string(out: &mut Vec<u8>, bytes: &[u8]) {
     let huffman_len = huffman::encoded_len(bytes);
     if huffman_len > 0 && huffman_len <= bytes.len() {
         integer::encode(out, 0x80, 7, huffman_len as u32);

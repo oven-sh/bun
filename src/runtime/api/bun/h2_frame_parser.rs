@@ -5662,9 +5662,6 @@ impl H2FrameParser {
                     never_index,
                 ) {
                     Ok(()) => Ok(true),
-                    Err(crate::Error::Alloc(bun_alloc::AllocError)) => {
-                        Err(global_object.throw(format_args!("Failed to allocate header buffer")))
-                    }
                     Err(_) => {
                         // nghttp2 checks maxSendHeaderBlockLength pre-deflation and fires
                         // on_frame_not_send_callback(NGHTTP2_ERR_FRAME_SIZE_ERROR); Node surfaces
@@ -6571,16 +6568,15 @@ impl H2FrameParser {
                         BStr::new(value)
                     );
 
-                    if let Err(err) = self.encode_header_into_list(
-                        &mut encoded_headers,
-                        validated_name,
-                        value,
-                        never_index,
-                    ) {
-                        if matches!(err, crate::Error::Alloc(_)) {
-                            return Err(global_object
-                                .throw(format_args!("Failed to allocate header buffer")));
-                        }
+                    if self
+                        .encode_header_into_list(
+                            &mut encoded_headers,
+                            validated_name,
+                            value,
+                            never_index,
+                        )
+                        .is_err()
+                    {
                         let Some(stream) = self.handle_received_stream_id(stream_id) else {
                             return Ok(JSValue::js_number(-1.0));
                         };
@@ -6741,16 +6737,15 @@ impl H2FrameParser {
                             BStr::new(value)
                         );
 
-                        if let Err(err) = self.encode_header_into_list(
-                            &mut encoded_headers,
-                            validated_name,
-                            value,
-                            never_index,
-                        ) {
-                            if matches!(err, crate::Error::Alloc(_)) {
-                                return Err(global_object
-                                    .throw(format_args!("Failed to allocate header buffer")));
-                            }
+                        if self
+                            .encode_header_into_list(
+                                &mut encoded_headers,
+                                validated_name,
+                                value,
+                                never_index,
+                            )
+                            .is_err()
+                        {
                             let Some(stream) = self.handle_received_stream_id(stream_id) else {
                                 return Ok(JSValue::js_number(-1.0));
                             };
@@ -6809,16 +6804,15 @@ impl H2FrameParser {
                         BStr::new(value)
                     );
 
-                    if let Err(err) = self.encode_header_into_list(
-                        &mut encoded_headers,
-                        validated_name,
-                        value,
-                        never_index,
-                    ) {
-                        if matches!(err, crate::Error::Alloc(_)) {
-                            return Err(global_object
-                                .throw(format_args!("Failed to allocate header buffer")));
-                        }
+                    if self
+                        .encode_header_into_list(
+                            &mut encoded_headers,
+                            validated_name,
+                            value,
+                            never_index,
+                        )
+                        .is_err()
+                    {
                         let Some(stream) = self.handle_received_stream_id(stream_id) else {
                             return Ok(JSValue::js_number(-1.0));
                         };

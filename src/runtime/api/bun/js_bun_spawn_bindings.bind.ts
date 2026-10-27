@@ -14,7 +14,7 @@ export const StdioValue = b.union(
   {
     missing: b.undefined,
     ignore: b.null,
-    name: b.string.allowStringObject,
+    string: b.stringLike,
     fd: b.jsNumber,
     blob: Blob.withValue,
     buildArtifact: BuildArtifact.withValue,

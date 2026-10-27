@@ -1492,7 +1492,7 @@ where
     pub(crate) fn publish(
         &self,
         cx: &mut JsScope<'_>,
-        topic: Option<bun_core::Utf8Bytes<'static>>,
+        topic: Option<&[u8]>,
         data: Option<WebSocketMessage<'_>>,
         compress: bool,
     ) -> JsResult<JSValue> {
@@ -1511,7 +1511,7 @@ where
         if self.config.get().websocket.is_none() {
             return Ok(JSValue::js_number(0.0));
         }
-        if topic.slice().is_empty() {
+        if topic.is_empty() {
             return Err(global.throw(format_args!("publish requires a topic string")));
         }
         let Some(app) = self.app.get() else {
@@ -1520,7 +1520,7 @@ where
         let status = AnyWebSocket::publish_with_options(
             SSL,
             app.cast::<c_void>(),
-            topic.slice(),
+            topic,
             bytes.slice(),
             payload.opcode(),
             compress,

@@ -12,7 +12,7 @@ export const RedisArgument = b.union(
     missing: b.null,
     number: b.f64,
     buffer: b.bufferSource.allowShared,
-    text: b.stringLike,
+    string: b.stringLike,
     blob: Blob,
     buildArtifact: BuildArtifact,
     other: b.ignored,
@@ -228,7 +228,7 @@ const key = RedisArgument;
 const text = b.string.loose.deferred;
 
 /** As itself: it is the key of the listeners too, and `toString` of a `String` object runs once the client has dialed. */
-export const RedisChannel = b.union({ list: b.jsArray, text: b.stringLike, other: b.ignored });
+export const RedisChannel = b.union({ list: b.jsArray, string: b.stringLike, other: b.ignored });
 
 const integerOption = b.u32.validateIntegerRange().nanAs(0).optional;
 export const RedisOptions = b.dictionary(

@@ -25,7 +25,7 @@ export const ProxyOptions = b.dictionary(
 export const ProxyInit = b.union({
   flag: b.bool,
   url: JSDOMURL,
-  text: b.stringLike,
+  string: b.stringLike,
   missing: b.null,
   options: ProxyOptions,
   other: b.opaque,

@@ -42,19 +42,17 @@ export const UpgradeInit = b.dictionary(
   { deferred: true },
 );
 
-/** Told apart without running JavaScript. `stringObject`, and `other` where a method takes it, is sent as its `webSocketMessageText`. */
+/** Told apart without running JavaScript. `other`, where a method takes it, is sent as its `ToString`. */
 export const WebSocketMessage = b.union({
   undefined: b.undefined,
   null: b.null,
   buffer: b.bufferSource.allowShared,
   blob: Blob,
   buildArtifact: BuildArtifact,
-  text: b.string.view,
-  stringObject: b.stringObject,
+  string: b.stringLike,
   other: b.opaque,
 });
-export const WebSocketTopic = b.union({ text: b.string.view, stringObject: b.stringObject, other: b.opaque });
-export const webSocketMessageText = b.conversion(b.string.loose);
+export const WebSocketTopic = b.union({ string: b.stringLike, other: b.opaque });
 export const WebSocketCompress = b.union({ missing: b.undefined, flag: b.bool, other: b.ignored });
 
 /** The body refuses `other` with the text it also has for a number out of range. */
@@ -329,7 +327,7 @@ function server(name: string) {
       /** `publish(topic)` throws. `publish(topic, undefined)` sends the text "undefined". */
       publish: {
         args: {
-          topic: b.string.loose.utf8.owned.nullable,
+          topic: b.string.loose.utf8.nullable,
           data: WebSocketMessage.ifPassed,
           compress: b.bool.loose.default(true),
         },

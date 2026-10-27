@@ -139,7 +139,7 @@ pub(crate) fn parse_proxy<'a>(
         ProxyInit::Flag(false) => return Ok(ProxyArg::Policy(ProxyOption::Direct)),
         // A URL instance has no `.url` own property; treat it as its href.
         ProxyInit::Url(url) => return explicit(url.to_js()),
-        ProxyInit::Text(text) => return string(text.to_js()),
+        ProxyInit::String(text) => return string(text.to_js()),
         ProxyInit::Missing => return Ok(ProxyArg::Absent),
         ProxyInit::Other(proxy_arg) => return Ok(ProxyArg::Unusable(proxy_arg)),
         ProxyInit::Options(proxy_arg) => proxy_arg,

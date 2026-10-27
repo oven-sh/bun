@@ -3,7 +3,7 @@ import * as b from "../../codegen/bindgen-lib.ts";
 /** `"ipv4"` or `"ipv6"` in any case, or the number of the address family. An error shows what is neither. */
 export const SocketAddressFamily = b.union({
   missing: b.undefined,
-  name: b.string.allowStringObject,
+  string: b.stringLike,
   number: b.jsNumber,
   other: b.opaque,
 });

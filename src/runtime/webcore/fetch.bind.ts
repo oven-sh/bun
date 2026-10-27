@@ -25,7 +25,7 @@ export const CompressInit = b.union({
   other: b.opaque,
 });
 export const MaxRedirects = b.union({ missing: b.null, number: b.f64, other: b.ignored });
-export const FetchVerbose = b.union({ name: b.string.allowStringObject, flag: b.bool, other: b.ignored });
+export const FetchVerbose = b.union({ string: b.stringLike, flag: b.bool, other: b.ignored });
 export const FetchInit = b.dictionary(
   {
     url: b.string.loose.optional,
@@ -36,7 +36,7 @@ export const FetchInit = b.dictionary(
     session: { type: FetchSession.withValue.nullable, expected: "fetch: 'session' must be a Bun.FetchSession" },
     tls: FetchTLS.otherAsNull,
     unix: UnixPath,
-    protocol: b.string.allowStringObject.otherAsNull,
+    protocol: b.stringLike.otherAsNull,
     timeout: FlagOrNumber,
     redirect: { type: b.stringLike.nullable, expected: "redirect must be a string" },
     keepalive: FlagOrNumber,

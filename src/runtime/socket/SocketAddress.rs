@@ -70,7 +70,7 @@ impl Options {
         let _family: AF = match obj.family(global)? {
             SocketAddressFamily::Missing => AF::INET,
             // "ipv4" or "ipv6", ignoring case
-            SocketAddressFamily::Name(name) => AF::from_name(global, &name)?,
+            SocketAddressFamily::String(name) => AF::from_name(global, name)?,
             SocketAddressFamily::Number(number) => AF::from_number(global, number.to_js())?,
             SocketAddressFamily::Other(fam) => {
                 return Err(global.throw_invalid_argument_property_value(
@@ -304,9 +304,7 @@ impl SocketAddress {
     ) -> JsResult<SocketAddress> {
         let address_: BunString = BunString::from_js(address_js.to_js(), global)?;
         let family_: AF = match family_js {
-            Some(family_js) => {
-                AF::from_name(global, &BunString::from_js(family_js.to_js(), global)?)?
-            }
+            Some(family_js) => AF::from_name(global, family_js)?,
             None => AF::INET,
         };
         Self::init_js(
@@ -684,7 +682,9 @@ impl AF {
         self as inet::sa_family_t
     }
 
-    fn from_name(global: &JSGlobalObject, fam_str: &BunString) -> JsResult<AF> {
+    fn from_name(global: &JSGlobalObject, value: JsLocal<'_, StringLike>) -> JsResult<AF> {
+        let value = value.to_js();
+        let fam_str = BunString::from_js(value, global)?;
         if fam_str.length() == 4 {
             if fam_str.is_8bit() {
                 let slice = fam_str.latin1();
@@ -708,7 +708,7 @@ impl AF {
         Err(global.throw_invalid_argument_property_value(
             b"options.family",
             Some("'ipv4' or 'ipv6'"),
-            fam_str.to_js(global)?,
+            value,
         ))
     }
 

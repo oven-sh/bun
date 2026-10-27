@@ -40,7 +40,7 @@ fn sockaddr_from_js(
 ) -> JsResult<JsResult<sockaddr>> {
     let value = match value {
         BlockListAddress::Address(sa) => return Ok(Ok(sa._addr)),
-        BlockListAddress::Text(text) => text,
+        BlockListAddress::String(text) => text,
         BlockListAddress::Other(value) => {
             return Err(validators::throw_err_invalid_arg_type(
                 global,
@@ -52,7 +52,7 @@ fn sockaddr_from_js(
     };
     let family = match family {
         BlockListFamily::Ipv4 => None,
-        BlockListFamily::Text(text) => Some(text),
+        BlockListFamily::String(text) => Some(text),
         BlockListFamily::Other(family) => {
             return Err(validators::throw_err_invalid_arg_type(
                 global,

@@ -73,7 +73,7 @@ fn from_argument(
             };
             JSArgument::StringOrBuffer(StringOrBuffer::owned(copy))
         }
-        RedisArgument::Text(text) => {
+        RedisArgument::String(text) => {
             return JSArgument::from_js_maybe_file(global, text.to_js(), FileBlobs::Allow);
         }
         RedisArgument::Blob(blob) | RedisArgument::BuildArtifact(BuildArtifact { blob, .. }) => {
@@ -1666,7 +1666,7 @@ impl JSValkeyClient {
                 // handler.
                 self.upsert_receive_handler(global, channel_arg, handler_callback)?;
             }
-        } else if let RedisChannel::Text(channel) = channel {
+        } else if let RedisChannel::String(channel) = channel {
             let channel_or_many = channel.to_js();
             // It is a single string channel
             let Some(channel) = from_js(global, channel_or_many)? else {
@@ -1755,7 +1755,7 @@ impl JSValkeyClient {
         if let (Some(listener_cb), 1) = (listener.iter().next(), listener.len()) {
             // In this case, the first argument is a channel string and the second
             // argument is the handler to remove.
-            let RedisChannel::Text(channel) = channel_or_many else {
+            let RedisChannel::String(channel) = channel_or_many else {
                 return Err(global.throw_invalid_argument_type("unsubscribe", "channel", "string"));
             };
 
@@ -1833,7 +1833,7 @@ impl JSValkeyClient {
                 // Clear the handlers for this channel
                 self.clear_receive_handlers(global, channel_arg)?;
             }
-        } else if let RedisChannel::Text(channel) = channel_or_many {
+        } else if let RedisChannel::String(channel) = channel_or_many {
             let channel_or_many = channel.to_js();
             // It is a single string channel
             let Some(channel) = from_js(global, channel_or_many)? else {

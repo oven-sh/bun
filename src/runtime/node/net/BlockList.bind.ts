@@ -4,9 +4,9 @@ import { SocketAddress } from "../../socket/SocketAddress.bind.ts";
 const js = { capability: "js", throws: true } as const;
 
 /** An error shows what is none of them. A `String` object is converted once the kind of every argument is checked. */
-export const BlockListAddress = b.union({ address: SocketAddress, text: b.stringLike, other: b.opaque });
+export const BlockListAddress = b.union({ address: SocketAddress, string: b.stringLike, other: b.opaque });
 /** `"ipv4"` or `"ipv6"` in any case. It is not looked at if the address is a `SocketAddress`. */
-export const BlockListFamily = b.union({ ipv4: b.undefined, text: b.stringLike, other: b.opaque });
+export const BlockListFamily = b.union({ ipv4: b.undefined, string: b.stringLike, other: b.opaque });
 /** The range depends on the family of the network. */
 export const BlockListPrefix = b.union({ number: b.jsNumber, other: b.opaque });
 

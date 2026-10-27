@@ -405,7 +405,8 @@ impl Stdio {
                 *out_stdio = Stdio::Ignore;
                 return Ok(());
             }
-            StdioValue::Name(str) => {
+            StdioValue::String(str) => {
+                let str = str.to_js().to_js_string_view(cx.global())?;
                 if str.eq_ascii(b"inherit") {
                     *out_stdio = Stdio::Inherit;
                 } else if str.eq_ascii(b"ignore") {

@@ -457,8 +457,8 @@ impl Finder {
             let mut ip2 = ip0 + step;
             let mut current0 = base_index.wrapping_add(ip0);
 
-            // Ends with where 4 bytes are the same as earlier.
-            let (ip, back, off_base) = loop {
+            // Ends with where a match starts and ends.
+            let (start, end, off_base) = loop {
                 // There is a position after `ip2` to look at, and that one is before the last that can be.
                 let Some(ahead) = near.window::<{ HASH_READ_SIZE + 2 }>(ip2) else {
                     break 'block;
@@ -470,7 +470,8 @@ impl Finder {
                 {
                     table_put(hash_table, hash_of::<MLS>(bytes0 >> 8, hlog), current0 + 1);
                     let back = u32::from(sink.same_byte_before(ip2, rep_offset1));
-                    break (ip2, back, REPCODE1_TO_OFFBASE);
+                    let end = ip2 + 4 + sink.count_before(ip2 + 4, rep_offset1);
+                    break (ip2 - back, end, REPCODE1_TO_OFFBASE);
                 }
                 let mut match0 = idx0.wrapping_sub(base_index);
                 if near.read32(match0) == Some(bytes0 as u32) {
@@ -504,26 +505,29 @@ impl Finder {
                 let ip = current0.wrapping_sub(base_index);
                 rep_offset2 = rep_offset1;
                 rep_offset1 = ip - match0;
+                let end = ip + 4 + near.count(ip + 4, match0 + 4);
                 let back = near.count_backwards(ip, sink.anchor, match0, 0);
-                break (ip, back, offset_to_offbase(rep_offset1));
+                break (ip - back, end, offset_to_offbase(rep_offset1));
             };
 
-            ip0 = ip + 4 + sink.count_before(ip + 4, rep_offset1);
-            sink.store(ip - back, ip0, off_base);
+            ip0 = end;
+            sink.store(start, end, off_base);
 
             // `ip0` is not past the last position that can be looked at.
-            let Some(around) = near.window::<{ 2 + HASH_READ_SIZE }>(ip0 - 2) else {
+            let Some(bytes) = near.read64(ip0) else {
                 break 'block;
             };
+            bytes0 = bytes;
             if let Some(to_insert) = near.read64((current0 + 2).wrapping_sub(base_index)) {
                 table_put(hash_table, hash_of::<MLS>(to_insert, hlog), current0 + 2);
             }
-            table_put(
-                hash_table,
-                hash_of::<MLS>(le64_at::<0, _>(around), hlog),
-                base_index.wrapping_add(ip0 - 2),
-            );
-            bytes0 = le64_at::<2, _>(around);
+            if let Some(before) = near.read64(ip0 - 2) {
+                table_put(
+                    hash_table,
+                    hash_of::<MLS>(before, hlog),
+                    base_index.wrapping_add(ip0 - 2),
+                );
+            }
 
             while rep_offset2 > 0 && sink.read32_before(ip0, rep_offset2) == Some(bytes0 as u32) {
                 let end = ip0 + 4 + sink.count_before(ip0 + 4, rep_offset2);

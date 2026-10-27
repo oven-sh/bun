@@ -805,18 +805,16 @@ impl<'a> Near<'a> {
     }
 }
 
-/// `table[hash]`. The size of `table` is a power of 2 that `hash` is less than, which the mask tells the compiler.
+/// `table[hash]`. `hash` is less than the size of `table`: to check that delays nothing, which a mask would.
 #[inline(always)]
 pub(crate) fn table_get(table: &[u32], hash: usize) -> u32 {
-    let cell = table.get(hash & table.len().wrapping_sub(1));
-    cell.copied().unwrap_or(0)
+    table.get(hash).copied().unwrap_or(0)
 }
 
 /// `table[hash] = index`, likewise.
 #[inline(always)]
 pub(crate) fn table_put(table: &mut [u32], hash: usize, index: u32) {
-    let mask = table.len().wrapping_sub(1);
-    if let Some(cell) = table.get_mut(hash & mask) {
+    if let Some(cell) = table.get_mut(hash) {
         *cell = index;
     }
 }
@@ -824,8 +822,7 @@ pub(crate) fn table_put(table: &mut [u32], hash: usize, index: u32) {
 /// `table[hash] = index`, likewise. Returns what was there.
 #[inline(always)]
 pub(crate) fn table_swap(table: &mut [u32], hash: usize, index: u32) -> u32 {
-    let mask = table.len().wrapping_sub(1);
-    match table.get_mut(hash & mask) {
+    match table.get_mut(hash) {
         Some(cell) => core::mem::replace(cell, index),
         None => 0,
     }

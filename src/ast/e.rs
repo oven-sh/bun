@@ -2380,8 +2380,7 @@ impl Import {
     }
 }
 
-/// The loader that the options of `import(specifier, options)` select, as far as a
-/// bundler can read them without running the program.
+/// The loader that the options of `import(specifier, options)` select at build time.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum ImportLoader {
     /// No `type` attribute that names a loader.
@@ -2395,8 +2394,7 @@ pub enum ImportLoader {
 }
 
 impl ImportLoader {
-    /// Reads `options` the way the runtime reads it when the call runs: `with` is
-    /// looked up on the object, and `type` is one of its own properties.
+    /// Reads `options` the way the runtime reads it when the call runs.
     #[inline]
     pub fn from_options(options: &Expr, bump: &Bump) -> ImportLoader {
         // `import(specifier)`
@@ -2492,14 +2490,12 @@ fn is_embedded_sqlite(attributes: &Object) -> bool {
         .is_some_and(|embed| embed.eql_comptime(b"true"))
 }
 
-/// The value of `name` after the object literal is evaluated, when the definition that
-/// wins is a plain `name: value`. `Err` is the property that only the runtime can read.
-/// `inherits`: the lookup follows the prototype, so `__proto__: value` can supply `name`.
+/// The last definition of `name`: its value when plain, `Err` when only the runtime reads it.
 #[inline(always)]
 fn plain_property(
     obj: &Object,
     name: &'static [u8],
-    inherits: bool,
+    follows_prototype: bool,
 ) -> Result<Option<Expr>, crate::Loc> {
     // `key == literal`, with the comparison of a plain UTF-8 key inline.
     #[inline(always)]
@@ -2514,9 +2510,7 @@ fn plain_property(
     let mut found = Ok(None);
     let mut proto = None;
     for prop in obj.properties.slice() {
-        // A spread, or a `[key]: value` whose key is not a constant, can define `name`.
-        // Neither gets here today: `e_import` reads only options that have no side
-        // effects. A member of an enum in the same file is a constant key.
+        // A spread or a non-constant `[key]` can define `name`. `e_import` passes neither.
         let Some(key) = prop.key.map(Expr::unwrap_inlined) else {
             return Err(prop.value.map_or(crate::Loc::EMPTY, |value| value.loc));
         };
@@ -2534,7 +2528,7 @@ fn plain_property(
                 Some(value) if is_plain => Ok(Some(value)),
                 _ => Err(key.loc),
             };
-        } else if inherits
+        } else if follows_prototype
             && is_plain
             && !prop.flags.contains(crate::flags::Property::IsComputed)
             && !prop.flags.contains(crate::flags::Property::WasShorthand)

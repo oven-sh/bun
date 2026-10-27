@@ -28,9 +28,7 @@ pub struct ImportRecord<'a> {
     /// Previously 15 separate bool fields caused ~14-16 bytes of padding waste.
     pub flags: Flags,
 
-    /// `import(specifier, options)` in a bundle: why only the runtime can read the
-    /// `with` attributes of `options`. The bundler then picks the loader from the file
-    /// extension, and `BundleV2` warns when it bundles the call.
+    /// Why the bundler cannot read the `with` attributes of this `import(specifier, options)`.
     pub unreadable_attributes: Option<UnreadableAttributes>,
     /// The expression that hides those attributes.
     pub unreadable_attributes_loc: Loc,
@@ -125,8 +123,7 @@ pub enum UnreadableAttributes {
     WithNotObjectLiteral,
     /// `import(x, { with: { type } })`, `import(x, { with: { type: 1 } })`
     TypeNotStringLiteral,
-    /// The definition of `with` or `type` that wins is a getter, a setter or a method,
-    /// or `__proto__` can supply `with`.
+    /// A getter, a setter, a method or `__proto__` decides `with` or `type`.
     PropertyNotPlain,
 }
 

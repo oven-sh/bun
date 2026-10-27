@@ -2078,8 +2078,7 @@ pub mod bv2_impl {
         /// Files which are imported by CSS and inlined in CSS
         pub(crate) additional_files_imported_by_css_and_inlined: &'a mut DynamicBitSetUnmanaged,
 
-        /// Importer and record index of every bundled `import()` that has
-        /// `ImportRecord::unreadable_attributes`.
+        /// (importer, record index) of each bundled `import()` with `unreadable_attributes`.
         pub(crate) imports_with_unreadable_attributes: Vec<(IndexInt, u32)>,
 
         pub(crate) stack: Vec<ReachFrame>,
@@ -2322,9 +2321,7 @@ pub mod bv2_impl {
     }
 
     impl<'a> BundleV2<'a> {
-        /// Each of `imports` is a bundled `import(specifier, options)` whose `with`
-        /// attributes only the runtime can read, so its loader came from the file
-        /// extension. Says so once for each call.
+        /// Warns once for each bundled `import()` whose loader came from the file extension.
         #[cold]
         fn warn_unreadable_import_attributes(&self, imports: &[(IndexInt, u32)]) {
             use bun_ast::import_record::UnreadableAttributes as Reason;
@@ -2332,8 +2329,7 @@ pub mod bv2_impl {
             let flags = self.graph.input_files.items_flags();
             let all_import_records = self.graph.ast.items_import_records();
             let log = self.transpiler.log_mut();
-            // The two records of `import(a ? "x" : "y", options)`, or one file in two
-            // graphs, are one call.
+            // One call: the two records of `import(a ? x : y, o)`, or one file in two graphs.
             let mut seen = bun_collections::StringArrayHashMap::<()>::default();
             for &(importer, record_index) in imports {
                 let record =
@@ -2343,8 +2339,7 @@ pub mod bv2_impl {
                 };
                 let loc = record.unreadable_attributes_loc;
                 let target = record.source_index.get() as usize;
-                // What an `onLoad` plugin returned is the module, and a node polyfill has
-                // no loader to pick.
+                // An `onLoad` plugin or a node polyfill supplied the module.
                 if flags[target].contains(crate::Graph::InputFileFlags::IS_LOADED_BY_PLUGIN)
                     || sources[target].path.namespace == b"node"
                 {

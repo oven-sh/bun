@@ -41,7 +41,7 @@ flag stays set only when the call ran to completion. `codec_jpeg.rs` accepts a d
 
 ## Adding a format
 
-1. New `scripts/build/deps/<lib>.ts` (copy `libwebp.ts` for the simple case).
+1. New `scripts/build/deps/<lib>.ts` (copy `libdeflate.ts` for the simple case).
 2. Extend `Format` + `sniff()` + `mime()` in `codecs.rs`, add a `<fmt>` module with
    `decode`/`encode` functions alongside the others.
 3. If the format carries EXIF, extend `exif.rs`.

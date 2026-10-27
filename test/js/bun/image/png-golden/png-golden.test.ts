@@ -239,6 +239,12 @@ describe("chunks before the image", () => {
     );
   });
 
+  test("a profile that inflates to more than the limit costs the image too", async () => {
+    const file = png(rgba[0], iccp(Buffer.alloc(9 << 20, "p").toString()), rgba[1], iend);
+    expect((await decode(file)).profile?.length).toBe(9 << 20);
+    await expect(decode(file, { maxPixels: 64 })).rejects.toMatchObject({ code: "ERR_IMAGE_DECODE_FAILED" });
+  });
+
   test("compressed text may inflate to as much as a profile may", async () => {
     const big = zlib.deflateSync(Buffer.alloc(9 << 20));
     const small = zlib.deflateSync(Buffer.alloc(1 << 20));

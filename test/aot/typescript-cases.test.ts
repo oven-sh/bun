@@ -64,7 +64,7 @@ function readCases(): [name: string, source: string][] {
     Bun.zstdDecompressSync(readFileSync(join(import.meta.dir, "../cli/check/typescript-go/bundle.zst"))),
   );
   const cases: [string, string][] = [];
-  for (let at = 0; at < bytes.length; ) {
+  for (let at = 0; at < bytes.length;) {
     const end = bytes.indexOf(10, at);
     const header = bytes.toString("utf8", at + 4, end);
     const space = header.lastIndexOf(" ");

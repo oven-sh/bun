@@ -118,6 +118,18 @@ describe("bundler", () => {
       onAfterBundle: keepsAttribute,
       run: { stdout: "Hello, world!" },
     });
+    // `--format cjs` turns the import into a `require()`. The loader goes in its second argument.
+    for (const target of ["bun", "node"] as const) {
+      itBundled(`bun/sqlite-attribute-format-cjs-target-${target}`, {
+        target,
+        format: "cjs",
+        files,
+        onAfterBundle(api) {
+          api.expectFile("out.js").toContain('require("./app.db", { type: "sqlite" })');
+        },
+        run: { stdout: "Hello, world!" },
+      });
+    }
   });
   itBundled("bun/embedded-sqlite-file", {
     target: "bun",

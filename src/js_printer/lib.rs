@@ -2967,6 +2967,15 @@ pub(crate) mod __gated_printer {
 
                 self.print(b"(");
                 self.print_import_record_path(record);
+                match record.loader {
+                    Some(bun_ast::Loader::Sqlite) => {
+                        self.print_whitespacer(ws!(b", { type: \"sqlite\" }"))
+                    }
+                    Some(bun_ast::Loader::SqliteEmbedded) => {
+                        self.print_whitespacer(ws!(b", { type: \"sqlite\", embed: \"true\" }"))
+                    }
+                    _ => {}
+                }
                 self.print(b")");
 
                 // A split `require()` of a module that is CommonJS at link

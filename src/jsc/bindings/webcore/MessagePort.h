@@ -107,8 +107,13 @@ public:
     // The message may legitimately be `undefined`/falsy, so emptiness is reported through hadMessage.
     JSValue tryTakeMessage(JSGlobalObject*, bool& hadMessage);
 
-    void jsRef(JSGlobalObject*);
-    void jsUnref(JSGlobalObject*);
+    // Whether the call also switches m_isRefd, the hold of the 'message' listeners. The onmessage setter keeps it.
+    enum class ListenerHold : bool {
+        Keep,
+        Switch,
+    };
+    void jsRef(JSGlobalObject*, ListenerHold = ListenerHold::Switch);
+    void jsUnref(JSGlobalObject*, ListenerHold = ListenerHold::Switch);
     // Report the actual loop-ref state (matches Node's uv_has_ref), not the intent flag.
     bool jsHasRef() { return m_hasRef || m_listenerLoopRefActive; }
 

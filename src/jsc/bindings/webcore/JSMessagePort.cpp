@@ -200,11 +200,14 @@ static inline bool setJSMessagePort_onmessageSetter(JSGlobalObject& lexicalGloba
     ensureStillAliveHere(value);
 
     // node: a callable handler starts the port and keeps the loop alive; assigning anything else
-    // clears the handler and lets the loop exit again.
+    // clears the handler and gives that hold back. The other 'message' listeners keep theirs.
     if (value.isCallable())
-        thisObject.wrapped().jsRef(&lexicalGlobalObject);
-    else
+        thisObject.wrapped().jsRef(&lexicalGlobalObject, MessagePort::ListenerHold::Keep);
+    else if (value.isObject()) {
+        // Not callable, but still a counted 'message' listener: it never runs, so it must not hold the loop.
         thisObject.wrapped().jsUnref(&lexicalGlobalObject);
+    } else
+        thisObject.wrapped().jsUnref(&lexicalGlobalObject, MessagePort::ListenerHold::Keep);
 
     return true;
 }

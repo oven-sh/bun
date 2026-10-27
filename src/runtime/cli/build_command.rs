@@ -2,7 +2,7 @@ use std::io::Write as _;
 
 use crate::cli::command::{Context, HotReload};
 use bun_bundler::bundle_v2::{self, BundleV2};
-use bun_bundler::input_path_set::{InputPathSet, OutputWrite, resolve_output_root};
+use bun_bundler::input_path_set::{InputPathSet, OutputWrite, Refusal, resolve_output_root};
 use bun_bundler::linker_context::metafile_builder as MetafileBuilder;
 use bun_bundler::options;
 use bun_bundler::transpiler;
@@ -734,6 +734,7 @@ impl BuildCommand {
                 metafile_paths
                     .iter()
                     .map(|path| (*path, OutputWrite::Truncate)),
+                Refusal::metafile,
                 watch,
             );
 
@@ -751,6 +752,7 @@ impl BuildCommand {
                             .iter()
                             .filter_map(|f| f.path_written_to_disk())
                             .map(|path| (path, OutputWrite::Truncate)),
+                        Refusal::output,
                         watch,
                     );
                 }
@@ -854,6 +856,7 @@ impl BuildCommand {
                         &input_paths,
                         root_path,
                         dest_paths.iter().map(|(path, write)| (&**path, *write)),
+                        Refusal::output,
                         watch,
                     );
                 }
@@ -1264,6 +1267,7 @@ fn refuse_to_overwrite_inputs<'a>(
     input_paths: &InputPathSet,
     root_path: &[u8],
     dest_paths: impl Iterator<Item = (&'a [u8], OutputWrite)>,
+    refusal: fn(Box<[u8]>) -> Refusal,
     watch: bool,
 ) {
     let mut dest_paths = dest_paths.peekable();
@@ -1275,12 +1279,9 @@ fn refuse_to_overwrite_inputs<'a>(
         dest_paths
             .find_map(|(dest_path, write)| input_paths.overwritten_by(&root, dest_path, write))
     };
-    if let Some(input) = overwritten {
-        Output::err_generic(
-            "Refusing to overwrite input file {}",
-            (bun_fmt::quote(&input),),
-        );
-        drop(input);
+    if let Some(refusal) = overwritten.map(refusal) {
+        Output::err_generic("{}", (&refusal,));
+        drop(refusal);
         Output::flush();
         exit_or_watch(1, watch);
     }

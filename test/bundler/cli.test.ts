@@ -866,7 +866,7 @@ describe.concurrent("--no-bundle with --outdir", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain('Refusing to overwrite input file "a.js"');
+    expect(stderr).toContain('Refusing to overwrite input file "a.js". Please choose a different outdir or outfile');
     expect(stdout).toBe("");
     expect(await Bun.file(path.join(String(dir), "a.js")).text()).toBe(`console.log("hello world!");\n`);
     expect(exitCode).toBe(1);
@@ -888,7 +888,7 @@ describe.concurrent("bun build refuses to write an output over an input", () => 
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain('Refusing to overwrite input file "b.js"');
+    expect(stderr).toContain('Refusing to overwrite input file "b.js". Please choose a different outdir or outfile');
     expect(stdout).toBe("");
     expect(await Bun.file(path.join(String(dir), "b.js")).text()).toBe(`console.log("B-SOURCE");\n`);
     expect(exitCode).toBe(1);
@@ -927,7 +927,9 @@ describe.concurrent("bun build refuses to write an output over an input", () => 
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain('Refusing to overwrite input file "index.html"');
+    expect(stderr).toContain(
+      'Refusing to overwrite input file "index.html". Please choose a different outdir or outfile',
+    );
     expect(stdout).toBe("");
     expect(fs.readdirSync(String(dir)).sort()).toEqual(["app.js", "index.html"]);
     expect(await Bun.file(path.join(String(dir), "index.html")).text()).toBe(
@@ -955,6 +957,36 @@ describe.concurrent("bun build refuses to write an output over an input", () => 
     expect(stdout).toBe("");
     expect(await Bun.file(path.join(String(dir), "index.js")).text()).toBe(`console.log("PARENT");\n`);
     expect(exitCode).toBe(1);
+  });
+
+  // `a.ts` imports "./b.js". The first build writes `src/b.js`, and the second build reads it.
+  test("--outdir that holds the sources, built twice", async () => {
+    const files = {
+      "src/a.ts": `import { b } from "./b.js";\nconsole.log(b);\n`,
+      "src/b.ts": `export const b: number = 1;\n`,
+    };
+    using dir = tempDir("build-overwrite-in-place-twice", files);
+
+    async function build() {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "./src/a.ts", "./src/b.ts", "--outdir", "src"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stderr, exitCode };
+    }
+
+    expect(await build()).toEqual({ stderr: "", exitCode: 0 });
+    const written = await Bun.file(path.join(String(dir), "src", "b.js")).text();
+    expect(await build()).toEqual({
+      stderr: 'error: Refusing to overwrite input file "src/b.js". Please choose a different outdir or outfile\n',
+      exitCode: 1,
+    });
+    expect(await Bun.file(path.join(String(dir), "src", "b.js")).text()).toBe(written);
+    expect(fs.readdirSync(path.join(String(dir), "src")).sort()).toEqual(["a.js", "a.ts", "b.js", "b.ts"]);
   });
 
   // Nothing is in a directory that does not exist yet, but this output name leaves it.
@@ -1014,7 +1046,7 @@ describe.concurrent("bun build refuses to write an output over an input", () => 
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain('Refusing to overwrite input file "app.js"');
+    expect(stderr).toContain('Refusing to overwrite input file "app.js". Please choose a different outdir or outfile');
     expect(stdout).toBe("");
     expect(await Bun.file(path.join(String(dir), "app.js")).text()).toBe(`console.log("APP");\n`);
     expect(exitCode).toBe(1);
@@ -1055,7 +1087,9 @@ describe.concurrent("bun build refuses to write an output over an input", () => 
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain('Refusing to overwrite input file "assets/meta.json"');
+    expect(stderr).toContain(
+      'Refusing to overwrite input file "assets/meta.json". Please choose a different metafile path',
+    );
     expect(stdout).toBe("");
     expect(await Bun.file(path.join(String(dir), "assets", "meta.json")).text()).toBe(`{ "asset": true }\n`);
     expect(exitCode).toBe(1);
@@ -1087,7 +1121,11 @@ describe.concurrent("bun build refuses to write an output over an input", () => 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(JSON.parse(stdout)).toEqual({
       success: false,
-      logs: [expect.stringContaining('Refusing to overwrite input file "assets/meta.json"')],
+      logs: [
+        expect.stringContaining(
+          'Refusing to overwrite input file "assets/meta.json". Please choose a different metafile path',
+        ),
+      ],
     });
     expect(await Bun.file(path.join(String(dir), "assets", "meta.json")).text()).toBe(`{ "asset": true }\n`);
     expect(exitCode).toBe(0);
@@ -1202,7 +1240,7 @@ describe.concurrent("bun build refuses to write an output over an input", () => 
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain('Refusing to overwrite input file "data.json"');
+    expect(stderr).toContain('Refusing to overwrite input file "data.json". Please choose a different metafile path');
     expect(await Bun.file(path.join(String(dir), "data.json")).text()).toBe(`{ "source": true }\n`);
     // The refusal comes before the first write, so no chunk is on disk.
     expect(fs.readdirSync(String(dir)).sort()).toEqual(["a.js", "data.json"]);
@@ -1560,7 +1598,11 @@ describe.concurrent("bun build refuses to write an output over an input", () => 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(JSON.parse(stdout)).toEqual({
       success: false,
-      logs: [expect.stringContaining('Refusing to overwrite input file "app.js"')],
+      logs: [
+        expect.stringContaining(
+          'Refusing to overwrite input file "app.js". Please choose a different outdir or outfile',
+        ),
+      ],
     });
     expect(await Bun.file(path.join(String(dir), "app.js")).text()).toBe(`console.log("APP");\n`);
     expect(exitCode).toBe(0);
@@ -1592,7 +1634,11 @@ describe.concurrent("bun build refuses to write an output over an input", () => 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(JSON.parse(stdout)).toEqual({
       success: false,
-      logs: [expect.stringContaining('Refusing to overwrite input file "data.json"')],
+      logs: [
+        expect.stringContaining(
+          'Refusing to overwrite input file "data.json". Please choose a different metafile path',
+        ),
+      ],
     });
     expect(await Bun.file(path.join(String(dir), "data.json")).text()).toBe(`{ "source": true }\n`);
     expect(exitCode).toBe(0);
@@ -1713,7 +1759,11 @@ describe.concurrent("bun build refuses to write an output over an input", () => 
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual({
       success: false,
-      logs: [expect.stringContaining('Refusing to overwrite input file "data.json"')],
+      logs: [
+        expect.stringContaining(
+          'Refusing to overwrite input file "data.json". Please choose a different metafile path',
+        ),
+      ],
     });
     expect(await Bun.file(path.join(String(dir), "data.json")).text()).toBe(`{ "source": true }\n`);
     expect(exitCode).toBe(0);
@@ -1745,7 +1795,9 @@ describe.concurrent("bun build refuses to write an output over an input", () => 
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual({
       success: false,
-      logs: [expect.stringContaining('Refusing to overwrite input file "b.js"')],
+      logs: [
+        expect.stringContaining('Refusing to overwrite input file "b.js". Please choose a different outdir or outfile'),
+      ],
     });
     expect(await Bun.file(path.join(String(dir), "b.js")).text()).toBe(`console.log("B-SOURCE");\n`);
     expect(exitCode).toBe(0);

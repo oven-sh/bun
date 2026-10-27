@@ -11,7 +11,7 @@ use bun_wyhash::hash;
 
 use crate::LinkerContext;
 use crate::chunk::{Content, Flags as ChunkFlags, ReferencePathStyle, SourceMapShiftTracking};
-use crate::input_path_set::{OutputWrite, resolve_output_root};
+use crate::input_path_set::{OutputWrite, Refusal, resolve_output_root};
 use crate::linker_context::output_file_list_builder::OutputFileList;
 use crate::linker_context_mod::debug;
 use crate::options::{self, Loader, OutputFile, SourceMapOption};
@@ -680,15 +680,13 @@ fn refuse_to_overwrite_inputs(
     is_standalone: bool,
     standalone_sourcemaps: &[Option<Box<[u8]>>],
 ) -> Result<(), Error> {
-    let Some(input) = overwritten_input(c, root_path, chunks, is_standalone, standalone_sourcemaps)
+    let Some(refusal) =
+        overwritten_input(c, root_path, chunks, is_standalone, standalone_sourcemaps)
     else {
         return Ok(());
     };
-    c.log_mut().add_error_fmt(
-        None,
-        Loc::EMPTY,
-        format_args!("Refusing to overwrite input file {}", quote(&input)),
-    );
+    c.log_mut()
+        .add_error_fmt(None, Loc::EMPTY, format_args!("{refusal}"));
     Err(crate::Error::OutputOverwritesInput)
 }
 
@@ -698,14 +696,18 @@ fn overwritten_input(
     chunks: &[Chunk],
     is_standalone: bool,
     standalone_sourcemaps: &[Option<Box<[u8]>>],
-) -> Option<Box<[u8]>> {
+) -> Option<Refusal> {
     // SAFETY: `c` is the `linker` field of a `BundleV2` that is valid for the link step.
     let inputs = unsafe { &*LinkerContext::bundle_v2_const_ptr(c) }.input_paths();
     if inputs.is_empty() {
         return None;
     }
     let root = resolve_output_root(root_path);
-    let check = |dest_path: &[u8]| inputs.overwritten_by(&root, dest_path, OutputWrite::Truncate);
+    let check = |dest_path: &[u8]| {
+        inputs
+            .overwritten_by(&root, dest_path, OutputWrite::Truncate)
+            .map(Refusal::output)
+    };
 
     for (i, chunk) in chunks.iter().enumerate() {
         let inlined_into_html = is_standalone && !matches!(chunk.content, Content::Html);
@@ -718,29 +720,29 @@ fn overwritten_input(
             )
         };
         if !inlined_into_html {
-            if let Some(input) = check(&chunk.final_rel_path) {
-                return Some(input);
+            if let Some(refusal) = check(&chunk.final_rel_path) {
+                return Some(refusal);
             }
         }
         if writes_sourcemap {
-            if let Some(input) = check(&strings::concat(&[&chunk.final_rel_path, b".map"])) {
-                return Some(input);
+            if let Some(refusal) = check(&strings::concat(&[&chunk.final_rel_path, b".map"])) {
+                return Some(refusal);
             }
         }
         if !inlined_into_html && c.options.generate_bytecode_cache && c.chunk_gets_bytecode(chunk) {
-            if let Some(input) = check(&strings::concat(&[
+            if let Some(refusal) = check(&strings::concat(&[
                 &chunk.final_rel_path,
                 BYTECODE_EXTENSION.as_bytes(),
             ])) {
-                return Some(input);
+                return Some(refusal);
             }
         }
     }
 
     if !is_standalone {
         for file in c.parse_graph().additional_output_files.iter() {
-            if let Some(input) = check(&file.dest_path) {
-                return Some(input);
+            if let Some(refusal) = check(&file.dest_path) {
+                return Some(refusal);
             }
         }
     }
@@ -749,7 +751,7 @@ fn overwritten_input(
     for path in c.options.caller_output_paths {
         let working_dir = working_dir.get_or_insert_with(|| resolve_output_root(b""));
         if let Some(input) = inputs.overwritten_by(working_dir, path, OutputWrite::Truncate) {
-            return Some(input);
+            return Some(Refusal::metafile(input));
         }
     }
 
@@ -761,4 +763,5 @@ fn overwritten_input(
             c.options.metafile_markdown_path,
         ],
     )
+    .map(Refusal::metafile)
 }

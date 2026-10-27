@@ -5757,10 +5757,7 @@ pub mod bv2_impl {
                     self.linker.log_mut().add_error_fmt(
                         None,
                         bun_ast::Loc::EMPTY,
-                        format_args!(
-                            "Refusing to overwrite input file {}",
-                            bun_core::fmt::quote(&input)
-                        ),
+                        format_args!("{}", crate::input_path_set::Refusal::metafile(input)),
                     );
                     return Err(Error::OutputOverwritesInput);
                 }

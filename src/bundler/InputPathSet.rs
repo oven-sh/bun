@@ -25,6 +25,41 @@ impl OutputWrite {
     };
 }
 
+/// An output that would replace `input`. Its text is the build error.
+pub struct Refusal {
+    input: Box<[u8]>,
+    /// What the user can change to move the output.
+    option: &'static str,
+}
+
+impl Refusal {
+    /// A chunk, an asset, a source map, a bytecode file or the executable.
+    pub fn output(input: Box<[u8]>) -> Self {
+        Self {
+            input,
+            option: "outdir or outfile",
+        }
+    }
+
+    pub fn metafile(input: Box<[u8]>) -> Self {
+        Self {
+            input,
+            option: "metafile path",
+        }
+    }
+}
+
+impl core::fmt::Display for Refusal {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "Refusing to overwrite input file {}. Please choose a different {}",
+            bun_core::fmt::quote(&self.input),
+            self.option,
+        )
+    }
+}
+
 /// Absolute paths of every input file that the build read from disk.
 #[derive(Default)]
 pub struct InputPathSet {

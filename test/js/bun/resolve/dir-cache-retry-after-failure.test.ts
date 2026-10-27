@@ -475,16 +475,32 @@ const files = {
           // A link whose target is not there.
           ["Z10", () => require.resolve("./s7.cjs")],
         ];
-        for (const [label, miss] of misses) res(label, miss);
-        const before = resolverDirInfoSlotsUsed();
-        for (let round = 0; round < 20; round++) {
-          for (const [, miss] of misses) {
-            try {
-              miss();
-            } catch {}
+        // Runs each miss 20 more times. Returns how many directories that read again.
+        const readAgain = misses => {
+          const before = resolverDirInfoSlotsUsed();
+          for (let round = 0; round < 20; round++) {
+            for (const [, miss] of misses) {
+              try {
+                miss();
+              } catch {}
+            }
           }
-        }
-        console.log("directories read again by 200 more misses:", resolverDirInfoSlotsUsed() - before);
+          return resolverDirInfoSlotsUsed() - before;
+        };
+        for (const [label, miss] of misses) res(label, miss);
+        console.log("directories read again by 200 more misses:", readAgain(misses));
+        // Names of more than one segment. s1, s2 and s5 have their config file next to the
+        // importer, where a miss on such a name compares it. The one of s3 is a level above.
+        const longer = [
+          ["Z11", () => s1.resolve("#x/y")],
+          ["Z12", () => s2.resolve("#x/y")],
+          ["Z13", () => s3.resolve("#x/y")],
+          ["Z14", () => s5.resolve("@s5/utils")],
+          ["Z15", () => s1.resolve("s1/feature")],
+          ["Z16", () => require.resolve("@never/installed")],
+        ];
+        for (const [label, miss] of longer) res(label, miss);
+        console.log("directories read again by 120 more misses of longer names:", readAgain(longer));
       },
 
       async build() {
@@ -523,6 +539,85 @@ const files = {
         await build("G6a", path.join("g6", "ent.css"));
         write(path.join("g6", "late.svg"), "<svg xmlns='http://www.w3.org/2000/svg'/>");
         await build("G6b", path.join("g6", "ent.css"));
+      },
+
+      async alias() {
+        // A name of more than one segment ("@scope/name", "#a/b", "name/file") is looked up
+        // from the importer's directory, as a name of one segment is. A miss compares the
+        // config files of that directory too.
+        const aliased = (name, target) =>
+          JSON.stringify({ compilerOptions: { baseUrl: ".", paths: { [name]: [target] } } });
+        const project = name => {
+          write(path.join(name, "src", "lib", "utils.cjs"), "");
+          return requireFrom(path.join(name, "src"));
+        };
+        // An "imports" entry added to the package.json next to the importer.
+        write(path.join("m2", "package.json"), JSON.stringify({ name: "m2", imports: {} }));
+        write(path.join("m2", "impl.cjs"), "");
+        const m2 = requireFrom("m2");
+        res("S3", () => m2.resolve("#internal/alias"));
+        write(
+          path.join("m2", "package.json"),
+          JSON.stringify({ name: "m2", imports: { "#internal/alias": "./impl.cjs" } }),
+        );
+        res("S4", () => m2.resolve("#internal/alias"));
+        // A subpath of the package itself, once the package.json has the name and the "exports".
+        write(path.join("m7", "package.json"), JSON.stringify({ name: "not-yet" }));
+        write(path.join("m7", "feature.cjs"), "");
+        const m7 = requireFrom("m7");
+        res("SR3", () => m7.resolve("m7/feature"));
+        write(
+          path.join("m7", "package.json"),
+          JSON.stringify({ name: "m7", exports: { "./feature": "./feature.cjs" } }),
+        );
+        res("SR4", () => m7.resolve("m7/feature"));
+        // A tsconfig.json "paths" alias, created in the importing directory.
+        const c7 = project("c7");
+        res("Y17", () => c7.resolve("@c7/utils"));
+        write(path.join("c7", "src", "tsconfig.json"), aliased("@c7/utils", "./lib/utils.cjs"));
+        res("Y18", () => c7.resolve("@c7/utils"));
+        // One added to the tsconfig.json that is there.
+        write(path.join("c8", "src", "tsconfig.json"), JSON.stringify({ compilerOptions: { baseUrl: "." } }));
+        const c8 = project("c8");
+        res("Y19", () => c8.resolve("~/utils"));
+        write(path.join("c8", "src", "tsconfig.json"), aliased("~/utils", "./lib/utils.cjs"));
+        res("Y20", () => c8.resolve("~/utils"));
+        // A pattern, in a jsconfig.json.
+        const c9 = project("c9");
+        res("Y21", () => c9.resolve("@/lib/utils.cjs"));
+        write(path.join("c9", "src", "jsconfig.json"), aliased("@/*", "./*"));
+        res("Y22", () => c9.resolve("@/lib/utils.cjs"));
+        // One added to the file that the tsconfig.json extends.
+        write(path.join("c10", "base.json"), JSON.stringify({ compilerOptions: { baseUrl: "." } }));
+        write(path.join("c10", "src", "tsconfig.json"), JSON.stringify({ extends: "../base.json" }));
+        const c10 = project("c10");
+        res("Y23", () => c10.resolve("@c10/utils"));
+        write(path.join("c10", "base.json"), aliased("@c10/utils", "./src/lib/utils.cjs"));
+        res("Y24", () => c10.resolve("@c10/utils"));
+        // What did not change keeps failing.
+        res("W2", () => m2.resolve("#internal/other"));
+        res("W3", () => m7.resolve("m7/other"));
+        res("W4", () => c7.resolve("@c7/other"));
+        res("W5", () => c8.resolve("~/other"));
+
+        // The same through Bun.build(): the alias is added after the first build failed, to a
+        // tsconfig.json that is created (T1, T3), and to one that was there (T2).
+        const aliases = names =>
+          JSON.stringify({ compilerOptions: { paths: Object.fromEntries(names.map(name => [name, ["./real.ts"]])) } });
+        const rows = [
+          ["@made-up/x", false],
+          ["@/x", true],
+          ["~/x", false],
+        ];
+        for (const [i, [alias, wasThere]] of rows.entries()) {
+          const dir = "t" + (i + 1);
+          write(path.join(dir, "real.ts"), "export const v = 42;");
+          write(path.join(dir, "ent.ts"), "import { v } from " + JSON.stringify(alias) + "; console.log(v);");
+          if (wasThere) write(path.join(dir, "tsconfig.json"), aliases(["other-alias"]));
+          await build("T" + (i + 1) + "a", path.join(dir, "ent.ts"));
+          write(path.join(dir, "tsconfig.json"), aliases(["other-alias", alias]));
+          await build("T" + (i + 1) + "b", path.join(dir, "ent.ts"));
+        }
       },
     };
 
@@ -800,7 +895,14 @@ describe.concurrent("a failed resolution checks again what it read from the cach
       Z8 ERR MODULE_NOT_FOUND
       Z9 ERR MODULE_NOT_FOUND
       Z10 ERR MODULE_NOT_FOUND
-      directories read again by 200 more misses: 0"
+      directories read again by 200 more misses: 0
+      Z11 ERR MODULE_NOT_FOUND
+      Z12 ERR MODULE_NOT_FOUND
+      Z13 ERR MODULE_NOT_FOUND
+      Z14 ERR MODULE_NOT_FOUND
+      Z15 ERR MODULE_NOT_FOUND
+      Z16 ERR MODULE_NOT_FOUND
+      directories read again by 120 more misses of longer names: 0"
       ,
       }
     `);
@@ -873,6 +975,39 @@ describe.concurrent("a failed resolution checks again what it read from the cach
       G5b OK 1
       G6a ERR Could not resolve: "./late.svg#frag"
       G6b OK 1"
+      ,
+      }
+    `);
+  });
+
+  test("a config file changed next to the importer after a miss on a name of more than one segment", async () => {
+    expect(await runGroup("alias")).toMatchInlineSnapshot(`
+      {
+        "exitCode": 0,
+        "stderr": "",
+        "stdout": 
+      "S3 ERR MODULE_NOT_FOUND
+      S4 OK m2/impl.cjs
+      SR3 ERR MODULE_NOT_FOUND
+      SR4 OK m7/feature.cjs
+      Y17 ERR MODULE_NOT_FOUND
+      Y18 OK c7/src/lib/utils.cjs
+      Y19 ERR MODULE_NOT_FOUND
+      Y20 OK c8/src/lib/utils.cjs
+      Y21 ERR MODULE_NOT_FOUND
+      Y22 OK c9/src/lib/utils.cjs
+      Y23 ERR MODULE_NOT_FOUND
+      Y24 OK c10/src/lib/utils.cjs
+      W2 ERR MODULE_NOT_FOUND
+      W3 ERR MODULE_NOT_FOUND
+      W4 ERR MODULE_NOT_FOUND
+      W5 ERR MODULE_NOT_FOUND
+      T1a ERR Could not resolve: "@made-up/x". Maybe you need to "bun install"?
+      T1b OK 1
+      T2a ERR Could not resolve: "@/x". Maybe you need to "bun install"?
+      T2b OK 1
+      T3a ERR Could not resolve: "~/x". Maybe you need to "bun install"?
+      T3b OK 1"
       ,
       }
     `);

@@ -2011,7 +2011,7 @@ impl<'a> Resolver<'a> {
             found
         };
         let stale = self.bust_touched_dirs(&touched, reread);
-        let stale_config = self.bust_stale_config_dir(source_dir, import_path, reread);
+        let stale_config = self.bust_stale_config_dirs(source_dir, import_path, reread);
         // A replay that finds an answer read what the run before it put in the caches.
         stale || stale_config || found
     }
@@ -3016,8 +3016,8 @@ impl<'a> Resolver<'a> {
             .is_some_and(|path| Self::read_config_file(path).is_some())
     }
 
-    /// Drops the parent of what the specifier names if its config files changed. The old retry dropped it on every miss.
-    fn bust_stale_config_dir(
+    /// Drops the specifier's parent directory and, for a package path, the importer's, if their config files changed.
+    fn bust_stale_config_dirs(
         &mut self,
         source_dir: &[u8],
         import_path: &[u8],
@@ -3025,7 +3025,7 @@ impl<'a> Resolver<'a> {
     ) -> bool {
         let mut buf = bun_paths::path_buffer_pool::get();
         // The join gives an absolute specifier the separators of a cache key too.
-        let Some(dir) = ResolvePath::join_abs_string_buf_checked(
+        let Some(named) = ResolvePath::join_abs_string_buf_checked(
             source_dir,
             &mut buf[..],
             &[import_path, b".."],
@@ -3034,6 +3034,26 @@ impl<'a> Resolver<'a> {
         .map(strings::without_trailing_slash_windows_path) else {
             return false;
         };
+        let mut stale = self.bust_dir_if_config_changed(named, reread);
+        // `name` and `#name` name the importer's directory. `@scope/name` and `name/file` name one below it.
+        if is_package_path(import_path) {
+            let mut importer_buf = bun_paths::path_buffer_pool::get();
+            let importer = ResolvePath::join_abs_string_buf_checked(
+                source_dir,
+                &mut importer_buf[..],
+                &[b"."],
+                bun_paths::Platform::AUTO,
+            )
+            .map(strings::without_trailing_slash_windows_path);
+            if let Some(importer) = importer.filter(|importer| *importer != named) {
+                stale |= self.bust_dir_if_config_changed(importer, reread);
+            }
+        }
+        stale
+    }
+
+    /// Drops `dir` if its `package.json`, or its `tsconfig.json` or `jsconfig.json`, is not the one that is cached.
+    fn bust_dir_if_config_changed(&mut self, dir: &[u8], reread: &mut Vec<u64>) -> bool {
         let key = bun_wyhash::hash(dir);
         if reread.contains(&key) {
             return false;

@@ -2255,3 +2255,130 @@ test.concurrent.each(["import", "require"])(
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "later.mjs\nlater.mjs\n", stderr: "", exitCode: 0 });
   },
 );
+
+// The resolver caches a directory under the path it walked, so a directory behind a link is cached once for the
+// link and once for its own path. A relative specifier that does not resolve makes the resolver read the directory
+// it names again. That has to reach the directory under every path it is cached by.
+describe("a directory cached by its own path and through a link", () => {
+  const fixture = `
+    const fs = require("fs"), path = require("path");
+    const root = fs.realpathSync(process.cwd());
+    const resolve = specifier => {
+      try {
+        return path.relative(root, Bun.resolveSync(specifier, root)).replaceAll("\\\\", "/");
+      } catch {
+        return "not found";
+      }
+    };
+    const write = (file, text = "") => {
+      fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
+      fs.writeFileSync(path.join(root, file), text);
+    };
+    // A renamed file: the old name is gone and a name that resolves later in the extension order is there.
+    const rename = dir => {
+      fs.rmSync(path.join(root, dir, "c.js"));
+      write(dir + "/c.json", "{}");
+    };
+    const packageJson = main => JSON.stringify({ name: "lib", version: "1.0.0", main });
+    const cases = {
+      "the link after its own path is read again"() {
+        resolve("lib/c"), resolve("./packages/lib/c");
+        rename("packages/lib");
+        resolve("./packages/lib/missing");
+        return [resolve("./packages/lib/c"), resolve("lib/c")];
+      },
+      "its own path after the link is read again"() {
+        resolve("lib/c"), resolve("./packages/lib/c");
+        rename("packages/lib");
+        resolve("./node_modules/lib/missing");
+        return [resolve("lib/c"), resolve("./packages/lib/c")];
+      },
+      "a link that alone was read"() {
+        resolve("lib/c");
+        rename("packages/lib");
+        resolve("./packages/lib/missing");
+        return [resolve("lib/c")];
+      },
+      "a directory below the link"() {
+        resolve("lib/sub/c"), resolve("./packages/lib/sub/c");
+        rename("packages/lib/sub");
+        resolve("./packages/lib/sub/missing");
+        return [resolve("./packages/lib/sub/c"), resolve("lib/sub/c")];
+      },
+      // The miss is cached for the directory, and the listing of the package does not have it.
+      "a directory below the link that did not exist"() {
+        const before = resolve("lib/later/c");
+        write("packages/lib/later/c.js");
+        resolve("./packages/lib/missing"), resolve("./packages/lib/later/missing");
+        return [before, resolve("lib/later/c")];
+      },
+      "a second link to the directory"() {
+        resolve("lib/c"), resolve("lib2/c");
+        rename("packages/lib");
+        resolve("./node_modules/lib/missing");
+        return [resolve("lib/c"), resolve("lib2/c")];
+      },
+      "a link outside node_modules"() {
+        resolve("./linked/c"), resolve("./packages/lib/c");
+        rename("packages/lib");
+        resolve("./packages/lib/missing");
+        return [resolve("./packages/lib/c"), resolve("./linked/c")];
+      },
+      "the package.json read through the link"() {
+        resolve("lib"), resolve("./packages/lib");
+        write("packages/lib/package.json", packageJson("./b.js"));
+        resolve("./packages/lib/missing");
+        return [resolve("./packages/lib"), resolve("lib")];
+      },
+      // Nothing above reads a directory again before it is named. A path that was never walked has no cache entry,
+      // so its first use finds a file that is newer than the other path's entry.
+      "a link first used after a file is added"() {
+        resolve("./packages/lib/c");
+        write("packages/lib/d.js");
+        return [resolve("lib/d")];
+      },
+      "its own path first used after a file is added"() {
+        resolve("lib/c");
+        write("packages/lib/d.js");
+        return [resolve("./packages/lib/d")];
+      },
+    };
+    write("packages/lib/package.json", packageJson("./a.js"));
+    for (const file of ["a.js", "b.js", "c.js", "sub/c.js"]) write("packages/lib/" + file);
+    console.log(JSON.stringify(cases[process.argv[2]]()));
+  `;
+
+  test.concurrent.each([
+    ["the link after its own path is read again", ["packages/lib/c.json", "packages/lib/c.json"]],
+    ["its own path after the link is read again", ["packages/lib/c.json", "packages/lib/c.json"]],
+    ["a link that alone was read", ["packages/lib/c.json"]],
+    ["a directory below the link", ["packages/lib/sub/c.json", "packages/lib/sub/c.json"]],
+    ["a directory below the link that did not exist", ["not found", "packages/lib/later/c.js"]],
+    ["a second link to the directory", ["packages/lib/c.json", "packages/lib/c.json"]],
+    ["a link outside node_modules", ["packages/lib/c.json", "packages/lib/c.json"]],
+    ["the package.json read through the link", ["packages/lib/b.js", "packages/lib/b.js"]],
+    ["a link first used after a file is added", ["packages/lib/d.js"]],
+    ["its own path first used after a file is added", ["packages/lib/d.js"]],
+  ])("%s", async (name, resolved) => {
+    using dir = tempDir("resolve-link-keys", { "main.cjs": fixture, "packages/lib/.keep": "" });
+    const root = realpathSync(String(dir));
+    mkdirSync(join(root, "node_modules"));
+    // The links exist before the process starts. A junction on Windows, which takes an absolute target.
+    for (const link of ["node_modules/lib", "node_modules/lib2", "linked"]) {
+      symlinkSync(join(root, "packages", "lib"), join(root, link), "junction");
+    }
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.cjs", name],
+      env: bunEnv,
+      cwd: root,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify(resolved),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});

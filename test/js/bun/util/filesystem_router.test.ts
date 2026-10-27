@@ -489,6 +489,23 @@ it("reload() works with new dirs/files", () => {
   expect(router.match("/test/test2")!.name).toBe("/test/test2");
 });
 
+it("reload() reads a directory behind a link again under its own path too", () => {
+  const { dir } = make(["pages/index.tsx", "shared/c.js"]);
+  const root = fs.realpathSync(dir);
+  // A junction on Windows, where a symlink to a directory needs a privilege.
+  fs.symlinkSync(path.join(root, "shared"), path.join(root, "pages", "linked"), "junction");
+
+  const router = new Bun.FileSystemRouter({ dir: path.join(root, "pages"), style: "nextjs" });
+  expect(Object.keys(router.routes).sort()).toEqual(["/", "/linked/c"]);
+  // The resolver caches the directory once for the link, which the router walks, and once for its own path.
+  expect(Bun.resolveSync("./shared/c", root)).toBe(path.join(root, "shared", "c.js"));
+
+  fs.renameSync(path.join(root, "shared", "c.js"), path.join(root, "shared", "c.tsx"));
+  router.reload();
+  expect(router.match("/linked/c")!.filePath).toEndWith("c.tsx");
+  expect(Bun.resolveSync("./shared/c", root)).toBe(path.join(root, "shared", "c.tsx"));
+});
+
 it("the constructor and reload() don't create allocator heaps", () => {
   const { dir } = make(["index.tsx", "posts/[id].tsx"]);
   const heapsCreatedBy = (fn: () => void) => {

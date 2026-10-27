@@ -2477,6 +2477,9 @@ impl<'a> Resolver<'a> {
     pub fn bust_dir_cache(&mut self, path: &[u8]) -> bool {
         let path = strings::without_trailing_slash_windows_path(path);
         Self::assert_valid_cache_key(path);
+        if self.fs_ref().fs.has_dir_links() {
+            return self.bust_every_key_of_dir(path);
+        }
         let first_bust = self.fs_mut().fs.bust_entries_cache(path);
         let second_bust = self.dir_cache_mut().remove(path);
         bun_core::scoped_log!(
@@ -2487,6 +2490,38 @@ impl<'a> Resolver<'a> {
             second_bust
         );
         first_bust || second_bust
+    }
+
+    /// `bust_dir_cache` once a directory link was followed. A caller names the directory by the
+    /// one path it knows, and the stale answer can be cached under another: the watcher reports
+    /// the real path of a package that imports reach through `node_modules/<name>`.
+    #[cold]
+    fn bust_every_key_of_dir(&mut self, path: &[u8]) -> bool {
+        let dir_cache = self.dir_cache();
+        let Fs::file_system::RealFS {
+            entries_mutex,
+            entries,
+            dir_links,
+            ..
+        } = &mut self.fs_mut().fs;
+        // The hot reloader calls this on the watcher thread with no resolver mutex, so this
+        // reads no `DirInfo`: its slot is published before it is filled.
+        let _entries_lock = entries_mutex.lock_guard();
+        let mut any_bust = false;
+        dir_links.for_each_key_of(path, |key| {
+            let first_bust = entries.remove(key);
+            // SAFETY: `dir_cache` is the process-lifetime `DirInfo` map, which locks itself.
+            let second_bust = unsafe { &mut *dir_cache }.remove(key);
+            bun_core::scoped_log!(
+                ResolverDev,
+                "Bust {} = {}, {}",
+                bstr::BStr::new(key),
+                first_bust,
+                second_bust
+            );
+            any_bust |= first_bust || second_bust;
+        });
+        any_bust
     }
 
     /// bust both the named file and a parent directory, because `./hello` can resolve
@@ -6378,6 +6413,12 @@ impl<'a> Resolver<'a> {
                                 logs.add_note(buf);
                             }
                             info.abs_real_path = symlink;
+                            // SAFETY: `rfs_ptr` points at the process-global RealFS, and the
+                            // caller holds `entries_mutex`.
+                            unsafe { &mut *rfs_ptr }.record_dir_link(
+                                strings::without_trailing_slash_windows_path(path),
+                                strings::without_trailing_slash_windows_path(symlink),
+                            );
                         } else if !parent_.abs_real_path.is_empty()
                             && let Some(joined) = self.fs_ref().abs_buf_checked(
                                 &[parent_.abs_real_path, base],

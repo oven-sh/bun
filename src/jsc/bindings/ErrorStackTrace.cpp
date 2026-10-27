@@ -162,12 +162,10 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
 
     // Match V8: remove all frames up to and including the caller. If the caller
     // is not found anywhere in the sync portion of the stack, remove everything.
-    // The caller's frame is the one whose callee is that cell. Only when no frame
-    // has it do we match by name: a resumed async function's frame callee is the
-    // generator's `next` function (a different cell) but Zig::functionName still
-    // reports the original async function's name. That frame runs user code, so
-    // a builtin's frame never matches by name: `function map() { [1].map(f) }`
-    // is cut at the user's `map`, not at the builtin under it.
+    // We match by cell identity first, then by name — name matching is needed
+    // because a resumed async function's frame callee is the generator's `next`
+    // function (a different cell) but Zig::functionName still reports the
+    // original async function's name.
     size_t callerIndex = indexOfSyncFrame([&](const JSC::StackFrame& frame) {
         return frame.callee() == callerObject;
     });
@@ -176,6 +174,7 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
         if (!callerName.isEmpty()) {
             callerIndex = indexOfSyncFrame([&](const JSC::StackFrame& frame) {
                 auto* codeBlock = frame.codeBlock();
+                // A builtin or host frame named like the caller (Array.prototype.map for a user's `map`) is not the caller.
                 return codeBlock && !codeBlock->unlinkedCodeBlock()->isBuiltinFunction() && Zig::functionName(vm, frame, nullptr) == callerName;
             });
         }

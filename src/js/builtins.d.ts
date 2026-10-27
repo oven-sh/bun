@@ -43,10 +43,7 @@ declare const IS_BUN_DEVELOPMENT: boolean;
 
 /** Place this directly above a function declaration (like a decorator) to make it a getter. */
 declare const $getter: never;
-/**
- * Assign to this directly above a function declaration (like a decorator) to override the function's `name`.
- * The default is the name of the export. `""` leaves the function without a name.
- */
+/** Assign to this directly above a function declaration (like a decorator) to override the function's `name`, which defaults to the export's name. `""` means no name. */
 declare var $overriddenName: string;
 /** ??? */
 declare var $linkTimeConstant: never;

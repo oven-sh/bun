@@ -271,6 +271,9 @@ enum Keep {
 ///
 /// libspng inflated into a buffer of 8 KiB that it doubled when full, unless that made it larger than `max`.
 /// So the limit on the output is the largest `8 KiB << n` that `max` allows.
+///
+/// Not the same for a `max` of 256 KiB or less: libspng gave zlib the first 81 or 256 bytes of the chunk apart
+/// from the rest, and refused a stream whose output filled the last buffer before its end was in sight.
 // https://github.com/randy408/libspng/blob/fb768002d4288590083a476af628e51c3f1d47cd/spng/spng.c#L1244
 fn inflate(mut input: &[u8], max: usize, keep: Keep) -> Result<Option<Vec<u8>>> {
     const INITIAL: usize = 8 * 1024;

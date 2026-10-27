@@ -61,8 +61,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_hasReifiedStatic, (JSC::JSGlobalObject * glo
     return JSValue::encode(jsBoolean(false));
 }
 
-// What native code gets when it throws ExceptionCode::QuotaExceededError. No API of Bun throws that
-// code yet, so this is the one way for a test to reach the subclass that DOMException::create() picks.
+// What a native thrower of ExceptionCode::QuotaExceededError gets, for tests: no API of Bun throws that code yet.
 JSC_DEFINE_HOST_FUNCTION(jsFunction_nativeQuotaExceededError, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = globalObject->vm();

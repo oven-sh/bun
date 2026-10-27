@@ -32,8 +32,7 @@
 
 namespace WebCore {
 
-// https://webidl.spec.whatwg.org/#quotaexceedederror
-// WebKit names this class QuotaExceededError. Here that name is an enumerator of the unscoped ExceptionCode.
+// WebKit calls this QuotaExceededError, which is an ExceptionCode enumerator here: https://webidl.spec.whatwg.org/#quotaexceedederror
 class DOMQuotaExceededError final : public DOMException {
 public:
     // The constructor steps of the interface: a RangeError for a negative member or for requested < quota.

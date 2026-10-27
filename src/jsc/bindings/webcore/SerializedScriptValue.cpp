@@ -502,10 +502,8 @@ static constexpr unsigned StringDataIs8BitFlag = 0x80000000;
  *    | WasmMemoryTag <value:uint32_t>
  *    | RTCDataChannelTransferTag <identifier:uint32_t>
  *    | DOMExceptionTag <message:String> <name:String>
- *    | QuotaExceededErrorTag <message:String> <name:String> <quota:double> <requested:double>
+ *    | QuotaExceededErrorTag <message:String> <name:String> <quota:double> <requested:double>, where a NaN is null
  *    | WebCodecsEncodedVideoChunkTag <identifier:uint32_t>
- *
- * A NaN quota or requested value in QuotaExceededErrorTag represents null.
  *
  * Inside certificate, data is serialized in this format as per spec:
  *

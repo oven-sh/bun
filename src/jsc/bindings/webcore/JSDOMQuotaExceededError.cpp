@@ -190,8 +190,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsDOMQuotaExceededErrorConstructor, (JSGlobalObject * l
     return JSValue::encode(JSDOMQuotaExceededError::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
 }
 
-// Node gives a receiver of another type ERR_INVALID_THIS, so these are not DOMAttribute getters, whose receiver JSC checks first.
-// The text is the one of Node's DOMException getters, which has no "type" before the name (throwInvalidThisError in lib/internal/per_context/domexception.js).
+// Not DOMAttribute getters, so that another receiver gets Node's ERR_INVALID_THIS. Its text has no "type": throwInvalidThisError in lib/internal/per_context/domexception.js.
 static JSC::EncodedJSValue nullableDoubleAttribute(JSGlobalObject* lexicalGlobalObject, JSC::EncodedJSValue thisValue, std::optional<double> (DOMQuotaExceededError::*attribute)() const)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);

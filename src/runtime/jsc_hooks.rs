@@ -827,14 +827,10 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
         // SAFETY: `i < n`; nothing touches `vm.preload` until the `clear()` after
         // this loop: the resolver does not, and `reload()` defers while `is_in_preload`.
         let preload_slice: &[u8] = unsafe { &(&(*vm).preload)[i] };
-        // Strip "file://".
-        let normalized: &[u8] = preload_slice
-            .strip_prefix(b"file://".as_slice())
-            .unwrap_or(preload_slice);
-
-        // node: builtin specifiers bypass the file resolver — JSModuleLoader
-        // resolves them internally, so `bun --import node:*` works like Node's.
-        let module_name = if normalized.starts_with(b"node:") {
+        let normalized = preload_slice;
+        // File URLs retain their escapes and suffix identity in the module loader.
+        let loader_specifier = normalized.starts_with(b"file:") || normalized.starts_with(b"node:");
+        let module_name = if loader_specifier {
             bun_core::StringView::from_bytes(normalized)
         } else {
             // ── resolve ─────────────────────────────────────────────────────

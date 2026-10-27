@@ -455,6 +455,7 @@ describe("bun", () => {
           "foo.test.ts": "",
           "bar_spec.js": "",
           "my feature.test.ts": "",
+          "Button.Spec.tsx": "",
           "helper.ts": "",
           "notes.txt": "",
           "tsconfig.build.json": "{}",
@@ -471,7 +472,13 @@ describe("bun", () => {
           stdout: "pipe",
           stderr: "pipe",
         });
-        const helpText = await help.stdout.text();
+        const [helpText, helpStderr, helpExitCode] = await Promise.all([
+          help.stdout.text(),
+          help.stderr.text(),
+          help.exited,
+        ]);
+        expect(helpStderr).toBe("");
+        expect(helpExitCode).toBe(0);
         const helpFlags = [...helpText.matchAll(/^\s+(?:(-[a-zA-Z]), )?(--[a-z-]+)/gm)]
           .flatMap(m => [m[1], m[2]])
           .filter(flag => flag && flag !== "--test-worker");
@@ -509,6 +516,7 @@ describe("bun", () => {
         // `bun test <TAB>`: the test files in cwd and the flags, not the other files
         const empty = await complete(cwd, "test", "");
         expect(empty.filter(word => !word.startsWith("-")).sort()).toEqual([
+          "Button.Spec.tsx",
           "bar_spec.js",
           "foo.test.ts",
           "my feature.test.ts",
@@ -525,6 +533,7 @@ describe("bun", () => {
         expect(await complete(cwd, "test", "--timeout", "")).toEqual([]);
         expect(await complete(cwd, "test", "--tsconfig-override", "t")).toEqual(["tsconfig.build.json"]);
         expect((await complete(cwd, "test", "--preload", "")).sort()).toEqual([
+          "Button.Spec.tsx",
           "bar_spec.js",
           "foo.test.ts",
           "helper.ts",

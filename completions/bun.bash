@@ -2,13 +2,14 @@
 
 _file_arguments() {
     local extensions="${1}"
-    # the filter patterns use extglob, which is off unless bash-completion turned it on
-    local reset=$(shopt -p extglob)
-    shopt -s extglob
+    # the filter patterns use extglob, which is off unless bash-completion turned it on.
+    # bun test picks test files by their lowercased name, so the filter ignores case too
+    local reset=$(shopt -p extglob nocasematch)
+    shopt -s extglob nocasematch
 
     readarray -t COMPREPLY < <(compgen -f -X "${extensions}" -- "${cur_word}");
 
-    $reset
+    eval "${reset}"
 }
 
 _long_short_completion() {

@@ -99,7 +99,7 @@ export const mydep: Dependency = {
   patches: ["patches/mydep/fix-something.patch"],
 
   // Optional: deps whose SOURCE must be ready before this one builds
-  // (for -I cross-dep headers). See libspng for an example.
+  // (for -I cross-dep headers). See lsquic for an example.
   fetchDeps: ["zlib"],
 
   // How to build. `direct` lists sources explicitly; emitDirect compiles

@@ -4,7 +4,7 @@
 use super::bit_cost::bits_entropy;
 use super::bit_writer::BitWriter;
 use super::brotli_bit_stream::{build_and_store_huffman_tree_fast, store_huffman_tree};
-use super::compress_fragment::store_meta_block_header;
+use super::compress_fragment::{emit_literals, store_meta_block_header};
 use super::entropy_encode::{HuffmanTree, convert_bit_depths_to_symbols, create_huffman_tree};
 use super::fast_log::log2_floor_nonzero;
 use super::find_match_length::find_match_length_with_limit;
@@ -12,7 +12,7 @@ use super::hash::HASH_MUL_32;
 use crate::common::constants::{
     NUM_COMMAND_SYMBOLS, NUM_LITERAL_SYMBOLS, WINDOW_GAP, max_backward_limit,
 };
-use crate::util::{Checked, OutOfMemory, SliceExt, load_u32_le, load_u64_le, try_box};
+use crate::util::{Bug, Checked, OutOfMemory, SliceExt, load_u64_le, try_box};
 
 const MAX_DISTANCE: usize = max_backward_limit(18);
 
@@ -48,35 +48,22 @@ impl TwoPassArena {
     }
 }
 
-/// A hash of the `length` bytes at `p`.
-#[inline(always)]
-fn hash(input: &[u8], p: usize, shift: usize, length: usize) -> Checked<usize> {
-    Ok(hash_bytes_at_offset(
-        load_u64_le(input, p)?,
-        0,
-        shift,
-        length,
-    ))
+/// The shortest copy that is looked for with a table of `1 << table_bits` entries.
+const fn min_match(table_bits: u32) -> usize {
+    if table_bits <= 15 { 4 } else { 6 }
 }
 
-/// A hash of the `length` bytes from byte `offset` of `v` on.
+/// A hash of `TABLE_BITS` bits of the low `min_match(TABLE_BITS)` bytes of `v`.
 #[inline(always)]
-fn hash_bytes_at_offset(v: u64, offset: usize, shift: usize, length: usize) -> usize {
-    debug_assert!(offset <= 8 - length);
-    let h = ((v >> (8 * offset)) << ((8 - length) * 8)).wrapping_mul(u64::from(HASH_MUL_32));
-    (h >> shift) as u32 as usize
+fn hash<const TABLE_BITS: u32>(v: u64) -> usize {
+    let h = (v << ((8 - min_match(TABLE_BITS)) * 8)).wrapping_mul(u64::from(HASH_MUL_32));
+    (h >> (64 - TABLE_BITS)) as usize
 }
 
-/// Whether the `length` bytes at `p1` and at `p2` are the same. `length` is 4 or 6.
+/// Whether the low `min_match(TABLE_BITS)` bytes of `a` and of `b` are the same.
 #[inline(always)]
-fn is_match(input: &[u8], p1: usize, p2: usize, length: usize) -> Checked<bool> {
-    if load_u32_le(input, p1)? != load_u32_le(input, p2)? {
-        return Ok(false);
-    }
-    if length == 4 {
-        return Ok(true);
-    }
-    Ok(input.at(p1 + 4)? == input.at(p2 + 4)? && input.at(p1 + 5)? == input.at(p2 + 5)?)
+fn is_match<const TABLE_BITS: u32>(a: u64, b: u64) -> bool {
+    (a ^ b) << ((8 - min_match(TABLE_BITS)) * 8) == 0
 }
 
 /// Builds the prefix codes for commands and for distances from `s.cmd_histo` and writes them.
@@ -128,10 +115,36 @@ fn build_and_store_command_prefix_code(s: &mut TwoPassArena, bw: &mut BitWriter<
     store_huffman_tree(dist_depth, &mut s.tmp_tree, bw)
 }
 
+/// A buffer that is filled from the start.
+struct Filling<'a, T> {
+    buffer: &'a mut [T],
+    len: usize,
+}
+
+impl<'a, T: Copy> Filling<'a, T> {
+    fn new(buffer: &'a mut [T]) -> Self {
+        Self { buffer, len: 0 }
+    }
+
+    #[inline(always)]
+    fn push(&mut self, value: T) -> Checked {
+        self.buffer.put(self.len, value)?;
+        self.len += 1;
+        Ok(())
+    }
+
+    #[inline(always)]
+    fn extend(&mut self, values: &[T]) -> Checked {
+        self.buffer.write_at(self.len, values)?;
+        self.len += values.len();
+        Ok(())
+    }
+}
+
 // A command is kept as its symbol in the low 8 bits and its extra bits above.
 
 #[inline(always)]
-fn emit_insert_len(insertlen: u32, commands: &mut Vec<u32>) {
+fn emit_insert_len(insertlen: u32, commands: &mut Filling<'_, u32>) -> Checked {
     commands.push(if insertlen < 6 {
         insertlen
     } else if insertlen < 130 {
@@ -153,11 +166,11 @@ fn emit_insert_len(insertlen: u32, commands: &mut Vec<u32>) {
         22 | ((insertlen - 6210) << 8)
     } else {
         23 | ((insertlen - 22594) << 8)
-    });
+    })
 }
 
 #[inline(always)]
-fn emit_copy_len(copylen: usize, commands: &mut Vec<u32>) {
+fn emit_copy_len(copylen: usize, commands: &mut Filling<'_, u32>) -> Checked {
     commands.push(if copylen < 10 {
         copylen + 38
     } else if copylen < 134 {
@@ -175,132 +188,112 @@ fn emit_copy_len(copylen: usize, commands: &mut Vec<u32>) {
         code | (extra << 8)
     } else {
         63 | ((copylen - 2118) << 8)
-    } as u32);
+    } as u32)
 }
 
 /// A copy at the distance of the command before, which had copy length 2 and is made longer by this.
 #[inline(always)]
-fn emit_copy_len_last_distance(copylen: usize, commands: &mut Vec<u32>) {
+fn emit_copy_len_last_distance(copylen: usize, commands: &mut Filling<'_, u32>) -> Checked {
     if copylen < 12 {
-        commands.push((copylen + 20) as u32);
+        commands.push((copylen + 20) as u32)
     } else if copylen < 72 {
         let tail = copylen - 8;
         let nbits = log2_floor_nonzero(tail) as usize - 1;
         let prefix = tail >> nbits;
         let code = (nbits << 1) + prefix + 28;
         let extra = tail - (prefix << nbits);
-        commands.push((code | (extra << 8)) as u32);
+        commands.push((code | (extra << 8)) as u32)
     } else if copylen < 136 {
         let tail = copylen - 8;
         let code = (tail >> 5) + 54;
         let extra = tail & 31;
-        commands.push((code | (extra << 8)) as u32);
-        commands.push(64);
+        commands.push((code | (extra << 8)) as u32)?;
+        commands.push(64)
     } else if copylen < 2120 {
         let tail = copylen - 72;
         let nbits = log2_floor_nonzero(tail) as usize;
         let code = nbits + 52;
         let extra = tail - (1 << nbits);
-        commands.push((code | (extra << 8)) as u32);
-        commands.push(64);
+        commands.push((code | (extra << 8)) as u32)?;
+        commands.push(64)
     } else {
-        commands.push((63 | ((copylen - 2120) << 8)) as u32);
-        commands.push(64);
+        commands.push((63 | ((copylen - 2120) << 8)) as u32)?;
+        commands.push(64)
     }
 }
 
 #[inline(always)]
-fn emit_distance(distance: u32, commands: &mut Vec<u32>) {
+fn emit_distance(distance: u32, commands: &mut Filling<'_, u32>) -> Checked {
     let d = distance + 3;
     let nbits = log2_floor_nonzero(d as usize) - 1;
     let prefix = (d >> nbits) & 1;
     let offset = (2 + prefix) << nbits;
     let distcode = 2 * (nbits - 1) + prefix + 80;
     let extra = d - offset;
-    commands.push(distcode | (extra << 8));
+    commands.push(distcode | (extra << 8))
 }
 
 /// Puts some positions within the copy that ended at `ip` into the table, which helps compression, and `ip` itself.
-/// Returns what the table held for `ip`.
+/// Returns what the table held for `ip`, and the bytes at `ip`, of which the low `min_match(TABLE_BITS)` count.
 ///
-/// After the first copy of a series, a `min_match` of 4 stores `ip - 1` under the hash of `ip - 3`. That is what the
+/// After the first copy of a series, a shortest copy of 4 stores `ip - 1` under the hash of `ip - 3`. That is what the
 /// reference encoder does, and the output depends on it.
 #[inline(always)]
-fn update_table(
+fn update_table<const TABLE_BITS: u32, const TABLE_SIZE: usize>(
     input: &[u8],
     ip: usize,
-    table: &mut [i32],
-    shift: usize,
-    min_match: usize,
+    table: &mut [i32; TABLE_SIZE],
     first_copy: bool,
-) -> Checked<usize> {
-    let cur_hash;
-    if min_match == 4 {
+) -> Checked<(usize, u64)> {
+    let hash = hash::<TABLE_BITS>;
+    let bytes;
+    if min_match(TABLE_BITS) == 4 {
         let input_bytes = load_u64_le(input, ip - 3)?;
-        cur_hash = hash_bytes_at_offset(input_bytes, 3, shift, min_match);
+        bytes = input_bytes >> 24;
+        table.put(hash(input_bytes), (ip - 3) as i32)?;
+        table.put(hash(input_bytes >> 8), (ip - 2) as i32)?;
         table.put(
-            hash_bytes_at_offset(input_bytes, 0, shift, min_match),
-            (ip - 3) as i32,
-        )?;
-        table.put(
-            hash_bytes_at_offset(input_bytes, 1, shift, min_match),
-            (ip - 2) as i32,
-        )?;
-        table.put(
-            hash_bytes_at_offset(
-                input_bytes,
-                if first_copy { 0 } else { 2 },
-                shift,
-                min_match,
-            ),
+            hash(if first_copy {
+                input_bytes
+            } else {
+                input_bytes >> 16
+            }),
             (ip - 1) as i32,
         )?;
     } else {
-        let input_bytes = load_u64_le(input, ip - 5)?;
-        table.put(
-            hash_bytes_at_offset(input_bytes, 0, shift, min_match),
-            (ip - 5) as i32,
-        )?;
-        table.put(
-            hash_bytes_at_offset(input_bytes, 1, shift, min_match),
-            (ip - 4) as i32,
-        )?;
-        table.put(
-            hash_bytes_at_offset(input_bytes, 2, shift, min_match),
-            (ip - 3) as i32,
-        )?;
-        let input_bytes = load_u64_le(input, ip - 2)?;
-        cur_hash = hash_bytes_at_offset(input_bytes, 2, shift, min_match);
-        table.put(
-            hash_bytes_at_offset(input_bytes, 0, shift, min_match),
-            (ip - 2) as i32,
-        )?;
-        table.put(
-            hash_bytes_at_offset(input_bytes, 1, shift, min_match),
-            (ip - 1) as i32,
-        )?;
+        let around: &[u8; 11] = input.array_at(ip - 5)?;
+        let input_bytes = u64::from_le_bytes(*around.first_chunk().ok_or(Bug)?);
+        table.put(hash(input_bytes), (ip - 5) as i32)?;
+        table.put(hash(input_bytes >> 8), (ip - 4) as i32)?;
+        table.put(hash(input_bytes >> 16), (ip - 3) as i32)?;
+        let input_bytes = u64::from_le_bytes(*around.last_chunk().ok_or(Bug)?);
+        bytes = input_bytes >> 16;
+        table.put(hash(input_bytes), (ip - 2) as i32)?;
+        table.put(hash(input_bytes >> 8), (ip - 1) as i32)?;
     }
-    let candidate = table.at(cur_hash)? as usize;
-    table.put(cur_hash, ip as i32)?;
-    Ok(candidate)
+    let entry = table.at_mut(hash(bytes))?;
+    let candidate = *entry as usize;
+    *entry = ip as i32;
+    Ok((candidate, bytes))
 }
 
-/// Finds the matches in the `block_size` bytes from `input` on. All positions are indices of `all_input`.
-#[inline(always)]
-fn create_commands(
+/// Finds the matches in the `block_size` bytes from `input` on. All positions are indices of `all_input`. Returns how
+/// many literals and how many commands there are.
+#[inline(never)]
+fn create_commands<const TABLE_BITS: u32, const TABLE_SIZE: usize>(
     all_input: &[u8],
     input: usize,
     block_size: usize,
-    table: &mut [i32],
-    table_bits: usize,
-    min_match: usize,
-    literals: &mut Vec<u8>,
-    commands: &mut Vec<u32>,
-) -> Checked {
+    table: &mut [i32; TABLE_SIZE],
+    literals: &mut [u8],
+    commands: &mut [u32],
+) -> Checked<(usize, usize)> {
     const INPUT_MARGIN_BYTES: usize = WINDOW_GAP;
+    let min_match = const { min_match(TABLE_BITS) };
+    let mut literals = Filling::new(literals);
+    let mut commands = Filling::new(commands);
     let input_size = all_input.len() - input;
     let mut ip = input;
-    let shift = 64 - table_bits;
     let ip_end = input + block_size;
     // The first byte that no copy covers yet. What lies between it and the next copy becomes literals.
     let mut next_emit = input;
@@ -317,7 +310,7 @@ fn create_commands(
         let ip_limit = input + len_limit;
 
         ip += 1;
-        let mut next_hash = hash(all_input, ip, shift, min_match)?;
+        let mut next_bytes = load_u64_le(all_input, ip)?;
         loop {
             // Step 1: look for a match of `min_match` bytes.
             //
@@ -328,7 +321,8 @@ fn create_commands(
             let mut next_ip = ip;
             let mut candidate;
             loop {
-                let hash_now = next_hash;
+                let bytes = next_bytes;
+                let hash_now = hash::<TABLE_BITS>(bytes);
                 let bytes_between_hash_lookups = (skip >> 5) as usize;
                 skip += 1;
                 ip = next_ip;
@@ -336,16 +330,18 @@ fn create_commands(
                 if next_ip > ip_limit {
                     break 'scan;
                 }
-                next_hash = hash(all_input, next_ip, shift, min_match)?;
+                next_bytes = load_u64_le(all_input, next_ip)?;
                 candidate = ip.wrapping_sub(last_distance as isize as usize);
-                let found = if is_match(all_input, ip, candidate, min_match)? && candidate < ip {
-                    table.put(hash_now, ip as i32)?;
+                let entry = table.at_mut(hash_now)?;
+                let found = if candidate < ip
+                    && is_match::<TABLE_BITS>(bytes, load_u64_le(all_input, candidate)?)
+                {
                     true
                 } else {
-                    candidate = table.at(hash_now)? as usize;
-                    table.put(hash_now, ip as i32)?;
-                    is_match(all_input, ip, candidate, min_match)?
+                    candidate = *entry as usize;
+                    is_match::<TABLE_BITS>(bytes, load_u64_le(all_input, candidate)?)
                 };
+                *entry = ip as i32;
                 if found && ip - candidate <= MAX_DISTANCE {
                     break;
                 }
@@ -353,6 +349,7 @@ fn create_commands(
 
             // Step 2: take note of the literals up to the match and of the match, and then of more matches for as long as
             // one follows the other.
+            let mut bytes_at_ip;
             {
                 let base = ip;
                 let matched = min_match
@@ -363,24 +360,27 @@ fn create_commands(
                     );
                 let distance = (base - candidate) as i32;
                 ip += matched;
-                emit_insert_len((base - next_emit) as u32, commands);
-                literals.extend_from_slice(all_input.sub(next_emit..base)?);
+                emit_insert_len((base - next_emit) as u32, &mut commands)?;
+                literals.extend(all_input.sub(next_emit..base)?)?;
                 if distance == last_distance {
-                    commands.push(64);
+                    commands.push(64)?;
                 } else {
-                    emit_distance(distance as u32, commands);
+                    emit_distance(distance as u32, &mut commands)?;
                     last_distance = distance;
                 }
-                emit_copy_len_last_distance(matched, commands);
+                emit_copy_len_last_distance(matched, &mut commands)?;
 
                 next_emit = ip;
                 if ip >= ip_limit {
                     break 'scan;
                 }
-                candidate = update_table(all_input, ip, table, shift, min_match, true)?;
+                (candidate, bytes_at_ip) =
+                    update_table::<TABLE_BITS, TABLE_SIZE>(all_input, ip, table, true)?;
             }
 
-            while ip - candidate <= MAX_DISTANCE && is_match(all_input, ip, candidate, min_match)? {
+            while ip - candidate <= MAX_DISTANCE
+                && is_match::<TABLE_BITS>(bytes_at_ip, load_u64_le(all_input, candidate)?)
+            {
                 // A match right after the last one, with no literals in between.
                 let base = ip;
                 let matched = min_match
@@ -391,28 +391,30 @@ fn create_commands(
                     );
                 ip += matched;
                 last_distance = (base - candidate) as i32;
-                emit_copy_len(matched, commands);
-                emit_distance(last_distance as u32, commands);
+                emit_copy_len(matched, &mut commands)?;
+                emit_distance(last_distance as u32, &mut commands)?;
 
                 next_emit = ip;
                 if ip >= ip_limit {
                     break 'scan;
                 }
-                candidate = update_table(all_input, ip, table, shift, min_match, false)?;
+                (candidate, bytes_at_ip) =
+                    update_table::<TABLE_BITS, TABLE_SIZE>(all_input, ip, table, false)?;
             }
 
             ip += 1;
-            next_hash = hash(all_input, ip, shift, min_match)?;
+            next_bytes = load_u64_le(all_input, ip)?;
         }
     }
 
     if next_emit < ip_end {
-        emit_insert_len((ip_end - next_emit) as u32, commands);
-        literals.extend_from_slice(all_input.sub(next_emit..ip_end)?);
+        emit_insert_len((ip_end - next_emit) as u32, &mut commands)?;
+        literals.extend(all_input.sub(next_emit..ip_end)?)?;
     }
-    Ok(())
+    Ok((literals.len, commands.len))
 }
 
+#[inline(never)]
 fn store_commands(
     s: &mut TwoPassArena,
     literals: &[u8],
@@ -461,23 +463,21 @@ fn store_commands(
     s.cmd_histo[84] += 1;
     build_and_store_command_prefix_code(s, bw)?;
 
-    let mut literals = literals.iter();
+    let mut literals = literals;
     for &command in commands {
         let code = (command & 0xFF) as usize;
         let extra = command >> 8;
+        let depth = usize::from(s.cmd_depth.at(code)?);
         bw.write_bits(
-            usize::from(s.cmd_depth.at(code)?),
-            u64::from(s.cmd_bits.at(code)?),
+            depth + usize::from(NUM_EXTRA_BITS.at(code)?),
+            u64::from(s.cmd_bits.at(code)?) | (u64::from(extra) << depth),
         )?;
-        bw.write_bits(usize::from(NUM_EXTRA_BITS.at(code)?), u64::from(extra))?;
         if let Some(&offset) = INSERT_OFFSET.get(code) {
-            for &literal in literals.by_ref().take((offset + extra) as usize) {
-                let literal = usize::from(literal);
-                bw.write_bits(
-                    usize::from(s.lit_depth.at(literal)?),
-                    u64::from(s.lit_bits.at(literal)?),
-                )?;
-            }
+            let (inserted, rest) = literals
+                .split_at_checked((offset + extra) as usize)
+                .ok_or(Bug)?;
+            literals = rest;
+            emit_literals(inserted, &s.lit_depth, &s.lit_bits, bw)?;
         }
     }
     Ok(())
@@ -510,41 +510,58 @@ fn emit_uncompressed_meta_block(input: &[u8], bw: &mut BitWriter<'_>) -> Checked
 /// Without that, `input` is not empty.
 ///
 /// `table` is all 0 and its length is a power of 2, from `1 << 8` to `1 << 17`. `command_buf` and `literal_buf` are
-/// scratch space. No copy reaches back before `input`.
+/// scratch space, each as long as `input` or [`COMPRESS_FRAGMENT_TWO_PASS_BLOCK_SIZE`] if that is less. No copy reaches
+/// back before `input`.
 pub(crate) fn compress_fragment_two_pass(
     s: &mut TwoPassArena,
     input: &[u8],
     is_last: bool,
-    command_buf: &mut Vec<u32>,
-    literal_buf: &mut Vec<u8>,
+    command_buf: &mut [u32],
+    literal_buf: &mut [u8],
     table: &mut [i32],
     bw: &mut BitWriter<'_>,
 ) -> Checked {
     let initial_storage_ix = bw.pos();
-    let table_bits = log2_floor_nonzero(table.len()) as usize;
-    let min_match = if table_bits <= 15 { 4 } else { 6 };
 
     let mut start = 0;
     while start < input.len() {
         let block_size = (input.len() - start).min(COMPRESS_FRAGMENT_TWO_PASS_BLOCK_SIZE);
         let block = input.sub(start..start + block_size)?;
-        command_buf.clear();
-        literal_buf.clear();
-        create_commands(
-            input,
-            start,
-            block_size,
-            table,
-            table_bits,
-            min_match,
-            literal_buf,
-            command_buf,
-        )?;
-        if should_compress(s, block, literal_buf.len())? {
+        macro_rules! run {
+            ($bits:literal) => {
+                create_commands::<$bits, { 1 << $bits }>(
+                    input,
+                    start,
+                    block_size,
+                    table.try_into().map_err(|_| Bug)?,
+                    literal_buf,
+                    command_buf,
+                )
+            };
+        }
+        let (num_literals, num_commands) = match table.len().trailing_zeros() {
+            8 => run!(8),
+            9 => run!(9),
+            10 => run!(10),
+            11 => run!(11),
+            12 => run!(12),
+            13 => run!(13),
+            14 => run!(14),
+            15 => run!(15),
+            16 => run!(16),
+            17 => run!(17),
+            _ => Err(Bug),
+        }?;
+        if should_compress(s, block, num_literals)? {
             store_meta_block_header(block_size, false, bw)?;
             // No block splits, no contexts.
             bw.write_bits(13, 0)?;
-            store_commands(s, literal_buf, command_buf, bw)?;
+            store_commands(
+                s,
+                literal_buf.sub(..num_literals)?,
+                command_buf.sub(..num_commands)?,
+                bw,
+            )?;
         } else {
             // Few matches and nearly 8 bits of entropy in a byte. Not compressing such data is about 3 times as fast.
             emit_uncompressed_meta_block(block, bw)?;

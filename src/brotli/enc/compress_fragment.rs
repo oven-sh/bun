@@ -301,7 +301,7 @@ impl CommandWriter<'_> {
 }
 
 #[inline(always)]
-fn emit_literals(
+pub(crate) fn emit_literals(
     literals: &[u8],
     depth: &[u8; 256],
     bits: &[u16; 256],

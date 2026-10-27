@@ -1209,14 +1209,11 @@ impl Encoder {
             let buf_size = COMPRESS_FRAGMENT_TWO_PASS_BLOCK_SIZE
                 .min(input.len())
                 .min(block_size_limit);
-            self.command_buf.clear();
-            self.command_buf
-                .try_reserve_exact(buf_size)
-                .map_err(|_| OutOfMemory)?;
-            self.literal_buf.clear();
-            self.literal_buf
-                .try_reserve_exact(buf_size)
-                .map_err(|_| OutOfMemory)?;
+            if self.command_buf.len() < buf_size {
+                let command_buf = try_zeroed(buf_size)?;
+                self.literal_buf = try_zeroed(buf_size)?;
+                self.command_buf = command_buf;
+            }
         }
 
         loop {

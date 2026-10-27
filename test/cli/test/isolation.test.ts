@@ -1649,9 +1649,11 @@ describe.concurrent("--isolate: a finished file's late completions do not run in
   // decrypt has come back from the thread pool. Here the decrypt of a finished file waits behind
   // a parked pool (2 threads, both in read() of a FIFO) until the next file lets it run. The
   // payload is not a JWK: converted in the finished realm, it threw a TypeError at the running file.
-  test.skipIf(isWindows)("a finished file's unwrapKey that comes back later does nothing in the next file", async () => {
-    using dir = tempDir("isolate-late-unwrap", {
-      "a-park.test.ts": `
+  test.skipIf(isWindows)(
+    "a finished file's unwrapKey that comes back later does nothing in the next file",
+    async () => {
+      using dir = tempDir("isolate-late-unwrap", {
+        "a-park.test.ts": `
         import { test, expect } from "bun:test";
         import fs from "node:fs";
 
@@ -1678,7 +1680,7 @@ describe.concurrent("--isolate: a finished file's late completions do not run in
           expect(writers).toHaveLength(2);
         });
       `,
-      "b-unwrap.test.ts": `
+        "b-unwrap.test.ts": `
         import { test, expect } from "bun:test";
         import { createCipheriv } from "node:crypto";
 
@@ -1693,7 +1695,7 @@ describe.concurrent("--isolate: a finished file's late completions do not run in
           expect().pass();
         });
       `,
-      "c-release.test.ts": `
+        "c-release.test.ts": `
         import { test, expect } from "bun:test";
         import fs from "node:fs";
 
@@ -1704,19 +1706,20 @@ describe.concurrent("--isolate: a finished file's late completions do not run in
           expect().pass();
         });
       `,
-    });
-    for (const name of ["fifo1", "fifo2"]) mkfifo(join(String(dir), name));
-    const { stderr, exitCode } = await runTests(
-      String(dir),
-      ["--isolate"],
-      ["./a-park.test.ts", "./b-unwrap.test.ts", "./c-release.test.ts"],
-      { ...bunEnv, UV_THREADPOOL_SIZE: "2" },
-    );
-    expect(normalizeBunSnapshot(stderr, dir)).toContain("3 pass");
-    expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
-    if (exitCode !== 0) expect(stderr).toBe("");
-    expect(exitCode).toBe(0);
-  });
+      });
+      for (const name of ["fifo1", "fifo2"]) mkfifo(join(String(dir), name));
+      const { stderr, exitCode } = await runTests(
+        String(dir),
+        ["--isolate"],
+        ["./a-park.test.ts", "./b-unwrap.test.ts", "./c-release.test.ts"],
+        { ...bunEnv, UV_THREADPOOL_SIZE: "2" },
+      );
+      expect(normalizeBunSnapshot(stderr, dir)).toContain("3 pass");
+      expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+      if (exitCode !== 0) expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    },
+  );
 
   // Here the finished file starts the unwrapKey while the next file runs: a ShadowRealm that it
   // left calls one of its functions when the fetch of the realm ends. The conversion then ran a

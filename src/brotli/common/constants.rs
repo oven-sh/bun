@@ -13,6 +13,11 @@ pub(crate) const NUM_BLOCK_LEN_SYMBOLS: usize = 26;
 pub(crate) const MAX_CONTEXT_MAP_SYMBOLS: usize = MAX_NUMBER_OF_BLOCK_TYPES + CONTEXT_MAP_MAX_RLE;
 pub(crate) const MAX_BLOCK_TYPE_SYMBOLS: usize = MAX_NUMBER_OF_BLOCK_TYPES + 2;
 
+/// 3.4. Simple prefix codes: how many bits a symbol is written in.
+pub(crate) const fn simple_code_symbol_bits(alphabet_size: u32) -> u32 {
+    u32::BITS - (alphabet_size - 1).leading_zeros()
+}
+
 /// 3.5. Complex prefix codes
 pub(crate) const REPEAT_PREVIOUS_CODE_LENGTH: usize = 16;
 pub(crate) const REPEAT_ZERO_CODE_LENGTH: usize = 17;

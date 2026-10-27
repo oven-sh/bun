@@ -18,7 +18,7 @@ use crate::common::constants::{
     LITERAL_CONTEXT_BITS, MAX_ALLOWED_DISTANCE, MAX_DISTANCE_BITS, MAX_NDIRECT, MAX_NPOSTFIX,
     NUM_BLOCK_LEN_SYMBOLS, NUM_COMMAND_SYMBOLS, NUM_DISTANCE_SHORT_CODES, NUM_LITERAL_SYMBOLS,
     REPEAT_PREVIOUS_CODE_LENGTH, calculate_distance_code_limit, distance_alphabet_size,
-    max_backward_limit,
+    max_backward_limit, simple_code_symbol_bits,
 };
 use crate::common::context::{ContextLut, ContextType, context_lut};
 use crate::common::dictionary::{self, MAX_DICTIONARY_WORD_LENGTH, MIN_DICTIONARY_WORD_LENGTH};
@@ -242,13 +242,13 @@ impl CompoundDictionary {
     /// Goes on with the copy in progress, to `pos` and up to the end of the ring buffer. Returns how much was copied.
     fn copy_to(
         &mut self,
-        ringbuffer: &mut [u8],
-        ringbuffer_size: i32,
+        ring_buffer: &mut [u8],
+        ring_buffer_size: i32,
         mut pos: i32,
     ) -> Checked<i32> {
         let orig_pos = pos;
         while self.is_copying() {
-            let space = ringbuffer_size - pos;
+            let space = ring_buffer_size - pos;
             let chunk_length = self.chunk_offsets.at(self.copy_chunk + 1)?
                 - self.chunk_offsets.at(self.copy_chunk)?;
             let rem_chunk_length = chunk_length - self.copy_offset;
@@ -258,7 +258,7 @@ impl CompoundDictionary {
             let chunk = self.chunks.get(self.copy_chunk).ok_or(Bug)?;
             let source =
                 chunk.sub(self.copy_offset as usize..(self.copy_offset + length) as usize)?;
-            ringbuffer.write_at(pos as usize, source)?;
+            ring_buffer.write_at(pos as usize, source)?;
             pos += length;
             self.copy_offset += length;
             self.copied += length;
@@ -266,7 +266,7 @@ impl CompoundDictionary {
                 self.copy_chunk += 1;
                 self.copy_offset = 0;
             }
-            if pos == ringbuffer_size {
+            if pos == ring_buffer_size {
                 break;
             }
         }
@@ -337,8 +337,8 @@ pub struct Decoder {
     pos: i32,
     max_backward_distance: i32,
     max_distance: i32,
-    ringbuffer_size: i32,
-    ringbuffer_mask: i32,
+    ring_buffer_size: i32,
+    ring_buffer_mask: i32,
     /// The last four distances.
     last_distances: [i32; 4],
     /// Where in `last_distances` the next one goes, modulo 4.
@@ -346,8 +346,8 @@ pub struct Decoder {
     error_code: E,
     meta_block_remaining_len: i32,
 
-    /// `ringbuffer_size` + [`RING_BUFFER_WRITE_AHEAD_SLACK`] bytes, or none before the first meta-block with data.
-    ringbuffer: Vec<u8>,
+    /// `ring_buffer_size` + [`RING_BUFFER_WRITE_AHEAD_SLACK`] bytes, or none before the first meta-block with data.
+    ring_buffer: Vec<u8>,
     /// Where in `command_trees.codes` the current tree starts.
     command_tree: usize,
     context_lookup: &'static ContextLut,
@@ -380,7 +380,7 @@ pub struct Decoder {
     literal_tree: usize,
 
     /// How many times the ring buffer was filled.
-    ringbuffer_roundtrips: usize,
+    ring_buffer_roundtrips: usize,
     /// How much output was handed to the caller in total.
     partial_pos_out: usize,
 
@@ -397,13 +397,13 @@ pub struct Decoder {
     substate_meta_block_header: MetaBlockHeaderState,
     substate_uncompressed: UncompressedState,
 
-    new_ringbuffer_size: i32,
+    new_ring_buffer_size: i32,
 
     is_last_meta_block: bool,
     is_uncompressed: bool,
     is_metadata: bool,
-    should_wrap_ringbuffer: bool,
-    canny_ringbuffer_allocation: bool,
+    should_wrap_ring_buffer: bool,
+    canny_ring_buffer_allocation: bool,
     large_window: bool,
     window_bits: u32,
     size_nibbles: u8,
@@ -566,7 +566,7 @@ fn read_preloaded_symbol(
     Ok(u32::from(result))
 }
 
-/// Reads up to `limit` symbols into `ringbuffer[pos..]`, which has room for them, and stops before the input gets
+/// Reads up to `limit` symbols into `ring_buffer[pos..]`, which has room for them, and stops before the input gets
 /// short. Returns how many were read.
 #[inline(always)]
 fn copy_preloaded_symbols_to_u8(
@@ -574,7 +574,7 @@ fn copy_preloaded_symbols_to_u8(
     br: &mut BitReader,
     input: &[u8],
     preloaded: &mut HuffmanCode,
-    ringbuffer: &mut [u8],
+    ring_buffer: &mut [u8],
     pos: usize,
     limit: usize,
 ) -> Checked<usize> {
@@ -583,7 +583,7 @@ fn copy_preloaded_symbols_to_u8(
     let unchecked = (br.bytes_before_guard() * 8 / 15)
         .saturating_sub(MAXIMAL_OVERREAD)
         .min(limit);
-    let (head, tail) = ringbuffer
+    let (head, tail) = ring_buffer
         .sub_mut(pos..pos + limit)?
         .split_at_mut_checked(unchecked)
         .ok_or(Bug)?;
@@ -599,12 +599,6 @@ fn copy_preloaded_symbols_to_u8(
         copies += 1;
     }
     Ok(copies)
-}
-
-/// The number of bits it takes to write `x`.
-#[inline(always)]
-fn bit_width(x: u32) -> u32 {
-    32 - x.leading_zeros()
 }
 
 impl HeaderReader {
@@ -665,7 +659,7 @@ impl HeaderReader {
         alphabet_size_max: u32,
         alphabet_size_limit: u32,
     ) -> Step {
-        let max_bits = bit_width(alphabet_size_max - 1);
+        let max_bits = simple_code_symbol_bits(alphabet_size_max);
         let num_symbols = self.symbol as usize;
         let mut i = self.sub_loop_counter as usize;
         while i <= num_symbols {
@@ -1191,13 +1185,13 @@ impl Decoder {
             pos: 0,
             max_backward_distance: 0,
             max_distance: 0,
-            ringbuffer_size: 0,
-            ringbuffer_mask: 0,
+            ring_buffer_size: 0,
+            ring_buffer_mask: 0,
             last_distances: [16, 15, 11, 4],
             last_distances_pos: 0,
             error_code: E::NoError,
             meta_block_remaining_len: 0,
-            ringbuffer: Vec::new(),
+            ring_buffer: Vec::new(),
             command_tree: 0,
             context_lookup: context_lut(ContextType::Lsb6),
             context_map_slice: 0,
@@ -1217,7 +1211,7 @@ impl Decoder {
             num_distance_trees: 0,
             distance_context_map: Vec::new(),
             literal_tree: 0,
-            ringbuffer_roundtrips: 0,
+            ring_buffer_roundtrips: 0,
             partial_pos_out: 0,
             copy_length: 0,
             implicit_distance: false,
@@ -1226,12 +1220,12 @@ impl Decoder {
             distance_tree: 0,
             substate_meta_block_header: MetaBlockHeaderState::None,
             substate_uncompressed: UncompressedState::None,
-            new_ringbuffer_size: 0,
+            new_ring_buffer_size: 0,
             is_last_meta_block: false,
             is_uncompressed: false,
             is_metadata: false,
-            should_wrap_ringbuffer: false,
-            canny_ringbuffer_allocation: true,
+            should_wrap_ring_buffer: false,
+            canny_ring_buffer_allocation: true,
             large_window: false,
             window_bits: 0,
             size_nibbles: 0,
@@ -1256,7 +1250,7 @@ impl Decoder {
         }
         match parameter {
             DecoderParameter::DisableRingBufferReallocation => {
-                self.canny_ringbuffer_allocation = value == 0
+                self.canny_ring_buffer_allocation = value == 0
             }
             DecoderParameter::LargeWindow => self.large_window = value != 0,
         }
@@ -1288,7 +1282,7 @@ impl Decoder {
         if self.error_code.is_error() {
             return false;
         }
-        !self.ringbuffer.is_empty() && self.unwritten_bytes(false) != 0
+        !self.ring_buffer.is_empty() && self.unwritten_bytes(false) != 0
     }
 
     /// Reads the window size from 1 to 7 bits, or the 8 bits that announce a large window. The accumulator holds at
@@ -1548,14 +1542,14 @@ impl Decoder {
 
     /// How much of the ring buffer was not handed to the caller yet. With `wrap`, what lies past its end is left out.
     fn unwritten_bytes(&self, wrap: bool) -> usize {
-        let pos = if wrap && self.pos > self.ringbuffer_size {
-            self.ringbuffer_size
+        let pos = if wrap && self.pos > self.ring_buffer_size {
+            self.ring_buffer_size
         } else {
             self.pos
         } as usize;
         let produced = self
-            .ringbuffer_roundtrips
-            .wrapping_mul(self.ringbuffer_size as usize)
+            .ring_buffer_roundtrips
+            .wrapping_mul(self.ring_buffer_size as usize)
             .wrapping_add(pos);
         produced.wrapping_sub(self.partial_pos_out)
     }
@@ -1563,34 +1557,34 @@ impl Decoder {
     /// Hands output to the caller. Asks for more room only if there is more to write and either the ring buffer cannot
     /// grow any further or `force` is set.
     fn write_ring_buffer(&mut self, output: &mut dyn Output, force: bool) -> Step {
-        let start = self.partial_pos_out & self.ringbuffer_mask as usize;
+        let start = self.partial_pos_out & self.ring_buffer_mask as usize;
         let to_write = self.unwritten_bytes(true);
         if self.meta_block_remaining_len < 0 {
             return Err(E::FormatBlockLength1);
         }
-        let num_written = output.write(self.ringbuffer.sub(start..start + to_write)?);
+        let num_written = output.write(self.ring_buffer.sub(start..start + to_write)?);
         self.partial_pos_out += num_written;
-        let at_full_size = self.ringbuffer_size == 1 << self.window_bits;
+        let at_full_size = self.ring_buffer_size == 1 << self.window_bits;
         if num_written < to_write {
             if at_full_size || force {
                 return Err(E::NeedsMoreOutput);
             }
             return Ok(());
         }
-        if at_full_size && self.pos >= self.ringbuffer_size {
-            self.pos -= self.ringbuffer_size;
-            self.ringbuffer_roundtrips += 1;
-            self.should_wrap_ringbuffer = self.pos != 0;
+        if at_full_size && self.pos >= self.ring_buffer_size {
+            self.pos -= self.ring_buffer_size;
+            self.ring_buffer_roundtrips += 1;
+            self.should_wrap_ring_buffer = self.pos != 0;
         }
         Ok(())
     }
 
     /// Moves what was written past the end of the ring buffer to its start.
     fn wrap_ring_buffer(&mut self) -> Checked {
-        if self.should_wrap_ringbuffer {
-            self.ringbuffer
-                .move_within(self.ringbuffer_size as usize, 0, self.pos as usize)?;
-            self.should_wrap_ringbuffer = false;
+        if self.should_wrap_ring_buffer {
+            self.ring_buffer
+                .move_within(self.ring_buffer_size as usize, 0, self.pos as usize)?;
+            self.should_wrap_ring_buffer = false;
         }
         Ok(())
     }
@@ -1598,18 +1592,18 @@ impl Decoder {
     /// Makes the ring buffer as large as [`Self::calculate_ring_buffer_size`] found it has to be. Fails with
     /// `out_of_memory` if there is no memory for that.
     fn ensure_ring_buffer(&mut self, out_of_memory: E) -> Step {
-        if self.ringbuffer_size == self.new_ringbuffer_size {
+        if self.ring_buffer_size == self.new_ring_buffer_size {
             return Ok(());
         }
-        let mut ringbuffer =
-            try_zeroed::<u8>(self.new_ringbuffer_size as usize + RING_BUFFER_WRITE_AHEAD_SLACK)
+        let mut ring_buffer =
+            try_zeroed::<u8>(self.new_ring_buffer_size as usize + RING_BUFFER_WRITE_AHEAD_SLACK)
                 .map_err(|_| out_of_memory)?;
-        if !self.ringbuffer.is_empty() {
-            ringbuffer.write_at(0, self.ringbuffer.sub(..self.pos as usize)?)?;
+        if !self.ring_buffer.is_empty() {
+            ring_buffer.write_at(0, self.ring_buffer.sub(..self.pos as usize)?)?;
         }
-        self.ringbuffer = ringbuffer;
-        self.ringbuffer_size = self.new_ringbuffer_size;
-        self.ringbuffer_mask = self.new_ringbuffer_size - 1;
+        self.ring_buffer = ring_buffer;
+        self.ring_buffer_size = self.new_ring_buffer_size;
+        self.ring_buffer_mask = self.new_ring_buffer_size - 1;
         Ok(())
     }
 
@@ -1631,11 +1625,11 @@ impl Decoder {
                 UncompressedState::None => {
                     let mut nbytes =
                         (self.br.remaining_bytes() as i32).min(self.meta_block_remaining_len);
-                    if self.pos + nbytes > self.ringbuffer_size {
-                        nbytes = self.ringbuffer_size - self.pos;
+                    if self.pos + nbytes > self.ring_buffer_size {
+                        nbytes = self.ring_buffer_size - self.pos;
                     }
                     let dest = self
-                        .ringbuffer
+                        .ring_buffer
                         .sub_mut(self.pos as usize..(self.pos + nbytes) as usize)?;
                     self.br.copy_bytes(input, dest)?;
                     self.pos += nbytes;
@@ -1651,7 +1645,7 @@ impl Decoder {
 
                 UncompressedState::Write => {
                     self.write_ring_buffer(output, false)?;
-                    if self.ringbuffer_size == 1 << self.window_bits {
+                    if self.ring_buffer_size == 1 << self.window_bits {
                         self.max_distance = self.max_backward_distance;
                     }
                     self.substate_uncompressed = UncompressedState::None;
@@ -1670,35 +1664,35 @@ impl Decoder {
     /// stream that announces a large window need not have that much data.
     fn calculate_ring_buffer_size(&mut self) {
         let window_size = 1i32 << self.window_bits;
-        let mut new_ringbuffer_size = window_size;
+        let mut new_ring_buffer_size = window_size;
         // The context of the first byte is taken from the last two bytes of the ring buffer.
-        let mut min_size = if self.ringbuffer_size != 0 {
-            self.ringbuffer_size
+        let mut min_size = if self.ring_buffer_size != 0 {
+            self.ring_buffer_size
         } else {
             1024
         };
 
-        if self.ringbuffer_size == window_size {
+        if self.ring_buffer_size == window_size {
             return;
         }
         if self.is_metadata {
             return;
         }
 
-        let output_size = if self.ringbuffer.is_empty() {
+        let output_size = if self.ring_buffer.is_empty() {
             0
         } else {
             self.pos
         } + self.meta_block_remaining_len;
         min_size = min_size.max(output_size);
 
-        if self.canny_ringbuffer_allocation {
-            while (new_ringbuffer_size >> 1) >= min_size {
-                new_ringbuffer_size >>= 1;
+        if self.canny_ring_buffer_allocation {
+            while (new_ring_buffer_size >> 1) >= min_size {
+                new_ring_buffer_size >>= 1;
             }
         }
 
-        self.new_ringbuffer_size = new_ringbuffer_size;
+        self.new_ring_buffer_size = new_ring_buffer_size;
     }
 
     /// Reads the context mode of each literal block type.
@@ -1842,7 +1836,7 @@ impl Decoder {
     /// Writes what `distance`, which is past the data seen so far, refers to in one of the dictionaries: `length`
     /// bytes of the compound dictionary, as far as there is room, or a word of `length` bytes of the static one,
     /// transformed. Returns the position after it.
-    fn copy_from_dictionary(&mut self, ringbuffer: &mut [u8], pos: i32, length: i32) -> Step<i32> {
+    fn copy_from_dictionary(&mut self, ring_buffer: &mut [u8], pos: i32, length: i32) -> Step<i32> {
         if self.distance > MAX_ALLOWED_DISTANCE as i32 {
             return Err(E::FormatDistance);
         }
@@ -1855,7 +1849,7 @@ impl Decoder {
                 .put((self.last_distances_pos & 3) as usize, self.distance)?;
             self.last_distances_pos = self.last_distances_pos.wrapping_add(1);
             self.meta_block_remaining_len -= length;
-            return Ok(pos + compound.copy_to(ringbuffer, self.ringbuffer_size, pos)?);
+            return Ok(pos + compound.copy_to(ring_buffer, self.ring_buffer_size, pos)?);
         }
         if length < MIN_DICTIONARY_WORD_LENGTH as i32 || length > MAX_DICTIONARY_WORD_LENGTH as i32
         {
@@ -1875,10 +1869,10 @@ impl Decoder {
         }
         let word = dictionary::DATA.sub(offset..offset + word_length)?;
         let len = if transform_idx == 0 {
-            ringbuffer.write_at(pos as usize, word)?;
+            ring_buffer.write_at(pos as usize, word)?;
             length
         } else {
-            let dst = ringbuffer.sub_mut(pos as usize..)?;
+            let dst = ring_buffer.sub_mut(pos as usize..)?;
             let len = transform_dictionary_word(dst, word, transform_idx)? as i32;
             if len == 0 && self.distance <= 120 {
                 return Err(E::FormatTransform);
@@ -1906,7 +1900,7 @@ impl Decoder {
         &mut self,
         input: &[u8],
         br: &mut BitReader,
-        ringbuffer: &mut [u8],
+        ring_buffer: &mut [u8],
         pos: &mut i32,
         remaining: &mut i32,
     ) -> Step {
@@ -1922,11 +1916,11 @@ impl Decoder {
         // Writes a literal of the insert in progress. Leaves the loop around it after the last one.
         macro_rules! put_literal {
             ($literal:expr) => {
-                ringbuffer.put(*pos as usize, $literal)?;
+                ring_buffer.put(*pos as usize, $literal)?;
                 self.block_length[LITERAL] -= 1;
                 *pos += 1;
                 *remaining -= 1;
-                if *pos == self.ringbuffer_size {
+                if *pos == self.ring_buffer_size {
                     self.state = State::WriteDuringInsert;
                     return Ok(());
                 }
@@ -1988,17 +1982,17 @@ impl Decoder {
                             if num_steps > 0 && num_steps as u32 > self.block_length[LITERAL] {
                                 num_steps = self.block_length[LITERAL] as i32;
                             }
-                            if self.ringbuffer_size >= *pos
-                                && (self.ringbuffer_size - *pos) <= num_steps
+                            if self.ring_buffer_size >= *pos
+                                && (self.ring_buffer_size - *pos) <= num_steps
                             {
-                                num_steps = self.ringbuffer_size - *pos - 1;
+                                num_steps = self.ring_buffer_size - *pos - 1;
                             }
                             let num_steps = copy_preloaded_symbols_to_u8(
                                 literal_tree,
                                 br,
                                 input,
                                 &mut preloaded,
-                                ringbuffer,
+                                ring_buffer,
                                 *pos as usize,
                                 num_steps.max(0) as usize,
                             )? as i32;
@@ -2031,8 +2025,10 @@ impl Decoder {
                             }
                         }
                     } else {
-                        let mut p1 = ringbuffer.at(((*pos - 1) & self.ringbuffer_mask) as usize)?;
-                        let mut p2 = ringbuffer.at(((*pos - 2) & self.ringbuffer_mask) as usize)?;
+                        let mut p1 =
+                            ring_buffer.at(((*pos - 1) & self.ring_buffer_mask) as usize)?;
+                        let mut p2 =
+                            ring_buffer.at(((*pos - 2) & self.ring_buffer_mask) as usize)?;
                         let context_map_slice: &[u8; 1 << LITERAL_CONTEXT_BITS] =
                             self.context_map.array_at(self.context_map_slice)?;
                         loop {
@@ -2086,13 +2082,13 @@ impl Decoder {
                     *remaining = self.copy_length;
                     // A distance past the data seen so far refers to one of the dictionaries.
                     if self.distance > self.max_distance {
-                        *pos = self.copy_from_dictionary(ringbuffer, *pos, *remaining)?;
-                        if *pos >= self.ringbuffer_size {
+                        *pos = self.copy_from_dictionary(ring_buffer, *pos, *remaining)?;
+                        if *pos >= self.ring_buffer_size {
                             self.state = State::WriteAfterDictionaryCopy;
                             return Ok(());
                         }
                     } else {
-                        let src_start = (*pos - self.distance) & self.ringbuffer_mask;
+                        let src_start = (*pos - self.distance) & self.ring_buffer_mask;
                         let dst_end = *pos + *remaining;
                         let src_end = src_start + *remaining;
                         self.last_distances
@@ -2101,11 +2097,11 @@ impl Decoder {
                         self.meta_block_remaining_len -= *remaining;
                         let (src, dst) = (src_start as usize, *pos as usize);
                         // No valid distance reaches the 16 bytes from `pos` on, so they can be written to in any case.
-                        let first: [u8; 16] = *ringbuffer.array_at(src)?;
-                        *ringbuffer.array_at_mut(dst)? = first;
+                        let first: [u8; 16] = *ring_buffer.array_at(src)?;
+                        *ring_buffer.array_at_mut(dst)? = first;
                         if (src_end > *pos && dst_end > src_start)
-                            || dst_end >= self.ringbuffer_size
-                            || src_end >= self.ringbuffer_size
+                            || dst_end >= self.ring_buffer_size
+                            || src_end >= self.ring_buffer_size
                         {
                             // The two overlap, or one of them goes past the end of the ring buffer.
                             label = Label::CommandPostWrapCopy;
@@ -2114,14 +2110,14 @@ impl Decoder {
                         *pos += *remaining;
                         if *remaining > 16 {
                             if *remaining > 32 {
-                                ringbuffer.move_within(
+                                ring_buffer.move_within(
                                     src + 16,
                                     dst + 16,
                                     (*remaining - 16) as usize,
                                 )?;
                             } else {
-                                let second: [u8; 16] = *ringbuffer.array_at(src + 16)?;
-                                *ringbuffer.array_at_mut(dst + 16)? = second;
+                                let second: [u8; 16] = *ring_buffer.array_at(src + 16)?;
+                                *ring_buffer.array_at_mut(dst + 16)? = second;
                             }
                         }
                     }
@@ -2132,15 +2128,15 @@ impl Decoder {
                 }
 
                 Label::CommandPostWrapCopy => {
-                    let mut wrap_guard = self.ringbuffer_size - *pos;
+                    let mut wrap_guard = self.ring_buffer_size - *pos;
                     loop {
                         *remaining -= 1;
                         if *remaining < 0 {
                             break;
                         }
-                        let byte = ringbuffer
-                            .at(((*pos - self.distance) & self.ringbuffer_mask) as usize)?;
-                        ringbuffer.put(*pos as usize, byte)?;
+                        let byte = ring_buffer
+                            .at(((*pos - self.distance) & self.ring_buffer_mask) as usize)?;
+                        ring_buffer.put(*pos as usize, byte)?;
                         *pos += 1;
                         wrap_guard -= 1;
                         if wrap_guard == 0 {
@@ -2168,15 +2164,15 @@ impl Decoder {
         let mut pos = self.pos;
         let mut remaining = self.loop_counter;
         let mut br = self.br;
-        let mut ringbuffer = core::mem::take(&mut self.ringbuffer);
+        let mut ring_buffer = core::mem::take(&mut self.ring_buffer);
         let result = self.process_commands_internal::<SAFE>(
             input,
             &mut br,
-            &mut ringbuffer,
+            &mut ring_buffer,
             &mut pos,
             &mut remaining,
         );
-        self.ringbuffer = ringbuffer;
+        self.ring_buffer = ring_buffer;
         self.br = br;
         self.pos = pos;
         self.loop_counter = remaining;
@@ -2259,7 +2255,7 @@ impl Decoder {
                 Ok(Flow::Continue) => {}
                 Ok(Flow::Finished) => return E::Success,
                 Err(E::NeedsMoreInput) => {
-                    if !self.ringbuffer.is_empty() {
+                    if !self.ring_buffer.is_empty() {
                         if let Err(code) = self.write_ring_buffer(output, true) {
                             if code.is_error() {
                                 return code;
@@ -2545,7 +2541,7 @@ impl Decoder {
             | State::WriteDuringWrapCopy => {
                 self.write_ring_buffer(output, false)?;
                 self.wrap_ring_buffer()?;
-                if self.ringbuffer_size == 1 << self.window_bits {
+                if self.ring_buffer_size == 1 << self.window_bits {
                     self.max_distance = self.max_backward_distance;
                 }
                 match self.state {
@@ -2554,11 +2550,11 @@ impl Decoder {
                             && compound.is_copying()
                         {
                             self.pos += compound.copy_to(
-                                &mut self.ringbuffer,
-                                self.ringbuffer_size,
+                                &mut self.ring_buffer,
+                                self.ring_buffer_size,
                                 self.pos,
                             )?;
-                            if self.pos >= self.ringbuffer_size {
+                            if self.pos >= self.ring_buffer_size {
                                 return Ok(Flow::Continue);
                             }
                         }
@@ -2601,7 +2597,7 @@ impl Decoder {
             }
 
             State::Done => {
-                if !self.ringbuffer.is_empty() {
+                if !self.ring_buffer.is_empty() {
                     self.write_ring_buffer(output, true)?;
                 }
                 return Ok(Flow::Finished);

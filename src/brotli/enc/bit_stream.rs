@@ -23,7 +23,7 @@ use crate::common::constants::{
     DISTANCE_CONTEXT_BITS, INITIAL_REPEATED_CODE_LENGTH, INSERT_LENGTH_PREFIX_CODE,
     LARGE_MAX_DISTANCE_BITS, LITERAL_CONTEXT_BITS, MAX_BLOCK_TYPE_SYMBOLS, MAX_CONTEXT_MAP_SYMBOLS,
     NUM_BLOCK_LEN_SYMBOLS, NUM_COMMAND_SYMBOLS, NUM_LITERAL_SYMBOLS, REPEAT_PREVIOUS_CODE_LENGTH,
-    REPEAT_ZERO_CODE_LENGTH, distance_alphabet_size,
+    REPEAT_ZERO_CODE_LENGTH, distance_alphabet_size, simple_code_symbol_bits,
 };
 use crate::common::context::{ContextType, context_lut};
 use crate::util::{Bug, Checked, SliceExt, try_box, try_vec, try_zeroed};
@@ -330,7 +330,7 @@ fn build_and_store_huffman_tree(
         count += 1;
     }
 
-    let max_bits = (usize::BITS - (alphabet_size - 1).leading_zeros()) as usize;
+    let max_bits = simple_code_symbol_bits(alphabet_size as u32) as usize;
 
     if count <= 1 {
         bw.write_bits(4, 1)?;

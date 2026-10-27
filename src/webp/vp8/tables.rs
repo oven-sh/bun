@@ -1,4 +1,4 @@
-//! Constant tables of the VP8 format (RFC 6386), from `tree_dec.c`, `quant_dec.c` and `vp8_dec.c`.
+//! Constant tables of the VP8 format (RFC 6386), which libwebp has once for the decoder and once for the encoder.
 
 use super::common::{NUM_BANDS, NUM_BMODES, NUM_CTX, NUM_PROBAS, NUM_TYPES};
 
@@ -9,7 +9,7 @@ pub(crate) const ZIGZAG: [u8; 16] = [0, 1, 4, 8, 5, 2, 3, 6, 9, 12, 13, 10, 7, 1
 pub(crate) const BANDS: [u8; 16 + 1] = [0, 1, 2, 3, 6, 4, 5, 6, 6, 6, 6, 6, 6, 6, 6, 7, 0];
 
 /// Paragraph 14.1
-pub(crate) const DC_TABLE: [u8; 128] = [
+pub(crate) static DC_TABLE: [u8; 128] = [
     4, 5, 6, 7, 8, 9, 10, 10, 11, 12, 13, 14, 15, 16, 17, 17, 18, 19, 20, 20, 21, 21, 22, 22, 23,
     23, 24, 25, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 37, 38, 39, 40, 41, 42, 43, 44,
     45, 46, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67,
@@ -18,7 +18,7 @@ pub(crate) const DC_TABLE: [u8; 128] = [
     132, 134, 136, 138, 140, 143, 145, 148, 151, 154, 157,
 ];
 
-pub(crate) const AC_TABLE: [u16; 128] = [
+pub(crate) static AC_TABLE: [u16; 128] = [
     4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28,
     29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52,
     53, 54, 55, 56, 57, 58, 60, 62, 64, 66, 68, 70, 72, 74, 76, 78, 80, 82, 84, 86, 88, 90, 92, 94,
@@ -28,7 +28,7 @@ pub(crate) const AC_TABLE: [u16; 128] = [
 ];
 
 /// Paragraph 13.5
-pub(crate) const COEFFS_PROBA0: [[[[u8; NUM_PROBAS]; NUM_CTX]; NUM_BANDS]; NUM_TYPES] = [
+pub(crate) static COEFFS_PROBA0: [[[[u8; NUM_PROBAS]; NUM_CTX]; NUM_BANDS]; NUM_TYPES] = [
     [
         [
             [128, 128, 128, 128, 128, 128, 128, 128, 128, 128, 128],
@@ -200,7 +200,7 @@ pub(crate) const COEFFS_PROBA0: [[[[u8; NUM_PROBAS]; NUM_CTX]; NUM_BANDS]; NUM_T
 ];
 
 /// Paragraph 13.4
-pub(crate) const COEFFS_UPDATE_PROBA: [[[[u8; NUM_PROBAS]; NUM_CTX]; NUM_BANDS]; NUM_TYPES] = [
+pub(crate) static COEFFS_UPDATE_PROBA: [[[[u8; NUM_PROBAS]; NUM_CTX]; NUM_BANDS]; NUM_TYPES] = [
     [
         [
             [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
@@ -372,7 +372,7 @@ pub(crate) const COEFFS_UPDATE_PROBA: [[[[u8; NUM_PROBAS]; NUM_CTX]; NUM_BANDS];
 ];
 
 /// Paragraph 11.5: by the mode above, then by the mode to the left.
-pub(crate) const BMODES_PROBA: [[[u8; NUM_BMODES - 1]; NUM_BMODES]; NUM_BMODES] = [
+pub(crate) static BMODES_PROBA: [[[u8; NUM_BMODES - 1]; NUM_BMODES]; NUM_BMODES] = [
     [
         [231, 120, 48, 89, 115, 113, 120, 152, 112],
         [152, 179, 64, 126, 170, 118, 46, 70, 95],

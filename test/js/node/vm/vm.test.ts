@@ -2726,9 +2726,12 @@ describe.concurrent("node:vm SourceTextModule that the evaluate() of an importer
     return { result: JSON.parse(stdout), exitCode };
   }
 
-  // Calls instantiate(), evaluate() and link() of `module`, and records its status and the error code of each call.
+  // reenter() calls instantiate(), evaluate() and link() of `module`, and records its status and the error code of each
+  // call. settled() waits for the two promises, for one turn of the event loop at most: the evaluate() of such a
+  // module never settled on a release build, and that must fail the test, not hang the child.
   const reenter = `
     const seen = {};
+    const pending = [];
     const code = error => error.code ?? error.name;
     const reenter = (module, linker) => {
       seen.status = module.status;
@@ -2738,9 +2741,12 @@ describe.concurrent("node:vm SourceTextModule that the evaluate() of an importer
       } catch (error) {
         seen.instantiate = code(error);
       }
-      module.evaluate().then(() => (seen.evaluate = "no error"), error => (seen.evaluate = code(error)));
-      module.link(linker).then(() => (seen.link = "no error"), error => (seen.link = code(error)));
+      pending.push(
+        module.evaluate().then(() => (seen.evaluate = "no error"), error => (seen.evaluate = code(error))),
+        module.link(linker).then(() => (seen.link = "no error"), error => (seen.link = code(error))),
+      );
     };
+    const settled = () => Promise.race([Promise.all(pending), new Promise(resolve => setImmediate(resolve))]);
   `;
   const rejected = {
     status: "evaluating",
@@ -2761,6 +2767,7 @@ describe.concurrent("node:vm SourceTextModule that the evaluate() of an importer
       Z = new vm.SourceTextModule("inBodyOfZ();", { identifier: "Z" });
       await D.link(linker);
       await D.evaluate();
+      await settled();
       console.log(JSON.stringify({ ...seen, after: [D.status, W.status, Z.status] }));
     `);
     expect(result).toEqual({ ...rejected, after: ["evaluated", "evaluated", "evaluated"] });
@@ -2781,6 +2788,7 @@ describe.concurrent("node:vm SourceTextModule that the evaluate() of an importer
       });
       await root.link(linker);
       await root.evaluate();
+      await settled();
       console.log(JSON.stringify({ ...seen, after: root.status }));
     `);
     expect(result).toEqual({ ...rejected, after: "evaluated" });

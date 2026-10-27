@@ -92,6 +92,17 @@ describe("SocketAddress constructor", () => {
     },
   );
 
+  it("calls an option of the wrong type a property, as Node.js does", () => {
+    // @ts-expect-error
+    expect(() => new SocketAddress({ address: 1 })).toThrow(
+      TypeError('The "options.address" property must be of type string. Received type number (1)'),
+    );
+    // @ts-expect-error
+    expect(() => new SocketAddress({ flowlabel: "x" })).toThrow(
+      TypeError(`The "options.flowlabel" property must be of type number. Received type string ('x')`),
+    );
+  });
+
   // ===========================================================================
   // ============================= LEAK DETECTION ==============================
   // ===========================================================================

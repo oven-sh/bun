@@ -12,7 +12,7 @@ use bun_sourcemap::{InternalSourceMap, Ordinal, ParsedSourceMap};
 type LinesHits = Vec<u32>;
 type Bitset = DynamicBitSet;
 
-/// Line and function coverage of one source file.
+/// Line, function and branch coverage of one source file.
 ///
 /// A line is executable if the source map has code of it in the text JSC compiled, so comments,
 /// blank lines and types are not. What ran does not change which lines are executable.
@@ -24,9 +24,21 @@ pub struct Report<'a> {
     /// Indexed in step with `functions_which_have_executed`.
     pub(crate) functions: Vec<ByteRange>,
     pub(crate) functions_which_have_executed: Bitset,
+    pub(crate) branches: Vec<(Branch, u32)>,
     /// Indexed in step with `stmts_which_have_executed`.
     pub(crate) stmts: Vec<ByteRange>,
     pub(crate) stmts_which_have_executed: Bitset,
+}
+
+/// One of the ways control goes from a decision, such as an `if` or an `&&`.
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct Branch {
+    /// The same in every process that loaded the same file. The block of an lcov `BRDA`.
+    pub(crate) decision: u32,
+    /// Position among the branches of `decision`.
+    pub(crate) index: u32,
+    /// Zero-based line where `decision` starts.
+    pub(crate) line: u32,
 }
 
 impl<'a> Report<'a> {
@@ -65,15 +77,34 @@ impl<'a> Report<'a> {
         (self.functions_which_have_executed.count() as f64) / total_count
     }
 
+    pub fn branches_found(&self) -> usize {
+        self.branches.len()
+    }
+
+    pub fn branches_hit(&self) -> usize {
+        self.branches.iter().filter(|&&(_, hits)| hits > 0).count()
+    }
+
+    pub fn branches_coverage_fraction(&self) -> f64 {
+        if self.branches.is_empty() {
+            return 1.0;
+        }
+        (self.branches_hit() as f64) / (self.branches.len() as f64)
+    }
+
     /// This file's fractions, with `failing` judged against `thresholds`.
     pub fn fraction(&self, thresholds: &Fraction) -> Fraction {
         let functions = self.function_coverage_fraction();
         let lines = self.lines_coverage_fraction();
+        let branches = self.branches_coverage_fraction();
         Fraction {
             functions,
             lines,
+            branches,
             stmts: self.stmts_coverage_fraction(),
-            failing: functions < thresholds.functions || lines < thresholds.lines,
+            failing: functions < thresholds.functions
+                || lines < thresholds.lines
+                || branches < thresholds.branches,
         }
     }
 
@@ -119,12 +150,14 @@ impl<'a> Report<'a> {
         if generator.loads > 1 {
             fold(&mut generator.blocks);
             fold(&mut generator.function_blocks);
+            fold_branches(&mut generator.branches);
         }
 
         Some(bun_core::handle_oom(
             byte_range_mapping.generate_report_from_blocks(
                 &generator.blocks,
                 &generator.function_blocks,
+                &generator.branches,
                 ignore_sourcemap_,
             ),
         ))
@@ -141,6 +174,7 @@ impl<'a> Report<'a> {
 ///        words, line_count × u32 hits
 ///   u32  n_functions, then n × {u32 start, u32 end}, executed words
 ///   u32  n_stmts, same shape
+///   u32  n_branches, then n × {u32 decision, u32 index, u32 line, u32 hits}
 pub mod wire {
     use super::*;
 
@@ -178,6 +212,13 @@ pub mod wire {
             &report.functions_which_have_executed,
         );
         put_ranges(out, &report.stmts, &report.stmts_which_have_executed);
+        put_u32(out, u32::try_from(report.branches.len()).expect("int cast"));
+        for &(branch, hits) in &report.branches {
+            put_u32(out, branch.decision);
+            put_u32(out, branch.index);
+            put_u32(out, branch.line);
+            put_u32(out, hits);
+        }
     }
 
     struct Reader<'a>(&'a [u8]);
@@ -209,6 +250,22 @@ pub mod wire {
             }
             Some((ranges, self.bitset(n)?))
         }
+        fn branches(&mut self, line_count: usize) -> Option<Vec<(Branch, u32)>> {
+            let n = self.len()?;
+            let mut branches = Vec::with_capacity(n.min(self.0.len() / 16));
+            for _ in 0..n {
+                let branch = Branch {
+                    decision: self.u32()?,
+                    index: self.u32()?,
+                    line: self.u32()?,
+                };
+                if branch.line as usize >= line_count {
+                    return None;
+                }
+                branches.push((branch, self.u32()?));
+            }
+            Some(branches)
+        }
     }
 
     pub fn decode(bytes: &[u8]) -> Option<Report<'static>> {
@@ -228,6 +285,7 @@ pub mod wire {
             .copy_from_slice(r.bytes(line_count * 4)?);
         let (functions, functions_which_have_executed) = r.ranges()?;
         let (stmts, stmts_which_have_executed) = r.ranges()?;
+        let branches = r.branches(line_count)?;
         if !r.0.is_empty() {
             return None;
         }
@@ -238,6 +296,7 @@ pub mod wire {
             line_hits,
             functions,
             functions_which_have_executed,
+            branches,
             stmts,
             stmts_which_have_executed,
         })
@@ -257,6 +316,8 @@ pub struct MergedReport {
     /// Every report's ranges with their executed bit; deduplicated in `finish`.
     functions: Vec<(ByteRange, bool)>,
     stmts: Vec<(ByteRange, bool)>,
+    /// Every report's branches with their hits; summed in `finish`.
+    branches: Vec<(Branch, u32)>,
 }
 
 impl MergedReport {
@@ -286,19 +347,14 @@ impl MergedReport {
             self.stmts
                 .push((r, report.stmts_which_have_executed.is_set(i)));
         }
+        self.branches.extend_from_slice(&report.branches);
         Ok(())
     }
 
     fn dedupe(
         mut all: Vec<(ByteRange, bool)>,
     ) -> Result<(Vec<ByteRange>, Bitset), bun_alloc::AllocError> {
-        all.sort_unstable_by_key(|e| e.0);
-        all.dedup_by(|next, kept| {
-            next.0 == kept.0 && {
-                kept.1 |= next.1;
-                true
-            }
-        });
+        merge_by_key(&mut all, |e| e.0, |kept, next| kept.1 |= next.1);
         let mut executed = Bitset::init_empty(all.len())?;
         let mut ranges = Vec::with_capacity(all.len());
         for (i, (r, hit)) in all.into_iter().enumerate() {
@@ -313,6 +369,12 @@ impl MergedReport {
     pub fn finish(self) -> Result<Report<'static>, bun_alloc::AllocError> {
         let (functions, functions_which_have_executed) = Self::dedupe(self.functions)?;
         let (stmts, stmts_which_have_executed) = Self::dedupe(self.stmts)?;
+        let mut branches = self.branches;
+        merge_by_key(
+            &mut branches,
+            |e| e.0,
+            |kept, next| kept.1 = kept.1.saturating_add(next.1),
+        );
         Ok(Report {
             source_url: Cow::Owned(self.source_url),
             executable_lines: self.executable_lines,
@@ -320,6 +382,7 @@ impl MergedReport {
             line_hits: self.line_hits,
             functions,
             functions_which_have_executed,
+            branches,
             stmts,
             stmts_which_have_executed,
         })
@@ -360,41 +423,27 @@ pub mod text {
             b' ',
             max_filename_length - filename.len() + usize::from(!indent_name),
         )?;
-        writer.write_all(&pretty_fmt::<ENABLE_COLORS>("<r><d> | <r>"))?;
 
-        if ENABLE_COLORS {
-            if vals.functions < failing.functions {
-                writer.write_all(&pretty_fmt::<true>("<b><red>"))?;
-            } else {
-                writer.write_all(&pretty_fmt::<true>("<b><green>"))?;
+        for (value, threshold, width) in [
+            (vals.functions, failing.functions, 7),
+            (vals.lines, failing.lines, 7),
+            (vals.branches, failing.branches, 8),
+        ] {
+            writer.write_all(&pretty_fmt::<ENABLE_COLORS>("<r><d> | <r>"))?;
+            // Without a threshold there is nothing to pass or fail.
+            if ENABLE_COLORS && threshold > 0.0 {
+                if value < threshold {
+                    writer.write_all(&pretty_fmt::<true>("<b><red>"))?;
+                } else {
+                    writer.write_all(&pretty_fmt::<true>("<b><green>"))?;
+                }
             }
+            write!(writer, "{:>width$.2}", value * 100.0)?;
         }
-
-        write!(writer, "{:>7.2}", vals.functions * 100.0)?;
-        // writer.write_all(&pretty_fmt("<r><d> | <r>", ENABLE_COLORS))?;
-        // if ENABLE_COLORS {
-        //     // if vals.stmts < failing.stmts {
-        //     writer.write_all(&pretty_fmt("<d>", true))?;
-        //     // } else {
-        //     //     writer.write_all(&pretty_fmt("<d>", true))?;
-        //     // }
-        // }
-        // write!(writer, "{:>8.2}", vals.stmts * 100.0)?;
-        writer.write_all(&pretty_fmt::<ENABLE_COLORS>("<r><d> | <r>"))?;
-
-        if ENABLE_COLORS {
-            if vals.lines < failing.lines {
-                writer.write_all(&pretty_fmt::<true>("<b><red>"))?;
-            } else {
-                writer.write_all(&pretty_fmt::<true>("<b><green>"))?;
-            }
-        }
-
-        write!(writer, "{:>7.2}", vals.lines * 100.0)?;
         Ok(())
     }
 
-    /// One table row: name, the two percentages from `fraction` (coloured
+    /// One table row: name, the three percentages from `fraction` (coloured
     /// against `thresholds`), and the uncovered line ranges.
     pub fn write_format<const ENABLE_COLORS: bool>(
         report: &Report,
@@ -429,6 +478,15 @@ pub mod text {
 
         // This sets statements in executed scopes
         executable_lines_that_havent_been_executed.set_intersection(&report.executable_lines);
+
+        // As Istanbul does: when every line ran, the lines with a branch that was not taken.
+        if executable_lines_that_havent_been_executed.count() == 0 {
+            for &(branch, hits) in &report.branches {
+                if hits == 0 {
+                    executable_lines_that_havent_been_executed.set(branch.line as usize);
+                }
+            }
+        }
 
         let mut iter = executable_lines_that_havent_been_executed.iterator::<true, true>();
 
@@ -511,15 +569,29 @@ pub mod lcov {
             report.functions_which_have_executed.count()
         )?;
 
+        for &(branch, hits) in &report.branches {
+            // BRDA: line number, block, branch, hit count
+            writeln!(
+                writer,
+                "BRDA:{},{},{},{}",
+                branch.line + 1,
+                branch.decision,
+                branch.index,
+                hits
+            )?;
+        }
+
+        // BRF: branches found
+        writeln!(writer, "BRF:{}", report.branches_found())?;
+
+        // BRH: branches hit
+        writeln!(writer, "BRH:{}", report.branches_hit())?;
+
         // ** Track all executable lines **
         // Executable lines that were not hit should be marked as 0
         // `DynamicBitSet::iterator` borrows `&self`, so no clone is needed.
         let mut iter = report.executable_lines.iterator::<true, true>();
 
-        // ** Branch coverage not supported yet, since JSC does not support those yet. ** //
-        // BRDA: line, block, (expressions,count)+
-        // BRF: branches found
-        // BRH: branches hit
         let line_hits = report.line_hits.slice();
         while let Some(line) = iter.next() {
             // DA: line number, hit count
@@ -542,7 +614,14 @@ unsafe extern "C" {
         vm: *mut VM,
         source_id: i32,
         ctx: *mut c_void,
-        cb: extern "C" fn(&mut Generator, *const BasicBlockRange, usize, usize),
+        cb: extern "C" fn(
+            &mut Generator,
+            *const BasicBlockRange,
+            usize,
+            usize,
+            *const BranchRange,
+            usize,
+        ),
     ) -> bool;
 }
 
@@ -551,6 +630,7 @@ unsafe extern "C" {
 struct Generator {
     blocks: Vec<BasicBlockRange>,
     function_blocks: Vec<BasicBlockRange>,
+    branches: Vec<BranchRange>,
     /// SourceIDs that had anything compiled.
     loads: usize,
 }
@@ -561,6 +641,8 @@ impl Generator {
         blocks_ptr: *const BasicBlockRange,
         blocks_len: usize,
         function_start_offset: usize,
+        branches_ptr: *const BranchRange,
+        branches_len: usize,
     ) {
         // The C++ side (CodeCoverage.cpp) invokes this callback with `(nullptr, 0, 0)` when
         // basicBlocks is empty. `core::slice::from_raw_parts` requires a non-null, aligned
@@ -580,20 +662,66 @@ impl Generator {
 
         this.blocks.extend_from_slice(blocks);
         this.function_blocks.extend_from_slice(function_blocks);
+        if branches_len != 0 {
+            // SAFETY: as for the blocks.
+            let branches = unsafe { core::slice::from_raw_parts(branches_ptr, branches_len) };
+            this.branches.extend_from_slice(branches);
+        }
         this.loads += 1;
     }
 }
 
-/// One range per `[start, end)`, executed if it executed under any SourceID.
-fn fold(ranges: &mut Vec<BasicBlockRange>) {
-    ranges.sort_unstable_by_key(|r| (r.start_offset, r.end_offset));
-    ranges.dedup_by(|next, kept| {
-        (next.start_offset, next.end_offset) == (kept.start_offset, kept.end_offset) && {
-            kept.has_executed |= next.has_executed;
-            kept.execution_count = kept.execution_count.saturating_add(next.execution_count);
+/// Sorts by `key`, and merges the elements of one key into the first of them.
+fn merge_by_key<T, K: Ord>(all: &mut Vec<T>, key: impl Fn(&T) -> K, merge: impl Fn(&mut T, &T)) {
+    all.sort_unstable_by_key(&key);
+    all.dedup_by(|next, kept| {
+        key(next) == key(kept) && {
+            merge(kept, next);
             true
         }
     });
+}
+
+/// One range per `[start, end)`, executed if it executed under any SourceID.
+fn fold(ranges: &mut Vec<BasicBlockRange>) {
+    merge_by_key(
+        ranges,
+        |r| (r.start_offset, r.end_offset),
+        |kept, next| {
+            kept.has_executed |= next.has_executed;
+            kept.execution_count = kept.execution_count.saturating_add(next.execution_count);
+        },
+    );
+}
+
+/// One entry per branch, sorted by decision, with its counts under every SourceID added up.
+fn fold_branches(branches: &mut Vec<BranchRange>) {
+    merge_by_key(
+        branches,
+        |branch| (branch.decision(), branch.index),
+        |kept, next| {
+            kept.execution_count = kept.execution_count.saturating_add(next.execution_count);
+        },
+    );
+}
+
+/// Zero-based line and column in the file.
+type OriginalPosition = (i32, i32);
+
+/// `JSC::BranchRange`. The offsets are in the text JSC compiled.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub(crate) struct BranchRange {
+    decision_start_offset: c_int,
+    decision_end_offset: c_int,
+    index: u32,
+    execution_count: usize,
+}
+
+impl BranchRange {
+    fn decision(&self) -> (c_int, c_int) {
+        (self.decision_start_offset, self.decision_end_offset)
+    }
 }
 
 #[repr(C)]
@@ -602,6 +730,7 @@ pub struct BasicBlockRange {
     start_offset: c_int,
     end_offset: c_int,
     has_executed: bool,
+    is_in_loop_header: bool,
     execution_count: usize,
 }
 
@@ -613,6 +742,8 @@ pub struct ByteRangeMapping {
     executable_units: Bitset,
     /// Code unit offset of the first unit of each line of the text.
     line_starts: Vec<u32>,
+    /// A `// @bun` file, which JSC compiles as written.
+    already_bundled: bool,
     /// JSC records coverage per `SourceProvider`, and each load of the file makes one.
     pub(crate) source_ids: Vec<i32>,
     /// Of the text.
@@ -678,6 +809,7 @@ impl ByteRangeMapping {
         &self,
         blocks: &[BasicBlockRange],
         function_blocks: &[BasicBlockRange],
+        branches: &[BranchRange],
         ignore_sourcemap: bool,
     ) -> Result<Report<'_>, bun_alloc::AllocError> {
         let source_url = self.source_url.slice();
@@ -715,6 +847,7 @@ impl ByteRangeMapping {
 
         let counts = ExecutionCounts::new(&blocks, &functions);
         let mut lines = LineCounts::default();
+        let mut mappings = Vec::new();
 
         if let Some(source_map) = source_map.as_deref() {
             let mut previous_original = None;
@@ -733,6 +866,7 @@ impl ByteRangeMapping {
                 ) else {
                     return;
                 };
+                mappings.push((offset, original));
                 self.count_line(&counts, offset, line, &mut lines);
             });
         } else {
@@ -757,6 +891,8 @@ impl ByteRangeMapping {
             });
         }
 
+        let branches = self.count_branches(branches, source_map.is_some().then_some(&mappings));
+
         let (executable_lines, lines_which_have_executed) = lines.bitsets()?;
         let (functions, functions_which_have_executed) = split_executed(&functions)?;
         let (stmts, stmts_which_have_executed) = split_executed(&blocks)?;
@@ -767,15 +903,78 @@ impl ByteRangeMapping {
             executable_lines,
             lines_which_have_executed,
             line_hits: lines.hits(),
+            branches,
             stmts,
             functions_which_have_executed,
             stmts_which_have_executed,
         })
     }
 
-    /// `line` ran as often as the code at `offset`, if it is code. A block's brace is not: the `{`
-    /// of a loop body shares a line with a header that runs once, and after a `return` JSC has
-    /// the `}` in a block of its own that never runs.
+    /// `branches` is sorted by decision, and `mappings` by offset in the text JSC compiled.
+    fn count_branches(
+        &self,
+        branches: &[BranchRange],
+        mappings: Option<&Vec<(u32, OriginalPosition)>>,
+    ) -> Vec<(Branch, u32)> {
+        // The source map of a bundle has lines of several files.
+        if self.already_bundled && mappings.is_some() {
+            return Vec::new();
+        }
+        let mut counted = Vec::with_capacity(branches.len());
+        let mut decision = 0;
+        for branches in branches.chunk_by(|a, b| a.decision() == b.decision()) {
+            let Some(line) = self.line_of_decision(branches[0].decision(), mappings) else {
+                continue;
+            };
+            decision += 1;
+            counted.extend(branches.iter().map(|branch| {
+                let hits = u32::try_from(branch.execution_count).unwrap_or(u32::MAX);
+                let branch = Branch {
+                    decision,
+                    index: branch.index,
+                    line,
+                };
+                (branch, hits)
+            }));
+        }
+        counted
+    }
+
+    /// The line in the file of the first code in the decision. `None` for one the transpiler added.
+    fn line_of_decision(
+        &self,
+        (start, end): (c_int, c_int),
+        mappings: Option<&Vec<(u32, OriginalPosition)>>,
+    ) -> Option<u32> {
+        let (start, end) = (u32::try_from(start).ok()?, u32::try_from(end).ok()?);
+        let Some(mappings) = mappings else {
+            let first = (start..=end).find(|&at| self.executable_units.is_set(at as usize))?;
+            return u32::try_from(self.line_and_column_of(first).0.zero_based()).ok();
+        };
+        let first = mappings.partition_point(|&(offset, _)| offset < start);
+        let last = mappings
+            .partition_point(|&(offset, _)| offset <= end)
+            .checked_sub(1)?;
+        // Code the transpiler adds usually has no mapping of its own.
+        if last < first {
+            return None;
+        }
+        // When it has, its mappings do not move forward in the file.
+        let moves_forward_from = |from: usize| mappings[last].1 > mappings[from].1;
+        let is_added = if mappings[first].0 == start {
+            first != last && !moves_forward_from(first)
+        } else {
+            // What an `&&` skips can be one mapping, which then follows that of the left side.
+            !moves_forward_from(first) && first > 0 && !moves_forward_from(first - 1)
+        };
+        if is_added {
+            return None;
+        }
+        u32::try_from(mappings[first].1.0).ok()
+    }
+
+    /// `line` ran as often as the code at `offset`, if it is code. A block's brace is not: after a
+    /// `return` JSC has the `}` in a block of its own that never runs.
     fn count_line(
         &self,
         counts: &ExecutionCounts,
@@ -812,6 +1011,7 @@ impl ByteRangeMapping {
         source_hash: u64,
         source_id: i32,
         source_url: Utf8Bytes<'static>,
+        already_bundled: bool,
     ) -> ByteRangeMapping {
         let (line_starts, executable_units) = if source.is_utf16() {
             scan(source.utf16().iter().copied())
@@ -821,6 +1021,7 @@ impl ByteRangeMapping {
         ByteRangeMapping {
             executable_units,
             line_starts,
+            already_bundled,
             source_ids: vec![source_id],
             source_hash,
             source_url,
@@ -828,8 +1029,8 @@ impl ByteRangeMapping {
     }
 
     /// `scan` sets no brace. Those of an object literal are code, and the printer marks them.
-    fn set_object_braces_executable(&mut self, text: &[u8], already_bundled: bool) {
-        if already_bundled {
+    fn set_object_braces_executable(&mut self, text: &[u8]) {
+        if self.already_bundled {
             // JSC compiles a `// @bun` file as written, so the original positions are in `text`.
             if let Some(blob) = print_for_coverage(self.source_url.slice(), text) {
                 InternalSourceMap {
@@ -1021,13 +1222,14 @@ impl LineCounts {
     }
 }
 
+/// Whether `--coverage` has not seen this text before, and so needs all of its branches.
 #[unsafe(no_mangle)]
 extern "C" fn ByteRangeMapping__generate(
     str_: &bun_core::String,
     source_contents_str: &bun_core::String,
     source_id: i32,
     already_bundled: bool,
-) {
+) -> bool {
     // SAFETY: thread_map() returns a pointer into this thread's owned Box<HashMap>;
     // valid for the lifetime of the thread, and we are the only mutable accessor on
     // this thread for the duration of this call.
@@ -1043,21 +1245,27 @@ extern "C" fn ByteRangeMapping__generate(
         && existing.source_hash == source_hash
     {
         existing.source_ids.push(source_id);
-        return;
+        return false;
     }
 
-    let mut new_value =
-        ByteRangeMapping::compute(source_contents_str, source_hash, source_id, source_url);
+    let mut new_value = ByteRangeMapping::compute(
+        source_contents_str,
+        source_hash,
+        source_id,
+        source_url,
+        already_bundled,
+    );
     // `node:inspector` turns the profiler on too. Nothing is marked for it.
-    if bun_jsc::VirtualMachine::VirtualMachine::get()
+    let code_coverage = bun_jsc::VirtualMachine::VirtualMachine::get()
         .as_mut()
         .transpiler
         .options
-        .code_coverage
-    {
-        new_value.set_object_braces_executable(source_contents.slice(), already_bundled);
+        .code_coverage;
+    if code_coverage {
+        new_value.set_object_braces_executable(source_contents.slice());
     }
     map.insert(hash, new_value);
+    code_coverage
 }
 
 /// For a provider that wraps another one. `module._compile()` wraps a text of its own.

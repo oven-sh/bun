@@ -37,6 +37,14 @@ mod coverage {
         bun_core::order(a.source_url.slice(), b.source_url.slice())
     }
 
+    pub(super) fn prepare_ignore_patterns(
+        ignore_patterns: &[Box<[u8]>],
+    ) -> Vec<bun_glob::Prepared<&[u8]>> {
+        (ignore_patterns.iter())
+            .map(|it| bun_glob::Prepared::new(&**it))
+            .collect()
+    }
+
     pub(super) fn is_ignored(
         ignore_patterns: &[bun_glob::Prepared<&[u8]>],
         relative_dir: &[u8],
@@ -1490,11 +1498,7 @@ impl CommandLineReporter {
         // collection loop below (single-threaded CLI report path).
         let map = unsafe { &mut *map.as_ptr() };
         let relative_dir = FileSystem::get().top_level_dir();
-        let ignore_patterns: Vec<bun_glob::Prepared<&[u8]>> = (opts
-            .ignore_patterns
-            .iter()
-            .map(|it| bun_glob::Prepared::new(&**it)))
-        .collect();
+        let ignore_patterns = coverage::prepare_ignore_patterns(&opts.ignore_patterns);
         let mut byte_ranges: Vec<&mut ByteRangeMapping> = Vec::with_capacity(map.len());
         for entry in map.values_mut() {
             if !coverage::is_ignored(&ignore_patterns, relative_dir, entry.source_url.slice()) {
@@ -1587,6 +1591,7 @@ fn print_coverage_table<const COLORS: bool>(
     let zero = Fraction {
         functions: 0.0,
         lines: 0.0,
+        branches: 0.0,
         stmts: 0.0,
         failing: false,
     };
@@ -1603,6 +1608,14 @@ fn print_coverage_table<const COLORS: bool>(
         avg.functions /= n;
         avg.lines /= n;
         avg.stmts /= n;
+        // Not the mean of the files: a file without branches would count as 100%.
+        let found: usize = reports.iter().map(|r| r.branches_found()).sum();
+        let hit: usize = reports.iter().map(|r| r.branches_hit()).sum();
+        avg.branches = if found == 0 {
+            1.0
+        } else {
+            hit as f64 / found as f64
+        };
         thresholds
     };
 
@@ -1611,8 +1624,11 @@ fn print_coverage_table<const COLORS: bool>(
     let separator = |out: &mut Vec<u8>| {
         let _ = bun_core::write_pretty!(out, COLORS, "<r><d>");
         out.resize(out.len() + max_filepath_length + 2, b'-');
-        let _ =
-            bun_core::write_pretty!(out, COLORS, "|---------|---------|-------------------<r>\n");
+        let _ = bun_core::write_pretty!(
+            out,
+            COLORS,
+            "|---------|---------|----------|-------------------<r>\n"
+        );
     };
     separator(&mut out);
     out.extend_from_slice(b"File");
@@ -1620,7 +1636,7 @@ fn print_coverage_table<const COLORS: bool>(
     let _ = bun_core::write_pretty!(
         out,
         COLORS,
-        " <d>|<r> % Funcs <d>|<r> % Lines <d>|<r> Uncovered Line #s\n"
+        " <d>|<r> % Funcs <d>|<r> % Lines <d>|<r> % Branch <d>|<r> Uncovered Line #s\n"
     );
     separator(&mut out);
     let _ = text::write_format_with_values::<COLORS>(
@@ -1757,6 +1773,18 @@ extern "C" fn BunTest__shouldGenerateCodeCoverage(test_name_str: &bun_core::Stri
     }
 
     true
+}
+
+/// Whether `coveragePathIgnorePatterns` leaves the file in the report.
+#[unsafe(no_mangle)]
+extern "C" fn BunTest__shouldReportCodeCoverage(source_url: &bun_core::String) -> bool {
+    let Some(runner) = jest::Jest::runner() else {
+        return true;
+    };
+    let ignore_patterns =
+        coverage::prepare_ignore_patterns(&runner.test_options.coverage.ignore_patterns);
+    let relative_dir = FileSystem::get().top_level_dir();
+    !coverage::is_ignored(&ignore_patterns, relative_dir, source_url.to_utf8().slice())
 }
 
 pub(crate) struct TestCommand;

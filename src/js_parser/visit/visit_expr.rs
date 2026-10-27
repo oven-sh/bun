@@ -1491,7 +1491,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             .was_originally_macro
                     {
                         if let Some(obj) = e_.target.get(&e_.name) {
-                            *e = obj;
+                            e.data = obj.data;
                             return;
                         }
                     }

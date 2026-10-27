@@ -5,6 +5,8 @@ exports[`lcov coverage reporter: lcov-coverage-reporter-output 1`] = `
 SF:demo1.ts
 FNF:0
 FNH:0
+BRF:0
+BRH:0
 DA:2,1
 DA:3,1
 LF:2
@@ -14,6 +16,8 @@ TN:
 SF:demo2.ts
 FNF:2
 FNH:1
+BRF:0
+BRH:0
 DA:2,1
 DA:4,1
 DA:6,1

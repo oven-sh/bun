@@ -2,6 +2,7 @@
 
 use super::Fallible;
 use super::bit_writer::BitWriter;
+use super::block_splitter::BlockSplit;
 use super::command::{Command, get_copy_length_code, get_insert_length_code};
 use super::entropy_encode::{
     HuffmanTree, HuffmanTreeCode, convert_bit_depths_to_symbols, create_huffman_tree, set_depth,
@@ -627,15 +628,19 @@ impl BlockSplitCode {
         bw.write_bits(len_nextra as usize, u64::from(len_extra))
     }
 
-    /// Builds the codes for the block types and block counts given, and writes them.
+    /// Builds the codes for the block types and block counts of `split`, and writes them.
     fn build_and_store(
         &mut self,
-        types: &[u8],
-        lengths: &[u32],
-        num_types: usize,
+        split: &BlockSplit,
         tree: &mut [HuffmanTree],
         bw: &mut BitWriter<'_>,
     ) -> Checked {
+        let BlockSplit {
+            num_types,
+            types,
+            lengths,
+        } = split;
+        let num_types = *num_types;
         let mut type_histo = [0u32; MAX_BLOCK_TYPE_SYMBOLS];
         let mut length_histo = [0u32; NUM_BLOCK_LEN_SYMBOLS];
         let mut type_code_calculator = BlockTypeCodeCalculator::new();
@@ -720,9 +725,7 @@ fn store_trivial_context_map(
 /// Writes the symbols of one category: literals, commands or distances.
 struct BlockEncoder<'a> {
     histogram_length: usize,
-    num_block_types: usize,
-    block_types: &'a [u8],
-    block_lengths: &'a [u32],
+    split: &'a BlockSplit,
     block_split_code: BlockSplitCode,
     block_ix: usize,
     block_len: usize,
@@ -732,17 +735,10 @@ struct BlockEncoder<'a> {
 }
 
 impl<'a> BlockEncoder<'a> {
-    fn new(
-        histogram_length: usize,
-        num_block_types: usize,
-        block_types: &'a [u8],
-        block_lengths: &'a [u32],
-    ) -> Self {
+    fn new(histogram_length: usize, split: &'a BlockSplit) -> Self {
         Self {
             histogram_length,
-            num_block_types,
-            block_types,
-            block_lengths,
+            split,
             block_split_code: BlockSplitCode {
                 type_code_calculator: BlockTypeCodeCalculator::new(),
                 type_depths: [0; MAX_BLOCK_TYPE_SYMBOLS],
@@ -751,7 +747,7 @@ impl<'a> BlockEncoder<'a> {
                 length_bits: [0; NUM_BLOCK_LEN_SYMBOLS],
             },
             block_ix: 0,
-            block_len: block_lengths.first().map_or(0, |&length| length as usize),
+            block_len: split.lengths.first().map_or(0, |&length| length as usize),
             entropy_ix: 0,
             depths: Vec::new(),
             bits: Vec::new(),
@@ -763,21 +759,15 @@ impl<'a> BlockEncoder<'a> {
         tree: &mut [HuffmanTree],
         bw: &mut BitWriter<'_>,
     ) -> Checked {
-        self.block_split_code.build_and_store(
-            self.block_types,
-            self.block_lengths,
-            self.num_block_types,
-            tree,
-            bw,
-        )
+        self.block_split_code.build_and_store(self.split, tree, bw)
     }
 
     /// At the end of a block, writes the switch to the next one and returns its type.
-    #[inline(always)]
+    #[cold]
     fn next_block(&mut self, bw: &mut BitWriter<'_>) -> Checked<usize> {
         self.block_ix += 1;
-        let block_len = self.block_lengths.at(self.block_ix)?;
-        let block_type = self.block_types.at(self.block_ix)?;
+        let block_len = self.split.lengths.at(self.block_ix)?;
+        let block_type = self.split.types.at(self.block_ix)?;
         if block_len == 0 {
             return Err(Bug);
         }
@@ -850,6 +840,8 @@ impl<'a> BlockEncoder<'a> {
 }
 
 /// Writes a meta-block of `length` bytes, from 1 to `1 << 24`, with the block splits, context maps and histograms of `mb`.
+// Its loop takes more instructions as a part of the caller.
+#[inline(never)]
 pub(crate) fn store_meta_block(
     input: &[u8],
     start_pos: usize,
@@ -877,32 +869,9 @@ pub(crate) fn store_meta_block(
         depths: [0; MAX_CONTEXT_MAP_SYMBOLS],
         bits: [0; MAX_CONTEXT_MAP_SYMBOLS],
     };
-    let mut literal_enc = BlockEncoder::new(
-        NUM_LITERAL_SYMBOLS,
-        mb.literal_split.num_types,
-        mb.literal_split.types.sub(..mb.literal_split.num_blocks)?,
-        mb.literal_split
-            .lengths
-            .sub(..mb.literal_split.num_blocks)?,
-    );
-    let mut command_enc = BlockEncoder::new(
-        NUM_COMMAND_SYMBOLS,
-        mb.command_split.num_types,
-        mb.command_split.types.sub(..mb.command_split.num_blocks)?,
-        mb.command_split
-            .lengths
-            .sub(..mb.command_split.num_blocks)?,
-    );
-    let mut distance_enc = BlockEncoder::new(
-        num_effective_distance_symbols,
-        mb.distance_split.num_types,
-        mb.distance_split
-            .types
-            .sub(..mb.distance_split.num_blocks)?,
-        mb.distance_split
-            .lengths
-            .sub(..mb.distance_split.num_blocks)?,
-    );
+    let mut literal_enc = BlockEncoder::new(NUM_LITERAL_SYMBOLS, &mb.literal_split);
+    let mut command_enc = BlockEncoder::new(NUM_COMMAND_SYMBOLS, &mb.command_split);
+    let mut distance_enc = BlockEncoder::new(num_effective_distance_symbols, &mb.distance_split);
 
     literal_enc.build_and_store_block_switch_entropy_codes(&mut tree, bw)?;
     command_enc.build_and_store_block_switch_entropy_codes(&mut tree, bw)?;

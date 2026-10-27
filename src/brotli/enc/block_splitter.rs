@@ -7,11 +7,11 @@ use super::cluster::{HistogramPair, histogram_bit_cost_distance, histogram_combi
 use super::command::Command;
 use super::fast_log::fast_log2;
 use super::histogram::{Histogram, NUM_HISTOGRAM_DISTANCE_SYMBOLS};
-use super::params::{EncoderParams, HQ_ZOPFLIFICATION_QUALITY};
+use super::params::HQ_ZOPFLIFICATION_QUALITY;
 use crate::common::constants::{
     MAX_NUMBER_OF_BLOCK_TYPES, NUM_COMMAND_SYMBOLS, NUM_LITERAL_SYMBOLS,
 };
-use crate::util::{Bug, Checked, SliceExt, try_box, try_vec, try_zeroed};
+use crate::util::{Bug, Checked, SliceExt, try_box, try_vec, try_with_capacity, try_zeroed};
 use bun_core::AllocError;
 
 const MAX_LITERAL_HISTOGRAMS: usize = 100;
@@ -32,46 +32,33 @@ const MIN_ITERS_FOR_REFINING: usize = 100;
 const HISTOGRAMS_PER_BATCH: usize = 64;
 const CLUSTERS_PER_BATCH: usize = 16;
 
-#[derive(Default)]
+/// The blocks of one category, in their order.
 pub(crate) struct BlockSplit {
     /// How many different types there are.
     pub(crate) num_types: usize,
-    /// How many elements of `types` and `lengths` count. Both can be longer.
-    pub(crate) num_blocks: usize,
+    /// The type of each block.
     pub(crate) types: Vec<u8>,
+    /// How many symbols each block has.
     pub(crate) lengths: Vec<u32>,
 }
 
 impl BlockSplit {
-    /// Makes room for `num_blocks` blocks.
-    pub(crate) fn ensure_capacity(&mut self, num_blocks: usize) -> Result<(), AllocError> {
-        if self.types.len() < num_blocks {
-            self.types
-                .try_reserve(num_blocks - self.types.len())
-                .map_err(|_| AllocError)?;
-            self.types.resize(num_blocks, 0);
-        }
-        if self.lengths.len() < num_blocks {
-            self.lengths
-                .try_reserve(num_blocks - self.lengths.len())
-                .map_err(|_| AllocError)?;
-            self.lengths.resize(num_blocks, 0);
-        }
-        Ok(())
+    /// No blocks, and room for `max_num_blocks`.
+    pub(crate) fn with_capacity(max_num_blocks: usize) -> Result<Self, AllocError> {
+        Ok(Self {
+            num_types: 0,
+            types: try_with_capacity(max_num_blocks)?,
+            lengths: try_with_capacity(max_num_blocks)?,
+        })
     }
 
-    /// Adds `length` symbols as a block of the only type.
-    fn add_only_block(&mut self, length: usize) -> Fallible {
-        self.ensure_capacity(self.num_blocks + 1)?;
-        self.num_types = 1;
-        self.types.put(self.num_blocks, 0)?;
-        self.lengths.put(self.num_blocks, length as u32)?;
-        self.num_blocks += 1;
-        Ok(())
+    pub(crate) fn push(&mut self, block_type: u8, length: u32) {
+        self.types.push(block_type);
+        self.lengths.push(length);
     }
 }
 
-fn count_literals(cmds: &[Command]) -> usize {
+pub(crate) fn count_literals(cmds: &[Command]) -> usize {
     cmds.iter().map(|cmd| cmd.insert_len as usize).sum()
 }
 
@@ -329,8 +316,7 @@ fn cluster_blocks<T: Copy + Into<usize>, const N: usize>(
     data: &[T],
     num_blocks: usize,
     block_ids: &[u8],
-    split: &mut BlockSplit,
-) -> Fallible {
+) -> Fallible<BlockSplit> {
     const INVALID_INDEX: u32 = u32::MAX;
     let mut histogram_symbols = try_zeroed::<u32>(num_blocks)?;
     let mut block_lengths = try_zeroed::<u32>(num_blocks)?;
@@ -340,14 +326,8 @@ fn cluster_blocks<T: Copy + Into<usize>, const N: usize>(
     let mut remap = [0u32; HISTOGRAMS_PER_BATCH];
     let expected_num_clusters =
         CLUSTERS_PER_BATCH * (num_blocks + HISTOGRAMS_PER_BATCH - 1) / HISTOGRAMS_PER_BATCH;
-    let mut all_histograms = Vec::<Histogram<N>>::new();
-    all_histograms
-        .try_reserve(expected_num_clusters)
-        .map_err(|_| AllocError)?;
-    let mut cluster_size = Vec::<u32>::new();
-    cluster_size
-        .try_reserve(expected_num_clusters)
-        .map_err(|_| AllocError)?;
+    let mut all_histograms = try_with_capacity::<Histogram<N>>(expected_num_clusters)?;
+    let mut cluster_size = try_with_capacity::<u32>(expected_num_clusters)?;
     let mut num_clusters = 0usize;
     let mut histograms = try_vec(Histogram::<N>::new(), num_blocks.min(HISTOGRAMS_PER_BATCH))?;
     let mut max_num_pairs = HISTOGRAMS_PER_BATCH * HISTOGRAMS_PER_BATCH / 2;
@@ -418,10 +398,7 @@ fn cluster_blocks<T: Copy + Into<usize>, const N: usize>(
         drop(pairs);
         pairs = try_vec(HistogramPair::default(), max_num_pairs + 1)?;
     }
-    let mut clusters = Vec::new();
-    clusters
-        .try_reserve_exact(num_clusters)
-        .map_err(|_| AllocError)?;
+    let mut clusters = try_with_capacity(num_clusters)?;
     clusters.extend(0..num_clusters as u32);
     let num_final_clusters = histogram_combine(
         &mut all_histograms,
@@ -473,27 +450,23 @@ fn cluster_blocks<T: Copy + Into<usize>, const N: usize>(
         }
     }
     drop(all_histograms);
-    split.ensure_capacity(num_blocks)?;
 
     // Neighbors that ended up in the same cluster become one block.
+    let mut split = BlockSplit::with_capacity(num_blocks)?;
     let mut cur_length = 0u32;
-    let mut block_idx = 0usize;
     let mut max_type = 0u8;
     for i in 0..num_blocks {
         cur_length += block_lengths.at(i)?;
         let symbol = histogram_symbols.at(i)?;
         if i + 1 == num_blocks || symbol != histogram_symbols.at(i + 1)? {
             let id = new_index.at(symbol as usize)? as u8;
-            split.types.put(block_idx, id)?;
-            split.lengths.put(block_idx, cur_length)?;
+            split.push(id, cur_length);
             max_type = max_type.max(id);
             cur_length = 0;
-            block_idx += 1;
         }
     }
-    split.num_blocks = block_idx;
     split.num_types = usize::from(max_type) + 1;
-    Ok(())
+    Ok(split)
 }
 
 /// Splits `data` into blocks. `max_histograms` is less than the format allows, to leave some for the contexts, which
@@ -504,19 +477,18 @@ fn split_byte_vector<T: Copy + Into<usize>, const N: usize>(
     max_histograms: usize,
     sampling_stride_length: usize,
     block_switch_cost: f64,
-    params: &EncoderParams,
-    split: &mut BlockSplit,
-) -> Fallible {
+    quality: i32,
+) -> Fallible<BlockSplit> {
     let length = data.len();
     let mut num_histograms = (length / symbols_per_histogram + 1).min(max_histograms);
 
-    if length == 0 {
-        split.num_types = 1;
-        return Ok(());
-    }
-
     if length < MIN_LENGTH_FOR_BLOCK_SPLITTING {
-        return split.add_only_block(length);
+        let mut split = BlockSplit::with_capacity(1)?;
+        split.num_types = 1;
+        if length != 0 {
+            split.push(0, length as u32);
+        }
+        return Ok(split);
     }
 
     let mut histograms = try_vec(Histogram::<N>::new(), num_histograms)?;
@@ -530,7 +502,7 @@ fn split_byte_vector<T: Copy + Into<usize>, const N: usize>(
     let mut cost = try_zeroed::<f64>(num_histograms)?;
     let mut switch_signal = try_zeroed::<u8>(length * bitmaplen)?;
     let mut new_id = try_zeroed::<u16>(num_histograms)?;
-    let iters = if params.quality < HQ_ZOPFLIFICATION_QUALITY {
+    let iters = if quality < HQ_ZOPFLIFICATION_QUALITY {
         3
     } else {
         10
@@ -553,26 +525,20 @@ fn split_byte_vector<T: Copy + Into<usize>, const N: usize>(
     drop(switch_signal);
     drop(new_id);
     drop(histograms);
-    cluster_blocks::<T, N>(data, num_blocks, &block_ids, split)
+    cluster_blocks::<T, N>(data, num_blocks, &block_ids)
 }
 
-/// Splits the literals, the command symbols and the distance symbols of `cmds` into blocks. `data` is a ring buffer of
-/// `mask + 1` bytes and the literals start at `offset`.
+/// Splits the literals, the command symbols and the distance symbols of `cmds` into blocks, and returns the splits in that
+/// order. `data` is a ring buffer of `mask + 1` bytes and the literals start at `offset`.
 pub(crate) fn split_block(
     cmds: &[Command],
     data: &[u8],
     offset: usize,
     mask: usize,
-    params: &EncoderParams,
-    literal_split: &mut BlockSplit,
-    command_split: &mut BlockSplit,
-    distance_split: &mut BlockSplit,
-) -> Fallible {
-    {
-        let mut literals = Vec::new();
-        literals
-            .try_reserve_exact(count_literals(cmds))
-            .map_err(|_| AllocError)?;
+    quality: i32,
+) -> Fallible<(BlockSplit, BlockSplit, BlockSplit)> {
+    let literal_split = {
+        let mut literals = try_with_capacity(count_literals(cmds))?;
         copy_literals_to_byte_array(cmds, data, offset, mask, &mut literals)?;
         split_byte_vector::<u8, NUM_LITERAL_SYMBOLS>(
             &literals,
@@ -580,16 +546,12 @@ pub(crate) fn split_block(
             MAX_LITERAL_HISTOGRAMS,
             LITERAL_STRIDE_LENGTH,
             LITERAL_BLOCK_SWITCH_COST,
-            params,
-            literal_split,
-        )?;
-    }
+            quality,
+        )?
+    };
 
-    {
-        let mut command_symbols = Vec::new();
-        command_symbols
-            .try_reserve_exact(cmds.len())
-            .map_err(|_| AllocError)?;
+    let command_split = {
+        let mut command_symbols = try_with_capacity(cmds.len())?;
         command_symbols.extend(cmds.iter().map(|cmd| cmd.cmd_prefix));
         split_byte_vector::<u16, NUM_COMMAND_SYMBOLS>(
             &command_symbols,
@@ -597,16 +559,12 @@ pub(crate) fn split_block(
             MAX_COMMAND_HISTOGRAMS,
             COMMAND_STRIDE_LENGTH,
             COMMAND_BLOCK_SWITCH_COST,
-            params,
-            command_split,
-        )?;
-    }
+            quality,
+        )?
+    };
 
-    {
-        let mut distance_symbols = Vec::new();
-        distance_symbols
-            .try_reserve_exact(cmds.len())
-            .map_err(|_| AllocError)?;
+    let distance_split = {
+        let mut distance_symbols = try_with_capacity(cmds.len())?;
         distance_symbols.extend(
             cmds.iter()
                 .filter(|cmd| cmd.has_distance_symbol())
@@ -618,9 +576,8 @@ pub(crate) fn split_block(
             MAX_COMMAND_HISTOGRAMS,
             DISTANCE_STRIDE_LENGTH,
             DISTANCE_BLOCK_SWITCH_COST,
-            params,
-            distance_split,
-        )?;
-    }
-    Ok(())
+            quality,
+        )?
+    };
+    Ok((literal_split, command_split, distance_split))
 }

@@ -4,7 +4,7 @@ use super::Fallible;
 use super::bit_cost::population_cost;
 use super::fast_log::fast_log2;
 use super::histogram::Histogram;
-use crate::util::{Bug, Checked, SliceExt, try_box, try_vec, try_zeroed};
+use crate::util::{Bug, Checked, SliceExt, try_box, try_vec, try_with_capacity, try_zeroed};
 use bun_core::AllocError;
 
 /// Two clusters that could be merged.
@@ -279,9 +279,7 @@ fn histogram_reindex<const N: usize>(
             next_index += 1;
         }
     }
-    let mut tmp = Vec::new();
-    tmp.try_reserve_exact(next_index as usize)
-        .map_err(|_| AllocError)?;
+    let mut tmp = try_with_capacity(next_index as usize)?;
     for symbol in symbols.iter_mut() {
         let index = new_index.at(*symbol as usize)?;
         if index as usize == tmp.len() {
@@ -295,13 +293,14 @@ fn histogram_reindex<const N: usize>(
     Ok(tmp.len())
 }
 
-/// Clusters the histograms of `input` into at most `max_histograms`, which it returns. Stores the index of the cluster
-/// of `input[i]` in `histogram_symbols[i]`.
+/// Clusters the histograms of `input` and returns the clusters. Stores the index of the cluster of `input[i]` in
+/// `histogram_symbols[i]`.
 pub(crate) fn cluster_histograms<const N: usize>(
     input: &[Histogram<N>],
-    max_histograms: usize,
     histogram_symbols: &mut [u32],
 ) -> Fallible<Vec<Histogram<N>>> {
+    // The index of a cluster has to fit in a byte.
+    const MAX_CLUSTERS: usize = 256;
     const MAX_INPUT_HISTOGRAMS: usize = 64;
     let in_size = input.len();
     let histogram_symbols = histogram_symbols.sub_mut(..in_size)?;
@@ -313,8 +312,7 @@ pub(crate) fn cluster_histograms<const N: usize>(
     let mut pairs = try_vec(HistogramPair::default(), pairs_capacity + 1)?;
     let mut tmp = try_box(Histogram::new())?;
 
-    let mut out = Vec::new();
-    out.try_reserve_exact(in_size).map_err(|_| AllocError)?;
+    let mut out = try_with_capacity(in_size)?;
     out.extend_from_slice(input);
     for (i, (histogram, symbol)) in out.iter_mut().zip(histogram_symbols.iter_mut()).enumerate() {
         histogram.bit_cost = population_cost(histogram)?;
@@ -336,7 +334,7 @@ pub(crate) fn cluster_histograms<const N: usize>(
             &mut pairs,
             num_to_combine,
             num_to_combine,
-            max_histograms,
+            MAX_CLUSTERS,
             pairs_capacity,
         )?;
     }
@@ -358,7 +356,7 @@ pub(crate) fn cluster_histograms<const N: usize>(
         &mut pairs,
         num_clusters,
         in_size,
-        max_histograms,
+        MAX_CLUSTERS,
         max_num_pairs,
     )?;
     drop(pairs);

@@ -19,8 +19,7 @@ use super::compress_fragment_two_pass::{
 use super::fast_log::{fast_log2, log2_floor_nonzero};
 use super::hash::Hasher;
 use super::meta_block::{
-    MAX_STATIC_CONTEXTS, MetaBlockSplit, build_meta_block, build_meta_block_greedy,
-    optimize_histograms,
+    MAX_STATIC_CONTEXTS, build_meta_block, build_meta_block_greedy, optimize_histograms,
 };
 use super::params::{
     DistanceParams, EncoderParams, FAST_COMPRESSION_WINDOW_BITS, FAST_ONE_PASS_COMPRESSION_QUALITY,
@@ -493,9 +492,7 @@ fn write_meta_block(
             bw,
         )?;
     } else {
-        let mut mb = MetaBlockSplit::default();
-        let mut block_dist = params.dist;
-        if params.quality < MIN_QUALITY_FOR_HQ_BLOCK_SPLITTING {
+        let (mut mb, block_dist) = if params.quality < MIN_QUALITY_FOR_HQ_BLOCK_SPLITTING {
             let (num_literal_contexts, literal_context_map) =
                 if params.disable_literal_context_modeling {
                     (1, None)
@@ -509,7 +506,7 @@ fn write_meta_block(
                         params.size_hint,
                     )?
                 };
-            build_meta_block_greedy(
+            let mb = build_meta_block_greedy(
                 data,
                 wrapped_last_flush_pos,
                 mask,
@@ -519,22 +516,20 @@ fn write_meta_block(
                 num_literal_contexts,
                 literal_context_map,
                 commands,
-                &mut mb,
             )?;
+            (mb, params.dist)
         } else {
             build_meta_block(
                 data,
                 wrapped_last_flush_pos,
                 mask,
                 params,
-                &mut block_dist,
                 prev_byte,
                 prev_byte2,
                 commands,
                 literal_context_mode,
-                &mut mb,
-            )?;
-        }
+            )?
+        };
         if params.quality >= MIN_QUALITY_FOR_OPTIMIZE_HISTOGRAMS {
             // With a large window fewer distance symbols are in use than the alphabet has.
             optimize_histograms(block_dist.alphabet_size_limit, &mut mb)?;

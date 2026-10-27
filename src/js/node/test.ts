@@ -2143,6 +2143,17 @@ function invokeTestFn(fn: Function, arg: unknown) {
   return fn(arg);
 }
 
+// Node prints a diagnostic when a thrown promise rejects (v26.3.0 lib/internal/test_runner/harness.js:118). bun:test would fail the test that runs then.
+function markThrownPromiseAsHandled(err: unknown) {
+  if ($isPromise(err)) $pokePromiseAsHandled(err);
+}
+
+// `bun test` prints a rejected promise without its reason.
+function printableFailure(failure: unknown) {
+  if (!$isPromise(failure) || !$isPromiseRejected(failure)) return failure;
+  return $peekPromiseSettledValue(failure) ?? failure;
+}
+
 // A single timeout armed once per test and raced against both the body and
 // plan.check(), matching Node's stopTest()/stopPromise. `promise` never
 // resolves; it only rejects with the timeout error. Callers must dispose().
@@ -2219,6 +2230,7 @@ async function runHook(hook: Hook, owner: TestNode, arg: unknown) {
       await raceWithTimeoutAndSignal(run, timeout, signal);
     }
   } catch (err) {
+    markThrownPromiseAsHandled(err);
     // A hook that throws a nullish value must still fail the owning test.
     throw err ?? makeTestFailure("hook failed");
   }
@@ -2263,7 +2275,9 @@ async function runOwnBeforeHooks(node: TestNode) {
   }
 }
 
-async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
+type TestOutcome = { __proto__: null; failure: unknown } | undefined;
+
+async function executeTestNode(node: TestNode, fn: TestFn): Promise<TestOutcome> {
   // Runs a single test (top-level or subtest): inherited beforeEach hooks, the
   // body, pending subtests, the plan check, inherited afterEach hooks, and the
   // test's own after hooks. Returns the failure (if any) instead of throwing.
@@ -2307,6 +2321,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
       try {
         await (stop === undefined ? runBody() : Promise.race([stop.promise, runBody()]));
       } catch (err) {
+        markThrownPromiseAsHandled(err);
         // A body that throws or rejects with a nullish value must still fail.
         failure = err ?? makeTestFailure("test failed");
       }
@@ -2346,7 +2361,7 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
         "subtestsFailed",
       );
       if (firstSubtestError !== undefined) {
-        (error as { cause?: unknown }).cause = firstSubtestError;
+        (error as { cause?: unknown }).cause = printableFailure(firstSubtestError);
       }
       failure = error;
     }
@@ -2387,13 +2402,15 @@ async function executeTestNode(node: TestNode, fn: TestFn): Promise<unknown> {
   try {
     node.mockTracker?.reset();
   } catch (err) {
+    markThrownPromiseAsHandled(err);
     if (!acceptedXfail) failure ??= err;
   }
 
   node.passed = failure === undefined;
   node.error = failure ?? (acceptedXfail ? bodyFailure : null);
   reportNodeToRunParent(node, started);
-  return failure;
+  // In an object with no prototype: an async function that returns a thenable settles as that thenable does.
+  return failure === undefined ? undefined : { __proto__: null, failure };
 }
 
 function scheduleSubtest(parent: TestNode, child: TestNode, fn: TestFn, ownTodo: boolean): Promise<undefined> {
@@ -2406,7 +2423,7 @@ function scheduleSubtest(parent: TestNode, child: TestNode, fn: TestFn, ownTodo:
     let failure: unknown;
     try {
       await runOwnBeforeHooks(parent);
-      failure = await executeTestNode(child, fn);
+      failure = (await executeTestNode(child, fn))?.failure;
     } catch (err) {
       failure = err;
     }
@@ -2423,6 +2440,7 @@ function scheduleSubtest(parent: TestNode, child: TestNode, fn: TestFn, ownTodo:
 }
 
 function recordSuiteFailure(suite: TestNode, err: unknown) {
+  markThrownPromiseAsHandled(err);
   suite.failedSubtests++;
   suite.firstSubtestError ??= err ?? makeTestFailure("suite failed");
 }
@@ -2545,7 +2563,7 @@ function createTopLevelTestRunner(node: TestNode, fn: TestFn, declaredTodo = fal
     // plain describe so bun:test has no todo scope to consult.
     const todoBefore = node.todoFlag;
     executeTestNode(node, fn).then(
-      failure => {
+      outcome => {
         // A runtime t.skip()/t.todo() overrides bun:test's pass/fail accounting
         // (Node counts these as skip/todo even when the body threw); a declared
         // todo body's failure must reach bun:test's own todo accounting instead.
@@ -2554,7 +2572,7 @@ function createTopLevelTestRunner(node: TestNode, fn: TestFn, declaredTodo = fal
         } else if (node.todoFlag && !declaredTodo && (runChildReporterEnabled || !todoBefore)) {
           markCurrentResult(true, done);
         } else {
-          done(failure);
+          done(printableFailure(outcome?.failure));
           return;
         }
         done(undefined);
@@ -2695,7 +2713,7 @@ function addSuite(
     // (Node's Suite.run awaits buildPromise before iterating subtests). The
     // callback has not returned yet so its promise does not exist; seed the
     // chain through a gate the callback's settlement opens.
-    const gate = Promise.withResolvers<unknown>();
+    const gate = Promise.withResolvers<void>();
     suite.subtestChain = runningNode.subtestChain.then(() => gate.promise);
     // Build the suite eagerly (Node also runs describe callbacks immediately),
     // collecting children onto the suite's own subtest chain.
@@ -2710,7 +2728,12 @@ function addSuite(
     if (build != null && typeof (build as PromiseLike<unknown>).then === "function") {
       // Attach a handler now: the real await happens when the suite's turn
       // comes, which can be many ticks later (no unhandled rejection).
-      (build as Promise<unknown>).then(gate.resolve, gate.resolve);
+      const openGate = () => gate.resolve();
+      (build as Promise<unknown>).then(openGate, err => {
+        // The suite takes this failure in its turn, which can be after the report of unhandled rejections.
+        markThrownPromiseAsHandled(err);
+        openGate();
+      });
     } else {
       gate.resolve();
       build = undefined;
@@ -2814,12 +2837,7 @@ function before(arg0: unknown, arg1: unknown) {
     return;
   }
   const { beforeAll } = bunTest();
-  beforeAll((done: (error?: unknown) => void) => {
-    Promise.resolve(runHook(hook, owner, hookArgFor(owner))).then(
-      () => done(),
-      err => done(err ?? new Error("before hook failed")),
-    );
-  });
+  beforeAll((done: (error?: unknown) => void) => runHookForBunTest(hook, owner, done, "before hook failed"));
 }
 
 function after(arg0: unknown, arg1: unknown) {
@@ -2830,12 +2848,14 @@ function after(arg0: unknown, arg1: unknown) {
     return;
   }
   const { afterAll } = bunTest();
-  afterAll((done: (error?: unknown) => void) => {
-    Promise.resolve(runHook(hook, owner, hookArgFor(owner))).then(
-      () => done(),
-      err => done(err ?? new Error("after hook failed")),
-    );
-  });
+  afterAll((done: (error?: unknown) => void) => runHookForBunTest(hook, owner, done, "after hook failed"));
+}
+
+function runHookForBunTest(hook: Hook, owner: TestNode, done: (error?: unknown) => void, fallback: string) {
+  Promise.resolve(runHook(hook, owner, hookArgFor(owner))).then(
+    () => done(),
+    err => done(printableFailure(err) ?? new Error(fallback)),
+  );
 }
 
 function beforeEach(arg0: unknown, arg1: unknown) {

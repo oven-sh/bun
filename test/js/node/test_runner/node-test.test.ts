@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { join } from "node:path";
 
 describe("node:test", () => {
@@ -520,4 +520,199 @@ test("mock.property/mock.method survive a polluted Object.prototype", async () =
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.trim(), stderr, exitCode }).toMatchObject({ stdout: "ok", exitCode: 0 });
+});
+
+describe("node:test and a failure that is a thenable", () => {
+  // The first line of each error, each printed promise and the verdict of each test, in the order of the output.
+  const report = (stderr: string) =>
+    stderr
+      .split("\n")
+      .filter(line => /^(?:\((?:pass|fail)\) |error(?::|$)|AssertionError: |Promise \{|# )/.test(line))
+      .map(line => line.replace(/ \[[\d.]+ms\]$/, ""));
+
+  test("should fail a test whose error is a promise, another thenable, or has a then() method", async () => {
+    const { exitCode, stderr } = await runTests(["30-thenable-failures.js"]);
+    expect(report(stderr)).toEqual([
+      "error",
+      "Promise { <resolved> }",
+      "(fail) throws a promise",
+      "error",
+      "(fail) throws a thenable",
+      "error",
+      "(fail) rejects with a thenable",
+      "error",
+      "Promise { <rejected> }",
+      "(fail) throws a promise rejected with undefined",
+      "error",
+      "Promise { <resolved> }",
+      "(fail) throws a promise fulfilled with an error",
+      "error",
+      "Promise { <resolved> }",
+      "(fail) calls done() with a promise",
+      "error: 1 subtest failed",
+      "(fail) has a subtest that throws a promise",
+      "(pass) has a todo subtest that throws a promise",
+      "error",
+      "(fail) an afterEach hook that throws a thenable > fails the test",
+      "error",
+      "Promise { <resolved> }",
+      "(fail) has a before hook that throws a promise",
+      "error",
+      "Promise { <resolved> }",
+      "(fail) has an after hook that throws a promise",
+      "(pass) has a suite whose async callback rejects with a promise that never settles",
+      "error: 1 subtest failed",
+      "AssertionError: Expected values to be strictly equal:",
+      "(fail) has a failing subtest while Object.prototype.then exists",
+      "AssertionError: Expected values to be strictly equal:",
+      "(fail) fails an assertion while Error.prototype.then exists",
+      "error: test timed out after 1ms",
+      "(fail) times out while Error.prototype.then exists",
+      "error: 1 subtest failed",
+      "error: the error of the subtest",
+      "(fail) has a failing subtest while Error.prototype.then exists",
+    ]);
+    // The cause of "1 subtest failed" is the error of the subtest.
+    expect(stderr).toContain("cause: Promise { <resolved> }");
+    expect(exitCode).toBe(1);
+  });
+
+  test("should print the reason of a rejected promise that a test threw, and fail no other test", async () => {
+    const { exitCode, stderr } = await runTests(["31-thrown-promise-rejections.js"]);
+    expect(report(stderr)).toEqual([
+      "error: the reason of a thrown promise",
+      "(fail) throws a rejected promise",
+      "error: 1 subtest failed",
+      "error: the reason of a thrown promise",
+      "(fail) has a subtest that throws a rejected promise, and then waits",
+      "(pass) passes after the test whose subtest threw a rejected promise",
+      "error",
+      "Promise { <pending> }",
+      "(fail) throws a pending promise",
+      // Node prints a diagnostic with the late reason. Bun prints nothing for it.
+      "(pass) passes while it rejects the promise that the test before it threw",
+      "error: 1 subtest failed",
+      "error: the reason of a promise that was pending",
+      "(fail) has a subtest that throws a pending promise, rejects that promise, and then waits",
+      "(pass) passes after the test whose subtest threw a pending promise",
+      "error: the reason of a thrown promise",
+      "(fail) a beforeEach hook that throws a rejected promise > fails the test",
+      "(pass) a suite whose after hook throws a rejected promise > passes",
+      "# Unhandled error between tests",
+      "error: the reason of a thrown promise",
+      "error: the reason of a thrown promise",
+      "(fail) a test that throws a rejected promise > fails",
+      "(pass) a test that throws a rejected promise > gave the promise to the afterEach hook",
+      "(pass) gives the promise that a beforeEach hook threw to the afterEach hook",
+      "error: The test failed, but the error did not match the expected validation",
+      "AssertionError: The input did not match the regular expression /the reason/. Input:",
+      "(fail) expects a failure that matches the reason of the promise",
+      "error: 1 subtest failed",
+      "error: the reason of a thrown promise",
+      "(fail) has a suite whose callback throws a rejected promise, and then waits",
+      "(pass) has a suite whose async callback rejects with a rejected promise",
+      "(pass) has a suite whose async callback rejects with a rejected promise while a subtest runs",
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("should report the failure of the last attempt under --retry", async () => {
+    using dir = tempDir("node-test-retry", {
+      "retry.test.js": `
+const { test } = require("node:test");
+let attempt = 0;
+let endFirstAttempt;
+const firstAttemptCanEnd = new Promise(resolve => (endFirstAttempt = resolve));
+// An uncaught error ends the first attempt while its body still waits.
+// The body of the first attempt returns while the second attempt runs.
+test("fails in its last attempt", async () => {
+  attempt++;
+  if (attempt === 1) {
+    setTimeout(() => {
+      throw new Error("the uncaught error of the first attempt");
+    }, 1);
+    await firstAttemptCanEnd;
+    return;
+  }
+  endFirstAttempt();
+  await null;
+  await null;
+  const error = new Error("the error of the last attempt");
+  error.then = resolve => resolve();
+  throw error;
+});
+`,
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "test", "--retry=1", "retry.test.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("error: the error of the last attempt");
+    expect(stderr).toContain("(fail) fails in its last attempt");
+    expect({ exitCode, stderr }).toMatchObject({
+      exitCode: 1,
+      stderr: expect.stringContaining("0 pass"),
+    });
+  });
+
+  // Node does not end the run of a file when the restore of a mock throws, so these tests are not in the fixture.
+  test("should fail a test when the restore of its mock throws a promise", async () => {
+    using dir = tempDir("node-test-mock-restore", {
+      "mock-restore.test.js": `
+const { test } = require("node:test");
+const nextImmediate = () => new Promise(resolve => setImmediate(resolve));
+// The second defineProperty call on the object is the restore of the mock.
+const objectWhoseRestoreThrows = thrown => {
+  let calls = 0;
+  return new Proxy(
+    { method() {} },
+    {
+      defineProperty(target, key, descriptor) {
+        if (calls++ > 0) throw thrown();
+        return Reflect.defineProperty(target, key, descriptor);
+      },
+    },
+  );
+};
+const rejected = () => Promise.reject(new Error("the reason of a thrown promise"));
+
+test("has a mock whose restore throws a promise", t => {
+  t.mock.method(objectWhoseRestoreThrows(() => Promise.resolve()), "method");
+});
+
+test("has a subtest with a mock whose restore throws a rejected promise, and then waits", async t => {
+  await t.test("subtest", t => {
+    t.mock.method(objectWhoseRestoreThrows(rejected), "method");
+  });
+  await nextImmediate();
+});
+
+test("passes after the test whose subtest had that mock", async () => {
+  await nextImmediate();
+});
+`,
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "test", "mock-restore.test.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(report(stderr)).toEqual([
+      "error",
+      "Promise { <resolved> }",
+      "(fail) has a mock whose restore throws a promise",
+      "error: 1 subtest failed",
+      "error: the reason of a thrown promise",
+      "(fail) has a subtest with a mock whose restore throws a rejected promise, and then waits",
+      "(pass) passes after the test whose subtest had that mock",
+    ]);
+    expect(exitCode).toBe(1);
+  });
 });

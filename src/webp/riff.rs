@@ -10,15 +10,11 @@ pub(crate) const RIFF_HEADER_SIZE: usize = 12;
 pub(crate) const VP8X_CHUNK_SIZE: usize = 10;
 /// Such that adding the header and the padding does not overflow 32 bits.
 pub(crate) const MAX_CHUNK_PAYLOAD: u32 = u32::MAX - CHUNK_HEADER_SIZE as u32 - 1;
-const MAX_IMAGE_AREA: u64 = 1 << 32;
+pub(crate) const MAX_IMAGE_AREA: u64 = 1 << 32;
 
 pub(crate) const ANIMATION_FLAG: u32 = 0x02;
 pub(crate) const ALPHA_FLAG: u32 = 0x10;
 pub(crate) const ICCP_FLAG: u32 = 0x20;
-
-pub(crate) fn le16(data: &[u8], pos: usize) -> Checked<u32> {
-    Ok(u32::from(u16::from_le_bytes(*data.array_at(pos)?)))
-}
 
 pub(crate) fn le24(data: &[u8], pos: usize) -> Checked<u32> {
     let [a, b, c] = *data.array_at(pos)?;

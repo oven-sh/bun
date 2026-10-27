@@ -55,6 +55,7 @@ bun_event_loop.workspace = true
 bun_glob.workspace = true
 bun_highway.workspace = true
 bun_histogram.workspace = true
+bun_webp.workspace = true
 bun_http.workspace = true
 bun_http_jsc.workspace = true
 bun_http_types.workspace = true

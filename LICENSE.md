@@ -41,7 +41,7 @@ Bun statically links these libraries:
 | [`libdeflate`](https://github.com/ebiggers/libdeflate) | MIT |
 | [`libjpeg-turbo`](https://github.com/libjpeg-turbo/libjpeg-turbo) | [BSD 3-Clause / IJG / zlib](https://github.com/libjpeg-turbo/libjpeg-turbo/blob/main/LICENSE.md) |
 | [`libspng`](https://github.com/randy408/libspng) | BSD 2-Clause |
-| [`libwebp`](https://github.com/webmproject/libwebp) | BSD 3-Clause |
+| [`libwebp`](https://github.com/webmproject/libwebp) (not linked: `src/webp` is derived from it) | BSD 3-Clause |
 | [`highway`](https://github.com/google/highway) | Apache 2.0 |
 | [`uucode`](https://github.com/jacobsandlund/uucode) | MIT |
 | A fork of [`uWebsockets`](https://github.com/jarred-sumner/uwebsockets) | Apache 2.0 licensed |

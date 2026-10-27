@@ -9516,9 +9516,9 @@ declare module "bun" {
   }
 
   /**
-   * Decode, transform and re-encode images. Ships JPEG, PNG and WebP via
-   * statically-linked libjpeg-turbo / libspng / libwebp; resize and rotate
-   * are SIMD kernels — no native module install, no `sharp`.
+   * Decode, transform and re-encode images. JPEG, PNG and WebP codecs are
+   * built in; resize and rotate are SIMD kernels — no native module install,
+   * no `sharp`.
    *
    * The constructor and every chainable method only *record* settings; the
    * decode → transform → encode pipeline runs on a worker thread when a

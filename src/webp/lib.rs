@@ -15,6 +15,8 @@
 
 mod alpha;
 mod container;
+mod demux;
+pub mod dev_hooks;
 mod riff;
 mod util;
 mod vp8;
@@ -126,6 +128,11 @@ pub fn decode_rgba_into(data: &[u8], rgba: &mut [u8], stride: usize) -> Result<(
     } else {
         vp8::dec::decode(headers.bitstream, headers.alpha, &mut output)
     }
+}
+
+/// The ICC profile of a file, if it has one and the container is valid from start to end. It is not empty.
+pub fn icc_profile(data: &[u8]) -> Option<&[u8]> {
+    demux::icc_profile(data)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

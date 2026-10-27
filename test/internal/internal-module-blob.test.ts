@@ -216,6 +216,7 @@ describe("functions implemented in src/js/builtins", () => {
       const { promise, resolve, reject } = Promise.withResolvers<string[]>();
       worker.onmessage = event => resolve(event.data);
       worker.onerror = reject;
+      worker.addEventListener("close", event => reject(new Error(`worker closed (${event.code}) without a message`)));
       expect(await promise).toEqual(["from", "peek", "status", "write"]);
     } finally {
       worker.terminate();

@@ -1130,8 +1130,7 @@ impl<'a> DynWriteAdapter<'a> {
     }
 }
 
-/// Writes `prefix` before the first byte of every line that is not empty.
-/// The error printer indents the members of an AggregateError with one.
+/// Writes `prefix` before every line that is not empty.
 pub(crate) struct LinePrefixWriter<'a> {
     inner: &'a mut dyn bun_io::Write,
     prefix: &'static [u8],
@@ -1139,8 +1138,7 @@ pub(crate) struct LinePrefixWriter<'a> {
 }
 
 impl<'a> LinePrefixWriter<'a> {
-    /// `trailing_newlines` is how many `\n` end what `inner` holds: 1 at the
-    /// start of a line, 2 after a blank line.
+    /// `trailing_newlines`: the `\n` count that ends what `inner` holds (2 after a blank line).
     pub(crate) fn new(
         inner: &'a mut dyn bun_io::Write,
         prefix: &'static [u8],

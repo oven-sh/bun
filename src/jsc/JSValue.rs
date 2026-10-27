@@ -1030,9 +1030,7 @@ impl JSValue {
         }
     }
 
-    /// The own property `builtin_name`, read from the object's own storage:
-    /// no getter runs and the prototype chain is not walked. An accessor gives
-    /// its `GetterSetter` cell. `self` must be known to be an object.
+    /// Own-storage read: no getter runs, and an accessor gives its `GetterSetter` cell.
     pub(crate) fn fast_get_direct(
         self,
         global: &JSGlobalObject,
@@ -2525,10 +2523,7 @@ impl JSValue {
         }
         Bun__JSArray__length(self)
     }
-    /// The element at `index` that a `JSArray` holds in its own storage, or
-    /// `None` for a hole, an index past the end, or an entry of the sparse
-    /// map. Runs no user code and does not look at the prototype chain.
-    /// Asserts `self` is a `JSArray` (`Array` or `DerivedArray`).
+    /// Own-storage read of a `JSArray`: `None` for a hole, out of range, or sparse storage.
     pub(crate) fn try_get_index_quickly(self, index: u32) -> Option<JSValue> {
         debug_assert!(self.is_cell() && self.js_type().is_array());
         unsafe extern "C" {
@@ -2536,6 +2531,26 @@ impl JSValue {
         }
         let value = Bun__JSArray__tryGetIndexQuickly(self, index);
         if value.is_empty() { None } else { Some(value) }
+    }
+    /// The own present indexes of a `JSArray`, ascending. Runs no user code.
+    pub(crate) fn present_indexes(self) -> Vec<u32> {
+        debug_assert!(self.is_cell() && self.js_type().is_array());
+        unsafe extern "C" {
+            fn Bun__JSArray__presentIndexes(this: JSValue, out: *mut u32, capacity: u32) -> u32;
+        }
+        // SAFETY: the callee writes nothing when `capacity` is 0.
+        let count = unsafe { Bun__JSArray__presentIndexes(self, core::ptr::null_mut(), 0) };
+        let mut indexes = Vec::<u32>::new();
+        if indexes.try_reserve_exact(count as usize).is_err() {
+            return indexes;
+        }
+        // SAFETY: `indexes` has room for `count` elements. The callee writes at
+        // most `count` of them and initializes each one that it counts.
+        unsafe {
+            let written = Bun__JSArray__presentIndexes(self, indexes.as_mut_ptr(), count);
+            indexes.set_len(written.min(count) as usize);
+        }
+        indexes
     }
     /// `JSValue.getNameProperty` — the value's `.name` (function/class
     /// name). Empty for empty/`undefined`/`null`.

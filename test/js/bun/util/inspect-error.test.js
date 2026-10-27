@@ -897,6 +897,34 @@ setTimeout(() => {
     expect(inspected(inSet)).toEqual(["AggregateError: outer", " errors: Set(1) {", '  "in a set",', "},"]);
   });
 
+  test("a hole in `errors` is not a member", () => {
+    const sparse = new AggregateError([new Error("first")], "outer");
+    sparse.errors[1000] = new Error("last");
+    expect(inspected(sparse)).toEqual(["AggregateError: outer", "  error: first", "  error: last"]);
+
+    const onlyHoles = new AggregateError([], "outer");
+    onlyHoles.errors.length = 3;
+    expect(inspected(onlyHoles)).toEqual(["AggregateError: outer"]);
+
+    // An own enumerable `errors` with no member stays a property line.
+    class Holes extends AggregateError {
+      name = "Holes";
+      errors = new Array(3);
+    }
+    expect(inspected(new Holes([], "outer"))).toEqual(["Holes: outer", " errors: [ 3 x empty items ],"]);
+
+    // A frozen array keeps its elements in a map.
+    const frozen = new AggregateError([], "outer");
+    frozen.errors = Object.freeze([new Error("first"), , new Error("last")]);
+    expect(inspected(frozen)).toEqual(["AggregateError: outer", "  error: first", "  error: last"]);
+
+    // Keep this last. Where a hole is a member, an expectation above fails
+    // first, and this array does not print one block for each index.
+    const long = new AggregateError([new Error("first")], "outer");
+    long.errors[2 ** 32 - 2] = new Error("last");
+    expect(inspected(long)).toEqual(["AggregateError: outer", "  error: first", "  error: last"]);
+  });
+
   test("an own enumerable `errors` prints once", () => {
     class Listed extends AggregateError {
       name = "Listed";
@@ -989,6 +1017,21 @@ setTimeout(() => {
       .filter(line => /^ *(AggregateError: level|error: leaf)$/.test(line))
       .map(line => line.search(/\S/));
     expect(columns).toEqual([...Array.from({ length: 32 }, (_, level) => level * 2), ...Array(9).fill(64)]);
+  });
+
+  test("colors do not change the layout", () => {
+    const member = Object.assign(new Error("member"), { code: "E_MEMBER", data: { list: [1, 2] } });
+    const inner = new AggregateError(
+      [new Error("leaf", { cause: new Error("deep") }), "a string", { plain: 1 }],
+      "inner",
+    );
+    const error = new AggregateError([member, inner], "outer", { cause: new Error("the cause") });
+    // At depth 1 the output has `[Error ...]` markers.
+    for (const depth of [8, 1]) {
+      const colored = Bun.inspect(error, { depth, colors: true });
+      expect(colored).toContain("\x1b[");
+      expect(Bun.stripANSI(colored)).toBe(Bun.inspect(error, { depth, colors: false }));
+    }
   });
 
   test("Promise.any: the AggregateError has no message and no stack, and its members follow", async () => {
@@ -1225,6 +1268,11 @@ test("has no member", () => {
   Error.stackTraceLimit = 0;
   throw new AggregateError([]);
 });
+test("has only holes", () => {
+  const error = new AggregateError([]);
+  error.errors.length = 3;
+  throw error;
+});
 `,
     });
     await using proc = Bun.spawn({
@@ -1244,9 +1292,19 @@ test("has no member", () => {
         .map(line => /title=(\w*[Ee]rror)/.exec(line)?.[1]),
       failures: junit.match(/<failure[^>]*>/g),
     }).toEqual({
-      printed: ["AggregateError: ", "  error: first rejection", "  TypeError: second rejection", "AggregateError: "],
-      annotations: ["error", "TypeError", "AggregateError"],
-      failures: ['<failure type="Error" message="first rejection">', '<failure type="AggregateError">'],
+      printed: [
+        "AggregateError: ",
+        "  error: first rejection",
+        "  TypeError: second rejection",
+        "AggregateError: ",
+        "AggregateError: ",
+      ],
+      annotations: ["error", "TypeError", "AggregateError", "AggregateError"],
+      failures: [
+        '<failure type="Error" message="first rejection">',
+        '<failure type="AggregateError">',
+        '<failure type="AggregateError">',
+      ],
     });
     expect(exitCode).toBe(1);
   });

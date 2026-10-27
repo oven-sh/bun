@@ -6134,32 +6134,19 @@ impl VirtualMachine {
         self.run_error_handler(value, None);
     }
 
-    /// Stack that one Error print needs below `print_error_instance_js`, on
-    /// top of what `StackCheck` keeps free. `remap_zig_exception` runs the
-    /// transpiler for the source preview, and on Windows that call tree
-    /// stack-allocates `PathBuffer`s (`MAX_PATH_BYTES` is 98302 there, 4096 on
-    /// Linux): three of them are enough for the 16K-deep Error chain of
-    /// `bun-inspect.test.ts`.
+    /// 3× `PathBuffer` on Windows: enough for the 16K-deep Error test (`bun-inspect.test.ts`).
     const ERROR_PRINT_STACK_HEADROOM: usize = if cfg!(windows) {
         bun_paths::MAX_PATH_BYTES * 3
     } else {
         0
     };
 
-    /// The member walk of an AggregateError asks for this much on top of
-    /// `ERROR_PRINT_STACK_HEADROOM`. It is more than the frames between its
-    /// check and the one in `print_error_instance_js`, so a member that the
-    /// walk lets through does not fail there: a chain of AggregateErrors too
-    /// deep for the stack ends in `[Error ...]` and throws nothing.
+    /// Covers the frames from the member walk to the stack check in `print_error_instance_js`.
     const AGGREGATE_MEMBER_STACK_MARGIN: usize = 32 * 1024;
 
-    /// How far the members of an AggregateError print to the right of it.
     const AGGREGATE_MEMBER_INDENT: &[u8] = b"  ";
 
-    /// Members of an error nested this deep print at the column of their
-    /// AggregateError. Every level of indentation is one more writer that
-    /// each byte of a member passes through, on the stack too, and
-    /// `Formatter::depth` counts every nested error, so this bounds them.
+    /// Members nested deeper are not indented: each indented level stacks one more writer.
     const AGGREGATE_MEMBER_INDENT_MAX_DEPTH: u16 = 32;
 
     /// Note: takes runtime bools and the concrete `bun_core::io::Writer`.
@@ -6175,9 +6162,7 @@ impl VirtualMachine {
     ) {
         let global_ref = self.global();
 
-        // The build errors that Bun wraps in an AggregateError stand in for
-        // it. Any other AggregateError prints itself, then its members
-        // (`print_error_instance_body`).
+        // A list of build errors prints in place of the AggregateError that Bun wraps it in.
         if value.is_aggregate_error(global_ref)
             && formatter.depth < formatter.error_chain_max_depth()
         {
@@ -6220,10 +6205,7 @@ impl VirtualMachine {
         }
     }
 
-    /// The stack trace of the `JSC::Exception` that carried a BuildMessage or
-    /// a ResolveMessage, which has none of its own. Out of line: the `Holder`
-    /// is about 4 KB, and `print_errorlike_object` is on the stack once for
-    /// every level of nested errors.
+    /// Out of line: keeps the 4 KB `Holder` out of the recursive `print_errorlike_object` frame.
     #[cold]
     #[inline(never)]
     fn print_exception_stack_trace(
@@ -6234,9 +6216,7 @@ impl VirtualMachine {
         allow_ansi_color: bool,
     ) {
         let mut holder = crate::zig_exception::Holder::init();
-        // Note: `holder.deinit(self)` runs at the tail (for borrowck).
-        // Semantics unchanged because
-        // `need_to_clear_parser_arena_on_deinit` is false here.
+        // `holder.deinit(self)` runs at the tail (for borrowck): no parser arena is set here.
         let zig_exception: &mut ZigException<'_> = holder.zig_exception();
         exception.get_stack_trace(self.global(), &mut zig_exception.stack);
         if zig_exception.stack.frames_len > 0 {
@@ -6255,9 +6235,7 @@ impl VirtualMachine {
                 || value.as_class_ref::<crate::ResolveMessage>().is_some())
     }
 
-    /// The `errors` array of an AggregateError when it is not empty and holds
-    /// only BuildMessages and ResolveMessages. Reads the own storage of the
-    /// AggregateError and of the array: it runs no user code.
+    /// `errors` when it is a non-empty array with a build error at each index. Runs no user code.
     fn build_message_list(aggregate: JSValue, global: &JSGlobalObject) -> Option<JSValue> {
         let errors = aggregate.fast_get_direct(global, jsc::BuiltinName::errors)?;
         if !errors.is_array() {
@@ -6278,15 +6256,18 @@ impl VirtualMachine {
         Some(errors)
     }
 
-    /// Whether the AggregateError that `value` is, or that the `JSC::Exception`
-    /// cell `value` holds, has an `errors` array with members. Runs no user
-    /// code.
+    /// Whether `errors` is an array that holds a member. A hole is not a member.
+    fn holds_members(errors: JSValue) -> bool {
+        errors.is_array() && errors.next_present_index(0).is_some()
+    }
+
+    /// `value` may be the `JSC::Exception` cell of the error. Runs no user code.
     fn has_aggregate_error_members(value: JSValue, global: &JSGlobalObject) -> bool {
         value
             .to_error()
             .filter(|error| error.is_aggregate_error(global))
             .and_then(|aggregate| aggregate.fast_get_direct(global, jsc::BuiltinName::errors))
-            .is_some_and(|errors| errors.is_array() && errors.array_length() != 0)
+            .is_some_and(Self::holds_members)
     }
 
     /// Prints one member of an AggregateError, or a marker in its place.
@@ -6334,8 +6315,7 @@ impl VirtualMachine {
         formatter.depth = formatter.depth.saturating_sub(1);
     }
 
-    /// The AggregateError that the `JSC::Exception` cell `value` holds, and
-    /// its `errors` array.
+    /// The AggregateError in the `JSC::Exception` cell `value`, and its `errors` array.
     fn aggregate_error_in_exception(
         value: JSValue,
         global: &JSGlobalObject,
@@ -6353,13 +6333,7 @@ impl VirtualMachine {
         }
     }
 
-    /// Prints the members that `errors`, the `errors` array of `aggregate`,
-    /// holds, under the lines `print_error_instance_body` wrote for that
-    /// AggregateError: one blank line before each member, and each member
-    /// indented. `after_blank_line` is whether those lines ended in a blank
-    /// line. Returns how many `\n` end the last member (see
-    /// `LinePrefixWriter::trailing_newlines`), or `None` when there was no
-    /// member.
+    /// Returns how many `\n` end the last member, or `None` when `errors` has no member.
     #[inline(never)]
     #[allow(clippy::too_many_arguments)]
     fn print_members_under_aggregate_error(
@@ -6379,12 +6353,9 @@ impl VirtualMachine {
         if formatter.failed || global_ref.has_exception() {
             return None;
         }
-        // The length of the array bounds the walk, and no iterator runs.
-        let Ok(mut members) = errors.array_iterator(global_ref) else {
-            global_ref.clear_exception();
-            return None;
-        };
-        if members.len == 0 {
+        // The elements at the start bound the walk: no iterator runs, and a hole is no step.
+        let indexes = errors.present_indexes();
+        if indexes.is_empty() {
             return None;
         }
 
@@ -6393,18 +6364,16 @@ impl VirtualMachine {
         let had_errors = self.had_errors;
         let is_indented = formatter.depth < Self::AGGREGATE_MEMBER_INDENT_MAX_DEPTH;
         let mut trailing_newlines: u8 = if after_blank_line { 2 } else { 1 };
-        loop {
-            let member = match members.next() {
-                Ok(Some(member)) => member,
-                Ok(None) => break,
+        for index in indexes {
+            let member = match errors.get_direct_index(global_ref, index) {
+                Ok(member) if member.is_empty() => continue,
+                Ok(member) => member,
                 Err(_) => {
                     global_ref.clear_exception();
                     break;
                 }
             };
-            // A member prints as an error that nothing holds: its
-            // Error-valued properties go to its queue, and a build error
-            // writes no blank line of its own.
+            // A member prints as a top-level error does (see `prev_had_errors`).
             self.had_errors = false;
             if is_indented {
                 let mut indented = crate::console_object::LinePrefixWriter::new(
@@ -7058,9 +7027,11 @@ impl VirtualMachine {
         // branches' locals (every `pretty_write!` expands to two `write!`s).
         // More importantly, `remap_zig_exception` below calls
         // `fetch_without_on_load_plugins` → the transpiler for source-line
-        // preview. One cycle can therefore exceed the default 256 KB headroom
-        // `is_safe_to_recurse()` leaves on Windows, so re-check here with
-        // `ERROR_PRINT_STACK_HEADROOM` of slack: the same parity-level
+        // preview, and on Windows that call tree stack-allocates `PathBuffer`s
+        // (`MAX_PATH_BYTES = 98302` vs 4096 on Linux). One cycle can therefore
+        // exceed the default 256 KB headroom `is_safe_to_recurse()` leaves, so
+        // re-check here with an extra `MAX_PATH_BYTES * 3` of slack on Windows
+        // to cover the transpiler's nested path buffers — same parity-level
         // protection the Object path gets from C++ `forEachProperty`'s
         // `vm.isSafeToRecurse()`.
         if !formatter
@@ -7133,8 +7104,8 @@ impl VirtualMachine {
     /// Shared error-printer body for both the JS-value
     /// (`error_instance != .zero`) and pre-built-exception
     /// (`error_instance == .zero`) modes. Renders source-line previews, the
-    /// name/message line, owned-property dump, stack trace, the members of an
-    /// AggregateError, and the `cause` chain.
+    /// name/message line, owned-property dump, stack trace, and the `cause:` /
+    /// AggregateError chain.
     #[allow(clippy::too_many_arguments)]
     fn print_error_instance_body(
         &mut self,
@@ -7174,8 +7145,7 @@ impl VirtualMachine {
 
         // Also set for a `JSC::Exception` cell that holds an AggregateError.
         let is_aggregate_error = exception.r#type == crate::JSErrorCode::AggregateError;
-        // The AggregateError of `Promise.any` has no message and no stack:
-        // its members carry the report.
+        // `Promise.any` rejects with an empty AggregateError: its members carry the report.
         let allow_side_effects_here = allow_side_effects
             && !(is_aggregate_error
                 && exception.message.is_empty()
@@ -7471,12 +7441,8 @@ impl VirtualMachine {
             NonNull::new(&raw mut errors_to_append).expect("stack addr"),
         ));
 
-        // Whether the property lines, which end in a blank line, are the last
-        // lines so far.
         let mut after_blank_line = false;
-        // The `errors` of an AggregateError, read once. It is not enumerable.
-        // The members of an array print after the stack trace. Any other
-        // value is the last property line.
+        // Not enumerable: an array holds the members, another value is the last property line.
         let mut aggregate_members = None;
         let mut errors_property = None;
         if is_error_instance && is_aggregate_error {
@@ -7519,11 +7485,10 @@ impl VirtualMachine {
                 if field.eq_ascii(b"code") && code.is_some() {
                     continue;
                 }
-                // An own enumerable `errors`, such as a class field: it is
-                // this line, or the members that an array holds.
+                // An enumerable `errors` (a class field) prints once: as members or as this line.
                 if is_aggregate_error && field.eq_ascii(b"errors") {
                     errors_property = None;
-                    if value.is_array() && value.array_length() != 0 {
+                    if Self::holds_members(value) {
                         continue;
                     }
                 }
@@ -7531,9 +7496,7 @@ impl VirtualMachine {
                 let kind = value.js_type();
                 let circular = kind == JSType::ErrorInstance
                     && (value == error_instance || formatter.visited_contains(value));
-                // The queue prints an AggregateError with its members, so an
-                // assigned `cause` that is one goes there from a nested error
-                // too: printed here as well, it would print twice.
+                // Always queue an AggregateError `cause`: printed in place, it would print twice.
                 let is_queued = kind == JSType::ErrorInstance
                     && !circular
                     && (!prev_had_errors
@@ -7690,9 +7653,7 @@ impl VirtualMachine {
             )?;
         }
 
-        // The members print here, before the queue: indented under the lines
-        // above, they read as members of this error, and its `cause` then
-        // follows them as a `cause` follows any other error.
+        // Before the queue: the indentation under this error is the only marker of its members.
         let mut newlines_after_members = None;
         if is_aggregate_error {
             let members = if is_error_instance {
@@ -7723,8 +7684,7 @@ impl VirtualMachine {
         }
 
         for (index, &err) in errors_to_append.iter().enumerate() {
-            // One blank line before a queued error, whatever the last member
-            // of an AggregateError ended in.
+            // One blank line before a queued error, whatever the last member ended in.
             let newlines = match newlines_after_members {
                 Some(newlines) if index == 0 => newlines,
                 _ => 1,

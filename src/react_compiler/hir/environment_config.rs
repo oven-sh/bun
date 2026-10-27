@@ -109,9 +109,7 @@ pub struct EnvironmentConfig {
     /// For `validate_exhaustive_*_dependencies`: the dependencies that are inferred are in the order of their bytes.
     /// Upstream's are in that of `localeCompare`: `a`, `A`, `b`.
     pub dependencies_are_sorted_by_bytes: bool,
-    /// A local that is one of two functions has their type only where they have one shape and both are called, or
-    /// both made with `new`. To upstream they are one type where they return one type, and the local is the first of
-    /// them: `c ? Math.max : f` is then `Math.max`, which only reads what it is given, if `f` returns a number.
+    /// Two functions are one type at a phi only with one shape and `is_constructor`. To upstream, with one return type.
     pub joined_functions_are_told_apart: bool,
     pub validate_no_set_state_in_render: bool,
     pub enable_use_keyed_state: bool,

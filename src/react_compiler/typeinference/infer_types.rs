@@ -327,8 +327,7 @@ fn type_equals(mut a: &Type, mut b: &Type) -> bool {
     }
 }
 
-/// `EnvironmentConfig::joined_functions_are_told_apart`: the two are functions, or functions that return functions,
-/// that differ in their shape or in whether they are made with `new`. `type_equals` asks neither.
+/// `EnvironmentConfig::joined_functions_are_told_apart`: two functions that differ in shape or `is_constructor`.
 fn are_told_apart(mut a: &Type, mut b: &Type) -> bool {
     while let (
         Type::Function {

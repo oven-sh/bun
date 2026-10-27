@@ -10,11 +10,9 @@ use bun_paths::fs::Path;
 // `bun_ast::import_record::{ImportKind, Index, Loader}` keep resolving.
 pub use crate::{ImportKind, Index, Loader};
 
-pub struct ImportRecord {
+pub struct ImportRecord<'a> {
     pub range: Range,
-    // TODO: lifetime — `bun_paths::fs::Path<'a>` borrows resolver-owned
-    // strings. Uses 'static (PORTING.md: no struct lifetime params).
-    pub path: Path<'static>,
+    pub path: Path<'a>,
     pub kind: ImportKind,
     pub tag: Tag,
     pub loader: Option<Loader>,
@@ -24,9 +22,7 @@ pub struct ImportRecord {
     /// The original import specifier as written in source code (e.g., "./foo.js").
     /// This is preserved before resolution overwrites `path` with the resolved path.
     /// Used for metafile generation.
-    // TODO: lifetime — likely a borrow into parser-owned source text; using
-    // &'static [u8] as a placeholder.
-    pub original_path: &'static [u8],
+    pub original_path: &'a [u8],
 
     /// Pack all boolean flags into 4 bytes to reduce padding overhead.
     /// Previously 15 separate bool fields caused ~14-16 bytes of padding waste.
@@ -110,7 +106,7 @@ bitflags::bitflags! {
     }
 }
 
-pub type List<'a> = bun_alloc::ArenaVec<'a, ImportRecord>;
+pub type List<'a> = bun_alloc::ArenaVec<'a, ImportRecord<'a>>;
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]

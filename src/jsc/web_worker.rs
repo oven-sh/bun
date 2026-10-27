@@ -137,8 +137,7 @@ enum EntryOutcome {
     Stop,
 }
 
-/// Whether the render that made the text handed to `WebWorker__dispatchError` threw.
-/// Mirrors `WorkerErrorText` in WorkerMessagingProxy.h.
+/// Mirrors `WorkerErrorText` in WorkerMessagingProxy.h: whether the render of the worker's uncaught error threw.
 #[repr(u8)]
 #[derive(Copy, Clone)]
 enum WorkerErrorText {
@@ -1217,7 +1216,6 @@ fn on_unhandled_rejection(
         Ok(()) => global_object.try_take_exception(),
     };
     // Formatting ran script. A stop requested meanwhile ends the report, also when format2() swallowed the termination.
-    // A node:vm timeout is a termination that stops nothing: that render threw, and the report goes on.
     if !vm.script_allowed() {
         return;
     }
@@ -1233,6 +1231,7 @@ fn on_unhandled_rejection(
     // `flush_logs` above) and discard any actual exception: we are already the
     // last-resort error handler and about to arm termination.
     let error_message = BunString::clone_utf8(&array);
+    // A termination that stops nothing (a node:vm timeout) is a render that threw too.
     let text = match thrown {
         None => WorkerErrorText::Rendered,
         Some(_) => WorkerErrorText::RenderFailed,

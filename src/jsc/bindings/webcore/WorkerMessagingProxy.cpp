@@ -477,8 +477,7 @@ auto WorkerMessagingProxy::postSerializedErrorToWorkerObject(Zig::GlobalObject& 
     bool couldRunScript = WebCore::clientData(vm)->scriptAllowed();
     auto serialized = SerializedScriptValue::create(workerGlobalObject, value, SerializationForStorage::No, SerializationErrorMode::NonThrowing);
     CLEAR_IF_EXCEPTION(scope);
-    // Script that the clone ran stopped the worker (process.exit() in a getter): an exit, not a value that cannot
-    // be cloned. A node:vm timeout ends the clone with a termination too, but that worker was not stopped.
+    // process.exit() in a getter stops the worker and fails the clone. A node:vm timeout fails it too, and stops nothing.
     if (!serialized)
         return couldRunScript && !WebCore::clientData(vm)->scriptAllowed() ? ErrorCloneResult::Abandoned : ErrorCloneResult::NotCloneable;
 
@@ -518,8 +517,7 @@ void WorkerMessagingProxy::postUnserializableErrorToWorkerObject()
         RefPtr workerObject = protectedThis->m_workerObject;
         if (!workerObject)
             return;
-        // Nothing of the thrown value crosses. The parent builds the error, as node does:
-        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/worker.js#L412-L414
+        // The parent builds it, as node does: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/worker.js#L412-L414
         ErrorEvent::Init init;
         init.error = Bun::createError(context.globalObject(), Bun::ErrorCode::ERR_WORKER_UNSERIALIZABLE_ERROR, "Serializing an uncaught exception failed"_s);
         workerObject->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
@@ -548,8 +546,7 @@ void WorkerMessagingProxy::postErrorToWorkerObject(Zig::GlobalObject& workerGlob
         postMessageErrorToWorkerObject(String { message });
         return;
     case WorkerErrorText::RenderFailed:
-        // Neither a clone nor a render. Node posts COULD_NOT_SERIALIZE_ERROR for that:
-        // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/main/worker_thread.js#L270-L284
+        // node's COULD_NOT_SERIALIZE_ERROR: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/main/worker_thread.js#L270-L284
         postUnserializableErrorToWorkerObject();
         return;
     }

@@ -64,8 +64,7 @@ class Worker;
 // m_workerObject on the parent thread, which workerObjectDestroyed() nulls first.
 enum class DrainBudget;
 
-// Whether the render that made the text of a worker's uncaught error threw.
-// Mirrors `WorkerErrorText` in src/jsc/web_worker.rs.
+// Mirrors `WorkerErrorText` in src/jsc/web_worker.rs: whether the render of a worker's uncaught error threw.
 enum class WorkerErrorText : uint8_t {
     Rendered = 0,
     // The text is empty or stops where the render threw.

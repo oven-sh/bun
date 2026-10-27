@@ -3,15 +3,14 @@
 use super::internal::{
     BlockSrc, CompressionParameters, DictTableLoadMethod, HASH_READ_SIZE, Hasher,
     K_SEARCH_STRENGTH, MatchState, Near, Prefix, REPCODE1_TO_OFFBASE, SeqSink, SeqStore,
-    TableFillPurpose, ZSTD_SHORT_CACHE_TAG_BITS, compare_packed_tags, hash_ptr, hashed_get,
-    hashed_put, hashed_swap, le32_at, le64_at, offset_to_offbase, table_of_size,
-    write_tagged_index,
+    TableFillPurpose, ZSTD_SHORT_CACHE_TAG_BITS, compare_packed_tags, hashed_get, hashed_put,
+    hashed_swap, le32_at, le64_at, offset_to_offbase, table_of_size, table_put,
 };
 use crate::common::ZSTD_REP_NUM;
 use crate::error::Result;
 use crate::util::{BUG, SliceExt};
 
-pub(super) const FAST_HASH_FILL_STEP: u32 = 3;
+const FAST_HASH_FILL_STEP: u32 = 3;
 
 /// The repeat offsets at the start of a block. Those that reach further than `max_rep` are 0, and saved.
 pub(super) struct SavedRep {
@@ -71,54 +70,120 @@ pub(super) fn restore_rep(
     };
 }
 
-/// `ZSTD_fillHashTableForCDict`
+/// What `fast` and `dfast` index a dictionary by: every third position, with the 10 bytes there, which the 8 bytes at
+/// it and at the two positions in between are among.
+#[derive(Clone)]
+pub(super) struct ThirdPositions<'a> {
+    /// From the first position that is left up to the end of the 10 bytes at the last one.
+    bytes: &'a [u8],
+    /// The index of the first position that is left.
+    index: u32,
+}
+
+/// One of [`ThirdPositions`].
+pub(super) struct ThirdPosition<'a> {
+    pub(super) index: u32,
+    pub(super) bytes: &'a [u8; THIRD_POSITION_SIZE],
+}
+
+const THIRD_POSITION_SIZE: usize = FAST_HASH_FILL_STEP as usize - 1 + HASH_READ_SIZE;
+
+impl<'a> ThirdPositions<'a> {
+    /// From `first_index` up to the position `end` of the segment.
+    pub(super) fn new(prefix: Prefix<'a>, first_index: u32, end: usize) -> Result<Self> {
+        let bytes = prefix.buf.sub(prefix.pos_of(first_index)..end)?;
+        let len = match bytes.len().checked_sub(THIRD_POSITION_SIZE) {
+            Some(more) => bytes.len() - more % FAST_HASH_FILL_STEP as usize,
+            None => 0,
+        };
+        Ok(Self {
+            bytes: bytes.sub(..len)?,
+            index: first_index,
+        })
+    }
+}
+
+impl<'a> Iterator for ThirdPositions<'a> {
+    type Item = ThirdPosition<'a>;
+
+    #[inline(always)]
+    fn next(&mut self) -> Option<Self::Item> {
+        let item = ThirdPosition {
+            index: self.index,
+            bytes: self.bytes.first_chunk()?,
+        };
+        self.bytes = self.bytes.get(FAST_HASH_FILL_STEP as usize..)?;
+        self.index += FAST_HASH_FILL_STEP;
+        Some(item)
+    }
+}
+
+impl DoubleEndedIterator for ThirdPositions<'_> {
+    #[inline(always)]
+    fn next_back(&mut self) -> Option<Self::Item> {
+        let (before, bytes) = self.bytes.split_last_chunk()?;
+        let item = ThirdPosition {
+            index: self.index + before.len() as u32,
+            bytes,
+        };
+        let len = self.bytes.len() - FAST_HASH_FILL_STEP as usize;
+        self.bytes = self.bytes.get(..len)?;
+        Some(item)
+    }
+}
+
+/// `ZSTD_writeTaggedIndex`: the tables of a dictionary keep 8 more bits of the hash beside each index. The size of
+/// `table` is a power of 2 that the hash is less than.
+#[inline(always)]
+pub(super) fn put_tagged(table: &mut [u32], hash_and_tag: usize, index: u32) {
+    let hash = hash_and_tag >> ZSTD_SHORT_CACHE_TAG_BITS;
+    if let Some(cell) = table.get_mut(hash & table.len().wrapping_sub(1)) {
+        *cell = (index << ZSTD_SHORT_CACHE_TAG_BITS) | u32::from(hash_and_tag as u8);
+    }
+}
+
+/// Indexes the positions between `positions`, for which the C code only has the cells that are empty when it gets to
+/// them, on its way from the first position to the last. As `table` is empty, it comes to the same to go from the last
+/// to the first, and to index `positions` afterwards. Whether a cell is empty, which is as good as random, is then of
+/// no concern.
+#[inline(always)]
+pub(super) fn put_tagged_in_between(
+    table: &mut [u32],
+    hasher: Hasher,
+    positions: ThirdPositions<'_>,
+) {
+    for at in positions.rev() {
+        put_tagged(table, hasher.hash(le64_at::<2, _>(at.bytes)), at.index + 2);
+        put_tagged(table, hasher.hash(le64_at::<1, _>(at.bytes)), at.index + 1);
+    }
+}
+
+/// `ZSTD_fillHashTableForCDict`: the table is empty.
 fn fill_hash_table_for_cdict(
     ms: &mut MatchState,
     prefix: Prefix<'_>,
     end: usize,
     dtlm: DictTableLoadMethod,
 ) -> Result<()> {
-    let h_bits = ms.tagged_hash_log();
-    let mls = ms.c_params.min_match;
+    let hasher = Hasher::new(ms.tagged_hash_log(), ms.c_params.min_match);
+    let positions = ThirdPositions::new(prefix, ms.next_to_update, end)?;
     let hash_table = ms.hash_table.as_mut_slice();
-    let buf = prefix.buf;
-    let mut ip = prefix.pos_of(ms.next_to_update);
-    let Some(iend) = end.checked_sub(HASH_READ_SIZE) else {
-        return Ok(());
-    };
-
-    while ip + (FAST_HASH_FILL_STEP as usize) < iend + 2 {
-        let curr = prefix.index_of(ip);
-        write_tagged_index(hash_table, hash_ptr(buf, ip, h_bits, mls)?, curr)?;
-        if dtlm == DictTableLoadMethod::Full {
-            // The positions in between only go where there is nothing yet.
-            for p in 1..FAST_HASH_FILL_STEP {
-                let hash_and_tag = hash_ptr(buf, ip + p as usize, h_bits, mls)?;
-                if hash_table.at(hash_and_tag >> ZSTD_SHORT_CACHE_TAG_BITS)? == 0 {
-                    write_tagged_index(hash_table, hash_and_tag, curr + p)?;
-                }
-            }
-        }
-        ip += FAST_HASH_FILL_STEP as usize;
+    if dtlm == DictTableLoadMethod::Full {
+        put_tagged_in_between(hash_table, hasher, positions.clone());
+    }
+    for at in positions {
+        put_tagged(hash_table, hasher.hash(le64_at::<0, _>(at.bytes)), at.index);
     }
     Ok(())
 }
 
 /// `ZSTD_fillHashTableForCCtx`, which is only for `ZSTD_dtlm_fast`.
 fn fill_hash_table_for_cctx(ms: &mut MatchState, prefix: Prefix<'_>, end: usize) -> Result<()> {
-    let h_bits = ms.c_params.hash_log;
-    let mls = ms.c_params.min_match;
+    let hasher = Hasher::new(ms.c_params.hash_log, ms.c_params.min_match);
+    let positions = ThirdPositions::new(prefix, ms.next_to_update, end)?;
     let hash_table = ms.hash_table.as_mut_slice();
-    let buf = prefix.buf;
-    let mut ip = prefix.pos_of(ms.next_to_update);
-    let Some(iend) = end.checked_sub(HASH_READ_SIZE) else {
-        return Ok(());
-    };
-
-    while ip + (FAST_HASH_FILL_STEP as usize) < iend + 2 {
-        let curr = prefix.index_of(ip);
-        hash_table.put(hash_ptr(buf, ip, h_bits, mls)?, curr)?;
-        ip += FAST_HASH_FILL_STEP as usize;
+    for at in positions {
+        table_put(hash_table, hasher.hash(le64_at::<0, _>(at.bytes)), at.index);
     }
     Ok(())
 }

@@ -1,54 +1,37 @@
 //! `zstd_double_fast.c`: the `dfast` strategy, which looks up a table of long hashes and a table of short ones.
 
 use super::fast::{
-    DictBlock, ExtDictBlock, FAST_HASH_FILL_STEP, MatchSink, NoDictBlock, Segments, TaggedTable,
-    restore_rep,
+    DictBlock, ExtDictBlock, MatchSink, NoDictBlock, Segments, TaggedTable, ThirdPositions,
+    put_tagged, put_tagged_in_between, restore_rep,
 };
 use super::internal::{
     BlockSrc, DictTableLoadMethod, HASH_READ_SIZE, Hasher, K_SEARCH_STRENGTH, MatchState, Near,
-    Prefix, REPCODE1_TO_OFFBASE, SeqStore, TableFillPurpose, ZSTD_SHORT_CACHE_TAG_BITS, hash_ptr,
-    hashed_get, hashed_put, hashed_swap, le64_at, offset_to_offbase, table_of_size, table_prefetch,
-    write_tagged_index,
+    Prefix, REPCODE1_TO_OFFBASE, SeqStore, TableFillPurpose, hashed_get, hashed_put, hashed_swap,
+    le64_at, offset_to_offbase, table_get, table_of_size, table_prefetch, table_put,
 };
 use crate::common::ZSTD_REP_NUM;
 use crate::error::Result;
 use crate::util::{BUG, SliceExt};
 
-/// `ZSTD_fillDoubleHashTableForCDict`
+/// `ZSTD_fillDoubleHashTableForCDict`: the tables are empty.
 fn fill_double_hash_table_for_cdict(
     ms: &mut MatchState,
     prefix: Prefix<'_>,
     end: usize,
     dtlm: DictTableLoadMethod,
 ) -> Result<()> {
-    let h_bits_l = ms.tagged_hash_log();
-    let h_bits_s = ms.tagged_chain_log();
-    let mls = ms.c_params.min_match;
+    let long = Hasher::new(ms.tagged_hash_log(), 8);
+    let small = Hasher::new(ms.tagged_chain_log(), ms.c_params.min_match);
+    let positions = ThirdPositions::new(prefix, ms.next_to_update, end)?;
     let hash_large = ms.hash_table.as_mut_slice();
     let hash_small = ms.chain_table.as_mut_slice();
-    let buf = prefix.buf;
-    let mut ip = prefix.pos_of(ms.next_to_update);
-    let Some(iend) = end.checked_sub(HASH_READ_SIZE) else {
-        return Ok(());
-    };
-
-    // The positions in between only go in the table of long hashes, where there is nothing yet.
-    while ip + FAST_HASH_FILL_STEP as usize - 1 <= iend {
-        let curr = prefix.index_of(ip);
-        for i in 0..FAST_HASH_FILL_STEP {
-            let sm_hash_and_tag = hash_ptr(buf, ip + i as usize, h_bits_s, mls)?;
-            let lg_hash_and_tag = hash_ptr(buf, ip + i as usize, h_bits_l, 8)?;
-            if i == 0 {
-                write_tagged_index(hash_small, sm_hash_and_tag, curr + i)?;
-            }
-            if i == 0 || hash_large.at(lg_hash_and_tag >> ZSTD_SHORT_CACHE_TAG_BITS)? == 0 {
-                write_tagged_index(hash_large, lg_hash_and_tag, curr + i)?;
-            }
-            if dtlm == DictTableLoadMethod::Fast {
-                break;
-            }
-        }
-        ip += FAST_HASH_FILL_STEP as usize;
+    if dtlm == DictTableLoadMethod::Full {
+        put_tagged_in_between(hash_large, long, positions.clone());
+    }
+    for at in positions {
+        let bytes = le64_at::<0, _>(at.bytes);
+        put_tagged(hash_small, small.hash(bytes), at.index);
+        put_tagged(hash_large, long.hash(bytes), at.index);
     }
     Ok(())
 }
@@ -60,34 +43,27 @@ fn fill_double_hash_table_for_cctx(
     end: usize,
     dtlm: DictTableLoadMethod,
 ) -> Result<()> {
-    let h_bits_l = ms.c_params.hash_log;
-    let h_bits_s = ms.c_params.chain_log;
-    let mls = ms.c_params.min_match;
+    let long = Hasher::new(ms.c_params.hash_log, 8);
+    let small = Hasher::new(ms.c_params.chain_log, ms.c_params.min_match);
+    let positions = ThirdPositions::new(prefix, ms.next_to_update, end)?;
     let hash_large = ms.hash_table.as_mut_slice();
     let hash_small = ms.chain_table.as_mut_slice();
-    let buf = prefix.buf;
-    let mut ip = prefix.pos_of(ms.next_to_update);
-    let Some(iend) = end.checked_sub(HASH_READ_SIZE) else {
-        return Ok(());
-    };
-
-    // The positions in between only go in the table of long hashes, where there is nothing yet.
-    while ip + FAST_HASH_FILL_STEP as usize - 1 <= iend {
-        let curr = prefix.index_of(ip);
-        for i in 0..FAST_HASH_FILL_STEP {
-            let sm_hash = hash_ptr(buf, ip + i as usize, h_bits_s, mls)?;
-            let lg_hash = hash_ptr(buf, ip + i as usize, h_bits_l, 8)?;
-            if i == 0 {
-                hash_small.put(sm_hash, curr + i)?;
-            }
-            if i == 0 || hash_large.at(lg_hash)? == 0 {
-                hash_large.put(lg_hash, curr + i)?;
-            }
-            if dtlm == DictTableLoadMethod::Fast {
-                break;
+    for at in positions {
+        let bytes = le64_at::<0, _>(at.bytes);
+        table_put(hash_small, small.hash(bytes), at.index);
+        table_put(hash_large, long.hash(bytes), at.index);
+        // The positions in between only go in the table of long hashes, where there is nothing yet.
+        if dtlm == DictTableLoadMethod::Full {
+            for (bytes, index) in [
+                (le64_at::<1, _>(at.bytes), at.index + 1),
+                (le64_at::<2, _>(at.bytes), at.index + 2),
+            ] {
+                let hash = long.hash(bytes);
+                if table_get(hash_large, hash) == 0 {
+                    table_put(hash_large, hash, index);
+                }
             }
         }
-        ip += FAST_HASH_FILL_STEP as usize;
     }
     Ok(())
 }

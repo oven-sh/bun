@@ -1914,18 +1914,6 @@ pub(crate) const fn index_overlap_check(prefix_lowest_index: u32, rep_index: u32
 pub(crate) const ZSTD_SHORT_CACHE_TAG_BITS: u32 = 8;
 pub(crate) const ZSTD_SHORT_CACHE_TAG_MASK: u32 = (1 << ZSTD_SHORT_CACHE_TAG_BITS) - 1;
 
-/// `ZSTD_writeTaggedIndex`: the tables of a dictionary keep 8 more bits of the hash beside each index.
-#[inline(always)]
-pub(crate) fn write_tagged_index(
-    hash_table: &mut [u32],
-    hash_and_tag: usize,
-    index: u32,
-) -> Result<()> {
-    let hash = hash_and_tag >> ZSTD_SHORT_CACHE_TAG_BITS;
-    let tag = hash_and_tag as u32 & ZSTD_SHORT_CACHE_TAG_MASK;
-    hash_table.put(hash, (index << ZSTD_SHORT_CACHE_TAG_BITS) | tag)
-}
-
 /// `ZSTD_comparePackedTags`
 #[inline(always)]
 pub(crate) const fn compare_packed_tags(packed_tag1: usize, packed_tag2: usize) -> bool {

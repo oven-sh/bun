@@ -216,6 +216,8 @@ struct Scratch {
     lit_buffer: Vec<u8>,
     /// Sequences are decoded that many at a time, after 3 that only stand for the last offsets.
     batch: [RawSequence; 3 + 128],
+    /// Where a block that is all of a small output is decoded: with room to copy in chunks up to its end.
+    small_output: [u8; Self::MAX_SMALL_OUTPUT + WILDCOPY_OVERLENGTH],
 }
 
 thread_local! {
@@ -225,6 +227,7 @@ thread_local! {
 }
 
 impl Scratch {
+    const MAX_SMALL_OUTPUT: usize = 1 << 12;
     /// A thread keeps no more than that for its next decoder.
     const MAX_SPARE_LIT_BUFFER: usize = 1 << 14;
 
@@ -275,6 +278,7 @@ impl BlockDecoder {
                     entropy: EntropyDTables::new(),
                     lit_buffer: Vec::new(),
                     batch: [RawSequence::EMPTY; _],
+                    small_output: [0; _],
                 })
             })
         })
@@ -589,6 +593,7 @@ impl BlockDecoder {
             entropy,
             lit_buffer,
             batch,
+            small_output,
         } = &mut **scratch;
         let dict_tables = dict_entropy.map(|dict| &dict.seq);
         let tables = if nb_seq <= MAX_ONE_BY_ONE {
@@ -624,11 +629,23 @@ impl BlockDecoder {
         } else {
             literals.size
         };
+        let is_small = start == prefix_start
+            && capacity <= Scratch::MAX_SMALL_OUTPUT
+            && literals.location == LitLocation::NotInDst;
+        let (out, copy_to) = match buf {
+            OutputBuffer::Whole(bytes) if is_small => (
+                OutputBuffer::Whole(small_output.sub_mut(..capacity + WILDCOPY_OVERLENGTH)?),
+                Some(bytes.span_mut(start, capacity)?),
+            ),
+            OutputBuffer::Whole(bytes) => (OutputBuffer::Whole(bytes.sub_mut(..oend)?), None),
+            used => (used, None),
+        };
+        let (start, prefix_start, oend) = match copy_to {
+            Some(_) => (0, 0, capacity),
+            None => (start, prefix_start, oend),
+        };
         let mut exec = Executor {
-            out: match buf {
-                OutputBuffer::Whole(bytes) => OutputBuffer::Whole(bytes.sub_mut(..oend)?),
-                used => used,
-            },
+            out,
             oend,
             op: start,
             prefix_start,
@@ -651,7 +668,11 @@ impl BlockDecoder {
             *rep = prev_offset.map(|offset| offset as u32);
         }
         exec.last_literals()?;
-        Ok(exec.op - start)
+        let size = exec.op - start;
+        if let Some(to) = copy_to {
+            to.write_at(0, exec.out.bytes().sub(..size)?)?;
+        }
+        Ok(size)
     }
 }
 
@@ -818,7 +839,7 @@ impl PaddedStart {
 }
 
 /// Up to how many sequences it is not worth it to decode them by the batch.
-const MAX_ONE_BY_ONE: usize = 8;
+const MAX_ONE_BY_ONE: usize = 32;
 
 /// `seqState_t`
 #[derive(Clone, Copy)]
@@ -981,6 +1002,25 @@ impl<'a> SeqState<'a> {
             self.state_off = state_off as usize;
         }
         Ok(count)
+    }
+
+    /// Decodes the last sequence, far from the start of the stream.
+    fn decode_last(&mut self) -> Option<RawSequence> {
+        let ll_cell = self.tables.ll.table.get(self.state_ll)?;
+        let ml_cell = self.tables.ml.table.get(self.state_ml)?;
+        let of_cell = self.tables.of.table.get(self.state_off)?;
+        let of_bits = u32::from(of_cell.nb_additional_bits);
+        let ml_bits = u32::from(ml_cell.nb_additional_bits);
+        let ll_bits = u32::from(ll_cell.nb_additional_bits);
+        let offset_value = of_cell.first_value + self.bit_d.read_bits(of_bits) as u32;
+        let match_length = ml_cell.base_value() + self.bit_d.read_bits(ml_bits) as u32;
+        self.bit_d.reload();
+        let lit_length = ll_cell.base_value() + self.bit_d.read_bits(ll_bits) as u32;
+        Some(RawSequence {
+            offset_value,
+            lit_length,
+            match_length,
+        })
     }
 
     /// `ZSTD_decodeSequence`
@@ -1252,11 +1292,21 @@ impl<'a> Executor<'_, 'a> {
         }
 
         let o_lit_end = op + lit_length;
-        if offset > o_lit_end - self.prefix_start {
-            return None;
-        }
         let (before, room) = self.out.bytes().split_at_mut_checked(o_lit_end)?;
-        let from = before.get(before.len().checked_sub(offset)?..)?;
+        let in_prefix = o_lit_end - self.prefix_start;
+        let from = if offset > in_prefix {
+            // All of it in a dictionary, and then some to copy in chunks.
+            let ExtDict::Dict(dict) = self.ext_dict else {
+                return None;
+            };
+            let back = offset - in_prefix;
+            if back < match_length + 16 {
+                return None;
+            }
+            dict.get(dict.len().checked_sub(back)?..)?
+        } else {
+            before.get(before.len().checked_sub(offset)?..)?
+        };
         if offset >= 16 {
             // `ZSTD_wildcopy(ZSTD_no_overlap)`
             *room.first_chunk_mut::<16>()? = *from.first_chunk()?;
@@ -1569,18 +1619,24 @@ impl<'a> Executor<'_, 'a> {
         while remaining > ahead.len() {
             let mut count = 0;
             if !self.split {
-                let room = (batch.len() - 3).min(remaining - ahead.len().max(1));
-                let room = batch.span_mut(3, room)?;
-                let history = &mut self.history();
-                count = seq_state.decode_batch(LONG, more_bits, room, history)?;
-                if count == 0
-                    && can_leave
-                    && let Some(bit_d) = start.set(&seq_state.bit_d)
-                {
+                if can_leave && let Some(bit_d) = start.set(&seq_state.bit_d) {
                     can_leave = false;
                     left_at = Some((seq_state, remaining));
                     seq_state.bit_d = bit_d;
-                    continue;
+                }
+                // The last sequence is followed by no state.
+                let room = (batch.len() - 4).min(remaining - ahead.len().max(1));
+                if room > 0 {
+                    let history = &mut self.history();
+                    let room = batch.span_mut(3, room)?;
+                    count = seq_state.decode_batch(LONG, more_bits, room, history)?;
+                }
+                if left_at.is_some()
+                    && count + 1 == remaining
+                    && let Some(last) = seq_state.decode_last()
+                {
+                    batch.put(3 + count, last)?;
+                    count += 1;
                 }
             }
             let mut sequence = None;

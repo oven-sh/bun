@@ -1143,8 +1143,9 @@ where
                                 // below documents the intentional dead store.
                                 let mut prev_entry_id: usize = usize::MAX;
                                 if loader != bun_ast::Loader::File {
-                                    // Both arms of `'brk` assign this before
+                                    // Both arms of `'brk` assign these before
                                     // any read.
+                                    let path_string: bun_ptr::Interned;
                                     let file_hash: bun_watcher::HashType;
                                     let abs_path: &[u8] = 'brk: {
                                         // Probe `.data` under `entries_mutex`; a
@@ -1169,34 +1170,22 @@ where
                                                     core::sync::atomic::Ordering::Release,
                                                 );
                                             }
-                                            // A listing no import resolved from has no paths.
-                                            let resolved_path = ent.abs_path();
-                                            let changed_path: &[u8] = if !resolved_path.is_empty() {
-                                                resolved_path.as_bytes()
-                                            } else {
-                                                let dir = strings::trim_right(file_path, &[SEP]);
-                                                let len = dir.len() + 1 + changed_name.len();
-                                                if len > _on_file_update_path_buf.len() {
-                                                    continue 'names;
-                                                }
-                                                _on_file_update_path_buf[..dir.len()]
-                                                    .copy_from_slice(dir);
-                                                _on_file_update_path_buf[dir.len()] = SEP;
-                                                _on_file_update_path_buf[dir.len() + 1..len]
-                                                    .copy_from_slice(changed_name);
-                                                &_on_file_update_path_buf[..len]
-                                            };
-                                            file_hash = Watcher::get_hash(changed_path);
+                                            path_string = ent.abs_path();
+                                            file_hash = Watcher::get_hash(path_string.as_bytes());
                                             for (entry_id, hash) in hashes.iter().enumerate() {
                                                 if *hash == file_hash {
                                                     if file_descriptors[entry_id].is_valid() {
                                                         if prev_entry_id != entry_id {
-                                                            record_changed_path(changed_path);
+                                                            record_changed_path(
+                                                                path_string.as_bytes(),
+                                                            );
                                                             current_task.append(hashes[entry_id]);
                                                             if self.verbose {
                                                                 Self::debug(format_args!(
                                                                     "Removing file: {}",
-                                                                    bstr::BStr::new(changed_path)
+                                                                    bstr::BStr::new(
+                                                                        path_string.as_bytes()
+                                                                    )
                                                                 ));
                                                             }
                                                             // SAFETY: see the
@@ -1219,7 +1208,7 @@ where
                                                 }
                                             }
 
-                                            break 'brk changed_path;
+                                            break 'brk path_string.as_bytes();
                                         } else {
                                             let file_path_without_trailing_slash =
                                                 strings::trim_right(file_path, &[SEP]);

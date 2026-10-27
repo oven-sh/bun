@@ -128,7 +128,7 @@ impl JSFrameworkRouter {
                         // A file named `[0].tsx` produces a param name that's an array index.
                         params_obj.put_may_be_index(
                             global,
-                            &bun_core::String::borrow_utf8(param.key.slice()),
+                            &bun_core::StringView::borrow_utf8(param.key.slice()),
                             bun_string_jsc::create_utf8_for_js(global, param.value.slice())?,
                         )?;
                     }

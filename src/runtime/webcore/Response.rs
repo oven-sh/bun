@@ -10,7 +10,7 @@ use crate::webcore::jsc::{
     HTTPHeaderName, JSGlobalObject, JSType, JSValue, JsError, JsRef, JsResult, StringJsc as _,
 };
 use bun_core::Output;
-use bun_core::{String as BunString, Utf8Bytes};
+use bun_core::{String as BunString, StringView, Utf8Bytes};
 use bun_http_types::Method::Method;
 
 use super::body::{Body, BodyMixin, Value as BodyValue, ValueError as BodyValueError};
@@ -574,7 +574,7 @@ impl Response {
                 if !content_type.is_empty() {
                     init.headers.as_mut().unwrap().put(
                         HTTPHeaderName::ContentType,
-                        &BunString::ascii(content_type),
+                        &StringView::ascii(content_type),
                         global_this,
                     )?;
                 }
@@ -903,7 +903,7 @@ impl Response {
         let json_mime = bun_http_types::MimeType::JSON;
         headers_ref.put_default(
             HTTPHeaderName::ContentType,
-            &BunString::ascii(json_mime.value.as_ref()),
+            &StringView::ascii(json_mime.value.as_ref()),
             global_this,
         )?;
         // Disarm the body-reset guard: all fallible ops have succeeded.
@@ -1063,7 +1063,7 @@ impl Response {
                 let headers = response.get_or_create_headers(global_this)?;
                 headers.put(
                     HTTPHeaderName::Location,
-                    &BunString::ascii(&result.url),
+                    &StringView::ascii(&result.url),
                     global_this,
                 )?;
                 return Ok(response);
@@ -1108,7 +1108,7 @@ impl Response {
                 if !content_type.is_empty() && !headers.fast_has(HTTPHeaderName::ContentType) {
                     headers.put(
                         HTTPHeaderName::ContentType,
-                        &BunString::ascii(content_type),
+                        &StringView::ascii(content_type),
                         global_this,
                     )?;
                 }

@@ -1,7 +1,7 @@
 use crate::test_runner::expect::JSValueTestExt;
 use core::fmt;
 
-use bun_core::String as BunString;
+use bun_core::{String as BunString, StringView};
 use bun_jsc::bindgen::{Callable, JsLocal, JsScope};
 use bun_jsc::{JSGlobalObject, JSValue, JsClass, JsResult};
 
@@ -322,7 +322,7 @@ impl ScopeFunctions {
             if debugger.test_reporter_agent.is_enabled() {
                 debugger.test_reporter_agent.next_test_id += 1;
                 let id = debugger.test_reporter_agent.next_test_id;
-                let name = BunString::from_bytes(description.unwrap_or(b"(unnamed)"));
+                let name = StringView::from_bytes(description.unwrap_or(b"(unnamed)"));
                 let parent: &DescribeScope = bun_test.collection.active_scope();
                 let parent_id = if parent.base.test_id_for_debugger != 0 {
                     parent.base.test_id_for_debugger
@@ -388,7 +388,7 @@ impl ScopeFunctions {
                         filter_names(&mut rem, description, Some(active_scope));
                         debug_assert!(rem.buf.is_empty());
 
-                        let str = BunString::from_bytes(bun_test.collection.filter_buffer.as_slice());
+                        let str = StringView::from_bytes(bun_test.collection.filter_buffer.as_slice());
                         group_log::log(format_args!(
                             "matches_filter \"{}\"",
                             bstr::BStr::new(bun_test.collection.filter_buffer.as_slice())

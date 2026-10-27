@@ -1556,7 +1556,7 @@ impl FFI {
                     }
                 };
             // Symbol names are user input, so one can be an array index like "0".
-            let key = bun_core::String::borrow_utf8(function_name.as_bytes());
+            let key = bun_core::StringView::borrow_utf8(function_name.as_bytes());
             if let Err(err) = obj.put_may_be_index(global, &key, cb) {
                 dylib.close();
                 lib.do_close();
@@ -1634,7 +1634,7 @@ impl FFI {
                     }
                 };
             // Symbol names are user input, so one can be an array index like "0".
-            let key = bun_core::String::borrow_utf8(function_name.as_bytes());
+            let key = bun_core::StringView::borrow_utf8(function_name.as_bytes());
             if let Err(err) = obj.put_may_be_index(global, &key, cb) {
                 lib.do_close();
                 return Err(err);

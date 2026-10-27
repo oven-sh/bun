@@ -2,7 +2,7 @@
 use crate::dec::{self, DecCase, compare, mutate};
 use crate::ffi::{self, c_compress};
 use crate::rng::Rng;
-use crate::{CORPUS_DIRS, api, big, grammar, oom, perf, random_enc_params, r#gen, ring, stream};
+use crate::{CORPUS_DIRS, api, args, big, grammar, oom, perf, random_enc_params, r#gen, ring, stream};
 
 /// `StreamingDecoder`: intact, cut short, damaged, and followed by something else.
 fn dec_stream(seed0: u64, iters: u64, max_len: usize) {
@@ -164,45 +164,10 @@ fn replay_dec(dir: &str) {
             schedule: u64::from(*schedule).wrapping_mul(0x9E37_79B9_7F4A_7C15) >> 8,
             max_output: 4 << 20,
         };
-        compare(&case, None).unwrap_or_else(|e| panic!("{:?}: {e}", e.to_string()));
+        compare(&case, None).unwrap_or_else(|error| panic!("{}: {error}", e.path().display()));
         n += 1;
     }
     println!("ok: {n} files");
-}
-
-/// Cases for a driver in C, to compare builds of the reference: u32 count of parameters, (i32, u32) each, u32 length, data.
-fn dump_cases(path: &str, seed0: u64, synthetic: u64, max_len: usize) {
-    use std::io::Write;
-    let corpus = r#gen::Corpus::load(CORPUS_DIRS, 4 << 20);
-    let mut f = std::io::BufWriter::new(std::fs::File::create(path).unwrap());
-    let mut put = |params: &[(i32, u32)], data: &[u8]| {
-        f.write_all(&(params.len() as u32).to_le_bytes()).unwrap();
-        for &(k, v) in params {
-            f.write_all(&k.to_le_bytes()).unwrap();
-            f.write_all(&v.to_le_bytes()).unwrap();
-        }
-        f.write_all(&(data.len() as u32).to_le_bytes()).unwrap();
-        f.write_all(data).unwrap();
-    };
-    let mut n = 0;
-    for q in 0..if std::env::var_os("NO_FILES").is_some() { 0 } else { 12 } {
-        for file in &corpus.files {
-            put(&[(1, q), (5, file.len() as u32)], file);
-            n += 1;
-        }
-    }
-    for it in 0..synthetic {
-        let mut rng = Rng(seed0 + it);
-        let q = (it % 12) as u32;
-        let len = r#gen::length(&mut rng, if q >= 10 { max_len.min(1 << 18) } else { max_len });
-        let data = r#gen::data(&mut rng, &corpus, len);
-        let mut p = random_enc_params(&mut rng, len, &corpus);
-        p.params.retain(|&(k, v)| k != 1 && !(k == 2 && v > 24));
-        p.params.push((1, q));
-        put(&p.params, &data);
-        n += 1;
-    }
-    println!("{n} cases");
 }
 
 /// Compresses and decompresses on a thread with a stack of `kib` KiB. Too little kills the process.
@@ -254,9 +219,9 @@ fn stack() {
 
 /// Whether there is such a subcommand.
 pub fn run(args: &[String]) -> bool {
-    let num = |i: usize, d: u64| args.get(i).and_then(|s| s.parse().ok()).unwrap_or(d);
+    let num = |i: usize, d: u64| args::num(args, i, d);
+    let text = |i: usize| args::text(args, i);
     let corpus = || r#gen::Corpus::load(CORPUS_DIRS, 4 << 20);
-    let pairs = |from: usize| args[from..].iter().map(|s| { let (k, v) = s.split_once('=').unwrap(); (k.parse().unwrap(), v.parse().unwrap()) }).collect();
     match args.get(1).map(String::as_str) {
         Some("dec-gen") => dec_gen(num(2, 1), num(3, 1000), num(4, 0) as usize),
         Some("dec-stream") => dec_stream(num(2, 1), num(3, 1000), num(4, 1 << 20) as usize),
@@ -267,24 +232,24 @@ pub fn run(args: &[String]) -> bool {
                 let t = std::time::Instant::now();
                 let case = DecCase { stream: stream.clone(), large_window: false, no_realloc: false, dicts: vec![], schedule, max_output: usize::MAX };
                 let o = compare(&case, None).unwrap_or_else(|e| panic!("schedule {schedule}: {e}"));
-                println!("schedule {schedule}: result {} error {} output {} calls {} in {:.1} s", o.result, o.error, o.output_len, o.calls, t.elapsed().as_secs_f64());
+                assert_eq!((o.result, o.error), (0, -17), "schedule {schedule}: not _ERROR_FORMAT_BLOCK_SWITCH");
+                println!("schedule {schedule}: error {} after {} calls in {:.1} s", o.error, o.calls, t.elapsed().as_secs_f64());
             }
         }
         Some("enc-tail") => ring::run_tail(num(2, 1), num(3, 1000), num(4, 0x1C), &corpus()),
-        Some("enc-marks") => ring::run_marks(num(2, 1), num(3, 1000), num(4, 0x60), &args[5..].iter().map(|s| s.parse().unwrap()).collect::<Vec<usize>>(), &corpus()),
+        Some("enc-marks") => ring::run_marks(num(2, 1), num(3, 1000), num(4, 0x60), &args::rest(args, 5).iter().map(|s| args::parse(s) as usize).collect::<Vec<usize>>(), &corpus()),
         Some("enc-words") => ring::run_words(num(2, 1), num(3, 1000), num(4, 1 << 16) as usize, num(5, 0xFFF)),
         Some("enc-lengths") => ring::run_lengths(num(2, 1), num(3, 1000), num(4, 1 << 19) as usize, num(5, 0xFFF)),
-        Some("enc-big") => big::run(num(2, 1), num(3, 6 << 30), pairs(4), &corpus()),
+        Some("enc-big") => big::run(num(2, 1), num(3, 6 << 30), args::params(args::rest(args, 4)), &corpus()),
         Some("api") => api::run(num(2, 1), num(3, 300), &corpus()),
         Some("oom") => oom::run(num(2, 1), num(3, 100), num(4, 1 << 18) as usize, &corpus()),
         Some("oom-cold") => oom::cold(),
         Some("oom-cold-probe") => oom::cold_probe(num(2, 11) as i32, num(3, 0) as i64, num(4, 0) != 0),
         Some("perf-scan") => perf::run(num(2, 1), num(3, 300), num(4, 1 << 20) as usize, &corpus()),
-        Some("stack-probe") => stack_probe(&args[2], num(3, 5) as u32, num(4, 1024) as usize),
+        Some("stack-probe") => stack_probe(text(2), num(3, 5) as u32, num(4, 1024) as usize),
         Some("stack") => stack(),
-        Some("gen-corpus") => gen_corpus(&args[2], num(3, 2000)),
-        Some("replay-dec") => replay_dec(&args[2]),
-        Some("dump-cases") => dump_cases(&args[2], num(3, 1), num(4, 1000), num(5, 1 << 20) as usize),
+        Some("gen-corpus") => gen_corpus(text(2), num(3, 2000)),
+        Some("replay-dec") => replay_dec(text(2)),
         _ => return false,
     }
     true

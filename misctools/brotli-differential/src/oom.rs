@@ -173,10 +173,11 @@ fn fallback() {
             COUNTDOWN.store(0, Relaxed);
             PERSISTENT.store(true, Relaxed);
             let a = armed(|| bun_brotli::compress(quality, 22, bun_brotli::EncoderMode::Generic, input, &mut out));
+            let same = a.is_some_and(|n| out[..n] == expect[..]);
             let b = armed(|| bun_brotli::compress_append(quality, 22, bun_brotli::EncoderMode::Generic, input, &mut spare));
             let short = armed(|| bun_brotli::compress(quality, 22, bun_brotli::EncoderMode::Generic, input, &mut out[..bound - 1]));
             COUNTDOWN.store(i64::MAX, Relaxed);
-            assert!(a == Some(expect.len()) && b == a && spare[3..] == expect[..] && &spare[..3] == b"abc", "fallback: len {len} quality {quality}: {a:?} {b:?}, expected {}", expect.len());
+            assert!(same && b == a && spare[3..] == expect[..] && &spare[..3] == b"abc", "fallback: len {len} quality {quality}: {a:?} {b:?}, expected {}", expect.len());
             assert!(short.is_none(), "fallback: len {len} quality {quality}: with one byte less than the bound {short:?}");
             let a = armed(|| bun_brotli::compress(quality, 22, bun_brotli::EncoderMode::Generic, input, &mut out));
             assert!(a.is_some());
@@ -194,7 +195,7 @@ pub fn run(seed0: u64, iters: u64, max_len: usize, corpus: &r#gen::Corpus) {
         ARMED.store(false, Relaxed);
         let bt = std::backtrace::Backtrace::force_capture().to_string();
         // The innermost line of the crate.
-        let at = bt.lines().filter_map(|l| l.trim().strip_prefix("at ")).find_map(|l| l.split_once("/src/").filter(|(dir, _)| dir.ends_with("brotli")).map(|(_, f)| f)).unwrap_or("?");
+        let at = bt.lines().filter_map(|l| l.trim().strip_prefix("at ")).find_map(|l| l.split_once("/src/brotli/").map(|(_, f)| f)).unwrap_or("?");
         let at = at.rsplit_once(':').map_or(at, |(f, _)| f);
         MAX_SIZE.fetch_max(layout.size() as u64, Relaxed);
         panic!("INFALLIBLE allocation at {at}");

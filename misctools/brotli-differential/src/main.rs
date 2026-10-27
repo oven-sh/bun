@@ -1,5 +1,6 @@
 #![feature(alloc_error_hook)]
 mod api;
+mod args;
 mod big;
 mod dec;
 mod enc;
@@ -118,7 +119,7 @@ fn dec_fuzz(seed0: u64, iters: u64, max_len: usize) {
     println!("ok: {iters} iterations; outcomes {stats:?}");
 }
 
-/// Purely random and bit-structured garbage.
+/// Random bytes.
 fn dec_garbage(seed0: u64, iters: u64) {
     let mut stats = std::collections::BTreeMap::<i32, u64>::new();
     for it in 0..iters {
@@ -145,7 +146,7 @@ fn dec_garbage(seed0: u64, iters: u64) {
 /// `qualities`: a bit mask.
 fn enc_fuzz(seed0: u64, iters: u64, max_len: usize, qualities: u64) {
     let corpus = r#gen::Corpus::load(CORPUS_DIRS, 4 << 20);
-    let qs: Vec<u32> = (0..12).filter(|q| qualities >> q & 1 != 0).collect();
+    let qs = args::qualities(qualities, 0..12);
     let mut total_in = 0usize;
     let mut total_out = 0usize;
     for it in 0..iters {
@@ -250,7 +251,7 @@ fn enc_fuzz(seed0: u64, iters: u64, max_len: usize, qualities: u64) {
 /// Every file of the corpus at every quality in the mask, with the default settings.
 fn enc_files(qualities: u64, lgwin: u32) {
     let corpus = r#gen::Corpus::load(CORPUS_DIRS, 4 << 20);
-    for q in (0..12).filter(|q| qualities >> q & 1 != 0) {
+    for q in args::qualities(qualities, 0..12) {
         let mut n = 0;
         for (i, f) in corpus.files.iter().enumerate() {
             if q >= 10 && f.len() > 1 << 19 {
@@ -270,11 +271,10 @@ fn enc_files(qualities: u64, lgwin: u32) {
 
 fn enc_one(path: &str, params: &[String]) {
     let data = std::fs::read(path).unwrap();
-    let params: Vec<(i32, u32)> = params.iter().map(|s| { let (k, v) = s.split_once('=').unwrap(); (k.parse().unwrap(), v.parse().unwrap()) }).collect();
-    let case = enc::EncCase { data, params, dicts: vec![], schedule: 0, misuse: false };
+    let case = enc::EncCase { data, params: args::params(params), dicts: vec![], schedule: 0, misuse: false };
     match enc::compare(&case) {
         Ok(o) => println!("ok: {} bytes", o.len()),
-        Err(e) => println!("FAIL: {e}"),
+        Err(e) => panic!("{e}"),
     }
 }
 
@@ -334,7 +334,7 @@ fn bench_small(path: &str, len: usize, quality: u32, lgwin: u32, reps: usize) {
     let mut back = vec![0u8; data.len() + 16];
     let mut t = [0f64; 4];
     let mut n = cap;
-    for round in 0..3 {
+    for _ in 0..3 {
         let s = std::time::Instant::now();
         for _ in 0..reps {
             n = cap;
@@ -361,7 +361,6 @@ fn bench_small(path: &str, len: usize, quality: u32, lgwin: u32, reps: usize) {
             assert!(d.decompress_stream(&mut input, &mut o) == bun_brotli::DecoderResult::Success);
         }
         t[3] = s.elapsed().as_secs_f64();
-        let _ = round;
     }
     let us = |x: f64| x * 1e6 / reps as f64;
     println!("{len} bytes q{quality} w{lgwin}: encode C {:.1} us, Rust {:.1} us ({:.0}%); decode C {:.1} us, Rust {:.1} us ({:.0}%)", us(t[0]), us(t[1]), 100.0 * t[0] / t[1], us(t[2]), us(t[3]), 100.0 * t[2] / t[3]);
@@ -419,7 +418,8 @@ fn bench_dec(path: &str, quality: u32, lgwin: u32, reps: usize) {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let num = |i: usize, d: u64| args.get(i).and_then(|s| s.parse().ok()).unwrap_or(d);
+    let num = |i: usize, d: u64| args::num(&args, i, d);
+    let text = |i: usize| args::text(&args, i);
     if args.get(1).is_some_and(|s| s.starts_with("bench-") || s == "perf-scan") {
         ffi::plain_malloc();
     }
@@ -427,16 +427,19 @@ fn main() {
         Some("testdata") => testdata(),
         Some("dec-fuzz") => dec_fuzz(num(2, 1), num(3, 1000), num(4, 1 << 22) as usize),
         Some("dec-garbage") => dec_garbage(num(2, 1), num(3, 100000)),
-        Some("bench-dec") => bench_dec(&args[2], num(3, 5) as u32, num(4, 22) as u32, num(5, 10) as usize),
+        Some("bench-dec") => bench_dec(text(2), num(3, 5) as u32, num(4, 22) as u32, num(5, 10) as usize),
         Some("enc-fuzz") => enc_fuzz(num(2, 1), num(3, 1000), num(4, 1 << 22) as usize, num(5, 0xFFF)),
         Some("enc-ring") => ring::run(num(2, 1), num(3, 1000), num(4, 1 << 22) as usize, num(5, 0xFFC), &r#gen::Corpus::load(CORPUS_DIRS, 4 << 20)),
         Some("enc-hash") => ring::run_hash(num(2, 1), num(3, 1000), num(4, 1 << 22) as usize, num(5, 0x3E0), &r#gen::Corpus::load(CORPUS_DIRS, 4 << 20)),
         Some("enc-files") => enc_files(num(2, 0xFFF), num(3, 22) as u32),
-        Some("bench-small") => bench_small(&args[2], num(3, 1000) as usize, num(4, 5) as u32, num(5, 22) as u32, num(6, 1000) as usize),
-        Some("bench-first") => bench_first(&args[2], num(3, 260) as usize, num(4, 11) as u32),
-        Some("enc-one") => enc_one(&args[2], &args[3..]),
-        Some("bench-enc") => bench_enc(&args[2], num(3, 5) as u32, num(4, 22) as u32, num(5, 5) as usize),
+        Some("bench-small") => bench_small(text(2), num(3, 1000) as usize, num(4, 5) as u32, num(5, 22) as u32, num(6, 1000) as usize),
+        Some("bench-first") => bench_first(text(2), num(3, 260) as usize, num(4, 11) as u32),
+        Some("enc-one") => enc_one(text(2), args::rest(&args, 3)),
+        Some("bench-enc") => bench_enc(text(2), num(3, 5) as u32, num(4, 22) as u32, num(5, 5) as usize),
         _ if extra::run(&args) => {}
-        _ => eprintln!("see README.md"),
+        _ => {
+            eprintln!("no such subcommand, see README.md");
+            std::process::exit(2);
+        }
     }
 }

@@ -1,4 +1,5 @@
 //! The encoder's ring buffer: inputs whose length, and pieces whose ends, are near the sizes that matter to it.
+use crate::args;
 use crate::enc::{self, EncCase, Step};
 use crate::r#gen;
 use crate::rng::Rng;
@@ -82,7 +83,7 @@ fn near(rng: &mut Rng, base: usize) -> usize {
 }
 
 pub fn run(seed0: u64, iters: u64, max_len: usize, qualities: u64, corpus: &r#gen::Corpus) {
-    let qs: Vec<u32> = (2..12).filter(|q| qualities >> q & 1 != 0).collect();
+    let qs = args::qualities(qualities, 2..12);
     let (mut total_in, mut total_out) = (0usize, 0usize);
     for it in 0..iters {
         let seed = seed0.wrapping_add(it);
@@ -208,7 +209,7 @@ pub fn run(seed0: u64, iters: u64, max_len: usize, qualities: u64, corpus: &r#ge
 
 /// The hashers of qualities 5 to 9: more than 65536 positions in one bucket.
 pub fn run_hash(seed0: u64, iters: u64, max_len: usize, qualities: u64, corpus: &r#gen::Corpus) {
-    let qs: Vec<u32> = (2..12).filter(|q| qualities >> q & 1 != 0).collect();
+    let qs = args::qualities(qualities, 2..12);
     let (mut total_in, mut total_out) = (0usize, 0usize);
     for it in 0..iters {
         let seed = seed0.wrapping_add(it);
@@ -268,7 +269,7 @@ pub fn run_hash(seed0: u64, iters: u64, max_len: usize, qualities: u64, corpus: 
 /// next position looks at it. If a block that started before the end of the ring buffer ends after it, that byte is in
 /// the tail: 241, or zero, or a copy of the first lap, depending on how long the first write was.
 pub fn run_tail(seed0: u64, iters: u64, qualities: u64, corpus: &r#gen::Corpus) {
-    let qs: Vec<u32> = (2..12).filter(|q| qualities >> q & 1 != 0).collect();
+    let qs = args::qualities(qualities, 2..12);
     let (mut total_in, mut total_out) = (0usize, 0usize);
     for it in 0..iters {
         let seed = seed0.wrapping_add(it);
@@ -370,7 +371,7 @@ pub fn run_tail(seed0: u64, iters: u64, qualities: u64, corpus: &r#gen::Corpus) 
 /// Input lengths, ends of pieces and flushes near the given positions, for thresholds inside the encoder (like the
 /// amount of input after which a hasher changes its storage).
 pub fn run_marks(seed0: u64, iters: u64, qualities: u64, marks: &[usize], corpus: &r#gen::Corpus) {
-    let qs: Vec<u32> = (0..12).filter(|q| qualities >> q & 1 != 0).collect();
+    let qs = args::qualities(qualities, 0..12);
     let (mut total_in, mut total_out) = (0usize, 0usize);
     for it in 0..iters {
         let seed = seed0.wrapping_add(it);
@@ -502,7 +503,7 @@ pub fn words(rng: &mut Rng, len: usize) -> Vec<u8> {
 }
 
 pub fn run_words(seed0: u64, iters: u64, max_len: usize, qualities: u64) {
-    let qs: Vec<u32> = (0..12).filter(|q| qualities >> q & 1 != 0).collect();
+    let qs = args::qualities(qualities, 0..12);
     let (mut total_in, mut total_out) = (0usize, 0usize);
     for it in 0..iters {
         let seed = seed0.wrapping_add(it);
@@ -552,7 +553,7 @@ pub fn run_words(seed0: u64, iters: u64, max_len: usize, qualities: u64) {
 pub fn run_lengths(seed0: u64, iters: u64, max_len: usize, qualities: u64) {
     const INSERT: [usize; 23] = [0, 1, 5, 6, 8, 10, 14, 18, 26, 34, 50, 66, 98, 130, 194, 322, 578, 1090, 2114, 6210, 22594, 64, 512];
     const COPY: [usize; 24] = [4, 5, 8, 9, 10, 12, 14, 18, 22, 30, 38, 54, 70, 72, 102, 134, 136, 198, 326, 582, 1094, 2118, 2120, 16384];
-    let qs: Vec<u32> = (0..12).filter(|q| qualities >> q & 1 != 0).collect();
+    let qs = args::qualities(qualities, 0..12);
     let (mut total_in, mut total_out) = (0usize, 0usize);
     for it in 0..iters {
         let seed = seed0.wrapping_add(it);

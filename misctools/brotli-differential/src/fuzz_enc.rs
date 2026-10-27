@@ -1,6 +1,7 @@
 //! libFuzzer: 12 bytes of settings, then a recipe for the data that both encoders get.
 #![no_main]
 #![allow(dead_code)]
+mod args;
 mod dec;
 mod enc;
 mod ffi;
@@ -8,7 +9,7 @@ mod rng;
 
 const DICTIONARY: &[u8] = include_bytes!("../../../src/brotli/common/dictionary.bin");
 const SIZE_BITS_BY_LENGTH: [u32; 25] = [0, 0, 0, 0, 10, 10, 11, 11, 10, 10, 10, 10, 10, 9, 9, 8, 7, 7, 8, 7, 7, 6, 6, 5, 5];
-const TEXT: &[u8] = b"The quick brown fox jumps over the lazy dog. <div class=\"header\">function() { return this.value; }</div>\n0123456789";
+use dec::TEXT;
 
 struct Bytes<'a>(&'a [u8]);
 impl Bytes<'_> {

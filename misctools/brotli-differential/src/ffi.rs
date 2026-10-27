@@ -82,7 +82,7 @@ pub fn plain_malloc() {
 
 extern "C" fn c_alloc(_: *mut c_void, n: usize) -> *mut c_void {
     unsafe {
-        match *FILL.get_or_init(|| Some(std::env::var("C_FILL").ok().and_then(|s| s.parse().ok()).unwrap_or(0))) {
+        match *FILL.get_or_init(|| Some(std::env::var("C_FILL").map_or(0, |s| crate::args::parse(&s) as u8))) {
             None => malloc(n),
             Some(0) => calloc(1, n),
             Some(b) => {

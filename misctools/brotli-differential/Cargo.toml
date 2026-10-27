@@ -21,7 +21,7 @@ required-features = ["libfuzzer"]
 libfuzzer = ["dep:libfuzzer-sys"]
 
 [dependencies]
-libfuzzer-sys = { version = "0.4", optional = true }
+libfuzzer-sys = { version = "=0.4.13", optional = true }
 bun_brotli = { path = "../../src/brotli" }
 
 [profile.release]

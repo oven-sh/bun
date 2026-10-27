@@ -9,6 +9,7 @@ impl Corpus {
     pub fn load(dirs: &[&str], max_file: usize) -> Self {
         let mut files = Vec::new();
         for d in dirs {
+            assert!(std::path::Path::new(d).is_dir(), "{d} is missing");
             let mut stack = vec![std::path::PathBuf::from(d)];
             while let Some(p) = stack.pop() {
                 let Ok(md) = std::fs::metadata(&p) else { continue };
@@ -25,6 +26,7 @@ impl Corpus {
                 }
             }
         }
+        assert!(!files.is_empty(), "no files in {dirs:?}");
         Self { files }
     }
 }

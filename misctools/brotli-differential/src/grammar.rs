@@ -847,7 +847,7 @@ pub fn stream(rng: &mut Rng, evil_rate: usize, max_output: usize) -> Stream {
                 if n > 0 {
                     w.put(8 * bytes, n as u64 - 1);
                 }
-                w.align(u64::from(evil.now(rng, "metadata: padding")) * 0x55);
+                w.align(u64::from(w.n % 8 != 0 && evil.now(rng, "metadata: padding")) * 0x55);
                 let mut skipped = Vec::new();
                 literals(rng, 0, n, &mut skipped);
                 w.raw(&skipped);
@@ -860,7 +860,7 @@ pub fn stream(rng: &mut Rng, evil_rate: usize, max_output: usize) -> Stream {
                 w.put(2, u64::from(nibbles) - 4);
                 w.put(4 * nibbles, mlen as u64 - 1);
                 w.put(1, 1);
-                w.align(u64::from(evil.now(rng, "uncompressed: padding")) * 0x55);
+                w.align(u64::from(w.n % 8 != 0 && evil.now(rng, "uncompressed: padding")) * 0x55);
                 let at = m.out.len();
                 let kind = rng.below(4);
                 literals(rng, kind, mlen, &mut m.out);
@@ -875,7 +875,7 @@ pub fn stream(rng: &mut Rng, evil_rate: usize, max_output: usize) -> Stream {
     if !ended && evil.done.is_none() {
         w.put(2, 3);
     }
-    w.align(u64::from(evil.now(rng, "padding after the last meta-block")) * 0x55);
+    w.align(u64::from(w.n % 8 != 0 && evil.now(rng, "padding after the last meta-block")) * 0x55);
     Stream { bytes: w.bytes, output: m.out, large_window, dictionaries, evil: evil.done }
 }
 

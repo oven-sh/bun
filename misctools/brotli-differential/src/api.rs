@@ -254,7 +254,7 @@ fn decoder(text: &[u8]) -> Result<usize, String> {
                     let mut rin = input;
                     let mut rout: &mut [u8] = &mut b;
                     let rr = r.decompress_stream(&mut rin, &mut rout) as i32;
-                    if cr != rr || used != input.len() - rin.len() || made != (1 << 16) - rout.len() {
+                    if cr != rr || used != input.len() - rin.len() || made != (1 << 16) - rout.len() || a[..made] != b[..made] || c.error_code() != r.error_code() as i32 {
                         return Err(format!("decoder: first {first}, parameter {k} = {v}: result {cr}/{rr}"));
                     }
                     Ok(used)

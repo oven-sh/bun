@@ -1,6 +1,7 @@
 //! libFuzzer: two bytes of settings, then a stream for both decoders.
 #![no_main]
 #![allow(dead_code)]
+mod args;
 mod dec;
 mod ffi;
 mod rng;

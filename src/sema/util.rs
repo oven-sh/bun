@@ -127,6 +127,66 @@ pub fn number_repeated<K: Copy + Eq + std::hash::Hash>(keys: &[K]) -> FxHashMap<
     numbers
 }
 
+/// Where each key's entry is in a list that grows at its end: past the first `SEARCHED` entries, a map has the place.
+pub(crate) struct LaterPlaces<K> {
+    places: FxHashMap<K, u32>,
+}
+
+impl<K> Default for LaterPlaces<K> {
+    fn default() -> Self {
+        LaterPlaces {
+            places: FxHashMap::default(),
+        }
+    }
+}
+
+impl<K: Copy + Eq + std::hash::Hash> LaterPlaces<K> {
+    const SEARCHED: usize = 32;
+
+    /// The entry of `list` for `key`. `None`: the caller must push one. `room`: how long the list can get.
+    #[inline]
+    pub(crate) fn find<'a, T>(
+        &mut self,
+        list: &'a mut [T],
+        key_of: impl Fn(&T) -> K,
+        key: K,
+        room: usize,
+    ) -> Option<&'a mut T> {
+        if list.len() < Self::SEARCHED {
+            return list.iter_mut().find(|it| key_of(it) == key);
+        }
+        self.find_in_long(list, key_of, key, room)
+    }
+
+    #[inline(never)]
+    fn find_in_long<'a, T>(
+        &mut self,
+        list: &'a mut [T],
+        key_of: impl Fn(&T) -> K,
+        key: K,
+        room: usize,
+    ) -> Option<&'a mut T> {
+        let (searched, later) = list.split_at_mut(Self::SEARCHED);
+        if let Some(it) = searched.iter_mut().find(|it| key_of(it) == key) {
+            return Some(it);
+        }
+        if self.places.is_empty() {
+            self.places.reserve(room.saturating_sub(Self::SEARCHED));
+        }
+        match self.places.entry(key) {
+            std::collections::hash_map::Entry::Occupied(place) => {
+                let it = &mut later[*place.get() as usize];
+                debug_assert!(key_of(it) == key);
+                Some(it)
+            }
+            std::collections::hash_map::Entry::Vacant(place) => {
+                place.insert(later.len() as u32);
+                None
+            }
+        }
+    }
+}
+
 /// A bit set of positions in a list. Methods that combine two sets expect both to be for lists of the same length. Sets
 /// of up to 128 positions are stored inline.
 #[derive(Clone, Default)]

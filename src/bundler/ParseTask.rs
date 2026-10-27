@@ -30,7 +30,7 @@ pub use bun_js_parser::parser::ParserOptions;
 use crate::bun_css;
 use crate::bun_fs as Fs;
 use crate::bun_node_fallbacks as NodeFallbackModules;
-use crate::bundle_v2::{self as bundler, BundleV2};
+use crate::bundle_v2::{self as bundler, BundleV2, LoopPoster, MiniShared};
 use crate::cache::{Entry as CacheEntry, ExternalFreeFunction};
 use crate::html_scanner::scan_import_records;
 use crate::options::{self, Loader};
@@ -274,7 +274,7 @@ impl<'a> ParseTask<'a> {
         // write provenance from the `*mut BundleV2` parameter; caller passes a
         // live `&mut BundleV2` coerced to `*mut`.
         let ctx_ref = unsafe { bun_ptr::ParentRef::from_raw_mut(ctx.cast::<BundleV2<'static>>()) };
-        let known_target = ctx_ref.get().transpiler().options.target;
+        let known_target = ctx_ref.get().transpiler().options.target.get();
         ParseTask {
             ctx: Some(ctx_ref),
             path,
@@ -880,7 +880,7 @@ pub mod parse_worker {
                 };
                 // SAFETY: `resolver` is a live `*mut Resolver`;
                 // `caches` is disjoint from `(*transpiler).options` reborrowed above.
-                let root: Expr = unsafe { &mut (*resolver).caches.json }
+                let root: Expr = unsafe { &(*resolver).caches.json }
                     .parse_json(log, source, mode)?
                     .unwrap_or_else(|| Expr::init(E::Object::default(), Loc::EMPTY));
                 return Ok(JSAst::init(
@@ -1006,7 +1006,7 @@ pub mod parse_worker {
                 // runtime aliases without a copy (`encode_text_module`), so the
                 // module becomes `export default require("<bunfs path>")`.
                 // Browser chunks cannot reach the embedded graph.
-                let root = if topts.compile_mode.is_executable() && topts.target.is_bun() {
+                let root = if topts.compile_mode.is_executable() && topts.target.get().is_bun() {
                     require_embedded_asset(register_embedded_asset(
                         bump,
                         source,
@@ -1086,7 +1086,7 @@ pub mod parse_worker {
             }
 
             Loader::SqliteEmbedded | Loader::Sqlite => {
-                if !topts.target.is_bun() {
+                if !topts.target.get().is_bun() {
                     // logger OOM-only
                     let _ = log.add_error(
                         Some(source),
@@ -1193,7 +1193,7 @@ pub mod parse_worker {
             }
             Loader::Napi => {
                 // (dap-eval-cb "source.contents.ptr")
-                if topts.target == options::Target::Browser {
+                if topts.target.get() == options::Target::Browser {
                     // logger OOM-only
                     let _ = log.add_error(
                     Some(source),
@@ -1329,7 +1329,7 @@ pub mod parse_worker {
                 if let Err(e) = css_ast.minify(
                     bump,
                     &bun_css::MinifyOptions {
-                        targets: bun_css::Targets::for_bundler_target(topts.target),
+                        targets: bun_css::Targets::for_bundler_target(topts.target.get()),
                         unused_symbols: Default::default(),
                     },
                     &extra,
@@ -1534,7 +1534,7 @@ pub mod parse_worker {
                 let fs_ref = unsafe { &mut *(*transpiler).fs };
                 // SAFETY: `resolver` is a live `*mut Resolver`; `caches.fs` is
                 // disjoint from `(*transpiler).fs` (a backref pointer field).
-                break 'brk match unsafe { &mut (*resolver).caches.fs }.read_file_with_allocator(
+                break 'brk match unsafe { &(*resolver).caches.fs }.read_file_with_allocator(
                     fs_ref,
                     file_path.text,
                     contents_dir,
@@ -2461,7 +2461,7 @@ pub mod parse_worker {
             {
                 options::Target::ServerComponentsSsr
             } else {
-                topts.target
+                topts.target.get()
             }
         });
 
@@ -2482,19 +2482,9 @@ pub mod parse_worker {
         // a worker-owned `Transpiler` that outlives the parse.
         // SAFETY: ARENA — `topts` outlives `opts` (worker-owned for the bundle pass).
         opts.allow_unresolved = unsafe { bun_collections::detach_ref(&topts.allow_unresolved) };
-        // `Transpiler.macro_context` is `Option<bun_ast::Macro::MacroContext>`
-        // (same nominal type as `ParserOptions.macro_context`'s pointee). Reborrow
-        // through the raw `*mut Transpiler` so the `&mut MacroContext` is disjoint
-        // from `topts` (which borrows `(*transpiler).options`). `.unwrap()` is
-        // sound — caller (`BundleV2::init`) guarantees
-        // it is set before any ParseTask runs.
-        // SAFETY: `transpiler` is live; `macro_context` is a disjoint field.
-        // `'static` erasure: the context outlives the parse.
-        opts.macro_context = unsafe {
-            Some(&mut *std::ptr::from_mut(
-                (*transpiler).macro_context.as_mut().unwrap(),
-            ))
-        };
+        // `BundleV2::init` sets it before any ParseTask runs.
+        // SAFETY: `transpiler` is live.
+        opts.macro_context = Some(unsafe { (*transpiler).macro_context.get() }.unwrap());
         opts.package_version = task.package_version.slice();
 
         opts.features.allow_runtime = !task.source_index.is_runtime();
@@ -2505,7 +2495,7 @@ pub mod parse_worker {
         opts.features.auto_import_jsx = task.jsx.parse && topts.auto_import_jsx;
         opts.features.trim_unused_imports =
             loader.is_typescript() || topts.trim_unused_imports.unwrap_or(false);
-        opts.features.inlining = topts.minify_syntax;
+        opts.features.inlining = topts.minify_syntax.get();
         // `bun_options_types::Format` and `bun_js_parser::options::Format` are
         // distinct enums; map explicitly.
         opts.output_format = match output_format {
@@ -2514,10 +2504,10 @@ pub mod parse_worker {
             options::Format::Iife => js_parser::options::Format::Iife,
             options::Format::InternalBakeDev => js_parser::options::Format::InternalBakeDev,
         };
-        opts.features.minify_syntax = topts.minify_syntax;
-        opts.features.minify_identifiers = topts.minify_identifiers;
+        opts.features.minify_syntax = topts.minify_syntax.get();
+        opts.features.minify_identifiers = topts.minify_identifiers.get();
         opts.features.minify_keep_names = topts.keep_names;
-        opts.features.minify_whitespace = topts.minify_whitespace;
+        opts.features.minify_whitespace = topts.minify_whitespace.get();
         opts.use_define_for_class_fields = task.use_define_for_class_fields;
         opts.features.emit_decorator_metadata = task.emit_decorator_metadata;
         // emitDecoratorMetadata implies legacy/experimental decorators, as it only
@@ -2910,14 +2900,14 @@ pub mod parse_worker {
         // Running `on_complete` inline on the worker thread would violate
         // `BundleV2::on_parse_task_complete`'s threading contract (it mutates the
         // bundler graph, which is owned by the main/bundler thread).
-        match worker.ctx.mini_poster {
-            None => {
+        match worker
+            .ctx
+            .poster
+            .as_ref()
+            .expect("bundle has an event loop")
+        {
+            LoopPoster::Js(poster) => {
                 let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::create_from(result);
-                let poster = worker
-                    .ctx
-                    .js_poster
-                    .as_ref()
-                    .expect("JS-owned bundle has a poster");
                 if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {
                     // Owning JS VM torn down mid-bundle: free the hop and the result.
                     // SAFETY: refused ⇒ we own the task box and the leaked result.
@@ -2927,17 +2917,17 @@ pub mod parse_worker {
                     }
                 }
             }
-            Some(mini) => {
+            LoopPoster::Mini(mini) => {
                 // SAFETY: `result` is a valid heap pointer with `task` at the given offset;
                 // ownership transfers to the mini event loop which frees it after `on_complete_mini`.
-                // `mini` is live: see `BundleV2::mini_poster`.
+                // `mini`: see `LoopPoster::Mini`.
                 unsafe {
-                    mini.as_ref()
-                        .enqueue_task_concurrent_with_extra_ctx::<Result, BundleV2<'static>>(
-                            result,
-                            on_complete_mini,
-                            offset_of!(Result, task),
-                        );
+                    MiniShared::enqueue_task_concurrent_with_extra_ctx::<Result, BundleV2<'static>>(
+                        mini.as_ptr(),
+                        result,
+                        on_complete_mini,
+                        offset_of!(Result, task),
+                    );
                 }
             }
         }

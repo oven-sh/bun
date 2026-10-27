@@ -7,6 +7,7 @@
 
 use crate::{is_package_path, is_package_path_not_absolute};
 
+use core::cell::Cell;
 use core::ptr::NonNull;
 use std::io::Write as _;
 use std::sync::Arc;
@@ -468,13 +469,12 @@ pub struct Resolver<'a> {
     // `NonNull` (never-null but raw-aliasing) and deref through the `fs()` /
     // `log()` accessors below.
     pub fs: *mut Fs::FileSystem,
-    pub log: NonNull<bun_ast::Log>,
+    log: Cell<NonNull<bun_ast::Log>>,
     // allocator dropped — global mimalloc
     /// NOTE: saved/restored across nested resolves.
     /// Stored as a `Copy` enum tag (no self-reference) and resolved on demand
-    /// via [`Self::extension_order`] / [`options::BundleOptions::ext_order_slice`].
-    pub(crate) extension_order: options::ExtOrder,
-    pub(crate) timer: Timer,
+    /// via [`options::BundleOptions::ext_order_slice`].
+    pub(crate) extension_order: Cell<options::ExtOrder>,
 
     pub care_about_bin_folder: bool,
     pub care_about_scripts: bool,
@@ -483,10 +483,10 @@ pub struct Resolver<'a> {
     /// For Bun's runtime, we don't.
     pub(crate) care_about_browser_field: bool,
 
-    pub debug_logs: Option<DebugLogs>,
-    pub elapsed: u64, // tracing
+    pub debug_logs: DebugLogs,
+    pub elapsed: Cell<u64>, // tracing
 
-    pub watcher: Option<AnyResolveWatcher>,
+    pub watcher: Cell<Option<AnyResolveWatcher>>,
 
     pub caches: CacheSet,
     pub generation: Generation,
@@ -498,7 +498,7 @@ pub struct Resolver<'a> {
     /// singleton through the link-time `__bun_resolver_init_package_manager`
     /// factory and caches the pointer here. A failed init (e.g. unreadable
     /// top-level directory) is returned as an error and leaves this `None`.
-    pub package_manager: Option<NonNull<dyn AutoInstaller>>,
+    pub package_manager: Cell<Option<NonNull<dyn AutoInstaller>>>,
     pub on_wake_package_manager: Install::WakeHandler,
     // Stored as `NonNull` (not `&'a Loader`) because the same allocation is
     // mutably reborrowed via `Transpiler.env: *mut Loader` after this field is
@@ -506,7 +506,7 @@ pub struct Resolver<'a> {
     // → `run_env_loader()` which takes `&mut *self.env`). Holding a live
     // `&Loader` across that `&mut Loader` would be aliased-&mut UB; a raw
     // pointer carries no aliasing guarantee.
-    pub env_loader: Option<NonNull<DotEnv::Loader>>,
+    pub env_loader: Cell<Option<NonNull<DotEnv::Loader>>>,
     pub store_fd: bool,
 
     pub standalone_module_graph: Option<&'a dyn StandaloneModuleGraph>,
@@ -570,7 +570,7 @@ pub struct Resolver<'a> {
     /// is overwritten while the resolution happens.
     ///
     /// When this is null, it is as if it is set to `&.{ path.dirname(referrer) }`.
-    pub custom_dir_paths: Option<&'a [bun_core::String]>,
+    pub custom_dir_paths: Cell<Option<&'a [bun_core::String]>>,
 }
 
 /// Bust the directory cache for the given path, which may end in a separator. Any thread: both
@@ -579,9 +579,8 @@ pub fn bust_dir_cache(path: &[u8]) -> bool {
     let path = strings::without_trailing_slash_windows_path(path);
     Resolver::assert_valid_cache_key(path);
     let first_bust = Fs::FileSystem::instance().fs.bust_entries_cache(path);
-    // SAFETY: never freed. `remove` touches the map's `index` alone, under the map's mutex, as
-    // does everything else that reads or writes `index`.
-    let second_bust = unsafe { &mut *DirInfo::hash_map_instance() }.remove(path);
+    // SAFETY: the process's map, never freed.
+    let second_bust = unsafe { DirInfo::HashMap::remove_raw(DirInfo::hash_map_instance(), path) };
     bun_core::scoped_log!(
         ResolverDev,
         "Bust {} = {}, {}",
@@ -597,7 +596,7 @@ impl<'a> Resolver<'a> {
     /// copy-from-`from` for the resolver
     /// portion. Every `Copy` / raw-pointer field is copied from `from`; the
     /// per-worker `caches` (the only `Drop`-carrying field, via the
-    /// `Json` cache's `MimallocArena`) and `debug_logs`/`timer` are freshly
+    /// `Json` cache's `MimallocArena`) and `debug_logs` are freshly
     /// constructed so nothing the parent owns is aliased into the worker.
     ///
     /// `opts` and `log` are supplied by the caller (the worker projects a
@@ -607,32 +606,30 @@ impl<'a> Resolver<'a> {
     /// `from`'s `standalone_module_graph` / `env_loader` borrow data that
     /// outlives the returned resolver (process-lifetime singletons in every
     /// caller). The lifetime is widened from `'from` to `'a` here; callers
-    /// must uphold that the borrowed data outlives `'a`.
+    /// must uphold that the borrowed data outlives `'a`. `log`: as for [`Self::set_log`].
     pub unsafe fn for_worker(
         from: &Resolver<'_>,
         log: NonNull<bun_ast::Log>,
         mut opts: options::BundleOptions,
     ) -> Resolver<'a> {
-        opts.tsconfig_override_json
-            .clone_from(&from.opts.tsconfig_override_json);
+        opts.tsconfig_override_json = from.opts.tsconfig_override_json.clone();
         Resolver {
             opts,
             fs: from.fs,
-            log,
-            extension_order: from.extension_order,
-            timer: Timer::start().unwrap_or_else(|_| panic!("Timer fail")),
+            log: Cell::new(log),
+            extension_order: from.extension_order.clone(),
             care_about_bin_folder: from.care_about_bin_folder,
             care_about_scripts: from.care_about_scripts,
             care_about_browser_field: from.care_about_browser_field,
             // `DebugLogs` owns Vecs — per-worker fresh.
-            debug_logs: None,
-            elapsed: 0,
-            watcher: from.watcher,
+            debug_logs: DebugLogs::default(),
+            elapsed: Cell::new(0),
+            watcher: from.watcher.clone(),
             caches: CacheSet::init(),
             generation: from.generation,
-            package_manager: from.package_manager,
+            package_manager: from.package_manager.clone(),
             on_wake_package_manager: from.on_wake_package_manager,
-            env_loader: from.env_loader,
+            env_loader: from.env_loader.clone(),
             store_fd: from.store_fd,
             // SAFETY: see fn doc — lifetime-widen the trait-object borrow. The
             // vtable layout is identical (only the borrow-checker tag differs);
@@ -649,7 +646,7 @@ impl<'a> Resolver<'a> {
             prefer_module_field: from.prefer_module_field,
             // Transient per-resolve scratch (only set for `require(..., {paths})`);
             // never carried across worker init.
-            custom_dir_paths: None,
+            custom_dir_paths: Cell::new(None),
         }
     }
 
@@ -703,72 +700,45 @@ impl<'a> Resolver<'a> {
     /// `log()` deref.
     #[inline(always)]
     pub(crate) fn log(&self) -> *mut bun_ast::Log {
-        self.log.as_ptr()
+        self.log.get().as_ptr()
+    }
+
+    #[inline(always)]
+    pub fn log_ptr(&self) -> NonNull<bun_ast::Log> {
+        self.log.get()
+    }
+
+    /// # Safety
+    /// The resolver reads and writes `log` until the next `set_log`: until then `log` stays
+    /// allocated, and nothing else borrows it while a method of this resolver runs.
+    #[inline(always)]
+    pub unsafe fn set_log(&self, log: NonNull<bun_ast::Log>) {
+        self.log.set(log);
     }
 
     /// Shared-borrow of the resolver's `Log` for read-only inspection
     /// (e.g. `log.level`). Preferred over `unsafe { &*self.log() }`.
     #[inline(always)]
     pub(crate) fn log_ref(&self) -> &bun_ast::Log {
-        // SAFETY: BACKREF — `self.log` is set in `init1` or by the owner,
-        // owner-allocated, outlives the Resolver. Resolver mutex serializes
-        // mutation; a Shared `&` here pushes no Unique tag and so cannot
-        // alias-UB with the narrow `log_mut()` retags elsewhere (none are live
-        // across a `log_ref()` call).
-        unsafe { self.log.as_ref() }
-    }
-
-    /// Unique-borrow of the resolver's `Log` for `add_*_fmt` / `add_msg`.
-    ///
-    /// Centralizes the per-site `unsafe { &mut *self.log() }` retag. `&mut
-    /// self` rules out two coexisting `&mut Log` from the SAME `Resolver`;
-    /// cross-clone aliasing (worker copies share the owner's `Log`) is
-    /// guarded by the resolver `mutex` — same invariant the open-coded sites
-    /// already relied on.
-    ///
-    /// Sites that need `&mut Log` while holding a disjoint `&mut self.<field>`
-    /// (`flush_debug_logs` ↔ `self.debug_logs`, `parse_tsconfig` ↔
-    /// `self.caches.json`) cannot route through `&mut self` and continue to
-    /// narrow-retag via the raw [`log()`](Self::log) accessor.
-    #[inline(always)]
-    pub fn log_mut(&mut self) -> &mut bun_ast::Log {
-        // SAFETY: BACKREF — `self.log` is set in `init1` or by the owner; the
-        // pointee (owner-allocated `Log`, or a stack `Log` that the owner swaps
-        // out again before it goes) outlives every borrow returned here. Resolver
-        // mutex serializes mutation across worker clones.
-        unsafe { self.log.as_mut() }
+        // SAFETY: `self.log` is set in `init1` or by `set_log`: it is allocated.
+        // Resolver mutex serializes mutation; a Shared `&` here pushes no Unique
+        // tag and so cannot alias-UB with the narrow `&mut *self.log()` retags
+        // elsewhere (none are live across a `log_ref()` call).
+        unsafe { self.log.get().as_ref() }
     }
 
     /// NOTE (Stacked Borrows): returns RAW `*mut` (see `fs()` note). ARENA —
     /// `DirInfo::hash_map_instance()` singleton; never freed. Caller
     /// `unsafe { &mut *r.dir_cache() }` at each use site.
+    ///
+    /// Each such reborrow pushes a fresh Unique tag on the BSSMap allocation,
+    /// so any `*mut DirInfo` projected from an earlier one is popped. Slot
+    /// pointers that must survive a subsequent map access are re-derived from
+    /// the raw singleton via `DirInfo::put_slot` / `DirInfo::slot_ptr_at`; refs
+    /// from `at_index` / `ref_at_index` are only durable until the next map access.
     #[inline(always)]
     pub(crate) fn dir_cache(&self) -> *mut DirInfo::HashMap {
         self.dir_cache
-    }
-
-    /// Unique-borrow of the `DirInfo` BSSMap singleton.
-    ///
-    /// Centralizes the `unsafe { &mut *self.dir_cache() }` retag that every
-    /// call site previously open-coded. `&mut self` ensures no two coexisting
-    /// `&mut HashMap` are produced from the SAME `Resolver`; cross-clone
-    /// aliasing (per-worker `Resolver`s share the singleton) is
-    /// guarded by the resolver `mutex` — identical invariant to the prior
-    /// per-site `unsafe`.
-    ///
-    /// Stacked Borrows: each call pushes a fresh Unique tag on the BSSMap
-    /// allocation, so any `*mut DirInfo` previously projected from an earlier
-    /// `dir_cache_mut()` borrow is popped. Slot pointers that must survive a
-    /// subsequent map access are re-derived from the raw singleton via
-    /// `DirInfo::put_slot` / `DirInfo::slot_ptr_at`; refs from `at_index` /
-    /// `ref_at_index` are only durable until the next map access.
-    #[inline(always)]
-    pub(crate) fn dir_cache_mut(&mut self) -> &mut DirInfo::HashMap {
-        // SAFETY: ARENA — `self.dir_cache` is the never-null
-        // `DirInfo::hash_map_instance()` static (set in `init1`, never
-        // reassigned, never freed). Resolver mutex serializes all mutation
-        // across worker clones; `&mut self` rules out intra-instance aliasing.
-        unsafe { &mut *self.dir_cache }
     }
 
     /// Lazily initializing
@@ -785,7 +755,7 @@ impl<'a> Resolver<'a> {
     /// inside the factory) when the one-time init fails, e.g. the top-level
     /// directory was deleted or is unreadable — callers surface that as a
     /// resolve failure rather than panicking.
-    pub fn get_package_manager(&mut self) -> crate::CrateResult<*mut dyn AutoInstaller> {
+    pub fn get_package_manager(&self) -> crate::CrateResult<*mut dyn AutoInstaller> {
         let top_level_dir = self.fs_ref().top_level_dir();
         self.get_package_manager_for(top_level_dir)
     }
@@ -793,14 +763,15 @@ impl<'a> Resolver<'a> {
     /// The package manager is created once per process, by the first call. It uses the registries,
     /// credentials and lockfile of the project of `importer_dir`, the importing file's directory.
     fn get_package_manager_for(
-        &mut self,
+        &self,
         importer_dir: &[u8],
     ) -> crate::CrateResult<*mut dyn AutoInstaller> {
-        if let Some(pm) = self.package_manager {
+        if let Some(pm) = self.package_manager.get() {
             return Ok(pm.as_ptr());
         }
         let env: NonNull<DotEnv::Loader> = self
             .env_loader
+            .get()
             .expect("Resolver.env_loader must be set before auto-install");
         // SAFETY: `__bun_resolver_init_package_manager` is defined
         // `#[no_mangle]` in `bun_install::auto_installer` and linked into the
@@ -809,7 +780,7 @@ impl<'a> Resolver<'a> {
         // names the `PackageManager` singleton (`'static`).
         let pm: NonNull<dyn AutoInstaller> = unsafe {
             __bun_resolver_init_package_manager(
-                self.log,
+                self.log.get(),
                 self.opts.install,
                 env,
                 self.opts.install_preference
@@ -819,30 +790,31 @@ impl<'a> Resolver<'a> {
         }?;
         // SAFETY: `pm` is the just-initialized singleton; sole `&mut` here.
         unsafe { (*pm.as_ptr()).set_on_wake(self.on_wake_package_manager) };
-        self.package_manager = Some(pm);
+        self.package_manager.set(Some(pm));
         Ok(pm.as_ptr())
     }
 
-    /// Safe accessor for the optional [`AutoInstaller`] back-reference.
-    ///
-    /// Single `unsafe` deref site for the `package_manager:
-    /// Option<NonNull<dyn AutoInstaller>>` field. The pointee is the
+    /// The optional [`AutoInstaller`] back-reference. The pointee is the
     /// process-static `PackageManager` singleton (set via
     /// [`get_package_manager`](Self::get_package_manager) /
     /// `__bun_resolver_init_package_manager`), so it strictly outlives the
-    /// resolver. `&mut self` ensures the returned `&mut dyn AutoInstaller` is
-    /// the only live reference for its lifetime.
+    /// resolver.
+    ///
+    /// # Safety
+    /// No other borrow of the package manager is live until the returned one ends.
     #[inline]
-    pub(crate) fn auto_installer(&mut self) -> Option<&mut dyn AutoInstaller> {
-        // SAFETY: BACKREF — `package_manager` names the bun_install-owned
-        // singleton, live for the resolver's lifetime once installed; `&mut
-        // self` ⇒ exclusive access to the only Rust handle.
-        self.package_manager.map(|mut pm| unsafe { pm.as_mut() })
+    #[allow(clippy::mut_from_ref)]
+    pub(crate) unsafe fn auto_installer(&self) -> Option<&mut dyn AutoInstaller> {
+        // SAFETY: `package_manager` names the bun_install-owned singleton, live for the
+        // resolver's lifetime once installed. Exclusive per the fn contract.
+        self.package_manager
+            .get()
+            .map(|mut pm| unsafe { pm.as_mut() })
     }
 
     /// The project's package.json is parsed before the first bare import creates the manager.
     pub(crate) fn parse_dependency(
-        &mut self,
+        &self,
         name: Semver::String,
         name_hash: Install::PackageNameHash,
         version: &[u8],
@@ -852,7 +824,9 @@ impl<'a> Resolver<'a> {
         // files. An alias that an installed package declares applies to that package alone.
         is_project: bool,
     ) -> Option<Dependency::Version> {
-        match self.auto_installer().filter(|_| is_project) {
+        // SAFETY: the resolver holds no borrow of the package manager across a call, and this
+        // one ends with the `match`.
+        match unsafe { self.auto_installer() }.filter(|_| is_project) {
             Some(pm) => pm.parse_dependency(name, Some(name_hash), version, sliced, log),
             None => __bun_resolver_parse_dependency(name, name_hash, version, sliced, log),
         }
@@ -871,9 +845,8 @@ impl<'a> Resolver<'a> {
         // SAFETY: BACKREF — `env_loader` names the Transpiler-owned
         // `DotEnv::Loader`, live for the resolver's lifetime `'a`; resolution
         // never mutates the env, so no `&mut Loader` overlaps this shared
-        // borrow. Returned as `&'a` (not tied to `&self`) so callers may keep
-        // the env borrow across `&mut self` resolver calls.
-        self.env_loader.map(|p| unsafe { p.as_ref() })
+        // borrow.
+        self.env_loader.get().map(|p| unsafe { p.as_ref() })
     }
 
     #[inline]
@@ -914,24 +887,23 @@ impl<'a> Resolver<'a> {
             mutex: &RESOLVER_MUTEX,
             caches: CacheSet::init(),
             opts,
-            timer: Timer::start().unwrap_or_else(|_| panic!("Timer fail")),
             fs: _fs,
-            log,
-            extension_order: options::ExtOrder::DefaultDefault,
+            log: Cell::new(log),
+            extension_order: Cell::new(options::ExtOrder::DefaultDefault),
             care_about_browser_field,
             care_about_bin_folder: false,
             care_about_scripts: false,
-            debug_logs: None,
-            elapsed: 0,
-            watcher: None,
+            debug_logs: DebugLogs::default(),
+            elapsed: Cell::new(0),
+            watcher: Cell::new(None),
             generation: 0,
-            package_manager: None,
+            package_manager: Cell::new(None),
             on_wake_package_manager: Default::default(),
-            env_loader: None,
+            env_loader: Cell::new(None),
             store_fd: false,
             standalone_module_graph: None,
             prefer_module_field: true,
-            custom_dir_paths: None,
+            custom_dir_paths: Cell::new(None),
         }
     }
 
@@ -963,7 +935,7 @@ impl<'a> Resolver<'a> {
     /// without breaking catch-all `"*"` paths entries that only cover ambient
     /// type stubs.
     pub(crate) fn resolve_via_tsconfig_paths(
-        &mut self,
+        &self,
         source_dir: &[u8],
         import_path: &[u8],
         kind: ast::ImportKind,
@@ -987,25 +959,18 @@ impl<'a> Resolver<'a> {
         self.match_tsconfig_paths(&tsconfig, import_path, kind, out)
     }
 
-    pub(crate) fn flush_debug_logs(&mut self, flush_mode: FlushMode) -> crate::CrateResult<()> {
-        // NOTE: capture `log` before partially borrowing `self.debug_logs`
-        // so the method call doesn't conflict with the field borrow (`log()`
-        // derefs the raw `*mut Log` and is lifetime-decoupled from `&self`).
-        // SAFETY: BACKREF — `self.log` points at owner-allocated `Log`; disjoint from
-        // `self.debug_logs` (separate allocation), so the `&mut Log` does not alias the
-        // `self.debug_logs.as_mut()` borrow below.
+    pub(crate) fn flush_debug_logs(&self, flush_mode: FlushMode) -> crate::CrateResult<()> {
+        // SAFETY: the contract of `set_log`; the only borrow of the log until the end of the fn,
+        // which calls nothing else of the resolver.
         let log = unsafe { &mut *self.log() };
-        if let Some(debug) = self.debug_logs.as_mut() {
-            // NOTE: only consume `what`/`notes` inside
+        if let Some(debug) = self.debug_logs.enabled() {
+            // NOTE: only consume `notes` inside
             // the arm that actually emits, so the success-at-non-verbose path touches
-            // nothing. `add_range_debug_with_notes`/`add_verbose_with_notes` take
-            // `&'static [u8]`; bypass them and build the `Msg` directly so the Log owns
-            // the `what` buffer via `Data.text: Cow::Owned` (no `Box::leak`, PORTING.md
-            // §Forbidden). The `should_print` gate mirrors the bypassed wrappers.
+            // nothing. The `should_print` gate mirrors `add_range_debug_with_notes` /
+            // `add_verbose_with_notes`.
             if flush_mode == FlushMode::Fail {
                 if bun_ast::Kind::Debug.should_print(log.level) {
-                    let what = core::mem::take(&mut debug.what);
-                    let notes = core::mem::take(&mut debug.notes).into_boxed_slice();
+                    let notes = debug.take_notes();
                     log.add_msg(Msg {
                         kind: bun_ast::Kind::Debug,
                         data: bun_ast::range_data(
@@ -1014,7 +979,7 @@ impl<'a> Resolver<'a> {
                                 loc: bun_ast::Loc::default(),
                                 ..Default::default()
                             },
-                            what,
+                            Vec::new(),
                         ),
                         notes,
                         ..Default::default()
@@ -1022,8 +987,7 @@ impl<'a> Resolver<'a> {
                 }
             } else if (log.level as u32) <= (bun_ast::Level::Verbose as u32) {
                 if bun_ast::Kind::Verbose.should_print(log.level) {
-                    let what = core::mem::take(&mut debug.what);
-                    let notes = core::mem::take(&mut debug.notes).into_boxed_slice();
+                    let notes = debug.take_notes();
                     log.add_msg(Msg {
                         kind: bun_ast::Kind::Verbose,
                         data: bun_ast::range_data(
@@ -1032,7 +996,7 @@ impl<'a> Resolver<'a> {
                                 loc: bun_ast::Loc::EMPTY,
                                 ..Default::default()
                             },
-                            what,
+                            Vec::new(),
                         ),
                         notes,
                         ..Default::default()
@@ -1046,7 +1010,7 @@ impl<'a> Resolver<'a> {
     // var tracing_start: i128 — unused; dropped.
 
     pub fn resolve_and_auto_install<'r>(
-        &mut self,
+        &self,
         source_dir: &[u8],
         import_path: &'r [u8],
         kind: ast::ImportKind,
@@ -1083,9 +1047,9 @@ impl<'a> Resolver<'a> {
             };
         }
 
-        let original_order = self.extension_order;
+        let original_order = self.extension_order.get();
         // NOTE: the restore happens explicitly at every return point below.
-        self.extension_order = match kind {
+        self.extension_order.set(match kind {
             ast::ImportKind::Url | ast::ImportKind::AtConditional | ast::ImportKind::At => {
                 options::ExtOrder::Css
             }
@@ -1099,35 +1063,23 @@ impl<'a> Resolver<'a> {
                 options::ExtOrder::RequiredByPackage
             }
             _ => options::ExtOrder::DefaultDefault,
-        };
+        });
 
-        if FeatureFlags::TRACING {
-            self.timer.reset();
-        }
-
-        // The tracing-elapsed accumulation
-        // fires on EVERY return path. Capture raw field ptrs (Copy) so the closure
-        // does not hold a `&mut self` borrow across the function body.
-        let elapsed_ptr: *mut u64 = core::ptr::addr_of_mut!(self.elapsed);
-        let timer_ptr: *const Timer = core::ptr::addr_of!(self.timer);
+        let timer =
+            FeatureFlags::TRACING.then(|| Timer::start().unwrap_or_else(|_| panic!("Timer fail")));
+        // On every return path.
         scopeguard::defer! {
-            if FeatureFlags::TRACING {
-                // SAFETY: `self` outlives this guard (drops at end of fn body);
-                // `elapsed`/`timer` are not borrowed when the guard fires.
-                unsafe { *elapsed_ptr += (*timer_ptr).read(); }
+            if let Some(timer) = &timer {
+                self.elapsed.set(self.elapsed.get() + timer.read());
             }
         }
 
         if self.log_ref().level == bun_ast::Level::Verbose {
-            if self.debug_logs.is_some() {
-                // deinit → drop
-                self.debug_logs = None;
-            }
-            self.debug_logs = Some(DebugLogs::init().expect("unreachable"));
+            self.debug_logs.enable();
         }
 
         if import_path.is_empty() {
-            self.extension_order = original_order;
+            self.extension_order.set(original_order);
             return ResultUnion::NotFound;
         }
 
@@ -1145,7 +1097,7 @@ impl<'a> Resolver<'a> {
                 || (import_path.starts_with(b"internal/")
                     && ::bun_resolve_builtins::expose_internals_enabled())
             {
-                self.extension_order = original_order;
+                self.extension_order.set(original_order);
                 return ResultUnion::Success(Result {
                     import_kind: kind,
                     path_pair: PathPair {
@@ -1175,14 +1127,14 @@ impl<'a> Resolver<'a> {
                 .resolve_via_tsconfig_paths(source_dir, import_path, kind, &mut res)
                 .is_success()
             {
-                if let Some(debug) = self.debug_logs.as_mut() {
+                if let Some(debug) = self.debug_logs.enabled() {
                     debug.add_note(
                         b"Resolved via tsconfig.json \"paths\" before applying packages=external"
                             .to_vec(),
                     );
                 }
                 let _ = self.flush_debug_logs(FlushMode::Success);
-                self.extension_order = original_order;
+                self.extension_order.set(original_order);
                 return ResultUnion::Success(Result {
                     import_kind: kind,
                     path_pair: res.path_pair,
@@ -1208,12 +1160,12 @@ impl<'a> Resolver<'a> {
             // "background: url(//example.com/images/image.png);"
             || import_path.starts_with(b"//"))
         {
-            if let Some(debug) = self.debug_logs.as_mut() {
+            if let Some(debug) = self.debug_logs.enabled() {
                 debug.add_note(b"Marking this path as implicitly external".to_vec());
             }
             let _ = self.flush_debug_logs(FlushMode::Success);
 
-            self.extension_order = original_order;
+            self.extension_order.set(original_order);
             return ResultUnion::Success(Result {
                 import_kind: kind,
                 path_pair: PathPair {
@@ -1236,11 +1188,11 @@ impl<'a> Resolver<'a> {
                 // tokens pass it through as external like http:// above; for
                 // JS imports the bundler surfaces a resolve error.
                 if kind.is_from_css() {
-                    if let Some(debug) = self.debug_logs.as_mut() {
+                    if let Some(debug) = self.debug_logs.enabled() {
                         debug.add_note(b"Marking malformed \"dataurl\" as external".to_vec());
                     }
                     let _ = self.flush_debug_logs(FlushMode::Success);
-                    self.extension_order = original_order;
+                    self.extension_order.set(original_order);
                     return ResultUnion::Success(Result {
                         import_kind: kind,
                         path_pair: PathPair {
@@ -1252,7 +1204,7 @@ impl<'a> Resolver<'a> {
                         ..Default::default()
                     });
                 }
-                self.extension_order = original_order;
+                self.extension_order.set(original_order);
                 return ResultUnion::Failure(crate::Error::InvalidDataURL);
             }
             Ok(Some(data_url)) => {
@@ -1264,12 +1216,12 @@ impl<'a> Resolver<'a> {
                     mime.category,
                     Category::Javascript | Category::Css | Category::Json | Category::Text
                 ) {
-                    if let Some(debug) = self.debug_logs.as_mut() {
+                    if let Some(debug) = self.debug_logs.enabled() {
                         debug.add_note(b"Putting this path in the \"dataurl\" namespace".to_vec());
                     }
                     let _ = self.flush_debug_logs(FlushMode::Success);
 
-                    self.extension_order = original_order;
+                    self.extension_order.set(original_order);
                     return ResultUnion::Success(Result {
                         path_pair: PathPair {
                             primary: Fs::Path::init_with_namespace(import_path, b"dataurl"),
@@ -1280,12 +1232,12 @@ impl<'a> Resolver<'a> {
                 }
 
                 // "background: url(data:image/png;base64,iVBORw0KGgo=);"
-                if let Some(debug) = self.debug_logs.as_mut() {
+                if let Some(debug) = self.debug_logs.enabled() {
                     debug.add_note(b"Marking this \"dataurl\" as external".to_vec());
                 }
                 let _ = self.flush_debug_logs(FlushMode::Success);
 
-                self.extension_order = original_order;
+                self.extension_order.set(original_order);
                 return ResultUnion::Success(Result {
                     path_pair: PathPair {
                         primary: Fs::Path::init_with_namespace(import_path, b"dataurl"),
@@ -1313,7 +1265,7 @@ impl<'a> Resolver<'a> {
                     || ::bun_options_types::standalone_path::is_bun_standalone_file_path(source_dir)
                 {
                     if let Some(file_name) = graph.resolve(source_dir, import_path) {
-                        self.extension_order = original_order;
+                        self.extension_order.set(original_order);
                         return ResultUnion::Success(Result {
                             import_kind: kind,
                             path_pair: PathPair {
@@ -1326,7 +1278,7 @@ impl<'a> Resolver<'a> {
                         });
                     }
                     if specifier_is_embedded_path {
-                        self.extension_order = original_order;
+                        self.extension_order.set(original_order);
                         return ResultUnion::NotFound;
                     }
                     break 'brk Fs::FileSystem::instance().top_level_dir();
@@ -1341,7 +1293,7 @@ impl<'a> Resolver<'a> {
             // is backwards compat with Bun 1.0 behavior)
             // See https://github.com/oven-sh/bun/issues/8994 for more details.
             if source_dir.is_empty() {
-                // if let Some(debug) = self.debug_logs.as_mut() {
+                // if let Some(debug) = self.debug_logs.enabled() {
                 //     debug.add_note(b"Cannot resolve this path without a directory".to_vec());
                 //     let _ = self.flush_debug_logs(FlushMode::Fail);
                 // }
@@ -1353,7 +1305,7 @@ impl<'a> Resolver<'a> {
             // or call the module resolver from javascript (Bun.resolveSync)
             // with a faulty parent specifier.
             if !bun_paths::is_absolute(source_dir) {
-                // if let Some(debug) = self.debug_logs.as_mut() {
+                // if let Some(debug) = self.debug_logs.enabled() {
                 //     debug.add_note(b"Cannot resolve this path without an absolute directory".to_vec());
                 //     let _ = self.flush_debug_logs(FlushMode::Fail);
                 // }
@@ -1366,7 +1318,7 @@ impl<'a> Resolver<'a> {
                 // On Windows, adding the drive to a rooted directory can overflow a path buffer.
                 Err(::bun_paths::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)) => {
                     let _ = self.flush_debug_logs(FlushMode::Fail);
-                    self.extension_order = original_order;
+                    self.extension_order.set(original_order);
                     return ResultUnion::NotFound;
                 }
                 Err(_) => panic!("Failed to query CWD"),
@@ -1377,7 +1329,7 @@ impl<'a> Resolver<'a> {
         // anyways would cause assertion failures.
         if strings::index_of_char(import_path, 0).is_some() {
             let _ = self.flush_debug_logs(FlushMode::Fail);
-            self.extension_order = original_order;
+            self.extension_order.set(original_order);
             return ResultUnion::NotFound;
         }
 
@@ -1396,7 +1348,7 @@ impl<'a> Resolver<'a> {
                     break 'try_without_suffix;
                 }
 
-                if let Some(debug) = self.debug_logs.as_mut() {
+                if let Some(debug) = self.debug_logs.enabled() {
                     debug.add_note_fmt(format_args!(
                         "Retrying resolution after removing the suffix {}",
                         bstr::BStr::new(&import_path[suffix..])
@@ -1421,7 +1373,7 @@ impl<'a> Resolver<'a> {
                     && !result.flags.is_standalone_module()
                 {
                     if let Err(err) = self.finalize_result(&mut result, kind) {
-                        self.extension_order = original_order;
+                        self.extension_order.set(original_order);
                         return ResultUnion::Failure(err);
                     }
                 }
@@ -1470,12 +1422,12 @@ impl<'a> Resolver<'a> {
         };
 
         // (tracing `elapsed` accumulation handled by `_elapsed_guard` above on all paths)
-        self.extension_order = original_order;
+        self.extension_order.set(original_order);
         ret
     }
 
     pub fn resolve<'r>(
-        &mut self,
+        &self,
         source_dir: &[u8],
         import_path: &'r [u8],
         kind: ast::ImportKind,
@@ -1490,7 +1442,7 @@ impl<'a> Resolver<'a> {
     /// Runs a resolution but also checking if a Bun Bake framework has an
     /// override. This is used in one place in the bundler.
     pub fn resolve_with_framework<'r>(
-        &mut self,
+        &self,
         source_dir: &[u8],
         import_path: &'r [u8],
         kind: ast::ImportKind,
@@ -1513,10 +1465,9 @@ impl<'a> Resolver<'a> {
                         });
                     }
                     bun_options_types::BuiltInModule::Import(path) => {
-                        // NOTE: copy out `path` so the `&self.opts.framework` borrow
-                        // ends before `self.resolve(&mut self, ...)`.
                         // SAFETY: `path` borrows `self.opts.framework`, which lives for the
-                        // resolver's lifetime; the `'static` erase only releases the `&self` borrow.
+                        // resolver's lifetime and is not written after `init1`. The result, which
+                        // may borrow `path`, does not outlive the resolver.
                         let path: &'static [u8] =
                             unsafe { &*std::ptr::from_ref::<[u8]>(path.as_ref()) };
                         let top = self.fs_ref().top_level_dir();
@@ -1529,7 +1480,7 @@ impl<'a> Resolver<'a> {
     }
 
     pub(crate) fn finalize_result(
-        &mut self,
+        &self,
         result: &mut Result,
         kind: ast::ImportKind,
     ) -> crate::CrateResult<()> {
@@ -1611,7 +1562,7 @@ impl<'a> Resolver<'a> {
                         result.file_fd = query.entry().cache().fd;
                     }
 
-                    if let Some(debug) = self.debug_logs.as_mut() {
+                    if let Some(debug) = self.debug_logs.enabled() {
                         debug.add_note_fmt(format_args!(
                             "Resolved symlink \"{}\" to \"{}\"",
                             bstr::BStr::new(path.text()),
@@ -1673,7 +1624,7 @@ impl<'a> Resolver<'a> {
                     }
 
                     let symlink = Fs::FilenameStore::instance().append_slice(&buf[..out_len])?;
-                    if let Some(debug) = self.debug_logs.as_mut() {
+                    if let Some(debug) = self.debug_logs.enabled() {
                         debug.add_note_fmt(format_args!(
                             "Resolved symlink \"{}\" to \"{}\"",
                             bstr::BStr::new(symlink),
@@ -1708,7 +1659,7 @@ impl<'a> Resolver<'a> {
     }
 
     pub(crate) fn resolve_without_symlinks<'r>(
-        &mut self,
+        &self,
         source_dir: &[u8],
         input_import_path: &'r [u8],
         kind: ast::ImportKind,
@@ -1760,7 +1711,7 @@ impl<'a> Resolver<'a> {
                 import_path = &buf[..len];
             }
 
-            if let Some(debug) = self.debug_logs.as_mut() {
+            if let Some(debug) = self.debug_logs.enabled() {
                 debug.add_note_fmt(format_args!(
                     "The import \"{}\" is being treated as an absolute path",
                     bstr::BStr::new(import_path)
@@ -1798,7 +1749,7 @@ impl<'a> Resolver<'a> {
                 // been marked as an external module, mark it as *not* an absolute path.
                 // That way we preserve the literal text in the output and don't generate
                 // a relative path from the output directory to that path.
-                if let Some(debug) = self.debug_logs.as_mut() {
+                if let Some(debug) = self.debug_logs.enabled() {
                     debug.add_note_fmt(format_args!(
                         "The path \"{}\" is marked as external by the user",
                         bstr::BStr::new(import_path)
@@ -1847,7 +1798,7 @@ impl<'a> Resolver<'a> {
         let check_package = is_package_path_;
 
         if check_relative {
-            if let Some(custom_paths) = self.custom_dir_paths {
+            if let Some(custom_paths) = self.custom_dir_paths.get() {
                 // @branchHint(.unlikely)
                 bun_core::hint::cold();
                 for custom_path in custom_paths {
@@ -1964,7 +1915,7 @@ impl<'a> Resolver<'a> {
                 let mut query = import_path;
                 loop {
                     if self.opts.external.node_modules.contains(query) {
-                        if let Some(debug) = self.debug_logs.as_mut() {
+                        if let Some(debug) = self.debug_logs.enabled() {
                             debug.add_note_fmt(format_args!(
                                 "The path \"{}\" was marked as external by the user",
                                 bstr::BStr::new(query)
@@ -1989,7 +1940,7 @@ impl<'a> Resolver<'a> {
                 }
             }
 
-            if let Some(custom_paths) = self.custom_dir_paths {
+            if let Some(custom_paths) = self.custom_dir_paths.get() {
                 bun_core::hint::cold();
                 for custom_path in custom_paths {
                     let custom_utf8 = custom_path.to_utf8();
@@ -2038,7 +1989,7 @@ impl<'a> Resolver<'a> {
     }
 
     pub(crate) fn check_relative_path(
-        &mut self,
+        &self,
         source_dir: &[u8],
         import_path: &[u8],
         kind: ast::ImportKind,
@@ -2059,7 +2010,7 @@ impl<'a> Resolver<'a> {
             // been marked as an external module, mark it as *not* an absolute path.
             // That way we preserve the literal text in the output and don't generate
             // a relative path from the output directory to that path.
-            if let Some(debug) = self.debug_logs.as_mut() {
+            if let Some(debug) = self.debug_logs.enabled() {
                 debug.add_note_fmt(format_args!(
                     "The path \"{}\" is marked as external by the user",
                     bstr::BStr::new(abs_path)
@@ -2144,10 +2095,11 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        let prev_extension_order = self.extension_order;
+        let prev_extension_order = self.extension_order.get();
         // NOTE: defer restore reshaped — restored before each return
         if strings::path_contains_node_modules_folder(abs_path) {
-            self.extension_order = self.opts.extension_order.kind(kind, true);
+            self.extension_order
+                .set(self.opts.extension_order.kind(kind, true));
         }
 
         // Re-append the separator the join stripped so "." resolves like "./".
@@ -2157,7 +2109,7 @@ impl<'a> Resolver<'a> {
             let len = abs_path.len();
             let buf = bufs!(relative_abs_path);
             if len >= buf.len() {
-                self.extension_order = prev_extension_order;
+                self.extension_order.set(prev_extension_order);
                 return ResultUnion::NotFound;
             }
             buf[len] = SEP;
@@ -2181,12 +2133,12 @@ impl<'a> Resolver<'a> {
         } else {
             ResultUnion::NotFound
         };
-        self.extension_order = prev_extension_order;
+        self.extension_order.set(prev_extension_order);
         ret
     }
 
     pub(crate) fn check_package_path<'r>(
-        &mut self,
+        &self,
         source_dir: &[u8],
         unremapped_import_path: &'r [u8],
         kind: ast::ImportKind,
@@ -2436,14 +2388,14 @@ impl<'a> Resolver<'a> {
     }
 
     /// See [`bust_dir_cache`].
-    pub fn bust_dir_cache(&mut self, path: &[u8]) -> bool {
+    pub fn bust_dir_cache(&self, path: &[u8]) -> bool {
         bust_dir_cache(path)
     }
 
     /// bust both the named file and a parent directory, because `./hello` can resolve
     /// to `./hello.js` or `./hello/index.js`
     pub fn bust_dir_cache_from_specifier(
-        &mut self,
+        &self,
         import_source_file: &[u8],
         specifier: &[u8],
     ) -> bool {
@@ -2471,7 +2423,7 @@ impl<'a> Resolver<'a> {
         self.bust_dir_cache_and_parent(joined)
     }
 
-    fn bust_dir_cache_and_parent(&mut self, path: &[u8]) -> bool {
+    fn bust_dir_cache_and_parent(&self, path: &[u8]) -> bool {
         // On Windows the dirname of `a\hello\` is `a\hello`, so strip first.
         let path = strings::without_trailing_slash_windows_path(path);
         let dir = bun_paths::dirname_platform(path, bun_paths::Platform::AUTO);
@@ -2482,7 +2434,7 @@ impl<'a> Resolver<'a> {
     }
 
     pub(crate) fn load_node_modules(
-        &mut self,
+        &self,
         import_path: &[u8],
         kind: ast::ImportKind,
         // NOTE: `DirInfoRef` (not `&mut`) — body re-enters `dir_cache` via
@@ -2497,7 +2449,7 @@ impl<'a> Resolver<'a> {
         out: &mut MatchResult,
     ) -> MatchStatus {
         let mut dir_info: DirInfoRef = _dir_info;
-        if let Some(debug) = self.debug_logs.as_mut() {
+        if let Some(debug) = self.debug_logs.enabled() {
             debug.add_note_fmt(format_args!(
                 "Searching for {} in \"node_modules\" directories starting from \"{}\"",
                 bstr::BStr::new(import_path),
@@ -2516,7 +2468,7 @@ impl<'a> Resolver<'a> {
                     .match_tsconfig_paths(&tsconfig, import_path, kind, out)
                     .is_success()
                 {
-                    if let Some(d) = self.debug_logs.as_mut() {
+                    if let Some(d) = self.debug_logs.enabled() {
                         d.decrease_indent();
                     }
                     return MatchStatus::Success;
@@ -2531,7 +2483,7 @@ impl<'a> Resolver<'a> {
                     bufs!(load_as_file_or_directory_via_tsconfig_base_path),
                 ) {
                     if self.load_as_file_or_directory(abs, kind, out).is_success() {
-                        if let Some(d) = self.debug_logs.as_mut() {
+                        if let Some(d) = self.debug_logs.enabled() {
                             d.decrease_indent();
                         }
                         return MatchStatus::Success;
@@ -2563,7 +2515,7 @@ impl<'a> Resolver<'a> {
                     global_cache,
                     out,
                 );
-                if let Some(d) = self.debug_logs.as_mut() {
+                if let Some(d) = self.debug_logs.enabled() {
                     d.decrease_indent();
                 }
                 return r;
@@ -2573,7 +2525,7 @@ impl<'a> Resolver<'a> {
             let package_name = crate::package_json::Package::parse_name(import_path);
             if let Some(_package_name) = package_name {
                 if _package_name == package_json.name.as_ref() && package_json.exports.is_some() {
-                    if let Some(debug) = self.debug_logs.as_mut() {
+                    if let Some(debug) = self.debug_logs.enabled() {
                         debug.add_note_fmt(format_args!(
                             "\"{}\" is a self-reference",
                             bstr::BStr::new(import_path)
@@ -2613,14 +2565,14 @@ impl<'a> Resolver<'a> {
                             None => break 'node_modules,
                         }
                     };
-                    if let Some(debug) = self.debug_logs.as_mut() {
+                    if let Some(debug) = self.debug_logs.enabled() {
                         debug.add_note_fmt(format_args!(
                             "Checking for a package in the directory \"{}\"",
                             bstr::BStr::new(abs_path)
                         ));
                     }
 
-                    let prev_extension_order = self.extension_order;
+                    let prev_extension_order = self.extension_order.get();
                     // NOTE: defer restore reshaped — restored at end of block
 
                     if let Some(ref esm) = esm_ {
@@ -2636,21 +2588,32 @@ impl<'a> Resolver<'a> {
                         if let Some(abs_package_path) = abs_package_path
                             && let Ok(Some(pkg_dir_info)) = self.dir_info_cached(abs_package_path)
                         {
-                            self.extension_order = match kind {
+                            self.extension_order.set(match kind {
                                 ast::ImportKind::Url
                                 | ast::ImportKind::AtConditional
                                 | ast::ImportKind::At => options::ExtOrder::Css,
                                 _ => self.opts.extension_order.kind(kind, true),
-                            };
+                            });
 
                             if let Some(package_json) = pkg_dir_info.package_json() {
                                 if let Some(exports_map) = package_json.exports.as_ref() {
                                     // The condition set is determined by the kind of import
-                                    // NOTE: keeping a single
-                                    // `ESModule` (which holds `&mut self.debug_logs`) alive across a
-                                    // `&mut self` call is aliased-&mut UB. Build a fresh short-lived
-                                    // `ESModule` per `resolve` call so its borrow ends before
-                                    // `self.handle_esm_resolution` re-borrows `self`.
+                                    let esmodule = ESModule {
+                                        conditions: match kind {
+                                            ast::ImportKind::Require
+                                            | ast::ImportKind::RequireResolve => {
+                                                &self.opts.conditions.require
+                                            }
+                                            ast::ImportKind::At
+                                            | ast::ImportKind::AtConditional => {
+                                                &self.opts.conditions.style
+                                            }
+                                            _ => &self.opts.conditions.import,
+                                        },
+                                        debug_logs: self.debug_logs.enabled(),
+                                        stack_check: StackCheck::init(),
+                                    };
+
                                     // Resolve against the path "/", then join it with the absolute
                                     // directory path. This is done because ESM package resolution uses
                                     // URLs while our path resolution uses file system paths. We don't
@@ -2658,23 +2621,8 @@ impl<'a> Resolver<'a> {
                                     // paths. We also want to avoid any "%" characters in the absolute
                                     // directory path accidentally being interpreted as URL escapes.
                                     {
-                                        let esm_resolution = ESModule {
-                                            conditions: match kind {
-                                                ast::ImportKind::Require
-                                                | ast::ImportKind::RequireResolve => {
-                                                    &self.opts.conditions.require
-                                                }
-                                                ast::ImportKind::At
-                                                | ast::ImportKind::AtConditional => {
-                                                    &self.opts.conditions.style
-                                                }
-                                                _ => &self.opts.conditions.import,
-                                            },
-                                            debug_logs: self.debug_logs.as_mut(),
-                                            stack_check: StackCheck::init(),
-                                        }
-                                        .resolve(b"/", esm.subpath, &exports_map.root);
-                                        // ESModule temporary dropped here; `self` is unborrowed.
+                                        let esm_resolution =
+                                            esmodule.resolve(b"/", esm.subpath, &exports_map.root);
 
                                         if self
                                             .handle_esm_resolution(
@@ -2688,8 +2636,8 @@ impl<'a> Resolver<'a> {
                                             .is_success()
                                         {
                                             out.is_node_module = true;
-                                            self.extension_order = prev_extension_order;
-                                            if let Some(d) = self.debug_logs.as_mut() {
+                                            self.extension_order.set(prev_extension_order);
+                                            if let Some(d) = self.debug_logs.enabled() {
                                                 d.decrease_indent();
                                             }
                                             return MatchStatus::Success;
@@ -2714,22 +2662,7 @@ impl<'a> Resolver<'a> {
                                     // We limit this behavior just to ".js" files.
                                     let extname = bun_paths::extension(esm.subpath);
                                     if extname == b".js" && esm.subpath.len() > 3 {
-                                        let esm_resolution = ESModule {
-                                            conditions: match kind {
-                                                ast::ImportKind::Require
-                                                | ast::ImportKind::RequireResolve => {
-                                                    &self.opts.conditions.require
-                                                }
-                                                ast::ImportKind::At
-                                                | ast::ImportKind::AtConditional => {
-                                                    &self.opts.conditions.style
-                                                }
-                                                _ => &self.opts.conditions.import,
-                                            },
-                                            debug_logs: self.debug_logs.as_mut(),
-                                            stack_check: StackCheck::init(),
-                                        }
-                                        .resolve(
+                                        let esm_resolution = esmodule.resolve(
                                             b"/",
                                             &esm.subpath[0..esm.subpath.len() - 3],
                                             &exports_map.root,
@@ -2746,8 +2679,8 @@ impl<'a> Resolver<'a> {
                                             .is_success()
                                         {
                                             out.is_node_module = true;
-                                            self.extension_order = prev_extension_order;
-                                            if let Some(d) = self.debug_logs.as_mut() {
+                                            self.extension_order.set(prev_extension_order);
+                                            if let Some(d) = self.debug_logs.enabled() {
                                                 d.decrease_indent();
                                             }
                                             return MatchStatus::Success;
@@ -2756,8 +2689,8 @@ impl<'a> Resolver<'a> {
 
                                     // if they hid "package.json" from "exports", still allow importing it.
                                     if esm.subpath == b"./package.json" {
-                                        self.extension_order = prev_extension_order;
-                                        if let Some(d) = self.debug_logs.as_mut() {
+                                        self.extension_order.set(prev_extension_order);
+                                        if let Some(d) = self.debug_logs.enabled() {
                                             d.decrease_indent();
                                         }
                                         *out = MatchResult {
@@ -2786,8 +2719,8 @@ impl<'a> Resolver<'a> {
                                         return MatchStatus::Success;
                                     }
 
-                                    self.extension_order = prev_extension_order;
-                                    if let Some(d) = self.debug_logs.as_mut() {
+                                    self.extension_order.set(prev_extension_order);
+                                    if let Some(d) = self.debug_logs.enabled() {
                                         d.decrease_indent();
                                     }
                                     return MatchStatus::NotFound;
@@ -2800,13 +2733,13 @@ impl<'a> Resolver<'a> {
                         .load_as_file_or_directory(abs_path, kind, out)
                         .is_success()
                     {
-                        self.extension_order = prev_extension_order;
-                        if let Some(d) = self.debug_logs.as_mut() {
+                        self.extension_order.set(prev_extension_order);
+                        if let Some(d) = self.debug_logs.enabled() {
                             d.decrease_indent();
                         }
                         return MatchStatus::Success;
                     }
-                    self.extension_order = prev_extension_order;
+                    self.extension_order.set(prev_extension_order);
                 }
 
                 match dir_info.get_parent() {
@@ -2839,7 +2772,7 @@ impl<'a> Resolver<'a> {
                 else {
                     continue;
                 };
-                if let Some(debug) = self.debug_logs.as_mut() {
+                if let Some(debug) = self.debug_logs.enabled() {
                     debug.add_note_fmt(format_args!(
                         "Checking for a package in the NODE_PATH directory \"{}\"",
                         bstr::BStr::new(abs_path)
@@ -2849,7 +2782,7 @@ impl<'a> Resolver<'a> {
                     .load_as_file_or_directory(abs_path, kind, out)
                     .is_success()
                 {
-                    if let Some(d) = self.debug_logs.as_mut() {
+                    if let Some(d) = self.debug_logs.enabled() {
                         d.decrease_indent();
                     }
                     return MatchStatus::Success;
@@ -2895,7 +2828,8 @@ impl<'a> Resolver<'a> {
                             }
                             _ => None,
                         };
-                        let log = self.log_mut();
+                        // SAFETY: allocated (`set_log`), and the only borrow of the log until the `return`.
+                        let log = unsafe { &mut *self.log() };
                         let mut add = |text: core::fmt::Arguments<'_>| {
                             log.add_resolve_error(
                                 None,
@@ -2919,7 +2853,7 @@ impl<'a> Resolver<'a> {
                                 bstr::BStr::new(import_path)
                             )),
                         }
-                        if let Some(d) = self.debug_logs.as_mut() {
+                        if let Some(d) = self.debug_logs.enabled() {
                             d.decrease_indent();
                         }
                         return MatchStatus::Failure(err);
@@ -3004,7 +2938,8 @@ impl<'a> Resolver<'a> {
                                 Semver::semver_string::Builder::string_hash(name),
                                 range,
                                 &Semver::SlicedString::init(&buf, range),
-                                Some(self.log_mut()),
+                                // SAFETY: allocated (`set_log`), and the only borrow of the log during the call.
+                                Some(unsafe { &mut *self.log() }),
                             );
                             if let Some(version) = version {
                                 dependency_version = version;
@@ -3058,7 +2993,8 @@ impl<'a> Resolver<'a> {
                     {
                         let found = self.dir_info_cached(folder);
                         if !matches!(found, Ok(Some(_))) {
-                            self.log_mut().add_error_fmt(
+                            // SAFETY: allocated (`set_log`), and the only borrow of the log during the call.
+                            unsafe { &mut *self.log() }.add_error_fmt(
                                 None,
                                 bun_ast::Loc::EMPTY,
                                 format_args!(
@@ -3083,7 +3019,8 @@ impl<'a> Resolver<'a> {
                                     None,
                                     esm.version,
                                     &sliced_string,
-                                    Some(self.log_mut()),
+                                    // SAFETY: allocated (`set_log`), and the only borrow of the log during the call.
+                                    Some(unsafe { &mut *self.log() }),
                                 ) {
                                     Some(v) => v,
                                     None => break 'load_module_from_cache,
@@ -3114,7 +3051,7 @@ impl<'a> Resolver<'a> {
                         ) {
                             DependencyToResolve::Resolution(res) => break 'brk res,
                             DependencyToResolve::Pending(pending) => {
-                                if let Some(d) = self.debug_logs.as_mut() {
+                                if let Some(d) = self.debug_logs.enabled() {
                                     d.decrease_indent();
                                 }
                                 return MatchStatus::Pending(pending);
@@ -3122,7 +3059,7 @@ impl<'a> Resolver<'a> {
                             // The registry has no such package or version, or the install failed.
                             // The reason is already in the log.
                             DependencyToResolve::NotFound => {
-                                if let Some(d) = self.debug_logs.as_mut() {
+                                if let Some(d) = self.debug_logs.enabled() {
                                     d.decrease_indent();
                                 }
                                 return MatchStatus::NotFound;
@@ -3151,7 +3088,7 @@ impl<'a> Resolver<'a> {
                                     .expect("unreachable");
                                 let mut path = Fs::Path::init(interned);
                                 path.is_disabled = true;
-                                if let Some(d) = self.debug_logs.as_mut() {
+                                if let Some(d) = self.debug_logs.enabled() {
                                     d.decrease_indent();
                                 }
                                 *out = MatchResult {
@@ -3165,7 +3102,7 @@ impl<'a> Resolver<'a> {
                             }
 
                             // The reason is already in the log.
-                            if let Some(d) = self.debug_logs.as_mut() {
+                            if let Some(d) = self.debug_logs.enabled() {
                                 d.decrease_indent();
                             }
                             return MatchStatus::NotFound;
@@ -3175,7 +3112,7 @@ impl<'a> Resolver<'a> {
                     // The path is empty for a resolution that has no folder in the cache, such as a
                     // git checkout. On Windows, opening "" would open the cwd.
                     if dir_path_for_resolution.is_empty() {
-                        if let Some(d) = self.debug_logs.as_mut() {
+                        if let Some(d) = self.debug_logs.enabled() {
                             d.decrease_indent();
                         }
                         return MatchStatus::NotFound;
@@ -3191,7 +3128,18 @@ impl<'a> Resolver<'a> {
                             if let Some(package_json) = pkg_dir_info.package_json() {
                                 if let Some(exports_map) = package_json.exports.as_ref() {
                                     // The condition set is determined by the kind of import
-                                    // NOTE: reshaped for borrowck — see identical note above.
+                                    let esmodule = ESModule {
+                                        conditions: match kind {
+                                            ast::ImportKind::Require
+                                            | ast::ImportKind::RequireResolve => {
+                                                &self.opts.conditions.require
+                                            }
+                                            _ => &self.opts.conditions.import,
+                                        },
+                                        debug_logs: self.debug_logs.enabled(),
+                                        stack_check: StackCheck::init(),
+                                    };
+
                                     // Resolve against the path "/", then join it with the absolute
                                     // directory path. This is done because ESM package resolution uses
                                     // URLs while our path resolution uses file system paths. We don't
@@ -3199,18 +3147,8 @@ impl<'a> Resolver<'a> {
                                     // paths. We also want to avoid any "%" characters in the absolute
                                     // directory path accidentally being interpreted as URL escapes.
                                     {
-                                        let esm_resolution = ESModule {
-                                            conditions: match kind {
-                                                ast::ImportKind::Require
-                                                | ast::ImportKind::RequireResolve => {
-                                                    &self.opts.conditions.require
-                                                }
-                                                _ => &self.opts.conditions.import,
-                                            },
-                                            debug_logs: self.debug_logs.as_mut(),
-                                            stack_check: StackCheck::init(),
-                                        }
-                                        .resolve(b"/", esm.subpath, &exports_map.root);
+                                        let esm_resolution =
+                                            esmodule.resolve(b"/", esm.subpath, &exports_map.root);
 
                                         if self
                                             .handle_esm_resolution(
@@ -3224,7 +3162,7 @@ impl<'a> Resolver<'a> {
                                             .is_success()
                                         {
                                             out.is_node_module = true;
-                                            if let Some(d) = self.debug_logs.as_mut() {
+                                            if let Some(d) = self.debug_logs.enabled() {
                                                 d.decrease_indent();
                                             }
                                             return MatchStatus::Success;
@@ -3238,18 +3176,7 @@ impl<'a> Resolver<'a> {
                                     // We limit this behavior just to ".js" files.
                                     let extname = bun_paths::extension(esm.subpath);
                                     if extname == b".js" && esm.subpath.len() > 3 {
-                                        let esm_resolution = ESModule {
-                                            conditions: match kind {
-                                                ast::ImportKind::Require
-                                                | ast::ImportKind::RequireResolve => {
-                                                    &self.opts.conditions.require
-                                                }
-                                                _ => &self.opts.conditions.import,
-                                            },
-                                            debug_logs: self.debug_logs.as_mut(),
-                                            stack_check: StackCheck::init(),
-                                        }
-                                        .resolve(
+                                        let esm_resolution = esmodule.resolve(
                                             b"/",
                                             &esm.subpath[0..esm.subpath.len() - 3],
                                             &exports_map.root,
@@ -3266,7 +3193,7 @@ impl<'a> Resolver<'a> {
                                             .is_success()
                                         {
                                             out.is_node_module = true;
-                                            if let Some(d) = self.debug_logs.as_mut() {
+                                            if let Some(d) = self.debug_logs.enabled() {
                                                 d.decrease_indent();
                                             }
                                             return MatchStatus::Success;
@@ -3275,7 +3202,7 @@ impl<'a> Resolver<'a> {
 
                                     // if they hid "package.json" from "exports", still allow importing it.
                                     if esm.subpath == b"./package.json" {
-                                        if let Some(d) = self.debug_logs.as_mut() {
+                                        if let Some(d) = self.debug_logs.enabled() {
                                             d.decrease_indent();
                                         }
                                         *out = MatchResult {
@@ -3298,7 +3225,7 @@ impl<'a> Resolver<'a> {
                                         return MatchStatus::Success;
                                     }
 
-                                    if let Some(d) = self.debug_logs.as_mut() {
+                                    if let Some(d) = self.debug_logs.enabled() {
                                         d.decrease_indent();
                                     }
                                     return MatchStatus::NotFound;
@@ -3309,12 +3236,12 @@ impl<'a> Resolver<'a> {
                                 &[pkg_dir_info.abs_path, esm.subpath],
                                 bufs!(node_modules_check),
                             ) else {
-                                if let Some(d) = self.debug_logs.as_mut() {
+                                if let Some(d) = self.debug_logs.enabled() {
                                     d.decrease_indent();
                                 }
                                 return MatchStatus::NotFound;
                             };
-                            if let Some(debug) = self.debug_logs.as_mut() {
+                            if let Some(debug) = self.debug_logs.enabled() {
                                 debug.add_note_fmt(format_args!(
                                     "Checking for a package in the directory \"{}\"",
                                     bstr::BStr::new(abs_path)
@@ -3326,7 +3253,7 @@ impl<'a> Resolver<'a> {
                                 .is_success()
                             {
                                 out.is_node_module = true;
-                                if let Some(d) = self.debug_logs.as_mut() {
+                                if let Some(d) = self.debug_logs.enabled() {
                                     d.decrease_indent();
                                 }
                                 return MatchStatus::Success;
@@ -3334,7 +3261,7 @@ impl<'a> Resolver<'a> {
                         }
                     }
                     Err(err) => {
-                        if let Some(d) = self.debug_logs.as_mut() {
+                        if let Some(d) = self.debug_logs.enabled() {
                             d.decrease_indent();
                         }
                         return MatchStatus::Failure(err);
@@ -3343,23 +3270,25 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        if let Some(d) = self.debug_logs.as_mut() {
+        if let Some(d) = self.debug_logs.enabled() {
             d.decrease_indent();
         }
         MatchStatus::NotFound
     }
 
     fn dir_info_for_resolution(
-        &mut self,
+        &self,
         dir_path_maybe_trail_slash: &[u8],
         package_id: Install::PackageID,
     ) -> crate::CrateResult<Option<DirInfoRef>> {
-        debug_assert!(self.package_manager.is_some());
+        debug_assert!(self.package_manager.get().is_some());
 
         let dir_path = strings::without_trailing_slash_windows_path(dir_path_maybe_trail_slash);
 
         Self::assert_valid_cache_key(dir_path);
-        let mut dir_cache_info_result = self.dir_cache_mut().get_or_put(dir_path)?;
+        // SAFETY: the live singleton. No borrow of it is live on this thread, and `get_or_put`
+        // touches `index` alone, under the map's mutex.
+        let mut dir_cache_info_result = unsafe { &mut *self.dir_cache() }.get_or_put(dir_path)?;
         if dir_cache_info_result.status == allocators::ItemStatus::Exists {
             // we've already looked up this package before
             // SAFETY: `Exists` index was assigned by `put`; resolver mutex held.
@@ -3394,7 +3323,8 @@ impl<'a> Resolver<'a> {
             Ok(d) => d,
             Err(err) => {
                 // TODO: handle this error better
-                let _ = self.log_mut().add_error_fmt(
+                // SAFETY: allocated (`set_log`), and the only borrow of the log during the call.
+                let _ = unsafe { &mut *self.log() }.add_error_fmt(
                     None,
                     bun_ast::Loc::EMPTY,
                     format_args!("Unable to open directory: {}", bstr::BStr::new(err.name())),
@@ -3534,7 +3464,7 @@ impl<'a> Resolver<'a> {
     }
 
     fn enqueue_dependency_to_resolve(
-        &mut self,
+        &self,
         package_json_dir: Option<&[u8]>,
         esm: &crate::package_json::Package<'_>,
         behavior: Dependency::Behavior,
@@ -3542,7 +3472,7 @@ impl<'a> Resolver<'a> {
         version: Dependency::Version,
         version_buf: &[u8],
     ) -> DependencyToResolve {
-        if let Some(debug) = self.debug_logs.as_mut() {
+        if let Some(debug) = self.debug_logs.enabled() {
             debug.add_note_fmt(format_args!(
                 "Enqueueing pending dependency \"{}@{}\"",
                 bstr::BStr::new(esm.name),
@@ -3551,8 +3481,6 @@ impl<'a> Resolver<'a> {
         }
 
         let input_package_id = *input_package_id_;
-        // NOTE: see `manager_ptr` note in `load_node_modules` — split the
-        // `&mut self` borrow by holding the PackageManager via raw pointer.
         // Init failure is unreachable in practice (`load_node_modules`
         // initialized the manager before calling here), but propagate rather
         // than unwrap so the invariant isn't load-bearing for safety.
@@ -3613,7 +3541,7 @@ impl<'a> Resolver<'a> {
     }
 
     fn handle_esm_resolution(
-        &mut self,
+        &self,
         esm_resolution_: crate::package_json::Resolution,
         abs_package_path: &[u8],
         kind: ast::ImportKind,
@@ -3661,7 +3589,7 @@ impl<'a> Resolver<'a> {
                 };
                 let extension_order: options::ExtOrder =
                     if kind == ast::ImportKind::At || kind == ast::ImportKind::AtConditional {
-                        self.extension_order
+                        self.extension_order.get()
                     } else {
                         self.opts
                             .extension_order
@@ -3749,7 +3677,7 @@ impl<'a> Resolver<'a> {
                                     if unsafe { iq.entry().kind(self.rfs_ptr(), self.store_fd) }
                                         == Fs::file_system::EntryKind::File
                                     {
-                                        if let Some(debug) = self.debug_logs.as_mut() {
+                                        if let Some(debug) = self.debug_logs.enabled() {
                                             let mut ms = Vec::with_capacity(1 + file_name.len());
                                             ms.push(b'/');
                                             ms.extend_from_slice(&file_name[..]);
@@ -3840,7 +3768,7 @@ impl<'a> Resolver<'a> {
     /// under `entries_mutex`; `dirname_fd` was captured under the caller's
     /// critical section.
     fn probe_target_extensions(
-        &mut self,
+        &self,
         resolved_dir_info: DirInfoRef,
         dirname_fd: FD,
         package_json: &PackageJSON,
@@ -3869,7 +3797,7 @@ impl<'a> Resolver<'a> {
                     if unsafe { ext_query.entry().kind(rfs, self.store_fd) }
                         == Fs::file_system::EntryKind::File
                     {
-                        if let Some(debug) = self.debug_logs.as_mut() {
+                        if let Some(debug) = self.debug_logs.enabled() {
                             debug.add_note_fmt(format_args!(
                                 "Resolved to \"{}\" by adding extension \"{}\"",
                                 bstr::BStr::new(file_name),
@@ -3909,7 +3837,7 @@ impl<'a> Resolver<'a> {
                         if unsafe { ts_query.entry().kind(rfs, self.store_fd) }
                             == Fs::file_system::EntryKind::File
                         {
-                            if let Some(debug) = self.debug_logs.as_mut() {
+                            if let Some(debug) = self.debug_logs.enabled() {
                                 debug.add_note_fmt(format_args!(
                                     "Rewrote \"{}\" to \"{}\"",
                                     bstr::BStr::new(base),
@@ -3933,7 +3861,7 @@ impl<'a> Resolver<'a> {
     }
 
     fn build_wildcard_match(
-        &mut self,
+        &self,
         resolved_dir_info: DirInfoRef,
         dirname_fd: FD,
         package_json: &PackageJSON,
@@ -3984,7 +3912,7 @@ impl<'a> Resolver<'a> {
     }
 
     pub(crate) fn resolve_without_remapping(
-        &mut self,
+        &self,
         // NOTE: `DirInfoRef` (not `&mut`) — forwards into `load_node_modules`
         // which re-enters `dir_cache` and may re-derive the same DirInfo slot.
         source_dir_info: DirInfoRef,
@@ -4007,7 +3935,7 @@ impl<'a> Resolver<'a> {
     }
 
     pub(crate) fn parse_tsconfig(
-        &mut self,
+        &self,
         file: &[u8],
         dirname_fd: FD,
     ) -> crate::CrateResult<Option<Box<TSConfigJSON>>> {
@@ -4055,8 +3983,7 @@ impl<'a> Resolver<'a> {
         // SAFETY: BACKREF — `self.log` (see `log()` NOTE); disjoint from `self.caches`,
         // narrow `&mut` for this call only.
         let mut result =
-            match TSConfigJSON::parse(unsafe { &mut *self.log() }, &source, &mut self.caches.json)?
-            {
+            match TSConfigJSON::parse(unsafe { &mut *self.log() }, &source, &self.caches.json)? {
                 Some(r) => r,
                 None => return Ok(None),
             };
@@ -4095,7 +4022,7 @@ impl<'a> Resolver<'a> {
     }
 
     pub(crate) fn parse_package_json<const ALLOW_DEPENDENCIES: bool>(
-        &mut self,
+        &self,
         file: &[u8],
         dirname_fd: FD,
         package_id: Option<Install::PackageID>,
@@ -4134,16 +4061,16 @@ impl<'a> Resolver<'a> {
         Ok(Some(intern_package_json(pkg)))
     }
 
-    fn dir_info_cached(&mut self, path: &[u8]) -> crate::CrateResult<Option<DirInfoRef>> {
+    fn dir_info_cached(&self, path: &[u8]) -> crate::CrateResult<Option<DirInfoRef>> {
         self.dir_info_cached_maybe_log(true, path)
     }
 
-    pub fn read_dir_info(&mut self, path: &[u8]) -> crate::CrateResult<Option<DirInfoRef>> {
+    pub fn read_dir_info(&self, path: &[u8]) -> crate::CrateResult<Option<DirInfoRef>> {
         self.dir_info_cached_maybe_log(false, path)
     }
 
     /// Like `readDirInfo`, but returns `null` instead of throwing an error.
-    pub fn read_dir_info_ignore_error(&mut self, path: &[u8]) -> Option<DirInfoRef> {
+    pub fn read_dir_info_ignore_error(&self, path: &[u8]) -> Option<DirInfoRef> {
         self.dir_info_cached_maybe_log(false, path).ok().flatten()
     }
 
@@ -4152,7 +4079,7 @@ impl<'a> Resolver<'a> {
     // (it gates one cold error-formatting branch) so this large dir-walk function
     // monomorphizes to a single copy instead of two faulted in at startup.
     fn dir_info_cached_maybe_log(
-        &mut self,
+        &self,
         enable_logging: bool,
         raw_input_path: &[u8],
     ) -> crate::CrateResult<Option<DirInfoRef>> {
@@ -4223,12 +4150,11 @@ impl<'a> Resolver<'a> {
 
         let path_without_trailing_slash = strings::without_trailing_slash_windows_path(input_path);
         Self::assert_valid_cache_key(path_without_trailing_slash);
-        let top_result = self
-            .dir_cache_mut()
-            .get_or_put(path_without_trailing_slash)?;
+        // SAFETY: the live singleton; resolver mutex held, and no other borrow of the map is live.
+        let dir_cache = unsafe { &mut *self.dir_cache() };
+        let top_result = dir_cache.get_or_put(path_without_trailing_slash)?;
         if top_result.status != allocators::ItemStatus::Unknown {
-            return Ok(self
-                .dir_cache_mut()
+            return Ok(dir_cache
                 .at_index(top_result.index)
                 .map(DirInfoRef::from_slot));
         }
@@ -4244,7 +4170,7 @@ impl<'a> Resolver<'a> {
     #[cold]
     #[inline(never)]
     fn dir_info_cached_miss(
-        &mut self,
+        &self,
         enable_logging: bool,
         input_path: &[u8],
         top_result: allocators::Result,
@@ -4285,9 +4211,6 @@ impl<'a> Resolver<'a> {
         let root_path = &path[0..1];
         Self::assert_valid_cache_key(root_path);
 
-        // NOTE: hold RealFS as a raw `*mut` so the entries-mutex/close-dirs
-        // scopeguards can capture it by Copy without keeping a `self.rfs_ptr()`
-        // borrow live across the loop body (which calls `&mut self` methods).
         // SAFETY: ARENA — `self.fs` points at the process-global FileSystem singleton.
         // Derive provenance from the raw `*mut FileSystem` field directly so later
         // `unsafe { &mut *self.fs() }` calls (e.g. `dirname_store.append_*`) cannot pop `rfs`'s tag
@@ -4305,7 +4228,9 @@ impl<'a> Resolver<'a> {
 
         while top.len() > root_path.len() {
             debug_assert!(top.as_ptr() == root_path.as_ptr());
-            let result = self.dir_cache_mut().get_or_put(top)?;
+            // SAFETY: the live singleton; resolver mutex held (by the caller), and no other borrow
+            // of the map is live.
+            let result = unsafe { &mut *self.dir_cache() }.get_or_put(top)?;
 
             if result.status != allocators::ItemStatus::Unknown {
                 top_parent = result;
@@ -4348,7 +4273,8 @@ impl<'a> Resolver<'a> {
         }
 
         if top == root_path {
-            let result = self.dir_cache_mut().get_or_put(root_path)?;
+            // SAFETY: as above.
+            let result = unsafe { &mut *self.dir_cache() }.get_or_put(root_path)?;
             if result.status != allocators::ItemStatus::Unknown {
                 top_parent = result;
             } else {
@@ -4390,17 +4316,14 @@ impl<'a> Resolver<'a> {
         let open_dir_count = core::cell::Cell::new(0usize);
 
         // When this function halts, any item not processed means it's not found.
-        // NOTE: capture only what the cleanup needs by-value (store_fd) / by-Cell
-        // (open_dir_count) so the guard doesn't pin `&mut self` across the loop
-        // body. `need_to_close_files()` is evaluated AT DROP TIME,
+        // NOTE: `need_to_close_files()` is evaluated AT DROP TIME,
         // not snapshotted up-front — the loop body calls
         // `Fs.FileSystem.setMaxFd()` which can flip `needToCloseFiles()`
         // mid-walk. Reach the RealFS via the `&'static` singleton accessor
         // instead of capturing a raw `*mut RealFS` (the read is `&self`-only).
-        let close_dirs_store_fd = self.store_fd;
         scopeguard::defer! {
             let n = open_dir_count.get();
-            if n > 0 && (!close_dirs_store_fd || Fs::FileSystem::get().fs.need_to_close_files()) {
+            if n > 0 && (!self.store_fd || Fs::FileSystem::get().fs.need_to_close_files()) {
                 let open_dirs = &bufs!(open_dirs)[0..n];
                 for open_dir in open_dirs {
                     open_dir.close();
@@ -4524,12 +4447,14 @@ impl<'a> Resolver<'a> {
                             //
                             //   openat(dfd: CWD, filename: "node_modules/react", flags: RDONLY|DIRECTORY) = -1 ENOENT (No such file or directory)
                             //   ...
-                            self.dir_cache_mut().mark_not_found(queue_top.result);
+                            // SAFETY: as for `get_or_put` above.
+                            unsafe { &mut *self.dir_cache() }.mark_not_found(queue_top.result);
                             rfs!().entries.mark_not_found(cached_dir_entry_result);
                             if err != crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                                 if enable_logging {
                                     let pretty = queue_top_unsafe_path;
-                                    let _ = self.log_mut().add_error_fmt(
+                                    // SAFETY: allocated (`set_log`), and the only borrow of the log during the call.
+                                    let _ = unsafe { &mut *self.log() }.add_error_fmt(
                                         None,
                                         bun_ast::Loc::default(),
                                         format_args!(
@@ -4758,13 +4683,13 @@ impl<'a> Resolver<'a> {
     // This closely follows the behavior of "tryLoadModuleUsingPaths()" in the
     // official TypeScript compiler
     pub(crate) fn match_tsconfig_paths(
-        &mut self,
+        &self,
         tsconfig: &TSConfigJSON,
         path: &[u8],
         kind: ast::ImportKind,
         out: &mut MatchResult,
     ) -> MatchStatus {
-        if let Some(debug) = self.debug_logs.as_mut() {
+        if let Some(debug) = self.debug_logs.enabled() {
             debug.add_note_fmt(format_args!(
                 "Matching \"{}\" against \"paths\" in \"{}\"",
                 bstr::BStr::new(path),
@@ -4781,7 +4706,7 @@ impl<'a> Resolver<'a> {
             abs_base_url = &tsconfig.base_url;
         }
 
-        if let Some(debug) = self.debug_logs.as_mut() {
+        if let Some(debug) = self.debug_logs.enabled() {
             debug.add_note_fmt(format_args!(
                 "Using \"{}\" as \"baseURL\"",
                 bstr::BStr::new(abs_base_url)
@@ -4881,7 +4806,7 @@ impl<'a> Resolver<'a> {
         // prefix. This matches the behavior of the TypeScript compiler.
         if longest_match_prefix_length != -1 {
             let longest_match = longest_match.unwrap();
-            if let Some(debug) = self.debug_logs.as_mut() {
+            if let Some(debug) = self.debug_logs.enabled() {
                 debug.add_note_fmt(format_args!(
                     "Found a fuzzy match for \"{}*{}\" in \"paths\"",
                     bstr::BStr::new(longest_match.prefix),
@@ -4953,7 +4878,7 @@ impl<'a> Resolver<'a> {
     /// only. Skip it, like esbuild's `matchTSConfigPaths` (which checks `.d.ts` only).
     /// This looks at the tsconfig text, not the `*` expansion: `"@/*": ["./src/*"]`
     /// must still resolve `import "@/env.d.ts"`.
-    fn is_type_only_tsconfig_path(&mut self, substitution: &[u8]) -> bool {
+    fn is_type_only_tsconfig_path(&self, substitution: &[u8]) -> bool {
         const DECLARATION_EXTS: [&[u8]; 3] = [b".d.ts", b".d.mts", b".d.cts"];
         let Some(ext) = DECLARATION_EXTS.iter().find(|ext| {
             substitution
@@ -4963,7 +4888,7 @@ impl<'a> Resolver<'a> {
         }) else {
             return false;
         };
-        if let Some(debug) = self.debug_logs.as_mut() {
+        if let Some(debug) = self.debug_logs.enabled() {
             debug.add_note_fmt(format_args!(
                 "Ignoring substitution \"{}\" because it ends in \"{}\"",
                 bstr::BStr::new(substitution),
@@ -4974,7 +4899,7 @@ impl<'a> Resolver<'a> {
     }
 
     pub(crate) fn load_package_imports(
-        &mut self,
+        &self,
         import_path: &[u8],
         // NOTE: `DirInfoRef` (not `&mut`) — `handle_esm_resolution` re-enters
         // `dir_cache` via `dir_info_cached(dirname(abs_esm_path))`; for any
@@ -4987,7 +4912,7 @@ impl<'a> Resolver<'a> {
         out: &mut MatchResult,
     ) -> MatchStatus {
         let package_json = dir_info.package_json().unwrap();
-        if let Some(debug) = self.debug_logs.as_mut() {
+        if let Some(debug) = self.debug_logs.enabled() {
             debug.add_note_fmt(format_args!(
                 "Looking for {} in \"imports\" map in {}",
                 bstr::BStr::new(import_path),
@@ -4999,7 +4924,7 @@ impl<'a> Resolver<'a> {
         let imports_map = package_json.imports.as_ref().unwrap();
 
         if import_path.len() == 1 || import_path.starts_with(b"#/") {
-            if let Some(debug) = self.debug_logs.as_mut() {
+            if let Some(debug) = self.debug_logs.enabled() {
                 debug.add_note_fmt(format_args!(
                     "The path \"{}\" must not equal \"#\" and must not start with \"#/\"",
                     bstr::BStr::new(import_path)
@@ -5008,10 +4933,6 @@ impl<'a> Resolver<'a> {
             return MatchStatus::NotFound;
         }
 
-        // NOTE: keeping the `ESModule`'s borrow of `self.debug_logs` alive
-        // across the subsequent `&mut self` calls would be aliased-&mut UB, so
-        // the `ESModule` is constructed as a temporary whose
-        // borrow of `self.debug_logs` ends as soon as `resolve_imports` returns.
         let esm_resolution = ESModule {
             conditions: match kind {
                 ast::ImportKind::Require | ast::ImportKind::RequireResolve => {
@@ -5019,7 +4940,7 @@ impl<'a> Resolver<'a> {
                 }
                 _ => &self.opts.conditions.import,
             },
-            debug_logs: self.debug_logs.as_mut(),
+            debug_logs: self.debug_logs.enabled(),
             stack_check: StackCheck::init(),
         }
         .resolve_imports(import_path, &imports_map.root);
@@ -5077,7 +4998,7 @@ impl<'a> Resolver<'a> {
     }
 
     pub(crate) fn check_browser_map<const KIND: BrowserMapPathKind>(
-        &mut self,
+        &self,
         dir_info: &DirInfo::DirInfo,
         input_path_: &[u8],
     ) -> Option<&'static [u8]> {
@@ -5126,7 +5047,7 @@ impl<'a> Resolver<'a> {
             remapped: b"",
             cleaned,
             input_path,
-            extension_order: self.opts.ext_order_slice(self.extension_order),
+            extension_order: self.opts.ext_order_slice(self.extension_order.get()),
             map: &package_json.browser_map,
         };
 
@@ -5175,7 +5096,7 @@ impl<'a> Resolver<'a> {
     }
 
     pub(crate) fn load_from_main_field(
-        &mut self,
+        &self,
         path: &[u8],
         // NOTE: `DirInfoRef` (not `&mut`) — `get_enclosing_browser_scope()`
         // may return `dir_info` itself (self-browser-scope),
@@ -5188,7 +5109,7 @@ impl<'a> Resolver<'a> {
     ) -> MatchStatus {
         let field_rel_path = _field_rel_path;
         // Is this a directory?
-        if let Some(debug) = self.debug_logs.as_mut() {
+        if let Some(debug) = self.debug_logs.enabled() {
             debug.add_note_fmt(format_args!(
                 "Found main field \"{}\" with path \"{}\"",
                 bstr::BStr::new(field),
@@ -5199,7 +5120,7 @@ impl<'a> Resolver<'a> {
 
         macro_rules! dec_ret {
             ($e:expr) => {{
-                if let Some(d) = self.debug_logs.as_mut() {
+                if let Some(d) = self.debug_logs.enabled() {
                     d.decrease_indent();
                 }
                 return $e;
@@ -5291,7 +5212,7 @@ impl<'a> Resolver<'a> {
             extension_order,
             out,
         );
-        if let Some(d) = self.debug_logs.as_mut() {
+        if let Some(d) = self.debug_logs.enabled() {
             d.decrease_indent();
         }
         r
@@ -5303,40 +5224,28 @@ impl<'a> Resolver<'a> {
     // NOTE: `dir_info` is a `DirInfoRef` (matching spec `*DirInfo`) so
     // `load_index_with_extension` may re-borrow without aliasing the caller's `&mut`.
     pub(crate) fn load_as_index(
-        &mut self,
+        &self,
         dir_info: DirInfoRef,
         extension_order: options::ExtOrder,
         out: &mut MatchResult,
     ) -> MatchStatus {
         // Try the "index" file with extensions
-        // NOTE: index by `0..len` so each iteration takes a fresh short
-        // borrow of `self.opts` that ends before `&mut self` is taken by
-        // `load_index_with_extension` (matches `extra_cjs_extensions` loop below).
-        let n = self.opts.ext_order_slice(extension_order).len();
-        for i in 0..n {
-            // BACKREF: `RawSlice` detaches the `&self.opts` borrow so the loop
-            // body can take `&mut self`. Backing `Box<[u8]>` is owned by
-            // `self.opts` and never mutated while the resolver runs.
-            let ext = bun_ptr::RawSlice::new(&*self.opts.ext_order_slice(extension_order)[i]);
+        for ext in self.opts.ext_order_slice(extension_order) {
             if self
-                .load_index_with_extension(dir_info, &ext, out)
+                .load_index_with_extension(dir_info, ext, out)
                 .is_success()
             {
                 return MatchStatus::Success;
             }
         }
-        // NOTE: index by `0..len` so each iteration takes a fresh short
-        // borrow of `self.opts` that ends before `&mut self` is taken by
-        // `load_index_with_extension` (avoids the forbidden lifetime-extension cast).
-        let n = self.opts.extra_cjs_extensions.len();
-        for i in 0..n {
-            // BACKREF: see `RawSlice` note above — backing `Box<[u8]>` in
-            // `extra_cjs_extensions` is heap-stable for the resolver's life.
-            let ext = bun_ptr::RawSlice::new(&*self.opts.extra_cjs_extensions[i]);
-            if self
-                .load_index_with_extension(dir_info, &ext, out)
-                .is_success()
-            {
+        if !self.opts.extra_cjs_extensions.is_empty() {
+            let extensions = self.opts.extra_cjs_extensions.take();
+            let found = extensions.iter().any(|ext| {
+                self.load_index_with_extension(dir_info, ext, out)
+                    .is_success()
+            });
+            drop(self.opts.extra_cjs_extensions.replace(extensions));
+            if found {
                 return MatchStatus::Success;
             }
         }
@@ -5345,7 +5254,7 @@ impl<'a> Resolver<'a> {
     }
 
     fn load_index_with_extension(
-        &mut self,
+        &self,
         dir_info: DirInfoRef,
         ext: &[u8],
         out: &mut MatchResult,
@@ -5406,7 +5315,7 @@ impl<'a> Resolver<'a> {
                 };
                 let out_buf: &[u8] = out_buf.as_bytes();
 
-                if let Some(debug) = self.debug_logs.as_mut() {
+                if let Some(debug) = self.debug_logs.enabled() {
                     debug
                         .add_note_fmt(format_args!("Found file: \"{}\"", bstr::BStr::new(out_buf)));
                 }
@@ -5436,7 +5345,7 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        if let Some(debug) = self.debug_logs.as_mut() {
+        if let Some(debug) = self.debug_logs.enabled() {
             debug.add_note_fmt(format_args!(
                 "Failed to find file: \"{}/{}\"",
                 bstr::BStr::new(dir_info.abs_path),
@@ -5448,7 +5357,7 @@ impl<'a> Resolver<'a> {
     }
 
     pub(crate) fn load_as_index_with_browser_remapping(
-        &mut self,
+        &self,
         // NOTE: `DirInfoRef` (not `&mut`) — `get_enclosing_browser_scope()`
         // may return `dir_info` itself (self-browser-scope),
         // which would alias a live `&mut`.
@@ -5551,12 +5460,12 @@ impl<'a> Resolver<'a> {
     }
 
     pub(crate) fn load_as_file_or_directory(
-        &mut self,
+        &self,
         path: &[u8],
         kind: ast::ImportKind,
         out: &mut MatchResult,
     ) -> MatchStatus {
-        let extension_order = self.extension_order;
+        let extension_order = self.extension_order.get();
 
         // Is this a file?
         if let Some(file) = self.load_as_file(path, extension_order) {
@@ -5603,7 +5512,7 @@ impl<'a> Resolver<'a> {
         }
 
         // Is this a directory?
-        if let Some(debug) = self.debug_logs.as_mut() {
+        if let Some(debug) = self.debug_logs.enabled() {
             debug.add_note_fmt(format_args!(
                 "Attempting to load \"{}\" as a directory",
                 bstr::BStr::new(path)
@@ -5612,7 +5521,7 @@ impl<'a> Resolver<'a> {
         }
         macro_rules! dec_ret {
             ($e:expr) => {{
-                if let Some(d) = self.debug_logs.as_mut() {
+                if let Some(d) = self.debug_logs.enabled() {
                     d.decrease_indent();
                 }
                 return $e;
@@ -5642,18 +5551,14 @@ impl<'a> Resolver<'a> {
             package_json = Some(std::ptr::from_ref(pkg_json));
             if pkg_json.main_fields.count() > 0 {
                 let main_field_values = &pkg_json.main_fields;
-                // BACKREF: `RawSlice` detaches the `&self.opts.main_fields`
-                // borrow so the loop body can take `&mut self`. Backing
-                // `Box<[Box<[u8]>]>` heap buffer is owned by `self.opts` and
-                // never mutated during resolve.
-                let main_field_keys = bun_ptr::RawSlice::<Box<[u8]>>::new(&self.opts.main_fields);
+                let main_field_keys = &self.opts.main_fields;
                 let mf_ext_order = options::ExtOrder::MainField;
                 // The bundler projects "user did not pass --main-fields" as an
                 // explicit bool because the owned `Box<[Box<[u8]>]>` can never
                 // alias a static default to compare pointers against.
                 let auto_main = self.opts.main_fields_is_default;
 
-                if let Some(debug) = self.debug_logs.as_mut() {
+                if let Some(debug) = self.debug_logs.enabled() {
                     debug.add_note_fmt(format_args!(
                         "Searching for main fields in \"{}\"",
                         bstr::BStr::new(pkg_json.source.path.text)
@@ -5665,7 +5570,7 @@ impl<'a> Resolver<'a> {
                     let field_rel_path = match main_field_values.get(key) {
                         Some(v) => v,
                         None => {
-                            if let Some(debug) = self.debug_logs.as_mut() {
+                            if let Some(debug) = self.debug_logs.enabled() {
                                 debug.add_note_fmt(format_args!(
                                     "Did not find main field \"{}\"",
                                     bstr::BStr::new(key)
@@ -5746,7 +5651,7 @@ impl<'a> Resolver<'a> {
                             // Additionally, if this is for the runtime, use the "main" field.
                             // If it doesn't exist, the "module" field will be used.
                             if self.prefer_module_field && kind != ast::ImportKind::Require {
-                                if let Some(debug) = self.debug_logs.as_mut() {
+                                if let Some(debug) = self.debug_logs.enabled() {
                                     debug.add_note_fmt(format_args!(
                                         "Resolved to \"{}\" using the \"{}\" field in \"{}\"",
                                         bstr::BStr::new(out.path_pair.primary.text()),
@@ -5773,7 +5678,7 @@ impl<'a> Resolver<'a> {
                                 };
                                 dec_ret!(MatchStatus::Success);
                             } else {
-                                if let Some(debug) = self.debug_logs.as_mut() {
+                                if let Some(debug) = self.debug_logs.enabled() {
                                     debug.add_note_fmt(format_args!(
                                         "Resolved to \"{}\" using the \"main\" field in \"{}\"",
                                         bstr::BStr::new(auto_main_result.path_pair.primary.text()),
@@ -5806,7 +5711,7 @@ impl<'a> Resolver<'a> {
     }
 
     pub(crate) fn load_as_file(
-        &mut self,
+        &self,
         path: &[u8],
         extension_order: options::ExtOrder,
     ) -> Option<LoadResult> {
@@ -5816,7 +5721,7 @@ impl<'a> Resolver<'a> {
         // under Stacked Borrows. We re-borrow `&mut *rfs` at each use site.
         let rfs: *mut Fs::file_system::RealFS = self.rfs_ptr();
 
-        if let Some(debug) = self.debug_logs.as_mut() {
+        if let Some(debug) = self.debug_logs.enabled() {
             debug.add_note_fmt(format_args!(
                 "Attempting to load \"{}\" as a file",
                 bstr::BStr::new(path)
@@ -5825,7 +5730,7 @@ impl<'a> Resolver<'a> {
         }
         macro_rules! dec_ret {
             ($e:expr) => {{
-                if let Some(d) = self.debug_logs.as_mut() {
+                if let Some(d) = self.debug_logs.enabled() {
                     d.decrease_indent();
                 }
                 return $e;
@@ -5835,10 +5740,9 @@ impl<'a> Resolver<'a> {
         let dir_path = strings::without_trailing_slash_windows_path(Dirname::dirname(path));
 
         // PORT — `dir_entry` is a slot in the BSSMap singleton (ARENA, see
-        // LIFETIMES.tsv); wrap in `BackRef` so later `&mut self` calls
-        // (debug_logs / load_extension / dirname_store) don't trip borrowck
-        // while each read goes through safe `BackRef: Deref` (pointee outlives
-        // holder by ARENA invariant).
+        // LIFETIMES.tsv); wrap in `BackRef` so it does not keep the `&mut RealFS`
+        // borrowed, while each read goes through safe `BackRef: Deref` (pointee
+        // outlives holder by ARENA invariant).
         // SAFETY: `rfs` points at the process-global RealFS singleton (see note at fn top).
         let dir_entry: bun_ptr::BackRef<Fs::file_system::real_fs::EntriesOption> =
             match unsafe { &mut *rfs }.read_directory(
@@ -5856,7 +5760,8 @@ impl<'a> Resolver<'a> {
                 crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
                 | crate::Error::Sys(bun_errno::SystemErrno::ENOTDIR) => {}
                 _ => {
-                    let _ = self.log_mut().add_error_fmt(
+                    // SAFETY: allocated (`set_log`), and the only borrow of the log during the call.
+                    let _ = unsafe { &mut *self.log() }.add_error_fmt(
                         None,
                         bun_ast::Loc::EMPTY,
                         format_args!(
@@ -5873,7 +5778,7 @@ impl<'a> Resolver<'a> {
         let base = bun_paths::basename(path);
 
         // Try the plain path without any extensions
-        if let Some(debug) = self.debug_logs.as_mut() {
+        if let Some(debug) = self.debug_logs.enabled() {
             debug.add_note_fmt(format_args!(
                 "Checking for file \"{}\" ",
                 bstr::BStr::new(base)
@@ -5889,7 +5794,7 @@ impl<'a> Resolver<'a> {
             // rewrite inside `kind()` is serialized on the per-entry mutex.
             if unsafe { query.entry().kind(rfs, self.store_fd) } == Fs::file_system::EntryKind::File
             {
-                if let Some(debug) = self.debug_logs.as_mut() {
+                if let Some(debug) = self.debug_logs.enabled() {
                     debug.add_note_fmt(format_args!("Found file \"{}\" ", bstr::BStr::new(base)));
                 }
 
@@ -5922,30 +5827,20 @@ impl<'a> Resolver<'a> {
             dec_ret!(None);
         }
         bufs!(load_as_file)[..path.len()].copy_from_slice(path);
-        // NOTE: index by `0..len` so each iteration takes a fresh short
-        // borrow of `self.opts` that ends before `&mut self` is taken by
-        // `load_extension` (matches `extra_cjs_extensions` loop below).
-        let n = self.opts.ext_order_slice(extension_order).len();
-        for i in 0..n {
-            // BACKREF: `RawSlice` detaches the `&self.opts` borrow so the loop
-            // body can take `&mut self`. Backing `Box<[u8]>` is owned by
-            // `self.opts` and never mutated while the resolver runs.
-            let ext = bun_ptr::RawSlice::new(&*self.opts.ext_order_slice(extension_order)[i]);
-            if let Some(result) = self.load_extension(base, path, &ext, dir_entry) {
+        for ext in self.opts.ext_order_slice(extension_order) {
+            if let Some(result) = self.load_extension(base, path, ext, dir_entry) {
                 dec_ret!(Some(result));
             }
         }
 
-        // NOTE: index by `0..len` so each iteration takes a fresh short
-        // borrow of `self.opts` that ends before `&mut self` is taken by
-        // `load_extension` (avoids the forbidden lifetime-extension cast).
-        let n = self.opts.extra_cjs_extensions.len();
-        for i in 0..n {
-            // BACKREF: see `RawSlice` note above — backing `Box<[u8]>` in
-            // `extra_cjs_extensions` is heap-stable for the resolver's life.
-            let ext = bun_ptr::RawSlice::new(&*self.opts.extra_cjs_extensions[i]);
-            if let Some(result) = self.load_extension(base, path, &ext, dir_entry) {
-                dec_ret!(Some(result));
+        if !self.opts.extra_cjs_extensions.is_empty() {
+            let extensions = self.opts.extra_cjs_extensions.take();
+            let found = extensions
+                .iter()
+                .find_map(|ext| self.load_extension(base, path, ext, dir_entry));
+            drop(self.opts.extra_cjs_extensions.replace(extensions));
+            if found.is_some() {
+                dec_ret!(found);
             }
         }
 
@@ -5973,7 +5868,7 @@ impl<'a> Resolver<'a> {
                         if unsafe { query.entry().kind(rfs, self.store_fd) }
                             == Fs::file_system::EntryKind::File
                         {
-                            if let Some(debug) = self.debug_logs.as_mut() {
+                            if let Some(debug) = self.debug_logs.enabled() {
                                 debug.add_note_fmt(format_args!(
                                     "Rewrote to \"{}\" ",
                                     bstr::BStr::new(&buffer[..])
@@ -6013,7 +5908,7 @@ impl<'a> Resolver<'a> {
                             }));
                         }
                     }
-                    if let Some(debug) = self.debug_logs.as_mut() {
+                    if let Some(debug) = self.debug_logs.enabled() {
                         debug.add_note_fmt(format_args!(
                             "Failed to rewrite \"{}\" ",
                             bstr::BStr::new(base)
@@ -6023,7 +5918,7 @@ impl<'a> Resolver<'a> {
             }
         }
 
-        if let Some(debug) = self.debug_logs.as_mut() {
+        if let Some(debug) = self.debug_logs.enabled() {
             debug.add_note_fmt(format_args!(
                 "Failed to find \"{}\" ",
                 bstr::BStr::new(path)
@@ -6033,7 +5928,7 @@ impl<'a> Resolver<'a> {
         if FeatureFlags::WATCH_DIRECTORIES {
             // For existent directories which don't find a match
             // Start watching it automatically,
-            if let Some(watcher) = self.watcher.as_ref() {
+            if let Some(watcher) = self.watcher.get() {
                 if let Some((dir, fd)) = dir_entry.get().dir_and_fd() {
                     watcher.watch(dir, fd);
                 }
@@ -6043,7 +5938,7 @@ impl<'a> Resolver<'a> {
     }
 
     fn load_extension(
-        &mut self,
+        &self,
         base: &[u8],
         path: &[u8],
         ext: &[u8],
@@ -6060,7 +5955,7 @@ impl<'a> Resolver<'a> {
         buffer[path.len()..].copy_from_slice(ext);
         let file_name = &buffer[path.len() - base.len()..buffer.len()];
 
-        if let Some(debug) = self.debug_logs.as_mut() {
+        if let Some(debug) = self.debug_logs.enabled() {
             debug.add_note_fmt(format_args!(
                 "Checking for file \"{}\" ",
                 bstr::BStr::new(&buffer[..])
@@ -6073,7 +5968,7 @@ impl<'a> Resolver<'a> {
             // rewrite inside `kind()` is serialized on the per-entry mutex.
             if unsafe { query.entry().kind(rfs, self.store_fd) } == Fs::file_system::EntryKind::File
             {
-                if let Some(debug) = self.debug_logs.as_mut() {
+                if let Some(debug) = self.debug_logs.enabled() {
                     debug.add_note_fmt(format_args!(
                         "Found file \"{}\" ",
                         bstr::BStr::new(&buffer[..])
@@ -6103,7 +5998,7 @@ impl<'a> Resolver<'a> {
     }
 
     fn dir_info_uncached(
-        &mut self,
+        &self,
         info: *mut DirInfo::DirInfo,
         path: &'static [u8],
         _entries: *mut Fs::file_system::real_fs::EntriesOption,
@@ -6118,8 +6013,7 @@ impl<'a> Resolver<'a> {
 
         // SAFETY: RealFS is the process-global ARENA singleton. `Entry::kind` /
         // `Entry::symlink` take it by raw pointer and reborrow only internally,
-        // so the interleaved `&mut self` calls below cannot invalidate `rfs_ptr`
-        // under Stacked Borrows.
+        // so the calls below cannot invalidate `rfs_ptr` under Stacked Borrows.
         let rfs_ptr: *mut Fs::file_system::RealFS = self.rfs_ptr();
         // SAFETY: `_entries` is a live slot (caller contract); the payload
         // `DirEntry` is a separate process-lifetime allocation, so the shared
@@ -6295,7 +6189,7 @@ impl<'a> Resolver<'a> {
                 .or(parent_.package_json_for_dependencies);
 
             // Make sure "absRealPath" is the real path of the directory (resolving any symlinks)
-            if !self.opts.preserve_symlinks {
+            if !self.opts.preserve_symlinks.get() {
                 // The only caller that reaches this with `parent` set
                 // (`dir_info_cached_miss`) already holds `entries_mutex`, and that
                 // mutex is non-recursive, so go through the `_locked` accessor.
@@ -6318,7 +6212,7 @@ impl<'a> Resolver<'a> {
                         // rewrite inside `symlink()` is serialized on `Entry.mutex`.
                         let mut symlink = unsafe { entry.symlink(rfs_ptr, self.store_fd) };
                         if !symlink.is_empty() {
-                            if let Some(logs) = self.debug_logs.as_mut() {
+                            if let Some(logs) = self.debug_logs.enabled() {
                                 let mut buf = Vec::new();
                                 let _ = write!(
                                     &mut buf,
@@ -6342,7 +6236,7 @@ impl<'a> Resolver<'a> {
                                 .append_slice(joined)
                                 .expect("unreachable");
 
-                            if let Some(logs) = self.debug_logs.as_mut() {
+                            if let Some(logs) = self.debug_logs.enabled() {
                                 let mut buf = Vec::new();
                                 let _ = write!(
                                     &mut buf,
@@ -6428,7 +6322,7 @@ impl<'a> Resolver<'a> {
                             info.package_json_for_dependencies = info.package_json;
                         }
 
-                        if let Some(logs) = self.debug_logs.as_mut() {
+                        if let Some(logs) = self.debug_logs.enabled() {
                             logs.add_note_fmt(format_args!(
                                 "Resolved package.json in \"{}\"",
                                 bstr::BStr::new(path)
@@ -6484,12 +6378,12 @@ impl<'a> Resolver<'a> {
                 };
                 // It is for the resolvers that read it. What is wrong with it is not an error of
                 // one that reads another in its place.
-                let (mut ignored, log) = (bun_ast::Log::init(), self.log);
+                let (mut ignored, log) = (bun_ast::Log::init(), self.log.get());
                 if self.opts.tsconfig_override.is_some() {
-                    self.log = NonNull::from(&mut ignored);
+                    self.log.set(NonNull::from(&mut ignored));
                 }
                 let loaded = self.load_tsconfig(tsconfigpath, fd);
-                self.log = log;
+                self.log.set(log);
                 // A leaked Box, interned into DirInfo: it outlives the resolver.
                 info.tsconfig_json = loaded?.map(|it| {
                     NonNull::new(bun_core::heap::into_raw(it)).expect("heap::alloc is non-null")
@@ -6503,7 +6397,7 @@ impl<'a> Resolver<'a> {
 
     /// The configuration file at `tsconfigpath`, with what it inherits from those that it extends.
     fn load_tsconfig(
-        &mut self,
+        &self,
         tsconfigpath: &[u8],
         fd: FD,
     ) -> crate::CrateResult<Option<Box<TSConfigJSON>>> {
@@ -6513,7 +6407,8 @@ impl<'a> Resolver<'a> {
             Err(err) => {
                 let pretty = tsconfigpath;
                 if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
-                    let _ = self.log_mut().add_error_fmt(
+                    // SAFETY: allocated (`set_log`), and the only borrow of the log during the call.
+                    let _ = unsafe { &mut *self.log() }.add_error_fmt(
                         None,
                         bun_ast::Loc::EMPTY,
                         format_args!("Cannot find tsconfig file {}", bun_core::fmt::quote(pretty)),
@@ -6521,7 +6416,8 @@ impl<'a> Resolver<'a> {
                 } else if err != crate::Error::ParseErrorAlreadyLogged
                     && err != crate::Error::Sys(bun_errno::SystemErrno::EISDIR)
                 {
-                    let _ = self.log_mut().add_error_fmt(
+                    // SAFETY: allocated (`set_log`), and the only borrow of the log during the call.
+                    let _ = unsafe { &mut *self.log() }.add_error_fmt(
                         None,
                         bun_ast::Loc::EMPTY,
                         format_args!(
@@ -6564,7 +6460,8 @@ impl<'a> Resolver<'a> {
                 let parent_config_maybe: Option<*mut TSConfigJSON> = match parsed {
                     Ok(v) => v.map(bun_core::heap::into_raw),
                     Err((err, shown_path)) => {
-                        let _ = self.log_mut().add_debug_fmt(
+                        // SAFETY: allocated (`set_log`), and the only borrow of the log during the call.
+                        let _ = unsafe { &mut *self.log() }.add_debug_fmt(
                             None,
                             bun_ast::Loc::EMPTY,
                             format_args!(
@@ -6647,12 +6544,12 @@ impl<'a> Resolver<'a> {
     /// `opts.tsconfig_override`, which this resolver and its workers read in place of the
     /// configuration file of every directory. It is not in `DirInfo`, which every resolver of the
     /// process shares: the runtime, and every `Bun.build`. `None`: there is none.
-    fn tsconfig_override(&mut self) -> Option<Option<Arc<TSConfigJSON>>> {
+    fn tsconfig_override(&self) -> Option<Option<Arc<TSConfigJSON>>> {
         if !self.opts.load_tsconfig_json {
             return None;
         }
         let path = self.opts.tsconfig_override.as_deref()?;
-        if self.opts.tsconfig_override_json.is_none() {
+        if self.opts.tsconfig_override_json.get().is_none() {
             let mut path = [path, b"\0"].concat();
             let z = bun_core::ZStr::from_buf(&path, path.len() - 1);
             let is_directory = bun_sys::directory_exists_at(FD::cwd(), z).unwrap_or(false);
@@ -6669,14 +6566,14 @@ impl<'a> Resolver<'a> {
                 path = joined.to_vec();
             }
             let loaded = self.load_tsconfig(&path, FD::INVALID).ok().flatten();
-            self.opts.tsconfig_override_json = Some(loaded.map(Arc::from));
+            let _ = self.opts.tsconfig_override_json.set(loaded.map(Arc::from));
         }
-        self.opts.tsconfig_override_json.clone()
+        self.opts.tsconfig_override_json.get().cloned()
     }
 
     /// `DirInfo::enclosing_tsconfig_json`, for this resolver.
     pub(crate) fn enclosing_tsconfig_json(
-        &mut self,
+        &self,
         dir_info: &DirInfo::DirInfo,
     ) -> Option<TSConfigRef> {
         match self.tsconfig_override() {
@@ -6688,7 +6585,7 @@ impl<'a> Resolver<'a> {
     }
 
     /// `DirInfo::tsconfig_json`, for this resolver.
-    pub fn tsconfig_json(&mut self, dir_info: &DirInfo::DirInfo) -> Option<TSConfigRef> {
+    pub fn tsconfig_json(&self, dir_info: &DirInfo::DirInfo) -> Option<TSConfigRef> {
         match self.tsconfig_override() {
             Some(it) => it.map(TSConfigRef::Override),
             None => dir_info.tsconfig_json().map(TSConfigRef::OfDirectory),
@@ -6771,7 +6668,7 @@ impl<'b> BrowserMapPath<'b> {
                 }
                 ext_buf[cleaned.len()..cleaned.len() + ext.len()].copy_from_slice(ext);
                 let new_path = &ext_buf[0..cleaned.len() + ext.len()];
-                // if let Some(debug) = r.debug_logs.as_mut() {
+                // if let Some(debug) = r.debug_logs.enabled() {
                 //     debug.add_note_fmt(format_args!("Checking for \"{}\" ", bstr::BStr::new(new_path)));
                 // }
                 if let Some(_remapped) = map.get(new_path) {
@@ -6810,7 +6707,7 @@ impl<'b> BrowserMapPath<'b> {
                 }
                 ext_buf[index_path.len()..index_path.len() + ext.len()].copy_from_slice(ext);
                 let new_path = &ext_buf[0..index_path.len() + ext.len()];
-                // if let Some(debug) = r.debug_logs.as_mut() {
+                // if let Some(debug) = r.debug_logs.enabled() {
                 //     debug.add_note_fmt(format_args!("Checking for \"{}\" ", bstr::BStr::new(new_path)));
                 // }
                 if let Some(_remapped) = map.get(new_path) {

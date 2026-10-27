@@ -5,6 +5,7 @@
 //! awaiting `.defer()`, so nothing else orders the pass's completion after this hop).
 
 use crate::BundleV2;
+use crate::bundle_v2::{LoopPoster, MiniShared};
 // Task is `(tag: u8, ptr: *mut ())` owned by bun_event_loop;
 // runtime owns the match-loop. See PORTING.md §Dispatch.
 use bun_event_loop::ConcurrentTask::ConcurrentTask;
@@ -65,21 +66,21 @@ impl DeferredBatchTask {
     fn come_back(&mut self) {
         let this: *mut Self = self;
         let bv2 = self.get_bundle_v2();
-        match bv2.mini_poster {
-            // bake: the plugins run on the loop that runs the bundle; already there.
-            None => bv2.decrement_scan_counter(),
-            Some(mini) => {
+        match bv2.poster {
+            Some(LoopPoster::Mini(mini)) => {
                 // SAFETY: `returned` is this struct's own node; `BundleV2` (and so `self`) is alive until
-                // the bundle thread runs this. `mini` is live: see `BundleV2::mini_poster`.
+                // the bundle thread runs this. `mini`: see `LoopPoster::Mini`.
                 unsafe {
-                    mini.as_ref()
-                        .enqueue_task_concurrent_with_extra_ctx::<Self, BundleV2<'static>>(
-                            this,
-                            |_, bv2| (*bv2).decrement_scan_counter(),
-                            core::mem::offset_of!(Self, returned),
-                        );
+                    MiniShared::enqueue_task_concurrent_with_extra_ctx::<Self, BundleV2<'static>>(
+                        mini.as_ptr(),
+                        this,
+                        |_, bv2| (*bv2).decrement_scan_counter(),
+                        core::mem::offset_of!(Self, returned),
+                    );
                 }
             }
+            // bake: the plugins run on the loop that runs the bundle; already there.
+            _ => bv2.decrement_scan_counter(),
         }
     }
 }

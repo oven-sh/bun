@@ -176,7 +176,7 @@ pub struct BundleOptions {
     pub extension_order: ExtensionOrder,
     pub conditions: Conditions,
     pub external: ExternalModules,
-    pub extra_cjs_extensions: Box<[Box<[u8]>]>,
+    pub extra_cjs_extensions: bun_collections::VecCell<Box<[u8]>>,
     pub framework: Option<Framework>,
     pub global_cache: bun_options_types::global_cache::GlobalCache,
     // The bundler
@@ -196,12 +196,13 @@ pub struct BundleOptions {
     pub mark_builtins_as_external: bool,
     pub polyfill_node_globals: bool,
     pub install_preference: bun_options_types::offline_mode::OfflineMode,
-    pub preserve_symlinks: bool,
+    pub preserve_symlinks: core::cell::Cell<bool>,
     pub rewrite_jest_for_tests: bool,
     pub tsconfig_override: Option<Box<[u8]>>,
     /// The file at `tsconfig_override`, once `Resolver::tsconfig_override` has read it.
     /// `Some(None)`: it cannot be read.
-    pub tsconfig_override_json: Option<Option<std::sync::Arc<crate::tsconfig_json::TSConfigJSON>>>,
+    pub tsconfig_override_json:
+        core::cell::OnceCell<Option<std::sync::Arc<crate::tsconfig_json::TSConfigJSON>>>,
     pub production: bool,
     pub force_node_env: ForceNodeEnv,
     // Bundler-only fields read via `c.resolver.opts` in

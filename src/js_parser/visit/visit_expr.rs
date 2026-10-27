@@ -749,17 +749,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             (record.path.text, record.range)
                         };
                         // We must visit it to convert inline_identifiers and record usage
-                        // Reborrow via the field-disjoint `Lexer::log()` accessor
-                        // so `&p.lexer` and `&mut p.options` split cleanly under
-                        // borrowck.
                         let log = p.lexer.log();
                         let source = p.source;
-                        let Ok(macro_result) = p
-                            .options
-                            .macro_context
-                            .as_deref_mut()
-                            .expect("macro_context")
-                            .call(
+                        let Ok(macro_result) =
+                            p.options.macro_context.expect("macro_context").call(
                                 record_path_text,
                                 source.path.source_dir(),
                                 log,
@@ -2361,25 +2354,17 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 };
                 let start_error_count = p.log().msgs.len();
                 p.macro_call_count += 1;
-                // Reborrow via the field-disjoint `Lexer::log()` accessor
-                // so `&p.lexer` and `&mut p.options` split cleanly under
-                // borrowck.
                 let log = p.lexer.log();
                 let source = p.source;
-                let macro_result = match p
-                    .options
-                    .macro_context
-                    .as_deref_mut()
-                    .expect("macro_context")
-                    .call(
-                        record_path_text,
-                        source.path.source_dir(),
-                        log,
-                        source,
-                        record_range,
-                        copied,
-                        name,
-                    ) {
+                let macro_result = match p.options.macro_context.expect("macro_context").call(
+                    record_path_text,
+                    source.path.source_dir(),
+                    log,
+                    source,
+                    record_range,
+                    copied,
+                    name,
+                ) {
                     Ok(r) => r,
                     Err(_) => {
                         if p.log().msgs.len() == start_error_count {

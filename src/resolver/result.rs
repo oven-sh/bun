@@ -3,12 +3,13 @@
 //! value types the [`crate::Resolver`] state machine produces and threads
 //! through `resolve_without_remapping` / `load_as_file_or_directory`.
 
+use core::cell::Cell;
 use std::io::Write as _;
 
 use ::bun_ast::import_record as ast;
 use ::bun_install_types::resolver_hooks as Install;
 use bun_alloc as allocators;
-use bun_core::MutableString;
+use bun_collections::VecCell;
 use bun_sys::Fd as FD;
 
 use crate::dir_info::DirInfoRef;
@@ -302,10 +303,13 @@ impl Clone for DirEntryResolveQueueItem {
     }
 }
 
+/// The notes of the resolve in progress, kept only at `Level::Verbose`.
+#[derive(Default)]
 pub struct DebugLogs {
-    pub(crate) what: Vec<u8>,
-    pub(crate) indent: MutableString,
-    pub(crate) notes: Vec<bun_ast::Data>,
+    enabled: Cell<bool>,
+    /// In spaces.
+    indent: Cell<usize>,
+    notes: VecCell<bun_ast::Data>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -315,36 +319,41 @@ pub enum FlushMode {
 }
 
 impl DebugLogs {
-    pub fn init() -> core::result::Result<DebugLogs, bun_alloc::AllocError> {
-        let mutable = MutableString::init(0)?;
-        Ok(DebugLogs {
-            what: Vec::new(),
-            indent: mutable,
-            notes: Vec::new(),
-        })
+    /// `Some` once [`Self::enable`] was called.
+    #[inline]
+    pub(crate) fn enabled(&self) -> Option<&DebugLogs> {
+        self.enabled.get().then_some(self)
     }
 
-    // deinit → Drop (only frees `notes`)
-
+    /// Starts over, with no notes and no indent.
     #[cold]
-    pub(crate) fn increase_indent(&mut self) {
-        self.indent.append(b" ").expect("unreachable");
+    pub fn enable(&self) {
+        self.enabled.set(true);
+        self.indent.set(0);
+        drop(self.notes.take());
     }
 
-    #[cold]
-    pub(crate) fn decrease_indent(&mut self) {
-        let new_len = self.indent.list.len() - 1;
-        self.indent.list.truncate(new_len);
+    pub(crate) fn take_notes(&self) -> Box<[bun_ast::Data]> {
+        self.notes.take().into_boxed_slice()
     }
 
     #[cold]
-    pub(crate) fn add_note(&mut self, text: Vec<u8>) {
-        let len = self.indent.len();
+    pub(crate) fn increase_indent(&self) {
+        self.indent.set(self.indent.get() + 1);
+    }
+
+    #[cold]
+    pub(crate) fn decrease_indent(&self) {
+        self.indent.set(self.indent.get().saturating_sub(1));
+    }
+
+    #[cold]
+    pub(crate) fn add_note(&self, text: Vec<u8>) {
+        let len = self.indent.get();
         let final_text = if len > 0 {
             let mut __text = Vec::with_capacity(text.len() + len);
-            __text.extend_from_slice(self.indent.list.as_slice());
+            __text.resize(len, b' ');
             __text.extend_from_slice(&text);
-            // d.notes.allocator.free(_text) — drop(text) is implicit
             __text
         } else {
             text
@@ -355,7 +364,7 @@ impl DebugLogs {
     }
 
     #[cold]
-    pub(crate) fn add_note_fmt(&mut self, args: core::fmt::Arguments<'_>) {
+    pub(crate) fn add_note_fmt(&self, args: core::fmt::Arguments<'_>) {
         let mut buf = Vec::new();
         write!(&mut buf, "{}", args).expect("unreachable");
         self.add_note(buf);

@@ -19,7 +19,7 @@ use bun_ast::{ImportKind, ImportRecordFlags};
 use crate::AstBuilder::AstBuilder;
 use crate::JSAst;
 use crate::Worker;
-use crate::bundle_v2::BundleV2;
+use crate::bundle_v2::{BundleV2, LoopPoster, MiniShared};
 use crate::cache::ExternalFreeFunction;
 use crate::options::{Loader, Target};
 use crate::parse_task::{self, ResultValue, Success, WatcherData, on_complete};
@@ -107,14 +107,14 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
     // Running `on_complete` inline on the worker thread would violate
     // `BundleV2::on_parse_task_complete`'s threading contract (it mutates the
     // bundler graph, which is owned by the main/bundler thread).
-    match worker.ctx.mini_poster {
-        None => {
+    match worker
+        .ctx
+        .poster
+        .as_ref()
+        .expect("bundle has an event loop")
+    {
+        LoopPoster::Js(poster) => {
             let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::create_from(result);
-            let poster = worker
-                .ctx
-                .js_poster
-                .as_ref()
-                .expect("JS-owned bundle has a poster");
             if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {
                 // Owning JS VM torn down mid-bundle: free the hop and the result.
                 // SAFETY: refused ⇒ we own the task box and the leaked result.
@@ -124,12 +124,16 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
                 }
             }
         }
-        Some(mini) => {
+        LoopPoster::Mini(mini) => {
             // SAFETY: `result` is a freshly Box-leaked `parse_task::Result` (above) and
             // `offset_of!(parse_task::Result, task)` is the intrusive task field within it.
-            // `mini` is live: see `BundleV2::mini_poster`.
+            // `mini`: see `LoopPoster::Mini`.
             unsafe {
-                mini.as_ref().enqueue_task_concurrent_with_extra_ctx::<parse_task::Result, BundleV2<'static>>(
+                MiniShared::enqueue_task_concurrent_with_extra_ctx::<
+                    parse_task::Result,
+                    BundleV2<'static>,
+                >(
+                    mini.as_ptr(),
                     result,
                     on_complete_mini,
                     offset_of!(parse_task::Result, task),
@@ -171,7 +175,7 @@ fn task_callback(
 
     let target = match &task.data {
         // Server-side
-        Data::ClientReferenceProxy(_) => ctx.transpiler().options.target,
+        Data::ClientReferenceProxy(_) => ctx.transpiler().options.target.get(),
         // Client-side,
         Data::ClientEntryWrapper(_) => Target::Browser,
     };

@@ -38,6 +38,7 @@ use crate::cache::ExternalFreeFunction;
 use crate::options::{self, Target};
 use crate::transpiler::Transpiler;
 use crate::{Index, IndexInt, LinkerContext};
+pub(crate) use bun_event_loop::MiniEventLoop::Shared as MiniShared;
 
 // ── re-exports so callers can reference these via `bundle_v2::…` ──
 pub use crate::ParseTask;
@@ -55,6 +56,17 @@ pub use api::JSBundler::FileMap;
 pub struct PendingImport {
     pub(crate) to_source_index: Index,
     pub(crate) import_record_index: u32,
+}
+
+/// How other threads deliver work to the loop that owns a bundle.
+pub enum LoopPoster {
+    /// A JS event loop (bake / dev server).
+    Js(bun_event_loop::JsPoster),
+    /// A mini loop (`bun build`, `Bun.build`'s bundle thread): the part of it that other threads
+    /// reach. It points into the `AnyEventLoop` given to `init`, which outlives the bundle. Every
+    /// task posted here is one of the bundle's pending items, so the bundle does not end before
+    /// its thread has run the task.
+    Mini(NonNull<MiniShared>),
 }
 
 pub struct BundleV2<'a> {
@@ -92,14 +104,8 @@ pub struct BundleV2<'a> {
     pub bun_watcher: Option<NonNull<bun_watcher::Watcher>>,
     pub plugins: Option<NonNull<JSBundlerPlugin>>,
     pub completion: Option<dispatch::CompletionHandle>,
-    /// When this bundle's owning loop is a JS event loop (bake / dev server):
-    /// how parse worker threads deliver work back to it.
-    pub js_poster: Option<bun_event_loop::JsPoster>,
-    /// When this bundle's owning loop is a mini loop (`bun build`, `Bun.build`'s bundle thread):
-    /// the part of it that other threads deliver work to. It points into the `AnyEventLoop` given
-    /// to `init`, which outlives the bundle. Every task posted here is one of the bundle's pending
-    /// items, so the bundle does not end before its thread has run the task.
-    pub mini_poster: Option<NonNull<bun_event_loop::MiniEventLoop::Shared>>,
+    /// `None` if `init` was given no loop.
+    pub poster: Option<LoopPoster>,
     /// Whose script the plugins' `onResolve` / `onLoad` callbacks continue: the context that called
     /// `Bun.build`. Once it has stopped a request is answered as cancelled instead of reaching them.
     pub plugin_context: bun_event_loop::ContextId,
@@ -175,8 +181,8 @@ impl<'a> BundleV2<'a> {
     }
 
     #[inline]
-    pub fn r#loop(&mut self) -> &EventLoop {
-        &mut self.linker.r#loop
+    pub fn r#loop(&self) -> EventLoop {
+        self.linker.r#loop
     }
 
     #[inline]
@@ -241,7 +247,7 @@ impl<'a> BundleV2<'a> {
         // browser-target request from a server-side build, which lazily
         // spins up a client transpiler.
         if !self.transpiler.options.server_components && self.linker.dev_server.is_none() {
-            if target == Target::Browser && self.transpiler.options.target.is_server_side() {
+            if target == Target::Browser && self.transpiler.options.target.get().is_server_side() {
                 if let Some(p) = self.client_transpiler {
                     // SAFETY: client_transpiler is live for `'a` (set in `init`);
                     // pointer carries write provenance (constructed from `&mut`
@@ -1577,7 +1583,7 @@ pub mod bv2_impl {
 
         unsafe extern "Rust" {
             /// Defined `#[no_mangle]` in `bun_jsc::hot_reloader`. Installs a
-            /// `NewHotReloader<BundleV2, AnyEventLoop, true>` watcher on the given
+            /// `NewHotReloader<BundleV2, true>` watcher on the given
             /// `BundleV2`. The bundler can't name the
             /// reloader generic (T6), so this is a definer-prefixed extern hook.
             /// `'static` matches the impl-side signature; the sole caller
@@ -1903,6 +1909,7 @@ pub mod bv2_impl {
     // that previously caused widespread "expected `BundleV2`, found `BundleV2`"
     // errors in cross-module call sites).
     pub use super::{BakeOptions, BundleV2, PendingImport};
+    use super::{LoopPoster, MiniShared};
 
     impl<'a> BundleV2<'a> {
         /// Folds the JS-loop lookup + enqueue so the bundler never dereferences
@@ -1920,10 +1927,9 @@ pub mod bv2_impl {
             }
             // From bake where the loop running the bundle is also the loop running
             // the plugins.
-            let poster = self
-                .js_poster
-                .as_ref()
-                .expect("No JavaScript event loop for transpiler plugins to run on");
+            let Some(LoopPoster::Js(poster)) = &self.poster else {
+                panic!("No JavaScript event loop for transpiler plugins to run on");
+            };
             if let bun_event_loop::Posted::Refused(task) = poster.post(task) {
                 // The JS VM running the plugins was torn down mid-bundle; the
                 // plugin hop will never run. Free the task if it is heap-owned.
@@ -1970,10 +1976,11 @@ pub mod bv2_impl {
             // SAFETY: `self.transpiler` (and the data its `&'a` fields borrow)
             // outlives this `BundleV2<'a>`; `for_worker` widens those borrows to
             // the same `'a`.
-            let mut ct: Transpiler<'a> =
-                unsafe { Transpiler::for_worker(this_transpiler, arena, this_transpiler.log) };
+            let mut ct: Transpiler<'a> = unsafe {
+                Transpiler::for_worker(this_transpiler, arena, this_transpiler.log_ptr())
+            };
 
-            ct.options.target = Target::Browser;
+            ct.options.target.set(Target::Browser);
             // Don't inherit SSR mode from the server target: the SSR pass
             // drops hook setter bindings, which is invalid for browser code.
             if ct.options.react_compiler.is_ssr() {
@@ -2020,7 +2027,7 @@ pub mod bv2_impl {
             // Re-project the resolver subset now that `target`/`conditions` etc.
             // have been overwritten for the browser.
             boxed.sync_resolver_opts();
-            boxed.resolver.env_loader = NonNull::new(this_env.cast());
+            boxed.resolver.env_loader.set(NonNull::new(this_env.cast()));
 
             // Park the owning Box first, then derive both the published `NonNull`
             // and the returned `&mut` from its final resting place. Taking the
@@ -2980,7 +2987,7 @@ pub mod bv2_impl {
                     // reshaped for borrowck — cannot hold two `&mut` into
                     // `self.graph` simultaneously, so re-derive the map per insert.
                     let key_text: Box<[u8]> = path.text.to_vec().into_boxed_slice();
-                    let main_target = self.transpiler.options.target;
+                    let main_target = self.transpiler.options.target.get();
                     let separate_ssr = self
                         .framework
                         .as_ref()
@@ -3195,10 +3202,11 @@ pub mod bv2_impl {
             heap: &'a ThreadLocalArena,
         ) -> Result<Box<BundleV2<'a>>, Error> {
             // The Box is heap-owned and dropped by the caller.
-            transpiler.options.mark_builtins_as_external =
-                transpiler.options.target.is_bun() || transpiler.options.target == Target::Node;
+            transpiler.options.mark_builtins_as_external = transpiler.options.target.get().is_bun()
+                || transpiler.options.target.get() == Target::Node;
             transpiler.resolver.opts.mark_builtins_as_external =
-                transpiler.options.target.is_bun() || transpiler.options.target == Target::Node;
+                transpiler.options.target.get().is_bun()
+                    || transpiler.options.target.get() == Target::Node;
 
             // SAFETY: `ssr_transpiler` intentionally aliases `transpiler` via a
             // raw `*mut` until bake installs a separate SSR transpiler; all
@@ -3227,11 +3235,11 @@ pub mod bv2_impl {
                 completion: None,
                 // SAFETY: `event_loop`, when set, points at the caller's live loop
                 // (owning thread == this thread).
-                js_poster: event_loop.and_then(|l| unsafe { l.as_ref() }.js_poster()),
-                // SAFETY: as above.
-                mini_poster: event_loop.and_then(|l| match unsafe { l.as_ref() } {
-                    bun_event_loop::AnyEventLoop::Js { .. } => None,
-                    bun_event_loop::AnyEventLoop::Mini(mini) => Some(NonNull::from(&mini.shared)),
+                poster: event_loop.map(|l| match unsafe { l.as_ref() } {
+                    bun_event_loop::AnyEventLoop::Js { owner } => LoopPoster::Js(owner.js_poster()),
+                    bun_event_loop::AnyEventLoop::Mini(mini) => {
+                        LoopPoster::Mini(NonNull::from(&mini.shared))
+                    }
                 }),
                 plugin_context: bun_event_loop::ContextId::NONE,
                 dev_server: None,
@@ -3312,9 +3320,10 @@ pub mod bv2_impl {
                 );
             }
 
-            this.linker.options.minify_syntax = this.transpiler.options.minify_syntax;
-            this.linker.options.minify_identifiers = this.transpiler.options.minify_identifiers;
-            this.linker.options.minify_whitespace = this.transpiler.options.minify_whitespace;
+            this.linker.options.minify_syntax = this.transpiler.options.minify_syntax.get();
+            this.linker.options.minify_identifiers =
+                this.transpiler.options.minify_identifiers.get();
+            this.linker.options.minify_whitespace = this.transpiler.options.minify_whitespace.get();
             this.linker.options.emit_dce_annotations = this.transpiler.options.emit_dce_annotations;
             this.linker.options.deprecated_namespace_object_setters =
                 this.transpiler.options.deprecated_namespace_object_setters;
@@ -3330,7 +3339,7 @@ pub mod bv2_impl {
             this.linker.options.css_chunking = this.transpiler.options.css_chunking;
             this.linker.options.min_chunk_size =
                 this.transpiler.options.min_chunk_size.unwrap_or_else(|| {
-                    crate::options::default_min_chunk_size(this.transpiler.options.target)
+                    crate::options::default_min_chunk_size(this.transpiler.options.target.get())
                 });
             this.linker.options.fold_chunks = this.transpiler.options.fold_chunks;
             this.linker.options.entry_naming_has_hash = crate::options::path_template_needs(
@@ -3343,7 +3352,7 @@ pub mod bv2_impl {
             // SAFETY: same `'a`-owned `Transpiler` field as `banner` above.
             this.linker.options.public_path =
                 unsafe { interned_slice(&this.transpiler.options.public_path) };
-            this.linker.options.target = this.transpiler.options.target;
+            this.linker.options.target = this.transpiler.options.target.get();
             this.linker.options.output_format = this.transpiler.options.output_format;
             this.linker.options.generate_bytecode_cache = this.transpiler.options.bytecode;
             this.linker.options.generate_internal_module_bytecode =
@@ -3511,7 +3520,7 @@ pub mod bv2_impl {
                 let entry_point: &[u8] = entry_point.as_ref();
                 if self.enqueue_entry_point_on_resolve_plugin_if_needed(
                     entry_point,
-                    self.transpiler.options.target,
+                    self.transpiler.options.target.get(),
                     None,
                 ) {
                     continue;
@@ -3524,7 +3533,7 @@ pub mod bv2_impl {
                         let _ = self.enqueue_entry_item(
                             &file_map_result,
                             true,
-                            self.transpiler.options.target,
+                            self.transpiler.options.target.get(),
                             None,
                         )?;
                         continue;
@@ -3539,7 +3548,7 @@ pub mod bv2_impl {
                 };
 
                 let target = 'brk: {
-                    let main_target = self.transpiler.options.target;
+                    let main_target = self.transpiler.options.target.get();
                     if main_target.is_server_side() {
                         if let Some(path) = resolved.path_const() {
                             if let Some(loader) = path.loader(&self.transpiler.options.loaders) {
@@ -3583,7 +3592,7 @@ pub mod bv2_impl {
                     } else {
                         &raw mut *self.transpiler
                     };
-                let server_target = self.transpiler.options.target;
+                let server_target = self.transpiler.options.target.get();
                 let client_loader = flags.html().then_some(Loader::Html);
 
                 struct TargetCheck {
@@ -3643,12 +3652,12 @@ pub mod bv2_impl {
                                 },
                                 abs_path,
                                 // SAFETY: `transpiler` points at one of self's transpilers, live for `'a`.
-                                unsafe { (*transpiler).log }.cast_const(),
+                                unsafe { (*transpiler).log_ptr() }.cast_const(),
                                 std::ptr::from_mut(self),
                             )
                             .expect("oom");
                             // SAFETY: `transpiler.log` is the `'a`-owned log; sole writer here.
-                            unsafe { (*(*transpiler).log).reset() };
+                            unsafe { (*(*transpiler).log_ptr()).reset() };
                             continue;
                         }
                     };
@@ -3678,7 +3687,7 @@ pub mod bv2_impl {
                     let _ = self.enqueue_entry_item(
                         &resolved,
                         true,
-                        self.transpiler.options.target,
+                        self.transpiler.options.target.get(),
                         None,
                     )?;
                 }
@@ -3711,7 +3720,7 @@ pub mod bv2_impl {
                 let abs_path = key.abs_path();
                 let target = match key.side {
                     bake::Side::Client => Target::Browser,
-                    bake::Side::Server => self.transpiler.options.target,
+                    bake::Side::Server => self.transpiler.options.target.get(),
                 };
 
                 if self.enqueue_entry_point_on_resolve_plugin_if_needed(abs_path, target, None) {
@@ -3736,7 +3745,7 @@ pub mod bv2_impl {
         /// Common prelude shared by all enqueue_entry_points_* variants: add the runtime task.
         fn enqueue_entry_points_common(&mut self) -> Result<(), Error> {
             // Add the runtime
-            let rt = ParseTask::get_runtime_source(self.transpiler.options.target);
+            let rt = ParseTask::get_runtime_source(self.transpiler.options.target.get());
             self.graph.input_files.append(crate::Graph::InputFile {
                 source: rt.source,
                 loader: Loader::Js,
@@ -3746,7 +3755,7 @@ pub mod bv2_impl {
 
             // try this.graph.entry_points.append(arena, Index.runtime);
             let _ = self.graph.ast.append(JSAst::empty_in(self.graph.heap)); // OOM/capacity: fire-and-forget
-            self.path_to_source_index_map(self.transpiler.options.target)
+            self.path_to_source_index_map(self.transpiler.options.target.get())
                 .put(&b"bun:wrap"[..], Index::RUNTIME.get())
                 .expect("oom");
             // SAFETY: arena (`self.graph.heap`) outlives the bundle pass; coerce the
@@ -4865,15 +4874,11 @@ pub mod bv2_impl {
             // For `Bun.build` this is a Mini loop running on the bundler thread, so
             // `on_load` must land there — not on the JS plugin loop — or it will
             // mutate `graph` / allocate from `graph.heap` off-thread.
-            match self.mini_poster {
-                None => {
+            match self.poster.as_ref().expect("bundle has an event loop") {
+                LoopPoster::Js(poster) => {
                     let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::create_from(
                         std::ptr::from_mut(load).cast::<jsc_api::JSBundler::LoadAnswered>(),
                     );
-                    let poster = self
-                        .js_poster
-                        .as_ref()
-                        .expect("JS-owned bundle has a poster");
                     if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {
                         // Owning JS VM torn down mid-bundle: the hop never runs.
                         // SAFETY: refused ⇒ we own the task.
@@ -4882,12 +4887,16 @@ pub mod bv2_impl {
                         };
                     }
                 }
-                Some(mini) => {
+                LoopPoster::Mini(mini) => {
                     // SAFETY: `load` is a valid &mut for the duration of the enqueue;
                     // the mini loop dispatches `on_load_mini` on the bundler thread.
-                    // `mini` is live: see `BundleV2::mini_poster`.
+                    // `mini`: see `LoopPoster::Mini`.
                     unsafe {
-                        mini.as_ref().enqueue_task_concurrent_with_extra_ctx::<jsc_api::JSBundler::Load, BundleV2<'static>>(
+                        MiniShared::enqueue_task_concurrent_with_extra_ctx::<
+                            jsc_api::JSBundler::Load,
+                            BundleV2<'static>,
+                        >(
+                            mini.as_ptr(),
                             std::ptr::from_mut(load),
                             on_load_mini,
                             core::mem::offset_of!(jsc_api::JSBundler::Load, task),
@@ -4899,15 +4908,11 @@ pub mod bv2_impl {
 
         pub fn on_resolve_async(&mut self, resolve: &mut jsc_api::JSBundler::Resolve) {
             // See `on_load_async` — must dispatch on the bundler's own loop.
-            match self.mini_poster {
-                None => {
+            match self.poster.as_ref().expect("bundle has an event loop") {
+                LoopPoster::Js(poster) => {
                     let ct = bun_event_loop::ConcurrentTask::ConcurrentTask::create_from(
                         std::ptr::from_mut(resolve).cast::<jsc_api::JSBundler::ResolveAnswered>(),
                     );
-                    let poster = self
-                        .js_poster
-                        .as_ref()
-                        .expect("JS-owned bundle has a poster");
                     if let bun_event_loop::Posted::Refused(ct) = poster.post(ct) {
                         // Owning JS VM torn down mid-bundle: the hop never runs.
                         // SAFETY: refused ⇒ we own the task.
@@ -4916,12 +4921,16 @@ pub mod bv2_impl {
                         };
                     }
                 }
-                Some(mini) => {
+                LoopPoster::Mini(mini) => {
                     // SAFETY: `resolve` is a valid &mut for the duration of the enqueue;
                     // the mini loop dispatches `on_resolve_mini` on the bundler thread.
-                    // `mini` is live: see `BundleV2::mini_poster`.
+                    // `mini`: see `LoopPoster::Mini`.
                     unsafe {
-                        mini.as_ref().enqueue_task_concurrent_with_extra_ctx::<jsc_api::JSBundler::Resolve, BundleV2<'static>>(
+                        MiniShared::enqueue_task_concurrent_with_extra_ctx::<
+                            jsc_api::JSBundler::Resolve,
+                            BundleV2<'static>,
+                        >(
+                            mini.as_ptr(),
                             std::ptr::from_mut(resolve),
                             on_resolve_mini,
                             core::mem::offset_of!(jsc_api::JSBundler::Resolve, task),
@@ -5577,7 +5586,8 @@ pub mod bv2_impl {
                 // (and can't — `RuntimeTranspilerStore` bytewise-clones it),
                 // so the `Box<Transpiler>` drop below would strand it.
                 if let Some(ctx) = ct.macro_context.take() {
-                    ctx.deinit();
+                    // SAFETY: the bundle is over: no parse holds a copy of the handle.
+                    unsafe { ctx.deinit() };
                 }
                 self.client_transpiler = None;
                 self.owned_client_transpiler = None;
@@ -7552,7 +7562,7 @@ pub mod bv2_impl {
             // BACKREF set in `BundleV2::init`).
             let (define_ptr, log_ptr): (*mut bun_js_parser::Define, *mut bun_ast::Log) = {
                 let transpiler = self.transpiler_for_target(target);
-                (&raw mut *transpiler.options.define, transpiler.log)
+                (&raw mut *transpiler.options.define, transpiler.log_ptr())
             };
 
             let ast_for_html_entrypoint = JSAst::init(
@@ -7953,7 +7963,7 @@ pub mod bv2_impl {
                             let mut server_source =
                                 this.graph.input_files.items_source()[result_source_index].clone();
                             server_source.path.pretty = server_source.path.text;
-                            let server_target = this.transpiler.options.target;
+                            let server_target = this.transpiler.options.target.get();
                             server_source.path = this
                                 .path_with_pretty_initialized(&server_source.path, server_target)
                                 .expect("oom");

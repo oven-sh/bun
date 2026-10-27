@@ -29,17 +29,19 @@ pub enum JsonMode {
 /// `parse_*` themselves — eagerly constructing `Arena::new()` here costs one
 /// `mi_heap_new` per worker (≈11 empty heaps on a typical build/elysia run).
 pub struct JsonCache {
-    bump: Option<bun_alloc::Arena>,
+    bump: core::cell::OnceCell<bun_alloc::Arena>,
 }
 
 impl JsonCache {
     pub(crate) fn init() -> JsonCache {
-        JsonCache { bump: None }
+        JsonCache {
+            bump: core::cell::OnceCell::new(),
+        }
     }
 
     #[inline]
     fn parse(
-        &mut self,
+        &self,
         log: &mut bun_ast::Log,
         source: &bun_ast::Source,
         func: fn(
@@ -49,7 +51,7 @@ impl JsonCache {
         ) -> Result<bun_ast::Expr, bun_parsers::Error>,
     ) -> Result<Option<bun_ast::Expr>, crate::Error> {
         let mut temp_log = bun_ast::Log::init();
-        let bump = self.bump.get_or_insert_with(bun_alloc::Arena::new);
+        let bump = self.bump.get_or_init(bun_alloc::Arena::new);
         let result = func(source, &mut temp_log, bump).ok();
         temp_log.append_to(log);
         Ok(result)
@@ -57,7 +59,7 @@ impl JsonCache {
 
     #[inline]
     fn parse_rows(
-        &mut self,
+        &self,
         log: &mut bun_ast::Log,
         source: &bun_ast::Source,
         func: fn(
@@ -74,7 +76,7 @@ impl JsonCache {
     /// Parses tsconfig.json/jsconfig.json source as JSONC into the immutable row AST.
     #[inline]
     pub(crate) fn parse_tsconfig(
-        &mut self,
+        &self,
         log: &mut bun_ast::Log,
         source: &bun_ast::Source,
     ) -> Result<Option<json_parser::ParsedJson>, crate::Error> {
@@ -84,7 +86,7 @@ impl JsonCache {
     /// Parses package.json source into the immutable row AST.
     #[inline]
     pub(crate) fn parse_package_json(
-        &mut self,
+        &self,
         log: &mut bun_ast::Log,
         source: &bun_ast::Source,
     ) -> Result<Option<json_parser::ParsedJson>, crate::Error> {
@@ -95,7 +97,7 @@ impl JsonCache {
     /// JSON vs JSONC.
     #[inline]
     pub fn parse_json(
-        &mut self,
+        &self,
         log: &mut bun_ast::Log,
         source: &bun_ast::Source,
         mode: JsonMode,
@@ -310,7 +312,7 @@ impl TSConfigJSON {
     pub fn parse(
         log: &mut bun_ast::Log,
         source: &bun_ast::Source,
-        json_cache: &mut JsonCache,
+        json_cache: &JsonCache,
     ) -> Result<Option<Box<TSConfigJSON>>, crate::Error> {
         // Unfortunately "tsconfig.json" isn't actually JSON. It's some other
         // format that appears to be defined by the implementation details of the

@@ -11,6 +11,7 @@ use bun_options_types::schema::api;
 use bun_resolver::fs as Fs;
 use bun_resolver::fs::PathResolverExt as _;
 use bun_resolver::package_json::{MacroMap as MacroRemap, PackageJSON};
+use core::cell::Cell;
 use enum_map::EnumMap;
 use std::borrow::Cow;
 
@@ -1237,7 +1238,7 @@ pub struct BundleOptions<'a> {
     pub output_format: Format,
 
     pub(crate) tsconfig_override: Option<Box<[u8]>>,
-    pub target: Target,
+    pub target: Cell<Target>,
     pub(crate) main_fields: Box<[Box<[u8]>]>,
     /// TODO: remove this in favor accessing bundler.log
     /// raw `*mut` (not `&'a mut`) — the same `*Log` is aliased
@@ -1304,9 +1305,9 @@ pub struct BundleOptions<'a> {
 
     pub inlining: bool,
     pub inline_entrypoint_import_meta_main: bool,
-    pub minify_whitespace: bool,
-    pub minify_syntax: bool,
-    pub minify_identifiers: bool,
+    pub minify_whitespace: Cell<bool>,
+    pub minify_syntax: Cell<bool>,
+    pub minify_identifiers: Cell<bool>,
     pub keep_names: bool,
     pub dead_code_elimination: bool,
     /// REPL mode: transforms code for interactive evaluation with vm.runInContext.
@@ -1349,7 +1350,7 @@ pub struct BundleOptions<'a> {
     pub compile_target_builtins: CompileTargetBuiltins,
 
     pub code_coverage: bool,
-    pub debugger: bool,
+    pub debugger: Cell<bool>,
 
     pub compile_mode: CompileMode,
     /// `--compile`: the name of the entry point's chunk, `/$bunfs/root/<name>` in the executable.
@@ -1489,7 +1490,7 @@ impl<'a> BundleOptions<'a> {
             production: self.production,
             output_format: self.output_format,
             tsconfig_override: self.tsconfig_override.clone(),
-            target: self.target,
+            target: self.target.clone(),
             main_fields: self.main_fields.clone(),
             log: self.log,
             external: self.external.clone(),
@@ -1532,9 +1533,9 @@ impl<'a> BundleOptions<'a> {
             install: self.install,
             inlining: self.inlining,
             inline_entrypoint_import_meta_main: self.inline_entrypoint_import_meta_main,
-            minify_whitespace: self.minify_whitespace,
-            minify_syntax: self.minify_syntax,
-            minify_identifiers: self.minify_identifiers,
+            minify_whitespace: self.minify_whitespace.clone(),
+            minify_syntax: self.minify_syntax.clone(),
+            minify_identifiers: self.minify_identifiers.clone(),
             keep_names: self.keep_names,
             dead_code_elimination: self.dead_code_elimination,
             repl_mode: self.repl_mode,
@@ -1553,7 +1554,7 @@ impl<'a> BundleOptions<'a> {
             bytecode_order: self.bytecode_order.clone(),
             compile_target_builtins: self.compile_target_builtins.clone(),
             code_coverage: self.code_coverage,
-            debugger: self.debugger,
+            debugger: self.debugger.clone(),
             compile_mode: self.compile_mode,
             compile_entry_point_name: self.compile_entry_point_name.clone(),
             metafile: self.metafile,
@@ -1666,14 +1667,14 @@ impl<'a> BundleOptions<'a> {
             // caller contract).
             self.log_mut(),
             self.transform_options.define.as_ref(),
-            self.target,
+            self.target.get(),
             loader_,
             Some(&self.env),
             node_env.as_deref(),
             // `&self.drop` is `Box<[Box<[u8]>]>`; the callee wants `&[&[u8]]`,
             // so re-borrow per call (cold path: once per options build).
             &self.drop.iter().map(|s| s.as_ref()).collect::<Vec<_>>(),
-            self.dead_code_elimination && self.minify_syntax,
+            self.dead_code_elimination && self.minify_syntax.get(),
             arena,
         )?;
         self.defines_loaded = true;
@@ -1716,7 +1717,7 @@ impl<'a> BundleOptions<'a> {
             define: Box::new(defines::Define::default()),
             loaders,
             output_dir: Box::from(transform.output_dir.as_deref().unwrap_or(b"out")),
-            target,
+            target: Cell::new(target),
             write: transform.write.unwrap_or(false),
             external: ExternalModules::default(), // filled below
             entry_points: transform.entry_points.clone().into_boxed_slice(),
@@ -1790,9 +1791,9 @@ impl<'a> BundleOptions<'a> {
             install: None,
             inlining: false,
             inline_entrypoint_import_meta_main: false,
-            minify_whitespace: false,
-            minify_syntax: false,
-            minify_identifiers: false,
+            minify_whitespace: Cell::new(false),
+            minify_syntax: Cell::new(false),
+            minify_identifiers: Cell::new(false),
             keep_names: false,
             dead_code_elimination: true,
             repl_mode: false,
@@ -1805,7 +1806,7 @@ impl<'a> BundleOptions<'a> {
             bytecode_order: Vec::new(),
             compile_target_builtins: CompileTargetBuiltins::Host,
             code_coverage: false,
-            debugger: false,
+            debugger: Cell::new(false),
             compile_mode: CompileMode::None,
             compile_entry_point_name: Box::default(),
             metafile: false,
@@ -1860,8 +1861,10 @@ impl<'a> BundleOptions<'a> {
         }
 
         if let Some(t) = transform.target {
-            opts.target = <Target as bun_options_types::TargetExt>::from_api(Some(t));
-            opts.main_fields = owned_string_list(Target::default_main_fields_map()[opts.target]);
+            opts.target
+                .set(<Target as bun_options_types::TargetExt>::from_api(Some(t)));
+            opts.main_fields =
+                owned_string_list(Target::default_main_fields_map()[opts.target.get()]);
         }
 
         {
@@ -1870,7 +1873,7 @@ impl<'a> BundleOptions<'a> {
             // 2. node-addons
             // 3. user conditions
             opts.conditions = ESMConditions::init(
-                Target::default_conditions_map()[opts.target],
+                Target::default_conditions_map()[opts.target.get()],
                 transform.allow_addons.unwrap_or(true),
                 &transform
                     .conditions
@@ -1880,7 +1883,7 @@ impl<'a> BundleOptions<'a> {
             )?;
         }
 
-        match opts.target {
+        match opts.target.get() {
             Target::Node => {
                 opts.import_path_format = ImportPathFormat::Relative;
                 opts.allow_runtime = false;
@@ -1932,18 +1935,18 @@ impl<'a> BundleOptions<'a> {
                 .collect::<Vec<&[u8]>>(),
             // sole live `&mut` for this call (struct not yet returned).
             opts.log_mut(),
-            opts.target,
+            opts.target.get(),
         );
-        opts.out_extensions = opts.target.out_extensions();
+        opts.out_extensions = opts.target.get().out_extensions();
 
         opts.source_map = SourceMapOption::from_api(transform.source_map);
 
         opts.packages = PackagesOption::from_api(transform.packages);
 
-        opts.tree_shaking = opts.target.is_bun() || opts.production;
+        opts.tree_shaking = opts.target.get().is_bun() || opts.production;
         opts.inlining = opts.tree_shaking;
         if opts.inlining {
-            opts.minify_syntax = true;
+            opts.minify_syntax.set(true);
         }
 
         if opts.origin.url().is_absolute() {
@@ -1960,7 +1963,7 @@ impl<'a> BundleOptions<'a> {
             opts.output_dir_handle = Some(handle);
         }
 
-        opts.polyfill_node_globals = opts.target == Target::Browser;
+        opts.polyfill_node_globals = opts.target.get() == Target::Browser;
 
         if let Some(tsconfig) = &transform.tsconfig_override {
             opts.tsconfig_override = Some(tsconfig.clone());
@@ -1968,7 +1971,7 @@ impl<'a> BundleOptions<'a> {
 
         {
             analytics::features::macros.fetch_add(
-                usize::from(opts.target == Target::BunMacro),
+                usize::from(opts.target.get() == Target::BunMacro),
                 Ordering::Relaxed,
             );
             analytics::features::external.fetch_add(

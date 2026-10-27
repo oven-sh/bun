@@ -162,7 +162,7 @@ pub struct Options<'a> {
     pub code_splitting: bool,
     pub package_version: &'a [u8],
 
-    pub macro_context: Option<&'a mut MacroContext>,
+    pub macro_context: Option<MacroContext>,
 
     pub warn_about_unbundled_modules: bool,
 

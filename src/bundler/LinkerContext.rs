@@ -533,7 +533,7 @@ impl<'a> LinkerContext<'a> {
         self.graph.code_splitting = transpiler.options.code_splitting;
         // `transpiler.log` is the canonical
         // `*mut Log` (same value aliased into `linker.log` / `resolver.log`).
-        self.log = transpiler.log;
+        self.log = transpiler.log_ptr();
 
         // Note: lifetime — `self.resolver` is `ParentRef<Resolver<'a>>`
         // but `transpiler.resolver` is `Resolver<'_>` (anonymous `bundle`

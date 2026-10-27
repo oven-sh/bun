@@ -1,5 +1,7 @@
 // This file is the old linker, used by Bun.Transpiler.
 
+use core::cell::Cell;
+
 use bun_ast::Log;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, ImportRecordTag};
 use bun_paths::{self, SEP};
@@ -28,7 +30,7 @@ pub struct Linker {
     // contract as `transpiler::set_log`'s `linker.log = log as *mut _`.
     pub(crate) options: *mut BundleOptions<'static>,
     pub(crate) fs: *mut Fs::FileSystem,
-    pub log: *mut Log,
+    log: Cell<*mut Log>,
     pub(crate) resolve_queue: *mut ResolveQueue,
     pub(crate) resolve_results: *mut ResolveResults,
 }
@@ -157,22 +159,6 @@ impl Linker {
         unsafe { &*self.fs }
     }
 
-    /// Exclusive borrow of the owning `Transpiler.log`.
-    ///
-    /// SAFETY: `self.log` is the `*mut Log` copied from `Transpiler.log` in
-    /// `configure_linker*` / `set_log`. Callers borrow `&mut self.linker`
-    /// field-disjointly from `Transpiler.log`, and no callee reached from a
-    /// `Linker` method re-derives a borrow of `*self.log`, so the `&mut`
-    /// returned here is exclusive for its lifetime. Never null.
-    #[inline]
-    pub(crate) fn log_mut(&mut self) -> &mut Log {
-        debug_assert!(!self.log.is_null());
-        // SAFETY: non-null backref to `Transpiler.log` set in `configure_linker*`;
-        // callers borrow `&mut self.linker` field-disjointly so no other live
-        // borrow of `*self.log` exists for the returned lifetime.
-        unsafe { &mut *self.log }
-    }
-
     /// Exclusive borrow of the owning `Transpiler.resolve_results`.
     ///
     /// SAFETY: sibling-field backref wired via `addr_of_mut!` in
@@ -210,6 +196,13 @@ impl Linker {
         unsafe { &mut *self.resolve_queue }
     }
 
+    /// # Safety
+    /// As for `Transpiler::set_log`, of the linker alone.
+    #[inline]
+    pub unsafe fn set_log(&self, log: *mut Log) {
+        self.log.set(log);
+    }
+
     pub(crate) fn init(
         log: *mut Log,
         resolve_queue: *mut ResolveQueue,
@@ -223,7 +216,7 @@ impl Linker {
         Self {
             options,
             fs,
-            log,
+            log: Cell::new(log),
             resolve_queue,
             resolve_results,
         }
@@ -240,7 +233,7 @@ impl Linker {
         resolve_results: *mut ResolveResults,
         fs: *mut Fs::FileSystem,
     ) {
-        self.log = log;
+        self.log.set(log);
         self.resolve_queue = resolve_queue;
         self.options = options;
         self.resolve_results = resolve_results;
@@ -253,7 +246,7 @@ impl Linker {
     // so `get_hashed_filename` — whose callers all build `PFs::Path` — can
     // forward directly; only `.text` (a `&[u8]`) is read.
     pub(crate) fn get_mod_key(
-        &mut self,
+        &self,
         file_path: &PFs::Path<'_>,
         fd: Option<Fd>,
     ) -> crate::Result<Fs::ModKey> {
@@ -283,7 +276,7 @@ impl Linker {
     }
 
     pub(crate) fn get_hashed_filename(
-        &mut self,
+        &self,
         file_path: &PFs::Path<'_>,
         fd: Option<Fd>,
     ) -> crate::Result<&'static [u8]> {
@@ -299,17 +292,15 @@ impl Linker {
     /// `options::ImportPathFormat` doesn't derive `ConstParamTy`, and the
     /// crate doesn't enable `adt_const_params`.
     pub fn link<const IGNORE_RUNTIME: bool, const IS_BUN: bool>(
-        &mut self,
+        &self,
         file_path: &Fs::Path<'_>,
         result: &mut ParseResult,
         origin: &URL<'_>,
         import_path_format: ImportPathFormat,
     ) -> crate::Result<()> {
-        // Copy out the two scalar config values we read so the `&self` borrow
-        // from `options()` doesn't overlap the later `&mut self` call (`log_mut`).
         let (target, rewrite_jest_for_tests) = {
             let opts = self.options();
-            (opts.target, opts.rewrite_jest_for_tests)
+            (opts.target.get(), opts.rewrite_jest_for_tests)
         };
 
         let source_dir = file_path.source_dir();
@@ -394,7 +385,9 @@ impl Linker {
                             // if a module is not found here, it is not found at
                             // all so we can just disable it
                             if Self::when_module_not_found::<IS_BUN>(
-                                self.log_mut(),
+                                // SAFETY: allocated (`Transpiler::set_log`), and the only
+                                // borrow of the log during the call.
+                                unsafe { &mut *self.log.get() },
                                 target,
                                 import_record,
                                 source,

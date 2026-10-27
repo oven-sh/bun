@@ -554,11 +554,13 @@ impl Worker {
             // handles, so the worker thread tearing it down is safe.
             if let Some(data) = worker.data.as_mut() {
                 if let Some(ctx) = data.transpiler.macro_context.take() {
-                    ctx.deinit();
+                    // SAFETY: the worker runs no more parse tasks: no copy of the handle is left.
+                    unsafe { ctx.deinit() };
                 }
                 if let Some(other) = data.other_transpiler.as_deref_mut() {
                     if let Some(ctx) = other.macro_context.take() {
-                        ctx.deinit();
+                        // SAFETY: as above.
+                        unsafe { ctx.deinit() };
                     }
                 }
                 js_ast::Macro::collect_vm_garbage();
@@ -677,7 +679,7 @@ impl Worker {
     pub(crate) fn transpiler_for_target(&mut self, target: Target) -> &mut Transpiler<'static> {
         // Callers only invoke this after `Worker::get` → `create()`.
         let data = self.data.as_mut().expect("Worker.data set in create()");
-        if target == Target::Browser && data.transpiler.options.target != target {
+        if target == Target::Browser && data.transpiler.options.target.get() != target {
             if data.other_transpiler.is_none() {
                 // `ctx` is a `BackRef` (set in `create()`); the `BundleV2`
                 // outlives every worker — safe `Deref`.
@@ -698,7 +700,7 @@ impl Worker {
                 .other_transpiler
                 .as_deref_mut()
                 .expect("other_transpiler set above");
-            debug_assert!(other.options.target == target);
+            debug_assert!(other.options.target.get() == target);
             return other;
         }
 

@@ -1926,6 +1926,7 @@ pub use dir_entry_accessor::DirEntryAccessor;
 // bundler crate re-exports/extends these as `bun_bundler::cache::*`.
 // ──────────────────────────────────────────────────────────────────────────
 pub mod cache {
+    use core::cell::Cell;
     use core::ffi::c_void;
 
     use bun_core::MutableString;
@@ -1947,9 +1948,9 @@ pub mod cache {
         pub(crate) fn init() -> Set {
             Set {
                 fs: Fs {
-                    shared_buffer: MutableString::init(0).expect("unreachable"),
-                    macro_shared_buffer: MutableString::init(0).expect("unreachable"),
-                    use_alternate_source_cache: false,
+                    shared_buffer: Cell::new(MutableString::init_empty()),
+                    macro_shared_buffer: Cell::new(MutableString::init_empty()),
+                    use_alternate_source_cache: Cell::new(false),
                     stream: false,
                 },
                 json: Json::init(),
@@ -1960,11 +1961,11 @@ pub mod cache {
     /// File-read cache: shared read buffers plus flags controlling buffer
     /// reuse and streaming reads.
     pub struct Fs {
-        pub(crate) shared_buffer: MutableString,
-        pub(crate) macro_shared_buffer: MutableString,
+        shared_buffer: Cell<MutableString>,
+        macro_shared_buffer: Cell<MutableString>,
 
-        pub use_alternate_source_cache: bool,
-        pub(crate) stream: bool,
+        pub use_alternate_source_cache: Cell<bool>,
+        stream: bool,
     }
 
     /// Optional external destructor (`function(ctx)`) for foreign-owned
@@ -2152,29 +2153,22 @@ pub mod cache {
         // When we are in a macro, the shared buffer may be in use by the in-progress macro.
         // so we have to dynamically switch it out.
         #[inline]
-        pub fn shared_buffer(&mut self) -> &mut MutableString {
-            if !self.use_alternate_source_cache {
-                &mut self.shared_buffer
+        fn shared_buffer(&self) -> &Cell<MutableString> {
+            if !self.use_alternate_source_cache.get() {
+                &self.shared_buffer
             } else {
-                &mut self.macro_shared_buffer
+                &self.macro_shared_buffer
             }
         }
 
         /// When we need to suspend/resume something that has pointers into the shared buffer, we need to
         /// switch out the shared buffer so that it is not in use.
         ///
-        /// Ownership transfer: the suspended parse keeps pointers into the old buffer, so plain
-        /// field assignment would drop+free the old buffer → use-after-free on resume. So we return
+        /// Ownership transfer: the suspended parse keeps pointers into the old buffer, so we return
         /// the detached buffer; the caller MUST take ownership of it and keep it alive for as long as
         /// `parse_result.source.contents` may be read.
-        pub fn reset_shared_buffer(&mut self, buffer: *const MutableString) -> MutableString {
-            if core::ptr::eq(buffer, &raw const self.shared_buffer) {
-                core::mem::replace(&mut self.shared_buffer, MutableString::init_empty())
-            } else if core::ptr::eq(buffer, &raw const self.macro_shared_buffer) {
-                core::mem::replace(&mut self.macro_shared_buffer, MutableString::init_empty())
-            } else {
-                unreachable!("resetSharedBuffer: invalid buffer");
-            }
+        pub fn take_shared_buffer(&self) -> MutableString {
+            self.shared_buffer().take()
         }
 
         /// `use_shared_buffer` is taken at runtime — the live
@@ -2191,7 +2185,7 @@ pub mod cache {
         /// heap (which is never destroyed). `None` keeps the global-heap
         /// `Contents::Owned(Vec<u8>)` path.
         pub fn read_file_with_allocator(
-            &mut self,
+            &self,
             _fs: &mut fs_mod::FileSystem,
             path: &[u8],
             dirname_fd: Fd,
@@ -2252,10 +2246,6 @@ pub mod cache {
                 fd
             );
 
-            // reshaped for borrowck — capture `stream` scalar before borrowing
-            // the shared buffer.
-            let stream = self.stream;
-
             let contents = match (use_shared_buffer, arena) {
                 // Read straight into the per-call arena so the source bytes
                 // are reclaimed by `mi_heap_destroy` instead of pinning a
@@ -2277,10 +2267,17 @@ pub mod cache {
                     }
                 }
                 _ => {
-                    let shared = self.shared_buffer();
-                    match fs_mod::read_file_contents(file_handle, use_shared_buffer, shared, stream)
-                        .map(Contents::from)
-                    {
+                    let cell = self.shared_buffer();
+                    let mut shared = cell.take();
+                    let result = fs_mod::read_file_contents(
+                        file_handle,
+                        use_shared_buffer,
+                        &mut shared,
+                        self.stream,
+                    )
+                    .map(Contents::from);
+                    cell.set(shared);
+                    match result {
                         Ok(c) => c,
                         Err(err) => {
                             if cfg!(debug_assertions) {

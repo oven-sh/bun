@@ -71,6 +71,9 @@ pub mod Macro {
     /// upward import. `javascript_object` is surfaced here so
     /// `Transpiler::parse` can thread `this_parse.macro_js_ctx` through
     /// without this crate depending on `bun_jsc::JSValue`.
+    ///
+    /// A handle: copies name the same state, which lives until [`Self::deinit`].
+    #[derive(Clone, Copy)]
     pub struct MacroContext {
         /// Encoded `JSC.JSValue` (the caller-supplied macro JS context).
         /// `bun_js_parser_jsc` reinterprets the bits as a `JSValue`.
@@ -91,12 +94,11 @@ pub mod Macro {
     }
     unsafe extern "Rust" {
         /// Defined `#[no_mangle]` in `bun_js_parser_jsc::Macro`. `transpiler`
-        /// is `*mut bun_bundler::Transpiler<'_>` — erased because this crate
+        /// is `*const bun_bundler::Transpiler<'_>` — erased because this crate
         /// cannot name it (dep-cycle).
-        // NOT `safe fn`: callee derefs `transpiler` as `&mut Transpiler<'_>` —
-        // caller must guarantee it is non-null, exclusively borrowed, and of
-        // that exact concrete type.
-        fn __bun_macro_context_init(transpiler: *mut core::ffi::c_void) -> MacroContext;
+        // NOT `safe fn`: callee derefs `transpiler` as `&Transpiler<'_>` —
+        // caller must guarantee it is non-null and of that exact concrete type.
+        fn __bun_macro_context_init(transpiler: *const core::ffi::c_void) -> MacroContext;
         // NOT `safe fn`: when non-null, `data` must be the exact `Box::into_raw`
         // value produced by `__bun_macro_context_init` and uniquely owned
         // (callee `Box::from_raw`s it → double-free / aliasing UB otherwise).
@@ -106,7 +108,7 @@ pub mod Macro {
         // maintained by `init`/`Default` — not a caller precondition. The
         // `#[no_mangle]` body in `bun_js_parser_jsc` is itself a safe `pub fn`.
         safe fn __bun_macro_context_call(
-            ctx: &mut MacroContext,
+            ctx: MacroContext,
             import_record_path: &[u8],
             source_dir: &[u8],
             log: &mut bun_ast::Log,
@@ -143,7 +145,7 @@ pub mod Macro {
     impl MacroContext {
         #[inline]
         pub(crate) fn call(
-            &mut self,
+            self,
             import_record_path: &[u8],
             source_dir: &[u8],
             log: &mut bun_ast::Log,
@@ -168,27 +170,26 @@ pub mod Macro {
         /// an upward dep on the bundler. The `_jsc` crate reads the concrete
         /// type back inside `__bun_macro_context_init`.
         #[inline]
-        pub fn init<T>(transpiler: &mut T) -> Self {
-            // SAFETY: `transpiler` is a live `&mut T` (exclusive, non-null,
-            // aligned) for the duration of the call; the callee casts it back to
-            // `&mut Transpiler<'_>` and only reads/borrows fields — it does not
-            // retain the pointer past return (the boxed state it allocates owns
-            // its own data).
+        pub fn init<T>(transpiler: &T) -> Self {
+            // SAFETY: `transpiler` is a live `&T` (non-null, aligned) for the
+            // duration of the call; the callee casts it back to `&Transpiler<'_>`.
             unsafe {
                 __bun_macro_context_init(
-                    core::ptr::from_mut(transpiler).cast::<core::ffi::c_void>(),
+                    core::ptr::from_ref(transpiler).cast::<core::ffi::c_void>(),
                 )
             }
         }
         /// Free the boxed higher-tier state behind `data`. Its arena backs the
         /// strings of every `Expr` its macros returned, so only call once the
         /// ASTs that hold them are printed.
+        ///
+        /// # Safety
+        /// The first `deinit` of any copy of this handle, and no copy is used afterwards.
         #[inline]
-        pub fn deinit(self) {
+        pub unsafe fn deinit(self) {
             // SAFETY: `self.data` is either null (callee no-ops) or the exact
-            // `Box::into_raw` produced by `__bun_macro_context_init`; `self` is
-            // taken by value so this is the unique owner and no double-free is
-            // possible.
+            // `Box::into_raw` produced by `__bun_macro_context_init`, still
+            // allocated and unborrowed per the fn contract.
             unsafe { __bun_macro_context_deinit(self.data) }
         }
         /// Returns `'static` so callers can keep the result across `&mut self`

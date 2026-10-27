@@ -386,7 +386,7 @@ impl PackageJSON {
     }
 
     pub fn parse<const INCLUDE_DEPENDENCIES: IncludeDependencies>(
-        r: &mut resolver::Resolver<'_>,
+        r: &resolver::Resolver<'_>,
         input_path: &[u8],
         dirname_fd: Fd,
         package_id: Option<PackageID>,
@@ -465,7 +465,7 @@ impl PackageJSON {
             let _ = e.close_fd();
         });
 
-        if let Some(debug) = r.debug_logs.as_mut() {
+        if let Some(debug) = r.debug_logs.enabled() {
             debug.add_note_fmt(format_args!(
                 "The file \"{}\" exists",
                 bstr::BStr::new(package_json_path)
@@ -821,7 +821,9 @@ impl PackageJSON {
 
                 // // if there is a name & version, check if the lockfile has the package
                 if !package_json.name.is_empty() && !package_json.version.is_empty() {
-                    if let Some(pm) = r.auto_installer() {
+                    // SAFETY: the resolver holds no borrow of the package manager across a
+                    // call, and nothing in this block reaches it but through `pm`.
+                    if let Some(pm) = unsafe { r.auto_installer() } {
                         let tag = pm.infer_dependency_tag(&package_json.version);
 
                         if tag == DependencyVersionTag::Npm {
@@ -1330,7 +1332,7 @@ impl Entry {
 pub type ConditionsMap = StringArrayHashMap<()>;
 
 pub(crate) struct ESModule<'a> {
-    pub(crate) debug_logs: Option<&'a mut resolver::DebugLogs>,
+    pub(crate) debug_logs: Option<&'a resolver::DebugLogs>,
     pub(crate) conditions: &'a ConditionsMap,
     /// `resolve_target` uses bigger stack frames than the JSON parser, so it can overflow on a target that parsed.
     pub(crate) stack_check: StackCheck,
@@ -1614,7 +1616,7 @@ fn module_bufs() -> *mut ModuleBufs {
 
 impl<'a> ESModule<'a> {
     pub(crate) fn resolve(
-        &mut self,
+        &self,
         package_url: &[u8],
         subpath: &[u8],
         exports: &Entry,
@@ -1623,7 +1625,7 @@ impl<'a> ESModule<'a> {
         Self::finalize(r)
     }
 
-    pub(crate) fn resolve_imports(&mut self, specifier: &[u8], imports: &Entry) -> Resolution {
+    pub(crate) fn resolve_imports(&self, specifier: &[u8], imports: &Entry) -> Resolution {
         if !matches!(imports.data, EntryData::Map(_)) {
             return Resolution {
                 status: Status::InvalidPackageConfiguration,
@@ -1706,14 +1708,9 @@ impl<'a> ESModule<'a> {
         result
     }
 
-    fn resolve_exports(
-        &mut self,
-        package_url: &[u8],
-        subpath: &[u8],
-        exports: &Entry,
-    ) -> Resolution {
+    fn resolve_exports(&self, package_url: &[u8], subpath: &[u8], exports: &Entry) -> Resolution {
         if matches!(exports.data, EntryData::Invalid) {
-            if let Some(logs) = self.debug_logs.as_deref_mut() {
+            if let Some(logs) = self.debug_logs {
                 logs.add_note(b"Invalid package configuration".to_vec());
             }
 
@@ -1753,7 +1750,7 @@ impl<'a> ESModule<'a> {
             }
         }
 
-        if let Some(logs) = self.debug_logs.as_deref_mut() {
+        if let Some(logs) = self.debug_logs {
             logs.add_note_fmt(format_args!(
                 "The path \"{}\" was not exported",
                 bstr::BStr::new(subpath)
@@ -1767,13 +1764,13 @@ impl<'a> ESModule<'a> {
     }
 
     fn resolve_imports_exports(
-        &mut self,
+        &self,
         match_key: &[u8],
         match_obj: &Entry,
         is_imports: bool,
         package_url: &[u8],
     ) -> Resolution {
-        if let Some(logs) = self.debug_logs.as_deref_mut() {
+        if let Some(logs) = self.debug_logs {
             logs.add_note_fmt(format_args!(
                 "Checking object path map for \"{}\"",
                 bstr::BStr::new(match_key)
@@ -1783,7 +1780,7 @@ impl<'a> ESModule<'a> {
         // If matchKey is a key of matchObj and does not end in "/" or contain "*", then
         if !strings::ends_with_char(match_key, b'/') && !strings::contains_char(match_key, b'*') {
             if let Some(target) = match_obj.value_for_key(match_key) {
-                if let Some(log) = self.debug_logs.as_deref_mut() {
+                if let Some(log) = self.debug_logs {
                     log.add_note_fmt(format_args!("Found \"{}\"", bstr::BStr::new(match_key)));
                 }
 
@@ -1816,7 +1813,7 @@ impl<'a> ESModule<'a> {
                             let target = &expansion.value;
                             let subpath = &match_key
                                 [pattern_base.len()..match_key.len() - pattern_trailer.len()];
-                            if let Some(log) = self.debug_logs.as_deref_mut() {
+                            if let Some(log) = self.debug_logs {
                                 log.add_note_fmt(format_args!(
                                     "The key \"{}\" matched with \"{}\" left over",
                                     bstr::BStr::new(&expansion.key),
@@ -1837,7 +1834,7 @@ impl<'a> ESModule<'a> {
                     if strings::starts_with(match_key, &expansion.key) {
                         let target = &expansion.value;
                         let subpath = &match_key[expansion.key.len()..];
-                        if let Some(log) = self.debug_logs.as_deref_mut() {
+                        if let Some(log) = self.debug_logs {
                             log.add_note_fmt(format_args!(
                                 "The key \"{}\" matched with \"{}\" left over",
                                 bstr::BStr::new(&expansion.key),
@@ -1856,7 +1853,7 @@ impl<'a> ESModule<'a> {
                     }
                 }
 
-                if let Some(log) = self.debug_logs.as_deref_mut() {
+                if let Some(log) = self.debug_logs {
                     log.add_note_fmt(format_args!(
                         "The key \"{}\" did not match",
                         bstr::BStr::new(&expansion.key)
@@ -1865,7 +1862,7 @@ impl<'a> ESModule<'a> {
             }
         }
 
-        if let Some(log) = self.debug_logs.as_deref_mut() {
+        if let Some(log) = self.debug_logs {
             log.add_note_fmt(format_args!(
                 "No keys matched \"{}\"",
                 bstr::BStr::new(match_key)
@@ -1879,14 +1876,14 @@ impl<'a> ESModule<'a> {
     }
 
     fn resolve_target<const PATTERN: bool>(
-        &mut self,
+        &self,
         package_url: &[u8],
         target: &Entry,
         subpath: &[u8],
         internal: bool,
     ) -> Resolution {
         if !self.stack_check.is_safe_to_recurse() {
-            if let Some(logs) = self.debug_logs.as_deref_mut() {
+            if let Some(logs) = self.debug_logs {
                 logs.add_note(b"The package target is nested too deeply".to_vec());
             }
             return Resolution {
@@ -1906,7 +1903,7 @@ impl<'a> ESModule<'a> {
                 let resolve_target_buf2: &mut PathBuffer =
                     unsafe { &mut (*mb).resolve_target_buf2 };
                 let str: &[u8] = str;
-                if let Some(log) = self.debug_logs.as_deref_mut() {
+                if let Some(log) = self.debug_logs {
                     log.add_note_fmt(format_args!(
                         "Checking path \"{}\" against target \"{}\"",
                         bstr::BStr::new(subpath),
@@ -1914,12 +1911,10 @@ impl<'a> ESModule<'a> {
                     ));
                     log.increase_indent();
                 }
-                // A scopeguard cannot hold the &mut across the recursive
-                // `&mut self` calls below; every return path in this arm invokes
-                // `dedent!()` manually instead (audited: every return in this arm dedents).
+                // Every return path in this arm invokes `dedent!()`.
                 macro_rules! dedent {
                     () => {
-                        if let Some(log) = self.debug_logs.as_deref_mut() {
+                        if let Some(log) = self.debug_logs {
                             log.decrease_indent();
                         }
                     };
@@ -1927,7 +1922,7 @@ impl<'a> ESModule<'a> {
                 macro_rules! invalid_specifier_if_too_long {
                     ($len:expr) => {
                         if $len > MAX_PATH_BYTES {
-                            if let Some(log) = self.debug_logs.as_deref_mut() {
+                            if let Some(log) = self.debug_logs {
                                 log.add_note_fmt(format_args!(
                                     "The path \"{}\" is invalid because it is too long",
                                     bstr::BStr::new(subpath)
@@ -1943,7 +1938,7 @@ impl<'a> ESModule<'a> {
                 }
 
                 if package_url.len() + str.len() + subpath.len() + 8 > MAX_PATH_BYTES {
-                    if let Some(log) = self.debug_logs.as_deref_mut() {
+                    if let Some(log) = self.debug_logs {
                         log.add_note_fmt(format_args!(
                             "The target \"{}\" is invalid because the resolved path would be too long",
                             bstr::BStr::new(str)
@@ -1960,7 +1955,7 @@ impl<'a> ESModule<'a> {
                 // does not end with "/", throw an Invalid Module Specifier error.
                 if !PATTERN {
                     if !subpath.is_empty() && !strings::ends_with_char(str, b'/') {
-                        if let Some(log) = self.debug_logs.as_deref_mut() {
+                        if let Some(log) = self.debug_logs {
                             log.add_note_fmt(format_args!(
                                 "The target \"{}\" is invalid because it doesn't end with a \"/\"",
                                 bstr::BStr::new(str)
@@ -1983,7 +1978,7 @@ impl<'a> ESModule<'a> {
                 // segments into the target and escape the package directory.
                 if !subpath.is_empty() {
                     if let Some(invalid) = find_invalid_subpath_segment(subpath) {
-                        if let Some(log) = self.debug_logs.as_deref_mut() {
+                        if let Some(log) = self.debug_logs {
                             log.add_note_fmt(format_args!(
                                 "The path \"{}\" is invalid because it contains an invalid segment \"{}\"",
                                 bstr::BStr::new(subpath),
@@ -2000,7 +1995,7 @@ impl<'a> ESModule<'a> {
 
                 // If target does not start with "./", then...
                 if !strings::starts_with(str, b"./") {
-                    if let Some(log) = self.debug_logs.as_deref_mut() {
+                    if let Some(log) = self.debug_logs {
                         log.add_note_fmt(format_args!(
                             "The target \"{}\" is invalid because it doesn't start with a \"./\"",
                             bstr::BStr::new(str)
@@ -2017,7 +2012,7 @@ impl<'a> ESModule<'a> {
                             invalid_specifier_if_too_long!(len);
                             let _ = replace(str, b"*", subpath, &mut resolve_target_buf2.0);
                             let result = &resolve_target_buf2.0[0..len];
-                            if let Some(log) = self.debug_logs.as_deref_mut() {
+                            if let Some(log) = self.debug_logs {
                                 log.add_note_fmt(format_args!(
                                     "Subsituted \"{}\" for \"*\" in \".{}\" to get \".{}\" ",
                                     bstr::BStr::new(subpath),
@@ -2044,7 +2039,7 @@ impl<'a> ESModule<'a> {
                             >(
                                 &mut resolve_target_buf2.0, &parts2
                             );
-                            if let Some(log) = self.debug_logs.as_deref_mut() {
+                            if let Some(log) = self.debug_logs {
                                 log.add_note_fmt(format_args!(
                                     "Resolved \".{}\" to \".{}\"",
                                     bstr::BStr::new(str),
@@ -2069,7 +2064,7 @@ impl<'a> ESModule<'a> {
                 // If target split on "/" or "\" contains any ".", ".." or "node_modules"
                 // segments after the first segment, throw an Invalid Package Target error.
                 if let Some(invalid) = find_invalid_segment(str) {
-                    if let Some(log) = self.debug_logs.as_deref_mut() {
+                    if let Some(log) = self.debug_logs {
                         log.add_note_fmt(format_args!(
                             "The target \"{}\" is invalid because it contains an invalid segment \"{}\"",
                             bstr::BStr::new(str),
@@ -2092,7 +2087,7 @@ impl<'a> ESModule<'a> {
                 // If target split on "/" or "\" contains any ".", ".." or "node_modules"
                 // segments after the first segment, throw an Invalid Package Target error.
                 if let Some(invalid) = find_invalid_segment(resolved_target) {
-                    if let Some(log) = self.debug_logs.as_deref_mut() {
+                    if let Some(log) = self.debug_logs {
                         log.add_note_fmt(format_args!(
                             "The target \"{}\" is invalid because it contains an invalid segment \"{}\"",
                             bstr::BStr::new(str),
@@ -2112,7 +2107,7 @@ impl<'a> ESModule<'a> {
                     invalid_specifier_if_too_long!(len);
                     let _ = replace(resolved_target, b"*", subpath, &mut resolve_target_buf2.0);
                     let result = &resolve_target_buf2.0[0..len];
-                    if let Some(log) = self.debug_logs.as_deref_mut() {
+                    if let Some(log) = self.debug_logs {
                         log.add_note_fmt(format_args!(
                             "Substituted \"{}\" for \"*\" in \".{}\" to get \".{}\" ",
                             bstr::BStr::new(subpath),
@@ -2122,7 +2117,7 @@ impl<'a> ESModule<'a> {
                     }
 
                     if let Some(invalid) = find_invalid_segment(result) {
-                        if let Some(log) = self.debug_logs.as_deref_mut() {
+                        if let Some(log) = self.debug_logs {
                             log.add_note_fmt(format_args!(
                                 "The path \"{}\" is invalid because it contains an invalid segment \"{}\"",
                                 bstr::BStr::new(result),
@@ -2147,7 +2142,7 @@ impl<'a> ESModule<'a> {
                     let result = resolve_path::resolve_path::join_string_buf::<
                         resolve_path::platform::Auto,
                     >(&mut resolve_target_buf2.0, &parts2);
-                    if let Some(log) = self.debug_logs.as_deref_mut() {
+                    if let Some(log) = self.debug_logs {
                         log.add_note_fmt(format_args!(
                             "Substituted \"{}\" for \"*\" in \".{}\" to get \".{}\" ",
                             bstr::BStr::new(subpath),
@@ -2167,7 +2162,7 @@ impl<'a> ESModule<'a> {
                 for entry in object.list.iter() {
                     let key: &[u8] = &entry.key;
                     if self.conditions.contains_key(key) {
-                        if let Some(log) = self.debug_logs.as_deref_mut() {
+                        if let Some(log) = self.debug_logs {
                             log.add_note_fmt(format_args!(
                                 "The key \"{}\" matched",
                                 bstr::BStr::new(key)
@@ -2187,7 +2182,7 @@ impl<'a> ESModule<'a> {
                         return result;
                     }
 
-                    if let Some(log) = self.debug_logs.as_deref_mut() {
+                    if let Some(log) = self.debug_logs {
                         log.add_note_fmt(format_args!(
                             "The key \"{}\" did not match",
                             bstr::BStr::new(key)
@@ -2195,7 +2190,7 @@ impl<'a> ESModule<'a> {
                     }
                 }
 
-                if let Some(log) = self.debug_logs.as_deref_mut() {
+                if let Some(log) = self.debug_logs {
                     log.add_note_fmt(format_args!("No keys matched"));
                 }
 
@@ -2206,7 +2201,7 @@ impl<'a> ESModule<'a> {
             }
             EntryData::Array(array) => {
                 if array.is_empty() {
-                    if let Some(log) = self.debug_logs.as_deref_mut() {
+                    if let Some(log) = self.debug_logs {
                         log.add_note_fmt(format_args!(
                             "The path \"{}\" is an empty array",
                             bstr::BStr::new(subpath)
@@ -2248,7 +2243,7 @@ impl<'a> ESModule<'a> {
                 };
             }
             EntryData::Null => {
-                if let Some(log) = self.debug_logs.as_deref_mut() {
+                if let Some(log) = self.debug_logs {
                     log.add_note_fmt(format_args!(
                         "The path \"{}\" is null",
                         bstr::BStr::new(subpath)
@@ -2263,7 +2258,7 @@ impl<'a> ESModule<'a> {
             _ => {}
         }
 
-        if let Some(logs) = self.debug_logs.as_deref_mut() {
+        if let Some(logs) = self.debug_logs {
             logs.add_note_fmt(format_args!(
                 "Invalid package target for path \"{}\"",
                 bstr::BStr::new(subpath)

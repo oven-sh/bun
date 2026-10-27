@@ -4210,7 +4210,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let macro_remap = if Self::ALLOW_MACROS {
             self.options
                 .macro_context
-                .as_deref()
                 .and_then(|ctx| ctx.get_remap(path.text))
         } else {
             None

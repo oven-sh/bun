@@ -3442,26 +3442,80 @@ describe("bundler", () => {
     run: { stdout: '[true,true,null,"{\\"__proto__\\":{\\"x\\":1},\\"a\\":2}"]' },
   });
   // https://github.com/oven-sh/bun/issues/40626
-  // A wildcard --external must not apply to a macro import: the macro runs at
-  // build time and is inlined. The entry lives in a subdirectory because the
-  // bug only showed when the cwd was not the importing file's directory.
+  // No external rule may apply to a macro import: the macro runs at build
+  // time and is inlined. Each case below hits a different external check in
+  // the resolver. The entry lives in a subdirectory because the bug only
+  // showed when the cwd was not the importing file's directory.
+  const macroInlinedOutput = `// @bun
+// src/entry.ts
+console.log("abc");
+`;
+  const relativeMacroFiles = {
+    "/src/entry.ts": /* js */ `
+      import { identity } from "./macro.ts" with { type: "macro" };
+      console.log(identity("abc"));
+    `,
+    "/src/macro.ts": /* js */ `
+      export function identity(arg: any) {
+        return arg;
+      }
+    `,
+  };
+  const packageMacroFiles = {
+    "/src/entry.ts": /* js */ `
+      import { identity } from "macro-pkg" with { type: "macro" };
+      console.log(identity("abc"));
+    `,
+    "/src/node_modules/macro-pkg/package.json": `{ "name": "macro-pkg", "main": "index.ts" }`,
+    "/src/node_modules/macro-pkg/index.ts": /* js */ `
+      export function identity(arg: any) {
+        return arg;
+      }
+    `,
+  };
+  // "*" is a wildcard pattern.
   itBundled("edgecase/MacroWithWildcardExternal", {
-    files: {
-      "/src/entry.ts": /* js */ `
-        import { identity } from "./macro.ts" with { type: "macro" };
-        console.log(identity("abc"));
-      `,
-      "/src/macro.ts": /* js */ `
-        export function identity(arg: any) {
-          return arg;
-        }
-      `,
-    },
+    files: relativeMacroFiles,
     entryPoints: ["/src/entry.ts"],
     target: "bun",
     external: ["*"],
     onAfterBundle(api) {
-      api.expectFile("out.js").not.toContain("macro");
+      api.expectFile("out.js").toBe(macroInlinedOutput);
+    },
+    run: { stdout: "abc" },
+  });
+  // A path is normalized against the cwd into the absolute-path set. That
+  // check already returned the absolute path, so the macro loaded before the
+  // fix too. This case guards the behavior.
+  itBundled("edgecase/MacroWithAbsolutePathExternal", {
+    files: relativeMacroFiles,
+    entryPoints: ["/src/entry.ts"],
+    target: "bun",
+    external: ["{{root}}/src/macro.ts"],
+    onAfterBundle(api) {
+      api.expectFile("out.js").toBe(macroInlinedOutput);
+    },
+    run: { stdout: "abc" },
+  });
+  // A bare package name goes into the exact-name set.
+  itBundled("edgecase/MacroWithExactPackageExternal", {
+    files: packageMacroFiles,
+    entryPoints: ["/src/entry.ts"],
+    target: "bun",
+    external: ["macro-pkg"],
+    onAfterBundle(api) {
+      api.expectFile("out.js").toBe(macroInlinedOutput);
+    },
+    run: { stdout: "abc" },
+  });
+  // packages: "external" marks every package path external.
+  itBundled("edgecase/MacroWithPackagesExternal", {
+    files: packageMacroFiles,
+    entryPoints: ["/src/entry.ts"],
+    target: "bun",
+    packages: "external",
+    onAfterBundle(api) {
+      api.expectFile("out.js").toBe(macroInlinedOutput);
     },
     run: { stdout: "abc" },
   });
@@ -3469,7 +3523,9 @@ describe("bundler", () => {
   // A macro module that fails to load must produce a build error, not crash.
   // A resolution failure rejects the macro load with a ResolveMessage, and
   // handling that rejection allocates a JSC Weak, so the handler must hold
-  // the JSC API lock (debug builds asserted without it).
+  // the JSC API lock. Only the CLI creates the macro VM without a caller that
+  // holds the lock, and release builds compile the lock assertion out, so this
+  // case guards the debug and ASAN lanes.
   itBundled("edgecase/MacroLoadErrorDoesNotCrash", {
     files: {
       "/entry.ts": /* js */ `
@@ -3484,8 +3540,9 @@ describe("bundler", () => {
       `,
     },
     target: "bun",
+    backend: "cli",
     bundleErrors: {
-      "/entry.ts": ['"MacroLoadError" error in macro'],
+      "/entry.ts": ["Cannot find module './missing.ts'"],
     },
   });
   // A macro result or a folded constant that is NaN, ±Infinity or undefined

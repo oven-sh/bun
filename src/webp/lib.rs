@@ -1,6 +1,4 @@
-//! WebP: lossy (VP8), lossless (VP8L), alpha and the RIFF container. Derived from https://github.com/webmproject/libwebp
-//! v1.6.0 (LICENSE.md). It encodes to the same bytes and decodes to the same pixels as libwebp's C code. libwebp's SIMD
-//! code makes other pixels of a damaged lossy image whose coefficients overflow 16 bits.
+//! WebP, derived from libwebp v1.6.0 (LICENSE.md). Encodes to the same bytes, decodes to the same pixels as its C code.
 #![forbid(unsafe_code)]
 // Images come from anywhere and a panic aborts the process.
 #![deny(
@@ -60,8 +58,7 @@ pub fn get_info(data: &[u8]) -> Result<(u32, u32), DecodeError> {
     riff::get_info(data)
 }
 
-/// `WebPDecodeRGBAInto`: `stride` is the distance in bytes between two rows of `rgba`. What `rgba` holds after an
-/// error is unspecified.
+/// `WebPDecodeRGBAInto`. Rows are `stride` bytes apart. What `rgba` holds after an error is unspecified.
 pub fn decode_rgba_into(data: &[u8], rgba: &mut [u8], stride: usize) -> Result<(), DecodeError> {
     let headers = riff::parse_headers(data)?;
     let mut output = Output { rgba, stride };
@@ -85,8 +82,7 @@ pub enum Compression {
     Lossless,
 }
 
-/// Non-premultiplied R, G, B, A bytes to a WebP file, with the ICC profile if there is one. `stride` is the distance in
-/// bytes between two rows of `rgba`.
+/// Non-premultiplied RGBA, rows `stride` bytes apart, to a WebP file, with the ICC profile if there is one.
 pub fn encode_rgba(
     rgba: &[u8],
     width: u32,

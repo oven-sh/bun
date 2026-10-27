@@ -48,7 +48,6 @@ fn finalize_token_probas(proba: &mut Proba) -> Checked {
     Ok(())
 }
 
-//------------------------------------------------------------------------------
 // The probabilities of the tree of the segments
 
 fn get_proba(a: u64, b: u64) -> u8 {

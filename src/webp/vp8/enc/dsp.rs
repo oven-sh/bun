@@ -1,7 +1,4 @@
-//! `dsp/enc.c`: transforms, intra predictions, metrics and quantization of 4x4 blocks.
-//!
-//! Where libwebp keeps a macroblock as rows of 32 bytes and has SIMD code for one or two blocks at a time, this keeps it as
-//! separate 4x4 blocks and has plain code for one block, which `Lanes` lets the compiler run on many blocks at a time.
+//! `dsp/enc.c`. A macroblock is kept as separate 4x4 blocks, and `Lanes` lets plain code run on many blocks at a time.
 
 use core::iter::repeat_n;
 use core::ops::{Add, Sub};
@@ -20,9 +17,7 @@ pub(super) type Chroma = [[Block; 4]; 2];
 /// The coefficients of a block, or its 16 levels in zigzag order.
 pub(super) type Coeffs = Matrix4x4<i16>;
 
-/// `L` blocks side by side: the first value of each, then the second of each... A loop over the blocks then reads and writes
-/// consecutive values, and as long as its body has no loop or branch of its own and `L` is at least 16, the compiler makes
-/// it handle as many blocks at a time as the widest type read or written allows.
+/// `L` blocks interleaved: the first value of each, then the second... A branch-free loop over the blocks vectorises.
 #[derive(Clone)]
 pub(super) struct Lanes<T, const L: usize>(Matrix4x4<[T; L]>);
 
@@ -210,10 +205,7 @@ fn clip_8b(v: i32) -> u8 {
     v.clamp(0, 255) as u8
 }
 
-//------------------------------------------------------------------------------
-// Transforms (Paragraph 14.4)
-//
-// On 16 bits wherever the values fit, like libwebp's SIMD code, for twice as many blocks at a time.
+// Transforms (paragraph 14.4), on 16 bits wherever the values fit, like libwebp's SIMD code.
 
 /// `(a * k) >> 16`
 #[inline(always)]
@@ -233,11 +225,7 @@ fn mul2(a: i16) -> i16 {
     mulhi(a, (35468 - 65536) as i16) + a
 }
 
-/// `pred` plus the inverse transform of `coeffs`.
-///
-/// What comes out of the transform is 8 times the residual that went into `ftransform`, 2040 at most, plus the transform
-/// of the quantization errors: these are at most 289 each, or 880 for a DC that went through the WHT, and add up to at
-/// most 14.8 times that. The values in between are no larger than twice the result.
+/// `pred` plus the inverse transform of `coeffs`. 16 bits do: twice 8 * 255 plus 14.8 * 880 of quantization error.
 #[inline(always)]
 fn itransform_block(pred: Block, coeffs: Coeffs) -> Block {
     let pass = |[in0, in1, in2, in3]: [i16; 4]| {
@@ -345,7 +333,6 @@ pub(super) fn transform_wht(coeffs: &Coeffs) -> [i16; 16] {
     values_of(&map(dc, |v| (v >> 3) as i16))
 }
 
-//------------------------------------------------------------------------------
 // Intra predictions
 
 /// The order of the 16x16 and of the chroma predictions.
@@ -436,8 +423,7 @@ fn intra_preds<const L: usize, const N: usize>(
             }))
         }
         (true, false) => he.clone(),
-        // The missing left samples count as 129, like the top left one: this is the vertical prediction, but for its
-        // default value.
+        // The missing left samples count as 129, like the top left one, which leaves the top samples.
         (false, true) => ve.clone(),
         (false, false) => fill(129),
     };
@@ -466,8 +452,7 @@ pub(super) fn intra_chroma_preds(
     intra_preds::<8, 2>(&[border(u_left, u_top), border(v_left, v_top)])
 }
 
-/// The ten 4x4 predictions, in the order of the `B_*_PRED` modes, and six blocks of padding. `edge` has the four samples
-/// on the left from bottom to top, the top left one, the four on top and the four on the top right.
+/// The ten `B_*_PRED` predictions and six blocks of padding. `edge`: left from the bottom up, top left, top, top right.
 pub(super) fn intra4_preds(edge: &[u8; 13]) -> Lanes<u8, 16> {
     let [l, k, j, i, x, a, b, c, d, e, f, g, h] = edge.map(u32::from);
     let avg3 = |a: u32, b: u32, c: u32| ((a + 2 * b + c + 2) >> 2) as u8;
@@ -526,7 +511,6 @@ pub(super) fn intra4_preds(edge: &[u8; 13]) -> Lanes<u8, 16> {
     Lanes::from_blocks(&[dc, tm, ve, he, rd, vr, ld, vl, hd, hu])
 }
 
-//------------------------------------------------------------------------------
 // Metrics
 
 /// The sum of the squared differences between each block of `a` and that of `b`.
@@ -572,7 +556,6 @@ pub(super) fn disto4x4(sum1: i32, sum2: i32) -> i32 {
     (sum2 - sum1).abs() >> 5
 }
 
-//------------------------------------------------------------------------------
 // Susceptibility, from the histogram of the coefficients
 
 const MAX_COEFF_THRESH: u16 = 31;
@@ -595,8 +578,7 @@ pub(super) fn collect_histograms<const L: usize, const N: usize>(
         bins.set(l, map(coeffs.get(l), bin));
     }
     (0..L / N).map(move |i| {
-        // Most coefficients fall in the same few bins. Counting in four places in turn keeps an increment from waiting
-        // for the one before.
+        // Most coefficients fall in a few bins: four counters in turn keep increments from waiting on each other.
         let mut distributions = [[0u16; MAX_COEFF_THRESH as usize + 1]; 4];
         for bins in &bins.0 {
             for (bins, distribution) in bins.iter().zip(&mut distributions) {
@@ -623,7 +605,6 @@ pub(super) fn collect_histograms<const L: usize, const N: usize>(
     })
 }
 
-//------------------------------------------------------------------------------
 // Quantization
 
 const QFIX: u32 = 17;

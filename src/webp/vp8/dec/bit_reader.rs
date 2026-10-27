@@ -3,9 +3,7 @@
 /// How many bits are loaded at a time. With the 8 bits in use they fill `value`.
 const BITS: i32 = 56;
 
-/// `kVP8Log2Range` and `kVP8NewRange`, for every range: by a range minus 1, how many bits to shift the range by for it to
-/// be 128 or more, and the result minus 1.
-// One load is a shorter wait for the next bit than counting the leading zeros and shifting.
+/// `[kVP8Log2Range, kVP8NewRange]` by range minus 1. One load is a shorter wait than counting zeros and shifting.
 const NORMALIZED: [[u8; 2]; 256] = {
     let mut table = [[0; 2]; 256];
     let mut rest: &mut [[u8; 2]] = &mut table;

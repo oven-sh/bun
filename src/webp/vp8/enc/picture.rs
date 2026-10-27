@@ -17,7 +17,6 @@ pub(super) struct Picture {
     pub(super) a: Option<Vec<u8>>,
 }
 
-//------------------------------------------------------------------------------
 // Gamma correction, which makes up for the resolution that subsampling the chroma loses
 
 /// The precision of the fractional part of an index into `LINEAR_TO_GAMMA`.
@@ -40,7 +39,6 @@ fn linear_to_gamma(v: u32) -> Checked<u16> {
     Ok(((y + (1 << GAMMA_TAB_FIX >> 1)) >> GAMMA_TAB_FIX) as u16)
 }
 
-//------------------------------------------------------------------------------
 // RGB -> YUV conversion
 
 const YUV_FIX: u32 = 16;

@@ -48,7 +48,6 @@ pub(crate) struct Config {
     pub(crate) exact: bool,
 }
 
-// -----------------------------------------------------------------------------
 // Palette
 
 /// The sets of transforms that are considered.
@@ -162,8 +161,7 @@ fn analyze_entropy(
     let green = bits_entropy(&histo.green);
     let alpha_pred = bits_entropy(&histo.alpha_pred);
     let green_pred = bits_entropy(&histo.green_pred);
-    // What the transforms themselves take matters for small images: one of 14 predictors for each tile, or 24 bits of
-    // multipliers, and about 8 bits for each colour of a palette, which is written as differences.
+    // The transforms' own cost matters for small images: a predictor or 24 bits per tile, some 8 bits per colour.
     let num_tiles =
         (sub_sample_size(width, transform_bits) * sub_sample_size(height, transform_bits)) as u64;
     let modes = [
@@ -239,8 +237,7 @@ fn analyze_entropy(
     Ok((min_entropy_ix, red_and_blue_always_zero))
 }
 
-/// Brings the size of tiles into its range, makes them large enough for there to be no more than `image_size_max`, and
-/// no larger than it takes for there to be just one.
+/// Clamps the tile size to its range, to at most `image_size_max` tiles, and to no more than a single tile takes.
 fn clamp_bits(
     width: usize,
     height: usize,
@@ -277,11 +274,9 @@ fn get_transform_bits(histo_bits: u32) -> u32 {
     histo_bits.min(5)
 }
 
-// -----------------------------------------------------------------------------
 // Prefix codes
 
-/// The five prefix codes of each histogram, one after another: green with lengths and cache indices, red, blue, alpha,
-/// distances.
+/// Five prefix codes per histogram: green with lengths and cache indices, red, blue, alpha, distances.
 struct HuffmanCodes {
     symbols: Vec<Symbol>,
     /// How many symbols the five codes of a histogram have in all.
@@ -505,8 +500,7 @@ fn write_huffman_code_with_extra_bits(bw: &mut BitWriter, symbol: Symbol, bits: 
     bw.put_bits((bits << depth) | u32::from(symbol.code), depth + n_bits);
 }
 
-/// Writes the pixels. `histogram_symbols` has in bits 8 to 23 which codes each tile of `1 << histo_bits` pixels squared
-/// uses. A `histo_bits` of 0 stands for a single tile.
+/// Writes the pixels. Bits 8 to 23 of `histogram_symbols` say which codes a tile uses. `histo_bits` 0: a single tile.
 fn store_image_to_bit_mask(
     bw: &mut BitWriter,
     width: usize,
@@ -604,8 +598,7 @@ fn encode_image_no_huffman(
     )?)
 }
 
-/// Writes the image that is left after the transforms, in the way among `sub_configs` that takes the fewest bytes.
-/// `cache_bits` is the largest colour cache to consider, or 0 for no such limit.
+/// Writes the transformed image in the smallest way among `sub_configs`. `cache_bits` caps the colour cache; 0: no cap.
 fn encode_image_internal(
     bw: &mut BitWriter,
     argb: &[u32],
@@ -714,7 +707,6 @@ fn encode_image_internal(
     Ok(())
 }
 
-// -----------------------------------------------------------------------------
 // Transforms
 
 fn put_transform(bw: &mut BitWriter, transform: TransformType) {
@@ -808,8 +800,7 @@ fn perfect_hash_table(
     Some(table)
 }
 
-/// `APPLY_PALETTE_FOR`: replaces each row of `width` pixels by `sub_sample_size(width, xbits)` pixels that hold their
-/// indices, which are what `color_index` returns.
+/// `APPLY_PALETTE_FOR`: packs each row's `color_index` values into `sub_sample_size(width, xbits)` pixels.
 fn apply_palette_for(
     argb: &mut [u32],
     width: usize,
@@ -872,8 +863,7 @@ fn apply_palette(
     })
 }
 
-/// Replaces the pixels by their indices in the palette. Returns the new width: up to 16 colours, several indices fit in
-/// a pixel.
+/// Replaces the pixels by palette indices. Returns the new width: up to 16 colours, several indices fit in a pixel.
 fn map_image_from_palette(
     argb: &mut Vec<u32>,
     palette: &[u32],
@@ -914,7 +904,6 @@ fn encode_palette(bw: &mut BitWriter, palette: &[u32]) -> Result<(), EncodeError
     )
 }
 
-// -----------------------------------------------------------------------------
 // Main call
 
 /// `VP8LEncodeStream`: writes the `width * height` pixels of `argb`, without the header.

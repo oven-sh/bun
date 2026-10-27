@@ -1,5 +1,4 @@
-//! `backward_references_cost_enc.c`: improves on an LZ77 by finding, with the symbol costs it led to, the cheapest way
-//! to reach each pixel.
+//! `backward_references_cost_enc.c`: with the symbol costs of a first LZ77, finds the cheapest way to each pixel.
 
 use super::backward_references::{
     BackwardRefs, HashChain, MAX_LENGTH, PixOrCopy, distance_to_plane_code,
@@ -81,14 +80,12 @@ impl CostModel {
     }
 }
 
-// -----------------------------------------------------------------------------
 // CostManager and interval handling
 
 /// The most intervals to keep. What does not fit goes into the costs at once.
 const COST_CACHE_INTERVAL_SIZE_MAX: usize = 500;
 
-/// A copy from `index` reaches the pixels from `start` to `end` (exclusive) at `cost`, and nothing known reaches them
-/// for less. The intervals form a list sorted by `start` and do not overlap.
+/// A copy from `index` reaches `start..end` at `cost`, the least known. Sorted by `start`, without overlap.
 #[derive(Clone, Copy, Default)]
 struct CostInterval {
     cost: i64,
@@ -107,9 +104,7 @@ struct CostCacheInterval {
     end: usize,
 }
 
-/// A copy from a pixel makes each of the up to `MAX_LENGTH` pixels after it reachable, at the cost of the distance
-/// plus that of the length. Lengths fall into a few ranges of equal cost, so that instead of one comparison for each
-/// of those pixels there is one interval for each range.
+/// A copy reaches up to `MAX_LENGTH` pixels. Lengths fall into few ranges of equal cost: one interval for each range.
 struct CostManager<'a> {
     head: Option<usize>,
     cache_intervals: Vec<CostCacheInterval>,
@@ -208,8 +203,7 @@ impl<'a> CostManager<'a> {
         Ok(())
     }
 
-    /// Takes into the cost of pixel `i` the intervals that it is in. With `do_clean_intervals`, drops those that end
-    /// before it.
+    /// Takes the intervals that pixel `i` is in into its cost. `do_clean_intervals` drops those that end before it.
     fn update_cost_at_index(&mut self, i: usize, do_clean_intervals: bool) -> Checked {
         let mut current = self.head;
         while let Some(index) = current {
@@ -283,8 +277,7 @@ impl<'a> CostManager<'a> {
         self.position_orphan_interval(interval_new, interval_in)
     }
 
-    /// There is a copy of `len` pixels from `position` on, which costs `distance_cost` plus the cost of the length
-    /// that is made use of.
+    /// A copy of `len` pixels from `position` on costs `distance_cost` plus the cost of the length made use of.
     fn push_interval(&mut self, distance_cost: i64, position: usize, len: usize) -> Checked {
         // Not worth the trouble with the intervals.
         const SKIP_DISTANCE: usize = 10;
@@ -425,8 +418,7 @@ fn backward_references_hash_chain_distance_only(
                 first_offset_is_constant = true;
                 cost_manager.push_interval(prev_cost + offset_cost, i, len)?;
             } else {
-                // A stretch of pixels that all copy from the same distance, as in an area of one colour. The interval
-                // of each would be the one of the pixel before, moved by one.
+                // All copy from the same distance, as in a flat area: each interval is the last one moved by one.
                 if first_offset_is_constant {
                     reach = (i + len_prev).checked_sub(2).ok_or(Bug)?;
                     first_offset_is_constant = false;
@@ -462,8 +454,7 @@ fn backward_references_hash_chain_distance_only(
     Ok(())
 }
 
-/// Follows the steps back from the last pixel. Returns where in `dist_array` the steps of the path start: they are
-/// packed at its end.
+/// Follows the steps back from the last pixel and packs them at the end of `dist_array`. Returns where they start.
 fn trace_backwards(dist_array: &mut [u16]) -> Checked<usize> {
     let mut path = dist_array.len();
     // One more than the pixel that the path has got back to.

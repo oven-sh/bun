@@ -110,8 +110,7 @@ pub(crate) fn distance_to_plane_code(xsize: usize, dist: u32) -> u32 {
     }
 }
 
-/// How far `argb[pos1..]` and `argb[pos2..]` are the same, up to `max_limit`. Returns 0 instead if that is
-/// `best_len_match` or less and it is quick to see.
+/// The length of the match, up to `max_limit`, or 0 if it is quick to see that it is `best_len_match` or less.
 #[inline]
 fn find_match_length(
     argb: &[u32],
@@ -134,7 +133,6 @@ fn match_length(argb: &[u32], pos1: usize, pos2: usize, max_limit: usize) -> Che
     ))
 }
 
-// -----------------------------------------------------------------------------
 // Hash chains
 
 /// `VP8LHashChain`: the best copy that can start at each pixel.
@@ -235,8 +233,7 @@ impl HashChain {
             while pos < size - 2 {
                 let argb_comp_next = argb.at(pos + 1)? == argb.at(pos + 2)?;
                 if argb_comp && argb_comp_next {
-                    // All the pairs of pixels in a run of one colour have the same hash. The colour and the length
-                    // of what is left of the run tell them apart.
+                    // All pairs in a run of one colour hash alike, so hash the colour and what is left of the run.
                     let color = argb.at(pos)?;
                     let mut len = 1 + argb
                         .sub(pos + 3..)?
@@ -271,8 +268,7 @@ impl HashChain {
             chain.put(pos, hash_to_first_index.at(hash_code)?)?;
         }
 
-        // Then, from the end, the links give way to the best match of each position. The last pixel has nothing
-        // after it to match and the first nothing before it.
+        // From the end, the links give way to each position's best match. The first and last pixels have none.
         chain.put(0, 0)?;
         chain.put(size - 1, 0)?;
         let mut base_position = size - 2;
@@ -344,8 +340,7 @@ impl HashChain {
                 {
                     break;
                 }
-                // A match of the longest length may have a nearer one of the same length, unless it is as near as can
-                // be.
+                // A match of the longest length may have a nearer one just as long, unless it is as near as can be.
                 if best_length == MAX_LENGTH
                     && best_distance != 1
                     && base_position + MAX_LENGTH < max_base_position
@@ -497,8 +492,7 @@ fn backward_references_lz77_box(
         let (mut best_offset, mut best_length) = hash_chain_best.find_copy(i)?;
         // A match of the longest length within the window cannot be improved on.
         if best_length < MAX_LENGTH || !window_offsets.contains(&best_offset) {
-            // What is left of the match of the pixel before is a start, and then only the pixels that it could not
-            // reach are worth a look.
+            // Start from the rest of the previous pixel's match: only pixels it could not reach are worth a look.
             let use_prev = best_length_prev > 1 && best_length_prev < MAX_LENGTH;
             let offsets = if use_prev {
                 best_length = best_length_prev - 1;
@@ -595,8 +589,7 @@ impl LiteralCounts {
     }
 }
 
-/// One element for each key of each size of colour cache: that of key `key` of the cache of `bits` bits is at
-/// `(1 << bits) | key`. The key of the next smaller cache lacks the last bit, so that half the index is its element.
+/// Key `key` of the cache of `bits` bits is at `(1 << bits) | key`, so half an index is the next smaller cache's.
 type PerCacheKey = [u32; 2 << MAX_COLOR_CACHE_BITS];
 
 /// The size of colour cache, up to `cache_bits_max`, with which `refs` have the lowest entropy. 0 is none.
@@ -729,8 +722,7 @@ pub(crate) enum Lz77 {
     Box,
 }
 
-/// `VP8LGetBackwardReferences`: leaves in `refs_best` the cheapest of what the `lz77_types_to_try` make of `argb`, and
-/// returns the size of the colour cache that goes with it, at most `cache_bits_max`. `refs_tmp` is working memory.
+/// `VP8LGetBackwardReferences`: the cheapest of `lz77_types_to_try` goes to `refs_best`. Returns its colour cache bits.
 pub(crate) fn get_backward_references(
     width: usize,
     argb: &[u32],

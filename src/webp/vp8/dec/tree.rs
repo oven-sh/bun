@@ -77,8 +77,7 @@ fn parse_mode4(br: &mut BitReader<'_>, prob: &[u8; 9]) -> IntraMode {
     }
 }
 
-/// `top` and `left` are the modes of the 4x4 blocks along the macroblock's edges, and become those of its own last
-/// row and column.
+/// `top` and `left`: the modes of the 4x4 blocks along the edges, replaced by those of this one's last row and column.
 pub(super) fn parse_intra_mode(
     br: &mut BitReader<'_>,
     proba: &Proba,

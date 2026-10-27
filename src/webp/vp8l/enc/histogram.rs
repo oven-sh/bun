@@ -1,5 +1,4 @@
-//! `histogram_enc.c`: counts the symbols that backward references turn into, estimates what they cost, and groups
-//! the tiles of an image into clusters that share their prefix codes.
+//! `histogram_enc.c`: counts symbols, estimates their cost, and clusters the tiles that are to share prefix codes.
 
 use super::backward_references::{BackwardRefs, PixOrCopy};
 use super::lossless::{
@@ -240,8 +239,7 @@ impl Histogram {
     }
 }
 
-/// The flags of the sum of two histograms. The costs are not set. A channel that is trivial in one and unused in the
-/// other does not count as trivial.
+/// The flags, not the costs, of the sum of two histograms. Trivial in one and unused in the other is not trivial.
 fn combined_channels(
     c1: &[Channel; NUM_CHANNELS],
     c2: &[Channel; NUM_CHANNELS],
@@ -256,16 +254,12 @@ fn combined_channels(
     out
 }
 
-// -----------------------------------------------------------------------------
 // Entropy-related functions.
 
-/// From some 259 million symbols of 8 bits of entropy on, which an image of noise of the largest size has, the mix is
-/// too much for the signed division, and the result is a small negative number as a `u64`. libwebp goes on with that,
-/// so costs are added with `add_costs` and `wrapping_add`.
+/// Wraps below 0 from some 259 million symbols of noise on, as in libwebp: hence `add_costs` and `wrapping_add`.
 fn bits_entropy_refine(entropy: &BitEntropy) -> u64 {
     let sum = u64::from(entropy.sum) << LOG_2_PRECISION_BITS;
-    // A prefix code cannot do as well as the entropy says when there are few symbols. Mixing some of the entropy
-    // into that limit makes for better clusters.
+    // A prefix code cannot reach the entropy of few symbols. Mixing some entropy into that limit clusters better.
     let mix: u64 = match entropy.nonzeros {
         0 | 1 => return 0,
         2 => return div_round::<100>((99 * sum).wrapping_add(entropy.entropy) as i64) as u64,
@@ -326,7 +320,6 @@ fn get_combined_entropy(x: &[u32], c1: &Channel, y: &[u32], c2: &Channel) -> u64
     bits_entropy_refine(&bit_entropy).wrapping_add(final_huffman_cost(&stats))
 }
 
-// -----------------------------------------------------------------------------
 // Various histogram combine/cost-eval functions
 
 /// `a + b`, or `i64::MAX` if that is less.
@@ -376,8 +369,7 @@ fn histogram_add_thresh(a: &Histogram, b: &Histogram, cost_threshold: i64) -> Op
 /// `VP8LHistogramSet`, where `VP8LGetHistoImageSymbols` combines histograms.
 struct HistogramSet {
     histograms: Vec<Histogram>,
-    /// Where in `histograms` each histogram of the set is. Removing one leaves the elements from `size` on as they
-    /// are, and `histogram_combine_stochastic` still looks at the one at `size`.
+    /// Where each histogram is. What removal leaves at `size` stays: `histogram_combine_stochastic` still looks at it.
     slots: Vec<usize>,
     size: usize,
     /// Where in `histograms` the one is that is not part of the set.
@@ -430,8 +422,7 @@ impl HistogramSet {
         self.remove(pair.idx2)
     }
 
-    /// `HistogramAddEval`: makes the spare histogram the sum of `a` and `b`, if `C(a + b) - C(a) - C(b)` is less than
-    /// `cost_threshold`.
+    /// `HistogramAddEval`: the spare becomes `a + b` if `C(a + b) - C(a) - C(b)` is less than `cost_threshold`.
     fn add_eval_to_spare(&mut self, a: usize, b: usize, cost_threshold: i64) -> Checked<bool> {
         let slots = [self.slots.at(a)?, self.slots.at(b)?, self.spare];
         let [a, b, out] = self.histograms.get_disjoint_mut(slots).map_err(|_| Bug)?;
@@ -478,8 +469,7 @@ fn histogram_build(
     Ok(())
 }
 
-/// `HistogramCopyAndAnalyze`: computes the costs of the histograms and copies those that are not empty, as those of
-/// tiles that a copy skips are.
+/// `HistogramCopyAndAnalyze`: computes the costs and drops the empty histograms, those of tiles that a copy skips.
 fn histogram_copy_and_analyze(
     orig_histo: &mut [Histogram],
     image_histo: &mut HistogramSet,
@@ -528,8 +518,7 @@ fn is_trivial_but_for_literal(histo: &Histogram) -> bool {
     red.trivial_symbol.is_some() && blue.trivial_symbol.is_some() && alpha.trivial_symbol.is_some()
 }
 
-/// `HistogramCombineEntropyBin`: merges histograms of the same bin where that pays. `combine_cost_factor` is a
-/// percentage.
+/// `HistogramCombineEntropyBin`: merges histograms of a bin where that pays. `combine_cost_factor` is a percentage.
 fn histogram_combine_entropy_bin(
     image_histo: &mut HistogramSet,
     combine_cost_factor: i64,
@@ -557,8 +546,7 @@ fn histogram_combine_entropy_bin(
             idx += 1;
             continue;
         }
-        // Merging a histogram that is trivial into one that is not costs more than the estimate says. When that
-        // holds back too many merges, the prefix codes of all those histograms cost even more.
+        // Merging a trivial histogram into one that is not costs more than estimated, but too many codes cost more.
         let try_combine =
             is_trivial_but_for_literal(image_histo.histograms.at_ref(image_histo.spare)?)
                 || (!is_trivial_but_for_literal(image_histo.get(idx)?)
@@ -580,7 +568,6 @@ fn my_rand(seed: &mut u32) -> u32 {
     *seed
 }
 
-// -----------------------------------------------------------------------------
 // Histogram pairs priority queue
 
 /// Two histograms that it pays to merge.
@@ -663,8 +650,7 @@ impl HistoQueue {
         Ok(())
     }
 
-    /// `HistoQueuePush`: adds the pair if there is room and merging it changes the cost by less than `threshold`, which
-    /// is not positive. Returns that change, or else 0.
+    /// `HistoQueuePush`: adds the pair if there is room and its cost change is below `threshold`. Returns it, or 0.
     fn push(
         &mut self,
         histograms: &HistogramSet,
@@ -723,8 +709,7 @@ fn histogram_combine_greedy(image_histo: &mut HistogramSet) -> Result<(), Encode
     Ok(())
 }
 
-/// Merges the best of a few pairs picked at random, over and over. Returns whether there are few enough histograms
-/// left for `histogram_combine_greedy`.
+/// Merges the best of a few random pairs, over and over. Returns whether `histogram_combine_greedy` can take over.
 fn histogram_combine_stochastic(
     image_histo: &mut HistogramSet,
     min_cluster_size: usize,
@@ -803,11 +788,9 @@ fn histogram_combine_stochastic(
     Ok(image_histo.size <= min_cluster_size)
 }
 
-// -----------------------------------------------------------------------------
 // Histogram refinement
 
-/// `HistogramRemap`: finds the best cluster for each tile, then makes each cluster the sum of its tiles. Returns the
-/// clusters.
+/// `HistogramRemap`: finds the best cluster for each tile. Returns the clusters, each the sum of its tiles.
 fn histogram_remap(
     in_histo: &[Histogram],
     out: HistogramSet,
@@ -862,8 +845,7 @@ fn get_combine_cost_factor(histo_size: usize, quality: i32) -> i64 {
     combine_cost_factor
 }
 
-/// `VP8LGetHistoImageSymbols`: returns the histograms of the clusters, and in `histogram_symbols` the cluster of each
-/// tile of `1 << histogram_bits` pixels squared.
+/// `VP8LGetHistoImageSymbols`: returns the clusters' histograms, and each tile's cluster in `histogram_symbols`.
 pub(crate) fn get_histo_image_symbols(
     xsize: usize,
     refs: &BackwardRefs,

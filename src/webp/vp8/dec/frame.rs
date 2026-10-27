@@ -47,8 +47,7 @@ pub(super) struct Frame<'a> {
 
     yuv_t: Vec<TopSamples>,
     yuv_b: YuvB,
-    /// A row of macroblocks, below the last `extra_y_rows` rows of the one above, which its filtering still changes.
-    /// Each element is a row of one macroblock, and `mb_w` of them are a row of the image.
+    /// A row of macroblocks below `extra_y_rows` rows still to be filtered. Each element is one row of one macroblock.
     cache_y: Vec<[u8; 16]>,
     /// The same with half as many rows.
     cache_u: Vec<[u8; 8]>,
@@ -360,8 +359,7 @@ impl<'a> Frame<'a> {
             y_end -= extra_y_rows;
         }
         let y_end = y_end.min(self.height);
-        // libwebp decodes the alpha of the rows that it is about to write, and gives up on the image if it cannot. In the
-        // end it has asked for every row, so decoding all of them before the first are written fails the same images.
+        // libwebp decodes alpha a few rows at a time, but ends up asking for every row, so this fails the same images.
         if let Some(alpha_data) = self.alpha_data.take() {
             let plane = alpha::dec::decode(alpha_data, self.emitter.width(), self.height)?;
             self.emitter.set_alpha(plane);

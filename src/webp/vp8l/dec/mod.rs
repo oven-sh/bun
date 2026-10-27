@@ -221,8 +221,7 @@ struct CodeBuffers {
     sorted: [u16; MAX_CODE_LENGTHS_SIZE],
 }
 
-/// Reads a code and appends its table to `tables`, if there are any. Returns where the table starts, and leaves the
-/// lengths in `buffers.code_lengths`.
+/// Reads a code into `buffers.code_lengths` and appends its table to `tables`, if any. Returns where the table starts.
 fn read_huffman_code(
     alphabet_size: usize,
     br: &mut BitReader<'_>,
@@ -308,8 +307,7 @@ impl Metadata {
     }
 }
 
-/// Reads `num_htree_groups_max` meta codes. With a `mapping`, it gives the index in the result of each, or `None` for
-/// those that are only checked.
+/// Reads `num_htree_groups_max` meta codes. `mapping` gives each one's index in the result; `None` is only checked.
 fn read_huffman_codes_helper(
     br: &mut BitReader<'_>,
     color_cache_bits: u32,
@@ -372,8 +370,7 @@ fn read_huffman_codes_helper(
     Ok((htree_groups, tables))
 }
 
-/// `ReadHuffmanCodes`, and the size of the colour cache in front of them, for an image of `xsize` by `ysize` pixels.
-/// Only the main image (`is_level0`) can have more than one meta code.
+/// `ReadHuffmanCodes`, and the colour cache size before them. Only the main image (`is_level0`) has several meta codes.
 fn read_metadata(
     br: &mut BitReader<'_>,
     xsize: usize,
@@ -485,8 +482,7 @@ fn cache_pixels(color_cache: &mut ColorCache, data: &[u32], last_cached: &mut us
     Ok(())
 }
 
-/// Decodes the pixels of an image. `process_rows` is given the pixels so far and the number of rows that are complete,
-/// every `NUM_ARGB_CACHE_ROWS` rows and at the end.
+/// Calls `process_rows` with the pixels so far and the rows complete, every `NUM_ARGB_CACHE_ROWS` rows and at the end.
 fn decode_image_data(
     br: &mut BitReader<'_>,
     hdr: &mut Metadata,
@@ -728,8 +724,7 @@ impl<'a> ArgbCache<'a> {
         })
     }
 
-    /// `ApplyInverseTransforms` to the rows of `data` from `last_row` up to `row`. Returns the number of the first one
-    /// and the pixels.
+    /// `ApplyInverseTransforms` to rows `last_row..row` of `data`. Returns the number of the first one and the pixels.
     fn process_rows(&mut self, data: &[u32], row: usize) -> Checked<(usize, &[Pixel])> {
         let start_row = self.last_row;
         self.last_row = row;
@@ -834,8 +829,7 @@ fn decode_alpha_data(
     Ok(data)
 }
 
-/// `VP8LDecodeAlphaHeader` and `VP8LDecodeAlphaImageStream`: sets `output` to the green channel of an image that is
-/// `width` pixels wide and has no header of its own.
+/// `VP8LDecodeAlphaHeader`, `VP8LDecodeAlphaImageStream`: `output` becomes the green channel of a headerless image.
 pub(crate) fn decode_alpha(
     data: &[u8],
     width: usize,

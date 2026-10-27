@@ -1,5 +1,4 @@
-//! The lossy encoder (`webp_enc.c`, `vp8i_enc.h`), with the configuration of `WebPEncodeRGBA` folded in: method 4, four
-//! segments, `sns_strength` 50, `filter_strength` 60 with the strong filter, one pass, one token partition.
+//! `webp_enc.c`, `vp8i_enc.h`, with the configuration of `WebPEncodeRGBA` (the default preset, method 4) folded in.
 
 mod analysis;
 mod bit_writer;

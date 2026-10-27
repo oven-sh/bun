@@ -130,8 +130,7 @@ fn set_bit_depths(
     }
 }
 
-/// Sets the lengths of an optimal code of at most `tree_depth_limit` bits. Counts below `count_min` are taken for
-/// `count_min`, which doubles until the code is short enough.
+/// An optimal code of at most `tree_depth_limit` bits: counts are raised to `count_min`, which doubles until it fits.
 fn generate_optimal_tree(
     histogram: &[u32],
     scratch: &mut Scratch,
@@ -262,8 +261,7 @@ fn code_repeated_zeros(mut repetitions: usize, tokens: &mut Vec<Token>) {
     }
 }
 
-/// `VP8LCreateCompressedHuffmanTree`: replaces `tokens` by the lengths of `tree`. There are no more tokens than
-/// symbols, and `tokens` has room for that many.
+/// `VP8LCreateCompressedHuffmanTree`: `tokens`, which has room for one per symbol, becomes the lengths of `tree`.
 pub(crate) fn create_compressed_huffman_tree(tree: &[Symbol], tokens: &mut Vec<Token>) {
     debug_assert!(tokens.capacity() >= tree.len());
     tokens.clear();
@@ -305,8 +303,7 @@ fn convert_bit_depths_to_symbols(tree: &mut [Symbol]) -> Checked {
     Ok(())
 }
 
-/// `VP8LCreateHuffmanTree`: makes `huff_code`, whose lengths are all 0 so far, the code for `histogram`, which has as
-/// many elements and gets smoothed on the way.
+/// `VP8LCreateHuffmanTree`: `huff_code`, all lengths 0 so far, becomes the code for `histogram`, which gets smoothed.
 pub(crate) fn create_huffman_tree(
     histogram: &mut [u32],
     tree_depth_limit: u8,

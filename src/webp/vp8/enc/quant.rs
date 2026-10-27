@@ -31,7 +31,6 @@ fn mult_8b(a: i32, b: i32) -> i32 {
     (a * b + 128) >> 8
 }
 
-//------------------------------------------------------------------------------
 // Quantization matrices
 
 #[derive(Clone, Copy)]
@@ -112,7 +111,6 @@ fn setup_matrices(enc: &mut Encoder<'_>) -> Checked {
     Ok(())
 }
 
-//------------------------------------------------------------------------------
 // Filtering parameters
 
 /// Below this, filtering has next to no visible effect.
@@ -136,8 +134,7 @@ fn setup_filter_strength(enc: &mut Encoder<'_>) -> Checked {
 const MAX_DQ_UV: i32 = 6;
 const MIN_DQ_UV: i32 = -4;
 
-/// Maps the quality, where like for JPEG 0.75 is good, to a compression factor, where the middle is 0.5. As the size goes
-/// roughly by the cube of the quantizer, it is the cube root of that.
+/// Moves JPEG's "good" 0.75 to the middle, then takes the cube root, as size goes roughly by the cube of the quantizer.
 fn quality_to_compression(c: f64) -> f64 {
     let linear_c = if c < 0.75 {
         c * (2.0 / 3.0)
@@ -208,7 +205,6 @@ pub(super) fn set_segment_params(enc: &mut Encoder<'_>) -> Checked {
     setup_matrices(enc)
 }
 
-//------------------------------------------------------------------------------
 // Scores
 
 /// Rate and distortion.
@@ -289,7 +285,6 @@ fn non_zero_bits(num_levels: &[u8]) -> u32 {
     })
 }
 
-//------------------------------------------------------------------------------
 // Difference, transform, quantize, back-transform, add
 
 struct Intra16 {
@@ -330,14 +325,12 @@ impl Intra16 {
     }
 }
 
-//------------------------------------------------------------------------------
 // DC-error diffusion
 
 /// The errors of the second, third and fourth block of U, and of V.
 type BlockErrors = [[i8; 3]; 2];
 
-/// The shares, out of 16, of the error that go to the block below and to the one on the right. A little under the whole
-/// of it, which would make a chessboard of colors at the lowest qualities.
+/// Sixteenths of the error for the block below and the one on the right. All 16 would give chessboards at low quality.
 const C1: i32 = 7;
 const C2: i32 = 8;
 const DSHIFT: u32 = 4;
@@ -401,7 +394,6 @@ fn store_diffusion_errors(it: &mut EncIterator, derr: BlockErrors) -> Checked {
     Ok(())
 }
 
-//------------------------------------------------------------------------------
 // Reconstruct with each mode, and pick the one with the lowest rate + lambda * distortion.
 
 /// The step between the 4x4 blocks, from the first three AC coefficients of their DCs.
@@ -645,8 +637,7 @@ pub(super) fn decimate(enc: &mut Encoder<'_>, it: &mut EncIterator) -> Checked<M
 
     let mut trials = [Intra16::new(), Intra16::new()];
     let i16 = pick_best_intra16(it, dqm, &enc.proba, (&src, &src_tt), trials.each_mut())?;
-    // A blocky macroblock, with nothing but DCs, and a fairly high distortion: record the step between its blocks, for the
-    // filter to be strong enough to smooth it out.
+    // Nothing but DCs and a fairly high distortion: record the step between blocks, for the filter to smooth it out.
     let max_edge = ((i16.score.nz & 0x100_ffff) == 0x100_0000 && i16.score.d > dqm.min_disto)
         .then(|| max_delta(&i16.y_dc_levels));
     let i4 = pick_best_intra4(it, enc, dqm, &src_tt, i16.score.score)?;

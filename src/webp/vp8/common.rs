@@ -1,7 +1,6 @@
 //! `common_dec.h`: what the decoder and the encoder agree on.
 
-/// How a block is predicted from its neighbours. All ten are for 4x4 luma blocks. Whole macroblocks, luma and chroma,
-/// use the first four.
+/// Prediction modes. All ten are for 4x4 luma blocks; whole macroblocks, luma and chroma, use the first four.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum IntraMode {
     Dc,

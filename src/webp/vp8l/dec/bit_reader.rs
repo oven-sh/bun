@@ -34,8 +34,7 @@ impl<'a> BitReader<'a> {
         }
     }
 
-    /// The next 32 bits. Past the end of the data they are whatever `val` holds there: the last symbol of an alpha
-    /// plane may be made of them.
+    /// The next 32 bits. Past the end they are what `val` holds: an alpha plane's last symbol may be made of them.
     #[inline(always)]
     pub(super) fn prefetch_bits(&self) -> u32 {
         (self.val >> (self.bit_pos & (LBITS - 1))) as u32
@@ -47,8 +46,7 @@ impl<'a> BitReader<'a> {
         self.eos || (self.pos == self.buf.len() && self.bit_pos > LBITS)
     }
 
-    /// `VP8LSetBitPos(br, br->bit_pos + num_bits)`, after `prefetch_bits`. At most `WBITS` bits between two calls of
-    /// `fill_bit_window`.
+    /// `VP8LSetBitPos(br, br->bit_pos + num_bits)`. At most `WBITS` bits between two calls of `fill_bit_window`.
     #[inline(always)]
     pub(super) fn skip_bits(&mut self, num_bits: u32) {
         self.bit_pos += num_bits;

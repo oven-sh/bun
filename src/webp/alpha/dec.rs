@@ -7,9 +7,7 @@ use crate::{DecodeError, vp8l};
 
 const ALPHA_PREPROCESSED_LEVELS: u8 = 1;
 
-/// The `width * height` alpha values of an `ALPH` payload. libwebp decodes them as the rows of the image are, which
-/// fails for the same payloads. Where it fails in `ALPHInit`, its status is `VP8_STATUS_OUT_OF_MEMORY`; here, malformed
-/// data is always a `BitstreamError`.
+/// The alpha values of an `ALPH` payload. Malformed data is a `BitstreamError`, also where libwebp says out of memory.
 pub(crate) fn decode(data: &[u8], width: usize, height: usize) -> Result<Vec<u8>, DecodeError> {
     if width == 0 || height == 0 {
         return Err(DecodeError::Bug);

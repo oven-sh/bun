@@ -1,14 +1,8 @@
-//! `dsp/upsampling.c`, `dsp/yuv.h`: the fancy upsampler and the conversion to RGB.
-//!
-//! libwebp goes through a row two pixels at a time: the pixels `2 * x + 1` and `2 * x + 2` lie between the chroma
-//! samples `x` and `x + 1`. Here they are called the odd and the even pixel of pair `x`, and they are kept apart until
-//! the end, so that each step is a loop over arrays that needs no shuffling.
+//! `dsp/upsampling.c`, `dsp/yuv.h`. Pixels `2x + 1` (odd) and `2x + 2` (even) stay apart to the end: no shuffles.
 
 use crate::util::{Bug, Checked, OutOfMemory, SliceExt, try_vec};
 
-/// A sample times 256.
-// In memory rather than computed where it is used, the shift stays out of the way of the multiplications, which then
-// compile to one instruction that gives the high half of a 16-bit product.
+/// A sample times 256, kept in memory so that the multiplications compile to the high half of a 16-bit product.
 type Wide = u16;
 
 #[inline(always)]
@@ -126,8 +120,7 @@ impl Upsampler {
         upsample(top[1], cur[1], top_v, bottom_v)
     }
 
-    /// The second half, for the upper or the `lower` of the two rows between the chroma rows. `y`, `alpha` and `dst` are
-    /// a row of the image.
+    /// The second half, for the upper or `lower` row between the chroma rows. `y`, `alpha`, `dst` are one row.
     pub(super) fn convert(
         &mut self,
         lower: bool,

@@ -1,5 +1,4 @@
-//! `lossless_enc.c`, `lossless_common.h`: logarithms and entropies in fixed point, prefix codes of lengths and
-//! distances, the colour transforms.
+//! `lossless_enc.c`, `lossless_common.h`: fixed-point logarithms and entropies, prefix codes, colour transforms.
 
 use crate::util::{Checked, SliceExt};
 
@@ -104,8 +103,7 @@ pub(crate) const fn bits_log2_floor(n: u32) -> u32 {
     31 - (n | 1).leading_zeros()
 }
 
-/// `v` is at least `LOG_LOOKUP_IDX_MAX`. Returns `v >> log_cnt`, which is below it, then `log_cnt` and what the shift
-/// dropped.
+/// For `v >= LOG_LOOKUP_IDX_MAX`: `v >> log_cnt`, which is below it, then `log_cnt` and what the shift dropped.
 #[inline]
 fn split_for_lookup(v: u32) -> (u32, u32, u32) {
     let log_cnt = bits_log2_floor(v).saturating_sub(7);
@@ -193,8 +191,7 @@ pub(crate) fn prefix_encode(distance: u32) -> PrefixCode {
     }
 }
 
-/// The histogram of the part of an image that is dealt with. The candidates for the next tile all are compared with it,
-/// so it keeps the terms of its entropy.
+/// The histogram of the tiles done so far, with the terms of its entropy: every candidate is compared with it.
 pub(crate) struct Accumulated {
     counts: [u32; 256],
     /// `fast_slog2` of each count.
@@ -461,8 +458,7 @@ const fn delta(color_pred: i16, color: i16) -> i16 {
     (color_pred * color) >> 5
 }
 
-/// Consecutive values often are the same, and a count cannot be incremented before its last increment is done. So
-/// they go to different tables.
+/// Equal values often follow each other and an increment waits for the one before, so they go to different tables.
 fn histogram_of(values: &[u8]) -> [u32; 256] {
     let mut histos = [[0u32; 256]; 4];
     let (quads, rest) = values.as_chunks::<4>();

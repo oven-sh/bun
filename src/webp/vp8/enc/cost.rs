@@ -80,8 +80,7 @@ impl Proba {
         Ok(())
     }
 
-    /// The cost of the levels of a block from `first` on, in the context `ctx0`. There are `num_levels` up to the last one
-    /// that is not zero, and `levels` is only called for if that is not 0.
+    /// Cost of the levels from `first` on in context `ctx0`. `num_levels` counts up to the last one that is not 0.
     #[inline]
     pub(super) fn get_residual_cost(
         &self,

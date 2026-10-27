@@ -14,8 +14,7 @@ pub(super) const COLOR_MAP_SIZE: usize = 256;
 
 pub(super) struct Transform {
     pub(super) kind: TransformType,
-    /// The blocks that share an entry of `data` are `1 << bits` pixels wide and high. For `ColorIndexing`, a pixel
-    /// holds the indices of `1 << bits` pixels.
+    /// Tiles are `1 << bits` pixels wide and high. For `ColorIndexing`, a pixel holds `1 << bits` indices.
     pub(super) bits: u32,
     /// The size of the image that the inverse transform makes.
     pub(super) xsize: usize,
@@ -45,8 +44,7 @@ fn blocks(pixels: &[Pixel]) -> &[Block] {
     pixels.as_flattened().as_chunks().0
 }
 
-/// `VP8LPredictorsAdd[MODE]` for the pixels `x..x_end` of `row`, which is below `upper`. `x` is not 0.
-// Not inlined, because the compiler makes better loops of the modes one at a time than of all in one function.
+/// `VP8LPredictorsAdd[MODE]` for `row[x..x_end]`, `x` not 0. Not inlined: each mode compiles to a better loop alone.
 #[inline(never)]
 fn predictor_add<const MODE: u32>(
     upper: &[Pixel],
@@ -209,8 +207,7 @@ impl Transform {
         Ok(())
     }
 
-    /// Sets the rows `dst` to `value` of the colours. Each of `indices` holds the indices of `1 << bits` pixels of a
-    /// row, the first one in the lowest bits.
+    /// Sets `dst` to `value` of the colours. Each of `indices` packs `1 << bits` indices, the first in the lowest bits.
     #[inline(always)]
     fn color_index_inverse<T>(
         &self,
@@ -244,9 +241,7 @@ impl Transform {
         self.color_index_inverse(src.iter().copied(), dst, |argb| (argb >> 8) as u8)
     }
 
-    /// `VP8LInverseTransform` of the rows `row_start..row_end`. They are in `rows_in`, or else already where they end
-    /// up, which is from `cache[top]` on. What is in front of that belongs to the predictor transform, which keeps the
-    /// last row it made there.
+    /// `VP8LInverseTransform`, from `rows_in` or in place, to `cache[top..]`. Before that is the predictor's last row.
     pub(super) fn inverse(
         &self,
         row_start: usize,

@@ -29,8 +29,7 @@ fn clip_8b(v: i32) -> u8 {
     v.clamp(0, 255) as u8
 }
 
-//------------------------------------------------------------------------------
-// Transforms (paragraph 14.4)
+// Transforms (paragraph 14.4), in 32 bits like libwebp's C code. Its SSE2 code wraps at 16, which damaged files show.
 
 /// Four rows of four samples in the work buffer, from the first sample to the last.
 pub(super) type Block4 = [u8; 3 * BPS + 4];
@@ -165,11 +164,9 @@ pub(super) fn transform_wht(input: &[i16; 16], out: &mut [[i16; 16]]) {
     }
 }
 
-//------------------------------------------------------------------------------
 // Intra predictions
 
-/// Predicts the luma (`N` = 16) or one chroma plane (`N` = 8) of a macroblock, whose first sample is at `off`. Without
-/// `has_top` or `has_left` the macroblock is on that edge of the image.
+/// Predicts luma (`N` = 16) or a chroma plane (`N` = 8) at `off`. Without `has_top`/`has_left` it is on that edge.
 pub(super) fn predict_block<const N: usize>(
     mode: IntraMode,
     has_top: bool,
@@ -224,8 +221,7 @@ pub(super) fn predict_block<const N: usize>(
     Ok(())
 }
 
-/// A 4x4 block in the work buffer with its neighbours: it starts at the top left sample and ends at the last sample of
-/// the block.
+/// A 4x4 block in the work buffer with its neighbours, from the top left sample to the last sample of the block.
 pub(super) type Luma4 = [u8; 4 * BPS + 5];
 
 #[inline(always)]
@@ -324,11 +320,7 @@ pub(super) fn predict_luma4(mode: IntraMode, dst: &mut Luma4) {
     }
 }
 
-//------------------------------------------------------------------------------
-// Edge filtering
-//
-// The arithmetic is in 8 bits with saturation and without branches, which gives the same results as libwebp's tables
-// and compiles to vector instructions.
+// Edge filtering, in 8 bits with saturation and no branches: the same results as libwebp's tables, and it vectorises.
 
 /// Sixteen samples next to each other along an edge: of one row for a horizontal edge, of one column for a vertical one.
 type Line = [u8; 16];
@@ -383,8 +375,7 @@ pub(super) struct Thresholds {
     pub(super) hev_thresh: u8,
 }
 
-/// Paragraph 15.3: `FilterLoop24` for an edge inside a macroblock, `FilterLoop26` for one between macroblocks. The lines
-/// are `p3`, `p2`, `p1`, `p0`, and on the other side of the edge `q0`, `q1`, `q2`, `q3`.
+/// Paragraph 15.3: `FilterLoop24` (`INNER`) or `FilterLoop26`. The lines are `p3..p0`, then across the edge `q0..q3`.
 fn complex_filter<const INNER: bool>(lines: &mut [Line; 8], t: Thresholds) {
     let [p3, p2, p1, p0, q0, q1, q2, q3] = lines;
     let lanes = p3.iter().zip(p2).zip(p1).zip(p0);
@@ -430,8 +421,7 @@ fn complex_filter<const INNER: bool>(lines: &mut [Line; 8], t: Thresholds) {
     }
 }
 
-/// Which edges of a macroblock are filtered in one direction, and how: the one it shares with its neighbour, and those
-/// between its own 4x4 blocks.
+/// Which edges of a macroblock to filter in one direction, and how: the outer one, and those between its 4x4 blocks.
 #[derive(Clone, Copy)]
 pub(super) struct Edges<T> {
     pub(super) outer: Option<T>,
@@ -481,8 +471,7 @@ fn complex_filter_lines(lines: &mut [Line], edges: Edges<Thresholds>) -> Checked
 /// Four samples next to each other in a row.
 type Quad = [u8; 4];
 
-/// From 16 rows of `G` quads to `G` times 4 columns.
-// Not inlined: next to the code that fills `tile`, LLVM moves every byte on its own.
+/// From 16 rows of `G` quads to `4 * G` columns. Not inlined: next to what fills `tile`, LLVM moves each byte alone.
 #[inline(never)]
 fn transpose<const G: usize>(tile: &[[Quad; G]; 16], columns: &mut [[Line; 4]; G]) -> Checked {
     for (g, columns) in columns.iter_mut().enumerate() {
@@ -515,8 +504,7 @@ fn transpose<const G: usize>(tile: &[[Quad; G]; 16], columns: &mut [[Line; 4]; G
     Ok(())
 }
 
-/// From 4 columns to 16 rows of a quad.
-// Not inlined, for the same reason.
+/// From 4 columns to 16 rows of a quad. Not inlined, for the same reason.
 #[inline(never)]
 fn interleave(columns: &[Line; 4], rows: &mut [Quad; 16]) {
     let [a, b, c, d] = columns;
@@ -532,9 +520,7 @@ fn is_flat(row: &[Quad]) -> bool {
     first == first.rotate_left(8) && row.iter().all(|&quad| u32::from_le_bytes(quad) == first)
 }
 
-/// Calls `filter` with `4 * G` columns of 16 rows: 16 rows of luma (`B` = 16) or 8 of each chroma plane (`B` = 8). The
-/// planes are made of blocks of `B` samples, `stride` of them in a row. The first row starts in block `at`, or with the
-/// last quad of the block before if `with_left`.
+/// Calls `filter` with `4 * G` columns of 16 rows (8 of each chroma plane if `B` = 8), from `at` or the quad before.
 #[inline(always)]
 fn with_columns<const B: usize, const G: usize>(
     planes: &mut [&mut [[u8; B]]],
@@ -616,8 +602,7 @@ fn all_same(lines: &[Line]) -> bool {
     lines.iter().all(|line| Some(line) == lines.first())
 }
 
-/// Filters the horizontal edges of the macroblock of luma whose first row is block `at`. There are `above` rows before
-/// it.
+/// Filters the horizontal edges of the luma macroblock whose first row is block `at`, with `above` rows before it.
 #[inline(always)]
 fn v_filter<T>(
     p: &mut [Line],
@@ -650,8 +635,7 @@ fn v_filter<T>(
     Ok(())
 }
 
-// In all of these the planes are made of blocks as wide as a macroblock, `stride` of them in a row, and `at` is the
-// first row of the macroblock.
+// Below, planes are made of blocks as wide as a macroblock, `stride` in a row; `at` is the macroblock's first row.
 
 /// `VP8SimpleHFilter16` and `VP8SimpleHFilter16i`
 pub(super) fn simple_h_filter16(

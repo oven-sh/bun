@@ -19,7 +19,6 @@ const NUM_PRED_MODES: usize = 14;
 /// The counts of the values of alpha, red, green and blue.
 type HistoArgb = [[u32; 256]; 4];
 
-//------------------------------------------------------------------------------
 // Methods to calculate Entropy (Shannon).
 
 /// A bias, hence negative, in favour of values near 0. `exp_val` is a percentage.
@@ -71,11 +70,9 @@ fn update_histo(histo_argb: &mut HistoArgb, argb: u32) -> Checked {
     Ok(())
 }
 
-//------------------------------------------------------------------------------
 // Spatial transform functions.
 
-/// The difference between `current` and `predict`. Unless `EXACT`, the colour of a transparent pixel is free to
-/// choose: it becomes the predicted one, in `current` too because later predictions depend on it.
+/// `current - predict`. Unless `EXACT`, a transparent pixel takes the predicted colour, in `current` too.
 #[inline]
 fn residual_of<const EXACT: bool>(current: &mut u32, predict: u32) -> u32 {
     let residual = sub_pixels(*current, predict);
@@ -115,8 +112,7 @@ fn predict_batch<const EXACT: bool>(
     Ok(())
 }
 
-/// `GetResidual`: stores in `out` the residuals of `current_row[x_start..x_end]`, which is part of row `y`. Both rows
-/// have `width + 1` pixels: the first pixel of the next row is the top right neighbour of the last pixel below.
+/// `GetResidual` of `current_row[x_start..x_end]`. Rows have one more pixel, the last one's top right neighbour.
 fn get_residual<const EXACT: bool>(
     width: usize,
     upper_row: &mut [u32],
@@ -165,8 +161,7 @@ const fn mode_of(pixel: u32) -> usize {
     ((pixel >> 8) & 0xff) as usize
 }
 
-/// Finds the best predictor for a tile from the histograms of the residuals of each, and adds the histogram of that
-/// one to `accumulated_argb`.
+/// Picks a tile's predictor by the histograms of the residuals, and adds the winner's to `accumulated_argb`.
 fn get_best_predictor_for_tile(
     all_argb: &[HistoArgb],
     tile_x: usize,
@@ -235,8 +230,7 @@ fn compute_residuals_for_tile<const EXACT: bool>(
     let residuals = residuals.sub_mut(..max_x)?;
 
     for (mode, histo_argb) in all_argb.iter_mut().enumerate() {
-        // A row is read with the pixel to the right of the tile, which at the right edge is the first one of the next
-        // row. Only the very last pixel of the image has none.
+        // A row is read with the pixel right of the tile, or else the next row's first. Only the last has none.
         let read_row = |row: &mut [u32], y: usize| -> Checked {
             let len = context_width + usize::from(y + 1 < height);
             let start = y * width + context_start_x;
@@ -302,8 +296,7 @@ fn copy_image_with_prediction<const EXACT: bool>(
     Ok(())
 }
 
-/// `VP8LOptimizeSampling`: `image` has one element for each tile of `1 << bits` pixels squared. If it is made of
-/// squares of equal elements, shrinks it so that each becomes a single element. Returns the new `bits`.
+/// `VP8LOptimizeSampling`: if `image` is made of squares of equal elements, shrinks each to one. Returns new `bits`.
 pub(crate) fn optimize_sampling(
     image: &mut [u32],
     full_width: usize,
@@ -407,9 +400,7 @@ fn residual_image_with<const EXACT: bool>(
     Ok((modes, best_bits))
 }
 
-/// `VP8LResidualImage`: finds the best predictor for each tile of `1 << bits` pixels squared and replaces the pixels by
-/// their residuals. Returns the predictor image and the size of the tiles that it ends up with. Unless `exact`,
-/// transparent pixels lose their colour.
+/// `VP8LResidualImage`: the pixels become residuals. Returns each tile's predictor and the final size of the tiles.
 pub(crate) fn residual_image(
     width: usize,
     height: usize,
@@ -425,7 +416,6 @@ pub(crate) fn residual_image(
     }
 }
 
-//------------------------------------------------------------------------------
 // Color transform functions.
 
 const fn color_code_to_multipliers(color_code: u32) -> Multipliers {
@@ -556,8 +546,7 @@ impl Tile {
     }
 }
 
-/// `VP8LColorSpaceTransform`: finds the best multipliers for each tile of `1 << bits` pixels squared and applies them.
-/// Returns the image of the multipliers and the size of the tiles that it ends up with.
+/// `VP8LColorSpaceTransform`: applies each tile's best multipliers. Returns them and the final size of the tiles.
 pub(crate) fn color_space_transform(
     width: usize,
     height: usize,

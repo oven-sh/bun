@@ -75,8 +75,7 @@ pub(crate) fn get_color_palette(argb: &[u32]) -> Checked<Option<Palette>> {
     Ok(Some(palette))
 }
 
-/// Whether red, green or blue goes both up and down along the palette. If none does, as in a grey image or an alpha
-/// plane, there is nothing to gain from another order.
+/// Whether a channel goes both up and down along the palette. If none does, as in a grey image, no order is better.
 fn palette_has_non_monotonous_deltas(palette: &[u32]) -> bool {
     let mut predict = 0;
     let mut sign_found = 0u32;
@@ -96,8 +95,7 @@ fn palette_has_non_monotonous_deltas(palette: &[u32]) -> bool {
     sign_found & (sign_found << 1) != 0
 }
 
-/// `PaletteSortMinimizeDeltas`: each colour is followed by the nearest of those that are left, because the palette is
-/// written as the differences between its colours.
+/// `PaletteSortMinimizeDeltas`: each colour is followed by the nearest one left, as the palette is written as deltas.
 pub(crate) fn palette_sort_minimize_deltas(palette_sorted: &Palette) -> Checked<Palette> {
     let mut palette = *palette_sorted;
     if !palette_has_non_monotonous_deltas(palette_sorted.colors()) {

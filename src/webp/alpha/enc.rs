@@ -153,8 +153,7 @@ fn get_num_colors(data: &[u8]) -> usize {
     color.into_iter().filter(|&is_used| is_used).count()
 }
 
-/// The `ALPH` payload for `width * height` alpha values, as `VP8EncStartAlpha`/`VP8EncFinishAlpha` make it with the
-/// default configuration: `method` 4, `alpha_compression` 1, `alpha_filtering` 1, `alpha_quality` 100.
+/// `VP8EncStartAlpha`/`VP8EncFinishAlpha` with `alpha_compression` 1, `alpha_filtering` 1, `alpha_quality` 100.
 pub(crate) fn encode(alpha: &[u8], width: usize, height: usize) -> Result<Vec<u8>, EncodeError> {
     const MIN_COLORS_FOR_FILTER_NONE: usize = 16;
     if width == 0 || height == 0 || alpha.len() != width * height {

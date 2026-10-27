@@ -260,8 +260,7 @@ struct MbData {
     /// One mode for 16x16, or sixteen.
     imodes: [IntraMode; 16],
     uvmode: IntraMode,
-    /// Two bits per block, the first block in the highest. 0: no coefficient, 1: only DC, 2: at most the first three,
-    /// 3: more.
+    /// Two bits per block, first block highest. 0: no coefficient, 1: only DC, 2: at most the first three, 3: more.
     non_zero_y: u32,
     non_zero_uv: u32,
     skip: bool,
@@ -526,8 +525,7 @@ impl Decoder<'_> {
     }
 }
 
-/// `VP8GetHeaders` and `VP8Decode`. `data` starts at the frame header and goes on to the end of the file. `alpha` is
-/// the payload of the `ALPH` chunk.
+/// `VP8GetHeaders`, `VP8Decode`. `data` goes from the frame header to the end of the file. `alpha`: the `ALPH` payload.
 pub(crate) fn decode(
     data: &[u8],
     alpha: Option<&[u8]>,

@@ -1,7 +1,4 @@
-//! `lossless.c`: the predictors of the predictor transform.
-//!
-//! They are written on blocks of 16 bytes, one operation for all bytes at a time, because that is what the compiler
-//! turns into vector instructions.
+//! `lossless.c`: the predictors, on blocks of 16 bytes at a time, which the compiler turns into vector instructions.
 
 /// The blue, green, red and alpha of a pixel.
 pub(super) type Pixel = [u8; 4];
@@ -103,8 +100,7 @@ pub(super) const fn uses_left(mode: u32) -> bool {
     matches!(mode, 1 | 5 | 6 | 7 | 10..=13)
 }
 
-/// `VP8LPredictors[mode]`, from the pixels to the left, top left, top and top right, for each of the four pixels. The
-/// exception is mode 11, which is right for the first pixel only.
+/// `VP8LPredictors[mode]` for four pixels from their neighbours. Mode 11 is right for the first pixel only.
 #[inline(always)]
 pub(super) fn predict(
     mode: u32,

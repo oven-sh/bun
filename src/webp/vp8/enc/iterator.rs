@@ -27,8 +27,7 @@ pub(super) struct EncIterator {
     pub(super) top_nz: [u8; 9],
     /// The same on the left. The last one is independent of `nz`.
     pub(super) left_nz: [u8; 9],
-    /// The non-zero bits of the macroblocks of the row above, or of this row up to the current one. They start at index
-    /// 1, after a 0 for the left of the picture.
+    /// The non-zero bits of the row above, or of this row up to the current macroblock, after a 0 for the left edge.
     nz: Vec<u32>,
     /// The diffusion errors from the left, and from the row above if diffusion is on.
     pub(super) left_derr: DError,
@@ -71,8 +70,7 @@ pub(super) struct EncIterator {
 /// ```
 const TOP_LEFT_I4: [u8; 16] = [17, 21, 25, 29, 13, 17, 21, 25, 9, 13, 17, 21, 5, 9, 13, 17];
 
-/// `dst` is a square of `dst.len() / blocks_per_row` blocks a side, of which the picture has `w` by `h` samples from
-/// `start` on. The last ones are repeated to fill it.
+/// Fills the square `dst` with the `w` by `h` samples the picture has from `start` on, repeating the last ones.
 fn import_block(
     src: &[u8],
     stride: usize,
@@ -332,7 +330,6 @@ impl EncIterator {
         self.y < self.mb_h
     }
 
-    //------------------------------------------------------------------------------
     // Intra4x4 sub-blocks iteration
 
     pub(super) fn start_i4(&mut self) -> Checked {

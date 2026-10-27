@@ -5,14 +5,12 @@ use super::dsp::{Coeffs, num_levels_block};
 use super::tables::{CAT3, CAT4, CAT5, CAT6, ENC_BANDS, NUM_BANDS, NUM_CTX, NUM_PROBAS};
 use crate::util::{Checked, OutOfMemory, SliceExt};
 
-/// Bit 15 is the bit to code. Bits 0 to 13 are its probability if bit 14, `FIXED_PROBA_BIT`, is set, and else the index of
-/// its probability.
+/// Bit 15: the bit to code. Bits 0 to 13: its probability if bit 14 (`FIXED_PROBA_BIT`) is set, else the index of it.
 type Token = u16;
 
 const FIXED_PROBA_BIT: u16 = 1 << 14;
 
-/// One to say whether there is a coefficient at all. Then each can take 6 bits for the range it is in, 11 for its place in
-/// this range, its sign, and one to say whether it is the last.
+/// One for "any coefficient?", then for each 6 for its range, 11 for its place in it, the sign, and "is it the last?".
 const MAX_TOKENS_PER_BLOCK: usize = 1 + 16 * (6 + 11 + 1 + 1);
 
 #[derive(Default)]

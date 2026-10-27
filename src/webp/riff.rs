@@ -156,8 +156,7 @@ fn parse_vp8_header(
     Ok((size as usize, is_vp8l))
 }
 
-/// With `want_headers`, the input is taken to be the whole file and an animation is refused. Without it, only as much
-/// is read as the size of the image takes.
+/// `want_headers`: the input is the whole file, and an animation is refused. Else it reads no further than the size.
 fn parse(input: &[u8], want_headers: bool) -> Result<Parsed<'_>, DecodeError> {
     if input.len() < RIFF_HEADER_SIZE {
         return Err(DecodeError::NotEnoughData);

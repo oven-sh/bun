@@ -1,5 +1,4 @@
-//! The constant tables of the encoder, from `tree_enc.c`, `cost_enc.c`, `quant_enc.c`, `frame_enc.c`, `dsp/cost.c` and
-//! `picture_csp_enc.c`.
+//! Constant tables from `tree_enc.c`, `cost_enc.c`, `quant_enc.c`, `frame_enc.c`, `dsp/cost.c`, `picture_csp_enc.c`.
 
 pub(super) use crate::vp8::common::{
     NUM_BANDS, NUM_BMODES, NUM_CTX, NUM_MB_SEGMENTS, NUM_PROBAS, NUM_TYPES,

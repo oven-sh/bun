@@ -1,5 +1,4 @@
-//! `lossless.c`, `lossless_common.h`: the 14 spatial predictors. Each guesses a pixel from its left, top-left, top
-//! and top-right neighbours.
+//! `lossless.c`, `lossless_common.h`: the 14 predictors of a pixel from its left, top-left, top and top-right.
 
 use crate::vp8l::format_constants::ARGB_BLACK;
 

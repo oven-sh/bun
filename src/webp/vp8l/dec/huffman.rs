@@ -127,8 +127,7 @@ fn next_table_bit_size(
     Ok(len - root_bits)
 }
 
-/// Returns the size of the table, or `None` unless the lengths make a complete code. Without `root_table` that is all
-/// it does. `sorted` is scratch space for as many symbols as there are lengths.
+/// The size of the table, or `None` for an incomplete code. Fills `root_table` if given. `sorted` is scratch space.
 fn build_huffman_table(
     mut root_table: Option<&mut [HuffmanCode]>,
     root_bits: usize,
@@ -272,8 +271,7 @@ pub(super) fn append_huffman_table(
     Ok(start)
 }
 
-/// `VP8LBuildHuffmanTable` for the code of the code lengths, which has no second level. `None` unless the lengths make
-/// a complete code.
+/// `VP8LBuildHuffmanTable` for the code of the code lengths, which has no second level. `None` if it is incomplete.
 pub(super) fn build_lengths_table(
     code_lengths: &[u8; CODE_LENGTH_CODES],
 ) -> Checked<Option<[HuffmanCode; 1 << LENGTHS_TABLE_BITS]>> {

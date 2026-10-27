@@ -1,7 +1,4 @@
-//! `demux.c`, as far as it takes to find the ICC profile of a whole file.
-//!
-//! libwebp's demuxer hands out chunks only if the whole container is valid, so this walks all of it. The demuxer can
-//! also work on the start of a file. Nothing here does, so "more data needed" and "invalid" are the same answer.
+//! `demux.c`: finds the ICC profile. libwebp hands out chunks only if the whole container is valid, so this walks it.
 
 use crate::riff::{
     self, ALPHA_FLAG, ANIMATION_FLAG, CHUNK_HEADER_SIZE, ICCP_FLAG, MAX_CHUNK_PAYLOAD,

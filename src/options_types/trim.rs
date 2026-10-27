@@ -17,6 +17,7 @@ impl TrimRequest {
         self.removes_unused
             || !self.remove.is_empty()
             || !self.remove_internal.is_empty()
+            || self.locales.is_some()
             || self.is_template
     }
 }
@@ -76,11 +77,11 @@ mod tests {
     }
 
     #[test]
-    fn locales_alone_do_not_enable() {
+    fn locales_enable() {
         let request = TrimRequest {
             locales: Some(vec![Box::from(&b"de"[..])]),
             ..TrimRequest::default()
         };
-        assert!(!request.is_enabled());
+        assert!(request.is_enabled());
     }
 }

@@ -3888,7 +3888,7 @@ declare module "bun" {
      * if one of them isn't a constant. If the program asks for a locale that was removed, the
      * process exits with code 70. It has no effect on macOS, where Bun uses the system's ICU.
      *
-     * Equivalent CLI flag: `--trim-locales`
+     * Equivalent CLI flag: `--trim-locales`, which implies `--trim`
      */
     locales?: string[];
     /**

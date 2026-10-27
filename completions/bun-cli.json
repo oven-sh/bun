@@ -4727,7 +4727,7 @@
         },
         {
           "name": "trim-locales",
-          "description": "With --trim: keep only these locales, such as en,de-AT",
+          "description": "Keep only these locales, such as en,de-AT. Implies --trim",
           "hasValue": true,
           "valueType": "val",
           "required": false,

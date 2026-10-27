@@ -683,7 +683,7 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--trim                           Remove the Bun and Node.js APIs your code never calls from the executable. Requires --compile"
         ),
         parse_param!(
-            "--trim-locales <STR>...          With --trim: keep only these locales, such as en,de-AT"
+            "--trim-locales <STR>...          Keep only these locales, such as en,de-AT. Implies --trim"
         ),
         parse_param!(
             "--obfuscate                      With --aot: strip function names and source locations from the executable and write them to \\<outfile\\>.map. Same as --sourcemap=external"

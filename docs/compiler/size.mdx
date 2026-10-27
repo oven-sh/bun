@@ -347,7 +347,7 @@ await Bun.build({
 });
 ```
 
-On the command line, it's `--trim --trim-locales en,de`.
+On the command line, it's `--trim-locales en,de`, which also turns on `--trim`.
 
 If the program asks for a language whose data was removed, the process exits with code `70`. A `try` block can't catch that.
 

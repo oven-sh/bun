@@ -150,6 +150,16 @@ pub(crate) struct TrimFlags<'a> {
     pub is_template: bool,
 }
 
+impl TrimFlags<'_> {
+    fn asks_to_remove_unused(&self) -> bool {
+        self.removes_unused
+            || !self.allow.is_empty()
+            || !self.remove.is_empty()
+            || self.locales.is_some()
+            || self.logs
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct CompileFlags<'a> {
     pub is_executable: bool,
@@ -436,12 +446,7 @@ fn check_requires_executable<'a>(flags: &CompileFlags<'a>) -> Result<(), OptionE
     let trim = &flags.trim;
     let option = if flags.aot {
         OptionName::Aot
-    } else if trim.removes_unused
-        || !trim.allow.is_empty()
-        || !trim.remove.is_empty()
-        || trim.locales.is_some()
-        || trim.logs
-    {
+    } else if trim.asks_to_remove_unused() {
         OptionName::Trim
     } else if !trim.remove_internal.is_empty() {
         OptionName::TrimWithout
@@ -557,7 +562,7 @@ fn resolve_trim<'a>(flags: &CompileFlags<'a>) -> Result<TrimRequest, OptionError
     }
 
     Ok(TrimRequest {
-        removes_unused: trim.removes_unused,
+        removes_unused: trim.asks_to_remove_unused(),
         allow,
         remove,
         remove_internal,

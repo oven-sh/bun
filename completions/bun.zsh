@@ -811,7 +811,7 @@ _bun_compile_completion() {
         '--no-compile-function-source[Don'"'"'t embed function source code. fn.toString() returns \[native code\]]' \
         '--no-aot[Bundle the JavaScript into the executable instead of compiling it to machine code]' \
         '--trim[Remove the Bun and Node.js APIs your code never calls from the executable]' \
-        '--trim-locales[With --trim\: keep only these locales, such as en,de-AT]:trim-locales' \
+        '--trim-locales[Keep only these locales, such as en,de-AT. Implies --trim]:trim-locales' \
         '--library[Build a package to publish instead of an executable]' \
         '--outdir[With --library\: the folder the package is written to]:outdir:_files -/' \
         '--no-script[Run this command even if the project has a compile script]' \

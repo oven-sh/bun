@@ -3,6 +3,7 @@
 // (Bun's default is en-US on every host), so the language of the host decides nothing: not where it was removed, and not where the host has none (LANG=C is en_US_POSIX to ICU).
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isMacOS, isWindows, tempDirWithBunTypes as tempDir } from "harness";
+import { statSync } from "node:fs";
 import { join } from "node:path";
 import { run } from "../aot/harness/run";
 import { unsupported } from "../aot/run-programs";
@@ -103,6 +104,73 @@ describe.skipIf(!canTrim)("--trim-locales", () => {
             // It is printed through C's stderr.
             stderr: `error: the locale data this program needs was removed by --trim. Add the locale to compile.trim.locales to keep it.${isWindows ? "\r\n" : "\n"}`,
             exitCode: 70,
+          });
+        }
+      },
+    );
+  }
+});
+
+describe("--trim-locales without --trim", () => {
+  const files = {
+    "month.ts": `console.log(new Date(0).toLocaleDateString(process.argv[2], { timeZone: "UTC", month: "long" }));`,
+    "build.ts": `
+const built = await Bun.build({
+  entrypoints: ["./month.ts"],
+  compile: { aot: process.argv[2] === "aot", outfile: process.argv[3], trim: { locales: ["de"] } },
+});
+if (!built.success) throw new AggregateError(built.logs);`,
+  };
+
+  for (const aot of [false, true]) {
+    const build = ["build", "--compile", ...(aot ? ["--aot"] : [])];
+    const compile = ["compile", ...(aot ? [] : ["--no-aot"])];
+    const ways = [
+      [...build, "month.ts", "--trim", "--trim-locales=de", "--outfile"],
+      [...build, "month.ts", "--trim-locales=de", "--outfile"],
+      [...compile, "month.ts", "--trim", "--trim-locales=de", "--outfile"],
+      [...compile, "month.ts", "--trim-locales=de", "--outfile"],
+      ["build.ts", aot ? "aot" : "bundle"],
+    ];
+
+    test.skipIf(!canTrim || (aot && !!unsupported))(
+      `${build.join(" ")}: the executable is the one that --trim --trim-locales and compile.trim.locales build`,
+      async () => {
+        using dir = tempDir("compile-trim-locales-alone", files);
+        const folder = String(dir);
+        const executables = [];
+        for (const [index, way] of ways.entries()) {
+          const how = way.join(" ");
+          const executable = join(folder, String(index), "month");
+          expect({ how, ...(await run([bunExe(), ...way, executable], folder)) }).toMatchObject({ how, exitCode: 0 });
+          const months = await Promise.all(
+            ["de", "de-AT", "en", "fr", "ja"].map(async tag => {
+              const { stdout, exitCode } = await run([executable, tag], folder);
+              return [tag, exitCode === 0 ? stdout.trim() : exitCode];
+            }),
+          );
+          const { size } = statSync(isWindows ? executable + ".exe" : executable);
+          executables.push({ how, size, months: Object.fromEntries(months) });
+        }
+        const removed = { en: 70, fr: 70, ja: 70 };
+        const fromTheSystemsIcu = { en: "January", fr: "janvier", ja: "1月" };
+        const months = { de: "Januar", "de-AT": "Jänner", ...(isMacOS ? fromTheSystemsIcu : removed) };
+        expect(executables).toEqual(ways.map(way => ({ how: way.join(" "), size: executables[0].size, months })));
+      },
+    );
+
+    test.skipIf(canTrim || (aot && !!unsupported))(
+      `${build.join(" ")}: a Bun that doesn't support --trim says so`,
+      async () => {
+        using dir = tempDir("compile-trim-locales-alone-unsupported", files);
+        const folder = String(dir);
+        for (const way of ways) {
+          const how = way.join(" ");
+          const { stderr, exitCode } = await run([bunExe(), ...way, join(folder, "month")], folder);
+          expect({ how, stderr, exitCode }).toEqual({
+            how,
+            stderr: expect.stringContaining("this build of Bun doesn't support --trim"),
+            exitCode: 1,
           });
         }
       },

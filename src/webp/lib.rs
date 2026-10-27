@@ -10,13 +10,10 @@
     clippy::unreachable
 )]
 #![warn(unused_must_use)]
-// TEMPORARY while the port is in pieces.
-#![allow(dead_code)]
 
 mod alpha;
 mod container;
 mod demux;
-pub mod dev_hooks;
 mod riff;
 mod util;
 mod vp8;

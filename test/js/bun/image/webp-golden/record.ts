@@ -5,7 +5,7 @@
 // Without arguments it records the cases that are already there again. The results in the repository come from the
 // last Bun that used libwebp (1.4.4, libwebp 1.6.0, Linux x64).
 //
-// No case is a damaged lossy file whose coefficients overflow 16 bits: libwebp's SSE2, NEON and C code each decode
+// No case is a damaged lossy file whose coefficients overflow 16 bits: libwebp's SSE2 code and its C code decode
 // those to different pixels. `bun_webp` does what the C code does.
 import { readdirSync } from "node:fs";
 import { join } from "node:path";

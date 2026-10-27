@@ -71,6 +71,51 @@ devTest("source map emitted for hmr chunk", {
   },
 });
 
+devTest("hmr chunk source map follows the source when mappings do not change", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import other from "./App";
+      console.log("Hello, " + other + "!");
+      import.meta.hot.accept();
+    `,
+    "App.tsx": `
+      export default "AAA";
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", { storeHotChunks: true });
+    await c.expectMessage("Hello, AAA!");
+    // Each edit changes only a string literal. The VLQ mappings stay the
+    // same, so the source map must be keyed by the source content too.
+    const mapUrls = new Set<string>();
+    for (const word of ["BBB", "CCC", "DDD"]) {
+      const source = `export default "${word}";\nimport.meta.hot.accept();`;
+      await dev.write("App.tsx", source);
+      const chunk = await c.getMostRecentHmrChunk();
+      expect(chunk).toContain(`"${word}"`);
+      const sourceMapUrl = chunk.match(/\n\/\/# sourceMappingURL=(\S+)/)?.[1];
+      expect(sourceMapUrl).toBeString();
+      mapUrls.add(sourceMapUrl!);
+      const sourceMap = await dev.fetch(sourceMapUrl!).json();
+      expect(sourceMap.sources.slice(1).map(Bun.fileURLToPath)).toEqual([dev.join("App.tsx")]);
+      expect(sourceMap.sourcesContent[1]).toBe(source);
+    }
+    expect(mapUrls.size).toBe(3);
+
+    // A re-save with the same bytes produces the same source map, so it
+    // reuses the same key.
+    await dev.writeNoChanges("App.tsx");
+    const chunk = await c.getMostRecentHmrChunk();
+    expect(chunk).toContain(`"DDD"`);
+    const sourceMapUrl = chunk.match(/\n\/\/# sourceMappingURL=(\S+)/)?.[1];
+    expect(mapUrls.has(sourceMapUrl!)).toBe(true);
+  },
+});
+
 type SourceMap = (BasicSourceMapConsumer | IndexedSourceMapConsumer) & {
   /** Original script generated */
   script: string;

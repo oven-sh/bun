@@ -1013,6 +1013,7 @@ pub enum Tag {
     ESpecial,
     EInlinedEnum,
     ENameOfSymbol,
+    EParenthesizedIdentifier,
 }
 
 impl Tag {
@@ -1070,6 +1071,7 @@ impl Tag {
             Tag::EIdentifier => "identifier",
             Tag::EImportIdentifier => "import identifier",
             Tag::EPrivateIdentifier => "#privateIdentifier",
+            Tag::EParenthesizedIdentifier => "parenthesized identifier",
             Tag::EJsxElement => "<jsx>",
             Tag::EMissing => "<missing>",
             Tag::ENumber => "number",
@@ -1361,6 +1363,8 @@ pub enum Data {
     EInlinedEnum(StoreRef<E::InlinedEnum>),
 
     ENameOfSymbol(StoreRef<E::NameOfSymbol>),
+
+    EParenthesizedIdentifier(E::ParenthesizedIdentifier),
 }
 
 // ── Layout guards ─────────────────────────────────────────────────────────
@@ -1387,6 +1391,7 @@ const _: () = assert!(core::mem::align_of::<E::Identifier>() == 4);
 const _: () = assert!(core::mem::size_of::<E::ImportIdentifier>() == 8);
 const _: () = assert!(core::mem::size_of::<E::CommonJSExportIdentifier>() == 8);
 const _: () = assert!(core::mem::size_of::<E::PrivateIdentifier>() == 8);
+const _: () = assert!(core::mem::size_of::<E::ParenthesizedIdentifier>() == 8);
 const _: () = assert!(core::mem::size_of::<E::Number>() <= 8);
 const _: () = assert!(core::mem::align_of::<E::Number>() == 4);
 const _: () = assert!(core::mem::size_of::<E::Special>() <= 8);
@@ -2194,6 +2199,7 @@ impl Data {
             Data::EImportIdentifier(e) => name_of(hasher, symbol_table, e.ref_),
             Data::EPrivateIdentifier(e) => name_of(hasher, symbol_table, e.ref_),
             Data::ECommonjsExportIdentifier(e) => name_of(hasher, symbol_table, e.ref_),
+            Data::EParenthesizedIdentifier(e) => name_of(hasher, symbol_table, e.ref_),
             Data::EBoolean(e) | Data::EBranchBoolean(e) => {
                 raw(hasher, e.value);
             }

@@ -150,6 +150,19 @@ describe("Bun.Transpiler replMode", () => {
       expect(context.x).toBe(20);
     });
 
+    test("a parenthesized assignment target does not name a function", async () => {
+      // `(f) = function () {}` names nothing: a parenthesized target is not an IdentifierRef.
+      const { results } = await runReplSession([
+        "var f, g",
+        "(f) = function () {}",
+        "f.name",
+        "g = function () {}",
+        "g.name",
+      ]);
+
+      expect([results[1].name, results[2], results[4]]).toEqual(["", "", "g"]);
+    });
+
     test("let persists with await", async () => {
       const { results } = await runReplSession(["let y = await Promise.resolve(100)", "y * 2"]);
 

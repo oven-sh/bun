@@ -4279,6 +4279,13 @@ pub(crate) mod __gated_printer {
                         self.print(b")");
                     }
                 }
+                ExprData::EParenthesizedIdentifier(e) => {
+                    let name = self.name_for_symbol(e.ref_);
+                    self.print(b"(");
+                    self.add_source_mapping(expr.loc);
+                    self.print_identifier(name);
+                    self.print(b")");
+                }
                 ExprData::EImportIdentifier(e) => {
                     // Potentially use a property access instead of an identifier
                     let mut did_print = false;

@@ -587,6 +587,27 @@ pub struct PrivateIdentifier {
     pub ref_: Ref,
 }
 
+/// The `(a)` in `(a) = function () {}`: a parenthesized identifier that an
+/// anonymous function, arrow or class is assigned to.
+///
+/// ECMA-262 names such a value after the target only when IsIdentifierRef of
+/// the target is true, and that is false for a ParenthesizedExpression. So
+/// `a.name` is "" here, and "a" for `a = function () {}`.
+///
+/// It's stored as a separate type for the same reason as `ImportIdentifier`:
+/// code that gives a value the name of its target matches `EIdentifier`, and
+/// must opt in to see this one. esbuild has no such node and prints
+/// `a = function() {}`.
+///
+/// The parser makes it in `P::sfx_after_parenthesized_identifier` only, as
+/// the left side of `=`, `||=`, `&&=` or `??=`. The visitor can move it to
+/// the value of a property in an object pattern. `ref_` holds the bits of an
+/// `Identifier::ref_`.
+#[derive(Clone, Copy)]
+pub struct ParenthesizedIdentifier {
+    pub ref_: Ref,
+}
+
 /// In development mode, the new JSX transform has a few special props
 /// - `React.jsxDEV(type, arguments, key, isStaticChildren, source, self)`
 /// - `arguments`:

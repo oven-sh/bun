@@ -3863,8 +3863,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Option<Binding> {
         match expr.data {
             js_ast::ExprData::EMissing(_) => return None,
-            js_ast::ExprData::EIdentifier(ex) => {
-                return Some(self.b(B::Identifier { r#ref: ex.ref_ }, expr.loc));
+            js_ast::ExprData::EIdentifier(E::Identifier { ref_ })
+            | js_ast::ExprData::EParenthesizedIdentifier(E::ParenthesizedIdentifier { ref_ }) => {
+                return Some(self.b(B::Identifier { r#ref: ref_ }, expr.loc));
             }
             js_ast::ExprData::EArray(ex) => {
                 if let Some(spread) = ex.comma_after_spread.to_nullable() {

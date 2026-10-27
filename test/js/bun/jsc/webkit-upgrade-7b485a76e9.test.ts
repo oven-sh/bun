@@ -48,7 +48,7 @@ describe("WebKit 7b485a76e9 upgrade", () => {
   });
 
   test("a parenthesized assignment target does not name an anonymous function (a848db6782)", () => {
-    // Through the Function constructor, because Bun's printer drops the parentheses.
+    // Through the Function constructor: only the engine reads this text.
     const names = new Function(`
       let a, b, c, d;
       (a) = function () {};

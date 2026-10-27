@@ -1270,6 +1270,7 @@ impl<'p, 'a> Walker<'p, 'a> {
                 unreachable!("the loop above ends at what is none of these")
             }
             Data::EIdentifier(e) => self.name(e.ref_),
+            Data::EParenthesizedIdentifier(e) => self.name(e.ref_),
             Data::EImportIdentifier(e) => self.name(e.ref_),
             Data::EPrivateIdentifier(e) => {
                 self.byte(t);

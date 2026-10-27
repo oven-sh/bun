@@ -1735,6 +1735,23 @@ describe("ES Decorators", () => {
       expect(exitCode).toBe(0);
     });
 
+    test.concurrent("a decorated anonymous class assigned to a parenthesized name has no name", async () => {
+      // A parenthesized target is not an IdentifierRef, so the assignment names nothing.
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        const dec = (v, ctx) => {};
+        let a, b, c, d, e;
+        a = @dec class {};
+        (b) = @dec class {};
+        [(c) = @dec class {}] = [];
+        ({ x: (d) = @dec class {} } = {});
+        (e) = class { @dec m() {} };
+        console.log(JSON.stringify([a.name, b.name, c.name, d.name, e.name]));
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe('["a","","","",""]\n');
+      expect(exitCode).toBe(0);
+    });
+
     test.concurrent("decorator lists no key of the class can hold are evaluated before it", async () => {
       // Only \`#private\` members and a constructor: no computed key to borrow.
       const { stdout, stderr, exitCode } = await runDecorator(`

@@ -52,6 +52,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         if in_.assign_target != js_ast::AssignTarget::None && !self.is_valid_assignment_target(e) {
+            // "(a)" is checked as "a" when its visitor comes back here. It is not an arm of
+            // the match below: with one more arm, LLVM estimates that each arm runs in under
+            // 2% of the calls, treats its call site as cold, and inlines only the small ones.
+            if matches!(e.data, Data::EParenthesizedIdentifier(_)) {
+                return Self::e_parenthesized_identifier(self, e, in_);
+            }
             self.log()
                 .add_error(Some(self.source), e.loc, b"Invalid assignment target");
         }
@@ -84,7 +90,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             Tag::EArrow => Self::e_arrow(self, e, in_),
             Tag::EFunction => Self::e_function(self, e, in_),
             Tag::EClass => Self::e_class(self, e, in_),
-            _ => {}
+            // A parenthesized identifier is always an assignment target, which returned above.
+            _ => debug_assert!(!matches!(e.data, Data::EParenthesizedIdentifier(_))),
         }
     }
 
@@ -354,6 +361,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .with_was_originally_identifier(true)
                 .with_is_property_access_target(in_.is_property_access_target),
         );
+    }
+
+    #[cold]
+    #[inline(never)]
+    fn e_parenthesized_identifier(p: &mut Self, e: &mut Expr, in_: ExprIn) {
+        let Data::EParenthesizedIdentifier(target) = e.data else {
+            return;
+        };
+        e.data = Data::EIdentifier(E::Identifier { ref_: target.ref_ });
+        p.visit_expr_in_out(e, in_);
+        // Only an identifier target can name a value. Anything else that the identifier
+        // became is printed as it is: a member of a TypeScript namespace is "ns.a".
+        if let Data::EIdentifier(visited) = e.data {
+            e.data =
+                Data::EParenthesizedIdentifier(E::ParenthesizedIdentifier { ref_: visited.ref_ });
+        }
     }
     // PERF(port:frame): keep these large, infrequently-taken arms out of the
     // `visit_expr_in_out` dispatcher frame. Without `inline(never)` LLVM folds the

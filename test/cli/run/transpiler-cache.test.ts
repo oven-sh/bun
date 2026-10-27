@@ -85,6 +85,15 @@ describe("transpiler cache", () => {
     expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("");
     expect(newCacheCount()).toBe(0);
   });
+  test("a cached file keeps the parentheses of an assignment target", async () => {
+    // `(a) = function () {}` names nothing. A cache hit gives the engine the printed text again.
+    const code = "(() => { var a; (a) = function () {}; return a.name === ''; })()";
+    writeFileSync(join(temp_dir, "a.js"), dummyFile(8 * 1024, "1", { code }));
+    expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("true");
+    expect(newCacheCount()).toBe(1);
+    expect(await bunRun(join(temp_dir, "a.js"), env)).toSpawn("true");
+    expect(newCacheCount()).toBe(0);
+  });
   test("ignores files under the minimum cache size", async () => {
     // MINIMUM_CACHE_SIZE is 4 KiB (src/jsc/RuntimeTranspilerCache.rs); files
     // below it skip the cache entirely so a stat+open+read can't be slower than

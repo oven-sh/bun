@@ -654,6 +654,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             let mut value = Expr::join_all_with_comma(items);
             p.mark_expr_as_parenthesized(&mut value);
+            if matches!(value.data, js_ast::ExprData::EIdentifier(_)) {
+                Self::sfx_after_parenthesized_identifier(p, level, &mut value)?;
+            }
             return Ok(value);
         }
 

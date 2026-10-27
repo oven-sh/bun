@@ -395,6 +395,7 @@ impl<'a> ContextIdentifierVisitor<'a> {
             Data::EObjectJSON(_) | Data::EArrayJSON(_) => {}
             Data::EIdentifier(id) => self.check_captured_reference(id.ref_),
             Data::EImportIdentifier(id) => self.check_captured_reference(id.ref_),
+            Data::EParenthesizedIdentifier(id) => self.check_captured_reference(id.ref_),
 
             Data::EBinary(b) => {
                 if !matches!(b.op.binary_assign_target(), AssignTarget::None) {

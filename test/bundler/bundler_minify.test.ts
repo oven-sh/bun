@@ -52,6 +52,34 @@ describe("bundler", () => {
     minifyIdentifiers: true,
     run: { stdout: "[]" },
   });
+  // `(a) = function () {}` gives the function no name: a parenthesized target is not an
+  // IdentifierRef. The parentheses must reach the output, around the name the symbol has there.
+  const parenthesizedTargetSource = /* js */ `
+    function run(longName, otherName) {
+      (longName) = function () {};
+      [(otherName) = () => {}] = [];
+      return [longName.name, otherName.name];
+    }
+    var first;
+    (first) = class {};
+    let inPattern;
+    ({ inPattern: (inPattern) = function () {} } = {});
+    let plain;
+    plain = function () {};
+    console.log(JSON.stringify([...run(), first.name, inPattern.name, plain.name !== ""]));
+  `;
+  for (const [name, options] of Object.entries({
+    "": {},
+    Minified: { minifySyntax: true, minifyIdentifiers: true, minifyWhitespace: true },
+    MinifiedNoBundle: { bundling: false, minifySyntax: true, minifyIdentifiers: true, minifyWhitespace: true },
+  } satisfies Record<string, Partial<BundlerTestInput>>)) {
+    itBundled(`minify/ParenthesizedAssignmentTargetNamesNothing${name}`, {
+      files: { "/entry.js": parenthesizedTargetSource },
+      ...options,
+      run: { stdout: '["","","","",true]' },
+    });
+  }
+
   // `bun build --no-bundle` names symbols through the same reserved set.
   itBundled("minify/WithStatementPinnedNameNotReusedByEnclosingScopeNoBundle", {
     files: {

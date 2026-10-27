@@ -3892,6 +3892,109 @@ console.log(resolve.length)
       });
     });
 
+    // `(a) = function () {}` does not name the function: a parenthesized target is not an
+    // IdentifierRef. Without the parentheses the engine names it "a".
+    describe("a parenthesized identifier that is assigned an anonymous function or class", () => {
+      it("keeps its parentheses", () => {
+        expectPrinted_("(a) = function() {}", "(a) = function() {}");
+        expectPrinted_("(a) = () => {}", "(a) = () => {}");
+        expectPrinted_("(a) = class {}", "(a) = class {\n}");
+        expectPrinted_("(a) = async function() {}", "(a) = async function() {}");
+        expectPrinted_("(a) = function* () {}", "(a) = function* () {}");
+        expectPrinted_("(a) = async () => {}", "(a) = async () => {}");
+        expectPrinted_("((a)) = function() {}", "(a) = function() {}");
+        expectPrinted_("(a) = (function() {})", "(a) = function() {}");
+        expectPrinted_("(a)\n= function() {}", "(a) = function() {}");
+        expectPrinted_("(a) ||= function() {}", "(a) ||= function() {}");
+        expectPrinted_("(a) &&= () => {}", "(a) &&= () => {}");
+        expectPrinted_("(a) ??= class {}", "(a) ??= class {\n}");
+        expectPrinted_("x = (a) = function() {}", "x = (a) = function() {}");
+        expectPrinted_("(a) = function() {}, (b) = () => {}", "(a) = function() {}, (b) = () => {}");
+        expectPrinted_("(a), (b) = function() {}", "a, (b) = function() {}");
+        expectPrinted_("x = { k: (a) = function() {} }", "x = { k: (a) = function() {} }");
+        expectPrinted_("x = () => (a) = function() {}", "x = () => (a) = function() {}");
+        expectPrinted_(
+          "function* g() { yield (a) = function() {} }",
+          "function* g() {\n  yield (a) = function() {};\n}",
+        );
+        expectPrinted_("export default (a) = function() {}", "export default (a) = function() {}");
+      });
+
+      it("keeps its parentheses in a pattern", () => {
+        expectPrinted_("[(a) = function() {}] = []", "[(a) = function() {}] = []");
+        expectPrinted_("({ x: (a) = function() {} } = {})", "({ x: (a) = function() {} } = {})");
+        // Not the shorthand `{ a = function() {} }`, which names it.
+        expectPrinted_("({ a: (a) = function() {} } = {})", "({ a: (a) = function() {} } = {})");
+        expectPrinted_("({ [k]: (a) = function() {} } = {})", "({ [k]: (a) = function() {} } = {})");
+        expectPrinted_("[{ x: (a) = () => {} }] = [{}]", "[{ x: (a) = () => {} }] = [{}]");
+        expectPrintedNoTrim("for ([(a) = function() {}] of []) ;", "for ([(a) = function() {}] of [])\n  ;\n");
+        expectPrintedNoTrim(
+          "for ({ x: (a) = function() {} } in {}) ;",
+          "for ({ x: (a) = function() {} } in {})\n  ;\n",
+        );
+      });
+
+      it("keeps its parentheses where TypeScript syntax is removed", () => {
+        ts.expectPrinted_("(a as any) = function() {}", "(a) = function() {}");
+        ts.expectPrinted_("(<any>a) = function() {}", "(a) = function() {}");
+        ts.expectPrinted_("(a satisfies T) ??= function() {}", "(a) ??= function() {}");
+        ts.expectPrinted_("(a!) = function() {}", "(a) = function() {}");
+        ts.expectPrinted_("(a)! = function() {}", "(a) = function() {}");
+        ts.expectPrinted_("(a)!! ||= function() {}", "(a) ||= function() {}");
+        ts.expectPrinted_("<any>(a) = function() {}", "(a) = function() {}");
+        ts.expectPrinted_("(a) = <any>function() {}", "(a) = function() {}");
+        ts.expectPrinted_("[(a as any) = () => {}] = []", "[(a) = () => {}] = []");
+        // After a line break, `!b` is a statement and not a non-null assertion. Its unused `!` is dropped.
+        ts.expectPrinted_("(a)\n!b", "a;\nb");
+        // The operand of a unary operator does not take the assignment.
+        ts.expectParseError("-<any>(a) = function() {}", "Invalid assignment target");
+      });
+
+      it("is not merged into the declaration before it", () => {
+        expectPrintedMin_("var fn; fn = function() {};", "var fn = function() {}");
+        expectPrintedMin_("var fn; (fn) = function() {};", "var fn;\n(fn) = function() {}");
+        expectPrintedMin_("var fn; (fn) = 1;", "var fn = 1");
+      });
+
+      it("is resolved like a plain identifier", () => {
+        const minifyIdentifiers = new Bun.Transpiler({ minify: { identifiers: true } });
+        expect(
+          minifyIdentifiers.transformSync(
+            "export function f(longName) { (longName) = () => {}; [(longName) = () => {}] = []; ({ k: (longName) = () => {} } = {}); return longName; }",
+            "js",
+          ),
+        ).toBe(
+          "export function f(r) {\n  (r) = () => {};\n  [(r) = () => {}] = [];\n  ({ k: (r) = () => {} } = {});\n  return r;\n}\n",
+        );
+        // A member of a TypeScript namespace is a property, and a property target names nothing.
+        ts.expectPrinted_(
+          "namespace N { export let a; (a) = function() {}; }",
+          "var N;\n((N) => {\n  N.a = function() {};\n})(N ||= {})",
+        );
+        expectParseError("(eval) = function() {}", "Invalid assignment target");
+        expectParseError("const c = 1; (c) = function() {}", 'Cannot assign to "c" because it is a constant');
+      });
+
+      it("has no parentheses with any other value or target", () => {
+        expectPrinted_("(x) = y", "x = y");
+        expectPrinted_("(a) = 1", "a = 1");
+        expectPrinted_("(a) ||= b", "a ||= b");
+        expectPrinted_("(a) += function() {}", "a += function() {}");
+        expectPrinted_("(a) = function f() {}", "a = function f() {}");
+        expectPrinted_("(a) = class C {}", "a = class C {\n}");
+        expectPrinted_("(a) = (0, function() {})", "a = (0, function() {})");
+        expectPrinted_("(a) = function() {}.bind(b)", "a = function() {}.bind(b)");
+        expectPrinted_("(a) = b = function() {}", "a = b = function() {}");
+        expectPrinted_("a = (function() {})", "a = function() {}");
+        expectPrinted_("(a.b) = function() {}", "a.b = function() {}");
+        expectPrinted_("(a)[b] = function() {}", "a[b] = function() {}");
+        expectPrinted_("[(a)] = b", "[a] = b");
+        expectPrintedNoTrim("for ((a) of b) ;", "for (a of b)\n  ;\n");
+        // A parenthesized parameter is not valid, and is still accepted.
+        expectPrinted_("x = ((a) = function() {}) => 0", "x = (a = function() {}) => 0");
+      });
+    });
+
     it("for-in and for-of loop initializers", () => {
       // Annex B: a plain identifier "var" binding may keep its initializer in a sloppy-mode for-in
       expectPrintedNoTrim("for (var x = 1 in y) ;", "x = 1;\nfor (x in y)\n  ;\nvar x;\n");

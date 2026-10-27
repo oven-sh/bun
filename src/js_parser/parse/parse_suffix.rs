@@ -1445,6 +1445,50 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(Continuation::Next)
     }
 
+    /// `left` is the identifier of "(identifier)" and the lexer is after the ")".
+    /// An assignment that follows is parsed here. One that is given an
+    /// anonymous function, arrow or class must not name it: see
+    /// `E::ParenthesizedIdentifier`.
+    #[cold]
+    #[inline(never)]
+    pub(crate) fn sfx_after_parenthesized_identifier(
+        p: &mut Self,
+        level: Level,
+        left: &mut Expr,
+    ) -> Result<(), Error> {
+        // "(a)! = b": TypeScript non-null assertions, as in `sfx_t_exclamation`
+        while Self::IS_TYPESCRIPT_ENABLED
+            && p.lexer.token == T::TExclamation
+            && !p.lexer.has_newline_before
+        {
+            p.lexer.next()?;
+        }
+
+        if level.gte(Level::Assign)
+            || !matches!(
+                p.lexer.token,
+                T::TEquals
+                    | T::TBarBarEquals
+                    | T::TAmpersandAmpersandEquals
+                    | T::TQuestionQuestionEquals
+            )
+        {
+            return Ok(());
+        }
+
+        // At this level `parse_suffix` takes the assignment and nothing after it.
+        p.parse_suffix(left, Level::Assign.sub(1), None, EFlags::None)?;
+        if let ExprData::EBinary(mut assign) = left.data
+            && let ExprData::EIdentifier(target) = assign.left.data
+            && assign.right.is_anonymous_named()
+        {
+            assign.left.data = ExprData::EParenthesizedIdentifier(E::ParenthesizedIdentifier {
+                ref_: target.ref_,
+            });
+        }
+        Ok(())
+    }
+
     pub(crate) fn parse_suffix(
         &mut self,
         left: &mut Expr,

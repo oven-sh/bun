@@ -108,6 +108,7 @@ pub(crate) fn scan_imports_and_exports(
     let ast_flags_list: *mut [AstFlags] = ast.flags;
     let module_types: *mut [crate::options::ModuleType] = ast.module_type;
     let export_star_import_records: *mut [bun_alloc::AstVec<u32>] = ast.export_star_import_records;
+    let redirects: *mut [u32] = ast.redirect_import_record_index;
     let exports_refs: *mut [Ref] = ast.exports_ref;
     let module_refs: *mut [Ref] = ast.module_ref;
     let wrapper_refs: *mut [Ref] = ast.wrapper_ref;
@@ -1155,6 +1156,17 @@ pub(crate) fn scan_imports_and_exports(
                             // `default: module.exports`, so the printed call reads
                             // `.default` to return `module.exports`, the same value
                             // an unsplit `require()` returns.
+                            debug_assert!(
+                                !(kind == ImportKind::Require && is_external_dyn)
+                                    || !LinkerContext::require_returns_namespace(
+                                        col_ref!(ast_flags_list),
+                                        col_ref!(export_star_import_records),
+                                        col_ref!(import_records_list),
+                                        col_ref!(redirects),
+                                        rec_source_index.get(),
+                                    ),
+                                "find_reachable_files splits no require() of a lifted CommonJS file"
+                            );
                             if kind == ImportKind::Require
                                 && is_external_dyn
                                 && rec_source_index.is_valid()
@@ -1278,7 +1290,18 @@ pub(crate) fn scan_imports_and_exports(
                             // code should see "__esModule". This is an extremely complex
                             // and subtle set of transpiler interop issues. See for example
                             // https://github.com/evanw/esbuild/issues/1591.
-                            if kind == ImportKind::Require {
+                            //
+                            // A lifted CommonJS module was never an ES module: its
+                            // exports object is its `module.exports`.
+                            if kind == ImportKind::Require
+                                && !LinkerContext::require_returns_namespace(
+                                    col_ref!(ast_flags_list),
+                                    col_ref!(export_star_import_records),
+                                    col_ref!(import_records_list),
+                                    col_ref!(redirects),
+                                    other_source_index,
+                                )
+                            {
                                 col!(import_records_list)[id].as_mut_slice()
                                     [import_record_index as usize]
                                     .flags

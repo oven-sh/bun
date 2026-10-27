@@ -39,6 +39,13 @@ pub struct Ast<'a> {
     /// `force_cjs_to_esm` for a file with no ES module syntax: its exports were
     /// lifted from `exports.foo = ...`, so its `module.exports` is the namespace.
     pub commonjs_lifted_to_esm: bool,
+    /// `commonjs_lifted_to_esm` for a file that is an ES module in this bundle
+    /// and CommonJS to `bun run`: a top-level `exports.foo = ...` became an
+    /// export, or a `require()` became an import and the file is not an ES
+    /// module by type. `require()` of it returns the namespace. A file with
+    /// neither is an ES module to `bun run` too: its `require()` value has
+    /// `__esModule`.
+    pub namespace_is_module_exports: bool,
     pub exports_kind: ExportsKind,
 
     // This is a list of ES6 features. They are ranges instead of booleans so
@@ -119,6 +126,7 @@ impl<'a> Ast<'a> {
             commonjs_module_exports_assigned_deoptimized: false,
             force_cjs_to_esm: false,
             commonjs_lifted_to_esm: false,
+            namespace_is_module_exports: false,
             exports_kind: ExportsKind::None,
             export_keyword: Range::NONE,
             top_level_await_keyword: Range::NONE,

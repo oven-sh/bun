@@ -4533,6 +4533,57 @@ impl<'a> LinkerContext<'a> {
             && ast_flags.contains(AstFlags::COMMONJS_LIFTED_TO_ESM)
     }
 
+    /// Does `require()` of `target` evaluate to its namespace object? It does
+    /// when that object stands in for `module.exports`
+    /// (`NAMESPACE_IS_MODULE_EXPORTS`): the call gets no `__toCommonJS` copy,
+    /// and the file is not a chunk that `import.meta.require` loads as an ES
+    /// module. A lifted `module.exports = require("./impl")` is an `export *`,
+    /// so `./impl` decides.
+    pub(crate) fn require_returns_namespace(
+        ast_flags: &[AstFlags],
+        export_star_import_records: &[bun_alloc::AstVec<u32>],
+        import_records: &[bun_ast::import_record::List<'_>],
+        redirects: &[u32],
+        target: u32,
+    ) -> bool {
+        let mut file = target as usize;
+        // Each step follows one record, so a longer walk is a cycle.
+        for _ in 0..ast_flags.len() {
+            let record_index = match redirects.get(file) {
+                // `find_reachable_files` points a record past a redirect file
+                // only when it visits the importer.
+                Some(&redirect) if redirect != u32::MAX => redirect,
+                _ => {
+                    if !ast_flags
+                        .get(file)
+                        .is_some_and(|flags| flags.contains(AstFlags::NAMESPACE_IS_MODULE_EXPORTS))
+                    {
+                        return false;
+                    }
+                    match export_star_import_records
+                        .get(file)
+                        .map(|stars| stars.as_slice())
+                    {
+                        Some([]) => return true,
+                        Some(&[star]) => star,
+                        _ => return false,
+                    }
+                }
+            };
+            let Some(record) = import_records
+                .get(file)
+                .and_then(|records| records.as_slice().get(record_index as usize))
+            else {
+                return false;
+            };
+            if !record.source_index.is_valid() {
+                return false;
+            }
+            file = record.source_index.get() as usize;
+        }
+        false
+    }
+
     /// Resolves every named import in one file to its matching export,
     /// recording the bindings in `imports_to_bind`.
     pub(crate) fn match_imports_with_exports_for_file(

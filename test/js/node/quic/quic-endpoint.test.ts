@@ -49,6 +49,7 @@ test.each(["connect", "listen"])("%s() reads each transport parameter once, and 
   const { initialMaxData, initialMaxStreamsBidi, maxIdleTimeout } = (
     side === "connect" ? client : await accepted.promise
   ).localTransportParams;
+  client.close();
   expect({ initialMaxData, initialMaxStreamsBidi, maxIdleTimeout }).toEqual({
     initialMaxData: 70_000n,
     initialMaxStreamsBidi: 7n,
@@ -56,7 +57,6 @@ test.each(["connect", "listen"])("%s() reads each transport parameter once, and 
   });
   expect(Object.values(reads).filter(count => count !== 1)).toEqual([]);
   expect(Object.keys(reads)).toContain("disableActiveMigration");
-  client.destroy();
 });
 
 describe("sessions that share an endpoint", () => {

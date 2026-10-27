@@ -184,19 +184,6 @@ pub fn warn(payload: impl PrettyFmtInput) {
     flush();
 }
 
-/// `Output.prettyErrorln` — function form. Performs `<tag>` → ANSI rewrite on
-/// the rendered payload (using stderr's colour state), writes to stderr, and
-/// appends `\n` if the rendered output does not already end in one. Macro
-/// form: `crate::pretty_errorln!`.
-#[inline]
-pub fn pretty_errorln(payload: impl PrettyFmtInput) {
-    let buf = payload.into_pretty_buf(enable_ansi_colors_stderr());
-    write_bytes(Destination::Stderr, &buf);
-    if buf.0.last() != Some(&b'\n') {
-        write_bytes(Destination::Stderr, b"\n");
-    }
-}
-
 /// `bun.Output.Source.Stdio.restore` — restore terminal to cooked mode on exit.
 /// Thin alias over [`crate::output::stdio::restore`] (the real impl, also in
 /// this crate).

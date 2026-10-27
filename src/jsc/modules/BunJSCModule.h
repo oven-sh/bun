@@ -841,7 +841,10 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshotForDebugging,
         return {};
     }
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(JSONParse(globalObject, WTF::move(jsonString))));
+    // JSONParse() returns an empty value for a text that is not JSON, with no exception.
+    JSValue snapshot = JSONParseWithException(globalObject, jsonString);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(snapshot);
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionSerialize,

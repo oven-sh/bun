@@ -17,7 +17,7 @@ pub enum Failure {
     ShortRead,
 }
 
-/// `StreamingDecoder` as it was before the C library was replaced (src/brotli/lib.rs at 1f86fc49).
+/// `StreamingDecoder` as it was before the C library was replaced (src/brotli/lib.rs at 92e819d8).
 pub struct Old {
     c: CDecoder,
     state: State,

@@ -83,6 +83,10 @@ impl ResolveMessage {
     ) -> JSValue {
         use bun_resolver::NodeModuleErrorKind as K;
         let code = match error.kind {
+            K::RecursionLimit => {
+                return global
+                    .create_range_error_instance(format_args!("Maximum call stack size exceeded"));
+            }
             K::InvalidPackageJson => {
                 return bun_core::EncodedSlice::utf16(&error.json_message)
                     .to_syntax_error_instance(global);

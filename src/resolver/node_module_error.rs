@@ -11,6 +11,7 @@ use bstr::BStr;
 /// ESM spells it `ERR_MODULE_NOT_FOUND`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum NodeModuleErrorKind {
+    RecursionLimit,
     InvalidPackageJson,
     /// ERR_PACKAGE_PATH_NOT_EXPORTED
     PackagePathNotExported,
@@ -130,10 +131,17 @@ impl NodeModuleError {
         error
     }
 
+    pub fn recursion_limit() -> Box<Self> {
+        let mut error = Self::at_end(NodeModuleErrorKind::RecursionLimit, Vec::new(), false);
+        error.suppress_referrer = true;
+        error
+    }
+
     pub fn is_fatal(&self) -> bool {
         matches!(
             self.kind,
-            NodeModuleErrorKind::InvalidPackageConfig
+            NodeModuleErrorKind::RecursionLimit
+                | NodeModuleErrorKind::InvalidPackageConfig
                 | NodeModuleErrorKind::InvalidPackageConfigStructure
                 | NodeModuleErrorKind::InvalidPackageJson
         )

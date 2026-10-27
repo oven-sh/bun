@@ -3794,12 +3794,10 @@ impl<'p, 's> Types<'p, 's> {
         id
     }
 
-    /// Compares `a.id` with `b.id` for `isDeeplyNestedType`, which treats a higher id as a sign of a newer instantiation,
-    /// one caused by recursion. Only the heights are compared. The instantiations of a recursion
-    /// that steps from one literal type to the next all have the same height, and comparing their hashes would count
-    /// only about half of them. The caller orders two types with the same height.
+    /// Compares the heights of `a` and `b`. A type is taller than every type it's built from, so a type that is lower
+    /// than another may be a component of it. Two types of the same height are unordered here.
     #[inline]
-    pub fn nesting_order(&self, a: TypeId, b: TypeId) -> std::cmp::Ordering {
+    pub fn height_order(&self, a: TypeId, b: TypeId) -> std::cmp::Ordering {
         self.rank(a).height.cmp(&self.rank(b).height)
     }
 
@@ -3875,6 +3873,38 @@ impl<'p, 's> Types<'p, 's> {
         // Equal keys shouldn't reach this point. The id tie-break keeps this a total order if they
         // do.
         order.then_with(|| a.0.cmp(&b.0))
+    }
+
+    /// True if the key of one of `wholes` mentions `part`, directly or through the keys of the types it mentions (a
+    /// mapper, a signature or a component list in a key included). A type is created after the types its key
+    /// mentions. Only a type taller than `part` can mention it, so no other key is followed.
+    pub fn key_mentions(&self, wholes: &[TypeId], part: TypeId) -> bool {
+        let height = self.rank(part).height;
+        let mut to_visit: SmallVec<[TypeId; 16]> = SmallVec::new();
+        let mut visited: crate::util::FxHashSet<TypeId> = Default::default();
+        let mut found = false;
+        for &whole in wholes {
+            if self.rank(whole).height > height && visited.insert(whole) {
+                to_visit.push(whole);
+            }
+        }
+        while let Some(next) = to_visit.pop() {
+            let mut mentions = Mentions {
+                types: *self,
+                found: &mut |id: TypeId| {
+                    if id == part {
+                        found = true;
+                    } else if self.rank(id).height > height && visited.insert(id) {
+                        to_visit.push(id);
+                    }
+                },
+            };
+            self.record(next).created.visit(&mut mentions);
+            if found {
+                return true;
+            }
+        }
+        false
     }
 
     fn written_key(&self, id: TypeId) -> Vec<KeyItem> {
@@ -5270,6 +5300,30 @@ impl Visitor for Ranking<'_, '_> {
     }
 }
 
+/// Calls `found` with each type a key mentions. See `Types::key_mentions`.
+struct Mentions<'a, 'p, 's> {
+    types: Types<'p, 's>,
+    found: &'a mut dyn FnMut(TypeId),
+}
+
+impl Visitor for Mentions<'_, '_, '_> {
+    fn atom(&mut self, _: Atom) {}
+    fn components(&mut self, id: ComponentsId) {
+        self.types.components(id).visit(self);
+    }
+    fn mapper(&mut self, id: MapperId) {
+        self.types.mapping(id).visit(self);
+    }
+    fn sig(&mut self, id: SigId) {
+        self.types.sig(id).visit(self);
+    }
+    fn ty(&mut self, id: TypeId) {
+        (self.found)(id);
+    }
+    fn file(&mut self, _: FileId) {}
+    fn plain<T: Hash + ?Sized>(&mut self, _: &T) {}
+}
+
 /// One item of a type's written-out key, for `Types::compare_contents`.
 enum KeyItem {
     Word(u64),
@@ -5604,11 +5658,11 @@ mod tests {
         ] {
             assert!(types.content_order(part, whole).is_lt());
             assert!(types.content_order(whole, part).is_gt());
-            assert!(types.nesting_order(whole, part).is_gt());
-            assert!(types.nesting_order(part, whole).is_lt());
+            assert!(types.height_order(whole, part).is_gt());
+            assert!(types.height_order(part, whole).is_lt());
         }
         // Same height.
-        assert!(types.nesting_order(keyof_string, keyof_number).is_eq());
+        assert!(types.height_order(keyof_string, keyof_number).is_eq());
         assert!(types.content_order(outer, outer).is_eq());
     }
 

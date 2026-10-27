@@ -18734,5 +18734,54 @@
       "node_modules/outer/node_modules/inner/index.d.ts": "export interface Inner { a: number }\nexport declare const value: number;\n",
       "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"declaration\": true, \"noEmit\": true, \"module\": \"esnext\", \"moduleResolution\": \"bundler\", \"types\": [], \"lib\": [\"es2022\"] }, \"files\": [\"a.ts\"] }\n"
     }
+  },
+  "deeply-nested-instantiations-created-by-the-comparison": {
+    "files": {
+      "a.ts": "type Node = string | null | Iterable<Node>;\ndeclare const fns: (() => void)[][][];\nexport const x: Node = fns;\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"skipLibCheck\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
+    }
+  },
+  "deeply-nested-instantiations-from-an-unchecked-declaration-file": {
+    "files": {
+      "a.ts": "type Node = null | { next: Node } | { v: Node } | [Node];\ndeclare const x: I4;\nexport const y: Node = x;\n",
+      "decls.d.ts": "type Box<T> = { v: T };\ninterface I0 { next: Box<number> }\ninterface I1 { next: Box<[I0]> }\ninterface I2 { next: Box<[[I1]]> }\ninterface I3 { next: Box<[[[I2]]]> }\ninterface I4 { next: Box<[[[[I3]]]]> }\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"skipLibCheck\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
+    }
+  },
+  "deeply-nested-instantiations-declared-before-the-comparison": {
+    "files": {
+      "a.ts": "type Box<T> = { v: T };\ninterface I0 { next: Box<number> }\ninterface I1 { next: Box<I0> }\ninterface I2 { next: Box<I1> }\ninterface I3 { next: Box<I2> }\ninterface I4 { next: Box<I3> }\ntype Node = null | { next: Node } | { v: Node };\ndeclare const x: I4;\nexport const y: Node = x;\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"skipLibCheck\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
+    }
+  },
+  "deeply-nested-instantiations-declared-after-the-comparison": {
+    "files": {
+      "a.ts": "declare const x: I4;\nexport const y: Node = x;\ntype Box<T> = { v: T };\ninterface I0 { next: Box<number> }\ninterface I1 { next: Box<I0> }\ninterface I2 { next: Box<I1> }\ninterface I3 { next: Box<I2> }\ninterface I4 { next: Box<I3> }\ntype Node = null | { next: Node } | { v: Node };\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"skipLibCheck\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
+    }
+  },
+  "deeply-nested-instantiations-declared-in-the-order-of-the-comparison": {
+    "files": {
+      "a.ts": "type Box<T> = { v: T };\ninterface I4 { next: Box<I3> }\ninterface I3 { next: Box<I2> }\ninterface I2 { next: Box<I1> }\ninterface I1 { next: Box<I0> }\ninterface I0 { next: Box<number> }\ntype Node = null | { next: Node } | { v: Node };\ndeclare const x: I4;\nexport const y: Node = x;\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"skipLibCheck\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
+    }
+  },
+  "deeply-nested-instantiations-of-a-conditional-type-over-declared-interfaces": {
+    "files": {
+      "a.ts": "type Wrap<T> = { v: T; next: T extends { x: infer U } ? Wrap<U> : null };\ninterface A { x: number }\ninterface B { x: A }\ninterface C { x: B }\ninterface D { x: C }\ntype Node = { v: object; next: Node } | null;\ndeclare const d: Wrap<D>;\nexport const n: Node = d;\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"skipLibCheck\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
+    }
+  },
+  "deeply-nested-inference-from-instantiations-declared-before-the-call": {
+    "files": {
+      "a.ts": "type Box<T> = { v: T };\ninterface I0 { next: Box<number> }\ninterface I1 { next: Box<I0> }\ninterface I2 { next: Box<I1> }\ninterface I3 { next: Box<I2> }\ninterface I4 { next: Box<I3> }\ntype N<T> = { next: { v: N<T> } } | T;\ndeclare function f<T>(x: N<T>): T;\ndeclare const x: I4;\nconst r = f(x);\nexport const s: string = r;\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"skipLibCheck\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
+    }
+  },
+  "deeply-nested-inference-from-instantiations-declared-after-the-call": {
+    "files": {
+      "a.ts": "type N<T> = { next: { v: N<T> } } | T;\ndeclare function f<T>(x: N<T>): T;\ndeclare const x: I4;\nconst r = f(x);\nexport const s: string = r;\ntype Box<T> = { v: T };\ninterface I0 { next: Box<number> }\ninterface I1 { next: Box<I0> }\ninterface I2 { next: Box<I1> }\ninterface I3 { next: Box<I2> }\ninterface I4 { next: Box<I3> }\n",
+      "tsconfig.json": "{ \"compilerOptions\": { \"strict\": true, \"noEmit\": true, \"skipLibCheck\": true, \"types\": [], \"lib\": [\"es2022\"] } }\n"
+    }
   }
 }

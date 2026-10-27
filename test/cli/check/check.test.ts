@@ -6654,6 +6654,642 @@ export {};
       expect(exitCode).toBe(0);
     });
 
+    // tsc cuts a comparison off when three instantiations of one type on a stack were each created after the one
+    // before. It creates the type of a type node when it checks the declaration the node is in, so those come in
+    // source order, and it creates an instantiation that nothing declares when a comparison reaches it, so those
+    // come in the order of the comparison. Issue #46998.
+    describe("cuts a deep comparison off where tsc does, for instantiations that are", () => {
+      const box = `type Box<T> = { v: T };
+interface I0 { next: Box<number> }
+interface I1 { next: Box<I0> }
+interface I2 { next: Box<I1> }
+interface I3 { next: Box<I2> }
+interface I4 { next: Box<I3> }
+type Node = null | { next: Node } | { v: Node };
+`;
+      const use = `declare const x: I4;
+export const y: Node = x;
+`;
+      const boxError = `
+a.ts(9,14): error TS2322: Type 'I4' is not assignable to type 'Node'.
+  Type 'I4' is not assignable to type '{ next: Node; }'.
+    Types of property 'next' are incompatible.
+      Type 'Box<I3>' is not assignable to type 'Node'.
+        Type 'Box<I3>' is not assignable to type '{ v: Node; }'.
+          Types of property 'v' are incompatible.
+            Type 'I3' is not assignable to type 'Node'.
+              Type 'I3' is not assignable to type '{ next: Node; }'.
+                Types of property 'next' are incompatible.
+                  Type 'Box<I2>' is not assignable to type 'Node'.
+                    Type 'Box<I2>' is not assignable to type '{ v: Node; }'.
+                      Types of property 'v' are incompatible.
+                        Type 'I2' is not assignable to type 'Node'.
+                          Type 'I2' is not assignable to type '{ next: Node; }'.
+                            Types of property 'next' are incompatible.
+                              Type 'Box<I1>' is not assignable to type 'Node'.
+                                Type 'Box<I1>' is not assignable to type '{ v: Node; }'.
+                                  Types of property 'v' are incompatible.
+                                    Type 'I1' is not assignable to type 'Node'.
+                                      Type 'I1' is not assignable to type '{ next: Node; }'.
+                                        Types of property 'next' are incompatible.
+                                          Type 'Box<I0>' is not assignable to type 'Node'.
+                                            Type 'Box<I0>' is not assignable to type '{ v: Node; }'.
+                                              Types of property 'v' are incompatible.
+                                                Type 'I0' is not assignable to type 'Node'.
+                                                  Type 'I0' is not assignable to type '{ next: Node; }'.
+                                                    Types of property 'next' are incompatible.
+                                                      Type 'Box<number>' is not assignable to type 'Node'.
+                                                        Type 'Box<number>' is not assignable to type '{ v: Node; }'.
+                                                          Types of property 'v' are incompatible.
+                                                            Type 'number' is not assignable to type 'Node'.
+`.slice(1, -1);
+      const tuples = `type Box<T> = { v: T };
+interface I0 { next: Box<number> }
+interface I1 { next: Box<[I0]> }
+interface I2 { next: Box<[[I1]]> }
+interface I3 { next: Box<[[[I2]]]> }
+interface I4 { next: Box<[[[[I3]]]]> }
+`;
+      const tuplesUse = `type Node = null | { next: Node } | { v: Node } | [Node];
+${use}`;
+      const cases: [name: string, files: Record<string, string>, error: string][] = [
+        [
+          "created while the comparison runs, from the lib",
+          {
+            "a.ts": `type Node = string | null | Iterable<Node>;
+declare const fns: (() => void)[][][];
+export const x: Node = fns;
+`,
+          },
+          "",
+        ],
+        [
+          "created while the comparison runs, from a declaration file that isn't checked",
+          { "decls.d.ts": tuples, "a.ts": tuplesUse },
+          "",
+        ],
+        ["declared in a checked file after the comparison", { "a.ts": use + box }, ""],
+        [
+          "declared in a checked file in the order of the comparison",
+          {
+            "a.ts": `type Box<T> = { v: T };
+interface I4 { next: Box<I3> }
+interface I3 { next: Box<I2> }
+interface I2 { next: Box<I1> }
+interface I1 { next: Box<I0> }
+interface I0 { next: Box<number> }
+type Node = null | { next: Node } | { v: Node };
+${use}`,
+          },
+          "",
+        ],
+        [
+          "created while the comparison runs, from a conditional type in a checked file",
+          {
+            "a.ts": `type Wrap<T> = { v: T; next: T extends { x: infer U } ? Wrap<U> : null };
+interface A { x: number }
+interface B { x: A }
+interface C { x: B }
+interface D { x: C }
+type Node = { v: object; next: Node } | null;
+declare const d: Wrap<D>;
+export const n: Node = d;
+`,
+          },
+          "",
+        ],
+        ["declared in a checked file before the comparison", { "a.ts": box + use }, boxError],
+        [
+          "declared in a checked file before the comparison, inside tuples",
+          { "a.ts": tuples + tuplesUse },
+          `
+a.ts(9,14): error TS2322: Type 'I4' is not assignable to type 'Node'.
+  Type 'I4' is not assignable to type '{ next: Node; }'.
+    Types of property 'next' are incompatible.
+      Type 'Box<[[[[I3]]]]>' is not assignable to type 'Node'.
+        Type 'Box<[[[[I3]]]]>' is not assignable to type '{ v: Node; }'.
+          Types of property 'v' are incompatible.
+            Type '[[[[I3]]]]' is not assignable to type 'Node'.
+              Type '[[[[I3]]]]' is not assignable to type '[Node]'.
+                Type '[[[I3]]]' is not assignable to type 'Node'.
+                  Type '[[[I3]]]' is not assignable to type '[Node]'.
+                    Type '[[I3]]' is not assignable to type 'Node'.
+                      Type '[[I3]]' is not assignable to type '[Node]'.
+                        Type '[I3]' is not assignable to type 'Node'.
+                          Type '[I3]' is not assignable to type '[Node]'.
+                            Type 'I3' is not assignable to type 'Node'.
+                              Type 'I3' is not assignable to type '{ next: Node; }'.
+                                Types of property 'next' are incompatible.
+                                  Type 'Box<[[[I2]]]>' is not assignable to type 'Node'.
+                                    Type 'Box<[[[I2]]]>' is not assignable to type '{ v: Node; }'.
+                                      Types of property 'v' are incompatible.
+                                        Type '[[[I2]]]' is not assignable to type 'Node'.
+                                          Type '[[[I2]]]' is not assignable to type '[Node]'.
+                                            Type '[[I2]]' is not assignable to type 'Node'.
+                                              Type '[[I2]]' is not assignable to type '[Node]'.
+                                                Type '[I2]' is not assignable to type 'Node'.
+                                                  Type '[I2]' is not assignable to type '[Node]'.
+                                                    Type 'I2' is not assignable to type 'Node'.
+                                                      Type 'I2' is not assignable to type '{ next: Node; }'.
+                                                        Types of property 'next' are incompatible.
+                                                          Type 'Box<[[I1]]>' is not assignable to type 'Node'.
+                                                            Type 'Box<[[I1]]>' is not assignable to type '{ v: Node; }'.
+                                                              Types of property 'v' are incompatible.
+                                                                Type '[[I1]]' is not assignable to type 'Node'.
+                                                                  Type '[[I1]]' is not assignable to type '[Node]'.
+                                                                    Type '[I1]' is not assignable to type 'Node'.
+                                                                      Type '[I1]' is not assignable to type '[Node]'.
+                                                                        Type 'I1' is not assignable to type 'Node'.
+                                                                          Type 'I1' is not assignable to type '{ next: Node; }'.
+                                                                            Types of property 'next' are incompatible.
+                                                                              Type 'Box<[I0]>' is not assignable to type 'Node'.
+                                                                                Type 'Box<[I0]>' is not assignable to type '{ v: Node; }'.
+                                                                                  Types of property 'v' are incompatible.
+                                                                                    Type '[I0]' is not assignable to type 'Node'.
+                                                                                      Type '[I0]' is not assignable to type '[Node]'.
+                                                                                        Type 'I0' is not assignable to type 'Node'.
+                                                                                          Type 'I0' is not assignable to type '{ next: Node; }'.
+                                                                                            Types of property 'next' are incompatible.
+                                                                                              Type 'Box<number>' is not assignable to type 'Node'.
+                                                                                                Type 'Box<number>' is not assignable to type '{ v: Node; }'.
+                                                                                                  Types of property 'v' are incompatible.
+                                                                                                    Type 'number' is not assignable to type 'Node'.
+`.slice(1, -1),
+        ],
+        [
+          "declared in a checked file after an arrow function that compares them, whose body is checked last",
+          {
+            "a.ts": `type Node = null | { next: Node } | { v: Node };
+declare const x: I4;
+export const f = () => { const y: Node = x; return y; };
+${box.replace("type Node = null | { next: Node } | { v: Node };\n", "")}`,
+          },
+          boxError.replace("a.ts(9,14)", "a.ts(3,32)"),
+        ],
+        [
+          "declared in class expressions before the comparison, which are checked last",
+          {
+            "a.ts": `type Box<T> = { v: T };
+interface I0 { next: Box<number> }
+const C1 = class { next!: Box<I0> };
+type I1 = InstanceType<typeof C1>;
+const C2 = class { next!: Box<I1> };
+type I2 = InstanceType<typeof C2>;
+const C3 = class { next!: Box<I2> };
+type I3 = InstanceType<typeof C3>;
+const C4 = class { next!: Box<I3> };
+type I4 = InstanceType<typeof C4>;
+type Node = null | { next: Node } | { v: Node };
+${use}`,
+          },
+          "",
+        ],
+        [
+          "declared in a checked file after a variance annotation that compares them, which is checked last",
+          {
+            "a.ts": `type Alias<in T> = { p: I4 extends T ? Node | I4 : Node };
+${box}export {};
+`,
+          },
+          `
+a.ts(1,12): error TS2636: Type 'Alias<super-T>' is not assignable to type 'Alias<sub-T>' as implied by variance annotation.
+  Types of property 'p' are incompatible.
+    Type 'I4 extends super-T ? Node | (super-T & I4) : Node' is not assignable to type 'I4 extends sub-T ? Node | (sub-T & I4) : Node'.
+      Type 'Node | (super-T & I4)' is not assignable to type 'I4 extends sub-T ? Node | (sub-T & I4) : Node'.
+        Type 'super-T & I4' is not assignable to type 'I4 extends sub-T ? Node | (sub-T & I4) : Node'.
+`.slice(1, -1),
+        ],
+        [
+          "declared in a checked file before the comparison, as the results of methods",
+          { "a.ts": (box + use).replaceAll("next: ", "next(): ") },
+          boxError
+            .replaceAll("next: Node", "next(): Node")
+            .replaceAll(
+              "Types of property 'next' are incompatible.",
+              "The types returned by 'next()' are incompatible between these types.",
+            ),
+        ],
+        [
+          "declared in a checked file before the comparison, in unions with null",
+          {
+            "a.ts": (box + use).replaceAll(/next: (Box<\w+>)/g, "next: $1 | null"),
+          },
+          `
+a.ts(9,14): error TS2322: Type 'I4' is not assignable to type 'Node'.
+  Type 'I4' is not assignable to type '{ next: Node; }'.
+    Types of property 'next' are incompatible.
+      Type 'Box<I3> | null' is not assignable to type 'Node'.
+        Type 'Box<I3>' is not assignable to type 'Node'.
+          Type 'Box<I3>' is not assignable to type '{ v: Node; }'.
+            Types of property 'v' are incompatible.
+              Type 'I3' is not assignable to type 'Node'.
+                Type 'I3' is not assignable to type '{ next: Node; }'.
+                  Types of property 'next' are incompatible.
+                    Type 'Box<I2> | null' is not assignable to type 'Node'.
+                      Type 'Box<I2>' is not assignable to type 'Node'.
+                        Type 'Box<I2>' is not assignable to type '{ v: Node; }'.
+                          Types of property 'v' are incompatible.
+                            Type 'I2' is not assignable to type 'Node'.
+                              Type 'I2' is not assignable to type '{ next: Node; }'.
+                                Types of property 'next' are incompatible.
+                                  Type 'Box<I1> | null' is not assignable to type 'Node'.
+                                    Type 'Box<I1>' is not assignable to type 'Node'.
+                                      Type 'Box<I1>' is not assignable to type '{ v: Node; }'.
+                                        Types of property 'v' are incompatible.
+                                          Type 'I1' is not assignable to type 'Node'.
+                                            Type 'I1' is not assignable to type '{ next: Node; }'.
+                                              Types of property 'next' are incompatible.
+                                                Type 'Box<I0> | null' is not assignable to type 'Node'.
+                                                  Type 'Box<I0>' is not assignable to type 'Node'.
+                                                    Type 'Box<I0>' is not assignable to type '{ v: Node; }'.
+                                                      Types of property 'v' are incompatible.
+                                                        Type 'I0' is not assignable to type 'Node'.
+                                                          Type 'I0' is not assignable to type '{ next: Node; }'.
+                                                            Types of property 'next' are incompatible.
+                                                              Type 'Box<number> | null' is not assignable to type 'Node'.
+                                                                Type 'Box<number>' is not assignable to type 'Node'.
+                                                                  Type 'Box<number>' is not assignable to type '{ v: Node; }'.
+                                                                    Types of property 'v' are incompatible.
+                                                                      Type 'number' is not assignable to type 'Node'.
+`.slice(1, -1),
+        ],
+        [
+          "type arguments of the type compared, from a declaration file that isn't checked",
+          {
+            "decls.d.ts": `type Box<T> = { v: T };
+interface I1 { next: string }
+interface I2 { next: Box<I1> }
+interface I3 { next: Box<I2> }
+type Foo<A, B> = { a: B; b: A };
+declare const x: Foo<Box<I1>, Box<I3>>;
+`,
+            "a.ts": `type Node = null | { next: Node } | { v: Node };
+type Outer = { a: Node; b: unknown };
+export const y: Outer = x;
+`,
+          },
+          `
+a.ts(3,14): error TS2322: Type 'Foo<Box<I1>, Box<I3>>' is not assignable to type 'Outer'.
+  Types of property 'a' are incompatible.
+    Type 'Box<I3>' is not assignable to type 'Node'.
+      Type 'Box<I3>' is not assignable to type '{ v: Node; }'.
+        Types of property 'v' are incompatible.
+          Type 'I3' is not assignable to type 'Node'.
+            Type 'I3' is not assignable to type '{ next: Node; }'.
+              Types of property 'next' are incompatible.
+                Type 'Box<I2>' is not assignable to type 'Node'.
+                  Type 'Box<I2>' is not assignable to type '{ v: Node; }'.
+                    Types of property 'v' are incompatible.
+                      Type 'I2' is not assignable to type 'Node'.
+                        Type 'I2' is not assignable to type '{ next: Node; }'.
+                          Types of property 'next' are incompatible.
+                            Type 'Box<I1>' is not assignable to type 'Node'.
+                              Type 'Box<I1>' is not assignable to type '{ v: Node; }'.
+                                Types of property 'v' are incompatible.
+                                  Type 'I1' is not assignable to type 'Node'.
+                                    Type 'I1' is not assignable to type '{ next: Node; }'.
+                                      Types of property 'next' are incompatible.
+                                        Type 'string' is not assignable to type 'Node'.
+`.slice(1, -1),
+        ],
+        [
+          "parameters, which are compared with the sides swapped",
+          {
+            "a.ts": `type Box<T> = { v: T };
+interface S0 { next: (p: { v: string }) => void }
+interface S1 { next: (p: { v: S0 }) => void }
+interface S2 { next: (p: { v: S1 }) => void }
+interface S3 { next: (p: { v: S2 }) => void }
+interface S4 { next: (p: { v: S3 }) => void }
+interface S5 { next: (p: { v: S4 }) => void }
+interface S6 { next: (p: { v: S5 }) => void }
+interface I6 { next: (p: Box<I5>) => void }
+interface I5 { next: (p: Box<I4>) => void }
+interface I4 { next: (p: Box<I3>) => void }
+interface I3 { next: (p: Box<I2>) => void }
+interface I2 { next: (p: Box<I1>) => void }
+interface I1 { next: (p: Box<I0>) => void }
+interface I0 { next: (p: Box<number>) => void }
+declare const x: S6;
+export const y: I6 = x;
+`,
+          },
+          "",
+        ],
+        [
+          "the result of an arrow function, whose signature is checked in order and whose body is checked last",
+          {
+            "a.ts": `type Box<T> = { v: T };
+type Node = null | { next: Node } | { v: Node } | (() => Node);
+const g = (): Box<I1> => null!;
+interface I1 { next: Box<I0> }
+interface I0 { next: Box<Leaf> }
+interface Leaf { x: string }
+export const y: Node = g;
+`,
+          },
+          "",
+        ],
+        [
+          "declared in a checked file after a mapped type whose key compares them, which is checked in order",
+          {
+            "a.ts": `type M = { [K in (I4 extends Node ? "yes" : "no")]: 1 };
+declare const m: M;
+m.yes;
+type Box<T> = { v: T };
+interface I0 { next: Box<number> }
+interface I1 { next: Box<I0> }
+interface I2 { next: Box<I1> }
+interface I3 { next: Box<I2> }
+interface I4 { next: Box<I3> }
+type Node = null | { next: Node } | { v: Node };
+`,
+          },
+          "",
+        ],
+        [
+          "declared in a checked file after an assertion that compares them, which is checked last",
+          {
+            "a.ts": `declare const x: I4;
+export const y = x as Node;
+type Box<T> = { v: T };
+interface I0 { next: Box<number> }
+interface I1 { next: Box<I0> }
+interface I2 { next: Box<I1> }
+interface I3 { next: Box<I2> }
+interface I4 { next: Box<I3> }
+type Node = null | { next: Node } | { v: Node };
+`,
+          },
+          `
+a.ts(2,18): error TS2352: Conversion of type 'I4' to type 'Node' may be a mistake because neither type sufficiently overlaps with the other. If this was intentional, convert the expression to 'unknown' first.
+  Type 'I4' is not comparable to type '{ next: Node; }'.
+    Types of property 'next' are incompatible.
+      Type 'Box<I3>' is not comparable to type 'Node'.
+        Type 'Box<I3>' is not comparable to type '{ v: Node; }'.
+          Types of property 'v' are incompatible.
+            Type 'I3' is not comparable to type 'Node'.
+              Type 'I3' is not comparable to type '{ next: Node; }'.
+                Types of property 'next' are incompatible.
+                  Type 'Box<I2>' is not comparable to type 'Node'.
+                    Type 'Box<I2>' is not comparable to type '{ v: Node; }'.
+                      Types of property 'v' are incompatible.
+                        Type 'I2' is not comparable to type 'Node'.
+                          Type 'I2' is not comparable to type '{ next: Node; }'.
+                            Types of property 'next' are incompatible.
+                              Type 'Box<I1>' is not comparable to type 'Node'.
+                                Type 'Box<I1>' is not comparable to type '{ v: Node; }'.
+                                  Types of property 'v' are incompatible.
+                                    Type 'I1' is not comparable to type 'Node'.
+                                      Type 'I1' is not comparable to type '{ next: Node; }'.
+                                        Types of property 'next' are incompatible.
+                                          Type 'Box<I0>' is not comparable to type 'Node'.
+                                            Type 'Box<I0>' is not comparable to type '{ v: Node; }'.
+                                              Types of property 'v' are incompatible.
+                                                Type 'I0' is not comparable to type 'Node'.
+                                                  Type 'I0' is not comparable to type '{ next: Node; }'.
+                                                    Types of property 'next' are incompatible.
+                                                      Type 'Box<number>' is not comparable to type 'Node'.
+                                                        Type 'Box<number>' is not comparable to type '{ v: Node; }'.
+                                                          Types of property 'v' are incompatible.
+                                                            Type 'number' is not comparable to type 'Node'.
+`.slice(1, -1),
+        ],
+        [
+          "inherited from an interface declared after the comparison",
+          {
+            "a.ts": `type Box<T> = { v: T };
+interface B extends A {}
+type Node = null | { next: Node } | { v: Node };
+declare const x: I4;
+export const y: Node = x;
+interface I4 { next: Box<I3> }
+interface I3 { next: Box<I2> }
+interface I2 { next: Box<I1> }
+interface I1 { next: Box<I0> }
+interface I0 { next: Box<number> }
+interface A { next: Box<I3> }
+`,
+          },
+          "",
+        ],
+        [
+          "declared in the second of two declarations of an interface, after the comparison",
+          {
+            "a.ts": `type Box<T> = { v: T };
+interface I0 { next: Box<number> }
+interface I1 { next: Box<I0> }
+interface I2 { next: Box<I1> }
+interface I3 { next: Box<I2> }
+interface I4 {}
+type Node = null | { next: Node } | { v: Node };
+declare const x: I4;
+export const y: Node = x;
+interface I4 { next: Box<I3> }
+`,
+          },
+          `
+a.ts(9,14): error TS2322: Type 'I4' is not assignable to type 'Node'.
+  Type 'I4' is not assignable to type '{ next: Node; }'.
+    Types of property 'next' are incompatible.
+      Type 'Box<I3>' is not assignable to type 'Node'.
+        Type 'Box<I3>' is not assignable to type '{ v: Node; }'.
+          Types of property 'v' are incompatible.
+            Type 'I3' is not assignable to type 'Node'.
+              Type 'I3' is not assignable to type '{ next: Node; }'.
+                Types of property 'next' are incompatible.
+                  Type 'Box<I2>' is not assignable to type 'Node'.
+                    Type 'Box<I2>' is not assignable to type '{ v: Node; }'.
+                      Types of property 'v' are incompatible.
+                        Type 'I2' is not assignable to type 'Node'.
+                          Type 'I2' is not assignable to type '{ next: Node; }'.
+                            Types of property 'next' are incompatible.
+                              Type 'Box<I1>' is not assignable to type 'Node'.
+                                Type 'Box<I1>' is not assignable to type '{ v: Node; }'.
+                                  Types of property 'v' are incompatible.
+                                    Type 'I1' is not assignable to type 'Node'.
+                                      Type 'I1' is not assignable to type '{ next: Node; }'.
+                                        Types of property 'next' are incompatible.
+                                          Type 'Box<I0>' is not assignable to type 'Node'.
+                                            Type 'Box<I0>' is not assignable to type '{ v: Node; }'.
+                                              Types of property 'v' are incompatible.
+                                                Type 'I0' is not assignable to type 'Node'.
+                                                  Type 'I0' is not assignable to type '{ next: Node; }'.
+                                                    Types of property 'next' are incompatible.
+                                                      Type 'Box<number>' is not assignable to type 'Node'.
+                                                        Type 'Box<number>' is not assignable to type '{ v: Node; }'.
+                                                          Types of property 'v' are incompatible.
+                                                            Type 'number' is not assignable to type 'Node'.
+`.slice(1, -1),
+        ],
+        [
+          "members of a union that the comparison started with, from a declaration file that isn't checked",
+          {
+            "decls.d.ts": `type Box<T> = { v: T };
+interface I1 { next: string }
+interface I2 { next: Box<I1> }
+interface I3 { next: Box<I2> }
+declare const x: Box<I3> | Box<I1>;
+`,
+            "a.ts": `interface Node { v?: Node; next?: Node }
+export const y: Node = x;
+`,
+          },
+          `
+a.ts(2,14): error TS2322: Type 'Box<I1> | Box<I3>' is not assignable to type 'Node'.
+  Type 'Box<I1>' is not assignable to type 'Node'.
+    The types of 'v.next' are incompatible between these types.
+      Type 'string' has no properties in common with type 'Node'.
+`.slice(1, -1),
+        ],
+        [
+          "declared in a checked file after a parameter default that compares them, in a signature checked in order",
+          {
+            "a.ts": `declare const x: I4;
+export const g = (p: Node = x) => p;
+type Box<T> = { v: T };
+interface I0 { next: Box<number> }
+interface I1 { next: Box<I0> }
+interface I2 { next: Box<I1> }
+interface I3 { next: Box<I2> }
+interface I4 { next: Box<I3> }
+type Node = null | { next: Node } | { v: Node };
+`,
+          },
+          "",
+        ],
+        [
+          "declared in a checked file before the comparison, as optional members declared as unions",
+          {
+            "a.ts": `type Box<T> = { v: T };
+interface I0 { next?: Box<number> | null }
+interface I1 { next?: Box<I0> | null }
+interface I2 { next?: Box<I1> | null }
+interface I3 { next?: Box<I2> | null }
+interface I4 { next?: Box<I3> | null }
+type Node = null | { v?: Node; next?: Node };
+declare const x: I4;
+export const y: Node = x;
+`,
+          },
+          `
+a.ts(9,14): error TS2322: Type 'I4' is not assignable to type 'Node'.
+  Types of property 'next' are incompatible.
+    Type 'Box<I3> | null | undefined' is not assignable to type 'Node | undefined'.
+      Type 'Box<I3>' is not assignable to type '{ v?: Node | undefined; next?: Node | undefined; }'.
+        The types of 'v.next' are incompatible between these types.
+          Type 'Box<I2> | null | undefined' is not assignable to type 'Node | undefined'.
+            Type 'Box<I2>' is not assignable to type '{ v?: Node | undefined; next?: Node | undefined; }'.
+              The types of 'v.next' are incompatible between these types.
+                Type 'Box<I1> | null | undefined' is not assignable to type 'Node | undefined'.
+                  Type 'Box<I1>' is not assignable to type '{ v?: Node | undefined; next?: Node | undefined; }'.
+                    The types of 'v.next' are incompatible between these types.
+                      Type 'Box<I0> | null | undefined' is not assignable to type 'Node | undefined'.
+                        Type 'Box<I0>' is not assignable to type '{ v?: Node | undefined; next?: Node | undefined; }'.
+                          The types of 'v.next' are incompatible between these types.
+                            Type 'Box<number> | null | undefined' is not assignable to type 'Node | undefined'.
+                              Type 'Box<number>' is not assignable to type '{ v?: Node | undefined; next?: Node | undefined; }'.
+                                Types of property 'v' are incompatible.
+                                  Type 'number' has no properties in common with type '{ v?: Node | undefined; next?: Node | undefined; }'.
+`.slice(1, -1),
+        ],
+        [
+          "created by a signature checked earlier in the file, in the order of the comparison",
+          {
+            "a.ts": `type Box<T> = { v: T };
+declare function f(a: Box<I3>, b: Box<I2>): void;
+interface I0 { next: Box<number> }
+interface I1 { next: Box<I0> }
+interface I2 { next: Box<I1> }
+interface I3 { next: Box<I2> }
+interface I4 { next: Box<I3> }
+type Node = null | { next: Node } | { v: Node };
+${use}`,
+          },
+          "",
+        ],
+        [
+          "nested in one another in a declaration file that isn't checked",
+          {
+            "decls.d.ts": `type Box<T> = { v: T };
+declare const x: Box<Box<Box<Box<Box<number>>>>>;
+`,
+            "a.ts": `type Node = null | { v: Node };
+export const y: Node = x;
+`,
+          },
+          `
+a.ts(2,14): error TS2322: Type 'Box<Box<Box<Box<Box<number>>>>>' is not assignable to type 'Node'.
+  The types of 'v.v.v.v.v' are incompatible between these types.
+    Type 'number' is not assignable to type 'Node'.
+`.slice(1, -1),
+        ],
+      ];
+      test.each(cases)("%s", async (_, files, error) => {
+        using dir = project(files);
+        const { stdout, exitCode } = await check(dir);
+        expect(stdout).toBe(error);
+        expect(exitCode).toBe(error ? 1 : 0);
+      });
+
+      // `inferFromTypes` cuts off at two instantiations.
+      test.each([
+        ["before the call", "number"],
+        ["after the call", "I4"],
+      ])("an inference from types declared in a checked file %s", async (where, inferred) => {
+        const call = `type N<T> = { next: { v: N<T> } } | T;
+declare function f<T>(x: N<T>): T;
+declare const x: I4;
+export const s: string = f(x);
+`;
+        using dir = project({ "a.ts": where === "before the call" ? box + call : call + box });
+        const { stdout, exitCode } = await check(dir);
+        const line = where === "before the call" ? 11 : 4;
+        expect(stdout).toBe(`a.ts(${line},14): error TS2322: Type '${inferred}' is not assignable to type 'string'.`);
+        expect(exitCode).toBe(1);
+      });
+
+      test("declared after an assignment in a JSX fragment, which is checked in order", async () => {
+        using dir = tempDir("bun-check", {
+          "tsconfig.json": JSON.stringify({
+            compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, jsx: "preserve" },
+          }),
+          "jsx.d.ts": `declare namespace JSX {
+  interface Element {}
+  interface IntrinsicElements {}
+}
+`,
+          "a.tsx": `declare const x: I4;
+let y: Node;
+export const el = <>{y = x}</>;
+${box}`,
+        });
+        const { stdout, exitCode } = await check(dir);
+        expect(stdout).toBe("");
+        expect(exitCode).toBe(0);
+      });
+
+      test("an Iterable of an array of arrays as JSX children", async () => {
+        using dir = tempDir("bun-check", {
+          "tsconfig.json": JSON.stringify({
+            compilerOptions: { ...JSON.parse(tsconfig).compilerOptions, jsx: "preserve" },
+          }),
+          "jsx.d.ts": `declare namespace JSX {
+  interface Element {}
+  interface IntrinsicElements { div: { children?: Node } }
+}
+type Node = string | null | Iterable<Node>;
+`,
+          "a.tsx": `declare const fns: (() => void)[][][];
+export const x = <div>{fns}</div>;
+`,
+        });
+        const { stdout, exitCode } = await check(dir);
+        expect(stdout).toBe("");
+        expect(exitCode).toBe(0);
+      });
+    });
+
     test("accepts an intersection with a conditional type whose constraint is any", async () => {
       using dir = project({
         "a.ts": `

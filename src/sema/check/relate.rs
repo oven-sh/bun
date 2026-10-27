@@ -223,8 +223,8 @@ struct WorkerState {
 pub(super) struct Relater {
     pub(super) relation: Relation,
     /// The two types `check_type_related_to` was called with. `NEVER` in a relater created elsewhere.
-    top_source: TypeId,
-    top_target: TypeId,
+    pub(super) top_source: TypeId,
+    pub(super) top_target: TypeId,
     /// The comparisons in progress and those that succeeded assuming the ones in progress succeed.
     maybe_keys: Vec<Key>,
     /// `maybeKeysSet`: the keys in `maybe_keys`, from the point where there are many of them until
@@ -2463,33 +2463,53 @@ impl<'p, 's> Checker<'p, 's> {
     }
 
     /// Returns a sort key for when `checkDeferredNodes` reaches the type parameter `tp` of a class,
-    /// interface or type alias. It visits the files in program order, and a file's
-    /// `links.deferredNodes` in `checkNodeDeferred` order. A deferred node defers its contents only
-    /// when it's checked itself, so they come after everything deferred until then.
+    /// interface or type alias.
     fn place_in_deferred_nodes(&self, file: FileId, tp: TypeParamId) -> (u32, u32, u32) {
         let hir = self.hir(file);
         // `checkClassExpression` checks the type parameters of the class immediately.
         let declaration = hir.parent(hir.node(tp));
-        let mut enclosing_deferred = 0;
-        hir.find_ancestor(hir.parent(declaration), |node| {
-            if let NodeData::Expr(e) = hir.data(node)
-                && matches!(
-                    hir[e].kind,
-                    ExprKind::Fn(_)
-                        | ExprKind::Class(_)
-                        | ExprKind::Jsx(_)
-                        | ExprKind::Unary { op: UnOp::Void, .. }
-                )
-            {
-                enclosing_deferred += 1;
+        self.place_in_check_order(file, hir.parent(declaration), hir[tp].start, true)
+    }
+
+    /// Returns a sort key for when `checkSourceFile` reaches `node`, at `pos` in `file`: the files in program order,
+    /// a file's statements in source order, then its `links.deferredNodes` in `checkNodeDeferred` order. A deferred
+    /// node defers its contents when it's checked itself. `is_deferred` is true if `node` is checked deferred
+    /// although it isn't a deferred expression.
+    fn place_in_check_order(
+        &self,
+        file: FileId,
+        node: Node,
+        pos: u32,
+        is_deferred: bool,
+    ) -> (u32, u32, u32) {
+        let hir = self.hir(file);
+        let mut enclosing_deferred = u32::from(is_deferred);
+        // The signature of a function expression is checked at once. Only its body is deferred.
+        let mut below = Node::NONE;
+        hir.find_ancestor(node, |node| {
+            if let NodeData::Expr(e) = hir.data(node) {
+                let defers_below = match hir[e].kind {
+                    ExprKind::Fn(f) => {
+                        let func = &hir[f];
+                        let in_signature = !below.is_none()
+                            && (below == hir.node(func.ret)
+                                || below == hir.node(func.this_param)
+                                || func.params.iter().any(|p| hir.node(p) == below)
+                                || func.type_params.iter().any(|tp| hir.node(tp) == below));
+                        !in_signature
+                    }
+                    ExprKind::Jsx(jsx) => !hir[jsx].tag.is_none(),
+                    ExprKind::Class(_) | ExprKind::Unary { op: UnOp::Void, .. } => true,
+                    _ => false,
+                };
+                if defers_below {
+                    enclosing_deferred += 1;
+                }
             }
+            below = node;
             false
         });
-        (
-            self.files().rank_of_file(file),
-            enclosing_deferred,
-            hir[tp].start,
-        )
+        (self.files().rank_of_file(file), enclosing_deferred, pos)
     }
 
     /// Returns the type parameter list of each declaration of the class, interface or type alias `sym`.
@@ -4129,6 +4149,7 @@ impl<'p, 's> Checker<'p, 's> {
                 && r.source_stack.len() >= 3
                 && self.is_last_deeply_nested(
                     [&r.source_stack, &r.target_stack],
+                    [r.top_source, r.top_target],
                     true,
                     &mut r.source_identities,
                 )
@@ -4142,6 +4163,7 @@ impl<'p, 's> Checker<'p, 's> {
                 && r.target_stack.len() >= 3
                 && self.is_last_deeply_nested(
                     [&r.source_stack, &r.target_stack],
+                    [r.top_source, r.top_target],
                     false,
                     &mut r.target_identities,
                 )
@@ -4317,15 +4339,17 @@ impl<'p, 's> Checker<'p, 's> {
     /// `isDeeplyNestedType`. True if `stack` contains `max_depth` instantiations of the declaration
     /// that `t` is an instantiation of, each created later than the previous one. A homomorphic
     /// mapped type is as deeply nested as the type it's applied to. `stacks` are the source stack
-    /// and the target stack, and `stack` is the source stack if `is_source`.
+    /// and the target stack, and `stack` is the source stack if `is_source`. `tops` are the types the
+    /// comparison started with, or `NEVER` where the first entries of the stacks are.
     pub(super) fn is_deeply_nested_type(
         &mut self,
         t: TypeId,
         stacks: [&[(TypeId, u32)]; 2],
+        tops: [TypeId; 2],
         is_source: bool,
         max_depth: usize,
     ) -> bool {
-        self.is_deeply_nested_among(t, stacks, is_source, &[], max_depth)
+        self.is_deeply_nested_among(t, stacks, tops, is_source, &[], max_depth)
     }
 
     /// `known` has an `OnStack` for each entry of the stack, or is empty.
@@ -4333,6 +4357,7 @@ impl<'p, 's> Checker<'p, 's> {
         &mut self,
         t: TypeId,
         stacks: [&[(TypeId, u32)]; 2],
+        tops: [TypeId; 2],
         is_source: bool,
         known: &[OnStack],
         max_depth: usize,
@@ -4345,7 +4370,7 @@ impl<'p, 's> Checker<'p, 's> {
         if let TypeData::Intersection(parts) = data
             && parts
                 .iter()
-                .any(|&p| self.is_deeply_nested_among(p, stacks, is_source, known, max_depth))
+                .any(|&p| self.is_deeply_nested_among(p, stacks, tops, is_source, known, max_depth))
         {
             return true;
         }
@@ -4358,33 +4383,304 @@ impl<'p, 's> Checker<'p, 's> {
                 continue;
             }
             if self.has_matching_recursion_identity(on_stack, identity) {
-                if last.is_none_or(|last| self.is_at_least_as_new(on_stack, last, stacks)) {
+                if last.is_none_or(|last| self.is_at_least_as_new(i, last, stacks, tops, is_source))
+                {
                     count += 1;
                     if count >= max_depth {
                         return true;
                     }
                 }
-                last = Some(on_stack);
+                last = Some(i);
             }
         }
         false
     }
 
-    /// True if `t.id >= last.id` in tsgo, for `isDeeplyNestedType`. Height doesn't order two instantiations with the
-    /// same height. Counting each as newer than the other would cut off a comparison that only swaps the same two
-    /// types between the source stack and the target stack. tsgo creates an instantiation when a comparison first
-    /// reaches it, and the target's before the source's, so the type that was pushed first is the older one. Push
-    /// numbers grow with every level, and a level's target has a lower one than its source. No two entries share one,
-    /// so this is a total order: of two different types, exactly one is newer.
-    fn is_at_least_as_new(&self, t: TypeId, last: TypeId, stacks: [&[(TypeId, u32)]; 2]) -> bool {
+    /// True if `t.id >= last.id` in tsgo, for `isDeeplyNestedType`: the entry at `to` of the stack was created no
+    /// earlier than the entry at `from`. tsgo numbers types as it creates them. Here a type has one id however it's
+    /// reached, so the order follows from how each entry was created:
+    /// 1. The type of a type node in the declaration the entry was reached through is created when `checkSourceFile`
+    ///    reaches that declaration (`written_at`). Two such entries are in the order of their declarations.
+    /// 2. `tops` and what their keys mention existed before the comparison. They are older than an entry the
+    ///    comparison created on demand.
+    /// 3. Two entries that existed before are in height order, then push order: a type is taller than its parts.
+    /// 4. Of two on-demand entries, the one whose key mentions the other is newer. Otherwise the one pushed first
+    ///    is older. Every entry has its own push number, so this is a total order.
+    fn is_at_least_as_new(
+        &mut self,
+        to: usize,
+        from: usize,
+        stacks: [&[(TypeId, u32)]; 2],
+        tops: [TypeId; 2],
+        is_source: bool,
+    ) -> bool {
+        let stack = stacks[usize::from(!is_source)];
+        let (t, last) = (stack[to].0, stack[from].0);
+        if t == last {
+            return true;
+        }
+        let (to_written, from_written) = (
+            self.written_at(to, stacks, is_source),
+            self.written_at(from, stacks, is_source),
+        );
+        if let (Some(t), Some(last)) = (to_written, from_written)
+            && t != last
+        {
+            return t > last;
+        }
+        let types = self.types();
+        let tops = [0, 1].map(|i| match tops[i] {
+            TypeId::NEVER => stacks[i].first().map_or(TypeId::NEVER, |top| top.0),
+            top => top,
+        });
+        let existed = |x: TypeId, written: Option<(u32, u32, u32)>| {
+            written.is_some() || tops.contains(&x) || types.key_mentions(&tops, x)
+        };
         let pushed = |t: TypeId| {
             let first = |stack: &[(TypeId, u32)]| Some(stack.iter().find(|it| it.0 == t)?.1);
             stacks.into_iter().filter_map(first).min()
         };
-        t == last
-            || (self.types().nesting_order(t, last))
+        let mentions = |whole: TypeId, part: TypeId| {
+            types.height_order(part, whole).is_lt() && types.key_mentions(&[whole], part)
+        };
+        match (existed(t, to_written), existed(last, from_written)) {
+            (true, false) => false,
+            (false, true) => true,
+            (true, true) => (types.height_order(t, last))
                 .then_with(|| pushed(t).cmp(&pushed(last)))
-                .is_ge()
+                .is_ge(),
+            (false, false) => {
+                if mentions(last, t) {
+                    false
+                } else if mentions(t, last) {
+                    true
+                } else {
+                    pushed(t) >= pushed(last)
+                }
+            }
+        }
+    }
+
+    /// Rule 1 of `is_at_least_as_new`: the place in check order of the declaration the entry at `at` is the type of a
+    /// type node in, if `checkSourceFile` reaches it before the source element being checked. The declaration is the
+    /// entry at the level before, on either stack because parameters are compared with the sides swapped. A union
+    /// on the stack between them is what an optional member or a member declared as a union resolves to.
+    fn written_at(
+        &mut self,
+        at: usize,
+        stacks: [&[(TypeId, u32)]; 2],
+        is_source: bool,
+    ) -> Option<(u32, u32, u32)> {
+        let current = self.current_source_element?;
+        let stack = stacks[usize::from(!is_source)];
+        let (entry, push) = stack[at];
+        let mut written: SmallVec<[TypeId; 4]> = SmallVec::new();
+        written.push(entry);
+        let mut i = at;
+        let parent = loop {
+            i = i.checked_sub(1)?;
+            let parent = stack[i].0;
+            match self.data(parent) {
+                TypeData::Union(parts) | TypeData::Intersection(parts)
+                    if written.last().is_some_and(|child| parts.contains(child)) =>
+                {
+                    written.push(parent);
+                }
+                _ => break parent,
+            }
+        };
+        let level = push & !1;
+        let other = stacks[usize::from(is_source)];
+        let other_parent = other.iter().rev().find(|it| it.1 < level).map(|it| it.0);
+        let now = self.place_of_current(current);
+        let declared = [Some(parent), other_parent]
+            .into_iter()
+            .flatten()
+            .find_map(|parent| self.place_of_declaration_of(parent, &written))
+            .filter(|&at| at < now);
+        // An earlier type node of the file being checked may have created the type first.
+        let file = match current {
+            CurrentNode::Expr(file, _)
+            | CurrentNode::TypeNode(file, _)
+            | CurrentNode::Node(file, _) => file,
+        };
+        let earlier = self.earliest_type_node_before(file, now, &written);
+        [declared, earlier].into_iter().flatten().min()
+    }
+
+    /// The earliest place in check order, before `now`, of a type node of `file` whose type is one of `written`.
+    /// `checkSourceFile` has resolved every type node of the file that comes before `now`, so the index of the file
+    /// is filled in up to `now`.
+    fn earliest_type_node_before(
+        &mut self,
+        file: FileId,
+        now: (u32, u32, u32),
+        written: &[TypeId],
+    ) -> Option<(u32, u32, u32)> {
+        if self
+            .type_node_places
+            .as_ref()
+            .is_none_or(|index| index.file != file)
+        {
+            let hir = self.hir(file);
+            let mut nodes: Vec<((u32, u32, u32), TypeNodeId)> = (0..hir.types.len())
+                .map(|i| {
+                    let node = TypeNodeId(i as u32);
+                    (
+                        self.place_in_check_order(file, hir.node(node), hir[node].pos, false),
+                        node,
+                    )
+                })
+                .collect();
+            nodes.sort_unstable();
+            self.type_node_places = Some(TypeNodePlaces {
+                file,
+                nodes,
+                next: 0,
+                earliest: Default::default(),
+            });
+        }
+        let index = self.type_node_places.as_mut()?;
+        while let Some(&(place, node)) = index.nodes.get(index.next)
+            && place < now
+        {
+            index.next += 1;
+            if let Some(ty) = self.p.type_node_types.get(&self.task, &(file, node)) {
+                index.earliest.entry(ty).or_insert(place);
+            }
+        }
+        written
+            .iter()
+            .filter_map(|ty| index.earliest.get(ty))
+            .min()
+            .copied()
+    }
+
+    /// The place in check order of `parent`'s declaration, if `parent` is an uninstantiated class, interface, type
+    /// literal or function type in a checked file, and one of `written` is the type of a member, a parameter or the
+    /// result declared in it.
+    fn place_of_declaration_of(
+        &self,
+        parent: TypeId,
+        written: &[TypeId],
+    ) -> Option<(u32, u32, u32)> {
+        let files = self.files();
+        // An optional member's type adds `undefined` to the type of its node.
+        let covers = |whole: TypeId, part: TypeId| {
+            whole == part
+                || match (self.data(whole), self.data(part)) {
+                    (TypeData::Union(parts), TypeData::Union(inner)) => {
+                        inner.iter().all(|p| parts.contains(p))
+                    }
+                    (TypeData::Union(parts), _) => parts.contains(&part),
+                    _ => false,
+                }
+        };
+        let resolved = |file: FileId, node: TypeNodeId| {
+            (!node.is_none())
+                .then(|| self.p.type_node_types.get(&self.task, &(file, node)))
+                .flatten()
+                .is_some_and(|ty| written.iter().any(|&w| covers(w, ty)))
+        };
+        let declares_member = |file: FileId, m: MemberId| {
+            let hir = self.hir(file);
+            let member = &hir[m];
+            resolved(file, member.ty)
+                || !member.func.is_none()
+                    && written.iter().any(|&ty| match self.data(ty) {
+                        TypeData::Fns { decls, .. } => decls.first() == Some(&(file, member.func)),
+                        _ => false,
+                    })
+        };
+        match self.data(parent) {
+            TypeData::Fns {
+                decls,
+                mapper: MapperId::IDENTITY,
+            } => {
+                let &(file, f) = decls.first()?;
+                if !self.reports_semantic_errors(file) {
+                    return None;
+                }
+                let hir = self.hir(file);
+                let func = &hir[f];
+                let declares = resolved(file, func.ret)
+                    || func.params.iter().any(|p| resolved(file, hir[p].ty))
+                    || !func.this_param.is_none() && resolved(file, hir[func.this_param].ty);
+                // Only the body of a function expression is deferred, and the signature is what declares.
+                let node = hir.node(f);
+                let from = match hir.data(node) {
+                    NodeData::Expr(_) => hir.parent(node),
+                    _ => node,
+                };
+                declares.then(|| self.place_in_check_order(file, from, func.start, false))
+            }
+            TypeData::Ref {
+                target,
+                args: TypeArguments::Given(args),
+            } if args.is_empty() => {
+                let mut declarations = files.decls_of(*target).into_iter();
+                declarations.find_map(|(file, declaration)| {
+                    if !self.reports_semantic_errors(file) {
+                        return None;
+                    }
+                    let hir = self.hir(file);
+                    let (node, pos, members) = match declaration {
+                        crate::bind::Decl::Class(c) => {
+                            (hir.node(c), hir[c].name_pos, hir[c].members)
+                        }
+                        crate::bind::Decl::Interface(i) => {
+                            (hir.node(i), hir[i].name_pos, hir[i].members)
+                        }
+                        _ => return None,
+                    };
+                    (members.iter().any(|m| declares_member(file, m)))
+                        .then(|| self.place_in_check_order(file, node, pos, false))
+                })
+            }
+            &TypeData::Anon {
+                origin: Origin::TypeLiteral(file, node),
+                mapper: MapperId::IDENTITY,
+            } if self.reports_semantic_errors(file) => {
+                let hir = self.hir(file);
+                let TypeNodeKind::Object(members) = hir[node].kind else {
+                    return None;
+                };
+                (members.iter().any(|m| declares_member(file, m)))
+                    .then(|| self.place_in_check_order(file, hir.node(node), hir[node].pos, false))
+            }
+            _ => None,
+        }
+    }
+
+    /// The place in check order of the source element being checked. A type parameter of a class, an interface or a
+    /// type alias, and an assertion, are checked by `checkDeferredNodes`.
+    fn place_of_current(&self, current: CurrentNode) -> (u32, u32, u32) {
+        match current {
+            CurrentNode::Expr(file, e) => {
+                let hir = self.hir(file);
+                let is_deferred = matches!(hir[e].kind, ExprKind::As { .. });
+                self.place_in_check_order(file, hir.node(e), start_of(hir, e), is_deferred)
+            }
+            CurrentNode::TypeNode(file, node) => {
+                let hir = self.hir(file);
+                self.place_in_check_order(file, hir.node(node), hir[node].pos, false)
+            }
+            CurrentNode::Node(file, node) => {
+                let hir = self.hir(file);
+                if let NodeData::TypeParam(tp) = hir.data(node) {
+                    let declaration = hir.kind(hir.parent(node));
+                    if declaration.is_class_like()
+                        || matches!(
+                            declaration,
+                            Kind::InterfaceDeclaration | Kind::TypeAliasDeclaration
+                        )
+                    {
+                        return self.place_in_deferred_nodes(file, tp);
+                    }
+                }
+                self.place_in_check_order(file, node, hir.start(node), false)
+            }
+        }
     }
 
     /// `is_deeply_nested_type` of the last entry of the stack, at depth 3. `identities` has an `OnStack` for
@@ -4392,6 +4688,7 @@ impl<'p, 's> Checker<'p, 's> {
     fn is_last_deeply_nested(
         &mut self,
         stacks: [&[(TypeId, u32)]; 2],
+        tops: [TypeId; 2],
         is_source: bool,
         identities: &mut Vec<OnStack>,
     ) -> bool {
@@ -4416,13 +4713,13 @@ impl<'p, 's> Checker<'p, 's> {
             return false;
         };
         if cached_value == NOT_PLAIN {
-            return self.is_deeply_nested_among(t, stacks, is_source, identities, max_depth);
+            return self.is_deeply_nested_among(t, stacks, tops, is_source, identities, max_depth);
         }
         let identity = self.current_recursion_identity(t, cached_value);
         let bit = identity_bit(identity);
         let mut count = 0;
         let mut last = None;
-        for (&(on_stack, _), known) in stack.iter().zip(identities.iter()) {
+        for (i, (&(on_stack, _), known)) in stack.iter().zip(identities.iter()).enumerate() {
             if known.may_match & bit == 0 {
                 continue;
             }
@@ -4434,13 +4731,14 @@ impl<'p, 's> Checker<'p, 's> {
                     && self.current_recursion_identity(on_stack, cached_value) == identity
             };
             if matches {
-                if last.is_none_or(|last| self.is_at_least_as_new(on_stack, last, stacks)) {
+                if last.is_none_or(|last| self.is_at_least_as_new(i, last, stacks, tops, is_source))
+                {
                     count += 1;
                     if count >= max_depth {
                         return true;
                     }
                 }
-                last = Some(on_stack);
+                last = Some(i);
             }
         }
         false
@@ -5232,8 +5530,13 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
             TypeData::Cond { file, node, .. } => {
-                if self.is_deeply_nested_type(target, [&r.source_stack, &r.target_stack], false, 10)
-                {
+                if self.is_deeply_nested_type(
+                    target,
+                    [&r.source_stack, &r.target_stack],
+                    [r.top_source, r.top_target],
+                    false,
+                    10,
+                ) {
                     return Ternary::MAYBE;
                 }
                 // Only without `infer`, when the result doesn't depend on distribution, and when
@@ -5451,8 +5754,13 @@ impl<'p, 's> Checker<'p, 's> {
                 }
             }
             TypeData::Cond { .. } => {
-                if self.is_deeply_nested_type(source, [&r.source_stack, &r.target_stack], true, 10)
-                {
+                if self.is_deeply_nested_type(
+                    source,
+                    [&r.source_stack, &r.target_stack],
+                    [r.top_source, r.top_target],
+                    true,
+                    10,
+                ) {
                     return Ternary::MAYBE;
                 }
                 if matches!(self.data(target), TypeData::Cond { .. }) {

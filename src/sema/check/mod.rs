@@ -898,6 +898,7 @@ impl<'s> Program<'s> {
             cond_distributive_memo: Default::default(),
             relation_too_complex: false,
             current_source_element: None,
+            type_node_places: None,
             is_type_checked: false,
             is_emitting: false,
             cached_by_emit: Vec::new(),
@@ -1297,6 +1298,15 @@ pub(super) enum CurrentNode {
     Expr(FileId, ExprId),
     TypeNode(FileId, TypeNodeId),
     Node(FileId, Node),
+}
+
+/// The type nodes of one file in check order, and the earliest place of each type that one of them resolved to,
+/// among the nodes before `next`. See `Checker::earliest_type_node_before`.
+struct TypeNodePlaces {
+    file: FileId,
+    nodes: Vec<((u32, u32, u32), TypeNodeId)>,
+    next: usize,
+    earliest: crate::util::FxHashMap<TypeId, (u32, u32, u32)>,
 }
 
 /// Metadata for an entry of `Checker::stack`.
@@ -1711,6 +1721,8 @@ pub struct Checker<'p, 's> {
     pub(super) relation_too_complex: bool,
     /// `c.currentNode`, as `checkSourceElement` and `checkDeferredNode` set it. See `current_node`.
     pub(super) current_source_element: Option<CurrentNode>,
+    /// The type nodes of the file being checked, for `Checker::earliest_type_node_before`.
+    type_node_places: Option<TypeNodePlaces>,
     /// `NodeCheckFlagsTypeChecked` of `task.file`: `check_file` has finished it.
     is_type_checked: bool,
     /// True while `check_file` answers the queries that `Emit` makes before the check (`Options::emits_first`).

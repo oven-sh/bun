@@ -367,6 +367,8 @@ impl<'p, 's> Checker<'p, 's> {
     ) -> (bool, Option<RelationDiagnostic>) {
         let mut r = Relater::new(relation, self.cycles);
         r.error_node = error_node;
+        r.top_source = source;
+        r.top_target = target;
         r.set_relation_count(self.initial_relation_count(relation));
         let is_outermost = self.begin_comparison(Some(error_node).filter(|at| at.2 != 0));
         // These two are never a `headMessage`. They're the defaults `reportRelationError` uses when

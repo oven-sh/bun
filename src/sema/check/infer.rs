@@ -882,10 +882,22 @@ impl<'p, 's> Checker<'p, 's> {
         let push = 2 * n.source_stack.len() as u32;
         n.source_stack.push((source, push + 1));
         n.target_stack.push((target, push));
-        if self.is_deeply_nested_type(source, [&n.source_stack, &n.target_stack], true, 2) {
+        if self.is_deeply_nested_type(
+            source,
+            [&n.source_stack, &n.target_stack],
+            [TypeId::NEVER; 2],
+            true,
+            2,
+        ) {
             n.expanding |= 1;
         }
-        if self.is_deeply_nested_type(target, [&n.source_stack, &n.target_stack], false, 2) {
+        if self.is_deeply_nested_type(
+            target,
+            [&n.source_stack, &n.target_stack],
+            [TypeId::NEVER; 2],
+            false,
+            2,
+        ) {
             n.expanding |= 2;
         }
         if n.expanding != 3 {
@@ -2550,10 +2562,10 @@ impl<'p, 's> Checker<'p, 's> {
             std::mem::take(&mut self.reverse_mapped_source_stack),
             std::mem::take(&mut self.reverse_mapped_target_stack),
         );
-        if self.is_deeply_nested_type(source, [&sources, &targets], true, 2) {
+        if self.is_deeply_nested_type(source, [&sources, &targets], [TypeId::NEVER; 2], true, 2) {
             self.reverse_expanding |= 1;
         }
-        if self.is_deeply_nested_type(target, [&sources, &targets], false, 2) {
+        if self.is_deeply_nested_type(target, [&sources, &targets], [TypeId::NEVER; 2], false, 2) {
             self.reverse_expanding |= 2;
         }
         (

@@ -4,7 +4,15 @@ import { bunEnv, bunExe, tempDir } from "harness";
 import { cpSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { compileCommand, runtimeEnvironment } from "./harness/flags";
-import { built, slot, spawned, withoutCoreDump, withoutCrashReport, withoutDebugInformation } from "./run-programs";
+import {
+  built,
+  slot,
+  spawned,
+  withEverySlot,
+  withoutCoreDump,
+  withoutCrashReport,
+  withoutDebugInformation,
+} from "./run-programs";
 import { describe, test } from "./supported";
 
 const timeout = 600_000;
@@ -25,16 +33,23 @@ async function build(folder: string, entry: string) {
   return { executable, ...(await spawned(command, folder, bunEnv)) };
 }
 
+const whileNothingElseRuns: typeof slot = work => withEverySlot(0, work);
+
 describe.concurrent("compile/aot/workers from texts that the build knows", () => {
   test.each([
-    ["data-urls-that-the-build-knows-start-workers", "main.ts"],
-    ["files-named-by-paths-start-workers", "main.ts"],
-    ["texts-that-the-build-knows-start-workers.ts", "texts-that-the-build-knows-start-workers.ts"],
-    ["what-a-worker-sees-that-started-from-a-data-url.ts", "what-a-worker-sees-that-started-from-a-data-url.ts"],
+    ["data-urls-that-the-build-knows-start-workers", "main.ts", slot],
+    ["files-named-by-paths-start-workers", "main.ts", slot],
+    // Each of its texts is an entry point, and its build keeps every core busy.
+    [
+      "texts-that-the-build-knows-start-workers.ts",
+      "texts-that-the-build-knows-start-workers.ts",
+      whileNothingElseRuns,
+    ],
+    ["what-a-worker-sees-that-started-from-a-data-url.ts", "what-a-worker-sees-that-started-from-a-data-url.ts", slot],
   ])(
     "%s runs without the interpreter",
-    (program, entry) =>
-      slot(async () => {
+    (program, entry, hold) =>
+      hold(async () => {
         using dir = tempDir("aot-workers-from-texts", {});
         const folder = String(dir);
         cpSync(join(programs, program), program === entry ? join(folder, entry) : folder, { recursive: true });

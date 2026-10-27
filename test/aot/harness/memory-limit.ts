@@ -10,8 +10,8 @@ export const memoryLimit = machine / 4;
 /** In bytes, for a build or a program that the tests run every time. */
 export const memoryLimitOfAKnownProgram = machine / 2;
 
-/** In bytes, for all the commands that a test file runs at once. A test machine of CI has 8 GB. */
-export const memoryLimitOfCommandsAtOnce = 5 * 2 ** 30;
+/** In bytes, for all the commands that a test file runs at once. The rest is for the test itself and for everything else on the machine. */
+export const memoryLimitOfCommandsAtOnce = (machine * 5) / 8;
 
 /** In bytes; 0 where nothing tells. */
 function residentMemory(pid: number, field = "VmRSS") {

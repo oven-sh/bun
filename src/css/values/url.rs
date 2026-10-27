@@ -5,14 +5,34 @@ use bun_ast::ImportRecord;
 use bun_core::strings;
 
 /// A CSS [url()](https://www.w3.org/TR/css-values-4/#urls) value and its source location.
+#[derive(Clone)]
 pub struct Url {
-    /// The url string.
+    /// The url as written. A pointer and a `u32` length: a slice grows `Property` by 8 bytes.
+    text: *const u8,
+    text_len: u32,
+    /// The import record of this `url()`.
     pub(crate) import_record_idx: u32,
     /// The location where the `url()` was seen in the CSS source file.
     pub(crate) loc: crate::dependencies::Location,
 }
 
+const _: () = assert!(core::mem::size_of::<Url>() == 24);
+
 impl Url {
+    pub(crate) fn new(
+        text: &'static [u8],
+        import_record_idx: u32,
+        loc: crate::dependencies::Location,
+    ) -> Url {
+        Url {
+            text: text.as_ptr(),
+            // A source file is shorter than `i32::MAX` bytes: `add_import_record` checks it.
+            text_len: u32::try_from(text.len()).unwrap_or(u32::MAX),
+            import_record_idx,
+            loc,
+        }
+    }
+
     pub fn parse(input: &mut css::Parser) -> CssResult<Url> {
         let start_pos = input.position();
         let loc = input.current_source_location();
@@ -20,10 +40,17 @@ impl Url {
         let end_pos = input.position();
         let import_record_idx =
             input.add_import_record(url, start_pos, end_pos, bun_ast::ImportKind::Url)?;
-        Ok(Url {
+        Ok(Url::new(
+            url,
             import_record_idx,
-            loc: crate::dependencies::Location::from_source_location(loc),
-        })
+            crate::dependencies::Location::from_source_location(loc),
+        ))
+    }
+
+    fn text(&self) -> &[u8] {
+        // SAFETY: `text` and `text_len` come from one slice of the parser source or arena in
+        // `Url::new`. That storage outlives every value of the stylesheet.
+        unsafe { core::slice::from_raw_parts(self.text, self.text_len as usize) }
     }
 
     /// Returns whether the URL is absolute, and not relative.
@@ -147,23 +174,15 @@ impl Url {
     }
 
     pub(crate) fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
-        Url {
-            import_record_idx: self.import_record_idx,
-            loc: self.loc,
-        }
+        self.clone()
     }
 
-    // TODO: dedupe import records??
-    // This might not fucking work
+    /// Each `url()` has its own import record, so the text decides.
     pub fn eql(&self, other: &Url) -> bool {
-        self.import_record_idx == other.import_record_idx
+        self.text() == other.text()
     }
 
-    // TODO: dedupe import records??
-    // This might not fucking work
     pub(crate) fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
-        // Only `import_record_idx` participates in identity (matches `eql`
-        // above); `loc` is presentation metadata.
-        hasher.update(&self.import_record_idx.to_ne_bytes());
+        hasher.update(self.text());
     }
 }

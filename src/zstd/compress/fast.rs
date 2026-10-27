@@ -300,11 +300,11 @@ impl<'a, 'b> MatchSink<'a, 'b> {
 
     /// Stores the match from `ip` to `end`, with the literals before it.
     #[inline(always)]
-    pub(super) fn store(&mut self, ip: u32, end: u32, off_base: u32) {
+    pub(super) fn store<const SHORT: usize>(&mut self, ip: u32, end: u32, off_base: u32) {
         let anchor = self.anchor;
         self.anchor = end;
         if (self.seq_store)
-            .store_seq(ip - anchor, self.near, anchor, off_base, end - ip)
+            .store_seq::<SHORT>(ip - anchor, self.near, anchor, off_base, end - ip)
             .is_err()
         {
             core::hint::cold_path();
@@ -519,7 +519,7 @@ impl Finder {
             };
 
             ip0 = end;
-            sink.store(start, end, off_base);
+            sink.store::<32>(start, end, off_base);
 
             // `ip0` is not past the last position that can be looked at.
             let Some(bytes) = near.read64(ip0) else {
@@ -545,7 +545,7 @@ impl Finder {
                     hash_of::<MLS>(bytes0, hlog),
                     base_index.wrapping_add(ip0),
                 );
-                sink.store(ip0, end, REPCODE1_TO_OFFBASE);
+                sink.store::<32>(ip0, end, REPCODE1_TO_OFFBASE);
                 ip0 = end;
                 let Some(bytes) = near.read64(ip0) else {
                     break 'block;
@@ -642,7 +642,7 @@ impl Finder {
             };
 
             ip0 = ip + 4 + window.count(ip + 4, place + 4);
-            sink.store(ip - back, ip0, off_base);
+            sink.store::<32>(ip - back, ip0, off_base);
 
             if next < ip0
                 && let Some(bytes) = near.read64(next)
@@ -679,7 +679,7 @@ impl Finder {
                     hash_of::<MLS>(bytes0, hlog),
                     base_index.wrapping_add(ip0),
                 );
-                sink.store(ip0, end, REPCODE1_TO_OFFBASE);
+                sink.store::<32>(ip0, end, REPCODE1_TO_OFFBASE);
                 ip0 = end;
                 let Some(bytes) = near.read64(ip0) else {
                     break 'block;
@@ -839,7 +839,7 @@ impl Finder {
                     ip0 += 1;
                     let rep_place = window.place_of(ip0).wrapping_sub(rep_offset1);
                     let end = ip0 + 4 + window.count(ip0 + 4, rep_place + 4);
-                    sink.store(ip0, end, REPCODE1_TO_OFFBASE);
+                    sink.store::<32>(ip0, end, REPCODE1_TO_OFFBASE);
                     ip0 = end;
                     break None;
                 }
@@ -871,7 +871,7 @@ impl Finder {
                 let back = window.count_backwards(ip0, sink.anchor, place);
                 rep_offset2 = rep_offset1;
                 rep_offset1 = window.place_of(ip0) - place;
-                sink.store(ip0 - back, end, offset_to_offbase(rep_offset1));
+                sink.store::<32>(ip0 - back, end, offset_to_offbase(rep_offset1));
                 ip0 = end;
             }
 
@@ -900,7 +900,7 @@ impl Finder {
                     hash_of::<MLS>(bytes0, hlog),
                     base_index.wrapping_add(ip0),
                 );
-                sink.store(ip0, end, REPCODE1_TO_OFFBASE);
+                sink.store::<32>(ip0, end, REPCODE1_TO_OFFBASE);
                 ip0 = end;
                 let Some(bytes) = near.read64(ip0) else {
                     break 'block;

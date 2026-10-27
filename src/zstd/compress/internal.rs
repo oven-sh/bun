@@ -435,9 +435,10 @@ impl<'a> SeqSink<'a> {
         }
     }
 
-    /// `ZSTD_storeSeq`: the literals are the `lit_length` bytes of `src` from `literals` on.
+    /// `ZSTD_storeSeq`: the literals are the `lit_length` bytes of `src` from `literals` on. Up to `SHORT` of them, which
+    /// is at most [`WILDCOPY_OVERLENGTH`], that many bytes are copied whatever their number.
     #[inline(always)]
-    pub(crate) fn store_seq(
+    pub(crate) fn store_seq<const SHORT: usize>(
         &mut self,
         lit_length: u32,
         src: Near<'_>,
@@ -446,12 +447,12 @@ impl<'a> SeqSink<'a> {
         match_length: u32,
     ) -> Result<()> {
         let lit_len = self.lit_len as usize;
-        let room = self.lit_buffer.get_mut(lit_len..lit_len + 16);
+        let room = self.lit_buffer.get_mut(lit_len..lit_len + SHORT);
         match (
-            src.chunk16(literals),
-            room.and_then(<[u8]>::first_chunk_mut::<16>),
+            src.window::<SHORT>(literals),
+            room.and_then(<[u8]>::first_chunk_mut::<SHORT>),
         ) {
-            (Some(from), Some(to)) if lit_length <= 16 => *to = *from,
+            (Some(from), Some(to)) if lit_length as usize <= SHORT => *to = *from,
             _ => self.lit_buffer.write_at(
                 lit_len,
                 src.bytes().span(literals as usize, lit_length as usize)?,

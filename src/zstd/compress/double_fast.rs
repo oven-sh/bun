@@ -167,7 +167,7 @@ impl Finder {
                 {
                     ip += 1;
                     let end = ip + 4 + sink.count_before(ip + 4, offset_1);
-                    sink.store(ip, end, REPCODE1_TO_OFFBASE);
+                    sink.store::<16>(ip, end, REPCODE1_TO_OFFBASE);
                     break end;
                 }
 
@@ -216,7 +216,7 @@ impl Finder {
                     );
                 }
                 let back = near.count_backwards(ip, sink.anchor, match0, 0);
-                sink.store(ip - back, end, offset_to_offbase(offset_1));
+                sink.store::<16>(ip - back, end, offset_to_offbase(offset_1));
                 break end;
             };
             ip = end;
@@ -255,7 +255,7 @@ impl Finder {
                 let index = base_index.wrapping_add(ip);
                 table_put(hash_small, hash_of::<MLS>(bytes0, h_bits_s), index);
                 table_put(hash_long, hash8(bytes0, h_bits_l, 0), index);
-                sink.store(ip, end, REPCODE1_TO_OFFBASE);
+                sink.store::<16>(ip, end, REPCODE1_TO_OFFBASE);
                 ip = end;
                 let Some(bytes) = near.read64(ip) else {
                     break 'block;
@@ -343,7 +343,7 @@ impl Finder {
                 ip += 1;
                 let rep_place = window.place_of(ip).wrapping_sub(offset_1);
                 let end = ip + 4 + window.count(ip + 4, rep_place + 4);
-                sink.store(ip, end, REPCODE1_TO_OFFBASE);
+                sink.store::<16>(ip, end, REPCODE1_TO_OFFBASE);
                 ip = end;
             } else {
                 // The place of the match, and how much of it is known. `ip` is moved to where it is for.
@@ -390,7 +390,7 @@ impl Finder {
                 let back = window.count_backwards(ip, sink.anchor, place);
                 offset_2 = offset_1;
                 offset_1 = window.place_of(ip) - place;
-                sink.store(ip - back, end, offset_to_offbase(offset_1));
+                sink.store::<16>(ip - back, end, offset_to_offbase(offset_1));
                 ip = end;
             }
 
@@ -427,7 +427,7 @@ impl Finder {
                 let index = base_index.wrapping_add(ip);
                 table_put(hash_small, hash_of::<MLS>(bytes, h_bits_s), index);
                 table_put(hash_long, hash8(bytes, h_bits_l, 0), index);
-                sink.store(ip, end, REPCODE1_TO_OFFBASE);
+                sink.store::<16>(ip, end, REPCODE1_TO_OFFBASE);
                 ip = end;
             }
         }
@@ -534,7 +534,7 @@ impl Finder {
                 ip += 1;
                 let rep_place = window.place_of(ip) - offset_1;
                 let end = ip + 4 + window.count(ip + 4, rep_place + 4);
-                sink.store(ip, end, REPCODE1_TO_OFFBASE);
+                sink.store::<16>(ip, end, REPCODE1_TO_OFFBASE);
                 ip = end;
             } else {
                 // The match, and how much of it is known. `ip` is moved to where it is for.
@@ -559,7 +559,7 @@ impl Finder {
                 let back = window.count_backwards(ip, sink.anchor, place);
                 offset_2 = offset_1;
                 offset_1 = window.place_of(ip) - place;
-                sink.store(ip - back, end, offset_to_offbase(offset_1));
+                sink.store::<16>(ip - back, end, offset_to_offbase(offset_1));
                 ip = end;
             }
 
@@ -599,7 +599,7 @@ impl Finder {
                 let index = base_index.wrapping_add(ip);
                 table_put(hash_small, hash_of::<MLS>(bytes, h_bits_s), index);
                 table_put(hash_long, hash8(bytes, h_bits_l, 0), index);
-                sink.store(ip, end, REPCODE1_TO_OFFBASE);
+                sink.store::<16>(ip, end, REPCODE1_TO_OFFBASE);
                 ip = end;
             }
         }

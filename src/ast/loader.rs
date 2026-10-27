@@ -114,6 +114,11 @@ impl Loader {
         matches!(self, Loader::Jsx | Loader::Js | Loader::Ts | Loader::Tsx)
     }
 
+    #[inline]
+    pub fn is_sqlite(self) -> bool {
+        matches!(self, Loader::Sqlite | Loader::SqliteEmbedded)
+    }
+
     pub fn should_copy_for_bundling(self) -> bool {
         matches!(
             self,

@@ -6266,14 +6266,8 @@ pub(crate) mod __gated_printer {
 
                     self.print_import_record_path(record);
 
-                    // backwards compatibility: previously, we always stripped type.
-                    // "sqlite" is kept for every target: only Bun can load that import.
-                    if IS_BUN_PLATFORM
-                        || matches!(
-                            record.loader,
-                            Some(bun_ast::Loader::Sqlite | bun_ast::Loader::SqliteEmbedded)
-                        )
-                    {
+                    // backwards compatibility: previously, we always stripped type
+                    if IS_BUN_PLATFORM || record.loader.is_some_and(bun_ast::Loader::is_sqlite) {
                         if let Some(loader) = record.loader {
                             use bun_ast::Loader;
                             match loader {

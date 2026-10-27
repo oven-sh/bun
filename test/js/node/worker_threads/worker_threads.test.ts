@@ -4,6 +4,7 @@ import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
 import { Readable } from "node:stream";
+import { pathToFileURL } from "node:url";
 import wt, {
   BroadcastChannel,
   getEnvironmentData,
@@ -3347,4 +3348,28 @@ test("a ShadowRealm in a worker can import node:worker_threads", async () => {
 
   expect(stdout).toBe("true\n");
   expect(exitCode).toBe(0);
+});
+
+test("file URL preloads decode escaped paths", async () => {
+  using dir = tempDir("worker-file-url-preload", {
+    "spaced dir/setup.mjs": `globalThis.fileURLPreloaded = true;`,
+    "entry.mjs": `import { parentPort } from "node:worker_threads"; parentPort.postMessage(globalThis.fileURLPreloaded);`,
+  });
+  const url = pathToFileURL(join(String(dir), "spaced dir", "setup.mjs")).href;
+  expect(url).toContain("%20");
+  const worker = new Worker(join(String(dir), "entry.mjs"), { preload: url } as any);
+  try {
+    const [message, exit] = await Promise.all([once(worker, "message"), once(worker, "exit")]);
+    expect({ message, exit }).toEqual({ message: [true], exit: [0] });
+  } finally {
+    await worker.terminate();
+  }
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--preload", url, "-e", "console.log(globalThis.fileURLPreloaded)"],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "true\n", stderr: "", exitCode: 0 });
 });

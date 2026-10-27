@@ -726,12 +726,12 @@ fn log_data_of(reported: &Diagnostic) -> bun_ast::Data {
         let index = reported.line.checked_sub(reported.source_line)?;
         let line = reported.source.get(index as usize)?;
         // A longer line is truncated, so the column may be past its end.
-        (line.len() <= bun_sema_driver::MAX_SHOWN_LINE).then(|| Cow::Owned(line.clone()))
+        (line.len() <= bun_sema_driver::MAX_SHOWN_LINE).then(|| Box::from(&line[..]))
     };
     bun_ast::Data {
         text: Cow::Owned(text),
         location: (!reported.path.is_empty()).then(|| bun_ast::Location {
-            file: Cow::Owned(bun_sema_driver::host::to_native(&reported.path).to_vec()),
+            file: Box::from(bun_sema_driver::host::to_native(&reported.path)),
             line_text: line_text(),
             length: reported.end.saturating_sub(reported.start) as usize,
             offset: reported.start as usize,

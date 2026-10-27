@@ -331,6 +331,16 @@ Bun.inspect;
 fetch.preconnect("bun.sh");
 Bun.fetch.preconnect("bun.sh");
 
+// `Bun.fetch` and `Bun.plugin` are writable, like `Bun.file`.
+{
+  const originalFetch = Bun.fetch;
+  Bun.fetch = originalFetch;
+  const originalPlugin = Bun.plugin;
+  Bun.plugin = originalPlugin;
+  const originalFile = Bun.file;
+  Bun.file = originalFile;
+}
+
 new Uint8Array().toBase64();
 
 Bun.fetch("", {

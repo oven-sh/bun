@@ -560,7 +560,8 @@ function spawnSync(file, args, options?): SpawnSyncResult {
   // Validate and translate the kill signal, if present.
   options.killSignal = sanitizeKillSignal(options.killSignal);
 
-  const stdio = options.stdio || "pipe";
+  let stdio = options.stdio || "pipe";
+  if (!$isJSArray(stdio) && typeof stdio !== "string" && $isArray(stdio)) stdio = toPlainArray(stdio);
   const bunStdio = getBunStdioFromOptions(stdio);
 
   var { input } = options;
@@ -808,7 +809,7 @@ function fork(modulePath, args: string[] | Record<string, unknown> | null = [], 
 
   if (args == null) {
     args = [];
-  } else if (typeof args === "object" && !$isJSArray(args)) {
+  } else if (typeof args === "object" && !$isArray(args)) {
     options = args;
     args = [];
   } else {
@@ -840,7 +841,7 @@ function fork(modulePath, args: string[] | Record<string, unknown> | null = [], 
 
   if (typeof options.stdio === "string") {
     options.stdio = stdioStringToArray(options.stdio, "ipc");
-  } else if (!$isJSArray(options.stdio)) {
+  } else if (!$isArray(options.stdio)) {
     // Use a separate fd=3 for the IPC channel. Inherit stdin, stdout,
     // and stderr from the parent if silent isn't set.
     options.stdio = stdioStringToArray(options.silent ? "pipe" : "inherit", "ipc");
@@ -887,7 +888,7 @@ function getSignalsToNamesMapping() {
 }
 
 function normalizeExecFileArgs(file, args, options, callback?) {
-  if ($isJSArray(args)) {
+  if ($isArray(args)) {
     args = ArrayPrototypeSlice.$call(args);
   } else if (args != null && typeof args === "object") {
     callback = options;
@@ -954,7 +955,7 @@ function normalizeSpawnArguments(file, args, options?) {
 
   if (file.length === 0) throw $ERR_INVALID_ARG_VALUE("file", file, "cannot be empty");
 
-  if ($isJSArray(args)) {
+  if ($isArray(args)) {
     args = ArrayPrototypeSlice.$call(args);
   } else if (args == null) {
     args = [];
@@ -1402,7 +1403,8 @@ class ChildProcess extends EventEmitter {
     validateOneOf(options.serialization, "options.serialization", [undefined, "json", "advanced"]);
     const serialization = options.serialization || "json";
 
-    const stdio = options.stdio || ["pipe", "pipe", "pipe"];
+    let stdio = options.stdio || ["pipe", "pipe", "pipe"];
+    if (!$isJSArray(stdio) && typeof stdio !== "string" && $isArray(stdio)) stdio = toPlainArray(stdio);
     const bunStdio = getBunStdioFromOptions(stdio);
     // Extra "pipe" slots (i >= 3) are wrapped in a net.Socket by
     // #getBunSpawnIo, which hands the fd to usockets (usockets closes it on
@@ -1878,6 +1880,16 @@ function getBunStdioFromOptions(stdio) {
   // Stream -> throw err for now
   const bunStdio = normalizedStdio.map(nodeToBun);
   return bunStdio;
+}
+
+// Node takes a Proxy of an array as `stdio`: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/child_process.js#L998. The `$isJSArray` tests after the call need this copy.
+function toPlainArray(array) {
+  const length = $toLength(array.length);
+  const copy = $newArrayWithSize(length);
+  for (let i = 0; i < length; i++) {
+    if (i in array) $putByValDirect(copy, i, array[i]);
+  }
+  return copy;
 }
 
 function normalizeStdio(stdio): string[] {

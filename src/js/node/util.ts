@@ -365,7 +365,7 @@ function styleText(format, text, options) {
     skipColorize = !lazyUtilColors.shouldColorize(stream);
   }
 
-  const formatArray = $isJSArray(format) ? format : [format];
+  const formatArray = $isArray(format) ? format : [format];
 
   let openCodes = "";
   let closeCodes = "";

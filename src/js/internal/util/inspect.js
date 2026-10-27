@@ -1317,7 +1317,7 @@ function formatRaw(ctx, value, recurseTimes, typedArray) {
   // Otherwise it would not possible to identify all types properly.
   if (SymbolIterator in value || constructor === null) {
     noIterator = false;
-    if ($isJSArray(value)) {
+    if ($isArray(value)) {
       // Only set the constructor for non ordinary ("Array [...]") arrays.
       const prefix =
         constructor !== "Array" || tag !== "" ? getPrefix(constructor, tag, "Array", `(${value.length})`) : "";

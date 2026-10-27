@@ -171,12 +171,14 @@ type $AnyCallable = ((...args: any[]) => any) & $AnyObject;
  */
 declare function $isObject<T>(obj: T & $NotAny<T>): obj is $GuardNarrow<T, object> & $NotAny<T>;
 declare function $isObject(obj: any): obj is $AnyObject;
+/** The built-in `Array.isArray`: true for a Proxy of an array and for `Array.prototype`. Throws for a revoked Proxy. */
 declare function $isArray<T>(
   obj: T & $NotAny<T>,
 ): obj is ([Extract<T, readonly any[]>] extends [never] ? T & any[] : Extract<T, readonly any[]>) & $NotAny<T>;
 declare function $isArray(obj: any): obj is any[];
 declare function $isCallable<T>(fn: T & $NotAny<T>): fn is $GuardNarrow<T, CallableFunction> & $NotAny<T>;
 declare function $isCallable(fn: any): fn is $AnyCallable;
+/** Exact cell-type test: false for a Proxy of an array and for `Array.prototype`, unlike `$isArray`. Never throws. */
 declare function $isJSArray(obj: unknown): obj is any[];
 declare function $isProxyObject(obj: unknown): obj is Proxy;
 declare function $isRegExpObject(obj: unknown): obj is RegExp;

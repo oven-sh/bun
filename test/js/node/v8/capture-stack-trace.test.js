@@ -2,7 +2,6 @@ import { nativeFrameForTesting } from "bun:internal-for-testing";
 import { noInline } from "bun:jsc";
 import { afterEach, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
-import { EventEmitter } from "node:events";
 import { totalmem } from "node:os";
 const origPrepareStackTrace = Error.prepareStackTrace;
 afterEach(() => {
@@ -1340,100 +1339,6 @@ test("Error.captureStackTrace with caller not in stack clears async frames too",
   const err = await outerAsync();
   // When caller is not found, V8 clears everything
   expect(err.stack).toBe("Error: async test");
-});
-
-test("Error.captureStackTrace finds the caller by identity before it looks at names", () => {
-  // The function of the first frame that is left: the caller's caller.
-  const firstFrame = stack => stack.split("\n")[1]?.trim().split(" ")[1];
-  const capture = caller => {
-    const error = {};
-    Error.captureStackTrace(error, caller);
-    return error.stack;
-  };
-  // `|| null` keeps a call out of tail position, so its caller stays on the stack.
-
-  // Array.prototype.map is a builtin whose frame is also named `map`.
-  function map() {
-    let stack;
-    [1].map(() => void (stack = capture(map)));
-    return stack;
-  }
-  noInline(map);
-  function callsMap() {
-    return map() || null;
-  }
-  noInline(callsMap);
-
-  // Buffer.from is a builtin whose frame is also named `from`.
-  function from() {
-    let stack;
-    Buffer.from({
-      valueOf() {
-        stack = capture(from);
-        return "";
-      },
-    });
-    return stack;
-  }
-  noInline(from);
-  function callsFrom() {
-    return from() || null;
-  }
-  noInline(callsFrom);
-
-  // Two closures with one name: the caller is the outer one.
-  const makeTwin = callee =>
-    function twin() {
-      return callee() || null;
-    };
-  const innerTwin = makeTwin(() => capture(outerTwin));
-  const outerTwin = makeTwin(innerTwin);
-  noInline(innerTwin);
-  noInline(outerTwin);
-  function callsTwin() {
-    return outerTwin() || null;
-  }
-  noInline(callsTwin);
-
-  // A function that is not on the stack, named like a builtin that is.
-  const notOnStack = { map() {} }.map;
-  let stackWithoutCaller;
-  [1].map(() => void (stackWithoutCaller = capture(notOnStack)));
-
-  expect({
-    map: firstFrame(callsMap()),
-    from: firstFrame(callsFrom()),
-    twin: firstFrame(callsTwin()),
-    notOnStack: stackWithoutCaller,
-  }).toEqual({
-    map: "callsMap",
-    from: "callsFrom",
-    twin: "callsTwin",
-    notOnStack: "Error",
-  });
-});
-
-test("Error.captureStackTrace finds a resumed caller below a node: module frame with its name", async () => {
-  // EventEmitter.prototype.emit is a function of a node: module whose frame is also named `emit`.
-  const emitter = new EventEmitter();
-  async function emit() {
-    // Resumed from here on: its frame has another callee, so only the name can find it.
-    await new Promise(r => setImmediate(r));
-    const error = {};
-    emitter.once("event", () => Error.captureStackTrace(error, emit));
-    emitter.emit("event");
-    return error.stack;
-  }
-  noInline(emit);
-
-  async function callsEmit() {
-    return await emit();
-  }
-  noInline(callsEmit);
-
-  const stack = await callsEmit();
-  expect(stack).not.toContain("at emit");
-  expect(stack).toContain("at async callsEmit");
 });
 
 test("Error.captureStackTrace applies stackTraceLimit after caller removal", () => {

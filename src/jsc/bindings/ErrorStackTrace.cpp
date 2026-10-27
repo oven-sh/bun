@@ -151,14 +151,7 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
     }
 
     JSC::JSObject* callerObject = caller.getObject();
-
-    auto indexOfSyncFrame = [&](const auto& isFrameOfCaller) -> size_t {
-        for (size_t i = 0; i < stackTrace.size() && !stackTrace.at(i).isAsyncFrame(); i++) {
-            if (isFrameOfCaller(stackTrace.at(i)))
-                return i;
-        }
-        return WTF::notFound;
-    };
+    WTF::String callerName = Zig::functionName(vm, callerObject);
 
     // Match V8: remove all frames up to and including the caller. If the caller
     // is not found anywhere in the sync portion of the stack, remove everything.
@@ -166,21 +159,24 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
     // because a resumed async function's frame callee is the generator's `next`
     // function (a different cell) but Zig::functionName still reports the
     // original async function's name.
-    size_t callerIndex = indexOfSyncFrame([&](const JSC::StackFrame& frame) {
-        return frame.callee() == callerObject;
-    });
-    if (callerIndex == WTF::notFound) {
-        WTF::String callerName = Zig::functionName(vm, callerObject);
+    size_t removeCount = stackTrace.size();
+    for (size_t i = 0; i < stackTrace.size(); i++) {
+        const auto& frame = stackTrace.at(i);
+        if (frame.isAsyncFrame())
+            break;
+        if (frame.callee() == callerObject) {
+            removeCount = i + 1;
+            break;
+        }
         if (!callerName.isEmpty()) {
-            callerIndex = indexOfSyncFrame([&](const JSC::StackFrame& frame) {
-                auto* codeBlock = frame.codeBlock();
-                // A builtin or host frame named like the caller (Array.prototype.map for a user's `map`) is not the caller.
-                return codeBlock && !codeBlock->unlinkedCodeBlock()->isBuiltinFunction() && Zig::functionName(vm, frame, nullptr) == callerName;
-            });
+            WTF::String frameName = Zig::functionName(vm, frame, nullptr);
+            if (frameName == callerName) {
+                removeCount = i + 1;
+                break;
+            }
         }
     }
 
-    size_t removeCount = callerIndex == WTF::notFound ? stackTrace.size() : callerIndex + 1;
     if (removeCount > 0)
         stackTrace.removeAt(0, removeCount);
 

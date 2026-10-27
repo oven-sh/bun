@@ -16,11 +16,31 @@ impl DevServer {
             server_bits,
             client_bits,
             failures: Vec::new(),
+            forwards: Vec::new(),
         })
     }
 }
 
 impl DevServer {
+    /// Walks what the open pages of a route run: for an html route, the walk with the forwards of its last client bundle.
+    pub(super) fn trace_open_page_imports(
+        &mut self,
+        route_bundle: &RouteBundle,
+        gts: &mut GraphTraceState,
+        goal: TraceImportGoal,
+    ) -> crate::Result<()> {
+        match &route_bundle.data {
+            route_bundle::Data::Framework(_) => {
+                self.trace_all_route_imports(route_bundle, gts, goal)
+            }
+            route_bundle::Data::Html(html) => {
+                gts.forwards.extend_from_slice(&html.forwards);
+                self.client_graph
+                    .trace_imports(html.bundled_file, gts, goal)
+            }
+        }
+    }
+
     pub(super) fn trace_all_route_imports(
         &mut self,
         route_bundle: &RouteBundle,
@@ -82,8 +102,17 @@ impl DevServer {
                 }
             }
             route_bundle::Data::Html(html) => {
-                self.client_graph
-                    .trace_imports(html.bundled_file, gts, goal)?;
+                let graph = &mut self.client_graph;
+                let mark = graph.trace_mark(gts);
+                graph.trace_imports(html.bundled_file, gts, goal)?;
+                // The walk above has every file of the route. A page gets one file of a package when both are among them.
+                if goal != TraceImportGoal::FindErrors && !graph.pairs.is_empty() {
+                    graph.find_forwards(gts);
+                    if !gts.forwards.is_empty() {
+                        graph.rewind_trace(gts, mark);
+                        graph.trace_imports(html.bundled_file, gts, goal)?;
+                    }
+                }
             }
         }
         Ok(())

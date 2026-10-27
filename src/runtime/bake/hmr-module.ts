@@ -35,6 +35,8 @@ let refreshRuntime: any;
  * in Mozilla Firefox in 2025. Bun lazily evaluates it, so a SyntaxError gets
  * thrown upon first usage. */
 let lazyDynamicImportWithOptions: null | Function = null;
+/** See `Config.forwards`. The code of a module names the keys. A load with an importer goes one step through it. */
+const forwards = side === "client" ? config.forwards : undefined;
 
 const enum State {
   Pending,
@@ -237,17 +239,15 @@ export class HMRModule {
   acceptSpecifiers(specifiers: string | readonly string[], cb?: HotAcceptFunction | HotArrayAcceptFunction) {
     this.depAccepts ??= {};
     const isArray = Array.isArray(specifiers);
+    let modules = (isArray ? specifiers : [specifiers]) as string[];
+    if (side === "client" && forwards) modules = modules.map(id => forwards[id] ?? id);
     const accept: HotAccept = {
-      modules: isArray ? specifiers : [specifiers],
+      modules,
       cb: cb as HotAcceptFunction,
       single: !isArray,
     };
-    if (isArray) {
-      for (const specifier of specifiers) {
-        this.depAccepts[specifier] = accept;
-      }
-    } else {
-      this.depAccepts[specifiers as string] = accept;
+    for (const specifier of modules) {
+      this.depAccepts[specifier] = accept;
     }
   }
 
@@ -317,6 +317,7 @@ HMRModule.prototype.indirectHot = new Proxy({}, {
 
 // TODO: This function is currently recursive.
 export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModule | null): HMRModule {
+  if (side === "client" && forwards && importer) id = forwards[id] ?? id;
   // First, try and re-use an existing module.
   let mod = registry.get(id);
   if (mod) {
@@ -426,6 +427,7 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
   isUserDynamic: IsUserDynamic,
   importer: HMRModule | null,
 ): (IsUserDynamic extends true ? null : never) | Promise<HMRModule> | HMRModule {
+  if (side === "client" && forwards && importer) id = forwards[id] ?? id;
   // First, try and re-use an existing module.
   let mod = registry.get(id)!;
   if (mod) {
@@ -587,12 +589,15 @@ function parseEsmDependencies<T extends GenericModuleLoader<any>>(
   let isAsync = false;
   const { length } = deps;
   while (i < length) {
-    const dep = deps[i] as string;
+    let dep = deps[i] as string;
     DEBUG.ASSERT(typeof dep === "string");
     let expectedExportKeyEnd = i + 2 + (deps[i + 1] as number);
     DEBUG.ASSERT(typeof deps[i + 1] === "number");
     const promiseOrModule = enqueueModuleLoad(dep, false, parent);
     list.push(promiseOrModule);
+
+    // The record that the load above took for this id.
+    if (side === "client" && forwards) dep = forwards[dep] ?? dep;
 
     const unloadedModule = unloadedModuleRegistry[dep];
     if (!unloadedModule) {

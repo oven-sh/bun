@@ -552,6 +552,7 @@ impl DevServer {
                         script_injection_offset: None,
                         cached_response: None,
                         bundled_html_text: None,
+                        forwards: Vec::new(),
                     });
                 }
             },

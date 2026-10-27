@@ -183,6 +183,11 @@ pub(crate) struct GraphTraceState {
     pub(crate) server_bits: DynamicBitSet,
     /// Filled by `TraceImportGoal::FindErrors`.
     pub(crate) failures: Vec<SerializedFailure>,
+    /// For an html route: ("module" file, "main" file), sorted. A walk that meets the first file continues at the second.
+    pub(crate) forwards: Vec<(
+        incremental_graph::ClientFileIndex,
+        incremental_graph::ClientFileIndex,
+    )>,
 }
 impl GraphTraceState {
     #[inline]
@@ -197,6 +202,7 @@ impl GraphTraceState {
         self.server_bits.unmanaged.set_all(false);
         self.client_bits.unmanaged.set_all(false);
         self.failures.clear();
+        self.forwards.clear();
     }
 
     pub(crate) fn resize(&mut self, side: Side, new_size: usize) -> Result<(), crate::Error> {
@@ -215,6 +221,7 @@ impl GraphTraceState {
             .resize(0, false)
             .expect("freeing memory can not fail");
         self.failures = Vec::new();
+        self.forwards = Vec::new();
     }
 }
 

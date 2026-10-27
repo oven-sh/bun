@@ -254,6 +254,8 @@ pub(crate) struct TakeJSBundleOptionsClient<'a> {
     pub(crate) console_log: bool,
     /// The page and layouts of a route whose pages also run in the browser: `config.route`.
     pub(crate) route_page_files: Option<&'a super::router_glue::ClientPageFiles>,
+    /// `GraphTraceState::forwards` of the walk that found the files of the chunk: `config.forwards`.
+    pub(crate) forwards: &'a [(ClientFileIndex, ClientFileIndex)],
 }
 impl Default for TakeJSBundleOptionsClient<'_> {
     fn default() -> Self {
@@ -264,6 +266,7 @@ impl Default for TakeJSBundleOptionsClient<'_> {
             react_refresh_entry_point: b"",
             route_page_files: None,
             console_log: false,
+            forwards: &[],
         }
     }
 }
@@ -277,6 +280,24 @@ pub(crate) struct TakeJSBundleOptionsServer {
 struct TempLookup {
     edge_index: EdgeIndex,
     seen: bool,
+    /// An import record of this edge has `HAS_SECONDARY_PATH`.
+    pair: bool,
+}
+
+/// See `IncrementalGraph::trace_mark`.
+#[derive(Copy, Clone)]
+pub(crate) struct TraceMark {
+    css_files: usize,
+    chunk_parts: usize,
+    chunk_len: usize,
+}
+
+/// See `IncrementalGraph::pairs`.
+pub(crate) struct Pair {
+    /// The key of the "main" file. The graph has that file only while a file names it.
+    main: Box<[u8]>,
+    /// The number of edges of `pair_edges` into the "module" file.
+    edges: u32,
 }
 
 /// Parameterized via `adt_const_params` on `bake::Side`; `File` itself is
@@ -294,6 +315,10 @@ pub(crate) struct IncrementalGraph<const SIDE: bake::Side> {
     pub(crate) edges: Vec<Edge<SIDE>>,
     /// Freed edge slots for reuse by `new_edge`.
     pub(crate) edges_free_list: Vec<EdgeIndex>,
+    /// Client side: one bit per slot of `edges`, set when an import behind the edge has `HAS_SECONDARY_PATH`.
+    pub(crate) pair_edges: DynamicBitSetUnmanaged,
+    /// Client side: the "module" files that an edge of `pair_edges` imports. `find_forwards` reads it.
+    pub(crate) pairs: ArrayHashMap<FileIndex<SIDE>, Pair>,
     // ── per-bundle scratch (`current_chunk_*`) ─────────────────────────
     /// Total byte length of the current JS chunk being assembled.
     pub(crate) current_chunk_len: usize,
@@ -398,6 +423,11 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         graph += self.edge_lists.capacity() * size_of::<EdgeLists>();
         graph += self.edges.capacity() * size_of::<Edge<SIDE>>();
         graph += self.edges_free_list.capacity() * size_of::<EdgeIndex>();
+        graph += self.pair_edges.bytes().len();
+        graph += self.pairs.capacity() * (size_of::<FileIndex<SIDE>>() + size_of::<Pair>());
+        for pair in self.pairs.values() {
+            graph += pair.main.len();
+        }
         match SIDE {
             Side::Client => {
                 graph += self.current_chunk_parts.capacity() * size_of::<FileIndex<SIDE>>();
@@ -488,6 +518,9 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
     /// Does nothing besides release the `Edge` for reallocation by `new_edge`.
     /// Caller must detach the dependency from the linked list it is in.
     fn free_edge(&mut self, edge_index: EdgeIndex) {
+        if matches!(SIDE, Side::Client) {
+            self.unmark_pair_edge(edge_index);
+        }
         if edge_index.get() as usize == self.edges.len() - 1 {
             self.edges.pop();
         } else {
@@ -834,6 +867,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                     TempLookup {
                         seen: false,
                         edge_index,
+                        pair: false,
                     },
                 )?;
             }
@@ -882,6 +916,19 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 self.dev_incremental_result().had_adjusted_edges = true;
                 self.disconnect_edge_from_dependency_list(val.edge_index);
                 self.free_edge(val.edge_index);
+            }
+        }
+        // A route of this file is affected by the bundle, so its next page gets these marks.
+        if matches!(SIDE, Side::Client) {
+            for val in quick_lookup.values() {
+                if !val.seen {
+                    continue;
+                }
+                if val.pair {
+                    self.mark_pair_edge(ctx.secondary_paths, val.edge_index)?;
+                } else {
+                    self.unmark_pair_edge(val.edge_index);
+                }
             }
         }
 
@@ -1037,8 +1084,12 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
 
         debug_assert!((imported_file_index.get() as usize) < self.bundled_files.count());
 
+        let pair = matches!(SIDE, Side::Client)
+            && ir_flags.contains(bun_ast::ImportRecordFlags::HAS_SECONDARY_PATH);
+
         let gop = quick_lookup.get_or_put(imported_file_index)?;
         if gop.found_existing {
+            gop.value_ptr.pair |= pair;
             // Ends the walk of circular `@import`s. Each css root walks on its own, because two roots
             // of one bundle can import the same file and both need the edge.
             if gop.value_ptr.seen {
@@ -1069,6 +1120,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             *gop.value_ptr = TempLookup {
                 edge_index: edge,
                 seen: true,
+                pair,
             };
         }
         Ok(EdgeAttachmentResult::Continue)
@@ -1218,6 +1270,132 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         Ok(())
     }
 
+    /// Sets the bit of `edge` in `pair_edges`: an import record of this bundle with `HAS_SECONDARY_PATH` is behind it.
+    fn mark_pair_edge(
+        &mut self,
+        secondary_paths: &bun_bundler::secondary_paths::SecondaryPaths,
+        edge: EdgeIndex,
+    ) -> Result<(), crate::Error> {
+        let slot = edge.get() as usize;
+        if self.pair_edges.is_set_allow_out_of_bound(slot, false) {
+            return Ok(());
+        }
+        let module = self.edges[slot].imported;
+        if let Some(pair) = self.pairs.get_mut(&module) {
+            pair.edges += 1;
+        } else {
+            let main = secondary_paths
+                .get(&self.bundled_files.keys()[module.get() as usize])
+                .expect("`SecondaryPaths::note` keeps the path of each record that it flags");
+            self.pairs.put(
+                module,
+                Pair {
+                    main: Box::from(main),
+                    edges: 1,
+                },
+            )?;
+        }
+        if slot >= self.pair_edges.bit_length {
+            self.pair_edges
+                .resize(self.edges.capacity().max(slot + 1), false)?;
+        }
+        self.pair_edges.set(slot);
+        Ok(())
+    }
+
+    /// Clears the bit of `edge` in `pair_edges`.
+    fn unmark_pair_edge(&mut self, edge: EdgeIndex) {
+        let slot = edge.get() as usize;
+        if !self.pair_edges.is_set_allow_out_of_bound(slot, false) {
+            return;
+        }
+        self.pair_edges.unset(slot);
+        let module = self.edges[slot].imported;
+        let pair = self
+            .pairs
+            .get_mut(&module)
+            .expect("`mark_pair_edge` counted this edge");
+        pair.edges -= 1;
+        if pair.edges == 0 {
+            self.pairs.swap_remove(&module);
+        }
+    }
+
+    /// Gives each pair the "main" file that this bundle resolved: a package.json can name another file than before.
+    pub(crate) fn refresh_pairs(
+        &mut self,
+        secondary_paths: &bun_bundler::secondary_paths::SecondaryPaths,
+    ) {
+        for (module, main) in secondary_paths.iter() {
+            let Some(module) = self.bundled_files.get_index(module) else {
+                continue;
+            };
+            let Some(pair) = self.pairs.get_mut(&FileIndex::init(module as u32)) else {
+                continue;
+            };
+            if *pair.main != *main {
+                pair.main = Box::from(main);
+            }
+        }
+    }
+
+    /// Fills `gts.forwards` from a walk without forwards: "module" goes to "main" when the walk has both and a marked edge.
+    pub(crate) fn find_forwards(&self, gts: &mut GraphTraceState) {
+        debug_assert!(matches!(SIDE, Side::Client));
+        debug_assert!(gts.forwards.is_empty());
+        let visited = &gts.client_bits.unmanaged;
+        for (module, pair) in self.pairs.iter() {
+            if !visited.is_set(module.get() as usize) {
+                continue;
+            }
+            let Some(main) = self.bundled_files.get_index(&pair.main) else {
+                continue;
+            };
+            if !visited.is_set(main) {
+                continue;
+            }
+            let mut it = self.edge_lists[module.get() as usize].first_dep;
+            while let Some(edge_index) = it {
+                let edge = &self.edges[edge_index.get() as usize];
+                if self
+                    .pair_edges
+                    .is_set_allow_out_of_bound(edge_index.get() as usize, false)
+                    && visited.is_set(edge.dependency.get() as usize)
+                {
+                    gts.forwards.push((
+                        ClientFileIndex::init(module.get()),
+                        ClientFileIndex::init(main as u32),
+                    ));
+                    break;
+                }
+                it = edge.next_dependency;
+            }
+        }
+        bun_collections::index_sort::sort_slice_unstable_by_key(&mut gts.forwards, |forward| {
+            forward.0.get()
+        });
+    }
+
+    /// What a walk of `trace_imports` has appended so far, for `rewind_trace`.
+    pub(crate) fn trace_mark(&self, gts: &GraphTraceState) -> TraceMark {
+        debug_assert!(matches!(SIDE, Side::Client));
+        debug_assert!(gts.client_bits.count() == 0);
+        TraceMark {
+            css_files: self.current_css_files.len(),
+            chunk_parts: self.current_chunk_parts.len(),
+            chunk_len: self.current_chunk_len,
+        }
+    }
+
+    /// Undoes each write of `trace_imports` since `mark`. Not for a `FindErrors` walk, which also fills `gts.failures`.
+    pub(crate) fn rewind_trace(&mut self, gts: &mut GraphTraceState, mark: TraceMark) {
+        debug_assert!(gts.failures.is_empty());
+        gts.client_bits.unmanaged.set_all(false);
+        self.current_css_files.truncate(mark.css_files);
+        self.current_chunk_parts.truncate(mark.chunk_parts);
+        self.current_chunk_len = mark.chunk_len;
+    }
+
     /// Walks imports inward from `file_index`, marking visited files in
     /// `gts` to collect everything a bundle for this file must include.
     pub(crate) fn trace_imports(
@@ -1226,6 +1404,16 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         gts: &mut GraphTraceState,
         goal: TraceImportGoal,
     ) -> Result<(), crate::Error> {
+        // A forwarded file gives its place to the file that the forward names: one step, as in the module loader.
+        let file_index = if matches!(SIDE, Side::Client)
+            && let Ok(at) = gts
+                .forwards
+                .binary_search_by_key(&file_index.get(), |forward| forward.0.get())
+        {
+            FileIndex::init(gts.forwards[at].1.get())
+        } else {
+            file_index
+        };
         if gts.bits(SIDE).is_set(file_index.get() as usize) {
             return Ok(());
         }
@@ -1873,16 +2061,16 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         &mut end_list,
                     )?;
                 }
+                let write_id = |end_list: &mut Vec<u8>, abs: &[u8]| -> crate::Result<()> {
+                    let mut buf = bun_paths::path_buffer_pool::get();
+                    // SAFETY: `relative_path` reads `dev.root` only.
+                    let rel = unsafe { (*dev).relative_path(&mut *buf, abs) };
+                    bun_js_printer::write_json_string::<_, { bun_js_printer::Encoding::Utf8 }>(
+                        rel, end_list,
+                    )?;
+                    Ok(())
+                };
                 if let Some(files) = options.route_page_files {
-                    let write_id = |end_list: &mut Vec<u8>, abs: &[u8]| -> crate::Result<()> {
-                        let mut buf = bun_paths::path_buffer_pool::get();
-                        // SAFETY: `relative_path` reads `dev.root` only.
-                        let rel = unsafe { (*dev).relative_path(&mut *buf, abs) };
-                        bun_js_printer::write_json_string::<_, { bun_js_printer::Encoding::Utf8 }>(
-                            rel, end_list,
-                        )?;
-                        Ok(())
-                    };
                     end_list.extend_from_slice(b",\n  route: { page: ");
                     match &files.page {
                         Some(page) => write_id(&mut end_list, page)?,
@@ -1896,6 +2084,17 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         write_id(&mut end_list, layout)?;
                     }
                     end_list.extend_from_slice(b"] }");
+                }
+                if !options.forwards.is_empty() {
+                    let keys = self.bundled_files.keys();
+                    end_list.extend_from_slice(b",\n  forwards: {");
+                    for (i, (module, main)) in options.forwards.iter().enumerate() {
+                        end_list.extend_from_slice(if i > 0 { b", " } else { b" " });
+                        write_id(&mut end_list, &keys[module.get() as usize])?;
+                        end_list.extend_from_slice(b": ");
+                        write_id(&mut end_list, &keys[main.get() as usize])?;
+                    }
+                    end_list.extend_from_slice(b" }");
                 }
                 end_list.extend_from_slice(b"\n})");
             }

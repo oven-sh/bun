@@ -142,6 +142,7 @@ pub mod defines;
 pub mod linker;
 #[path = "LinkerGraph.rs"]
 pub mod linker_graph;
+pub mod secondary_paths;
 // Moved down to `bun_js_parser::defines_table` so the parser reads its own
 // const without a cross-crate hook. Re-export for existing callers.
 pub use bun_js_parser::defines_table;

@@ -17,6 +17,7 @@ pub(crate) struct HotUpdateContext<'a> {
     /// Used to tell if the server should replace or append import records.
     pub server_seen_bit_set: DynamicBitSet,
     pub gts: &'a mut GraphTraceState,
+    pub secondary_paths: &'a bun_bundler::secondary_paths::SecondaryPaths,
 }
 
 /// Sentinel-encoded `Option<FileIndex>` packed into a `u32` (`u32::MAX` == none).
@@ -269,6 +270,7 @@ pub(super) fn finalize_bundle(
         server_bits: DynamicBitSet::default(),
         client_bits: DynamicBitSet::default(),
         failures: Vec::new(),
+        forwards: Vec::new(),
     };
     let mut ctx = HotUpdateContext {
         import_records,
@@ -278,6 +280,7 @@ pub(super) fn finalize_bundle(
         resolved_index_cache: &mut resolved_index_cache,
         server_seen_bit_set: DynamicBitSet::default(), // assigned below
         gts: &mut gts_storage,
+        secondary_paths: bv2.dev_server_secondary_paths(),
     };
 
     let quoted_source_contents = bv2.linker.graph.files.items_quoted_source_contents();
@@ -643,6 +646,7 @@ pub(super) fn finalize_bundle(
             entry_index,
         )?;
     }
+    dev.client_graph.refresh_pairs(ctx.secondary_paths);
 
     // Index all failed files now that the incremental graph has been updated.
     if !dev.incremental_result.failures_removed.is_empty()
@@ -959,10 +963,10 @@ pub(super) fn finalize_bundle(
             if had_adjusted_edges {
                 ctx.gts.clear();
                 dev.client_graph.current_css_files.clear();
-                // SAFETY: `trace_all_route_imports` does not mutate `route_bundles`;
+                // SAFETY: `trace_open_page_imports` does not mutate `route_bundles`;
                 // shared, call-scoped reborrow.
                 let route_bundle_ref = unsafe { &*route_bundle };
-                dev.trace_all_route_imports(route_bundle_ref, ctx.gts, TraceImportGoal::FindCss)?;
+                dev.trace_open_page_imports(route_bundle_ref, ctx.gts, TraceImportGoal::FindCss)?;
                 let css_ids = &dev.client_graph.current_css_files;
 
                 w_int!(i32, i32::try_from(css_ids.len()).expect("int cast"));

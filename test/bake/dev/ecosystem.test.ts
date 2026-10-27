@@ -53,3 +53,22 @@ devTest("svelte component islands example", {
     expect(html2).toContain(`>This is a client component (magical)</p>`);
   },
 });
+
+// immutable has "main" and "module" and no "exports". The dev server found the two files of such a
+// package by the path that the resolver gives, here through the link of the test's node_modules.
+devTest("a page that imports and requires immutable runs one copy of it", {
+  fixture: "immutable-import-and-require",
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("one copy = true");
+
+    const script = (await dev.fetch("/").text()).match(/src="([^"]+\.js)"/)![1];
+    const forwards = JSON.parse((await dev.fetch(script).text()).match(/^  forwards: (\{.*\})$/m)![1]);
+    expect(Object.entries(forwards)).toEqual([
+      [
+        expect.stringMatching(/immutable\/dist\/immutable\.es\.js$/),
+        expect.stringMatching(/immutable\/dist\/immutable\.js$/),
+      ],
+    ]);
+  },
+});

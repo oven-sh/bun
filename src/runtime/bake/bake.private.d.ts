@@ -35,6 +35,8 @@ interface Config {
    * If true, the client will receive console logs from the server.
    */
   console: boolean;
+  /** Ids in the code of this page that go one step to another id: the "module" file of a package to its "main" file. */
+  forwards?: Record<Id, Id>;
 }
 
 /**

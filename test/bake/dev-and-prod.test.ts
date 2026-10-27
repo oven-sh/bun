@@ -138,6 +138,425 @@ devAndProductionTest("inline script and styles appear", {
     await c.style("body").backgroundColor.expect.toBe("red");
   },
 });
+// A package whose `import` resolves to esm.js and whose `require()` resolves to `main`.
+// `bun build` binds each import of esm.js to the `main` file too when a file of the build
+// requires the package, so that the output has one copy of it.
+const mainAndModule = (name: string, fields: Record<string, unknown> = { main: "cjs.js", module: "esm.js" }) => ({
+  [`node_modules/${name}/package.json`]: JSON.stringify({ name, version: "1.0.0", ...fields }),
+  [`node_modules/${name}/${fields.main ?? "index.js"}`]: `
+    module.exports = function fromMain() {};
+    module.exports.kind = "main";
+  `,
+  [`node_modules/${name}/esm.js`]: `
+    export default function fromModule() {}
+    export const kind = "module";
+  `,
+});
+devAndProductionTest("import and require of a package with main and module bind to one file", {
+  files: {
+    "package.json": JSON.stringify({ name: "app", type: "module" }),
+    ...mainAndModule("dual"),
+    "requires.cjs": `
+      globalThis.required = require("dual").kind;
+    `,
+    "index.js": `
+      import dual, { kind } from "dual";
+      import "./requires.cjs";
+      console.log("typeof default = " + typeof dual + ", kind = " + kind + ", required = " + globalThis.required);
+    `,
+    "index.html": emptyHtmlFile({
+      scripts: ["index.js"],
+    }),
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("typeof default = function, kind = main, required = main");
+  },
+});
+devAndProductionTest("every kind of import of a package with main and module follows a require", {
+  files: {
+    "package.json": JSON.stringify({ name: "app", type: "module" }),
+    ...mainAndModule("by-jsnext", { "main": "cjs.js", "jsnext:main": "esm.js" }),
+    ...mainAndModule("by-index", { module: "esm.js" }),
+    ...mainAndModule("by-import-call"),
+    ...mainAndModule("by-export-from"),
+    ...mainAndModule("in-one-file"),
+    ...mainAndModule("never-required"),
+    ...mainAndModule("by-file-path"),
+    ...mainAndModule("by-require-of-file"),
+    // `main` has no extension, and the file of `module` is beside it.
+    "node_modules/no-extension/package.json": JSON.stringify({
+      name: "no-extension",
+      main: "index",
+      module: "index.mjs",
+    }),
+    "node_modules/no-extension/index.js": `module.exports.kind = "main";`,
+    "node_modules/no-extension/index.mjs": `export const kind = "module";`,
+    // The same files, and no `module`.
+    "node_modules/only-main/package.json": JSON.stringify({ name: "only-main", main: "index" }),
+    "node_modules/only-main/index.js": `module.exports.kind = "main";`,
+    "node_modules/only-main/index.mjs": `export const kind = "module";`,
+    // `main` and `module` are one file.
+    "node_modules/one-file/package.json": JSON.stringify({ name: "one-file", main: "index.js", module: "index.js" }),
+    "node_modules/one-file/index.js": `export const kind = "one file";`,
+    // A script of the page is the file of `main`.
+    ...mainAndModule("by-script"),
+    // The "browser" field removes the file of `main`.
+    ...mainAndModule("disabled-main", { main: "cjs.js", module: "esm.js", browser: { "./cjs.js": false } }),
+    // A file of the package imports the file of `module` by its path, like a locale of moment.
+    ...mainAndModule("with-plugin"),
+    "node_modules/with-plugin/plugin.js": `
+      import { kind } from "./esm.js";
+      export const pluginSees = kind;
+    `,
+    "requires.cjs": `
+      globalThis.required = [
+        require("by-jsnext").kind,
+        require("by-index").kind,
+        require("by-import-call").kind,
+        require("by-export-from").kind,
+        require("by-file-path").kind,
+        require("by-require-of-file").kind,
+        require("no-extension").kind,
+        require("only-main").kind,
+        require("with-plugin").kind,
+        String(require("disabled-main").kind),
+      ];
+    `,
+    "export-from.js": `export { kind } from "by-export-from";`,
+    "index.js": `
+      import { kind as byJsnext } from "by-jsnext";
+      import { kind as byIndex } from "by-index";
+      import { kind as byExportFrom } from "./export-from.js";
+      import { kind as inOneFile } from "in-one-file";
+      import { kind as neverRequired } from "never-required";
+      // No import names this package, so the name of a file in it stays.
+      import { kind as byFilePath } from "by-file-path/esm.js";
+      import { kind as byRequireOfFile } from "by-require-of-file";
+      import { kind as noExtension } from "no-extension";
+      import { kind as onlyMain } from "only-main";
+      import { kind as oneFile } from "one-file";
+      import { kind as withPlugin } from "with-plugin";
+      import { kind as disabledMain } from "disabled-main";
+      import { kind as byScript } from "by-script";
+      import { pluginSees } from "with-plugin/plugin.js";
+      import "./requires.cjs";
+      const { kind: byImportCall } = await import("by-import-call");
+      console.log(
+        JSON.stringify({
+          byJsnext,
+          byIndex,
+          byImportCall,
+          byExportFrom,
+          inOneFile: [inOneFile, require("in-one-file").kind],
+          neverRequired,
+          byFilePath,
+          // An import of this package is above, so a require() of its \`module\` file moves too.
+          byRequireOfFile: [byRequireOfFile, require("by-require-of-file/esm.js").kind],
+          noExtension,
+          onlyMain,
+          oneFile,
+          withPlugin: [withPlugin, pluginSees],
+          disabledMain,
+          byScript,
+          required: globalThis.required,
+        }),
+      );
+    `,
+    "index.html": emptyHtmlFile({
+      scripts: ["node_modules/by-script/cjs.js", "index.js"],
+    }),
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage(
+      JSON.stringify({
+        byJsnext: "main",
+        byIndex: "main",
+        byImportCall: "main",
+        byExportFrom: "main",
+        inOneFile: ["main", "main"],
+        neverRequired: "module",
+        byFilePath: "module",
+        byRequireOfFile: ["main", "main"],
+        noExtension: "main",
+        onlyMain: "main",
+        oneFile: "one file",
+        withPlugin: ["main", "main"],
+        disabledMain: "module",
+        byScript: "main",
+        required: ["main", "main", "main", "main", "main", "main", "main", "main", "main", "undefined"],
+      }),
+    );
+  },
+});
+// The `main` file of such a package is often CommonJS from tsc or Babel. Its default import is
+// `exports.default`, unless the importer is an ES module by type.
+devAndProductionTest("the default import of a tsc package with main and module follows a require", {
+  files: {
+    "package.json": JSON.stringify({ name: "app", type: "module" }),
+    "node_modules/dual/package.json": JSON.stringify({
+      name: "dual",
+      version: "1.0.0",
+      main: "cjs.js",
+      module: "esm.js",
+    }),
+    "node_modules/dual/cjs.js": `
+      Object.defineProperty(exports, "__esModule", { value: true });
+      function fromMain() {}
+      fromMain.kind = "main";
+      exports.default = fromMain;
+    `,
+    "node_modules/dual/esm.js": `
+      function fromModule() {}
+      fromModule.kind = "module";
+      export default fromModule;
+    `,
+    // A dependency and a directory with their own package.json have no "type".
+    "node_modules/dependency/package.json": JSON.stringify({ name: "dependency", main: "index.js" }),
+    "node_modules/dependency/index.js": `
+      import dual from "dual";
+      export const inDependency = typeof dual + " " + dual.kind;
+    `,
+    "legacy/package.json": JSON.stringify({}),
+    "legacy/index.js": `
+      import dual from "dual";
+      export const inLegacy = typeof dual + " " + dual.kind;
+    `,
+    // A "main" file that is an ES module has its own default export for every importer.
+    "node_modules/esm-main/package.json": JSON.stringify({ name: "esm-main", main: "main.js", module: "esm.js" }),
+    "node_modules/esm-main/main.js": `
+      export default function fromMain() {}
+      export const kind = "main";
+    `,
+    "node_modules/esm-main/esm.js": `
+      export default function fromModule() {}
+      export const kind = "module";
+    `,
+    "requires.cjs": `
+      globalThis.required = require("dual").default.kind;
+      require("esm-main");
+    `,
+    "index.js": `
+      import dual from "dual";
+      import esmMain, { kind as esmMainKind } from "esm-main";
+      import { inDependency } from "dependency";
+      import { inLegacy } from "./legacy/index.js";
+      import "./requires.cjs";
+      console.log(
+        JSON.stringify({
+          inApp: typeof dual + " " + dual.default?.kind,
+          inDependency,
+          inLegacy,
+          required: globalThis.required,
+          esmMain: typeof esmMain + " " + esmMainKind,
+        }),
+      );
+    `,
+    "index.html": emptyHtmlFile({
+      scripts: ["index.js"],
+    }),
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage(
+      JSON.stringify({
+        inApp: "object main",
+        inDependency: "function main",
+        inLegacy: "function main",
+        required: "main",
+        esmMain: "function main",
+      }),
+    );
+  },
+});
+// The shape of moment and moment-timezone: the add-on requires the package and adds to its export.
+devAndProductionTest("an add-on that requires a package with main and jsnext:main extends the import of the page", {
+  files: {
+    "package.json": JSON.stringify({ name: "app", type: "module" }),
+    "node_modules/clock/package.json": JSON.stringify({
+      "name": "clock",
+      "version": "1.0.0",
+      "main": "./clock.js",
+      "jsnext:main": "./dist/clock.js",
+    }),
+    "node_modules/clock/clock.js": `module.exports = function clock() { return "main"; };`,
+    "node_modules/clock/dist/clock.js": `export default function clock() { return "module"; }`,
+    "node_modules/clock-zones/package.json": JSON.stringify({
+      name: "clock-zones",
+      version: "1.0.0",
+      main: "index.js",
+    }),
+    "node_modules/clock-zones/index.js": `
+      var clock = (module.exports = require("clock"));
+      clock.zone = function () { return "zone"; };
+    `,
+    "index.js": `
+      import clock from "clock";
+      import "clock-zones";
+      console.log(clock() + ", typeof clock.zone = " + typeof clock.zone);
+    `,
+    "index.html": emptyHtmlFile({
+      scripts: ["index.js"],
+    }),
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("main, typeof clock.zone = function");
+  },
+});
+// A build that binds a package to "main" has no use for its "module" file, nor for what only that file imports.
+devAndProductionTest("the page has nothing that only the module file of a package imports", {
+  files: {
+    "package.json": JSON.stringify({ name: "app", type: "module" }),
+    ...mainAndModule("styled"),
+    "node_modules/styled/esm.js": `
+      import "./module.css";
+      import "./only-module.js";
+      export const kind = "module";
+    `,
+    "node_modules/styled/module.css": `body { background-color: red; }`,
+    "node_modules/styled/only-module.js": `globalThis.onlyModule = "runs";`,
+    // The only require() of this package is below its own "module" file.
+    ...mainAndModule("requires-itself"),
+    "node_modules/requires-itself/esm.js": `
+      import "./helper.cjs";
+      export const kind = "module";
+    `,
+    "node_modules/requires-itself/helper.cjs": `
+      globalThis.helper = "runs";
+      require("requires-itself");
+    `,
+    "index.js": `
+      import { kind as styled } from "styled";
+      import { kind as requiresItself } from "requires-itself";
+      console.log(
+        JSON.stringify({
+          styled: [styled, require("styled").kind, globalThis.onlyModule],
+          requiresItself: [requiresItself, globalThis.helper],
+        }),
+      );
+    `,
+    "index.html": emptyHtmlFile({
+      scripts: ["index.js"],
+    }),
+  },
+  async test(dev) {
+    expect(await dev.fetch("/").text()).not.toContain("stylesheet");
+    await using c = await dev.client("/");
+    await c.expectMessage(JSON.stringify({ styled: ["main", "main", null], requiresItself: ["main", null] }));
+  },
+});
+// The "main" file of one package is the "module" file of another. An id goes one step.
+devAndProductionTest("a package whose main file is the module file of another package", {
+  files: {
+    "package.json": JSON.stringify({ name: "app", type: "module" }),
+    "node_modules/a/package.json": JSON.stringify({ name: "a", version: "1.0.0", main: "cjs.js", module: "esm.js" }),
+    "node_modules/a/esm.js": `export const kind = "a module";`,
+    "node_modules/a/cjs.js": `module.exports.kind = "a main";`,
+    "node_modules/b/package.json": JSON.stringify({
+      name: "b",
+      version: "1.0.0",
+      main: "index.js",
+      module: "../a/cjs.js",
+    }),
+    "node_modules/b/index.js": `module.exports.kind = "b main";`,
+    "index.js": `
+      import { kind as a } from "a";
+      import { kind as b } from "b";
+      console.log(JSON.stringify([a, b, require("a").kind, require("b").kind]));
+    `,
+    "index.html": emptyHtmlFile({
+      scripts: ["index.js"],
+    }),
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage(JSON.stringify(["a main", "b main", "b main", "b main"]));
+  },
+});
+// The file that requires the package is below an export of a barrel file. A barrel file leaves out
+// the files of the exports that no file asks for.
+const requiresBelowBarrel = {
+  "package.json": JSON.stringify({ name: "app", type: "module" }),
+  ...mainAndModule("dual"),
+  "node_modules/lib/package.json": JSON.stringify({
+    name: "lib",
+    version: "1.0.0",
+    main: "index.js",
+    sideEffects: false,
+  }),
+  "node_modules/lib/index.js": `
+    export { a } from "./a.js";
+    export { b } from "./b.js";
+  `,
+  "node_modules/lib/a.js": `export const a = "a";`,
+  "node_modules/lib/b.js": `export const b = require("dual").kind;`,
+  "index.html": emptyHtmlFile({
+    scripts: ["index.js"],
+  }),
+};
+devAndProductionTest("a require below a barrel export that no file asks for does not bind a package to main", {
+  files: {
+    ...requiresBelowBarrel,
+    "index.js": `
+      import { kind } from "dual";
+      import { a } from "lib";
+      console.log("kind = " + kind + ", a = " + a);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("kind = module, a = a");
+  },
+});
+devAndProductionTest("a require below a barrel export that a namespace import asks for binds a package to main", {
+  files: {
+    ...requiresBelowBarrel,
+    "index.js": `
+      import { kind } from "dual";
+      import * as lib from "lib";
+      console.log("kind = " + kind + ", b = " + lib.b);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("kind = main, b = main");
+  },
+});
+// `Bun.serve` builds each html route alone. One route has only the import, the other also the require.
+for (const [first, second] of [
+  ["/imports", "/requires"],
+  ["/requires", "/imports"],
+]) {
+  devAndProductionTest(`each html route binds a package with main and module by its own files (${first} first)`, {
+    files: {
+      "package.json": JSON.stringify({ name: "app", type: "module" }),
+      ...mainAndModule("dual"),
+      "imports.html": emptyHtmlFile({ scripts: ["imports.js"] }),
+      "imports.js": `
+        import { kind } from "./shared.js";
+        console.log("imports: kind = " + kind);
+      `,
+      "requires.html": emptyHtmlFile({ scripts: ["requires.js"] }),
+      "requires.js": `
+        import { kind } from "./shared.js";
+        console.log("requires: kind = " + kind + ", required = " + require("dual").kind);
+      `,
+      "shared.js": `export { kind } from "dual";`,
+    },
+    async test(dev) {
+      const messages = {
+        "/imports": "imports: kind = module",
+        "/requires": "requires: kind = main, required = main",
+      };
+      await using one = await dev.client(first);
+      await one.expectMessage(messages[first]);
+      await using two = await dev.client(second);
+      await two.expectMessage(messages[second]);
+    },
+  });
+}
 // TODO: revive production
 devTest("using runtime import", {
   files: {

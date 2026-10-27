@@ -6421,7 +6421,7 @@ impl<'a> Resolver<'a> {
         }
 
         // Record if this directory has a package.json file
-        if self.opts.load_package_json {
+        if self.opts.load_package_json || !self.is_project_config_dir(path) {
             if let Some(lookup) = entries!().get_comptime_query(b"package.json") {
                 // SAFETY: EntryStore-owned slot; `entries_mutex` held — read-only borrow,
                 // dies (NLL) before any later `&mut` to this slot.
@@ -6691,6 +6691,12 @@ impl<'a> Resolver<'a> {
             return Ok(Some(unsafe { bun_core::heap::take(merged_config) }));
         }
         Ok(None)
+    }
+
+    /// `dir` is the cwd or one of its parents, whose `package.json` is `load_package_json`'s.
+    fn is_project_config_dir(&self, dir: &[u8]) -> bool {
+        use ResolvePath::resolve_path::{ParentEqual, is_parent_or_equal};
+        is_parent_or_equal(dir, self.fs_ref().top_level_dir()) != ParentEqual::Unrelated
     }
 
     /// `opts.tsconfig_override`, which this resolver and its workers read in place of the

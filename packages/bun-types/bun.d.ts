@@ -3772,7 +3772,9 @@ declare module "bun" {
      */
     autoloadTsconfig?: boolean;
     /**
-     * Whether the standalone executable loads package.json when it runs
+     * Whether the standalone executable reads the project's own package.json
+     * (its `type`, `imports`, and self-reference `exports`) when it runs.
+     * A dependency's package.json is always read.
      *
      * Equivalent CLI flags: `--compile-autoload-package-json`, `--no-compile-autoload-package-json`
      *

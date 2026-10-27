@@ -307,7 +307,7 @@ console.log("PRELOAD");
     },
   });
 
-  // Test CLI backend with autoloadPackageJson: true using package.json exports
+  // Test CLI backend with autoloadPackageJson: true using the project's package.json "imports"
   itBundled("compile/AutoloadPackageJsonExportsCLI", {
     compile: {
       autoloadPackageJson: true,
@@ -315,24 +315,23 @@ console.log("PRELOAD");
     backend: "cli",
     files: {
       "/entry.js": /* js */ `
-        const pkgName = "cli-pkg";
-        const subpath = "feature";
-        import(pkgName + "/" + subpath)
+        const specifier = "#" + "feature";
+        import(specifier)
           .then(m => console.log(m.default))
           .catch(e => console.log("import-failed: " + e.message));
       `,
     },
     runtimeFiles: {
-      "/node_modules/cli-pkg/package.json": JSON.stringify({
-        name: "cli-pkg",
-        exports: {
-          "./feature": "./features/main.js",
+      "/package.json": JSON.stringify({
+        name: "cli-app",
+        imports: {
+          "#feature": "./features/main.js",
         },
       }),
-      "/node_modules/cli-pkg/features/main.js": `export default "feature-from-cli-package-exports";`,
+      "/features/main.js": `export default "feature-from-cli-package-imports";`,
     },
     run: {
-      stdout: "feature-from-cli-package-exports",
+      stdout: "feature-from-cli-package-imports",
       setCwd: true,
     },
   });
@@ -455,54 +454,79 @@ console.log("PRELOAD");
     },
   });
 
-  // Test that package.json exports are loaded at runtime when autoloadPackageJson: true
-  // Uses a dynamic import path that the bundler cannot resolve at compile time
+  // Test that the project's own package.json is loaded when autoloadPackageJson: true.
+  // A self-reference through its "exports" and a "#imports" specifier both resolve.
   itBundled("compile/AutoloadPackageJsonExportsEnabled", {
     compile: {
       autoloadPackageJson: true,
     },
     files: {
       "/entry.js": /* js */ `
-        // Use a dynamic path that can't be resolved at compile time
-        const pkgName = "my-runtime-pkg";
+        const selfName = "my-app";
         const subpath = "utils";
-        import(pkgName + "/" + subpath)
-          .then(m => console.log(m.default))
+        const hash = "#" + "helper";
+        Promise.all([import(selfName + "/" + subpath), import(hash)])
+          .then(([utils, helper]) => console.log(utils.default + " " + helper.default))
           .catch(e => console.log("import-failed: " + e.message));
       `,
     },
     runtimeFiles: {
-      "/node_modules/my-runtime-pkg/package.json": JSON.stringify({
-        name: "my-runtime-pkg",
+      "/package.json": JSON.stringify({
+        name: "my-app",
         exports: {
-          "./utils": "./lib/utilities.js",
+          "./utils": "./src/utils.js",
+        },
+        imports: {
+          "#helper": "./src/helper.js",
         },
       }),
-      "/node_modules/my-runtime-pkg/lib/utilities.js": `export default "utilities-from-package-exports";`,
+      "/src/utils.js": `export default "utils-from-self-reference";`,
+      "/src/helper.js": `export default "helper-from-imports";`,
     },
     run: {
-      stdout: "utilities-from-package-exports",
+      stdout: "utils-from-self-reference helper-from-imports",
       setCwd: true,
     },
   });
 
-  // Test that package.json exports are NOT loaded when autoloadPackageJson: false (default)
-  // The import should fail because my-runtime-pkg/utils cannot be resolved without package.json exports
+  // Test that the project's own package.json is NOT loaded when autoloadPackageJson: false (default).
+  // A self-reference through its "exports" and a "#imports" specifier both fail. A package inside
+  // node_modules is still resolved through its own package.json: that is the resolution
+  // algorithm, not a config file.
   itBundled("compile/AutoloadPackageJsonExportsDisabled", {
     compile: {
       autoloadPackageJson: false,
     },
     files: {
       "/entry.js": /* js */ `
-        // Without runtime package.json, my-runtime-pkg/utils cannot be resolved
+        const selfName = "my-app";
         const pkgName = "my-runtime-pkg";
         const subpath = "utils";
-        import(pkgName + "/" + subpath)
-          .then(m => console.log(m.default))
-          .catch(() => console.log("import-failed-as-expected"));
+        const hash = "#" + "helper";
+        const self = import(selfName + "/" + subpath)
+          .then(m => m.default)
+          .catch(() => "self-reference-failed-as-expected");
+        const imports = import(hash)
+          .then(m => m.default)
+          .catch(() => "imports-failed-as-expected");
+        const dep = import(pkgName + "/" + subpath)
+          .then(m => m.default)
+          .catch(e => "import-failed: " + e.message);
+        Promise.all([self, imports, dep]).then(lines => console.log(lines.join("\\n")));
       `,
     },
     runtimeFiles: {
+      "/package.json": JSON.stringify({
+        name: "my-app",
+        exports: {
+          "./utils": "./src/utils.js",
+        },
+        imports: {
+          "#helper": "./src/helper.js",
+        },
+      }),
+      "/src/utils.js": `export default "utils-from-self-reference";`,
+      "/src/helper.js": `export default "helper-from-imports";`,
       "/node_modules/my-runtime-pkg/package.json": JSON.stringify({
         name: "my-runtime-pkg",
         exports: {
@@ -512,7 +536,7 @@ console.log("PRELOAD");
       "/node_modules/my-runtime-pkg/lib/utilities.js": `export default "utilities-from-package-exports";`,
     },
     run: {
-      stdout: "import-failed-as-expected",
+      stdout: "self-reference-failed-as-expected\nimports-failed-as-expected\nutilities-from-package-exports",
       setCwd: true,
     },
   });
@@ -579,7 +603,7 @@ console.log("PRELOAD");
       "/entry.ts": /* ts */ `
         // Both imports require runtime config files
         const tsconfigPath = "@utils/" + "helper";
-        const pkgPath = "runtime-pkg/" + "utils";
+        const pkgPath = "#" + "utils";
         Promise.all([import(tsconfigPath), import(pkgPath)])
           .then(([helper, utils]) => console.log(helper.default + " " + utils.default))
           .catch(e => console.log("import-failed: " + e.message));
@@ -595,13 +619,13 @@ console.log("PRELOAD");
         },
       }),
       "/src/utils/helper.ts": `export default "tsconfig-helper";`,
-      "/node_modules/runtime-pkg/package.json": JSON.stringify({
-        name: "runtime-pkg",
-        exports: {
-          "./utils": "./lib/utils.js",
+      "/package.json": JSON.stringify({
+        name: "both-app",
+        imports: {
+          "#utils": "./lib/utils.js",
         },
       }),
-      "/node_modules/runtime-pkg/lib/utils.js": `export default "package-utils";`,
+      "/lib/utils.js": `export default "package-utils";`,
     },
     run: {
       stdout: "tsconfig-helper package-utils",

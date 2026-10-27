@@ -433,10 +433,10 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
             "--no-compile-autoload-tsconfig   Disable autoloading of tsconfig.json at runtime in standalone executable"
         ),
         parse_param!(
-            "--compile-autoload-package-json  Enable autoloading of package.json at runtime in standalone executable (default: false)"
+            "--compile-autoload-package-json  Read the project's package.json at runtime in standalone executable (default: false)"
         ),
         parse_param!(
-            "--no-compile-autoload-package-json Disable autoloading of package.json at runtime in standalone executable"
+            "--no-compile-autoload-package-json Do not read the project's package.json at runtime in standalone executable"
         ),
         parse_param!(
             "--compile-executable-path <STR>  Path to a Bun executable to use for cross-compilation instead of downloading"

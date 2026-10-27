@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
-import { rmSync } from "fs";
+import { rmSync, symlinkSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { BundlerTestInput, itBundled as itBundledBase } from "./expectBundled";
@@ -1008,6 +1008,62 @@ describe("bundler", () => {
     },
     compile: true,
   });
+  // A package inside node_modules is resolved through its own package.json at runtime, even
+  // though the executable does not load the project's package.json by default.
+  itBundled("compile/DynamicRequirePackageJsonMainAndExports", {
+    files: {
+      "/entry.tsx": /* tsx */ `
+        const req = (x) => require(x);
+        const m = req('with-main');
+        const e = req('with-exports/feature');
+        console.log(JSON.stringify([m, e]));
+        module.exports = null;
+      `,
+      "/node_modules/with-main/package.json": JSON.stringify({ name: "with-main", main: "lib/main.js" }),
+      "/node_modules/with-main/lib/main.js": "throw new Error('Must be runtime import.')",
+      "/node_modules/with-exports/package.json": JSON.stringify({
+        name: "with-exports",
+        exports: { "./feature": "./lib/feature.js" },
+      }),
+      "/node_modules/with-exports/lib/feature.js": "throw new Error('Must be runtime import.')",
+    },
+    runtimeFiles: {
+      "/node_modules/with-main/package.json": JSON.stringify({ name: "with-main", main: "lib/main.js" }),
+      "/node_modules/with-main/lib/main.js": "module.exports = 4;",
+      "/node_modules/with-exports/package.json": JSON.stringify({
+        name: "with-exports",
+        exports: { "./feature": "./lib/feature.js" },
+      }),
+      "/node_modules/with-exports/lib/feature.js": "module.exports = 5;",
+    },
+    run: {
+      stdout: "[4,5]",
+      setCwd: true,
+    },
+    compile: true,
+  });
+  // A static import of an --external package is resolved at startup from the cwd's node_modules
+  // through the package's main field.
+  itBundled("compile/ExternalPackageWithMain", {
+    external: ["with-main"],
+    files: {
+      "/entry.tsx": /* tsx */ `
+        import value from "with-main";
+        console.log(value);
+      `,
+      "/node_modules/with-main/package.json": JSON.stringify({ name: "with-main", main: "lib/main.js" }),
+      "/node_modules/with-main/lib/main.js": "throw new Error('Must be runtime import.')",
+    },
+    runtimeFiles: {
+      "/node_modules/with-main/package.json": JSON.stringify({ name: "with-main", main: "lib/main.js" }),
+      "/node_modules/with-main/lib/main.js": "module.exports = 'external-main';",
+    },
+    run: {
+      stdout: "external-main",
+      setCwd: true,
+    },
+    compile: true,
+  });
   itBundled("compile/DynamicImport", {
     files: {
       "/entry.tsx": /* tsx */ `
@@ -1545,6 +1601,61 @@ const server = serve({
   }, 30_000);
 
   // When compiling with 8+ entry points, the main entry point should still run correctly.
+  // A package that node_modules reaches by symlink (a workspace or `bun link`) has its own
+  // package.json read at runtime: its main, its exports, and its #imports from the real path.
+  test("compile resolves a symlinked node_modules package through its package.json", async () => {
+    await using dir = tempDir("compile-linked-pkg", {
+      "app.js": `
+        const req = (x) => require(x);
+        console.log(JSON.stringify([req("linked-pkg"), req("linked-pkg/feature")]));
+      `,
+      "packages/linked-pkg/package.json": JSON.stringify({
+        name: "linked-pkg",
+        main: "lib/main.js",
+        exports: { ".": "./lib/main.js", "./feature": "./lib/feature.js" },
+        imports: { "#util": "./lib/util.js" },
+      }),
+      "packages/linked-pkg/lib/main.js": `module.exports = require("#util") + "-main";`,
+      "packages/linked-pkg/lib/feature.js": `module.exports = require("#util") + "-feature";`,
+      "packages/linked-pkg/lib/util.js": `module.exports = "util";`,
+      "node_modules/.keep": "",
+    });
+    symlinkSync(
+      join(String(dir), "packages", "linked-pkg"),
+      join(String(dir), "node_modules", "linked-pkg"),
+      "junction",
+    );
+
+    await Bun.$`${bunExe()} build --compile app.js --outfile app`.cwd(dir).env(bunEnv).throws(true);
+
+    const result = await Bun.$`./app`.cwd(dir).env(bunEnv).nothrow();
+    expect(result.stderr.toString()).toBe("");
+    expect(result.stdout.toString().trim()).toBe('["util-main","util-feature"]');
+    expect(result.exitCode).toBe(0);
+  });
+
+  // A directory on NODE_PATH is not the project's config, so its package.json is read.
+  test("compile resolves a NODE_PATH package through its package.json main", async () => {
+    await using dir = tempDir("compile-node-path-pkg", {
+      "app.js": `
+        const req = (x) => require(x);
+        console.log(req("path-pkg"));
+      `,
+      "libs/path-pkg/package.json": JSON.stringify({ name: "path-pkg", main: "lib/main.js" }),
+      "libs/path-pkg/lib/main.js": `module.exports = "from-node-path";`,
+    });
+
+    await Bun.$`${bunExe()} build --compile app.js --outfile app`.cwd(dir).env(bunEnv).throws(true);
+
+    const result = await Bun.$`./app`
+      .cwd(dir)
+      .env({ ...bunEnv, NODE_PATH: join(String(dir), "libs") })
+      .nothrow();
+    expect(result.stderr.toString()).toBe("");
+    expect(result.stdout.toString().trim()).toBe("from-node-path");
+    expect(result.exitCode).toBe(0);
+  });
+
   test("compile with 8+ entry points runs main entry correctly", async () => {
     await using dir = tempDir("compile-many-entries", {
       "app.js": `console.log("IT WORKS");`,

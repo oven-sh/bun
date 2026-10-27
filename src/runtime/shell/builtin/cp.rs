@@ -820,6 +820,7 @@ impl ShellCpTask {
                 recursive: self.opts.recursive,
                 force: !self.opts.no_clobber,
                 error_on_exist: false,
+                existing: crate::node::fs::args::CpExisting::InPlace,
             },
         );
 

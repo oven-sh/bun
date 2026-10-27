@@ -1,12 +1,30 @@
 import { describe, expect, jest, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, type DirectoryTree, isLinux, isPosix, isWindows, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  type DirectoryTree,
+  isLinux,
+  isPosix,
+  isWindows,
+  tempDir,
+  unprivilegedSpawnOptions,
+} from "harness";
 import { mkfifo } from "mkfifo";
 import { isAbsolute, join } from "path";
+
+const cpWithCallback: typeof fs.promises.cp = (src, dest, options) => {
+  const { promise, resolve, reject } = Promise.withResolvers<void>();
+  const done = (err: Error | null) => (err ? reject(err) : resolve());
+  if (options === undefined) fs.cp(src, dest, done);
+  else fs.cp(src, dest, options, done);
+  return promise;
+};
 
 const impls = [
   ["cpSync", fs.cpSync],
   ["cp", fs.promises.cp],
+  ["cp (callback)", cpWithCallback],
 ] as const;
 
 for (const [name, copy] of impls) {
@@ -129,47 +147,178 @@ for (const [name, copy] of impls) {
       assertContent(basename + "/result/a.txt", "win");
     });
 
-    test("overwriting a hard-linked file replaces the link instead of writing through it", async () => {
-      await using basename = tempDir("cp", {
-        "from/a.txt": "new",
-        "store/a.txt": "original",
-        "result": {},
+    describe("a file onto an existing file", () => {
+      // macOS clones a file over 128 KB and copies a smaller one.
+      const large = Buffer.alloc(200 * 1024, "n").toString();
+      const sizes = ["small", "large"] as const;
+      const sources = { small: "new", large };
+      const contentOf = (path: string) => {
+        const content = fs.readFileSync(path, "utf8");
+        return content === large ? "large" : content;
+      };
+
+      // Every spelling of the options that takes the native copy.
+      const nativeOptions: [string, fs.CopySyncOptions | undefined][] = [
+        ["no options", undefined],
+        ["{}", {}],
+        ["recursive: true", { recursive: true }],
+        ["force: true", { force: true }],
+        ["mode: 0", { mode: 0 }],
+        ["errorOnExist: false", { errorOnExist: false }],
+      ];
+      test.each(nativeOptions)(
+        "leaves the other hard links of the destination alone (%s)",
+        async (_spelling, options) => {
+          using dir = tempDir("cp-hard-link", { ...sources, "store-small": "original", "store-large": "original" });
+          const at = (name: string) => join(String(dir), name);
+          for (const size of sizes) {
+            fs.linkSync(at("store-" + size), at("dest-" + size));
+            await copy(at(size), at("dest-" + size), options);
+          }
+          const result = (size: string) => ({
+            dest: contentOf(at("dest-" + size)),
+            store: contentOf(at("store-" + size)),
+            storeLinks: fs.statSync(at("store-" + size)).nlink,
+          });
+          expect({ small: result("small"), large: result("large") }).toEqual({
+            small: { dest: "new", store: "original", storeLinks: 1 },
+            large: { dest: "large", store: "original", storeLinks: 1 },
+          });
+        },
+      );
+
+      test("leaves a file descriptor that is open on the destination with the old content", async () => {
+        using dir = tempDir("cp-open-fd", { src: "new", dest: "original" });
+        const dest = join(String(dir), "dest");
+        const fd = fs.openSync(dest, "r");
+        try {
+          await copy(join(String(dir), "src"), dest);
+          expect({ fd: fs.readFileSync(fd, "utf8"), path: fs.readFileSync(dest, "utf8") }).toEqual({
+            fd: "original",
+            path: "new",
+          });
+        } finally {
+          fs.closeSync(fd);
+        }
       });
-      // result/a.txt shares its inode with store/a.txt, the way a package
-      // manager hard-links node_modules files out of its cache. node unlinks
-      // the destination and creates a fresh file, so the store copy is untouched.
-      fs.linkSync(basename + "/store/a.txt", basename + "/result/a.txt");
 
-      await copy(basename + "/from/a.txt", basename + "/result/a.txt");
-
-      expect({
-        result: fs.readFileSync(basename + "/result/a.txt", "utf8"),
-        store: fs.readFileSync(basename + "/store/a.txt", "utf8"),
-        storeLinks: fs.statSync(basename + "/store/a.txt").nlink,
-      }).toEqual({
-        result: "new",
-        store: "original",
-        storeLinks: 1,
+      // POSIX runs this case in the child below, which is never root.
+      test.skipIf(!isWindows)("replaces a read-only file", async () => {
+        using dir = tempDir("cp-read-only", { src: "new", dest: "original" });
+        const dest = join(String(dir), "dest");
+        fs.chmodSync(dest, 0o444);
+        await copy(join(String(dir), "src"), dest);
+        expect(fs.readFileSync(dest, "utf8")).toBe("new");
       });
-    });
 
-    // As root, open() ignores the file mode, so the in-place overwrite this
-    // guards against succeeds either way.
-    test.skipIf(isWindows || process.getuid?.() === 0)("overwriting a read-only file replaces it", async () => {
-      await using basename = tempDir("cp", {
-        "from/a.txt": "new",
-        "result/a.txt": "original",
+      // Windows has no file mode that makes a source unreadable or a directory read-only.
+      // Serial: `unprivilegedSpawnOptions` may change and restore the modes of directories above the test's own.
+      test.skipIf(isWindows).serial("obeys the modes of the destination, its directory and the source", async () => {
+        using dir = tempDir("cp-modes", {
+          ...sources,
+          "fixture.mjs": `
+            import fs from "node:fs";
+            import { join } from "node:path";
+            const forms = {
+              "cpSync": fs.cpSync,
+              "cp": fs.promises.cp,
+              "cp (callback)": (src, dest) =>
+                new Promise((resolve, reject) => fs.cp(src, dest, err => (err ? reject(err) : resolve()))),
+            };
+            const copy = forms[process.argv[2]];
+            const large = fs.readFileSync("large", "utf8");
+            const contentOf = path => {
+              const content = fs.readFileSync(path, "utf8");
+              return content === large ? "large" : content;
+            };
+            const attempt = async (src, dest) => {
+              try {
+                await copy(join(process.cwd(), src), join(process.cwd(), dest));
+                return "copied";
+              } catch (e) {
+                return { code: e.code, syscall: e.syscall, path: e.path === join(process.cwd(), dest) ? dest : e.path };
+              }
+            };
+            const results = {};
+            for (const size of ["small", "large"]) {
+              results[size] = {
+                readOnlyDest: {
+                  result: await attempt(size, "read-only-" + size),
+                  dest: contentOf("read-only-" + size),
+                  mode: fs.statSync("read-only-" + size).mode & 0o777,
+                },
+                unreadableSource: {
+                  result: (await attempt("unreadable-" + size, "kept-" + size)).code,
+                  dest: contentOf("kept-" + size),
+                },
+                readOnlyDirectory: {
+                  result: await attempt(size, join("locked", size)),
+                  dest: contentOf(join("locked", size)),
+                },
+              };
+            }
+            console.log(JSON.stringify(results));
+          `,
+          "read-only-small": "original",
+          "read-only-large": "original",
+          "unreadable-small": sources.small,
+          "unreadable-large": sources.large,
+          "kept-small": "original",
+          "kept-large": "original",
+          locked: { small: "original", large: "original" },
+        });
+        const at = (name: string) => join(String(dir), name);
+        const sourceMode = fs.statSync(at("small")).mode & 0o777;
+        for (const size of sizes) {
+          fs.chmodSync(at("read-only-" + size), 0o444);
+          fs.chmodSync(at("unreadable-" + size), 0o000);
+        }
+        fs.chmodSync(at("locked"), 0o555);
+        try {
+          using unprivileged = unprivilegedSpawnOptions(String(dir));
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "fixture.mjs", name],
+            cwd: String(dir),
+            env: bunEnv,
+            stdout: "pipe",
+            stderr: "pipe",
+            ...unprivileged,
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          expect(stderr).toBe("");
+          const expected = (size: (typeof sizes)[number]) => ({
+            readOnlyDest: { result: "copied", dest: contentOf(at(size)), mode: sourceMode },
+            // node unlinks before it opens the source, so there the destination is gone.
+            unreadableSource: { result: "EACCES", dest: "original" },
+            readOnlyDirectory: {
+              result: { code: "EACCES", syscall: "unlink", path: join("locked", size) },
+              dest: "original",
+            },
+          });
+          expect(JSON.parse(stdout)).toEqual({ small: expected("small"), large: expected("large") });
+          expect(exitCode).toBe(0);
+        } finally {
+          fs.chmodSync(at("locked"), 0o755);
+        }
       });
-      fs.chmodSync(basename + "/result/a.txt", 0o444);
 
-      await copy(basename + "/from/a.txt", basename + "/result/a.txt");
-
-      expect({
-        content: fs.readFileSync(basename + "/result/a.txt", "utf8"),
-        mode: fs.statSync(basename + "/result/a.txt").mode & 0o777,
-      }).toEqual({
-        content: "new",
-        mode: fs.statSync(basename + "/from/a.txt").mode & 0o777,
+      test("two copies started together both finish with one whole source at the destination", async () => {
+        const a = Buffer.alloc(64 * 1024, "a").toString();
+        const b = Buffer.alloc(64 * 1024, "b").toString();
+        using dir = tempDir("cp-together", { a, b, existing: "original" });
+        const at = (...names: string[]) => join(String(dir), ...names);
+        const together = (dest: string) => Promise.all([copy(at("a"), dest), copy(at("b"), dest)]);
+        const which = (dest: string) => {
+          const content = fs.readFileSync(dest, "utf8");
+          return content === a ? "a" : content === b ? "b" : "neither";
+        };
+        const results: string[] = [];
+        for (let round = 0; round < 10; round++) {
+          await together(at("existing"));
+          await together(at("new", String(round), "dest"));
+          results.push(which(at("existing")), which(at("new", String(round), "dest")));
+        }
+        expect(results.filter(result => result === "neither")).toEqual([]);
       });
     });
 
@@ -472,29 +621,6 @@ test("cp with missing callback throws", () => {
     // @ts-expect-error
     fs.cp("a", "b" as any);
   }).toThrow(/"cb"/);
-});
-
-test("callback fs.cp overwriting a hard-linked file replaces the link instead of writing through it", async () => {
-  await using basename = tempDir("cp", {
-    "from/a.txt": "new",
-    "store/a.txt": "original",
-    "result": {},
-  });
-  fs.linkSync(join(basename, "store", "a.txt"), join(basename, "result", "a.txt"));
-
-  const { promise, resolve, reject } = Promise.withResolvers<void>();
-  fs.cp(join(basename, "from", "a.txt"), join(basename, "result", "a.txt"), err => (err ? reject(err) : resolve()));
-  await promise;
-
-  expect({
-    result: fs.readFileSync(join(basename, "result", "a.txt"), "utf8"),
-    store: fs.readFileSync(join(basename, "store", "a.txt"), "utf8"),
-    storeLinks: fs.statSync(join(basename, "store", "a.txt")).nlink,
-  }).toEqual({
-    result: "new",
-    store: "original",
-    storeLinks: 1,
-  });
 });
 
 // On Windows, _copySingleFileSync's reparse-point branch opens a handle to the

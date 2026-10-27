@@ -973,7 +973,7 @@ function cpSync(src, dest, options) {
   if (!filter && !dereference && !preserveTimestamps && !verbatimSymlinks && !mode && !errorOnExist && force) {
     const { ok, checked } = tryNativeFastPathSync(src, dest, options);
     if (ok) {
-      return fs.cpSync(src, dest, recursive, errorOnExist, force, mode);
+      return fs.cpSync(src, dest, recursive, errorOnExist, force, mode, checked.destStat != null);
     }
     return cpSyncFn(src, dest, options, checked);
   }

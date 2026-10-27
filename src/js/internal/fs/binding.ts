@@ -81,8 +81,24 @@ type WatchFileListener = (curr: import("node:fs").Stats, prev: import("node:fs")
 
 interface FsBinding
   extends Pick<NodeFS, SyncMethod | "Dirent" | "Stats">, Pick<NodeFSPromises, PathPromiseMethod>, Promisified {
-  cp(src: string, dest: string, recursive: boolean, errorOnExist: boolean, force: boolean, mode: number): Promise<void>;
-  cpSync(src: string, dest: string, recursive: boolean, errorOnExist: boolean, force: boolean, mode: number): void;
+  cp(
+    src: string,
+    dest: string,
+    recursive: boolean,
+    errorOnExist: boolean,
+    force: boolean,
+    mode: number,
+    destSeen: boolean,
+  ): Promise<void>;
+  cpSync(
+    src: string,
+    dest: string,
+    recursive: boolean,
+    errorOnExist: boolean,
+    force: boolean,
+    mode: number,
+    destSeen: boolean,
+  ): void;
   read(
     fd: number,
     buffer: NodeJS.ArrayBufferView,

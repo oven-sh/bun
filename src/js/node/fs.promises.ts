@@ -187,7 +187,7 @@ async function cp(src, dest, options) {
   if (!filter && !dereference && !preserveTimestamps && !verbatimSymlinks && !mode && !errorOnExist && force) {
     const { ok, checked } = await require("internal/fs/cp").tryNativeFastPath(src, dest, options);
     if (ok) {
-      return fs.cp(src, dest, recursive, errorOnExist, force, mode);
+      return fs.cp(src, dest, recursive, errorOnExist, force, mode, checked.destStat != null);
     }
     return require("internal/fs/cp").cpFn(src, dest, options, checked);
   }

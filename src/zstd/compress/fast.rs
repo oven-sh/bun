@@ -484,6 +484,16 @@ impl<'a> Segments<'a> {
         len + self.near.count(ip + len, 0)
     }
 
+    /// [`Self::count_backwards`], with a branch on whether `ip` is `anchor`: whoever got there without a step is likely
+    /// to do so again.
+    #[inline(always)]
+    pub(super) fn count_backwards_if_any(self, ip: u32, anchor: u32, place: u32) -> u32 {
+        if ip == anchor {
+            return 0;
+        }
+        self.count_backwards(ip, anchor, place)
+    }
+
     /// How many bytes before the position `ip`, down to `anchor`, are the same as those before `place` in its segment.
     #[inline(always)]
     pub(super) fn count_backwards(self, ip: u32, anchor: u32, place: u32) -> u32 {
@@ -721,7 +731,7 @@ impl Finder {
                 let ip = current0.wrapping_sub(base_index);
                 rep_offset2 = rep_offset1;
                 rep_offset1 = window.place_of(ip) - place;
-                let back = window.count_backwards(ip, sink.anchor, place);
+                let back = window.count_backwards_if_any(ip, sink.anchor, place);
                 break (ip, place, back, offset_to_offbase(rep_offset1), next);
             };
 
@@ -964,7 +974,7 @@ impl Finder {
 
             if let Some(place) = place {
                 let end = ip0 + 4 + window.count(ip0 + 4, place + 4);
-                let back = window.count_backwards(ip0, sink.anchor, place);
+                let back = window.count_backwards_if_any(ip0, sink.anchor, place);
                 rep_offset2 = rep_offset1;
                 rep_offset1 = window.place_of(ip0) - place;
                 sink.store::<32>(ip0 - back, end, offset_to_offbase(rep_offset1));

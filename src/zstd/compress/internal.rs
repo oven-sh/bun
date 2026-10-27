@@ -948,6 +948,10 @@ impl<'a> Near<'a> {
         match_pos: u32,
         match_low: u32,
     ) -> u32 {
+        // Whoever got here without a step is likely to do so again.
+        if pos == anchor {
+            return 0;
+        }
         let most = (pos - anchor).min(match_pos - match_low);
         self.count_backwards_in(pos, self, match_pos, most)
     }

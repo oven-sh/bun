@@ -578,7 +578,7 @@ impl Finder {
                     };
                 let end = ip + known + window.count(ip + known, place + known);
                 look_ahead(near, end, hash_long, long, hash_small, small);
-                let back = window.count_backwards(ip, sink.anchor, place);
+                let back = window.count_backwards_if_any(ip, sink.anchor, place);
                 offset_2 = offset_1;
                 offset_1 = window.place_of(ip) - place;
                 sink.store::<16>(ip - back, end, offset_to_offbase(offset_1));

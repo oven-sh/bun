@@ -1624,10 +1624,10 @@ impl<'a> Executor<'_, 'a> {
         let mut remaining = nb_seq;
         // Long copies go on while the next sequences are decoded, if that is what comes next. And a batch of a few
         // sequences is not worth it.
-        if (seq_state.tables.matches_are_long() || nb_seq <= MAX_ONE_BY_ONE) && !LONG && !self.split
+        if (seq_state.tables.matches_are_long() || nb_seq <= MAX_ONE_BY_ONE && !LONG) && !self.split
         {
             let mut exec = self.fork();
-            while remaining > 0 {
+            while remaining > ahead.len() {
                 let sequence = seq_state.decode_sequence(remaining == 1);
                 remaining -= 1;
                 exec.exec_sequence::<false>(sequence)?;

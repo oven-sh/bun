@@ -105,7 +105,7 @@ impl Histogram {
         // The largest rank below which there are too few values with a probability of at most `alpha / 2`.
         let (mut low, mut high) = (0, n);
         while low < high {
-            let middle = low + (high - low + 1) / 2;
+            let middle = high - (high - low) / 2;
             if binomial_cdf(middle - 1, n, p) <= alpha / 2.0 {
                 low = middle;
             } else {

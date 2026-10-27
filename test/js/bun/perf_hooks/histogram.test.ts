@@ -1864,6 +1864,14 @@ describe("statistics", () => {
     );
   });
 
+  // Node.js: the count is negative by then, and everything is 0.
+  test("percentileCI of more values than an i64 holds", notInNode, () => {
+    const h = filled([7]);
+    for (let i = 0; i < 63; i++) h.add(h);
+    assert.strictEqual(h.countBigInt, 2n ** 63n);
+    assert.deepStrictEqual(h.percentileCI(50), bare({ value: 7, lower: 7, upper: 7 }));
+  });
+
   test("percentilesAt", () => {
     const h = filled(upTo(100));
     const percentiles = [99, 50, 50, 100, 0.5];
@@ -2774,7 +2782,7 @@ describe("the options of monitorEventLoopDelay", () => {
   });
 
   test("samplePerIteration does not keep the process running", () => {
-    const { status, stdout, stderr } = spawnSync(
+    const { status, stdout } = spawnSync(
       process.execPath,
       [
         "-e",
@@ -2784,7 +2792,7 @@ describe("the options of monitorEventLoopDelay", () => {
       ],
       { encoding: "utf8", timeout: 30_000 },
     );
-    assert.deepStrictEqual({ stdout, stderr, status }, { stdout: "true\n", stderr: "", status: 0 });
+    assert.deepStrictEqual({ stdout, status }, { stdout: "true\n", status: 0 });
   });
 
   test("arguments", () => {

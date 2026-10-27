@@ -35,6 +35,7 @@ pub(crate) struct Expansion {
     /// `transition_to_glob_state`; metacharacter bytes from any other source
     /// (JS interpolation, quoted text, `$var`, command substitution) are data
     /// and must not change the expansion structure or broaden the glob.
+    /// A `GlobText` atom records the offsets of its `GLOB_TEXT_SYNTAX` bytes.
     pub(crate) meta_offsets: Vec<u32>,
     pub(crate) child_script: Option<NodeId>,
     /// Whether the in-flight command substitution was `"$(...)"` (no IFS
@@ -284,7 +285,7 @@ impl Expansion {
         // `${...}` interpolations — are data: backslash-escape them so the
         // brace lexer cannot be steered into emitting extra argv words.
         // (`meta_offsets` also records literal `*`/`**` positions for the glob
-        // path; those are inert here since `*` is not in the escape set.)
+        // path, and `GLOB_TEXT_SYNTAX` bytes; none of those is in the escape set.)
         let mut escaped: Vec<u8> = Vec::with_capacity(me.current_out.len());
         let mut next_meta = 0usize;
         for (i, &b) in me.current_out.iter().enumerate() {
@@ -378,14 +379,56 @@ impl Expansion {
     /// literal character.
     /// `current_out` itself is not mutated: the no-match error message and the
     /// assignment-position literal fallback keep using the original word.
-    fn neutralize_glob_metachars(current_out: &[u8], meta_offsets: &[u32]) -> Vec<u8> {
+    /// A recorded `[` or `]` that is not part of a class (see `push_class`) is neutralized too.
+    fn neutralize_glob_metachars(
+        current_out: &[u8],
+        meta_offsets: &[u32],
+        brace_expands: bool,
+    ) -> Vec<u8> {
+        debug_assert!(meta_offsets.is_sorted());
         let mut pattern: Vec<u8> = Vec::with_capacity(current_out.len());
         let mut next_meta = 0usize;
+        // Where the last class that `push_class` wrote ends in `current_out`.
+        let mut class_end = 0usize;
+        // Brackets that open before this index are not a class. See `push_class`.
+        let mut no_class_before = 0usize;
+        let mut open_braces = 0usize;
         for (i, &b) in current_out.iter().enumerate() {
-            if next_meta < meta_offsets.len() && meta_offsets[next_meta] as usize == i {
-                next_meta += 1;
-                pattern.push(b);
+            let is_syntax = next_meta < meta_offsets.len() && meta_offsets[next_meta] as usize == i;
+            next_meta += usize::from(is_syntax);
+            if i < class_end {
                 continue;
+            }
+            if is_syntax {
+                match b {
+                    b'[' if i >= no_class_before => {
+                        let open_braces = brace_expands.then_some(open_braces);
+                        match Self::push_class(
+                            &mut pattern,
+                            current_out,
+                            i,
+                            meta_offsets,
+                            open_braces,
+                        ) {
+                            Ok(end) => {
+                                class_end = end;
+                                continue;
+                            }
+                            Err(not_in_a_class) => no_class_before = not_in_a_class,
+                        }
+                    }
+                    // Outside a class these are the characters themselves, like the data ones below.
+                    b'[' | b']' | b'!' => {}
+                    _ => {
+                        match b {
+                            b'{' => open_braces += 1,
+                            b'}' => open_braces = open_braces.saturating_sub(1),
+                            _ => {}
+                        }
+                        pattern.push(b);
+                        continue;
+                    }
+                }
             }
             match b {
                 // `[c]` is a single-character class containing only `c`.
@@ -433,6 +476,128 @@ impl Expansion {
         pattern
     }
 
+    /// `Ok` is the index after the class that was appended. `Err` is the index before which no brackets are a class.
+    fn push_class(
+        pattern: &mut Vec<u8>,
+        word: &[u8],
+        open: usize,
+        meta_offsets: &[u32],
+        open_braces: Option<usize>,
+    ) -> Result<usize, usize> {
+        let start = pattern.len();
+        let end = Self::write_class(pattern, word, open, meta_offsets, open_braces);
+        match end {
+            // The matcher reads what was written as exactly one class.
+            Ok(_) => debug_assert_eq!(
+                bun_glob::matcher::class_end(pattern, start),
+                Some(pattern.len())
+            ),
+            Err(_) => pattern.truncate(start),
+        }
+        end
+    }
+
+    /// Reads the brackets at `open` as bash does, with each byte that is not live as a member, and writes the class.
+    fn write_class(
+        pattern: &mut Vec<u8>,
+        word: &[u8],
+        open: usize,
+        meta_offsets: &[u32],
+        open_braces: Option<usize>,
+    ) -> Result<usize, usize> {
+        let is_live = |at: usize| meta_offsets.binary_search(&(at as u32)).is_ok();
+        // The character at `at`, which is a member unless it is the `]` that closes the class.
+        let member = |at: usize| {
+            let byte = *word.get(at).ok_or(word.len())?;
+            let cuts_brackets = match byte {
+                // The walker splits the pattern at each separator before the matcher reads a class.
+                b'/' => true,
+                b'\\' => cfg!(windows),
+                // Brace expansion comes first. `open_braces` is the count of open `{` in a word that brace-expands.
+                b'{' | b'}' => open_braces.is_some() && is_live(at),
+                b',' => open_braces.is_some_and(|open| open > 0) && is_live(at),
+                // `[:alpha:]`, `[.a.]` and `[=a=]` are POSIX forms that the matcher does not have. No class has one.
+                b'[' if matches!(word.get(at + 1), Some(b':' | b'.' | b'=')) && is_live(at) => {
+                    return Err(at + 1);
+                }
+                _ => false,
+            };
+            let character = bun_core::strings::utf8_codepoint_with_fffd(&word[at..]);
+            if cuts_brackets || character.fail {
+                return Err(at);
+            }
+            Ok(&word[at..at + usize::from(character.len)])
+        };
+        // The matcher reads `\\` in a class as the one member `\`.
+        let push = |pattern: &mut Vec<u8>, member: &[u8]| {
+            if member == b"\\" {
+                pattern.push(b'\\');
+            }
+            pattern.extend_from_slice(member);
+        };
+
+        // Only a live `!` or `^` negates, only a live `]` closes, and only a live `-` makes a range.
+        let negated = matches!(word.get(open + 1), Some(b'!' | b'^')) && is_live(open + 1);
+        let first = open + 1 + usize::from(negated);
+        pattern.extend_from_slice(&word[open..first]);
+        let members = pattern.len();
+        let (mut bracket, mut dash, mut backslash) = (false, false, false);
+        let mut at = first;
+        let close = loop {
+            if at > first && word.get(at) == Some(&b']') && is_live(at) {
+                break at;
+            }
+            let mut low = member(at)?;
+            at += low.len();
+            let is_range = word.get(at) == Some(&b'-')
+                && is_live(at)
+                && !(word.get(at + 1) == Some(&b']') && is_live(at + 1));
+            if !is_range {
+                match low {
+                    b"]" => bracket = true,
+                    b"-" => dash = true,
+                    _ => push(pattern, low),
+                }
+                continue;
+            }
+            let mut high = member(at + 1)?;
+            at += 1 + high.len();
+            // A range is written where it is. An end that cannot be (`-`, `]`) is a member beside the rest of the range.
+            if low == b"-" {
+                dash |= high[0] >= b'-';
+                low = b".";
+            }
+            if low == b"]" {
+                bracket |= high[0] >= b']';
+                low = b"^";
+            }
+            if high == b"]" {
+                bracket |= low[0] <= b']';
+                backslash |= low[0] <= b'\\';
+                high = b"[";
+            }
+            push(pattern, low);
+            pattern.push(b'-');
+            push(pattern, high);
+        };
+        // The matcher has no escape that every platform keeps: a `]` member is one only first, and a `-` only last.
+        if bracket {
+            pattern.insert(members, b']');
+        } else if !negated && matches!(pattern.get(members), Some(b'!' | b'^')) {
+            // The empty range keeps the member from the place where it negates.
+            pattern.splice(members..members, *b"b-a");
+        }
+        // No file name has a `\` on Windows, where the pattern cannot hold one.
+        if backslash && cfg!(not(windows)) {
+            pattern.extend_from_slice(b"\\\\");
+        }
+        if dash {
+            pattern.push(b'-');
+        }
+        pattern.push(b']');
+        Ok(close + 1)
+    }
+
     /// Kick off an off-thread
     /// glob walk for the assembled pattern in `current_out`.
     fn transition_to_glob_state(interp: &Interpreter, this: NodeId) -> Yield {
@@ -442,7 +607,11 @@ impl Expansion {
         {
             let me = interp.as_expansion_mut(this);
             me.state = ExpansionState::Glob;
-            pattern = Self::neutralize_glob_metachars(&me.current_out, &me.meta_offsets);
+            pattern = Self::neutralize_glob_metachars(
+                &me.current_out,
+                &me.meta_offsets,
+                me.node.get().has_brace_expansion(),
+            );
             cwd = me.base.shell().cwd().to_vec();
         }
         let walker = match bun_glob::BunGlobWalkerZ::init_with_cwd(
@@ -480,8 +649,17 @@ impl Expansion {
         vm_args_utf8: &mut Vec<bun_core::Utf8Bytes<'static>>,
     ) -> bool {
         use crate::shell::env_str::EnvStr;
+        use bun_shell_parser::parse::GLOB_TEXT_SYNTAX;
         match atom {
             ast::SimpleAtom::Text(txt) => out.extend_from_slice(txt),
+            ast::SimpleAtom::GlobText(txt) => {
+                for (at, &byte) in txt.iter().enumerate() {
+                    if bun_core::strings::contains_char(GLOB_TEXT_SYNTAX, byte) {
+                        meta_offsets.push((out.len() + at) as u32);
+                    }
+                }
+                out.extend_from_slice(txt);
+            }
             ast::SimpleAtom::QuotedEmpty => {
                 // Sets `has_quoted_empty = true` so an empty word is still pushed
                 // as an arg. The flag is *required* — without it Cmd cannot

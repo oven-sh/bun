@@ -71,6 +71,15 @@ describe("bun exec", () => {
     }
   });
 
+  TestBuilder.command`${BUN} exec ${"echo [ab]*.?s"}`
+    .env(bunEnv)
+    .ensureTempDir()
+    .file("apple.js", "")
+    .file("banana.ts", "")
+    .file("cherry.js", "")
+    .stdout(out => expect(out.trimEnd().split(" ").sort()).toEqual(["apple.js", "banana.ts"]))
+    .runAsTest("? and [...] in a word with * are glob syntax");
+
   TestBuilder.command`${BUN} exec cd`
     .env(bunEnv)
     .exitCode(0)

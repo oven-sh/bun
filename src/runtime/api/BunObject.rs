@@ -193,7 +193,11 @@ pub(crate) fn shell_escape<'a>(
     heap: &JsHeap<'a>,
     input: &BunString,
 ) -> bindgen::Result<'a, BunString> {
-    if !bun_shell_parser::needs_escape_bunstr(input) {
+    // A `!` or `^` negates a `[...]` class that the script has around the escaped value. Quoted, it is a member.
+    let negates_class = b"!^"
+        .iter()
+        .any(|&byte| input.index_of_ascii_char(byte).is_some());
+    if !bun_shell_parser::needs_escape_bunstr(input) && !negates_class {
         return Ok(input.clone());
     }
 

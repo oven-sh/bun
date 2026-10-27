@@ -29,9 +29,9 @@ pub(crate) use super::subproc; // declared once in `shell/mod.rs`
 // (still-draft) JSC bridge below. This file keeps the JSC-coupled half
 // (ShellErr, GlobalJS/Mini, shell_cmd_from_js, ShellSrcBuilder, TestingAPIs).
 pub(crate) use bun_shell_parser::parse::{
-    IfClauseTok, LEX_JS_OBJREF_PREFIX, LEX_JS_REF_TERMINATOR, LEX_JS_STRING_PREFIX, LexerAscii,
-    LexerUnicode, ParseError, Parser, Token, ast, is_if_clause_keyword_bunstr, needs_escape_bunstr,
-    needs_escape_utf8_ascii_latin1,
+    GLOB_TEXT_SYNTAX, IfClauseTok, LEX_JS_OBJREF_PREFIX, LEX_JS_REF_TERMINATOR,
+    LEX_JS_STRING_PREFIX, LexerAscii, LexerUnicode, ParseError, Parser, Token, ast,
+    is_if_clause_keyword_bunstr, needs_escape_bunstr, needs_escape_utf8_ascii_latin1,
 };
 
 #[cfg(windows)]
@@ -267,7 +267,8 @@ pub(crate) fn shell_cmd_from_js(
     out_script: &mut Vec<u8>,
     out_jsobjs: &mut MarkedArgumentBuffer,
 ) -> JsResult<()> {
-    let mut builder = ShellSrcBuilder::init(global, out_script, jsstrings);
+    let mut author_bracket = AuthorBracket::default();
+    let mut builder = ShellSrcBuilder::init(global, out_script, jsstrings, &mut author_bracket);
     let mut jsobjref_buf = [0u8; 128];
 
     let mut string_iter = string_args.array_iterator(global)?;
@@ -292,10 +293,11 @@ pub(crate) fn shell_cmd_from_js(
                 out_jsobjs,
                 out_script,
                 jsstrings,
+                &mut author_bracket,
                 &mut jsobjref_buf[..],
                 0,
             )?;
-            builder = ShellSrcBuilder::init(global, out_script, jsstrings);
+            builder = ShellSrcBuilder::init(global, out_script, jsstrings, &mut author_bracket);
         }
         i += 1;
     }
@@ -310,10 +312,11 @@ pub(crate) fn handle_template_value(
     out_jsobjs: &mut MarkedArgumentBuffer,
     out_script: &mut Vec<u8>,
     jsstrings: &mut Vec<BunString>,
+    author_bracket: &mut AuthorBracket,
     jsobjref_buf: &mut [u8],
     depth: u32,
 ) -> JsResult<()> {
-    let mut builder = ShellSrcBuilder::init(global, out_script, jsstrings);
+    let mut builder = ShellSrcBuilder::init(global, out_script, jsstrings, author_bracket);
     if !template_value.is_empty() {
         if let Some(_array_buffer) = template_value.as_array_buffer(global) {
             let idx = out_jsobjs.size();
@@ -423,12 +426,14 @@ pub(crate) fn handle_template_value(
                     out_jsobjs,
                     out_script,
                     jsstrings,
+                    author_bracket,
                     jsobjref_buf,
                     depth + 1,
                 )?;
                 if i < last {
                     let str = BunString::static_(" ");
-                    let mut b = ShellSrcBuilder::init(global, out_script, jsstrings);
+                    let mut b =
+                        ShellSrcBuilder::init(global, out_script, jsstrings, author_bracket);
                     if !b.append_bun_str::<false>(str)? {
                         return Err(global
                             .throw(format_args!("Shell script string contains invalid UTF-16")));
@@ -492,10 +497,29 @@ pub(crate) fn handle_template_value(
 
 // ───────────────────────────── ShellSrcBuilder ─────────────────────────────
 
+/// Whether the script has a `[` so far. Only its author can write one: a value that has one is a string ref.
+#[derive(Default)]
+pub(crate) struct AuthorBracket {
+    seen: bool,
+    /// The length of the script that was searched for it.
+    searched: usize,
+}
+
+impl AuthorBracket {
+    fn is_in(&mut self, script: &[u8]) -> bool {
+        if !self.seen {
+            self.seen = strings::contains_char(&script[self.searched..], b'[');
+            self.searched = script.len();
+        }
+        self.seen
+    }
+}
+
 pub(crate) struct ShellSrcBuilder<'a> {
     pub global_this: &'a JSGlobalObject,
     pub(crate) outbuf: &'a mut Vec<u8>,
     pub(crate) jsstrs_to_escape: &'a mut Vec<BunString>,
+    pub(crate) author_bracket: &'a mut AuthorBracket,
     pub(crate) jsstr_ref_buf: [u8; 128],
 }
 
@@ -504,11 +528,13 @@ impl<'a> ShellSrcBuilder<'a> {
         global: &'a JSGlobalObject,
         outbuf: &'a mut Vec<u8>,
         jsstrs_to_escape: &'a mut Vec<BunString>,
+        author_bracket: &'a mut AuthorBracket,
     ) -> Self {
         Self {
             global_this: global,
             outbuf,
             jsstrs_to_escape,
+            author_bracket,
             jsstr_ref_buf: [0u8; 128],
         }
     }
@@ -552,6 +578,7 @@ impl<'a> ShellSrcBuilder<'a> {
             if needs_escape_bunstr(&bunstr)
                 || is_if_clause_keyword_bunstr(&bunstr)
                 || self.outbuf_ends_with_var_ref()
+                || self.may_shape_class(|byte| bunstr.index_of_ascii_char(byte).is_some())
             {
                 self.append_js_str_ref(bunstr)?;
                 return Ok(true);
@@ -582,6 +609,7 @@ impl<'a> ShellSrcBuilder<'a> {
             if needs_escape_utf8_ascii_latin1(utf8)
                 || IfClauseTok::from_text(utf8).is_some()
                 || self.outbuf_ends_with_var_ref()
+                || self.may_shape_class(|byte| strings::contains_char(utf8, byte))
             {
                 self.append_js_str_ref(BunString::clone_utf8(utf8))?;
                 return Ok(true);
@@ -590,6 +618,12 @@ impl<'a> ShellSrcBuilder<'a> {
 
         self.append_utf8_impl(utf8)?;
         Ok(true)
+    }
+
+    /// Copied as it is, a value with a `GLOB_TEXT_SYNTAX` byte could negate or widen a `[...]` class of the script.
+    fn may_shape_class(&mut self, value_has: impl Fn(u8) -> bool) -> bool {
+        self.author_bracket.is_in(self.outbuf)
+            && GLOB_TEXT_SYNTAX.iter().any(|&byte| value_has(byte))
     }
 
     fn outbuf_ends_with_var_ref(&self) -> bool {

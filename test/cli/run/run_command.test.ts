@@ -258,6 +258,28 @@ for (const mode of ctrlCModes) {
   });
 }
 
+for (const args of [["run", "--shell=bun", "go"], ["go.sh"]]) {
+  test.concurrent(`the Bun shell expands ? and [...] in a word with * (bun ${args.join(" ")})`, async () => {
+    using dir = tempDir("run-shell-glob-class", {
+      "package.json": JSON.stringify({ name: "t", scripts: { go: "echo [ab]*.?s" } }),
+      "go.sh": "echo [ab]*.?s\n",
+      "apple.js": "",
+      "banana.ts": "",
+      "cherry.js": "",
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout.trimEnd().split(" ").sort()).toEqual(["apple.js", "banana.ts"]);
+    expect(exitCode).toBe(0);
+  });
+}
+
 // A signal that arrives before `bun run` knows the script's pid is forwarded once the spawn returns.
 // `bun run` blocks every signal during the spawn, which is visible in /proc/<pid>/status.
 test.skipIf(!isLinux)(

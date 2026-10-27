@@ -665,6 +665,8 @@ pub mod ast {
         Var(&'arena [u8]),
         VarArgv(u8),
         Text(&'arena [u8]),
+        /// Unquoted text of the script in a word that globs. Its `GLOB_TEXT_SYNTAX` bytes are pattern syntax.
+        GlobText(&'arena [u8]),
         /// An empty string from a quoted context (e.g. "", '', or ${''}). Preserved as an
         /// explicit empty argument during expansion, unlike unquoted empty text which is dropped.
         QuotedEmpty,
@@ -702,9 +704,8 @@ pub mod ast {
 pub struct Parser<'bump> {
     pub(crate) strpool: &'bump [u8],
     pub(crate) tokens: &'bump [Token],
-    /// Strpool ranges that came from interpolated JS values (`\x08__bunstr_N`
-    /// refs). See `Lexer::js_string_ranges`.
-    pub(crate) js_string_ranges: &'bump [TextRange],
+    /// Strpool ranges that hold data, not shell syntax. See `Lexer::data_ranges`.
+    pub(crate) data_ranges: &'bump [TextRange],
     pub(crate) alloc: &'bump Bump,
     pub(crate) current: u32,
     pub errors: bun_alloc::ArenaVec<'bump, ParserError<'bump>>,
@@ -740,7 +741,7 @@ impl<'bump> Parser<'bump> {
         Parser {
             strpool: lex_result.strpool,
             tokens: lex_result.tokens,
-            js_string_ranges: lex_result.js_string_ranges,
+            data_ranges: lex_result.data_ranges,
             alloc: bump,
             current: 0,
             errors: bun_alloc::ArenaVec::new_in(bump),
@@ -758,7 +759,7 @@ impl<'bump> Parser<'bump> {
         Parser {
             strpool: self.strpool,
             tokens: self.tokens,
-            js_string_ranges: self.js_string_ranges,
+            data_ranges: self.data_ranges,
             alloc: self.alloc,
             current: self.current,
             errors: core::mem::replace(&mut self.errors, bun_alloc::ArenaVec::new_in(self.alloc)),
@@ -1041,7 +1042,7 @@ impl<'bump> Parser<'bump> {
                             return Err(ParseError::Expected.into());
                         }
 
-                        let arg = match self.parse_atom()? {
+                        let arg = match self.parse_atom_without_glob_text()? {
                             Some(a) => a,
                             None => {
                                 self.add_error(format_args!(
@@ -1079,7 +1080,7 @@ impl<'bump> Parser<'bump> {
         //     arg1 -eq arg2
         // Again the token associated with the operator (in this case `-eq`) *must* be a .Text token.
 
-        let arg1 = match self.parse_atom()? {
+        let arg1 = match self.parse_atom_without_glob_text()? {
             Some(a) => a,
             None => {
                 self.add_error(format_args!(
@@ -1120,7 +1121,7 @@ impl<'bump> Parser<'bump> {
                     return Err(ParseError::Unsupported.into());
                 }
 
-                let arg2 = match self.parse_atom()? {
+                let arg2 = match self.parse_atom_without_glob_text()? {
                     Some(a) => a,
                     None => {
                         self.add_error(format_args!(
@@ -1411,7 +1412,7 @@ impl<'bump> Parser<'bump> {
                         // An `=` that came from an interpolated JS value is data, not
                         // shell syntax — it must not turn the word into an env
                         // assignment (e.g. interpolating "LD_PRELOAD=/evil.so").
-                        if self.is_interpolated_position(txtrng.start + eq_idx) {
+                        if self.is_data_position(txtrng.start + eq_idx) {
                             break 'var_decl None;
                         }
                         let label = &txt[..eq_idx as usize];
@@ -1446,7 +1447,7 @@ impl<'bump> Parser<'bump> {
                             });
                         }
 
-                        let right = match self.parse_atom()? {
+                        let right = match self.parse_atom_without_glob_text()? {
                             Some(a) => a,
                             None => {
                                 self.add_error(format_args!("Expected an atom"))?;
@@ -1454,7 +1455,13 @@ impl<'bump> Parser<'bump> {
                             }
                         };
                         let left = ast::Atom::Simple(ast::SimpleAtom::Text(txt_value));
-                        let merged = left.merge(&right, self.alloc)?;
+                        let mut merged = left.merge(&right, self.alloc)?;
+                        if let ast::Atom::Compound(word) = &mut merged
+                            && word.glob_hint
+                            && let Some(split) = self.split_glob_text(start_idx, word.atoms)
+                        {
+                            word.atoms = split.into_bump_slice();
+                        }
                         break 'var_decl Some(ast::Assign {
                             label,
                             value: merged,
@@ -1475,7 +1482,137 @@ impl<'bump> Parser<'bump> {
         }
     }
 
+    #[inline]
     fn parse_atom(&mut self) -> ParseResult<Option<ast::Atom<'bump>>> {
+        self.parse_atom_impl(true)
+    }
+
+    /// A word with no `GlobText`: its `?` and `[...]` are the characters unless the caller splits the glob text.
+    #[inline]
+    fn parse_atom_without_glob_text(&mut self) -> ParseResult<Option<ast::Atom<'bump>>> {
+        self.parse_atom_impl(false)
+    }
+
+    /// Splits the unquoted text of a word that globs, the tokens from `first_token`. `None` if no text has a `?` or `[`.
+    #[cold]
+    fn split_glob_text(
+        &self,
+        first_token: u32,
+        unsplit: &[ast::SimpleAtom<'bump>],
+    ) -> Option<bun_alloc::ArenaVec<'bump, ast::SimpleAtom<'bump>>> {
+        let has_glob_byte = |atom: &ast::SimpleAtom<'_>| match atom {
+            ast::SimpleAtom::Text(text) => strings::index_of_any(text, b"?[").is_some(),
+            _ => false,
+        };
+        if !unsplit.iter().any(has_glob_byte) {
+            return None;
+        }
+        let mut tokens = self
+            .tokens
+            .get(first_token as usize..self.current as usize)?
+            .iter();
+        let mut atoms = bun_alloc::ArenaVec::with_capacity_in(unsplit.len() + 1, self.alloc);
+        let mut in_glob_text = false;
+        for atom in unsplit {
+            let unquoted = match atom {
+                ast::SimpleAtom::Text(text) => self.unquoted_range(text, &mut tokens),
+                _ => None,
+            };
+            match unquoted {
+                Some(range) => self.push_unquoted_text(&mut atoms, range, &mut in_glob_text),
+                None => atoms.push(atom.clone()),
+            }
+        }
+        Some(atoms)
+    }
+
+    /// The strpool range of `text`, if the next of `tokens` that holds that range is unquoted text.
+    fn unquoted_range(
+        &self,
+        text: &[u8],
+        tokens: &mut core::slice::Iter<'_, Token>,
+    ) -> Option<TextRange> {
+        let range = self.strpool.subslice_range(text)?;
+        if range.is_empty() {
+            return None;
+        }
+        let range = TextRange {
+            start: u32::try_from(range.start).ok()?,
+            end: u32::try_from(range.end).ok()?,
+        };
+        let holds = |of: TextRange| of.start <= range.start && range.end <= of.end;
+        tokens
+            .find_map(|token| match *token {
+                Token::Text(of) if holds(of) => Some(true),
+                Token::SingleQuotedText(of) | Token::DoubleQuotedText(of) if holds(of) => {
+                    Some(false)
+                }
+                _ => None,
+            })?
+            .then_some(range)
+    }
+
+    /// Appends the text at `range`: `GlobText` for what the script has from the word's first `?` or `[` on, else `Text`.
+    fn push_unquoted_text(
+        &self,
+        atoms: &mut bun_alloc::ArenaVec<'bump, ast::SimpleAtom<'bump>>,
+        range: TextRange,
+        in_glob_text: &mut bool,
+    ) {
+        let first_data = self
+            .data_ranges
+            .partition_point(|data| data.end <= range.start);
+        let in_range = self.data_ranges[first_data..]
+            .iter()
+            .take_while(|data| data.start < range.end)
+            .map(|data| TextRange {
+                start: data.start.max(range.start),
+                end: data.end.min(range.end),
+            });
+        let end = TextRange {
+            start: range.end,
+            end: range.end,
+        };
+        // Where the text that is not pushed yet starts, and where the script's text after the last data range starts.
+        let (mut pending, mut author_start) = (range.start, range.start);
+        // `end` stands for one more data range after the text.
+        for data in in_range.chain(core::iter::once(end)) {
+            let mut author = TextRange {
+                start: author_start,
+                end: data.start,
+            };
+            author_start = data.end;
+            if !*in_glob_text {
+                let Some(at) = strings::index_of_any(self.text(author), b"?[") else {
+                    continue;
+                };
+                author.start += at as u32;
+                if pending < author.start {
+                    atoms.push(ast::SimpleAtom::Text(self.text(TextRange {
+                        start: pending,
+                        end: author.start,
+                    })));
+                }
+                *in_glob_text = true;
+            }
+            if author.start < author.end {
+                atoms.push(ast::SimpleAtom::GlobText(self.text(author)));
+            }
+            if data.start < data.end {
+                atoms.push(ast::SimpleAtom::Text(self.text(data)));
+            }
+            pending = data.end;
+        }
+        if pending < range.end {
+            atoms.push(ast::SimpleAtom::Text(self.text(TextRange {
+                start: pending,
+                end: range.end,
+            })));
+        }
+    }
+
+    fn parse_atom_impl(&mut self, split_glob_text: bool) -> ParseResult<Option<ast::Atom<'bump>>> {
+        let first_token = self.current;
         let mut atoms = bun_alloc::ArenaVec::with_capacity_in(1, self.alloc);
         let mut has_brace_open = false;
         let mut has_brace_close = false;
@@ -1651,6 +1788,12 @@ impl<'bump> Parser<'bump> {
             }
         }
 
+        if has_glob_syntax
+            && split_glob_text
+            && let Some(split) = self.split_glob_text(first_token, &atoms)
+        {
+            atoms = split;
+        }
         Ok(match atoms.len() {
             0 => None,
             1 => Some(ast::Atom::new_simple(atoms.into_iter().next().unwrap())),
@@ -1670,19 +1813,16 @@ impl<'bump> Parser<'bump> {
         &self.strpool[range.start as usize..range.end as usize]
     }
 
-    /// Whether the strpool position holds a byte that came from an
-    /// interpolated JS value (a `\x08__bunstr_N` ref spliced in by the lexer).
-    fn is_interpolated_position(&self, pos: u32) -> bool {
-        self.js_string_ranges
-            .iter()
-            .any(|r| pos >= r.start && pos < r.end)
+    /// Whether the strpool position holds data: a byte in one of `data_ranges`.
+    fn is_data_position(&self, pos: u32) -> bool {
+        let at = self.data_ranges.partition_point(|range| range.end <= pos);
+        self.data_ranges
+            .get(at)
+            .is_some_and(|range| range.start <= pos)
     }
 
     fn if_clause_tok_at(&self, range: TextRange) -> Option<IfClauseTok> {
-        if self.is_interpolated_position(range.start) {
-            return None;
-        }
-        IfClauseTok::from_text(self.text(range))
+        IfClauseTok::from_text(self.text(range)).filter(|_| !self.is_data_position(range.start))
     }
 
     fn advance(&mut self) -> Token {
@@ -2101,7 +2241,7 @@ pub struct LexResult<'bump> {
     pub errors: &'bump [LexError],
     pub tokens: &'bump [Token],
     pub strpool: &'bump [u8],
-    pub(crate) js_string_ranges: &'bump [TextRange],
+    pub(crate) data_ranges: &'bump [TextRange],
 }
 
 impl<'bump> LexResult<'bump> {
@@ -2197,7 +2337,8 @@ pub struct Lexer<'bump, const ENCODING: StringEncoding> {
     /// (`\x08__bunstr_N` refs). Interpolated bytes are data, not shell
     /// syntax, so the parser must not reinterpret them (e.g. an `=` inside
     /// one must not create an env assignment).
-    pub(crate) js_string_ranges: bun_alloc::ArenaVec<'bump, TextRange>,
+    /// An unquoted backslash-escaped `GLOB_TEXT_SYNTAX` byte has a range too. The ranges are in ascending order.
+    pub(crate) data_ranges: bun_alloc::ArenaVec<'bump, TextRange>,
 
     /// Contains a list of strings we need to escape
     /// Not owned by this struct
@@ -2219,7 +2360,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             tokens: bun_alloc::ArenaVec::new_in(bump),
             strpool: bun_alloc::ArenaVec::new_in(bump),
             errors: bun_alloc::ArenaVec::new_in(bump),
-            js_string_ranges: bun_alloc::ArenaVec::new_in(bump),
+            data_ranges: bun_alloc::ArenaVec::new_in(bump),
             word_start: 0,
             j: 0,
             delimit_quote: false,
@@ -2235,7 +2376,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             tokens: self.tokens.into_bump_slice(),
             strpool: self.strpool.into_bump_slice(),
             errors: self.errors.into_bump_slice(),
-            js_string_ranges: self.js_string_ranges.into_bump_slice(),
+            data_ranges: self.data_ranges.into_bump_slice(),
         }
     }
 
@@ -2261,8 +2402,8 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             strpool: core::mem::replace(&mut self.strpool, bun_alloc::ArenaVec::new_in(bump)),
             tokens: core::mem::replace(&mut self.tokens, bun_alloc::ArenaVec::new_in(bump)),
             errors: core::mem::replace(&mut self.errors, bun_alloc::ArenaVec::new_in(bump)),
-            js_string_ranges: core::mem::replace(
-                &mut self.js_string_ranges,
+            data_ranges: core::mem::replace(
+                &mut self.data_ranges,
                 bun_alloc::ArenaVec::new_in(bump),
             ),
             in_subshell: Some(kind),
@@ -2283,10 +2424,8 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         self.strpool = core::mem::replace(&mut sublexer.strpool, bun_alloc::ArenaVec::new_in(bump));
         self.tokens = core::mem::replace(&mut sublexer.tokens, bun_alloc::ArenaVec::new_in(bump));
         self.errors = core::mem::replace(&mut sublexer.errors, bun_alloc::ArenaVec::new_in(bump));
-        self.js_string_ranges = core::mem::replace(
-            &mut sublexer.js_string_ranges,
-            bun_alloc::ArenaVec::new_in(bump),
-        );
+        self.data_ranges =
+            core::mem::replace(&mut sublexer.data_ranges, bun_alloc::ArenaVec::new_in(bump));
 
         self.chars = sublexer.chars;
         self.word_start = sublexer.word_start;
@@ -2875,6 +3014,16 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 continue;
             }
 
+            if escaped
+                && self.chars.state == CharState::Normal
+                && u8::try_from(char)
+                    .is_ok_and(|byte| strings::contains_char(GLOB_TEXT_SYNTAX, byte))
+            {
+                self.push_data_range(TextRange {
+                    start: self.j,
+                    end: self.j + 1,
+                });
+            }
             self.append_char_to_str_pool(char)?;
         }
 
@@ -2890,6 +3039,15 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
 
         self.tokens.push(Token::Eof);
         Ok(())
+    }
+
+    fn push_data_range(&mut self, range: TextRange) {
+        debug_assert!(
+            self.data_ranges
+                .last()
+                .is_none_or(|last| last.end <= range.start)
+        );
+        self.data_ranges.push(range);
     }
 
     fn append_char_to_str_pool(&mut self, char: u32) -> Result<(), LexerError> {
@@ -3189,7 +3347,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         }
         let start = self.j;
         self.append_string_to_str_pool(bunstr)?;
-        self.js_string_ranges.push(TextRange { start, end: self.j });
+        self.push_data_range(TextRange { start, end: self.j });
         // Interpolated values are data, not shell syntax. If the value would
         // begin its Text token with `~`, flush it as a quoted-text token so the
         // parser does not re-interpret it as tilde expansion. Values that
@@ -3924,6 +4082,24 @@ pub(crate) const SPECIAL_CHARS_TABLE: ByteTable = {
         i += 1;
     }
     ByteTable(table)
+};
+
+/// The bytes of `SimpleAtom::GlobText` that are pattern syntax: `?`, and the bytes that shape a `[...]` class.
+pub const GLOB_TEXT_SYNTAX: &[u8] = b"?[]!^-";
+const _: () = {
+    let mut i = 0;
+    while i < GLOB_TEXT_SYNTAX.len() {
+        // Escaped, each is a data range. `parse_assign` asks about an `=`, `if_clause_tok_at` about a keyword's start.
+        assert!(!matches!(
+            GLOB_TEXT_SYNTAX[i],
+            b'=' | b'i' | b't' | b'e' | b'f'
+        ));
+        i += 1;
+    }
+    // A value with one of these is a string ref, so only the script's author can write one in the script.
+    assert!(SPECIAL_CHARS_TABLE.is_set(b'?' as usize));
+    assert!(SPECIAL_CHARS_TABLE.is_set(b'[' as usize));
+    assert!(SPECIAL_CHARS_TABLE.is_set(b']' as usize));
 };
 
 /// Characters that need to be backslashed inside double quotes

@@ -1055,6 +1055,61 @@ describe("parse shell", () => {
       expect(result).toEqual(expected);
     });
   });
+
+  test("glob text", () => {
+    const compound = (...atoms: object[]) => ({ compound: { atoms, brace_expansion_hint: false, glob_hint: true } });
+    // In a word with a `*`, the unquoted text that the script has from its first `?` or `[` on is glob text. A quoted,
+    // an escaped and an interpolated byte is not. A word with neither, or with no `*`, has the atoms it always had.
+    const { cmd } = JSON.parse(parse`echo a[b-c]* [a,"!"\^${"-"}b]* ~/[a]* NAME=[ab]* *.js a?b [ok]`).stmts[0].exprs[0];
+    expect(cmd.name_and_args.slice(1)).toEqual([
+      compound({ Text: "a" }, { glob_text: "[b-c]" }, { asterisk: {} }),
+      compound(
+        { glob_text: "[a" },
+        { comma: {} },
+        { Text: "!" },
+        { Text: "^" },
+        { Text: "-" },
+        { glob_text: "b]" },
+        { asterisk: {} },
+      ),
+      compound({ tilde: {} }, { Text: "/" }, { glob_text: "[a]" }, { asterisk: {} }),
+      compound({ Text: "NAME=" }, { glob_text: "[ab]" }, { asterisk: {} }),
+      compound({ asterisk: {} }, { Text: ".js" }),
+      { simple: { Text: "a?b" } },
+      { simple: { Text: "[ok]" } },
+    ]);
+    const assign = JSON.parse(parse`FOO=a[b,c]*`).stmts[0].exprs[0].assign[0];
+    expect(assign.value).toEqual(
+      compound({ Text: "a" }, { glob_text: "[b" }, { comma: {} }, { glob_text: "c]" }, { asterisk: {} }),
+    );
+    // The same with a character that is not ASCII, which puts the script in the other lexer.
+    const notAscii = JSON.parse(parse`${{ raw: "echo é[a\\-b]* é\\[ab\\]*" }}`).stmts[0].exprs[0].cmd;
+    expect(notAscii.name_and_args.slice(1)).toEqual([
+      compound({ Text: "é" }, { glob_text: "[a" }, { Text: "-" }, { glob_text: "b]" }, { asterisk: {} }),
+      compound({ Text: "é[ab]" }, { asterisk: {} }),
+    ]);
+    // An operand of `[[ ]]` has no glob text.
+    const { condexpr } = JSON.parse(parse`[[ -f [ab]?* ]]`).stmts[0].exprs[0];
+    expect(condexpr.args).toEqual([compound({ Text: "[ab]?" }, { asterisk: {} })]);
+  });
+
+  test("a script with many escaped characters does not look at each of them for every command", () => {
+    const lines = 10_000;
+    const bestOf3 = (line: string) => {
+      const script = Buffer.alloc(line.length * lines, line).toString();
+      const strings = Object.assign([script], { raw: [script] }) as unknown as TemplateStringsArray;
+      let best = Infinity;
+      for (let i = 0; i < 3; i++) {
+        const start = Bun.nanoseconds();
+        parse(strings);
+        best = Math.min(best, Bun.nanoseconds() - start);
+      }
+      return best;
+    };
+    // An escaped `-` is recorded as data and an escaped `:` is not. The rest of the two scripts is the same, so the
+    // times differ by a small factor in every build. With a search of the whole list per command it is over 15x.
+    expect(bestOf3("X=a\\-b\n")).toBeLessThan(bestOf3("X=a\\:b\n") * 6);
+  });
 });
 
 describe("parse shell invalid input", () => {

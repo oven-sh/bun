@@ -197,8 +197,7 @@ impl Finder {
                     break end;
                 }
 
-                // An index that is too low leads past the end. Whether one is takes no branch to find out: what is
-                // read instead is unlikely to be the same.
+                // An index that is too low leads past the end.
                 let matchl0 = idxl0.wrapping_sub(base_index);
                 let matchs0 = idxs0.wrapping_sub(base_index);
                 let (match0, end) = if near.has::<{ u64::MAX }>(matchl0, bytes0) {
@@ -378,7 +377,7 @@ impl Finder {
             } else {
                 // The place of the match, and how much of it is known. `ip` is moved to where it is for.
                 let (place, known) = 'found: {
-                    if near.diff64(match_long, bytes0) == 0 {
+                    if near.has::<{ u64::MAX }>(match_long, bytes0) {
                         break 'found (window.place_of(match_long), 8);
                     }
                     if let Some(place) = dict_tables.long.get::<8>(bytes0)
@@ -574,9 +573,9 @@ impl Finder {
                 ip = end;
             } else {
                 // The match, and how much of it is known. `ip` is moved to where it is for.
-                let (place, known) = if window.diff64_after_first(place_long, bytes0) == 0 {
+                let (place, known) = if window.has_after_first::<{ u64::MAX }>(place_long, bytes0) {
                     (place_long, 8)
-                } else if window.diff64_after_first(place_short, bytes0) as u32 == 0 {
+                } else if window.has_after_first::<0xFFFF_FFFF>(place_short, bytes0) {
                     // A short match: a long one at the next position is preferred.
                     let bytes1 = le64_at::<1, _>(here);
                     let place3 = table_swap(hash_long, hash8(bytes1, h_bits_l, 0), curr + 1)

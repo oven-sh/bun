@@ -394,12 +394,12 @@ impl<'a> Segments<'a> {
         spot.segment.read64(spot.pos)
     }
 
-    /// What differs between `bytes` and the 8 bytes at `place`: 0 if nothing does. Not 0 in the lower half if they are
-    /// not in one segment, or if `place` is the first one, which takes no branch to find out.
+    /// Whether the bits of `MASK` are the same in `bytes` and in the 8 bytes at `place`, which are in one segment, and
+    /// `place` is not the first one.
     #[inline(always)]
-    pub(super) fn diff64_after_first(self, place: u32, bytes: u64) -> u64 {
+    pub(super) fn has_after_first<const MASK: u64>(self, place: u32, bytes: u64) -> bool {
         let spot = self.spot(place);
-        spot.segment.diff64(spot.pos, bytes) | u64::from(place == 0)
+        spot.segment.has::<MASK>(spot.pos, bytes) && place > 0
     }
 
     /// The 4 bytes that are `offset` before the position `pos`, if they are in one segment. Which one that is does not
@@ -874,7 +874,7 @@ impl Finder {
                     break Some(place);
                 }
                 let match_pos = match_index.wrapping_sub(base_index);
-                if near.diff64(match_pos, bytes0) as u32 == 0 {
+                if near.has::<0xFFFF_FFFF>(match_pos, bytes0) {
                     break Some(window.place_of(match_pos));
                 }
 

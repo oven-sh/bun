@@ -274,13 +274,28 @@ describe("Bun.build", () => {
 
 describe("dev server", () => {
   async function serve(root: string) {
-    const server = Bun.spawn({ cmd: [process.execPath, "server.ts"], cwd: root, stdout: "pipe", stderr: "ignore" });
-    let url = "";
-    for await (const chunk of server.stdout.pipeThrough(new TextDecoderStream())) {
-      url += chunk;
-      if (url.includes("\n")) break;
+    const server = Bun.spawn({
+      cmd: [process.execPath, "server.ts"],
+      cwd: root,
+      // The timings show in `log` which builds generated the stylesheet again.
+      env: { ...process.env, DEBUG: "tailwindcss", NO_COLOR: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    // What the server printed, for the message of a test that gives up.
+    let log = "";
+    const listening = Promise.withResolvers<string>();
+    for (const stream of [server.stdout, server.stderr]) {
+      void (async () => {
+        for await (const chunk of stream.pipeThrough(new TextDecoderStream())) {
+          log += chunk;
+          const url = log.match(/^http:.*$/m)?.[0];
+          if (url) listening.resolve(url);
+        }
+      })();
     }
-    url = url.trim();
+    const url = await listening.promise;
 
     async function page() {
       const response = await fetch(url);
@@ -296,7 +311,10 @@ describe("dev server", () => {
         for (;;) {
           const current = await page();
           if (done(current)) return;
-          if (Date.now() > deadline) throw new Error(`gave up at status ${current.status}:\n${current.css}`);
+          if (Date.now() > deadline) {
+            const utilities = current.css.slice(current.css.indexOf("@layer utilities {"));
+            throw new Error(`gave up at status ${current.status}\n--- utilities\n${utilities}\n--- server\n${log}`);
+          }
           await Bun.sleep(25);
         }
       },

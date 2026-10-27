@@ -144,3 +144,22 @@ test("Bun.fetch and Bun.plugin are writable like Bun.file (#47033)", async () =>
   });
   expect(exitCode).toBe(0);
 });
+
+test("Bun.fetch and Bun.plugin accept an assignment before their first read", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `"use strict";
+      Bun.fetch = () => "replaced fetch";
+      Bun.plugin = () => "replaced plugin";
+      console.log(JSON.stringify({ fetch: Bun.fetch(), plugin: Bun.plugin() }));`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({ fetch: "replaced fetch", plugin: "replaced plugin" });
+  expect(exitCode).toBe(0);
+});

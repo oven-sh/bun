@@ -126,7 +126,7 @@ export async function observeDecode(file: Uint8Array): Promise<Decoded> {
     return { error: String(error.code) };
   }
   const { width, height, rgba, icc } = decodePng(png);
-  return { width, height, rgba: hash(rgba), ...(icc ? { icc: hash(icc) } : {}) };
+  return { width, height, rgba: hash(rgba), icc: icc && hash(icc) };
 }
 
 // ── Encoding ──
@@ -136,8 +136,12 @@ export type Spec = {
   seed: number;
   width: number;
   height: number;
-  /** 0 to 10, or "noise" for random bytes in all four channels. */
+  /**
+   * 0 flat, 1 gradient, 2 random, 3 smooth, 4 random from a palette, 5 smooth from a palette, 6 like a photo, 7 periodic,
+   * 8 black and white, 9 gray, 10 smooth with boxes on top, or "noise" for random bytes in all four channels.
+   */
   color: number | "noise";
+  /** 0 opaque, 1 transparent, 2 either of them, 3 gradient, 4 random, 5 four levels, 6 opaque but for one pixel. */
   alpha: number;
   /** Puts this many copies of the image side by side and on top of each other. */
   repeat?: [number, number];
@@ -150,12 +154,14 @@ export type EncodeCase = {
   icc?: number;
   size: number;
   hash: string;
-  /**
-   * For large images, whose files are too large for decode.json.gz: a hash of what the output is once decoded and
-   * encoded again without loss.
-   */
-  again?: string;
+  /** If the image `isLarge`: the hash of what the output is once decoded and encoded again without loss. */
+  reencodedHash?: string;
 };
+
+/** The output is too large to be a case of decode.json.gz. */
+export function isLarge({ width, height, repeat: [columns, rows] = [1, 1] }: Spec): boolean {
+  return width * columns * height * rows > 1 << 15;
+}
 
 function random(seed: number): () => number {
   let state = seed >>> 0;
@@ -215,8 +221,8 @@ function synthesizeTile({ seed, width, height, color, alpha }: Spec & { color: n
   const base = [next() & 255, next() & 255, next() & 255];
   const colors = [2, 3, 4, 5, 16, 17, 40, 200, 256, 300][next() % 10];
   const palette = Array.from({ length: colors }, () => [next() & 255, next() & 255, next() & 255]);
-  const tile = 2 + (next() % 23);
-  const tiles = Array.from({ length: tile * tile }, () => [next() & 255, next() & 255, next() & 255]);
+  const period = 2 + (next() % 23);
+  const pattern = Array.from({ length: period * period }, () => [next() & 255, next() & 255, next() & 255]);
   const amplitude = 1 + (next() % 40);
   const boxes = Array.from({ length: 4 }, () => [
     next() % width,
@@ -259,7 +265,7 @@ function synthesizeTile({ seed, width, height, color, alpha }: Spec & { color: n
           );
           break;
         case 7:
-          pixel = tiles[(y % tile) * tile + (x % tile)];
+          pixel = pattern[(y % period) * period + (x % period)];
           break;
         case 8:
           pixel =
@@ -298,10 +304,14 @@ export function profile(seed: number, size: number): Uint8Array {
   return Uint8Array.from({ length: size }, () => next() & 255);
 }
 
-export async function observeEncode({ image, options, icc, again }: Omit<EncodeCase, "size" | "hash">) {
+export async function observeEncode({
+  image,
+  options,
+  icc,
+}: Pick<EncodeCase, "image" | "options" | "icc">): Promise<Pick<EncodeCase, "size" | "hash" | "reencodedHash">> {
   const { width, height, rgba } = synthesize(image);
   const png = encodePng(width, height, rgba, icc ? profile(image.seed, icc) : undefined);
   const out = await new Bun.Image(png).webp(options).bytes();
-  if (again === undefined) return { size: out.length, hash: hash(out) };
-  return { size: out.length, hash: hash(out), again: hash(await new Bun.Image(out).webp({ lossless: true }).bytes()) };
+  const reencoded = isLarge(image) ? await new Bun.Image(out).webp({ lossless: true }).bytes() : undefined;
+  return { size: out.length, hash: hash(out), reencodedHash: reencoded && hash(reencoded) };
 }

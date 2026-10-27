@@ -49,6 +49,7 @@ members = [
   "src/threading",
   "src/valkey",
   "src/watcher",
+  "src/webp",
   "src/cares_sys",
   "src/clap",
   "src/clap_macros",
@@ -61,7 +62,6 @@ members = [
   "src/exe_format",
   "src/highway",
   "src/histogram",
-  "src/webp",
   "src/http_jsc",
   "src/http_types",
   "src/ini",
@@ -424,6 +424,7 @@ bun_tar = { path = "src/tar" }
 bun_threading = { path = "src/threading" }
 bun_valkey = { path = "src/valkey" }
 bun_watcher = { path = "src/watcher" }
+bun_webp = { path = "src/webp" }
 bun_cares_sys = { path = "src/cares_sys" }
 bun_clap = { path = "src/clap" }
 bun_clap_macros = { path = "src/clap_macros" }
@@ -436,7 +437,6 @@ bun_event_loop = { path = "src/event_loop" }
 bun_exe_format = { path = "src/exe_format" }
 bun_highway = { path = "src/highway" }
 bun_histogram = { path = "src/histogram" }
-bun_webp = { path = "src/webp" }
 bun_http_jsc = { path = "src/http_jsc" }
 bun_http_types = { path = "src/http_types" }
 bun_ini = { path = "src/ini" }

@@ -38,8 +38,7 @@ impl<'a> Reader<'a> {
     }
 
     fn le24(&mut self) -> Option<u32> {
-        let [a, b, c] = self.take()?;
-        Some(u32::from_le_bytes([a, b, c, 0]))
+        self.take().map(riff::le24)
     }
 
     /// The tag, the size of the payload and that size with padding, of a chunk that is all there.
@@ -49,7 +48,7 @@ impl<'a> Reader<'a> {
         if size > MAX_CHUNK_PAYLOAD {
             return None;
         }
-        let padded = (size + (size & 1)) as usize;
+        let padded = riff::padded(size) as usize;
         if padded > self.remaining() {
             return None;
         }
@@ -68,18 +67,14 @@ impl<'a> Reader<'a> {
 
 #[derive(Default)]
 struct Frame {
-    x_offset: u32,
-    y_offset: u32,
-    width: u32,
-    height: u32,
-    /// Where the `VP8 ` or `VP8L` chunk starts.
-    image: Option<usize>,
+    /// Where the `VP8 ` or `VP8L` chunk starts, and the size that it announces.
+    image: Option<(usize, Info)>,
     /// Where the `ALPH` chunk starts.
     alpha: Option<usize>,
 }
 
 impl Frame {
-    /// The image chunks at the cursor: at most one `ALPH` and one `VP8 ` or `VP8L`.
+    /// `StoreFrame`: the image chunks at the cursor, at most one `ALPH` and one `VP8 ` or `VP8L`.
     fn store(&mut self, reader: &mut Reader<'_>, min_size: usize) -> Option<()> {
         if reader.remaining() < CHUNK_HEADER_SIZE.max(min_size) {
             return None;
@@ -92,11 +87,7 @@ impl Frame {
                 b"VP8L" if self.alpha.is_some() => return None,
                 b"VP8 " | b"VP8L" if self.image.is_none() => {
                     let chunk = reader.buf.get(start..start + CHUNK_HEADER_SIZE + padded)?;
-                    Info {
-                        width: self.width,
-                        height: self.height,
-                    } = riff::get_info(chunk).ok()?;
-                    self.image = Some(start);
+                    self.image = Some((start, riff::get_info(chunk).ok()?));
                 }
                 _ => {
                     reader.pos = start;
@@ -110,25 +101,18 @@ impl Frame {
         }
     }
 
-    fn is_valid(&self, is_animation: bool, canvas_width: u32, canvas_height: u32) -> bool {
-        let Some(image) = self.image else {
-            return false;
-        };
+    /// The size of the image, if there is one and no alpha behind it.
+    fn size(&self) -> Option<Info> {
+        let (image, size) = self.image?;
         if self.alpha.is_some_and(|alpha| alpha > image) {
-            return false;
+            return None;
         }
-        if is_animation {
-            u64::from(self.width) + u64::from(self.x_offset) <= u64::from(canvas_width)
-                && u64::from(self.height) + u64::from(self.y_offset) <= u64::from(canvas_height)
-        } else {
-            (self.x_offset, self.y_offset) == (0, 0)
-                && (self.width, self.height) == (canvas_width, canvas_height)
-        }
+        Some(size)
     }
 }
 
-/// `WebPDemux`, `WebPDemuxGetI(WEBP_FF_FORMAT_FLAGS)` and `WebPDemuxGetChunk("ICCP", 1)`.
-pub(crate) fn icc_profile(data: &[u8]) -> Option<&[u8]> {
+/// The ICC profile, which is not empty, if the container is valid from start to end: `WebPDemuxGetChunk("ICCP", 1)`.
+pub fn icc_profile(data: &[u8]) -> Option<&[u8]> {
     if data.len() < RIFF_HEADER_SIZE + CHUNK_HEADER_SIZE
         || !data.starts_with(b"RIFF")
         || data.get(8..12)? != b"WEBP"
@@ -151,9 +135,14 @@ pub(crate) fn icc_profile(data: &[u8]) -> Option<&[u8]> {
     }
     let [flags, _, _, _] = reader.take()?;
     let flags = u32::from(flags);
-    let canvas_width = 1 + reader.le24()?;
-    let canvas_height = 1 + reader.le24()?;
-    if u64::from(canvas_width) * u64::from(canvas_height) >= MAX_IMAGE_AREA {
+    if flags & !ALL_VALID_FLAGS != 0 || flags & ICCP_FLAG == 0 {
+        return None;
+    }
+    let canvas = Info {
+        width: 1 + reader.le24()?,
+        height: 1 + reader.le24()?,
+    };
+    if u64::from(canvas.width) * u64::from(canvas.height) >= MAX_IMAGE_AREA {
         return None;
     }
     reader.skip(vp8x_size_padded - VP8X_CHUNK_SIZE)?;
@@ -181,43 +170,41 @@ pub(crate) fn icc_profile(data: &[u8]) -> Option<&[u8]> {
                 if flags & ALPHA_FLAG == 0 {
                     frame.alpha = None;
                 }
-                if !frame.is_valid(is_animation, canvas_width, canvas_height) {
+                if frame.size()? != canvas {
                     return None;
                 }
                 has_frame = true;
             }
-            b"ANIM" if !has_anim_chunk => {
+            b"ANIM" => {
                 if padded < ANIM_CHUNK_SIZE {
                     return None;
                 }
                 has_anim_chunk = true;
                 reader.skip(padded)?;
             }
-            b"ANIM" if padded < ANIM_CHUNK_SIZE => return None,
             b"ANMF" => {
                 if !has_anim_chunk || padded < ANMF_CHUNK_SIZE {
                     return None;
                 }
-                let mut frame = Frame {
-                    x_offset: 2 * reader.le24()?,
-                    y_offset: 2 * reader.le24()?,
-                    width: 1 + reader.le24()?,
-                    height: 1 + reader.le24()?,
-                    ..Frame::default()
-                };
+                let (x_offset, y_offset) = (2 * reader.le24()?, 2 * reader.le24()?);
+                let (width, height) = (1 + reader.le24()?, 1 + reader.le24()?);
                 // The duration, and how to dispose of the frame and blend it.
                 reader.skip(4)?;
-                if u64::from(frame.width) * u64::from(frame.height) >= MAX_IMAGE_AREA {
+                if u64::from(width) * u64::from(height) >= MAX_IMAGE_AREA {
                     return None;
                 }
                 let payload_size = padded - ANMF_CHUNK_SIZE;
                 let payload_start = reader.pos;
+                let mut frame = Frame::default();
                 frame.store(&mut reader, payload_size)?;
                 if reader.pos - payload_start > payload_size {
                     return None;
                 }
                 if is_animation && (frame.image.is_some() || frame.alpha.is_some()) {
-                    if !frame.is_valid(is_animation, canvas_width, canvas_height) {
+                    let size = frame.size()?;
+                    if x_offset + size.width > canvas.width
+                        || y_offset + size.height > canvas.height
+                    {
                         return None;
                     }
                     has_frame = true;
@@ -235,7 +222,7 @@ pub(crate) fn icc_profile(data: &[u8]) -> Option<&[u8]> {
             break;
         }
     }
-    if !has_frame || flags & !ALL_VALID_FLAGS != 0 || flags & ICCP_FLAG == 0 {
+    if !has_frame {
         return None;
     }
     profile.filter(|profile| !profile.is_empty())

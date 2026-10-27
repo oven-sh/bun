@@ -360,9 +360,7 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
             (w, h) = handle.read_header(bytes)?;
         }
         Format::Webp => {
-            let info = webp::probe(bytes)?;
-            w = info.width;
-            h = info.height;
+            (w, h) = webp::probe(bytes)?;
         }
         Format::Bmp => {
             let ih = bmp::parse_header(bytes)?;
@@ -467,8 +465,8 @@ impl Default for EncodeOptions {
 }
 
 /// Encoded output paired with the free function for its allocator. The C
-/// codecs each malloc internally (turbojpeg's allocator, libc for libspng)
-/// and `bun_webp` returns a `Vec`; rather than dupe into the global allocator so JS can own it,
+/// codecs each malloc internally (turbojpeg's allocator, libc for
+/// libspng); rather than dupe into the global allocator so JS can own it,
 /// we hand the original buffer to JS via `ArrayBuffer.toJSWithContext` with
 /// the matching free — one allocation, zero copies, for the final output.
 ///

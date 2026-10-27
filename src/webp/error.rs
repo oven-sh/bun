@@ -1,6 +1,6 @@
 use crate::util::Bug;
 
-/// Those of libwebp's `VP8StatusCode` and `WebPEncodingError` that a whole file or image can end with.
+/// The `VP8StatusCode`s and `WebPEncodingError`s that decoding a whole file or encoding an image can return.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 pub enum Error {
     #[error("the output buffer is too small for the image")]

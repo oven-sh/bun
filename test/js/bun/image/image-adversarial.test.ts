@@ -1007,8 +1007,9 @@ describe("lossless roundtrip", () => {
     return (Math.imul(n, 1664525) + 1013904223) >>> 0;
   }
   // Alpha is forced to ≥1: the lossless encoder zeroes RGB under α=0 (a
-  // documented libwebp size optimisation that bun_webp keeps, not a bug). PNG preserves RGB under α=0;
-  // WebP-lossless does not. The α=0 case is asserted separately below.
+  // documented libwebp size optimisation that bun_webp keeps, not a bug).
+  // PNG preserves RGB under α=0; WebP-lossless does not. The α=0 case is
+  // asserted separately below.
   let s = seed;
   const noise = makePng(w, h, () => {
     s = lcg(s);
@@ -1317,8 +1318,7 @@ describe("concurrent terminals on one Image", () => {
       `,
     ],
     [
-      // libwebp's demuxer counted the chunks with a tag, then looked one up.
-      // The filler chunks widened the gap between the two walks.
+      // The tag changes while the demuxer walks the container. The filler chunks make the walk long.
       "ICCP tag",
       `
       const chunk = (tag, payload) => {

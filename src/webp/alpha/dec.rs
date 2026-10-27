@@ -1,7 +1,7 @@
 //! `alpha_dec.c`: the alpha plane of a lossy image.
 
-use super::unfilters::unfilter;
-use super::{ALPHA_LOSSLESS_COMPRESSION, ALPHA_NO_COMPRESSION, Filter};
+use super::filters::{Filter, unfilter};
+use super::{ALPHA_LOSSLESS_COMPRESSION, ALPHA_NO_COMPRESSION};
 use crate::util::{SliceExt, try_vec};
 use crate::{Error, Result, vp8l};
 
@@ -23,8 +23,8 @@ pub(crate) fn decode(data: &[u8], width: usize, height: usize) -> Result<Vec<u8>
         _ => Filter::Gradient,
     };
     let pre_processing = (header >> 4) & 0x03;
-    let rsrv = (header >> 6) & 0x03;
-    if pre_processing > ALPHA_PREPROCESSED_LEVELS || rsrv != 0 {
+    let reserved = (header >> 6) & 0x03;
+    if pre_processing > ALPHA_PREPROCESSED_LEVELS || reserved != 0 {
         return Err(Error::BitstreamError);
     }
 

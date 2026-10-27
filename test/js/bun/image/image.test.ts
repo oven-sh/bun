@@ -718,8 +718,9 @@ describe("Bun.Image", () => {
     });
 
     // ── WebP ICCP carry-through — the raw VP8/VP8L bitstream is wrapped
-    // in a VP8X container so the ICCP chunk can travel alongside. Covers decode-side (WebP→PNG), encode-side (PNG→WebP,
-    // both lossy and lossless), WebP→WebP round-trip, geometry ops
+    // in a VP8X container so the ICCP chunk can travel alongside. Covers
+    // decode-side (WebP→PNG), encode-side (PNG→WebP, both lossy and
+    // lossless), WebP→WebP round-trip, geometry ops
     // preserving the profile through a WebP encode, and the no-profile
     // fast path staying a bare VP8/VP8L RIFF.
 

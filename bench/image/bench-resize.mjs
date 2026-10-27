@@ -63,7 +63,13 @@ process.stderr.write(`${(pngFixture.length / 1024).toFixed(0)} KB PNG, `);
 // JPEG-input case shows DCT-domain scaling (the "phone photo → thumbnail"
 // path); both engines exploit it so it's apples-to-apples.
 const jpegFixture = await new Bun.Image(pngFixture).jpeg({ quality: 92 }).bytes();
-process.stderr.write(`${(jpegFixture.length / 1024).toFixed(0)} KB JPEG\n`);
+process.stderr.write(`${(jpegFixture.length / 1024).toFixed(0)} KB JPEG, `);
+// Lossy (VP8) and lossless (VP8L) WebP are two separate decoders.
+const webpFixture = await new Bun.Image(pngFixture).webp({ quality: 92 }).bytes();
+const webpLosslessFixture = await new Bun.Image(pngFixture).webp({ lossless: true }).bytes();
+process.stderr.write(
+  `${(webpFixture.length / 1024).toFixed(0)} KB WebP, ${(webpLosslessFixture.length / 1024).toFixed(0)} KB lossless WebP\n`,
+);
 
 // 4K + phone-camera sizes — JPEG only (PNG at 4K is ~50 MB and just measures
 // zlib). 4032×3024 is what an iPhone hands you.
@@ -124,6 +130,26 @@ const ops = {
     fixture: jpegFixture,
     bun: buf => new Bun.Image(buf).webp({ quality: 80 }).bytes(),
     sharp: buf => sharp(buf).webp({ quality: 80 }).toBuffer(),
+  },
+  "WebP resize 400×400 inside → jpeg q80": {
+    fixture: webpFixture,
+    bun: buf => new Bun.Image(buf).resize(400, 400, { fit: "inside" }).jpeg({ quality: 80 }).bytes(),
+    sharp: buf => sharp(buf).resize(400, 400, { fit: "inside" }).jpeg({ quality: 80 }).toBuffer(),
+  },
+  "WebP → jpeg q80 (no resize)": {
+    fixture: webpFixture,
+    bun: buf => new Bun.Image(buf).jpeg({ quality: 80 }).bytes(),
+    sharp: buf => sharp(buf).jpeg({ quality: 80 }).toBuffer(),
+  },
+  "lossless WebP resize 400×400 inside → jpeg q80": {
+    fixture: webpLosslessFixture,
+    bun: buf => new Bun.Image(buf).resize(400, 400, { fit: "inside" }).jpeg({ quality: 80 }).bytes(),
+    sharp: buf => sharp(buf).resize(400, 400, { fit: "inside" }).jpeg({ quality: 80 }).toBuffer(),
+  },
+  "lossless WebP → jpeg q80 (no resize)": {
+    fixture: webpLosslessFixture,
+    bun: buf => new Bun.Image(buf).jpeg({ quality: 80 }).bytes(),
+    sharp: buf => sharp(buf).jpeg({ quality: 80 }).toBuffer(),
   },
   "4K JPEG → 800×450 → jpeg": {
     fixture: jpeg4k,

@@ -16,28 +16,28 @@ pub(crate) const ANIMATION_FLAG: u32 = 0x02;
 pub(crate) const ALPHA_FLAG: u32 = 0x10;
 pub(crate) const ICCP_FLAG: u32 = 0x20;
 
-pub(crate) fn le24(data: &[u8], pos: usize) -> Checked<u32> {
-    let [a, b, c] = *data.array_at(pos)?;
-    Ok(u32::from_le_bytes([a, b, c, 0]))
+pub(crate) const fn le24([a, b, c]: [u8; 3]) -> u32 {
+    u32::from_le_bytes([a, b, c, 0])
 }
 
 pub(crate) fn le32(data: &[u8], pos: usize) -> Checked<u32> {
     Ok(u32::from_le_bytes(*data.array_at(pos)?))
 }
 
+/// The size of a payload on disk: an odd one is followed by one byte of padding.
+pub(crate) const fn padded(size: u32) -> u32 {
+    size + (size & 1)
+}
+
 /// What the decoders are given.
 pub(crate) struct Headers<'a> {
+    /// The size that the bitstream announces.
+    info: Info,
     /// From the first byte of the VP8 or VP8L bitstream to the end of the input, which can be past the end of the chunk.
     pub(crate) bitstream: &'a [u8],
     /// The payload of the last `ALPH` chunk in front of the bitstream.
     pub(crate) alpha: Option<&'a [u8]>,
     pub(crate) is_lossless: bool,
-}
-
-struct Parsed<'a> {
-    width: u32,
-    height: u32,
-    headers: Option<Headers<'a>>,
 }
 
 /// Skips the RIFF header if there is one and returns its size field, or 0.
@@ -62,8 +62,7 @@ fn parse_riff(data: &mut &[u8], have_all_data: bool) -> Result<u32> {
 
 struct Vp8x {
     flags: u32,
-    width: u32,
-    height: u32,
+    canvas: Info,
 }
 
 /// Skips the `VP8X` chunk if the data starts with one.
@@ -81,17 +80,14 @@ fn parse_vp8x(data: &mut &[u8]) -> Result<Option<Vp8x>> {
         return Err(Error::NotEnoughData);
     }
     let flags = le32(data, 8)?;
-    let width = 1 + le24(data, 12)?;
-    let height = 1 + le24(data, 15)?;
+    let width = 1 + le24(*data.array_at(12)?);
+    let height = 1 + le24(*data.array_at(15)?);
     if u64::from(width) * u64::from(height) >= MAX_IMAGE_AREA {
         return Err(Error::BitstreamError);
     }
     *data = data.sub(CHUNK_HEADER_SIZE + VP8X_CHUNK_SIZE..)?;
-    Ok(Some(Vp8x {
-        flags,
-        width,
-        height,
-    }))
+    let canvas = Info { width, height };
+    Ok(Some(Vp8x { flags, canvas }))
 }
 
 /// Skips to the next `VP8 ` or `VP8L` chunk header and returns the last `ALPH` payload on the way.
@@ -107,8 +103,7 @@ fn parse_optional_chunks<'a>(data: &mut &'a [u8], riff_size: u32) -> Result<Opti
         if chunk_size > MAX_CHUNK_PAYLOAD {
             return Err(Error::BitstreamError);
         }
-        // An odd payload is followed by one byte of padding.
-        let disk_chunk_size = (CHUNK_HEADER_SIZE as u32 + chunk_size + 1) & !1;
+        let disk_chunk_size = CHUNK_HEADER_SIZE as u32 + padded(chunk_size);
         total_size = total_size.wrapping_add(disk_chunk_size);
         if riff_size > 0 && total_size > riff_size {
             return Err(Error::BitstreamError);
@@ -153,97 +148,100 @@ fn parse_vp8_header(
     Ok((size as usize, is_vp8l))
 }
 
-/// `want_headers`: the input is the whole file, and an animation is refused. Else it reads no further than the size.
-fn parse(input: &[u8], want_headers: bool) -> Result<Parsed<'_>> {
-    if input.len() < RIFF_HEADER_SIZE {
-        return Err(Error::NotEnoughData);
-    }
-    let mut data = input;
-    let riff_size = parse_riff(&mut data, want_headers)?;
-    let found_riff = riff_size > 0;
-    let vp8x = parse_vp8x(&mut data)?;
-    if !found_riff && vp8x.is_some() {
-        return Err(Error::BitstreamError);
-    }
-    let animated = vp8x
-        .as_ref()
-        .is_some_and(|vp8x| vp8x.flags & ANIMATION_FLAG != 0);
-    let canvas = vp8x.as_ref().map(|vp8x| (vp8x.width, vp8x.height));
-    // Without `want_headers` the `VP8X` chunk can answer alone.
-    let from_canvas = canvas
-        .filter(|_| !want_headers)
-        .map(|(width, height)| Parsed {
-            width,
-            height,
-            headers: None,
-        });
-    if animated && let Some(parsed) = from_canvas {
-        return Ok(parsed);
-    }
-    match (
-        parse_image(data, want_headers, riff_size, canvas),
-        from_canvas,
-    ) {
-        // libwebp parses an animation to the end before it refuses it.
-        (Ok(_) | Err(Error::NotEnoughData), _) if animated => Err(Error::UnsupportedFeature),
-        (Err(Error::NotEnoughData), Some(parsed)) => Ok(parsed),
-        (result, _) => result,
-    }
+/// The RIFF header and the `VP8X` chunk, neither of which a file needs to have.
+struct Prefix<'a> {
+    /// What follows them.
+    rest: &'a [u8],
+    have_all_data: bool,
+    /// The size field of the RIFF header, or 0.
+    riff_size: u32,
+    /// The size in the `VP8X` chunk.
+    canvas: Option<Info>,
+    is_animation: bool,
 }
 
-/// What follows the RIFF header and the `VP8X` chunk.
-fn parse_image(
-    mut data: &[u8],
-    have_all_data: bool,
-    riff_size: u32,
-    canvas: Option<(u32, u32)>,
-) -> Result<Parsed<'_>> {
-    if data.len() < TAG_SIZE {
-        return Err(Error::NotEnoughData);
-    }
-    let found_riff = riff_size > 0;
-    let mut alpha = None;
-    if (found_riff && canvas.is_some())
-        || (!found_riff && canvas.is_none() && data.starts_with(b"ALPH"))
-    {
-        alpha = parse_optional_chunks(&mut data, riff_size)?;
-    }
-    let (compressed_size, is_lossless) = parse_vp8_header(&mut data, have_all_data, riff_size)?;
-    if compressed_size > MAX_CHUNK_PAYLOAD as usize {
-        return Err(Error::BitstreamError);
-    }
-    let Info { width, height } = if is_lossless {
-        if data.len() < vp8l::dec::FRAME_HEADER_SIZE {
+impl<'a> Prefix<'a> {
+    /// `ParseHeadersInternal`, first half. `have_all_data`: a chunk that goes on past the end of the input is an error.
+    fn parse(mut data: &'a [u8], have_all_data: bool) -> Result<Self> {
+        if data.len() < RIFF_HEADER_SIZE {
             return Err(Error::NotEnoughData);
         }
-        vp8l::dec::get_info(data).ok_or(Error::BitstreamError)?
-    } else {
-        if data.len() < vp8::dec::FRAME_HEADER_SIZE {
+        let riff_size = parse_riff(&mut data, have_all_data)?;
+        let vp8x = parse_vp8x(&mut data)?;
+        if riff_size == 0 && vp8x.is_some() {
+            return Err(Error::BitstreamError);
+        }
+        Ok(Self {
+            rest: data,
+            have_all_data,
+            riff_size,
+            canvas: vp8x.as_ref().map(|vp8x| vp8x.canvas),
+            is_animation: vp8x.is_some_and(|vp8x| vp8x.flags & ANIMATION_FLAG != 0),
+        })
+    }
+
+    /// `ParseHeadersInternal`, second half: the chunks of a still image, up to the header of the bitstream.
+    fn parse_image(&self) -> Result<Headers<'a>> {
+        let mut data = self.rest;
+        if data.len() < TAG_SIZE {
             return Err(Error::NotEnoughData);
         }
-        vp8::dec::get_info(data, compressed_size).ok_or(Error::BitstreamError)?
-    };
-    if canvas.is_some_and(|canvas| canvas != (width, height)) {
-        return Err(Error::BitstreamError);
-    }
-    Ok(Parsed {
-        width,
-        height,
-        headers: Some(Headers {
+        let alpha = if self.canvas.is_some() || (self.riff_size == 0 && data.starts_with(b"ALPH")) {
+            parse_optional_chunks(&mut data, self.riff_size)?
+        } else {
+            None
+        };
+        let (compressed_size, is_lossless) =
+            parse_vp8_header(&mut data, self.have_all_data, self.riff_size)?;
+        if compressed_size > MAX_CHUNK_PAYLOAD as usize {
+            return Err(Error::BitstreamError);
+        }
+        let info = if is_lossless {
+            if data.len() < vp8l::dec::FRAME_HEADER_SIZE {
+                return Err(Error::NotEnoughData);
+            }
+            vp8l::dec::get_info(data).ok_or(Error::BitstreamError)?
+        } else {
+            if data.len() < vp8::dec::FRAME_HEADER_SIZE {
+                return Err(Error::NotEnoughData);
+            }
+            vp8::dec::get_info(data, compressed_size).ok_or(Error::BitstreamError)?
+        };
+        if self.canvas.is_some_and(|canvas| canvas != info) {
+            return Err(Error::BitstreamError);
+        }
+        Ok(Headers {
+            info,
             bitstream: data,
             alpha,
             is_lossless,
-        }),
-    })
+        })
+    }
 }
 
-/// `WebPGetInfo`
-pub(crate) fn get_info(data: &[u8]) -> Result<Info> {
-    let Parsed { width, height, .. } = parse(data, false)?;
-    Ok(Info { width, height })
+/// `WebPGetInfo`, from as little of the file as it takes.
+pub fn get_info(data: &[u8]) -> Result<Info> {
+    let have_all_data = false;
+    let prefix = Prefix::parse(data, have_all_data)?;
+    // The `VP8X` chunk answers for an animation, and for a file that ends in front of the bitstream.
+    if let Some(canvas) = prefix.canvas
+        && prefix.is_animation
+    {
+        return Ok(canvas);
+    }
+    match (prefix.parse_image(), prefix.canvas) {
+        (Err(Error::NotEnoughData), Some(canvas)) => Ok(canvas),
+        (result, _) => result.map(|headers| headers.info),
+    }
 }
 
 /// `WebPParseHeaders` of a whole file.
 pub(crate) fn parse_headers(data: &[u8]) -> Result<Headers<'_>> {
-    parse(data, true)?.headers.ok_or(Error::Bug)
+    let have_all_data = true;
+    let prefix = Prefix::parse(data, have_all_data)?;
+    match prefix.parse_image() {
+        // libwebp parses an animation to the end before it refuses it.
+        Ok(_) | Err(Error::NotEnoughData) if prefix.is_animation => Err(Error::UnsupportedFeature),
+        result => result,
+    }
 }

@@ -1,4 +1,4 @@
-//! WebP, derived from libwebp v1.6.0 (LICENSE.md). Encodes to the same bytes, decodes to the same pixels as its C code.
+//! WebP, derived from libwebp v1.6.0 (LICENSE). Encodes to the same bytes, decodes to the same pixels as its C code.
 #![forbid(unsafe_code)]
 // Images come from anywhere and a panic aborts the process.
 #![deny(
@@ -19,8 +19,16 @@ mod util;
 mod vp8;
 mod vp8l;
 
+pub use demux::icc_profile;
 pub use error::{Error, Result};
+pub use riff::get_info;
 use util::{Bug, Checked, SliceExt};
+
+/// `MIN_BUFFER_SIZE`: what `height` rows of `4 * width` bytes take. The last one needs no padding.
+fn min_buffer_size(width: usize, height: usize, stride: usize) -> Option<usize> {
+    let row = width.checked_mul(4)?;
+    stride.checked_mul(height.checked_sub(1)?)?.checked_add(row)
+}
 
 /// Where the decoders write: non-premultiplied R, G, B, A bytes.
 pub(crate) struct Output<'a> {
@@ -29,17 +37,10 @@ pub(crate) struct Output<'a> {
 }
 
 impl Output<'_> {
-    /// `WebPAllocateDecBuffer` for memory of the caller's.
+    /// `CheckDecBuffer`: an image of this size fits.
     pub(crate) fn check(&self, width: usize, height: usize) -> Result<()> {
-        let row = width.checked_mul(4).ok_or(Error::InvalidParam)?;
-        let last = height.checked_sub(1).ok_or(Error::InvalidParam)?;
-        // The last row needs no padding.
-        let size = self
-            .stride
-            .checked_mul(last)
-            .and_then(|size| size.checked_add(row))
-            .ok_or(Error::InvalidParam)?;
-        if width == 0 || size > self.rgba.len() || self.stride < row {
+        let size = min_buffer_size(width, height, self.stride).ok_or(Error::InvalidParam)?;
+        if width == 0 || size > self.rgba.len() || self.stride < 4 * width {
             return Err(Error::InvalidParam);
         }
         Ok(())
@@ -59,11 +60,6 @@ pub struct Info {
     pub height: u32,
 }
 
-/// `WebPGetInfo`, from as little of the file as it takes.
-pub fn get_info(data: &[u8]) -> Result<Info> {
-    riff::get_info(data)
-}
-
 /// `WebPDecodeRGBAInto`. Rows are `stride` bytes apart. What `rgba` holds after an error is unspecified.
 pub fn decode_rgba_into(data: &[u8], rgba: &mut [u8], stride: usize) -> Result<()> {
     let headers = riff::parse_headers(data)?;
@@ -73,11 +69,6 @@ pub fn decode_rgba_into(data: &[u8], rgba: &mut [u8], stride: usize) -> Result<(
     } else {
         vp8::dec::decode(headers.bitstream, headers.alpha, &mut output)
     }
-}
-
-/// The ICC profile of a file, if it has one and the container is valid from start to end. It is not empty.
-pub fn icc_profile(data: &[u8]) -> Option<&[u8]> {
-    demux::icc_profile(data)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -122,10 +113,7 @@ impl<'a> Input<'a> {
             return Err(Error::BadDimension);
         }
         let (width, height) = (width as usize, height as usize);
-        let size = stride
-            .checked_mul(height - 1)
-            .and_then(|size| size.checked_add(4 * width))
-            .ok_or(Error::BadDimension)?;
+        let size = min_buffer_size(width, height, stride).ok_or(Error::BadDimension)?;
         if stride < 4 * width || rgba.len() < size {
             return Err(Error::BadDimension);
         }

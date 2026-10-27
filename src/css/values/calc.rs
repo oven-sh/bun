@@ -1645,10 +1645,6 @@ calc_protocol_forwarders!(Length {
     try_sign: forward,
     try_map: forward,
     try_op: |this, rhs, ctx, f| {
-        // Delegate to `protocol::TryOp for LengthValue` (which inlines the
-        // same-unit/px-convert dispatch) rather than the inherent `Length::try_op`
-        // — the inherent takes a 2-arg `Fn` closure, and adapting our 3-arg `f`
-        // to that without `C: Copy` would only yield `FnOnce`.
         if let (Length::Value(a), Length::Value(b)) = (this, rhs) {
             return <LengthValue as protocol::TryOp>::try_op(a, b, ctx, f).map(Length::Value);
         }

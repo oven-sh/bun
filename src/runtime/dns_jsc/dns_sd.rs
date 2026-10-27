@@ -1,6 +1,9 @@
 //! macOS DNSServiceQueryRecord backend: all lookups share one mDNSResponder connection (see dns.rs banner).
 
+use core::cell::Cell;
+
 use super::*;
+use crate::timer::ElTimespec;
 use bun_collections::index_sort;
 
 type DNSServiceRef = *mut c_void;

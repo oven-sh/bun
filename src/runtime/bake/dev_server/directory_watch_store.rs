@@ -220,10 +220,7 @@ impl DirectoryWatchStore {
         }
     }
 
-    /// Registers a directory watch so that `importer` is bundled again once `abs_path`, a file
-    /// it imports that was deleted, exists again. `track_resolution_failure` covers this only
-    /// for a relative specifier: an import by package name or tsconfig path registers nothing.
-    /// `importer` is a key of `IncrementalGraph.bundled_files`, as `Dep.source_file_path` is.
+    /// Bundles `importer`, a graph key, again once the deleted file `abs_path` exists again.
     pub(crate) fn watch_for_deleted_file(
         &mut self,
         importer: bun_ptr::RawSlice<u8>,
@@ -427,9 +424,7 @@ impl DirectoryWatchStore {
         self.remove_dependencies(file_path, |_| true);
     }
 
-    /// Removes what `watch_for_deleted_file` registered for `file_path`, a key of
-    /// `IncrementalGraph.bundled_files`. Called when that file bundles: it no longer imports the
-    /// deleted file, and a watch left behind would bust the directory at every later event.
+    /// Removes what `watch_for_deleted_file` registered for `file_path`, once that file bundles.
     pub(crate) fn remove_deleted_file_watches(&mut self, file_path: &[u8]) {
         self.remove_dependencies(file_path, |dep| bun_paths::is_absolute(&dep.specifier));
     }

@@ -890,9 +890,7 @@ pub mod fs {
     /// The active filesystem backend (always the real filesystem).
     pub type Implementation = RealFS;
 
-    /// The directory links the resolver followed. The listing and `DirInfo` caches are keyed by
-    /// the path as walked, so one directory has a key for its real path and a key for that path
-    /// through each link. This names them all.
+    /// Every cache key of a directory: its real path, and that path through each link followed.
     #[derive(Default)]
     pub(crate) struct DirLinks {
         /// Path of a link as walked, to the real path of the directory.
@@ -924,8 +922,7 @@ pub mod fs {
             }
         }
 
-        /// Calls `each` with `path`, then with every other cache key of that directory. Keys
-        /// longer than a path buffer are skipped: nothing is cached under them.
+        /// Calls `each` with `path`, then with every other cache key of that directory.
         pub(crate) fn for_each_key_of(&self, path: &[u8], mut each: impl FnMut(&[u8])) {
             each(path);
 
@@ -1013,8 +1010,7 @@ pub mod fs {
         pub entries: EntriesMap,
         /// Guarded by `entries_mutex`.
         pub(crate) dir_links: DirLinks,
-        /// Set with the first link, so that a bust in a process that followed none takes no lock
-        /// to learn that.
+        /// False until a link is recorded: a bust then needs no lock to know there is none.
         has_dir_links: AtomicBool,
         pub(crate) cwd: &'static [u8],
         #[cfg(not(windows))]
@@ -1045,8 +1041,7 @@ pub mod fs {
             self.has_dir_links.load(Ordering::Acquire)
         }
 
-        /// Records that the directory walked as `link` is the directory `real`. Neither path ends
-        /// in a separator. The caller holds `entries_mutex`.
+        /// Records the directory link `link` to `real`. The caller holds `entries_mutex`.
         pub(crate) fn record_dir_link(&mut self, link: &'static [u8], real: &'static [u8]) {
             debug_assert!(self.entries_mutex.is_held_by_current_thread());
             if link == real {

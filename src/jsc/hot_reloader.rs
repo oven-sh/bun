@@ -1169,10 +1169,7 @@ where
                                                     core::sync::atomic::Ordering::Release,
                                                 );
                                             }
-                                            // The resolver fills `abs_path` in the listing it
-                                            // resolved the import from. For a package behind a
-                                            // link that is the listing of the link, and this
-                                            // one, of the watched real path, has none.
+                                            // A listing no import resolved from has no paths.
                                             let resolved_path = ent.abs_path();
                                             let changed_path: &[u8] = if !resolved_path.is_empty() {
                                                 resolved_path.as_bytes()

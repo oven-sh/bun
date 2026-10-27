@@ -2492,9 +2492,7 @@ impl<'a> Resolver<'a> {
         first_bust || second_bust
     }
 
-    /// `bust_dir_cache` once a directory link was followed. A caller names the directory by the
-    /// one path it knows, and the stale answer can be cached under another: the watcher reports
-    /// the real path of a package that imports reach through `node_modules/<name>`.
+    /// `bust_dir_cache` for every path of the directory: the watcher knows only the real one.
     #[cold]
     fn bust_every_key_of_dir(&mut self, path: &[u8]) -> bool {
         let dir_cache = self.dir_cache();
@@ -2504,8 +2502,7 @@ impl<'a> Resolver<'a> {
             dir_links,
             ..
         } = &mut self.fs_mut().fs;
-        // The hot reloader calls this on the watcher thread with no resolver mutex, so this
-        // reads no `DirInfo`: its slot is published before it is filled.
+        // Called on the watcher thread with no resolver mutex, so it must not read a `DirInfo`.
         let _entries_lock = entries_mutex.lock_guard();
         let mut any_bust = false;
         dir_links.for_each_key_of(path, |key| {

@@ -522,7 +522,8 @@ test.skipIf(isASAN || isDebug)(
 // The worker keeps one block of each size alive over the wait, so that no page becomes free as a whole: the waiting
 // thread then has about 30 MiB to discard by itself in the second release, which takes 3 to 5 ms. The main thread
 // notifies when RSS begins to fall, or on the clock where RSS does not show it.
-test.skipIf(isASAN /* malloc is not mimalloc */)(
+// Not ASAN or debug: malloc is not mimalloc there, so no notify would arrive during a release.
+test.skipIf(isASAN || isDebug)(
   "a notify that arrives while Atomics.wait releases a second time is not lost",
   async () => {
     await using proc = Bun.spawn({
@@ -576,20 +577,26 @@ test.skipIf(isASAN /* malloc is not mimalloc */)(
       worker.postMessage(view.buffer);
       const results = new Promise(resolve => (worker.onmessage = event => resolve(event.data)));
       const rss = () => process.memoryUsage.rss() / 1048576;
-      const rounds = 8;
+      const cpus = navigator.hardwareConcurrency;
+      // Where the test asserts that a notify arrived during a release (it says where), the rounds go on until one
+      // has: beside other work every notify of 8 rounds missed the release in 1 run of 60.
+      const untilOne = process.platform === "linux" && cpus > 1;
+      let rounds = 0;
       let duringRelease = 0;
-      for (let round = 0; round < rounds; round++) {
+      for (;;) {
         while (Atomics.load(view, WAITING) !== 1 && !Atomics.load(view, STOPPED));
         if (Atomics.load(view, STOPPED)) break;
         Atomics.store(view, WAITING, 0);
+        rounds++;
         const start = performance.now();
         // The first release, 100 ms into the wait, is over by now. It leaves the blocks.
         while (performance.now() - start < 150);
         const before = rss();
         // The second release begins 200 ms into the wait.
-        const onTheClock = 201 + round;
+        const onTheClock = 201 + (rounds % 8);
         while (performance.now() - start < onTheClock && before - rss() < 2);
-        if (round === rounds - 1) Atomics.store(view, LAST, 1);
+        const last = rounds >= 40 || (rounds >= 8 && (duringRelease > 0 || !untilOne));
+        if (last) Atomics.store(view, LAST, 1);
         const atNotify = rss();
         Atomics.store(view, VALUE, 1);
         Atomics.notify(view, VALUE);
@@ -597,10 +604,11 @@ test.skipIf(isASAN /* malloc is not mimalloc */)(
         // discarding after the notify was under way when the notify came.
         while (Atomics.load(view, VALUE) !== 0);
         if (atNotify - rss() > 4) duringRelease++;
+        if (last) break;
       }
       // ("not-equal" if the worker was held up for that long before it got to wait)
       const lost = (await results).filter(result => result !== "ok" && result !== "not-equal");
-      console.log(JSON.stringify({ lost, rounds, duringRelease, cpus: navigator.hardwareConcurrency }));
+      console.log(JSON.stringify({ lost, rounds, duringRelease, cpus }));
       process.exit(0);
       `,
       ],
@@ -610,19 +618,21 @@ test.skipIf(isASAN /* malloc is not mimalloc */)(
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     const { lost, rounds, duringRelease, cpus } = JSON.parse(stdout);
-    // On Linux a notify has to arrive while the second release runs, or this tests nothing. With one CPU the two
-    // threads take turns and that is left to chance (1 notify of 8, and none in 1 run of 16). Elsewhere the clock
-    // decides when the notifies are sent, and the number is only printed.
-    expect({ lost, rounds, duringRelease, cpus, met: !isLinux || cpus === 1 || duringRelease > 0 }).toEqual({
-      lost: [],
-      rounds: 8,
+    // On Linux a notify has to arrive while the second release runs, or this tests nothing: the child makes 8
+    // rounds, and more until one has, 40 at the most. With one CPU the two threads take turns and that is left to
+    // chance (1 notify of 8, and none in 1 run of 16). Elsewhere the clock decides when the notifies are sent, and
+    // the number is only printed.
+    expect({
+      lost,
+      rounds,
       duringRelease,
       cpus,
-      met: true,
-    });
+      ranAll: rounds >= 8,
+      met: !isLinux || cpus === 1 || duringRelease > 0,
+    }).toEqual({ lost: [], rounds, duringRelease, cpus, ranAll: true, met: true });
     expect(exitCode).toBe(0);
   },
-  // About 2.5 s when it passes. A lost notification makes the wait take its whole 10 s timeout, and that is to be
-  // reported by the assertion and not as a timeout.
+  // About 2.5 s when it passes, and 10 s when no notify arrives during a release. A lost notification makes the
+  // wait take its whole 10 s timeout, and that is to be reported by the assertion and not as a timeout.
   30_000,
 );

@@ -317,7 +317,8 @@ describe("heapStats() mimalloc integration", () => {
           // The allocator keeps the free large blocks of a thread only once that thread was idle.
           await Bun.sleep(5);
           const kept = [], perRound = [];
-          for (let round = 0; round < 9; round++) {
+          // 4 rounds until the pages are settled, then the 3 that count. Every round is 300 ms.
+          for (let round = 0; round < 7; round++) {
             const before = faults();
             const buffers = [];
             for (let i = 0; i < 40; i++) buffers.push(new Uint8Array(256 * 1024).fill(round + 1));
@@ -346,7 +347,8 @@ describe("heapStats() mimalloc integration", () => {
       const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
       const { perRound } = JSON.parse(stdout);
       // The first rounds fault the memory in for the first time. After that a round takes 70 faults when the buffers
-      // were left alone, and 2560 (one for each 4 KiB of 10 MiB) when they were given back.
+      // were left alone, and 2560 (one for each 4 KiB of 10 MiB) when they were given back. The median decides:
+      // beside much other work the sweeps of the helper threads spread out, and 1 round in 100 takes the faults.
       const settled = perRound.slice(4).sort((a: number, b: number) => a - b);
       expect(settled[settled.length >> 1], stdout).toBeLessThan(500);
       expect(exitCode).toBe(0);

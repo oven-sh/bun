@@ -6,6 +6,7 @@
 #include "JavaScriptCore/Identifier.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/JSCInlines.h>
+#include <JavaScriptCore/GlobalObjectMethodTable.h>
 #include <JavaScriptCore/JSNativeStdFunction.h>
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <JavaScriptCore/JSPromise.h>
@@ -66,6 +67,14 @@ static JSC::JSPromise* resolvedInternalPromise(JSC::JSGlobalObject* globalObject
     JSPromise* promise = JSPromise::create(vm, globalObject->promiseStructure());
     promise->fulfill(vm, value);
     return promise;
+}
+
+// What attaching a handler does (JSPromise::performPromiseThen): a rejection already reported as unhandled gets rejectionHandled.
+static void markRejectionAsHandled(Zig::GlobalObject* globalObject, JSC::JSPromise* promise)
+{
+    if (!promise->isHandled())
+        Zig::GlobalObject::promiseRejectionTracker(globalObject, promise, JSC::JSPromiseRejectionOperation::Handle);
+    promise->markAsHandled();
 }
 
 // Converts an object from InternalModuleRegistry into { ...obj, default: obj }
@@ -444,6 +453,11 @@ static JSValue handleVirtualModuleResult(
 
     case OnLoadResultTypePromise: {
         JSC::JSPromise* promise = uncheckedDowncast<JSC::JSPromise>(onLoadResult.value.promise);
+        // require() cannot wait for the chain below to report the rejection: it throws the reason now.
+        if (commonJSModule && promise->status() == JSC::JSPromise::Status::Rejected) {
+            markRejectionAsHandled(globalObject, promise);
+            RELEASE_AND_RETURN(scope, reject(promise->result()));
+        }
         JSFunction* performPromiseThenFunction = globalObject->performPromiseThenFunction();
         auto callData = JSC::getCallData(performPromiseThenFunction);
         ASSERT(callData.type != CallData::Type::None);
@@ -691,6 +705,8 @@ JSValue fetchCommonJSModule(
                 RELEASE_AND_RETURN(scope, JSValue {});
             }
             case JSPromise::Status::Pending: {
+                // Nothing else can handle this promise: it rejects when the plugin's promise does, after require() threw.
+                promise->markAsHandled();
                 JSC::throwTypeError(globalObject, scope, makeString("require() async module \""_s, specifierWtfString, "\" is unsupported. use \"await import()\" instead."_s));
                 RELEASE_AND_RETURN(scope, JSValue {});
             }
@@ -760,6 +776,8 @@ JSValue fetchCommonJSModule(
                 RELEASE_AND_RETURN(scope, JSValue {});
             }
             case JSPromise::Status::Pending: {
+                // Nothing else can handle this promise: it rejects when the plugin's promise does, after require() threw.
+                promise->markAsHandled();
                 JSC::throwTypeError(globalObject, scope, makeString("require() async module \""_s, specifierWtfString, "\" is unsupported. use \"await import()\" instead."_s));
                 RELEASE_AND_RETURN(scope, JSValue {});
             }

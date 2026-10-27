@@ -339,6 +339,224 @@ describe("module", () => {
   });
 });
 
+// Spawned in a subprocess: the failure is an unhandled rejection, which ends the process or fails the test run.
+describe.concurrent("require() of a module whose plugin callback returns a promise", () => {
+  const asyncModuleError = (id: string) =>
+    `TypeError: require() async module "${id}" is unsupported. use "await import()" instead.`;
+
+  // `body` is the body of an async function that has `log(line)`. Gives the lines it logged.
+  async function run(mode: "bun" | "bun test", body: string, files: Record<string, string> = {}) {
+    using dir = tempDir("plugin-require-promise", {
+      ...files,
+      "scenario.test.cjs": `
+        const lines = [];
+        const log = line => lines.push(line);
+        const tick = () => new Promise(resolve => setImmediate(resolve));
+        const scenario = (async () => {${body}})().then(() => console.log(JSON.stringify(lines)));
+        ${mode === "bun test" ? `require("bun:test").test("scenario", () => scenario);` : ""}
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: mode === "bun test" ? [bunExe(), "test", "./scenario.test.cjs"] : [bunExe(), "scenario.test.cjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    let lines: unknown = stdout;
+    try {
+      lines = JSON.parse(stdout.trim().split("\n").at(-1)!);
+    } catch {}
+    // `bun test` reports on stderr: the lines of a run that passed are left out, anything else is kept.
+    // A test that takes 10 microseconds or less is reported without its duration.
+    const report =
+      /^(scenario\.test\.cjs:|\(pass\) scenario( \[.+\])?| 1 pass| 0 fail|Ran 1 test across 1 file\. \[.+\])?$/;
+    const unexpected = stderr
+      .split(/\r?\n/)
+      .filter(line => mode === "bun" || !report.test(line))
+      .join("\n");
+    return { lines, stderr: unexpected, exitCode };
+  }
+
+  describe.each(["bun", "bun test"] as const)("%s", mode => {
+    it("throws the async module error for a pending promise, however it settles later", async () => {
+      const result = await run(
+        mode,
+        `
+          const { createRequire } = require("node:module");
+          const calls = [];
+          const pending = () => new Promise((resolve, reject) => calls.push({ resolve, reject }));
+          Bun.plugin({
+            name: "p",
+            setup(b) {
+              b.module("virt", pending);
+              b.onLoad({ filter: /\\.late$/ }, pending);
+              b.onLoad({ filter: /.*/, namespace: "late" }, pending);
+            },
+          });
+          const spellings = [
+            require,
+            id => module.require(id),
+            createRequire(__filename),
+            require("./meta-require.mjs").metaRequire,
+          ];
+          for (const id of ["virt", "./x.late", "late:x"]) {
+            const thrown = new Set();
+            for (const load of spellings) {
+              try {
+                load(id);
+                thrown.add("did not throw");
+              } catch (e) {
+                thrown.add(e.name + ": " + e.message.replace(require.resolve(id), id));
+              }
+            }
+            log([...thrown].join(" | "));
+          }
+          log("plugin calls: " + calls.length);
+          for (const [i, { resolve, reject }] of calls.entries()) {
+            if (i % 2) reject(new Error("late failure " + i));
+            else resolve({ loader: "object", exports: 7 });
+          }
+          await tick();
+        `,
+        { "x.late": "", "meta-require.mjs": `export const metaRequire = import.meta.require;` },
+      );
+      expect(result).toEqual({
+        lines: [asyncModuleError("virt"), asyncModuleError("./x.late"), asyncModuleError("late:x"), "plugin calls: 12"],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    it("throws the reason of a promise that is already rejected", async () => {
+      const result = await run(
+        mode,
+        `
+          const errors = {
+            "virt": new Error("module failed"),
+            "./x.rejects": new Error("loader failed"),
+            "rejects:x": new Error("namespace loader failed"),
+          };
+          const caught = Promise.reject(errors.virt);
+          caught.catch(() => {});
+          Bun.plugin({
+            name: "p",
+            setup(b) {
+              b.module("virt", () => caught);
+              b.onLoad({ filter: /\\.rejects$/ }, async () => {
+                throw errors["./x.rejects"];
+              });
+              b.onLoad({ filter: /.*/, namespace: "rejects" }, () => Promise.reject(errors["rejects:x"]));
+            },
+          });
+          for (const id in errors) {
+            try {
+              require(id);
+              log(id + " did not throw");
+            } catch (e) {
+              log(id + ": " + (e === errors[id] ? "the plugin's error" : e.name + ": " + e.message));
+            }
+          }
+          for (const id in errors) {
+            await import(id).then(
+              () => log("import of " + id + " did not reject"),
+              e => log("import of " + id + ": " + e.message),
+            );
+          }
+          await tick();
+        `,
+        { "x.rejects": "" },
+      );
+      expect(result).toEqual({
+        lines: [
+          "virt: the plugin's error",
+          "./x.rejects: the plugin's error",
+          "rejects:x: the plugin's error",
+          "import of virt: module failed",
+          "import of ./x.rejects: loader failed",
+          "import of rejects:x: namespace loader failed",
+        ],
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
+    it("leaves the import() that the error asks for to a promise of its own", async () => {
+      const result = await run(
+        mode,
+        `
+          const calls = [];
+          Bun.plugin({
+            name: "p",
+            setup(b) {
+              b.module("virt", () => new Promise((resolve, reject) => calls.push({ resolve, reject })));
+            },
+          });
+          let exports;
+          try {
+            exports = require("virt");
+          } catch {
+            const imported = import("virt");
+            calls[1].resolve({ loader: "object", exports: { from: "import()" } });
+            exports = await imported;
+          }
+          log("from: " + exports.from);
+          calls[0].reject(new Error("the promise that require() was given"));
+          await tick();
+          log("plugin calls: " + calls.length);
+        `,
+      );
+      expect(result).toEqual({ lines: ["from: import()", "plugin calls: 2"], stderr: "", exitCode: 0 });
+    });
+  });
+
+  it("emits rejectionHandled for a rejection that was reported before the module was loaded", async () => {
+    const result = await run(
+      "bun",
+      `
+        const stored = {
+          "virt-require": Promise.reject(new Error("for require()")),
+          "virt-import": Promise.reject(new Error("for import()")),
+        };
+        const events = { unhandledRejection: [], rejectionHandled: [] };
+        const nameOf = promise => Object.keys(stored).find(id => stored[id] === promise) ?? "another promise";
+        process.on("unhandledRejection", (reason, promise) => events.unhandledRejection.push(nameOf(promise)));
+        process.on("rejectionHandled", promise => events.rejectionHandled.push(nameOf(promise)));
+        Bun.plugin({
+          name: "p",
+          setup(b) {
+            for (const id in stored) b.module(id, () => stored[id]);
+          },
+        });
+        await tick();
+        try {
+          require("virt-require");
+          log("require() did not throw");
+        } catch (e) {
+          log("require(): " + e.message);
+        }
+        await import("virt-import").then(
+          () => log("import() did not reject"),
+          e => log("import(): " + e.message),
+        );
+        await tick();
+        for (const name in events) log(name + ": " + events[name].sort().join(", "));
+      `,
+    );
+    expect(result).toEqual({
+      lines: [
+        "require(): for require()",
+        "import(): for import()",
+        "unhandledRejection: virt-import, virt-require",
+        "rejectionHandled: virt-import, virt-require",
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 describe("dynamic import", () => {
   it("SSRs `<h1>Hello world!</h1>` with Svelte", async () => {
     const { default: App }: any = await import("./hello.svelte");

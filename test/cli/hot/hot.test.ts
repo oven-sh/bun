@@ -1195,10 +1195,13 @@ it.each(importedFolders)(
     unlinkSync(join(folder, "c.tsx"));
     expect(await loaded("loaded first c.js\n")).toBe(true);
 
-    // An editor that saves with a rename puts a new file in place of the watched one.
-    writeFileSync(join(folder, "a.ts.tmp"), `export const a = "second";`);
-    renameSync(join(folder, "a.ts.tmp"), join(folder, "a.ts"));
-    expect(await loaded("loaded second c.js\n")).toBe(true);
+    // An editor that saves with a rename puts a new file in place of the watched one. On Windows that rename
+    // fails with EPERM while the target exists (see writeHotFileAtomicSync).
+    if (!isWindows) {
+      writeFileSync(join(folder, "a.ts.tmp"), `export const a = "second";`);
+      renameSync(join(folder, "a.ts.tmp"), join(folder, "a.ts"));
+      expect(await loaded("loaded second c.js\n")).toBe(true);
+    }
 
     // writeFileSync truncates after it writes, so a shorter file could be read with the rest of the old one.
     writeFileSync(join(root, "main.ts"), main + `process.exit(0);\n`);

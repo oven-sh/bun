@@ -212,10 +212,10 @@ const fn length_codes(mut base_values: &[u32], mut nb_additional_bits: &[u8]) ->
     while let (
         [code, other_codes @ ..],
         [base_value, other_values @ ..],
-        [nb_bits, other_nb_bits @ ..],
+        [more_bits, other_nb_bits @ ..],
     ) = (left, base_values, nb_additional_bits)
     {
-        *code = l(0, *nb_bits, 0, *base_value).to_bits();
+        *code = l(0, *more_bits, 0, *base_value).to_bits();
         (left, base_values, nb_additional_bits) = (other_codes, other_values, other_nb_bits);
     }
     codes

@@ -656,8 +656,7 @@ pub struct AddrInfo_hints {
     pub ai_socktype: c_int,
     pub ai_protocol: c_int,
 }
-// SAFETY: four `c_int` fields; all-zero is a valid hints value (S021).
-unsafe impl bun_core::ffi::Zeroable for AddrInfo_hints {}
+bun_core::impl_zeroable!(AddrInfo_hints);
 
 #[derive(Copy, Clone, Default)]
 pub struct ChannelOptions {
@@ -1071,9 +1070,7 @@ pub struct struct_ares_addr6ttl {
     pub(crate) ttl: c_int,
 }
 
-// SAFETY: `#[repr(C)]` POD — 16-byte byte-array union + `c_int`. All-zero is a
-// valid bit pattern (S021).
-unsafe impl bun_core::ffi::Zeroable for struct_ares_addr6ttl {}
+bun_core::impl_zeroable!(struct_ares_addr6ttl);
 impl Default for struct_ares_addr6ttl {
     #[inline]
     fn default() -> Self {

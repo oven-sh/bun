@@ -333,8 +333,6 @@ pub type LPOVERLAPPED_COMPLETION_ROUTINE =
     Option<unsafe extern "system" fn(DWORD, DWORD, *mut OVERLAPPED)>;
 
 pub use bun_windows_sys::{PROCESS_INFORMATION, STARTUPINFOEXW, STARTUPINFOW};
-// `Zeroable for {OVERLAPPED, PROCESS_INFORMATION}` lives in `bun_core::ffi`
-// (orphan rule — trait owned by bun_core, type owned by bun_windows_sys).
 
 /// Wraps the kernel32 `CreateIoCompletionPort` call and returns `Err` on
 /// `NULL`.
@@ -586,8 +584,7 @@ pub use bun_windows_sys::externs::{
 };
 
 // Job Object structures + JOBOBJECTINFOCLASS consts — canonical definitions
-// live in bun_windows_sys::externs; Zeroable impls for these nominal types
-// live in bun_core/lib.rs (orphan-rule home). Do NOT re-declare here.
+// live in bun_windows_sys::externs. Do NOT re-declare here.
 pub use bun_windows_sys::externs::{
     IO_COUNTERS, JOBOBJECT_ASSOCIATE_COMPLETION_PORT, JOBOBJECT_BASIC_LIMIT_INFORMATION,
     JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectAssociateCompletionPortInformation,
@@ -642,7 +639,7 @@ pub fn user_unique_id() -> u32 {
         "username: {}",
         bun_core::fmt::utf16(name)
     );
-    bun_wyhash::hash32(bytemuck::cast_slice::<u16, u8>(name))
+    bun_wyhash::hash32(bun_core::slice_as_bytes(name))
 }
 
 // BOOL CreateDirectoryExW(
@@ -1235,8 +1232,7 @@ pub fn detect_runtime_version() -> &'static str {
         safe fn RtlGetVersion(info: &mut OSVERSIONINFOW) -> i32;
     }
     static CACHE: std::sync::OnceLock<std::string::String> = std::sync::OnceLock::new();
-    // SAFETY: `#[repr(C)]` POD — five u32 + a `[u16; 128]` array.
-    unsafe impl bun_core::ffi::Zeroable for OSVERSIONINFOW {}
+    bun_core::impl_zeroable!(OSVERSIONINFOW);
     CACHE.get_or_init(|| {
         let mut info: OSVERSIONINFOW = bun_core::ffi::zeroed();
         info.dwOSVersionInfoSize = core::mem::size_of::<OSVERSIONINFOW>() as u32;

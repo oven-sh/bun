@@ -8,6 +8,7 @@ use bun_libuv_sys::UvHandle as _;
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
 use bun_threading::Guarded;
+use std::rc::Rc;
 
 // Low-tier timer node + tag (per §Dispatch hot-path list, the `match tag`
 // dispatch lives in this crate; `bun_event_loop` only stores `(tag, ptr)`).
@@ -20,7 +21,7 @@ pub(crate) use bun_event_loop::EventLoopTimer::{
 // TODO: remove this alias once the lower tier switches to `bun_core::Timespec`.
 pub(crate) use bun_event_loop::EventLoopTimer::Timespec as ElTimespec;
 
-use crate::jsc::JSValue;
+use crate::node::histogram::Interval;
 
 // ─── JS-facing surface (`impl All { set_timeout / clear_* / … }`) ────────────
 #[path = "Timer.rs"]
@@ -185,7 +186,7 @@ pub(crate) mod immediate_object;
 mod date_header_timer_draft;
 
 #[path = "EventLoopDelayMonitor.rs"]
-mod event_loop_delay_monitor_draft;
+pub(crate) mod event_loop_delay_monitor;
 
 // ─── TimerHeap ───────────────────────────────────────────────────────────────
 // Real intrusive pairing-heap (meld/remove/combine_siblings) implemented in
@@ -342,123 +343,98 @@ impl DateHeaderTimer {
     }
 }
 
+/// Samples the event loop for every enabled `monitorEventLoopDelay()` histogram of this thread, with one timer.
 pub(crate) struct EventLoopDelayMonitor {
-    /// Weak, so a leaked monitor does not pin the retired `--isolate` realm.
-    /// `stop_active_handles` drops it before `~VM` (`All` outlives the heap).
-    histogram: bun_jsc::Weak<()>,
+    enabled: Vec<EnabledInterval>,
     pub(crate) event_loop_timer: EventLoopTimer,
-    /// Never 0. `on_fire` re-arms at the drain's fixed `now` plus this, and
-    /// `All::drain_timers` pops every node due at or before that `now`.
-    pub(crate) resolution_ms: u32,
-    pub(crate) last_fire_ns: u64,
-    pub(crate) enabled: bool,
 }
+
+struct EnabledInterval {
+    /// Weak, so a histogram that is collected while enabled stops being sampled. It holds no JS value.
+    interval: std::rc::Weak<Interval>,
+    next: Timespec,
+}
+
 impl Default for EventLoopDelayMonitor {
     fn default() -> Self {
         Self {
-            histogram: bun_jsc::Weak::default(),
+            enabled: Vec::new(),
             event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::EventLoopDelayMonitor),
-            resolution_ms: 10,
-            last_fire_ns: 0,
-            enabled: false,
         }
     }
 }
+
 impl EventLoopDelayMonitor {
     #[inline]
     fn timer_all() -> *mut All {
         crate::jsc_hooks::timer_all()
     }
 
-    fn enable(
-        &mut self,
-        vm: &mut bun_jsc::virtual_machine::VirtualMachine,
-        histogram: JSValue,
-        resolution_ms: f64,
-    ) {
-        self.disable();
-        self.histogram = bun_jsc::Weak::create_passive(histogram, vm.global());
-        // `as` saturates and maps NaN to 0.
-        self.resolution_ms = (resolution_ms as u32).max(1);
-        self.enabled = true;
-
-        // Schedule timer
+    fn enable(&mut self, interval: &Rc<Interval>) {
         let now = Timespec::now(TimespecMockMode::ForceRealTime);
-        let next = now.add_ms(i64::from(self.resolution_ms));
-        self.event_loop_timer.next = ElTimespec {
-            sec: next.sec,
-            nsec: next.nsec,
-        };
-        let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
-        // SAFETY: single JS thread; nothing `All::insert` touches overlaps
-        // `event_loop_delay`, which `self` aliases.
-        unsafe { (*Self::timer_all()).insert(elt) };
+        self.enabled.push(EnabledInterval {
+            interval: Rc::downgrade(interval),
+            next: now.add_ms(i64::from(interval.resolution_ms)),
+        });
+        self.schedule();
     }
 
-    pub(crate) fn disable(&mut self) {
-        if !self.enabled {
-            return;
-        }
-        self.enabled = false;
-        self.histogram = bun_jsc::Weak::default();
-        self.last_fire_ns = 0;
-        // FIRED (not linked) when called from `on_fire`.
-        if self.event_loop_timer.state == EventLoopTimerState::ACTIVE {
-            let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
-            // SAFETY: see `enable` — disjoint-field access on `All`.
-            unsafe { (*Self::timer_all()).remove(elt) };
-        }
+    fn disable(&mut self, interval: &Rc<Interval>) {
+        self.enabled
+            .retain(|enabled| !core::ptr::eq(enabled.interval.as_ptr(), Rc::as_ptr(interval)));
+        self.schedule();
     }
 
-    /// Record `now - last_fire_ns`
-    /// into the JS histogram and reschedule.
+    pub(crate) fn disable_all(&mut self) {
+        self.enabled.clear();
+        self.schedule();
+    }
+
     pub(crate) fn on_fire(
         &mut self,
-        _vm: &mut bun_jsc::virtual_machine::VirtualMachine,
         now: &bun_event_loop::EventLoopTimer::Timespec,
+        vm: &bun_jsc::virtual_machine::VirtualMachine,
     ) {
         self.event_loop_timer.state = EventLoopTimerState::FIRED;
-        if !self.enabled {
-            return;
-        }
-        let Some(histogram) = self.histogram.get() else {
-            self.disable();
-            return;
-        };
-
-        let now_ns = now.ns();
-        if self.last_fire_ns > 0 {
-            let expected_ns = u64::from(self.resolution_ms) * 1_000_000;
-            let actual_ns = now_ns - self.last_fire_ns;
-
-            if actual_ns > expected_ns {
-                let delay_ns =
-                    i64::try_from(actual_ns.saturating_sub(expected_ns)).expect("int cast");
-                unsafe extern "C" {
-                    safe fn JSNodePerformanceHooksHistogram_recordDelay(
-                        histogram: JSValue,
-                        delay_ns: i64,
-                    );
-                }
-                JSNodePerformanceHooksHistogram_recordDelay(histogram, delay_ns);
-            }
-        }
-
-        self.last_fire_ns = now_ns;
-
-        // Reschedule
-        let next = Timespec {
+        let now = Timespec {
             sec: now.sec,
             nsec: now.nsec,
-        }
-        .add_ms(i64::from(self.resolution_ms));
-        self.event_loop_timer.next = ElTimespec {
-            sec: next.sec,
-            nsec: next.nsec,
         };
+        let mut allocated = 0;
+        self.enabled.retain_mut(|enabled| {
+            let Some(interval) = enabled.interval.upgrade() else {
+                return false;
+            };
+            if enabled.next.order(&now).is_le() {
+                // From the time of the sample, which is later than `now` if a timer before this one was slow: the
+                // next sample is then no sooner than the resolution. `All::drain_timers` pops every node due at
+                // or before `now`.
+                let (sampled_at, grown) = interval.sample();
+                enabled.next = sampled_at.add_ms(i64::from(interval.resolution_ms));
+                allocated += grown;
+            }
+            true
+        });
+        self.schedule();
+        if allocated > 0 {
+            // This can collect, so it comes last.
+            vm.jsc_vm()
+                .report_extra_memory_allocated(bun_jsc::JSValue::UNDEFINED, allocated);
+        }
+    }
+
+    /// Arms the timer for the interval that is due first.
+    fn schedule(&mut self) {
         let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
-        // SAFETY: see `enable` — disjoint-field access on `All`.
-        unsafe { (*Self::timer_all()).insert(elt) };
+        let next = self.enabled.iter().map(|enabled| enabled.next);
+        if let Some(next) = next.min_by(Timespec::order) {
+            // SAFETY: single JS thread; nothing `All::update` touches overlaps
+            // `event_loop_delay`, which `self` aliases.
+            unsafe { (*Self::timer_all()).update(elt, &next) };
+        } else if self.event_loop_timer.state == EventLoopTimerState::ACTIVE {
+            // SAFETY: as above, for `All::remove`.
+            unsafe { (*Self::timer_all()).remove(elt) };
+        }
     }
 }
 

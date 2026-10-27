@@ -866,7 +866,9 @@ fn run_tasks_erased(
                     // The HTTP request was cached
                     if let Some(mut manifest) = loaded_manifest.take() {
                         // If we requested extended manifest but we somehow got an abbreviated one, this is a bug
-                        debug_assert!(!is_extended_manifest || manifest.pkg.has_extended_manifest);
+                        debug_assert!(
+                            !is_extended_manifest || manifest.pkg.has_extended_manifest()
+                        );
 
                         manifest.pkg.public_max_age =
                             npm::Registry::manifest_expiry(&response.headers);

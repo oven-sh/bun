@@ -3012,6 +3012,14 @@ mod tests {
     }
 
     #[test]
+    fn relative_to_another_windows_volume_is_the_absolute_path() {
+        let relative = relative_platform::<platform::Windows, false>;
+        assert_eq!(relative(b"C:\\out", b"D:\\src\\lib.js"), b"D:\\src\\lib.js");
+        // A drive letter is the same volume in either case.
+        assert_eq!(relative(b"c:\\out", b"C:\\src\\lib.js"), b"..\\src\\lib.js");
+    }
+
+    #[test]
     fn join_string_buf_skips_empty_parts_and_normalizes() {
         let mut out = [0u8; 64];
         assert_eq!(

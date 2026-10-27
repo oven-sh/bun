@@ -222,6 +222,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
                 None,
                 part_range.source_index,
                 source,
+                &chunk.output_dir_abs,
                 module_info,
             );
         }
@@ -980,6 +981,7 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
         runtime_require_ref,
         part_range.source_index,
         source_ref,
+        &chunk.output_dir_abs,
         module_info,
     )
 }

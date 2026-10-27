@@ -2190,6 +2190,39 @@ describe("compiled binary validity", () => {
     }
   });
 
+  // An executable resolves what it does not embed against the working directory, not
+  // against the directory it was written to.
+  test("an external file resolves from the working directory of a compiled binary", async () => {
+    using dir = tempDir("build-compile-external-file", {
+      "src/entry.js": `import lib from "../lib.js"; console.log(lib);`,
+      "lib.js": `export default "external-lib";`,
+    });
+
+    const result = await Bun.build({
+      entrypoints: [join(dir + "", "src", "entry.js")],
+      external: [join(dir + "", "lib.js")],
+      outdir: join(dir + "", "dist"),
+      compile: {
+        outfile: "app-external",
+      },
+    });
+
+    expect(result.success).toBe(true);
+
+    await using proc = Bun.spawn({
+      cmd: [result.outputs[0].path],
+      env: bunEnv,
+      cwd: process.cwd(),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, stderr }).toEqual({ stdout: "external-lib\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
   test("compiled binary runs and produces expected output", async () => {
     using dir = tempDir("build-compile-runs", {
       "app.js": `console.log("compile-test-output");`,

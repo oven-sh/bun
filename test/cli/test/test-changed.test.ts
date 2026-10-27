@@ -394,6 +394,21 @@ describe.concurrent("bun test --changed", () => {
     expect(exitCode).toBe(0);
   });
 
+  // `bun build` matches a file `external` as written. The scan of what a test loads does not.
+  test("a bunfig.toml `external` that equals an import only as written does not hide the dependency", async () => {
+    using dir = tempDir("test-changed-bunfig-external-as-written", {
+      ...fixture,
+      // Names <root>/helper. src/util.ts imports "./helper", which is src/helper.ts.
+      "bunfig.toml": `external = ["./helper"]\n`,
+    });
+    initRepo(String(dir));
+    appendFileSync(join(String(dir), "src", "helper.ts"), "// touched\n");
+
+    const { stderr, exitCode } = await runTestChanged(String(dir));
+    expect(ranFiles(stderr, names)).toEqual(["a.test.ts"]);
+    expect(exitCode).toBe(0);
+  });
+
   test("a node:vm timeout can interrupt a hot loop", async () => {
     using dir = tempDir("test-changed-vm-timeout", {
       "package.json": JSON.stringify({ name: "vm-timeout", type: "module" }),

@@ -616,6 +616,18 @@ impl BuildCommand {
                 // resolver subset; bundler-side `entry_naming` is sufficient.
             }
 
+            if this_transpiler.options.output_dir.is_empty() && !ctx.bundler_options.compile {
+                // Like the `'dump` block: a linked source map's two files go next to the entry.
+                let dir = if this_transpiler.options.source_map == options::SourceMapOption::Linked
+                    && ctx.args.entry_points.len() == 1
+                {
+                    bun_core::dirname(&ctx.args.entry_points[0])
+                } else {
+                    bun_core::dirname(outfile)
+                };
+                this_transpiler.options.cli_output_dir = dir.unwrap_or(b"").into();
+            }
+
             // Stack-owned Mini event loop so its tasks/concurrent_tasks queues
             // drop at scope exit; the arena bulk-free skips Drop. Outlives the
             // BACKREF passed to `generate_from_cli`.

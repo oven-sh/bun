@@ -2193,19 +2193,30 @@ pub mod bv2_impl {
                             while let Some(redirect_id) =
                                 get_redirect_id(self.redirects[other_source.get() as usize])
                             {
-                                let (other_src_idx, other_path) = {
+                                let (other_src_idx, other_path, other_flags) = {
                                     let other_import_records = self.all_import_records
                                         [other_source.get() as usize]
                                         .as_slice();
                                     let other_import_record =
                                         &other_import_records[redirect_id as usize];
-                                    (other_import_record.source_index, other_import_record.path)
+                                    (
+                                        other_import_record.source_index,
+                                        other_import_record.path,
+                                        other_import_record.flags,
+                                    )
                                 };
                                 let import_record = &mut self.all_import_records
                                     [import_record_list_id.get() as usize]
                                     .as_mut_slice()[ir_idx];
                                 import_record.source_index = other_src_idx;
                                 import_record.path = other_path;
+                                // How to print `path` travels with it.
+                                import_record.flags.set(
+                                    bun_ast::ImportRecordFlags::PRINT_PATH_RELATIVE_TO_OUTPUT,
+                                    other_flags.contains(
+                                        bun_ast::ImportRecordFlags::PRINT_PATH_RELATIVE_TO_OUTPUT,
+                                    ),
+                                );
                                 other_source = other_src_idx;
                                 if redirect_count == Self::MAX_REDIRECTS {
                                     import_record.path.is_disabled = true;
@@ -2750,6 +2761,16 @@ pub mod bv2_impl {
             let mut had_busted_dir_cache = false;
             let resolve_result = loop {
                 // SAFETY: see `transpiler` note above.
+                let options = unsafe { &(*transpiler).options };
+                if let Some(external) = self.external_file_result(
+                    options,
+                    source_dir,
+                    &import_record.specifier,
+                    import_record.kind,
+                ) {
+                    break external;
+                }
+                // SAFETY: see `transpiler` note above.
                 match unsafe { &mut *transpiler }.resolver.resolve(
                     source_dir,
                     &import_record.specifier,
@@ -2917,6 +2938,20 @@ pub mod bv2_impl {
             };
 
             if resolve_result.flags.is_external() {
+                if let Some(file_path) = self.external_file_path(
+                    &import_record.specifier,
+                    import_record.kind,
+                    &path,
+                    target,
+                ) {
+                    let record: &mut ImportRecord = &mut self.graph.ast.items_import_records_mut()
+                        [import_record.importer_source_index as usize]
+                        .as_mut_slice()[import_record.import_record_index as usize];
+                    record.path = file_path;
+                    record
+                        .flags
+                        .insert(bun_ast::ImportRecordFlags::PRINT_PATH_RELATIVE_TO_OUTPUT);
+                }
                 return;
             }
 
@@ -4534,6 +4569,8 @@ pub mod bv2_impl {
             event_loop: EventLoop,
             entry_points: &[&[u8]],
         ) -> Result<Box<BundleV2<'a>>, Error> {
+            // A scan follows what a file loads. `ExternalFiles` is about a bundle's output.
+            transpiler.options.external_files = Default::default();
             let mut this = BundleV2::init(transpiler, None, alloc, event_loop, false, None, alloc)?;
             this.unique_key = generate_unique_key();
 
@@ -6400,6 +6437,93 @@ pub mod bv2_impl {
             )
         }
 
+        /// The resolver's external result for a specifier that `options::ExternalFiles` matches.
+        fn external_file_result<'r>(
+            &self,
+            options: &options::BundleOptions<'_>,
+            source_dir: &[u8],
+            specifier: &'r [u8],
+            kind: ImportKind,
+        ) -> Option<_resolver::Result<'r>>
+        where
+            'a: 'r,
+        {
+            let external_files = &options.external_files;
+            if external_files.is_empty() {
+                return None;
+            }
+            let text: &'r [u8] = if external_files.matches_specifier(specifier) {
+                specifier
+            } else if !external_files.has_path_patterns()
+                // The resolver keeps a specifier that a wildcard matches as written.
+                || options::ExternalFiles::any_matches(&options.external.patterns, specifier)
+            {
+                return None;
+            } else if bun_paths::is_absolute(specifier) {
+                if !external_files.matches_path(specifier) {
+                    return None;
+                }
+                specifier
+            } else if !is_package_path(specifier) || kind.is_from_css() {
+                // The path as the resolver joins it, before it looks for the file.
+                let mut spill = Vec::new();
+                let joined =
+                    bun_paths::resolve_path::join_abs_string_spill::<bun_paths::platform::Loose>(
+                        self.transpiler.fs().top_level_dir(),
+                        &mut spill,
+                        &[source_dir, specifier],
+                    );
+                if !external_files.matches_path(joined) {
+                    return None;
+                }
+                self.arena().alloc_slice_copy(joined)
+            } else {
+                return None;
+            };
+            Some(_resolver::Result {
+                import_kind: kind,
+                path_pair: _resolver::PathPair {
+                    primary: Fs::Path::init(text),
+                    secondary: None,
+                },
+                flags: _resolver::ResultFlags::IS_EXTERNAL,
+                ..Default::default()
+            })
+        }
+
+        /// For a relative JS specifier that matched an `external` file by path: the absolute
+        /// path to store on the record (`PRINT_PATH_RELATIVE_TO_OUTPUT`). `None` otherwise.
+        fn external_file_path(
+            &mut self,
+            specifier: &[u8],
+            kind: ImportKind,
+            resolved: &Fs::Path<'_>,
+            target: options::Target,
+        ) -> Option<Fs::Path<'a>> {
+            if !resolved.is_file()
+                || !bun_paths::is_absolute(resolved.text)
+                || bun_paths::is_absolute(specifier)
+                || kind.is_from_css()
+            {
+                return None;
+            }
+            self.graph.has_output_relative_import_paths = true;
+            let mut path = self
+                .path_with_pretty_initialized(resolved, target)
+                .expect("oom");
+            // "." and "./lib/" name a directory: the printer keeps the separator the join stripped.
+            if _resolver::Resolver::import_path_names_directory(specifier)
+                && path.text.last() != Some(&bun_paths::SEP)
+            {
+                let text = self
+                    .arena()
+                    .alloc_slice_fill_copy(path.text.len() + 1, bun_paths::SEP);
+                text[..path.text.len()].copy_from_slice(path.text);
+                path.text = text;
+            }
+            Some(path)
+        }
+
         fn reserve_source_indexes_for_bake(&mut self) -> Result<(), Error> {
             let Some(fw) = &self.framework else {
                 return Ok(());
@@ -6882,6 +7006,14 @@ pub mod bv2_impl {
 
                 let mut had_busted_dir_cache = false;
                 let resolve_result: _resolver::Result<'a> = 'inner: loop {
+                    if let Some(external) = self.external_file_result(
+                        &transpiler.options,
+                        source_dir,
+                        import_record.path.text,
+                        import_record.kind,
+                    ) {
+                        break external;
+                    }
                     match transpiler.resolver.resolve_with_framework(
                         source_dir,
                         import_record.path.text,
@@ -7104,6 +7236,16 @@ pub mod bv2_impl {
                         )
                     {
                         import_record.path = resolve_result.path_pair.primary;
+                    } else if let Some(file_path) = self.external_file_path(
+                        import_record.path.text,
+                        import_record.kind,
+                        path,
+                        target,
+                    ) {
+                        import_record.path = file_path;
+                        import_record
+                            .flags
+                            .insert(bun_ast::ImportRecordFlags::PRINT_PATH_RELATIVE_TO_OUTPUT);
                     }
                     import_record.flags.set(
                         bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS,
@@ -7491,7 +7633,7 @@ pub mod bv2_impl {
                 if !only_selected_record(ctx.only_records, i) {
                     continue;
                 }
-                if let Some(source_index) = path_to_source_index_map.get_path(&record.path) {
+                if let Some(source_index) = path_to_source_index_map.get_record(record) {
                     if save_import_record_source_index
                         || input_file_loaders[source_index as usize].is_css()
                     {
@@ -7834,7 +7976,7 @@ pub mod bv2_impl {
                             let resolved_index = if star_ir.source_index.is_valid() {
                                 star_ir.source_index.get()
                             } else if let Some(idx) =
-                                this.graph.build_graphs[result_ast_target].get_path(&star_ir.path)
+                                this.graph.build_graphs[result_ast_target].get_record(star_ir)
                             {
                                 idx
                             } else {

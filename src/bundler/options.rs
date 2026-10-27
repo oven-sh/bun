@@ -181,6 +181,69 @@ pub(crate) fn init_external_modules(
     result
 }
 
+/// File-path `external` entries as only a bundle matches them: as written, or a wildcard by path.
+#[derive(Default)]
+pub struct ExternalFiles {
+    /// Entries as written. A specifier that matches stays in the output as written.
+    exact: StringSet,
+    /// `./`, `../` and absolute wildcards, made absolute.
+    abs_patterns: Vec<WildcardPattern>,
+}
+
+impl ExternalFiles {
+    pub(crate) fn init(
+        fs: &mut Fs::Implementation,
+        cwd: &[u8],
+        externals: &[Box<[u8]>],
+        log: &mut bun_ast::Log,
+    ) -> ExternalFiles {
+        let mut result = ExternalFiles::default();
+        for external in externals {
+            if bun_paths::is_package_path(external) {
+                continue;
+            }
+            if strings::index_of_char(external, b'*').is_none() {
+                result.exact.insert(external).expect("unreachable");
+                continue;
+            }
+            let normalized = validate_path(log, fs, cwd, external, b"external path");
+            if let Some(star) = strings::index_of_char(&normalized, b'*') {
+                let star = star as usize;
+                result.abs_patterns.push(WildcardPattern {
+                    prefix: Box::from(&normalized[0..star]),
+                    suffix: Box::from(&normalized[star + 1..]),
+                });
+            }
+        }
+        result
+    }
+
+    #[inline]
+    pub(crate) fn is_empty(&self) -> bool {
+        self.exact.count() == 0 && self.abs_patterns.is_empty()
+    }
+
+    pub(crate) fn matches_specifier(&self, specifier: &[u8]) -> bool {
+        self.exact.count() > 0 && self.exact.contains(specifier)
+    }
+
+    pub(crate) fn has_path_patterns(&self) -> bool {
+        !self.abs_patterns.is_empty()
+    }
+
+    pub(crate) fn matches_path(&self, abs_path: &[u8]) -> bool {
+        Self::any_matches(&self.abs_patterns, abs_path)
+    }
+
+    pub(crate) fn any_matches(patterns: &[WildcardPattern], text: &[u8]) -> bool {
+        patterns.iter().any(|pattern| {
+            text.len() >= pattern.prefix.len() + pattern.suffix.len()
+                && text.starts_with(&pattern.prefix)
+                && text.ends_with(&pattern.suffix)
+        })
+    }
+}
+
 pub use bun_resolve_builtins::node_builtins::{
     BUN_NODE_BUILTIN_PATTERNS_COMPAT, NODE_BUILTIN_PATTERNS, NODE_BUILTIN_PATTERNS_RAW,
 };
@@ -1226,6 +1289,8 @@ pub struct BundleOptions<'a> {
     pub(crate) output_dir_handle: Option<Dir>,
 
     pub output_dir: Box<[u8]>,
+    /// `bun build` without `--outdir`: the directory the CLI writes to (empty: stdout).
+    pub cli_output_dir: Box<[u8]>,
     pub root_dir: Box<[u8]>,
 
     pub(crate) write: bool,
@@ -1246,6 +1311,7 @@ pub struct BundleOptions<'a> {
     /// through those sibling raw pointers UB under stacked borrows.
     pub log: *mut bun_ast::Log,
     pub(crate) external: ExternalModules,
+    pub(crate) external_files: ExternalFiles,
     pub allow_unresolved: AllowUnresolved,
     pub entry_points: Box<[Box<[u8]>]>,
     pub entry_naming: Box<[u8]>,
@@ -1482,6 +1548,7 @@ impl<'a> BundleOptions<'a> {
             // close the parent's fd when the worker options drop.
             output_dir_handle: None,
             output_dir: self.output_dir.clone(),
+            cli_output_dir: self.cli_output_dir.clone(),
             root_dir: self.root_dir.clone(),
             write: self.write,
             preserve_symlinks: self.preserve_symlinks,
@@ -1493,6 +1560,8 @@ impl<'a> BundleOptions<'a> {
             main_fields: self.main_fields.clone(),
             log: self.log,
             external: self.external.clone(),
+            // Import records resolve on the bundle thread, never on a worker.
+            external_files: ExternalFiles::default(),
             allow_unresolved: self.allow_unresolved.clone(),
             entry_points: self.entry_points.clone(),
             entry_naming: self.entry_naming.clone(),
@@ -1716,9 +1785,11 @@ impl<'a> BundleOptions<'a> {
             define: Box::new(defines::Define::default()),
             loaders,
             output_dir: Box::from(transform.output_dir.as_deref().unwrap_or(b"out")),
+            cli_output_dir: Box::default(),
             target,
             write: transform.write.unwrap_or(false),
             external: ExternalModules::default(), // filled below
+            external_files: ExternalFiles::default(),
             entry_points: transform.entry_points.clone().into_boxed_slice(),
             out_extensions: StringHashMap::default(), // filled below
             env: Env::default(),
@@ -1934,6 +2005,14 @@ impl<'a> BundleOptions<'a> {
             opts.log_mut(),
             opts.target,
         );
+        if !transform.external.is_empty() {
+            opts.external_files = ExternalFiles::init(
+                &mut fs.fs,
+                top_level_dir,
+                &transform.external,
+                opts.log_mut(),
+            );
+        }
         opts.out_extensions = opts.target.out_extensions();
 
         opts.source_map = SourceMapOption::from_api(transform.source_map);
@@ -2483,6 +2562,29 @@ impl PathTemplate {
             &self.placeholder.target,
             sanitize_parent_dirs,
         )
+    }
+
+    /// Directory part of the template as written to disk, `/`-separated. A `[hash]` not
+    /// yet known takes a stand-in; hashes have no separators, so the depth is right.
+    pub(crate) fn rel_dir(&self) -> Box<[u8]> {
+        let mut rel = Vec::<u8>::new();
+        path_template_print(
+            &mut rel,
+            &self.data,
+            &self.placeholder.dir,
+            &self.placeholder.name,
+            &self.placeholder.ext,
+            Some(
+                self.placeholder
+                    .hash
+                    .unwrap_or_else(|| bun_core::fmt::ContentHash::new(0, self.hash_len())),
+            ),
+            &self.placeholder.target,
+            true,
+        )
+        .expect("write to Vec<u8>");
+        bun_paths::resolve_path::platform_to_posix_in_place::<u8>(&mut rel);
+        Box::from(bun_paths::resolve_path::dirname::<bun_paths::platform::Posix>(&rel))
     }
 
     /// Max output path length. A `PathBuffer` also needs room for a `.map` or `.jsc` suffix and the NUL.

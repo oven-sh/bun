@@ -91,6 +91,9 @@ pub struct Graph<'a> {
     ///
     /// Helps skip a loop.
     pub(crate) has_any_secondary_paths: bool,
+
+    /// Some import record has `PRINT_PATH_RELATIVE_TO_OUTPUT`, so chunks need `output_dir_abs`.
+    pub(crate) has_output_relative_import_paths: bool,
 }
 
 #[derive(Default)]
@@ -179,6 +182,7 @@ impl<'a> Graph<'a> {
             kit_referenced_server_data: false,
             kit_referenced_client_data: false,
             has_any_secondary_paths: false,
+            has_output_relative_import_paths: false,
         }
     }
 }

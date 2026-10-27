@@ -1380,6 +1380,10 @@ pub struct Options<'a> {
     pub line_offset_tables: Option<&'a SourceMap::line_offset_table::List<bun_alloc::AstAlloc>>,
 
     pub mangled_props: Option<&'a crate::MangledProps>,
+
+    /// Absolute directory of the output file; `PRINT_PATH_RELATIVE_TO_OUTPUT`
+    /// records print relative to it (as-is when empty).
+    pub output_dir: &'a [u8],
 }
 
 impl<'a> Options<'a> {
@@ -1436,6 +1440,7 @@ impl<'a> Default for Options<'a> {
             has_dynamic_import_items: false,
             line_offset_tables: None,
             mangled_props: None,
+            output_dir: b"",
         }
     }
 }
@@ -3614,10 +3619,10 @@ pub(crate) mod __gated_printer {
                     }
 
                     self.print(b"(");
-                    self.print_string_literal_utf8(
-                        self.import_record(e.import_record_index as usize).path.text,
-                        true,
+                    let path = self.import_record_path_text(
+                        self.import_record(e.import_record_index as usize),
                     );
+                    self.print_string_literal_utf8(path, true);
                     self.print(b")");
 
                     if wrap {
@@ -5632,8 +5637,9 @@ pub(crate) mod __gated_printer {
                     self.print_semicolon_after_statement();
 
                     if Self::MAY_HAVE_MODULE_INFO {
+                        let irp = self.import_record_path_text(import_record);
                         if let Some(mi) = self.module_info() {
-                            let irp_id = mi.str(import_record.path.text);
+                            let irp_id = mi.str(irp);
                             mi.request_module(
                                 irp_id,
                                 analyze_transpiled_module::FetchParameters::None,
@@ -5815,9 +5821,10 @@ pub(crate) mod __gated_printer {
                     if Self::MAY_HAVE_MODULE_INFO && self.module_info.is_some() {
                         // reshaped for borrowck — re-borrow module_info per item so
                         // `name_for_symbol` (which needs `&mut self`) can run between uses.
+                        let irp = self.import_record_path_text(import_record);
                         let irp_id = {
                             let mi = self.module_info().expect("infallible: module_info enabled");
-                            let id = mi.str(import_record.path.text);
+                            let id = mi.str(irp);
                             mi.request_module(id, analyze_transpiled_module::FetchParameters::None);
                             id
                         };
@@ -6344,9 +6351,10 @@ pub(crate) mod __gated_printer {
                         // so we re-borrow it between `name_for_symbol` calls instead of holding
                         // a single long-lived `mi` across the whole block. `irp_id` is Copy.
                         use analyze_transpiled_module::FetchParameters as FP;
+                        let irp = self.import_record_path_text(record);
                         let (irp_id, fetch_parameters) = {
                             let mi = self.module_info().expect("infallible: module_info enabled");
-                            let irp_id = mi.str(record.path.text);
+                            let irp_id = mi.str(irp);
                             let fetch_parameters: FP = if IS_BUN_PLATFORM {
                                 if let Some(loader) = record.loader {
                                     use bun_ast::Loader;
@@ -6522,14 +6530,59 @@ pub(crate) mod __gated_printer {
             Ok(())
         }
 
-        pub(crate) fn print_import_record_path(&mut self, import_record: &ImportRecord) {
+        /// `path.text`, or for a `PRINT_PATH_RELATIVE_TO_OUTPUT` record that
+        /// absolute path made relative to `options.output_dir`.
+        pub(crate) fn import_record_path_text(&self, import_record: &ImportRecord<'a>) -> &'a [u8] {
+            let text: &'a [u8] = import_record.path.text;
+            if !import_record
+                .flags
+                .contains(ImportRecordFlags::PRINT_PATH_RELATIVE_TO_OUTPUT)
+                || self.options.output_dir.is_empty()
+            {
+                return text;
+            }
+            // `relative_platform` has no length limit, unlike the `_buf` variant.
+            let rel = bun_paths::resolve_path::relative_platform::<
+                bun_paths::resolve_path::platform::Auto,
+                false,
+            >(self.options.output_dir, text);
+            // No relative path leads to another Windows volume: `rel` is then absolute.
+            let is_absolute = bun_paths::is_absolute(rel);
+            let rel = rel.strip_suffix(&[bun_paths::SEP]).unwrap_or(rel);
+            if rel.is_empty() {
+                return b"./";
+            }
+            let is_parent = rel
+                .strip_prefix(b"..")
+                .is_some_and(|rest| rest.first().is_none_or(|&c| c == bun_paths::SEP));
+            let prefix: &[u8] = if is_parent || is_absolute { b"" } else { b"./" };
+            // The resolver keeps the trailing separator of a specifier that names a directory.
+            let suffix: &[u8] = if text.last() == Some(&bun_paths::SEP) {
+                b"/"
+            } else {
+                b""
+            };
+            let out = self
+                .bump
+                .alloc_slice_fill_copy(prefix.len() + rel.len() + suffix.len(), 0u8);
+            out[..prefix.len()].copy_from_slice(prefix);
+            out[prefix.len()..][..rel.len()].copy_from_slice(rel);
+            bun_paths::resolve_path::platform_to_posix_in_place::<u8>(
+                &mut out[prefix.len()..][..rel.len()],
+            );
+            out[prefix.len() + rel.len()..].copy_from_slice(suffix);
+            out
+        }
+
+        pub(crate) fn print_import_record_path(&mut self, import_record: &ImportRecord<'a>) {
             if IS_JSON {
                 unreachable!();
             }
 
-            let quote = best_quote_char_for_string(import_record.path.text, false);
+            let text = self.import_record_path_text(import_record);
+            let quote = best_quote_char_for_string(text, false);
             self.print(quote);
-            self.print_string_characters_utf8(import_record.path.text, quote);
+            self.print_string_characters_utf8(text, quote);
             self.print(quote);
         }
 

@@ -103,6 +103,10 @@ bitflags::bitflags! {
         /// `IS_UNUSED` for its own reasons (an unused TypeScript import, a macro
         /// import), and those records must never be resolved.
         const IS_BARREL_DEFERRED = 1 << 18;
+
+        /// An external matched by resolved path: `path.text` is the file's
+        /// absolute path and prints relative to the output file's directory.
+        const PRINT_PATH_RELATIVE_TO_OUTPUT = 1 << 28;
     }
 }
 

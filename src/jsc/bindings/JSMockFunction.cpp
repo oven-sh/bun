@@ -404,6 +404,9 @@ public:
 
     // Set on an automocked class instance's method mock: the mock of the same method on the class prototype.
     JSC::WriteBarrier<JSMockFunction> prototypeMock;
+    // The object materializePrototype() made, and the parent setPrototypeParent() last gave it.
+    JSC::WriteBarrier<JSC::JSObject> ownPrototype;
+    JSC::WriteBarrier<JSC::JSObject> ownPrototypeParent;
     bool isAutomock { false };
     bool isVitest { false };
     // Made through `jest`. With neither flag it comes from bun:test's mock() or spyOn(), and its mock name is its `name`.
@@ -741,6 +744,8 @@ public:
     {
         JSObject* prototype = JSC::constructEmptyObject(this->globalObject());
         prototype->putDirect(vm, vm.propertyNames->constructor, this, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
+        this->ownPrototype.set(vm, this, prototype);
+        this->ownPrototypeParent.set(vm, this, this->globalObject()->objectPrototype());
         JSC::AllowLazyMaterializationOfImmutableProperties allowMaterialization(vm);
         this->setPrototypeProperty(vm, prototype);
     }
@@ -758,6 +763,7 @@ public:
     }
 
     // Instances are created from `mock.prototype`, so the implementation's `prototype` is chained behind it.
+    // An object the test assigned to `prototype`, or a chain it set up by hand, isn't changed.
     void setPrototypeParent(JSGlobalObject* globalObject, JSValue constructor)
     {
         auto& vm = this->vm();
@@ -767,7 +773,7 @@ public:
         if (this->hasLazyPrototype)
             this->materializePrototype(vm);
         JSValue prototype = this->getDirect(vm, vm.propertyNames->prototype);
-        if (!prototype || !prototype.isObject())
+        if (!prototype || prototype != JSValue(this->ownPrototype.get()))
             return;
 
         JSObject* parent = this->globalObject()->objectPrototype();
@@ -781,8 +787,9 @@ public:
             return;
         JSValue currentParent = asObject(prototype)->getPrototype(globalObject);
         RETURN_IF_EXCEPTION(scope, );
-        if (currentParent == parent)
+        if (currentParent == parent || currentParent != JSValue(this->ownPrototypeParent.get()))
             return;
+        this->ownPrototypeParent.set(vm, this, parent);
         scope.release();
         asObject(prototype)->setPrototype(vm, globalObject, parent);
     }
@@ -985,6 +992,8 @@ void JSMockFunction::visitAdditionalChildrenInGCThread(Visitor& visitor)
     visitor.append(fn->m_recorded.state);
     visitor.append(fn->m_spyOriginal);
     visitor.append(fn->prototypeMock);
+    visitor.append(fn->ownPrototype);
+    visitor.append(fn->ownPrototypeParent);
     visitor.append(fn->m_initialImplementation);
 }
 

@@ -4364,6 +4364,39 @@ if (isBun) {
           expect(Object.getPrototypeOf(resetFirst.prototype)).toBe(isVitest ? parent : Object.prototype);
         });
 
+        test("doesn't change a prototype chain that the test set up", () => {
+          class Base {}
+          class Derived extends Base {}
+          class Plain {}
+          class Later {}
+          const use = mocked => {
+            new mocked();
+            mocked.mockImplementation(Later);
+            new mocked();
+            mocked.mockReset();
+            new mocked();
+          };
+
+          const rechained = fresh();
+          Object.setPrototypeOf(rechained.prototype, Base.prototype);
+          use(rechained);
+          expect(Object.getPrototypeOf(rechained.prototype)).toBe(Base.prototype);
+
+          for (const Class of [Derived, Plain]) {
+            const parentOfClass = Object.getPrototypeOf(Class.prototype);
+            const assigned = fresh();
+            assigned.prototype = Class.prototype;
+            use(assigned);
+            expect(Object.getPrototypeOf(Class.prototype)).toBe(parentOfClass);
+
+            const readFirst = fresh();
+            void readFirst.prototype;
+            readFirst.prototype = Class.prototype;
+            use(readFirst);
+            expect(Object.getPrototypeOf(Class.prototype)).toBe(parentOfClass);
+          }
+        });
+
         test("spyOn", () => {
           const mocked = fresh();
           const spy = spyOn(mocked, "prototype", "get").mockReturnValue("spied");

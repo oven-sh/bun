@@ -914,9 +914,10 @@ describe("bundler", () => {
   itBundled("cjs2esm/KeptRequireOfLiftedCommonJSDiffersFromBunRun", {
     files: {
       "/entry.js": /* js */ `
-        let m, plain;
+        let m, plain, typeModule;
         try { m = require("react"); } catch {}
         try { plain = require("scheduler"); } catch {}
+        try { typeModule = require("react-is"); } catch {}
         // 65 70: the module reads the property that was defined.
         Object.defineProperty(m, "x", { value: 65, writable: true, enumerable: true, configurable: true });
         console.log(m.x, m.sum());
@@ -926,8 +927,10 @@ describe("bundler", () => {
         Object.freeze(m);
         m.z = 66;
         console.log(m.z);
-        // true: a file with no exports, no require() and no "use strict" is an ES module at run time.
+        // true: a file with no exports, no require() and no "use strict" is an ES module to Bun. Node prints undefined.
         console.log(plain.__esModule);
+        // true value: so is a file that only calls require(), in a package with "type": "module".
+        console.log(typeModule.__esModule, globalThis.fromDependency);
       `,
       "/node_modules/react/package.json": reactWithCounter["/node_modules/react/package.json"],
       "/node_modules/react/index.js": /* js */ `
@@ -942,9 +945,19 @@ describe("bundler", () => {
       "/node_modules/scheduler/index.js": /* js */ `
         globalThis.sideEffect = true;
       `,
+      "/node_modules/react-is/package.json": /* json */ `
+        { "name": "react-is", "version": "19.0.0", "main": "index.js", "type": "module" }
+      `,
+      "/node_modules/react-is/index.js": /* js */ `
+        const dependency = require("./dependency.cjs");
+        globalThis.fromDependency = dependency.value;
+      `,
+      "/node_modules/react-is/dependency.cjs": /* js */ `
+        exports.value = "value";
+      `,
     },
     run: {
-      stdout: "65 6\ntrue 6\n66\nundefined",
+      stdout: "65 6\ntrue 6\n66\nundefined\nundefined value",
     },
   });
   // `import * as ns` of a lifted file is that same object. `bun run` prints false.

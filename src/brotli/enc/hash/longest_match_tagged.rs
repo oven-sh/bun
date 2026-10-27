@@ -358,3 +358,18 @@ impl<const LONG: bool, const N: usize, B: TaggedBuckets<N>> LongestMatchHasher
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// What `ChooseHasher` of the reference encoder sets for H58 and H68. It sets `block_bits` to 4 and 5.
+    #[test]
+    fn same_parameters_as_the_reference_encoder() {
+        type H58 = HashLongestMatchTagged<false, 16, DenseBuckets<16>>;
+        type H68 = HashLongestMatchTagged<true, 32, DenseBuckets<32>>;
+        assert_eq!(H58::BUCKET_BITS, 14);
+        assert_eq!(H68::BUCKET_BITS, 15);
+        assert_eq!(NUM_LAST_DISTANCES_TO_CHECK, 4);
+    }
+}

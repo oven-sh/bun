@@ -12,7 +12,7 @@ use crate::common::constants::{
 };
 
 /// How thorough H5 and H6 are.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct HasherParams {
     /// `log2` of the number of hashes.
     pub(crate) bucket_bits: u32,
@@ -22,7 +22,7 @@ pub(crate) struct HasherParams {
 }
 
 /// See [`EncoderParams::choose_hasher`]. H58 and H68 keep 16 or 32 positions for each hash.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum HasherType {
     H2,
     H3,
@@ -236,6 +236,104 @@ impl EncoderParams {
             5 => HasherType::H58x16,
             6 => HasherType::H58x32,
             7..=9 => HasherType::H5(hasher_params),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::HasherType::*;
+    use super::*;
+
+    /// H58 finds the same matches as H5, and H68 as H6, so the output does not tell which one was chosen. The table is
+    /// `ChooseHasher` of the reference encoder, built with `BROTLI_MAX_SIMD_QUALITY` 6.
+    #[test]
+    fn chooses_the_hasher_of_the_reference_encoder() {
+        const MIB: usize = 1 << 20;
+        let p = |block_bits, num_last_distances_to_check| HasherParams {
+            bucket_bits: 15,
+            block_bits,
+            num_last_distances_to_check,
+        };
+        let table = [
+            (2, 10, 0, H2),
+            (2, 22, 0, H2),
+            (2, 24, MIB, H2),
+            (3, 16, 0, H3),
+            (3, 22, MIB, H3),
+            (3, 24, 0, H3),
+            (3, 25, 0, H35),
+            (3, 30, MIB, H35),
+            (4, 16, 0, H4),
+            (4, 22, MIB - 1, H4),
+            (4, 25, MIB - 1, H4),
+            (4, 16, MIB, H54),
+            (4, 22, MIB, H54),
+            (4, 24, MIB, H54),
+            (4, 25, MIB, H55),
+            (5, 10, 0, H40),
+            (5, 16, MIB, H40),
+            (6, 16, 0, H40),
+            (7, 16, 0, H41),
+            (8, 16, MIB, H41),
+            (9, 16, 0, H42),
+            (5, 17, 0, H58x16),
+            (5, 18, MIB, H58x16),
+            (5, 19, MIB - 1, H58x16),
+            (5, 25, MIB - 1, H58x16),
+            (6, 17, 0, H58x32),
+            (6, 18, MIB, H58x32),
+            (6, 19, MIB - 1, H58x32),
+            (6, 25, 0, H58x32),
+            (7, 17, 0, H5(p(6, 10))),
+            (7, 18, MIB, H5(p(6, 10))),
+            (7, 19, MIB - 1, H5(p(6, 10))),
+            (7, 25, MIB - 1, H5(p(6, 10))),
+            (8, 17, 0, H5(p(7, 10))),
+            (8, 22, MIB - 1, H5(p(7, 10))),
+            (9, 17, 0, H5(p(8, 16))),
+            (9, 18, MIB, H5(p(8, 16))),
+            (9, 22, MIB - 1, H5(p(8, 16))),
+            (5, 19, MIB, H68x16),
+            (5, 24, MIB, H68x16),
+            (6, 19, MIB, H68x32),
+            (6, 24, MIB, H68x32),
+            (7, 19, MIB, H6(p(6, 10))),
+            (7, 24, MIB, H6(p(6, 10))),
+            (8, 19, MIB, H6(p(7, 10))),
+            (9, 19, MIB, H6(p(8, 16))),
+            (9, 24, MIB, H6(p(8, 16))),
+            (5, 25, MIB, H65(p(4, 4))),
+            (6, 25, MIB, H65(p(5, 4))),
+            (7, 25, MIB, H65(p(6, 10))),
+            (8, 25, MIB, H65(p(7, 10))),
+            (9, 25, MIB, H65(p(8, 16))),
+            (9, 30, MIB, H65(p(8, 16))),
+            (10, 10, 0, H10),
+            (10, 16, MIB, H10),
+            (10, 22, 0, H10),
+            (10, 25, MIB, H10),
+            (11, 22, MIB, H10),
+            (11, 30, 0, H10),
+        ];
+        for (quality, lgwin, size_hint, expected) in table {
+            let params = EncoderParams {
+                mode: EncoderMode::Generic,
+                quality,
+                lgwin,
+                lgblock: 0,
+                stream_offset: 0,
+                size_hint,
+                disable_literal_context_modeling: false,
+                large_window: lgwin > MAX_WINDOW_BITS,
+                dist: DistanceParams::default(),
+                dictionary: CompoundDictionary::default(),
+            };
+            assert_eq!(
+                params.choose_hasher(),
+                expected,
+                "quality {quality}, lgwin {lgwin}, size hint {size_hint}"
+            );
         }
     }
 }

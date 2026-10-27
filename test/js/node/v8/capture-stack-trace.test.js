@@ -2,6 +2,7 @@ import { nativeFrameForTesting } from "bun:internal-for-testing";
 import { noInline } from "bun:jsc";
 import { afterEach, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { EventEmitter } from "node:events";
 import { totalmem } from "node:os";
 const origPrepareStackTrace = Error.prepareStackTrace;
 afterEach(() => {
@@ -1410,6 +1411,29 @@ test("Error.captureStackTrace finds the caller by identity before it looks at na
     twin: "callsTwin",
     notOnStack: "Error",
   });
+});
+
+test("Error.captureStackTrace finds a resumed caller below a node: module frame with its name", async () => {
+  // EventEmitter.prototype.emit is a function of a node: module whose frame is also named `emit`.
+  const emitter = new EventEmitter();
+  async function emit() {
+    // Resumed from here on: its frame has another callee, so only the name can find it.
+    await new Promise(r => setImmediate(r));
+    const error = {};
+    emitter.once("event", () => Error.captureStackTrace(error, emit));
+    emitter.emit("event");
+    return error.stack;
+  }
+  noInline(emit);
+
+  async function callsEmit() {
+    return await emit();
+  }
+  noInline(callsEmit);
+
+  const stack = await callsEmit();
+  expect(stack).not.toContain("at emit");
+  expect(stack).toContain("at async callsEmit");
 });
 
 test("Error.captureStackTrace applies stackTraceLimit after caller removal", () => {

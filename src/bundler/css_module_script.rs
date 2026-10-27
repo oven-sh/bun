@@ -175,7 +175,7 @@ pub(crate) fn parse(
 
     let mut js = Vec::<u8>::with_capacity(css.len() + 256);
     for asset in 0..assets.len() {
-        let _ = write!(&mut js, "import asset{asset} from \"{asset}\";\n");
+        let _ = writeln!(&mut js, "import asset{asset} from \"{asset}\";");
     }
     if !assets.is_empty() {
         // A constructed stylesheet resolves a relative URL against the document: `url` makes the chunk-relative path of an asset absolute, and safe in a quoted `url()`.

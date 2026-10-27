@@ -6,7 +6,7 @@
 //! same function it goes about it the wrong way and ends up with scalar code several times as slow. So every pass and
 //! every transposition is a function of its own, and `#[inline(never)]`.
 
-/// psraw by `shift` of a sum that has the rounding in it already, and packssdw.
+/// psrad by `shift` of a sum that has the rounding in it already, and packssdw.
 #[inline(always)]
 pub(crate) fn descale(sum: i32, shift: u32) -> i16 {
     (sum >> shift).clamp(-32768, 32767) as i16

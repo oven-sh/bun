@@ -9,7 +9,7 @@ use super::lossless::DiffController;
 use super::marker::Reached;
 use super::phuff::PHuffDecoder;
 use super::upsample::{self, Method};
-use super::{ColorSpace, DCTSIZE, Decoder, PixelFormat, div_round_up, round_up};
+use super::{ColorSpace, DCTSIZE, Decoder, last_group};
 use crate::error::{Error, Result, try_vec_with_capacity};
 
 enum Source {
@@ -35,47 +35,45 @@ struct Upsampler {
 }
 
 impl Decoder<'_> {
-    /// The size of the image that `decode` makes at `scale` eighths.
-    pub fn scaled_size(&self, scale: u32) -> (u32, u32) {
+    /// The size of the image that `decode` makes.
+    pub fn scaled_size(&self, eighths: u32) -> (u32, u32) {
         (
-            div_round_up(self.width * scale, DCTSIZE),
-            div_round_up(self.height * scale, DCTSIZE),
+            (self.width * eighths).div_ceil(DCTSIZE),
+            (self.height * eighths).div_ceil(DCTSIZE),
         )
     }
 
-    /// Decodes the image at `scale` eighths of its size, from 1 to 8, into 4 bytes per pixel. This can be done once.
-    pub fn decode(&mut self, scale: u32, format: PixelFormat) -> Result<Vec<u8>> {
-        if !(1..=DCTSIZE).contains(&scale)
-            || (scale != DCTSIZE && !self.scalable())
-            || self.input_scan_number != 1
-        {
+    /// Decodes the image at 1 to 8 eighths of its size, into 4 bytes per pixel: RGB and an alpha of 255, or for
+    /// `ColorSpace::Cmyk` and `ColorSpace::Ycck`, CMYK as the stream has it, which in Adobe's files means 255 is no ink.
+    pub fn decode(mut self, eighths: u32) -> Result<Vec<u8>> {
+        if !(1..=DCTSIZE).contains(&eighths) || (eighths != DCTSIZE && !self.scalable()) {
             return Err(Error::InvalidArgument);
         }
-        let (output_width, output_height) = self.scaled_size(scale);
-        let min_dct_scaled_size = if self.lossless { 1 } else { scale };
+        let (output_width, output_height) = self.scaled_size(eighths);
+        let min_dct_scaled_size = if self.lossless { 1 } else { eighths };
         if !self.lossless {
-            self.scale_components(scale);
+            self.scale_components(eighths);
         }
         if self.precision > 8 {
             return Err(Error::BadPrecision(self.precision));
         }
 
-        let conversion = self.select_conversion(format)?;
+        let conversion = self.select_conversion()?;
         let mut upsamplers = self.select_upsamplers(min_dct_scaled_size, output_width)?;
         let mut source = if self.lossless {
             if self.arith_code {
                 return Err(Error::ArithNotImpl);
             }
-            Source::Lossless(Box::new(DiffController::new(self)?))
+            Source::Lossless(Box::new(DiffController::new(&self)?))
         } else {
             let entropy = if self.arith_code {
-                Entropy::Arith(Box::new(ArithDecoder::new(self)))
+                Entropy::Arith(Box::new(ArithDecoder::new(&self)))
             } else if self.progressive {
-                Entropy::PHuff(Box::new(PHuffDecoder::new(self)))
+                Entropy::PHuff(Box::new(PHuffDecoder::new(&self)))
             } else {
-                Entropy::Huff(Box::new(HuffDecoder::new(self)))
+                Entropy::Huff(Box::new(HuffDecoder::new(&mut self)))
             };
-            Source::Lossy(CoefController::new(self, entropy)?)
+            Source::Lossy(CoefController::new(&self, entropy)?)
         };
 
         let new_planes = |d: &Self| -> Result<Vec<Plane>> {
@@ -88,10 +86,10 @@ impl Decoder<'_> {
             };
             d.comps.iter().map(plane).collect()
         };
-        let mut current = new_planes(self)?;
+        let mut current = new_planes(&self)?;
         let need_context = upsamplers.iter().any(|up| up.method.needs_context());
         let mut next = if need_context {
-            new_planes(self)?
+            new_planes(&self)?
         } else {
             Vec::new()
         };
@@ -103,8 +101,8 @@ impl Decoder<'_> {
             // All of the input comes before any of the output.
             loop {
                 match &mut source {
-                    Source::Lossy(coef) => coef.consume_scan(self)?,
-                    Source::Lossless(diff) => diff.consume_scan(self)?,
+                    Source::Lossy(coef) => coef.consume_scan(&mut self)?,
+                    Source::Lossless(diff) => diff.consume_scan(&mut self)?,
                 }
                 match self.read_markers()? {
                     Reached::Sos => self.start_input_pass(&mut source)?,
@@ -119,7 +117,7 @@ impl Decoder<'_> {
             .map(|comp| Idct::new(comp.dct_scaled_size, comp.quant_table.as_ref()))
             .collect();
         if let Source::Lossy(coef) = &mut source {
-            coef.start_output_pass(self);
+            coef.start_output_pass(&self);
         }
 
         let mut emitter = Emitter {
@@ -140,12 +138,14 @@ impl Decoder<'_> {
                 &mut current
             };
             match (&mut source, self.has_multiple_scans) {
-                (Source::Lossy(coef), false) => coef.decompress_onepass(self, &idcts, planes)?,
-                (Source::Lossy(coef), true) => {
-                    coef.decompress_data(self, imcu_row, &idcts, planes)?
+                (Source::Lossy(coef), false) => {
+                    coef.decompress_onepass(&mut self, &idcts, planes)?
                 }
-                (Source::Lossless(diff), false) => diff.decompress_onepass(self, planes)?,
-                (Source::Lossless(diff), true) => diff.output_data(self, imcu_row, planes)?,
+                (Source::Lossy(coef), true) => {
+                    coef.decompress_data(&self, imcu_row, &idcts, planes)?
+                }
+                (Source::Lossless(diff), false) => diff.decompress_onepass(&mut self, planes)?,
+                (Source::Lossless(diff), true) => diff.output_data(&self, imcu_row, planes)?,
             }
             if !need_context {
                 emitter.emit(
@@ -190,24 +190,22 @@ impl Decoder<'_> {
             }
             comp.dct_scaled_size = ssize;
             comp.downsampled_width =
-                div_round_up(self.width * comp.h_samp * ssize, self.max_h_samp * DCTSIZE);
+                (self.width * comp.h_samp * ssize).div_ceil(self.max_h_samp * DCTSIZE);
             comp.downsampled_height =
-                div_round_up(self.height * comp.v_samp * ssize, self.max_v_samp * DCTSIZE);
+                (self.height * comp.v_samp * ssize).div_ceil(self.max_v_samp * DCTSIZE);
         }
     }
 
-    fn select_conversion(&self, format: PixelFormat) -> Result<Conversion> {
-        let conversion = match (format, self.color_space()) {
-            (PixelFormat::Rgba, ColorSpace::Rgb) => Conversion::RgbToRgba,
-            (PixelFormat::Cmyk, ColorSpace::Cmyk) => Conversion::Cmyk,
+    fn select_conversion(&self) -> Result<Conversion> {
+        Ok(match self.color_space {
+            ColorSpace::Rgb => Conversion::RgbToRgba,
+            ColorSpace::Cmyk => Conversion::Cmyk,
             // A lossless stream only converts in ways that lose nothing, and libjpeg counts none of these among them.
             _ if self.lossless => return Err(Error::ConversionNotImpl),
-            (PixelFormat::Rgba, ColorSpace::Grayscale) => Conversion::GrayToRgba,
-            (PixelFormat::Rgba, ColorSpace::YCbCr) => Conversion::YccToRgba,
-            (PixelFormat::Cmyk, ColorSpace::Ycck) => Conversion::YcckToCmyk,
-            _ => return Err(Error::ConversionNotImpl),
-        };
-        Ok(conversion)
+            ColorSpace::Grayscale => Conversion::GrayToRgba,
+            ColorSpace::YCbCr => Conversion::YccToRgba,
+            ColorSpace::Ycck => Conversion::YcckToCmyk,
+        })
     }
 
     fn select_upsamplers(
@@ -253,16 +251,16 @@ impl Decoder<'_> {
                 method,
                 rowgroup_height: v_in as usize,
                 rows: rows as usize,
-                last_rows: match comp.downsampled_height % rows {
-                    0 => rows,
-                    n => n,
-                } as usize,
+                last_rows: last_group(comp.downsampled_height, rows) as usize,
                 width: comp.downsampled_width as usize,
                 above: Vec::new(),
                 buffer: if method == Method::FullSize {
                     Plane::default()
                 } else {
-                    Plane::new(round_up(output_width, h_out) as usize, v_out as usize)?
+                    Plane::new(
+                        output_width.next_multiple_of(h_out) as usize,
+                        v_out as usize,
+                    )?
                 },
             });
         }
@@ -275,7 +273,8 @@ impl Decoder<'_> {
             Source::Lossy(coef) => {
                 self.latch_quant_tables()?;
                 coef.entropy.start_pass(self)?;
-                coef.start_input_pass(self)
+                coef.start_input_pass();
+                Ok(())
             }
             Source::Lossless(diff) => diff.start_input_pass(self),
         }

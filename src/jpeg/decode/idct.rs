@@ -16,10 +16,6 @@ const fn fix(x: f64) -> i32 {
     (x * (1 << CONST_BITS) as f64 + 0.5) as i32
 }
 
-const FIX_0_541196100: i32 = fix(0.541196100);
-const FIX_0_765366865: i32 = fix(0.765366865);
-const FIX_1_847759065: i32 = fix(1.847759065);
-
 /// The multipliers of a component, in row-major order. libjpeg keeps them in a `short`.
 pub(crate) type DctTable = [i16; 64];
 
@@ -599,7 +595,7 @@ fn idct12<T: Int>([dc, x1, x2, x3, x4, x5, x6, x7]: [T; 8]) -> [T; 12] {
     let z3 = x5;
     let z4 = x7;
     let tmp11 = z2 * fix(1.306562965);
-    let tmp14 = z2 * -FIX_0_541196100;
+    let tmp14 = z2 * -F_0_541;
     let tmp10 = z1 + z3;
     let tmp15 = (tmp10 + z4) * fix(0.860918669);
     let tmp12 = tmp15 + tmp10 * fix(0.261052384);
@@ -610,9 +606,9 @@ fn idct12<T: Int>([dc, x1, x2, x3, x4, x5, x6, x7]: [T; 8]) -> [T; 12] {
     let tmp15 = tmp15 + (tmp14 - z1 * fix(0.676326758) - z4 * fix(1.982889723));
     let z1 = z1 - z4;
     let z2 = z2 - z3;
-    let z3 = (z1 + z2) * FIX_0_541196100;
-    let tmp11 = z3 + z1 * FIX_0_765366865;
-    let tmp14 = z3 - z2 * FIX_1_847759065;
+    let z3 = (z1 + z2) * F_0_541;
+    let tmp11 = z3 + z1 * F_0_765;
+    let tmp14 = z3 - z2 * F_1_847;
     [
         tmp20 + tmp10,
         tmp21 + tmp11,

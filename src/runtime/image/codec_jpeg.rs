@@ -1,13 +1,13 @@
 //! JPEG decode/encode for `Bun.Image`, on `bun_jpeg`.
 //! Dispatch lives in codecs.rs; this file is the codec body.
 
-use bun_jpeg::{ColorSpace, Decoder, EncodeOptions, PixelFormat};
+use bun_jpeg::{ColorSpace, Decoder, EncodeOptions};
 
 use super::codecs;
 
 fn decode_error(err: bun_jpeg::Error) -> codecs::Error {
     match err {
-        bun_jpeg::Error::OutOfMemory => codecs::Error::OutOfMemory,
+        bun_jpeg::Error::Alloc(oom) => oom.into(),
         _ => codecs::Error::DecodeFailed,
     }
 }
@@ -23,7 +23,7 @@ pub(crate) fn decode(
     max_pixels: u64,
     hint: codecs::DecodeHint,
 ) -> Result<codecs::Decoded, codecs::Error> {
-    let mut decoder = Decoder::new(bytes).map_err(decode_error)?;
+    let decoder = Decoder::new(bytes).map_err(decode_error)?;
     let (src_w, src_h) = (decoder.width(), decoder.height());
     codecs::guard(src_w, src_h, max_pixels)?;
     // However high `max_pixels` is set. TurboJPEG took its own limit as an `int`.
@@ -71,12 +71,7 @@ pub(crate) fn decode(
         decoder.icc_profile().map_err(decode_error)?
     };
 
-    let format = if cmyk {
-        PixelFormat::Cmyk
-    } else {
-        PixelFormat::Rgba
-    };
-    let mut rgba = decoder.decode(eighths, format).map_err(decode_error)?;
+    let mut rgba = decoder.decode(eighths).map_err(decode_error)?;
     if cmyk {
         codecs::cmyk_to_rgba(&mut rgba);
     }
@@ -111,7 +106,7 @@ pub(crate) fn encode(
             bytes.shrink_to_fit();
             Ok(codecs::Encoded::from_owned(bytes))
         }
-        Err(bun_jpeg::Error::OutOfMemory) => Err(codecs::Error::OutOfMemory),
+        Err(bun_jpeg::Error::Alloc(oom)) => Err(oom.into()),
         Err(_) => Err(codecs::Error::EncodeFailed),
     }
 }

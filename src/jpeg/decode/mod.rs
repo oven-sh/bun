@@ -14,7 +14,7 @@ mod phuff;
 mod upsample;
 
 use crate::error::{Error, Result};
-use crate::tables::HuffSpec;
+use crate::tables::{HuffSpec, MAX_DIMENSION};
 use input::Input;
 use marker::Reached;
 use std::borrow::Cow;
@@ -26,7 +26,6 @@ pub(crate) const MAX_COMPS_IN_SCAN: usize = 4;
 pub(crate) const MAX_SAMP_FACTOR: u32 = 4;
 pub(crate) const MAX_COMPONENTS: usize = 10;
 pub(crate) const MAX_BLOCKS_IN_MCU: usize = 10;
-pub(crate) const MAX_DIMENSION: u32 = 65500;
 pub(crate) const DCTSIZE: u32 = 8;
 
 /// 64 coefficients in row-major order.
@@ -42,16 +41,6 @@ pub enum ColorSpace {
     Ycck,
 }
 
-/// The layout of the decoded pixels, 4 bytes each.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PixelFormat {
-    /// Alpha is 255. Not for `ColorSpace::Cmyk` and `ColorSpace::Ycck`.
-    Rgba,
-    /// As stored in the stream, which for Adobe's files means 255 is no ink. Only for `ColorSpace::Cmyk` and
-    /// `ColorSpace::Ycck`.
-    Cmyk,
-}
-
 #[derive(Default, Clone)]
 pub(crate) struct Component {
     pub(crate) id: u8,
@@ -64,6 +53,8 @@ pub(crate) struct Component {
     /// In data units: 8x8 blocks, or single samples in a lossless stream.
     pub(crate) width_in_blocks: u32,
     pub(crate) height_in_blocks: u32,
+    /// Rows of data units in the last iMCU row. The others have `v_samp`.
+    pub(crate) last_row_height: u32,
     /// The side of the square of samples that the inverse DCT makes of a block.
     pub(crate) dct_scaled_size: u32,
     /// In samples, after the inverse DCT.
@@ -76,7 +67,6 @@ pub(crate) struct Component {
     pub(crate) mcu_width: u32,
     pub(crate) mcu_height: u32,
     pub(crate) last_col_width: u32,
-    pub(crate) last_row_height: u32,
 }
 
 pub struct Decoder<'a> {
@@ -101,9 +91,9 @@ pub struct Decoder<'a> {
     pub(crate) comps: Vec<Component>,
 
     saw_jfif: bool,
-    saw_adobe: bool,
-    adobe_transform: u8,
-    color_space: Option<ColorSpace>,
+    /// From the Adobe APP14 segment, if there is one.
+    adobe_transform: Option<u8>,
+    color_space: ColorSpace,
     /// The APP2 segments before the first scan.
     app2: Vec<Cow<'a, [u8]>>,
     in_header: bool,
@@ -129,12 +119,12 @@ pub struct Decoder<'a> {
     pub(crate) mcu_membership: [u8; MAX_BLOCKS_IN_MCU],
 }
 
-pub(crate) fn div_round_up(a: u32, b: u32) -> u32 {
-    a.div_ceil(b)
-}
-
-pub(crate) fn round_up(a: u32, b: u32) -> u32 {
-    a.next_multiple_of(b)
+/// How many are in the last group when `total` are put in groups of `size`.
+pub(crate) fn last_group(total: u32, size: u32) -> u32 {
+    match total % size {
+        0 => size,
+        n => n,
+    }
 }
 
 impl<'a> Decoder<'a> {
@@ -162,9 +152,8 @@ impl<'a> Decoder<'a> {
             height: 0,
             comps: Vec::new(),
             saw_jfif: false,
-            saw_adobe: false,
-            adobe_transform: 0,
-            color_space: None,
+            adobe_transform: None,
+            color_space: ColorSpace::Grayscale,
             app2: Vec::new(),
             in_header: true,
             comps_in_scan: 0,
@@ -189,10 +178,7 @@ impl<'a> Decoder<'a> {
             Reached::Eoi => return Err(Error::NoImage),
         }
         this.in_header = false;
-        this.guess_color_space();
-        if this.color_space.is_none() {
-            return Err(Error::UnknownColorSpace);
-        }
+        this.color_space = this.guess_color_space()?;
         Ok(this)
     }
 
@@ -205,13 +191,7 @@ impl<'a> Decoder<'a> {
     }
 
     pub fn color_space(&self) -> ColorSpace {
-        // `new` fails without one.
-        self.color_space.unwrap_or(ColorSpace::YCbCr)
-    }
-
-    /// The profile from the APP2 segments before the first scan.
-    pub fn icc_profile(&self) -> Result<Option<Vec<u8>>> {
-        self.read_icc_profile()
+        self.color_space
     }
 
     /// Whether `decode` takes a `scale` other than 8. TurboJPEG allowed a cropping region, which Bun relied on when it
@@ -295,44 +275,31 @@ impl<'a> Decoder<'a> {
 
         for comp in &mut self.comps {
             comp.dct_scaled_size = data_unit;
-            comp.width_in_blocks =
-                div_round_up(self.width * comp.h_samp, self.max_h_samp * data_unit);
+            comp.width_in_blocks = (self.width * comp.h_samp).div_ceil(self.max_h_samp * data_unit);
             comp.height_in_blocks =
-                div_round_up(self.height * comp.v_samp, self.max_v_samp * data_unit);
-            comp.downsampled_width = div_round_up(self.width * comp.h_samp, self.max_h_samp);
-            comp.downsampled_height = div_round_up(self.height * comp.v_samp, self.max_v_samp);
-            comp.quant_table = None;
+                (self.height * comp.v_samp).div_ceil(self.max_v_samp * data_unit);
+            comp.downsampled_width = (self.width * comp.h_samp).div_ceil(self.max_h_samp);
+            comp.downsampled_height = (self.height * comp.v_samp).div_ceil(self.max_v_samp);
+            comp.last_row_height = last_group(comp.height_in_blocks, comp.v_samp);
         }
-        self.total_imcu_rows = div_round_up(self.height, self.max_v_samp * data_unit);
+        self.total_imcu_rows = self.height.div_ceil(self.max_v_samp * data_unit);
         self.has_multiple_scans = self.comps_in_scan < self.comps.len() || self.progressive;
         Ok(())
     }
 
-    fn guess_color_space(&mut self) {
-        self.color_space = match *self.comps.as_slice() {
-            [_] => Some(ColorSpace::Grayscale),
-            [ref c0, ref c1, ref c2] => Some(if self.saw_jfif {
-                ColorSpace::YCbCr
-            } else if self.saw_adobe {
-                match self.adobe_transform {
-                    0 => ColorSpace::Rgb,
-                    _ => ColorSpace::YCbCr,
-                }
-            } else if (c0.id, c1.id, c2.id) == (b'R', b'G', b'B') || self.lossless {
-                ColorSpace::Rgb
-            } else {
-                ColorSpace::YCbCr
-            }),
-            [_, _, _, _] => Some(if self.saw_adobe {
-                match self.adobe_transform {
-                    0 => ColorSpace::Cmyk,
-                    _ => ColorSpace::Ycck,
-                }
-            } else {
-                ColorSpace::Cmyk
-            }),
-            _ => None,
-        };
+    fn guess_color_space(&self) -> Result<ColorSpace> {
+        Ok(match (self.comps.as_slice(), self.adobe_transform) {
+            ([_], _) => ColorSpace::Grayscale,
+            ([_, _, _], _) if self.saw_jfif => ColorSpace::YCbCr,
+            ([_, _, _], Some(0)) => ColorSpace::Rgb,
+            ([_, _, _], Some(_)) => ColorSpace::YCbCr,
+            ([c0, c1, c2], None) if (c0.id, c1.id, c2.id) == (b'R', b'G', b'B') => ColorSpace::Rgb,
+            ([_, _, _], None) if self.lossless => ColorSpace::Rgb,
+            ([_, _, _], None) => ColorSpace::YCbCr,
+            ([_, _, _, _], None | Some(0)) => ColorSpace::Cmyk,
+            ([_, _, _, _], Some(_)) => ColorSpace::Ycck,
+            _ => return Err(Error::UnknownColorSpace),
+        })
     }
 
     /// Before each scan.
@@ -346,29 +313,17 @@ impl<'a> Decoder<'a> {
             comp.mcu_width = 1;
             comp.mcu_height = 1;
             comp.last_col_width = 1;
-            // Here this is the number of block rows in the last iMCU row.
-            comp.last_row_height = match comp.height_in_blocks % comp.v_samp {
-                0 => comp.v_samp,
-                n => n,
-            };
             self.blocks_in_mcu = 1;
             self.mcu_membership = [0; MAX_BLOCKS_IN_MCU];
         } else {
-            self.mcus_per_row = div_round_up(self.width, self.max_h_samp * data_unit);
+            self.mcus_per_row = self.width.div_ceil(self.max_h_samp * data_unit);
             self.blocks_in_mcu = 0;
             for i in 0..self.comps_in_scan {
                 let ci = self.scan_comp_index(i)?;
                 let comp = self.comps.get_mut(ci).ok_or(Error::Internal)?;
                 comp.mcu_width = comp.h_samp;
                 comp.mcu_height = comp.v_samp;
-                comp.last_col_width = match comp.width_in_blocks % comp.mcu_width {
-                    0 => comp.mcu_width,
-                    n => n,
-                };
-                comp.last_row_height = match comp.height_in_blocks % comp.mcu_height {
-                    0 => comp.mcu_height,
-                    n => n,
-                };
+                comp.last_col_width = last_group(comp.width_in_blocks, comp.mcu_width);
                 for _ in 0..comp.mcu_width * comp.mcu_height {
                     *self
                         .mcu_membership
@@ -379,6 +334,17 @@ impl<'a> Decoder<'a> {
             }
         }
         Ok(())
+    }
+
+    /// An iMCU row of a scan with one component has as many rows of MCUs as the component has rows of data units in it.
+    pub(crate) fn mcu_rows_in_imcu_row(&self, imcu_row: u32) -> Result<u32> {
+        Ok(if self.comps_in_scan > 1 {
+            1
+        } else if imcu_row + 1 < self.total_imcu_rows {
+            self.scan_comp(0)?.v_samp
+        } else {
+            self.scan_comp(0)?.last_row_height
+        })
     }
 
     /// A later scan may come after the slot of a quantization table was redefined, so each component keeps the table

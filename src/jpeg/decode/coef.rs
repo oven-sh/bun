@@ -6,7 +6,7 @@ use super::huff::HuffDecoder;
 use super::idct::{self, DctTable};
 use super::input::Input;
 use super::phuff::PHuffDecoder;
-use super::{Block, Decoder, MAX_BLOCKS_IN_MCU, round_up};
+use super::{Block, Decoder, MAX_BLOCKS_IN_MCU};
 use crate::error::{Error, Result, try_vec};
 
 /// Where an entropy decoder finds the blocks of the MCU it is decoding.
@@ -181,8 +181,6 @@ const SAVED_COEFS: usize = 10;
 pub(crate) struct CoefController {
     pub(crate) entropy: Entropy,
     input_imcu_row: u32,
-    /// An iMCU row of a scan with one component has as many MCU rows as the component has block rows in it.
-    mcu_rows_per_imcu_row: u32,
     mcu_buffer: Box<[Block; MAX_BLOCKS_IN_MCU]>,
     /// Empty if the stream has a single scan.
     whole_image: Vec<CoefArray>,
@@ -197,8 +195,8 @@ impl CoefController {
         let mut whole_image = Vec::new();
         if d.has_multiple_scans {
             for comp in &d.comps {
-                let blocks_per_row = round_up(comp.width_in_blocks, comp.h_samp) as usize;
-                let rows = round_up(comp.height_in_blocks, comp.v_samp) as usize;
+                let blocks_per_row = comp.width_in_blocks.next_multiple_of(comp.h_samp) as usize;
+                let rows = comp.height_in_blocks.next_multiple_of(comp.v_samp) as usize;
                 let blocks = try_vec([0; 64], blocks_per_row * rows)?;
                 whole_image.push(CoefArray {
                     blocks,
@@ -209,7 +207,6 @@ impl CoefController {
         Ok(CoefController {
             entropy,
             input_imcu_row: 0,
-            mcu_rows_per_imcu_row: 0,
             mcu_buffer: Box::new([[0; 64]; MAX_BLOCKS_IN_MCU]),
             whole_image,
             last_good_imcu_row: 0,
@@ -217,20 +214,8 @@ impl CoefController {
         })
     }
 
-    fn start_imcu_row(&mut self, d: &Decoder) -> Result<()> {
-        self.mcu_rows_per_imcu_row = if d.comps_in_scan > 1 {
-            1
-        } else if self.input_imcu_row < d.total_imcu_rows - 1 {
-            d.scan_comp(0)?.v_samp
-        } else {
-            d.scan_comp(0)?.last_row_height
-        };
-        Ok(())
-    }
-
-    pub(crate) fn start_input_pass(&mut self, d: &Decoder) -> Result<()> {
+    pub(crate) fn start_input_pass(&mut self) {
         self.input_imcu_row = 0;
-        self.start_imcu_row(d)
     }
 
     /// Decodes the next iMCU row of a stream with a single scan straight into samples.
@@ -243,7 +228,7 @@ impl CoefController {
         let last_mcu_col = d.mcus_per_row - 1;
         let last_imcu_row = d.total_imcu_rows - 1;
 
-        for yoffset in 0..self.mcu_rows_per_imcu_row {
+        for yoffset in 0..d.mcu_rows_in_imcu_row(self.input_imcu_row)? {
             for mcu_col_num in 0..=last_mcu_col {
                 for block in self.mcu_buffer.iter_mut().take(d.blocks_in_mcu) {
                     *block = [0; 64];
@@ -286,9 +271,6 @@ impl CoefController {
         }
 
         self.input_imcu_row += 1;
-        if self.input_imcu_row < d.total_imcu_rows {
-            self.start_imcu_row(d)?;
-        }
         Ok(())
     }
 
@@ -299,7 +281,7 @@ impl CoefController {
                 arrays: &mut self.whole_image,
                 at: [(0, 0); MAX_BLOCKS_IN_MCU],
             };
-            for yoffset in 0..self.mcu_rows_per_imcu_row {
+            for yoffset in 0..d.mcu_rows_in_imcu_row(self.input_imcu_row)? {
                 for mcu_col_num in 0..d.mcus_per_row {
                     let mut at = mcu.at.iter_mut();
                     for i in 0..d.comps_in_scan {
@@ -324,9 +306,6 @@ impl CoefController {
                 }
             }
             self.input_imcu_row += 1;
-            if self.input_imcu_row < d.total_imcu_rows {
-                self.start_imcu_row(d)?;
-            }
         }
         Ok(())
     }
@@ -420,10 +399,7 @@ impl CoefController {
             let block_rows = if output_imcu_row < last_imcu_row {
                 comp.v_samp
             } else {
-                match comp.height_in_blocks % comp.v_samp {
-                    0 => comp.v_samp,
-                    n => n,
-                }
+                comp.last_row_height
             };
             let size = comp.dct_scaled_size as usize;
             let first_row = (output_imcu_row * comp.v_samp) as usize;

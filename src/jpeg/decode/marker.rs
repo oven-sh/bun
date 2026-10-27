@@ -9,9 +9,6 @@ use std::borrow::Cow;
 /// How much of an APP0 or APP14 segment is looked at.
 const APPN_DATA_LEN: usize = 14;
 
-/// "ICC_PROFILE\0", a sequence number and a count.
-const ICC_OVERHEAD_LEN: usize = 14;
-
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Reached {
     Sos,
@@ -288,8 +285,7 @@ impl Decoder<'_> {
             }
         } else if numtoread >= 12 && b.starts_with(b"Adobe") {
             let [.., transform, _, _] = b;
-            self.saw_adobe = true;
-            self.adobe_transform = transform;
+            self.adobe_transform = Some(transform);
         }
         self.inp.skip(length - numtoread);
     }
@@ -316,15 +312,13 @@ impl Decoder<'_> {
         self.inp.skip(length);
     }
 
-    /// Puts the ICC profile together from the APP2 segments read so far. A profile whose pieces do not add up is
-    /// ignored.
-    pub(crate) fn read_icc_profile(&self) -> Result<Option<Vec<u8>>> {
+    /// The ICC profile in the APP2 segments before the first scan. A profile whose pieces do not add up is ignored.
+    pub fn icc_profile(&self) -> Result<Option<Vec<u8>>> {
         fn icc(marker: &[u8]) -> Option<(u8, u8, &[u8])> {
-            let rest = marker.strip_prefix(b"ICC_PROFILE\0")?;
+            let rest = marker.strip_prefix(ICC_SIGNATURE)?;
             let (&[seq_no, count], data) = rest.split_first_chunk::<2>()?;
             Some((seq_no, count, data))
         }
-        const _: () = assert!(ICC_OVERHEAD_LEN == b"ICC_PROFILE\0".len() + 2);
 
         let mut num_markers: u8 = 0;
         let mut pieces: [Option<&[u8]>; 256] = [None; 256];

@@ -73,19 +73,24 @@ pub enum Error {
     HuffCodeLengthOverflow,
     #[error("Invalid argument")]
     InvalidArgument,
-    #[error("Insufficient memory")]
-    OutOfMemory,
     /// A state this crate rules out. It stands where C would index out of bounds.
     #[error("Internal error")]
     Internal,
+    #[error(transparent)]
+    Alloc(#[from] bun_alloc::AllocError),
 }
 
-pub type Result<T> = core::result::Result<T, Error>;
+impl From<std::collections::TryReserveError> for Error {
+    fn from(_: std::collections::TryReserveError) -> Self {
+        Self::Alloc(bun_alloc::AllocError)
+    }
+}
+
+pub type Result<T, E = Error> = core::result::Result<T, E>;
 
 pub(crate) fn try_vec_with_capacity<T>(capacity: usize) -> Result<Vec<T>> {
     let mut vec = Vec::new();
-    vec.try_reserve_exact(capacity)
-        .map_err(|_| Error::OutOfMemory)?;
+    vec.try_reserve_exact(capacity)?;
     Ok(vec)
 }
 

@@ -23,7 +23,7 @@ impl Output {
 
     pub(crate) fn finish(self) -> Result<Vec<u8>> {
         if self.out_of_memory {
-            return Err(Error::OutOfMemory);
+            return Err(bun_alloc::AllocError.into());
         }
         Ok(self.bytes)
     }

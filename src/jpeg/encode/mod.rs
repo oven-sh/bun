@@ -8,7 +8,7 @@ mod phuff;
 mod sample;
 
 use crate::error::{Error, Result, try_vec};
-use crate::tables::{self, HuffSpec, NATURAL_ORDER};
+use crate::tables::{self, HuffSpec, MAX_DIMENSION, NATURAL_ORDER};
 use fdct::Divisors;
 use huff::{BitWriter, Counts, EncodeTable, Output, SequentialTable};
 use phuff::{AcEncoder, Sink};
@@ -29,7 +29,10 @@ impl Block {
         let mut coefs = [0; 64];
         let [first, ..] = &mut coefs;
         *first = dc;
-        Block { coefs, nonzero: 0 }
+        Block {
+            coefs,
+            nonzero: (dc != 0) as u64,
+        }
     }
 
     #[inline(always)]
@@ -51,8 +54,6 @@ impl Block {
         self.nonzero & (u64::MAX << first) & (u64::MAX >> (63 - last))
     }
 }
-
-const MAX_DIMENSION: u32 = 65500;
 
 struct Component {
     id: u8,

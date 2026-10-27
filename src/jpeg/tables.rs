@@ -1,5 +1,8 @@
 //! Constant tables of the JPEG standard.
 
+/// The largest width and height that libjpeg takes.
+pub(crate) const MAX_DIMENSION: u32 = 65500;
+
 /// A Huffman table as a DHT segment gives it.
 #[derive(Clone)]
 pub(crate) struct HuffSpec {

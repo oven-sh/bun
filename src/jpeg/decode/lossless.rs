@@ -2,7 +2,7 @@
 
 use super::bits::{BitReader, DerivedTable, TableKind, huff_extend};
 use super::coef::Plane;
-use super::{Decoder, MAX_BLOCKS_IN_MCU, NUM_HUFF_TBLS, round_up};
+use super::{Decoder, MAX_BLOCKS_IN_MCU, NUM_HUFF_TBLS};
 use crate::error::{Error, Result, try_vec};
 
 /// The rows of one component for one iMCU row, as numbers wider than a sample.
@@ -43,7 +43,6 @@ pub(crate) struct DiffController {
     first_row: Vec<bool>,
 
     input_imcu_row: u32,
-    mcu_rows_per_imcu_row: u32,
     /// MCU rows left in this restart interval.
     restart_rows_to_go: u32,
     diff_buf: Vec<Rows>,
@@ -58,11 +57,11 @@ impl DiffController {
         let mut undiff_buf = Vec::new();
         let mut whole_image = Vec::new();
         for comp in &d.comps {
-            let stride = round_up(comp.width_in_blocks, comp.h_samp) as usize;
+            let stride = comp.width_in_blocks.next_multiple_of(comp.h_samp) as usize;
             diff_buf.push(Rows::new(stride, comp.v_samp as usize)?);
             undiff_buf.push(Rows::new(stride, comp.v_samp as usize)?);
             if d.has_multiple_scans {
-                let rows = round_up(comp.height_in_blocks, comp.v_samp) as usize;
+                let rows = comp.height_in_blocks.next_multiple_of(comp.v_samp) as usize;
                 whole_image.push((Plane::new(stride, rows)?, false));
             }
         }
@@ -73,7 +72,6 @@ impl DiffController {
             num_runs: 0,
             first_row: vec![true; d.comps.len()],
             input_imcu_row: 0,
-            mcu_rows_per_imcu_row: 0,
             restart_rows_to_go: 0,
             diff_buf,
             undiff_buf,
@@ -87,17 +85,6 @@ impl DiffController {
             return Err(Error::BadProgression(d.ss, d.se, d.ah, d.al));
         }
         self.first_row.fill(true);
-        Ok(())
-    }
-
-    fn start_imcu_row(&mut self, d: &Decoder) -> Result<()> {
-        self.mcu_rows_per_imcu_row = if d.comps_in_scan > 1 {
-            1
-        } else if self.input_imcu_row < d.total_imcu_rows - 1 {
-            d.scan_comp(0)?.v_samp
-        } else {
-            d.scan_comp(0)?.last_row_height
-        };
         Ok(())
     }
 
@@ -135,7 +122,7 @@ impl DiffController {
         }
         self.restart_rows_to_go = d.restart_interval / d.mcus_per_row;
         self.input_imcu_row = 0;
-        self.start_imcu_row(d)
+        Ok(())
     }
 
     /// Decodes the differences of one row of MCUs.
@@ -189,7 +176,7 @@ impl DiffController {
         d: &mut Decoder,
         mut output: impl FnMut(usize, usize) -> Option<&'p mut [u8]>,
     ) -> Result<()> {
-        for yoffset in 0..self.mcu_rows_per_imcu_row {
+        for yoffset in 0..d.mcu_rows_in_imcu_row(self.input_imcu_row)? {
             if d.restart_interval != 0 && self.restart_rows_to_go == 0 {
                 self.bits.reset();
                 d.inp.read_restart_marker();
@@ -256,9 +243,6 @@ impl DiffController {
         }
 
         self.input_imcu_row += 1;
-        if self.input_imcu_row < d.total_imcu_rows {
-            self.start_imcu_row(d)?;
-        }
         Ok(())
     }
 
@@ -318,10 +302,7 @@ impl DiffController {
             let rows = if output_imcu_row < d.total_imcu_rows - 1 {
                 comp.v_samp
             } else {
-                match comp.height_in_blocks % comp.v_samp {
-                    0 => comp.v_samp,
-                    n => n,
-                }
+                comp.last_row_height
             } as usize;
             let first = (output_imcu_row * comp.v_samp) as usize;
             let width = comp.width_in_blocks as usize;

@@ -30,3 +30,6 @@ pub(crate) const M_APP2: u8 = 0xe2;
 pub(crate) const M_APP14: u8 = 0xee;
 pub(crate) const M_APP15: u8 = 0xef;
 pub(crate) const M_COM: u8 = 0xfe;
+
+/// What an APP2 segment with a piece of an ICC profile begins with. The number of the piece and their count follow.
+pub(crate) const ICC_SIGNATURE: &[u8; 12] = b"ICC_PROFILE\0";

@@ -3,7 +3,9 @@
 use super::huff::Output;
 use super::{COMPONENTS, Scan};
 use crate::error::{Error, Result};
-use crate::markers::{M_APP0, M_APP2, M_DHT, M_DQT, M_EOI, M_SOF0, M_SOF2, M_SOI, M_SOS};
+use crate::markers::{
+    ICC_SIGNATURE, M_APP0, M_APP2, M_DHT, M_DQT, M_EOI, M_SOF0, M_SOF2, M_SOI, M_SOS,
+};
 use crate::tables::{HuffSpec, NATURAL_ORDER};
 
 impl Output {
@@ -26,7 +28,8 @@ impl Output {
     }
 
     pub(crate) fn icc_profile(&mut self, profile: &[u8]) -> Result<()> {
-        const MAX_DATA_BYTES_IN_MARKER: usize = 65533 - 14;
+        const OVERHEAD: usize = ICC_SIGNATURE.len() + 2;
+        const MAX_DATA_BYTES_IN_MARKER: usize = 65533 - OVERHEAD;
 
         // libjpeg takes the length as an `unsigned int`.
         let profile = profile.get(..profile.len() as u32 as usize).unwrap_or(&[]);
@@ -37,8 +40,8 @@ impl Output {
         // A profile that takes more than 255 segments is written all the same, with the numbers cut off.
         let count = chunks.len() as u8;
         for (i, chunk) in chunks.enumerate() {
-            self.segment(M_APP2, chunk.len() + 14);
-            self.extend(b"ICC_PROFILE\0");
+            self.segment(M_APP2, chunk.len() + OVERHEAD);
+            self.extend(ICC_SIGNATURE);
             self.extend(&[(i + 1) as u8, count]);
             self.extend(chunk);
         }

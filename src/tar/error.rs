@@ -50,6 +50,8 @@ pub enum Error {
     OutOfOrderSparse,
     #[error("Unreasonably large sparse map")]
     SparseMapTooLarge,
+    #[error("The holes of sparse files add up to more than 1 GiB, too much to read into memory")]
+    HolesTooLarge,
     #[error("Oversized AppleDouble extension")]
     OversizedMacMetadata,
     #[error("Input requires too many filters for decoding")]

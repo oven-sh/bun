@@ -10423,6 +10423,10 @@ declare module "bun" {
      * Creates the target directory and any necessary parent directories if they don't exist.
      * Existing files are overwritten.
      *
+     * On Linux and macOS, nothing is written through a symlink in the target directory that leads out of it.
+     * The promise rejects when a file entry needs such a symlink, unless `options.glob` is set, which skips the entry.
+     * Before Linux 5.6 and macOS 26, this applies to every symlink in the target directory.
+     *
      * @param path - The directory path to extract to
      * @param options - Optional extraction options
      * @param options.glob - Glob pattern(s) to filter entries (positive patterns include, negative patterns starting with `!` exclude)
@@ -10514,6 +10518,7 @@ declare module "bun" {
      *
      * Only regular files are included; directories are not returned.
      * File contents are loaded into memory, so for large archives consider using `extract()` instead.
+     * The promise rejects once the holes read from the archive's sparse files add up to more than 1 GiB.
      *
      * @param glob - Optional glob pattern(s) to filter files. Supports the same syntax as {@link Bun.Glob},
      *   including negation patterns (prefixed with `!`). Patterns are matched against paths normalized

@@ -1,8 +1,21 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isFreeBSD, isLinux, isMacOS, isMacOSVersionAtLeast, isWindows, tempDir } from "harness";
 import { randomBytes } from "node:crypto";
-import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync } from "node:fs";
-import { join } from "path";
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  readlinkSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { release } from "node:os";
+import { dirname, join } from "path";
 
 // Minimal ustar tarball builder (pathnames must be <100 bytes). `name` accepts
 // a Buffer so tests can put raw, non-UTF-8 byte sequences into the name field.
@@ -38,6 +51,16 @@ function ustarHeader(
 function ustarEntry(name: string | Buffer, data: Buffer): Buffer {
   const pad = Buffer.alloc((512 - (data.length % 512)) % 512);
   return Buffer.concat([ustarHeader(name, data.length), data, pad]);
+}
+
+function ustarSymlink(name: string, target: string): Buffer {
+  const h = ustarHeader(name, 0, "2");
+  h.write(target, 157);
+  h.write("        ", 148);
+  let sum = 0;
+  for (let i = 0; i < 512; i++) sum += h[i];
+  h.write(sum.toString(8).padStart(6, "0") + "\0 ", 148);
+  return h;
 }
 
 // GNU tar base-256 ("binary") form of a numeric header field: the top bit of
@@ -725,28 +748,10 @@ describe("Bun.Archive", () => {
     test.skipIf(isWindows)("creates symlink entries", async () => {
       using dir = tempDir("archive-extract-symlink", {});
 
-      const symlinkEntry = (name: string, target: string): Buffer => {
-        const h = Buffer.alloc(512);
-        h.write(name, 0, 100, "utf8");
-        h.write("0000777\0", 100);
-        h.write("0000000\0", 108);
-        h.write("0000000\0", 116);
-        h.write("00000000000\0", 124);
-        h.write("00000000000\0", 136);
-        h.write("        ", 148);
-        h.write("2", 156);
-        h.write(target, 157, 100, "utf8");
-        h.write("ustar\0", 257);
-        h.write("00", 263);
-        let sum = 0;
-        for (let i = 0; i < 512; i++) sum += h[i];
-        h.write(sum.toString(8).padStart(6, "0") + "\0 ", 148);
-        return h;
-      };
       const tarball = new Uint8Array(
         Buffer.concat([
           ustarEntry("index.js", Buffer.from("module.exports = 1;")),
-          symlinkEntry("link.js", "index.js"),
+          ustarSymlink("link.js", "index.js"),
           Buffer.alloc(1024),
         ]),
       );
@@ -1194,6 +1199,306 @@ describe("Bun.Archive", () => {
       expect(existsSync(join(extractPath, "safe_dir"))).toBe(true);
       // The normalized "escaped_dir" may or may not exist inside extractPath
       // (depending on whether normalization keeps it), but it must NOT be outside
+    });
+
+    // Where a path leads depends on the symlinks already on disk, whether the
+    // user made them or an earlier archive did. Windows still follows the ones
+    // a user made, and no archive makes one there.
+    describe.skipIf(isWindows)("symlinks in the destination", () => {
+      const file = (name: string) => ustarEntry(name, Buffer.from("from the archive"));
+      const directory = (name: string) => ustarHeader(name + "/", 0, "5");
+      type Case = {
+        /** `[path, target]`, made in the destination before anything is extracted. `$` is the directory it is in. */
+        links?: [string, string][];
+        /** Extracted one after the other. */
+        archives: Buffer[][];
+      };
+      /** What each `extract()` resolves to, or the message it rejects with. */
+      type Expected = { plain: (number | string)[]; glob: (number | string)[] };
+      const leaving: Record<string, Case & Expected> = {
+        "a file through a symlink": {
+          links: [["out", "../outside"]],
+          archives: [[file("out/new.txt")]],
+          plain: ["ReadError"],
+          glob: [0],
+        },
+        "a file through an absolute symlink": {
+          links: [["out", "$/outside"]],
+          archives: [[file("out/new.txt")]],
+          plain: ["ReadError"],
+          glob: [0],
+        },
+        "a file and its parents through a symlink": {
+          links: [["out", "../outside"]],
+          archives: [[file("out/a/b/new.txt")]],
+          plain: ["ReadError"],
+          glob: [0],
+        },
+        "a file through a symlink below a directory": {
+          links: [["deep/er/out", "../../../outside"]],
+          archives: [[file("deep/er/out/new.txt")]],
+          plain: ["ReadError"],
+          glob: [0],
+        },
+        "a file over a symlink": {
+          links: [["victim.txt", "../outside/victim.txt"]],
+          archives: [[file("victim.txt")]],
+          plain: ["ReadError"],
+          glob: [0],
+        },
+        "a file over a dangling symlink": {
+          links: [["new.txt", "../outside/new.txt"]],
+          archives: [[file("new.txt")]],
+          plain: ["ReadError"],
+          glob: [0],
+        },
+        "a directory through a symlink": {
+          links: [["out", "../outside"]],
+          archives: [[directory("out/new")]],
+          plain: [1],
+          glob: [0],
+        },
+        "a directory and its parents through a symlink": {
+          links: [["out", "../outside"]],
+          archives: [[directory("out/a/b/new")]],
+          plain: [1],
+          glob: [0],
+        },
+        "a symlink through a symlink": {
+          links: [["out", "../outside"]],
+          archives: [[ustarSymlink("out/new", "victim.txt")]],
+          plain: [1],
+          glob: [0],
+        },
+        // Each target stays inside going by the path of its symlink. The second
+        // symlink is not where its path says: `a/up` is the destination, so
+        // its `..` is the directory above.
+        "a symlink through the symlink of an earlier archive": {
+          archives: [[ustarSymlink("a/up", "..")], [ustarSymlink("a/up/esc", "..")], [file("esc/new.txt")]],
+          plain: [1, 1, 1],
+          glob: [0, 0, 1],
+        },
+        // macOS follows the last name of a path that ends in a slash, which the name of a directory entry does.
+        "a directory over a dangling symlink": {
+          links: [["new", "../outside/new"]],
+          archives: [[directory("new")]],
+          plain: [1],
+          glob: [1],
+        },
+        "a directory over a dangling symlink below a directory": {
+          links: [["deep/new", "../../outside/new"]],
+          archives: [[directory("deep/new")]],
+          plain: [1],
+          glob: [1],
+        },
+        "a symlink whose name ends in a slash over a dangling symlink": {
+          links: [["new", "../outside/new"]],
+          archives: [[ustarSymlink("new/", "victim.txt")]],
+          plain: [1],
+          glob: [0],
+        },
+        "a symlink whose name ends in a slash over the symlink of an earlier archive": {
+          archives: [[ustarSymlink("a/l", "../b")], [ustarSymlink("a/l/", "..")], [file("b/new.txt")]],
+          plain: [1, 1, 1],
+          glob: [0, 0, 1],
+        },
+        // It is in `a`, not in `a/l`.
+        "a symlink whose name ends in a slash": {
+          archives: [[ustarSymlink("a/l/", "../..")], [file("a/l/new.txt")]],
+          plain: [1, 1],
+          glob: [0, 1],
+        },
+      };
+
+      const [major, minor] = release().split(".").map(Number);
+      const kernelResolvesBeneath =
+        (isLinux && (major > 5 || (major === 5 && minor >= 6))) || isMacOSVersionAtLeast(26) || isFreeBSD;
+
+      function tree(root: string, prefix = "", out: Record<string, string> = {}): Record<string, string> {
+        for (const entry of readdirSync(join(root, prefix), { withFileTypes: true })) {
+          const path = join(prefix, entry.name);
+          if (entry.isSymbolicLink()) out[path] = "-> " + readlinkSync(join(root, path));
+          else if (!entry.isDirectory()) out[path] = readFileSync(join(root, path), "utf8");
+          else tree(root, path, Object.assign(out, { [path]: "directory" }));
+        }
+        return out;
+      }
+
+      const fixture = {
+        "extract-fixture.ts": `
+          import { readFileSync } from "node:fs";
+          process.umask(0);
+          const { options, cases } = JSON.parse(readFileSync("cases.json", "utf8"));
+          const results = {};
+          for (const { name, dest, archives } of cases) {
+            results[name] = [];
+            for (const path of archives) {
+              results[name].push(await new Bun.Archive(readFileSync(path)).extract(dest, options).catch(e => e.message));
+            }
+          }
+          console.log(JSON.stringify(results));
+        `,
+      };
+
+      /** `dir` is a `tempDir` of `fixture`. Case number `i` is extracted to `i/dest`, next to `i/outside`. */
+      async function extractAll(
+        dir: string,
+        cases: Record<string, Case>,
+        mode: "plain" | "glob",
+        env: Record<string, string>,
+      ) {
+        const list = Object.entries(cases).map(([name, { links = [], archives }], i) => {
+          const root = join(dir, String(i));
+          mkdirSync(join(root, "dest"), { recursive: true });
+          mkdirSync(join(root, "outside"));
+          writeFileSync(join(root, "outside", "victim.txt"), "original");
+          for (const [path, target] of links) {
+            mkdirSync(dirname(join(root, "dest", path)), { recursive: true });
+            symlinkSync(target.replace("$", root), join(root, "dest", path));
+          }
+          return {
+            name,
+            root,
+            dest: join(root, "dest"),
+            archives: archives.map((entries, j) => {
+              writeFileSync(join(root, `${j}.tar`), Buffer.concat([...entries, Buffer.alloc(1024)]));
+              return join(root, `${j}.tar`);
+            }),
+          };
+        });
+        writeFileSync(
+          join(dir, "cases.json"),
+          JSON.stringify({ options: mode === "glob" ? { glob: "**" } : undefined, cases: list }),
+        );
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "extract-fixture.ts"],
+          env: { ...bunEnv, ...env },
+          cwd: dir,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout: stdout.slice(0, 1), stderr, exitCode }).toEqual({ stdout: "{", stderr: "", exitCode: 0 });
+        return { list, results: JSON.parse(stdout) as Record<string, (number | string)[]> };
+      }
+
+      describe.each([
+        ["by default", {}, kernelResolvesBeneath],
+        ["when the kernel is not asked", { BUN_FEATURE_FLAG_DISABLE_RESOLVE_BENEATH: "1" }, false],
+      ] as const)("%s", (_, env, followsInside) => {
+        test.concurrent.each(["plain", "glob"] as const)("nothing is written outside of it (%s)", async mode => {
+          using dir = tempDir("archive-symlinks", fixture);
+          const { list, results } = await extractAll(String(dir), leaving, mode, env);
+          const untouched = { "victim.txt": "original" };
+          expect(
+            Object.fromEntries(
+              list.map(({ name, root, archives }) => [
+                name,
+                {
+                  results: results[name],
+                  outside: tree(join(root, "outside")),
+                  siblings: readdirSync(root).length - archives.length,
+                },
+              ]),
+            ),
+          ).toEqual(
+            Object.fromEntries(
+              Object.entries(leaving).map(([name, expected]) => [
+                name,
+                { results: expected[mode], outside: untouched, siblings: 2 },
+              ]),
+            ),
+          );
+        });
+
+        test.concurrent.each(["plain", "glob"] as const)("one that stays inside (%s)", async mode => {
+          using dir = tempDir("archive-symlinks", fixture);
+          const { list, results } = await extractAll(
+            String(dir),
+            {
+              "file": {
+                links: [["alias", "real"]],
+                archives: [[directory("real"), file("alias/new.txt")]],
+              },
+              "up": {
+                links: [["a/up", ".."]],
+                archives: [[directory("real"), file("a/up/real/new.txt")]],
+              },
+              // The kernels refuse every absolute one.
+              "absolute": {
+                links: [["alias", "$/dest/real"]],
+                archives: [[directory("real"), file("alias/new.txt")]],
+              },
+            },
+            mode,
+            env,
+          );
+          const refused = mode === "plain" ? "ReadError" : 1;
+          const written = followsInside && { [join("real", "new.txt")]: "from the archive" };
+          expect({
+            results,
+            file: tree(list[0].dest),
+            up: tree(list[1].dest),
+            absolute: tree(list[2].dest),
+          }).toEqual({
+            results: { file: [followsInside ? 2 : refused], up: [followsInside ? 2 : refused], absolute: [refused] },
+            file: { "alias": "-> real", "real": "directory", ...written },
+            up: { "a": "directory", [join("a", "up")]: "-> ..", "real": "directory", ...written },
+            absolute: { "alias": "-> " + join(list[2].dest, "real"), "real": "directory" },
+          });
+        });
+
+        test.concurrent.each(["plain", "glob"] as const)(
+          "directories that no entry names are 0755 (%s)",
+          async mode => {
+            using dir = tempDir("archive-symlinks", fixture);
+            const { list } = await extractAll(
+              String(dir),
+              { "implied": { archives: [[file("a/b/new.txt"), ustarSymlink("c/d/link", "new.txt")]] } },
+              mode,
+              env,
+            );
+            const paths = ["a", "a/b", "c", "c/d"];
+            expect(paths.map(path => (statSync(join(list[0].dest, path)).mode & 0o7777).toString(8))).toEqual(
+              paths.map(() => "755"),
+            );
+          },
+        );
+
+        // Only its search permission is needed to create something in a directory.
+        test.concurrent.each(["plain", "glob"] as const)("in a directory that cannot be listed (%s)", async mode => {
+          using dir = tempDir("archive-symlinks", fixture);
+          const unlisted = join(String(dir), "0", "dest", "d");
+          using _ = { [Symbol.dispose]: () => existsSync(unlisted) && chmodSync(unlisted, 0o700) };
+          const { list, results } = await extractAll(
+            String(dir),
+            {
+              "unlisted": {
+                archives: [
+                  [
+                    ustarHeader("d/", 0, "5", { mode: Buffer.from("0000300\0") }),
+                    directory("d/e"),
+                    file("d/e/new.txt"),
+                    ustarSymlink("d/link", "e"),
+                  ],
+                ],
+              },
+            },
+            mode,
+            env,
+          );
+          chmodSync(unlisted, 0o700);
+          expect({ results, tree: tree(list[0].dest) }).toEqual({
+            results: { unlisted: [4] },
+            tree: {
+              "d": "directory",
+              [join("d", "e")]: "directory",
+              [join("d", "e", "new.txt")]: "from the archive",
+              [join("d", "link")]: "-> e",
+            },
+          });
+        });
+      });
     });
   });
 
@@ -2178,6 +2483,50 @@ describe("Bun.Archive", () => {
       // The limit is below the offset, so no file system can place the chunk.
       expect(JSON.parse(stdout)).toEqual({ settled: "rejected", allocated: 0 });
       expect(exitCode).toBe(0);
+    });
+
+    // Holes are the only bytes of a member that the archive does not hold, so
+    // a member of any size takes a few hundred bytes of archive. In memory
+    // they are zeros that have to be written. On disk they are nothing.
+    describe("more than 1 GiB of holes", () => {
+      const limit = 2 ** 30;
+      const data = Buffer.alloc(512, 0x41);
+      const member = (build: typeof paxSparseEntry, name: string, holes: number) =>
+        build(name, data.length + holes, [{ offset: 0, data }]);
+      const message = "The holes of sparse files add up to more than 1 GiB, too much to read into memory";
+
+      test.each([
+        ["gnu", oldGnuSparseEntry],
+        ["pax", paxSparseEntry],
+      ] as const)("files() rejects them in one member (%s)", async (_, build) => {
+        const bytes = Buffer.concat([member(build, "big.bin", limit + 1), Buffer.alloc(1024)]);
+        expect(await new Bun.Archive(bytes).files().catch(e => e.message)).toBe(message);
+      });
+
+      test("files() rejects them in all members together", async () => {
+        const first = 2 ** 20;
+        const bytes = Buffer.concat([
+          member(paxSparseEntry, "small.bin", first),
+          member(paxSparseEntry, "big.bin", limit - first + 1),
+          Buffer.alloc(1024),
+        ]);
+        expect(await new Bun.Archive(bytes).files().catch(e => e.message)).toBe(message);
+        // A member that is not read does not count.
+        const files = await new Bun.Archive(bytes).files("small.bin");
+        expect([...files].map(([name, file]) => [name, file.size])).toEqual([["small.bin", data.length + first]]);
+      });
+
+      test.each([
+        ["without a glob", undefined],
+        ["with a glob", { glob: "**" }],
+      ] as const)("extract() writes them (%s)", async (_, options) => {
+        using dir = tempDir("sparse-many-holes", {});
+        const bytes = Buffer.concat([member(paxSparseEntry, "big.bin", limit + 1), Buffer.alloc(1024)]);
+        expect(await new Bun.Archive(bytes).extract(String(dir), options)).toBe(1);
+        const stat = statSync(join(String(dir), "big.bin"));
+        expect(stat.size).toBe(data.length + limit + 1);
+        if (isLinux || isWindows) expect(stat.blocks * 512).toBeLessThan(1024 * 1024);
+      });
     });
   });
 

@@ -10,6 +10,8 @@ use bun_jsc::bindgen::{JsLocal, JsScope};
 use bun_jsc::{self as jsc, JSGlobalObject, JSMap, JSPromise, JSPromiseStrong, JSValue, JsResult};
 use bun_jsc::{StringJsc as _, SysErrorJsc as _};
 use bun_ptr::RefPtr;
+#[cfg(unix)]
+use bun_sys::beneath::{self, Symlinks};
 use bun_sys::{self, Fd, FdDirExt as _, FdExt as _, Mode};
 
 /// Compression options for the archive
@@ -635,6 +637,7 @@ impl ExtractContext {
                 log: false,
                 npm: false,
                 skip_symlinks: false,
+                new_destination: false,
             },
         ) {
             Ok(c) => c,
@@ -1165,6 +1168,11 @@ fn extract_to_disk_filtered(
     };
     let _dir_close = bun_sys::CloseOnDrop::new(dir_fd);
 
+    #[cfg(unix)]
+    let make_path = |path: &[u8]| beneath::make_path(dir_fd, path, Symlinks::FollowInside);
+    #[cfg(windows)]
+    let make_path = |path: &[u8]| dir_fd.make_path(path);
+
     let mut count: u32 = 0;
     let mut write_strategy = bun_archive::WriteStrategy::default();
 
@@ -1202,7 +1210,7 @@ fn extract_to_disk_filtered(
 
         match entry_ref.kind() {
             bun_sys::FileKind::Directory => {
-                match dir_fd.make_path(pathname) {
+                match make_path(pathname) {
                     // Directory already exists - don't count as extracted
                     Err(e) if e.get_errno() == bun_sys::E::EEXIST => continue,
                     Err(_) => continue,
@@ -1220,29 +1228,17 @@ fn extract_to_disk_filtered(
                     0o644
                 };
 
-                // Create parent directories if needed (ignore expected errors)
-                if let Some(parent_dir) = bun_core::dirname(pathname) {
-                    match dir_fd.make_path(parent_dir) {
-                        // Expected: directory already exists
-                        Err(e) if e.get_errno() == bun_sys::E::EEXIST => {}
-                        // Permission errors: skip this file, will fail at openat
-                        Err(e) if e.get_errno() == bun_sys::E::EACCES => {}
-                        // Other errors: skip, will fail at openat
-                        Err(_) => {}
-                        Ok(()) => {}
-                    }
-                }
-
-                // Create and write the file using bun.sys
-                let file_fd: Fd = match bun_sys::openat(
-                    dir_fd,
-                    pathname_z,
-                    bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
-                    mode,
-                ) {
-                    Ok(fd) => fd,
-                    Err(_) => continue,
-                };
+                let flags = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
+                #[cfg(unix)]
+                let open =
+                    || beneath::openat(dir_fd, pathname_z, flags, mode, Symlinks::FollowInside);
+                #[cfg(windows)]
+                let open = || bun_sys::openat(dir_fd, pathname_z, flags, mode);
+                let opened = open().or_else(|err| {
+                    make_path(bun_core::dirname(pathname).ok_or(err)?)?;
+                    open()
+                });
+                let Ok(file_fd) = opened else { continue };
 
                 let write_success = size == 0
                     || bun_archive::read_data_into_fd(&mut reader, file_fd, &mut write_strategy)
@@ -1251,6 +1247,9 @@ fn extract_to_disk_filtered(
 
                 if !write_success {
                     // Remove partial file on failure
+                    #[cfg(unix)]
+                    let _ = beneath::unlinkat(dir_fd, pathname, Symlinks::FollowInside);
+                    #[cfg(windows)]
                     let _ = bun_sys::unlinkat(dir_fd, pathname_z);
                     return Err(crate::Error::ReadError);
                 }
@@ -1267,13 +1266,15 @@ fn extract_to_disk_filtered(
                 // On Windows, symlinks are skipped since they require elevated privileges.
                 #[cfg(unix)]
                 {
-                    match bun_sys::symlinkat(link_target_z, dir_fd, pathname_z) {
+                    let symlinkat =
+                        || beneath::symlinkat(link_target_z, dir_fd, pathname, Symlinks::Refuse);
+                    match symlinkat() {
                         Err(err) => {
                             if matches!(err.get_errno(), bun_sys::E::EPERM | bun_sys::E::ENOENT) {
                                 if let Some(parent) = bun_core::dirname(pathname) {
-                                    let _ = dir_fd.make_path(parent);
+                                    let _ = beneath::make_path(dir_fd, parent, Symlinks::Refuse);
                                 }
-                                if bun_sys::symlinkat(link_target_z, dir_fd, pathname_z).is_err() {
+                                if symlinkat().is_err() {
                                     continue;
                                 }
                             } else {

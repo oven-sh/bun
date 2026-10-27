@@ -697,14 +697,15 @@ impl<'a> Near<'a> {
     #[inline(always)]
     pub(crate) fn count(self, pos: u32, match_pos: u32) -> u32 {
         let mut len = 0;
+        // Where 16 bytes differ takes no branch, and few matches are longer.
         while let (Some(bytes), Some(match_bytes)) =
-            (self.read64(pos + len), self.read64(match_pos + len))
+            (self.chunk16(pos + len), self.chunk16(match_pos + len))
         {
-            let diff = bytes ^ match_bytes;
+            let diff = u128::from_le_bytes(*bytes) ^ u128::from_le_bytes(*match_bytes);
             if diff != 0 {
                 return len + (diff.trailing_zeros() >> 3);
             }
-            len += 8;
+            len += 16;
         }
         while let Some(byte) = self.read8(pos + len)
             && self.read8(match_pos + len) == Some(byte)
@@ -723,9 +724,24 @@ impl<'a> Near<'a> {
         match_pos: u32,
         match_low: u32,
     ) -> u32 {
+        let most = (pos - anchor).min(match_pos - match_low);
         let mut len = 0;
-        while pos - len > anchor
-            && match_pos - len > match_low
+        while len < most
+            && let (Some(bytes), Some(match_bytes)) = (
+                self.read64((pos - len).wrapping_sub(8)),
+                self.read64((match_pos - len).wrapping_sub(8)),
+            )
+        {
+            let diff = bytes ^ match_bytes;
+            if diff != 0 {
+                return (len + (diff.leading_zeros() >> 3)).min(most);
+            }
+            len += 8;
+        }
+        if len >= most {
+            return most;
+        }
+        while len < most
             && let Some(byte) = self.read8(pos - len - 1)
             && self.read8(match_pos - len - 1) == Some(byte)
         {

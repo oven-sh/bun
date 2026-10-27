@@ -11,7 +11,7 @@ use super::params::{
     resolve_enable_ldm, resolve_row_match_finder_mode,
 };
 use crate::error::{ErrorCode, Result};
-use crate::util::{SliceExt, try_copy, try_zeroed};
+use crate::util::{SliceExt, try_copy};
 use crate::{InBuffer, OutBuffer};
 
 /// `ZSTD_EndDirective`
@@ -37,11 +37,15 @@ enum StreamStage {
 pub struct CCtx {
     frame: FrameCompressor,
     requested_params: CCtxParams,
+    /// As long as it was ever filled, with room for `in_buff_size`.
     in_buff: Vec<u8>,
+    in_buff_size: usize,
     in_to_compress: usize,
     in_buff_pos: usize,
     in_buff_target: usize,
+    /// Empty until it is needed, with room for `out_buff_size`.
     out_buff: Vec<u8>,
+    out_buff_size: usize,
     out_buff_content_size: usize,
     out_buff_flushed_size: usize,
     stream_stage: StreamStage,
@@ -68,11 +72,26 @@ fn limit_copy(dst: &mut [u8], src: &[u8]) -> usize {
     length
 }
 
-fn resize_buffer(buffer: &mut Vec<u8>, len: usize) -> Result<()> {
-    if buffer.len() != len {
+/// Gives `buffer` room for `new_size` bytes instead of `size`, none of which is touched.
+fn resize_buffer(buffer: &mut Vec<u8>, size: &mut usize, new_size: usize) -> Result<()> {
+    if *size != new_size {
+        // First, so that both are not allocated at once.
         *buffer = Vec::new();
-        *buffer = try_zeroed(len)?;
+        *size = 0;
+        buffer
+            .try_reserve_exact(new_size)
+            .map_err(|_| ErrorCode::MemoryAllocation)?;
+        *size = new_size;
     }
+    Ok(())
+}
+
+/// Writes `src` at `pos`, which is at most the length of `buffer`, over what is there and beyond.
+fn write_or_append(buffer: &mut Vec<u8>, pos: usize, src: &[u8]) -> Result<()> {
+    let over = buffer.sub_mut(pos..)?;
+    let (first, rest) = src.split_at_checked(over.len()).unwrap_or((src, &[]));
+    over.write_at(0, first)?;
+    buffer.extend_from_slice(rest);
     Ok(())
 }
 
@@ -86,10 +105,12 @@ impl CCtx {
             frame: FrameCompressor::new(),
             requested_params: CCtxParams::new(ZSTD_CLEVEL_DEFAULT),
             in_buff: Vec::new(),
+            in_buff_size: 0,
             in_to_compress: 0,
             in_buff_pos: 0,
             in_buff_target: 0,
             out_buff: Vec::new(),
+            out_buff_size: 0,
             out_buff_content_size: 0,
             out_buff_flushed_size: 0,
             stream_stage: StreamStage::Init,
@@ -217,8 +238,16 @@ impl CCtx {
                 pledged_src_size,
                 true,
             )?;
-            resize_buffer(&mut self.in_buff, sizes.buff_in_size)?;
-            resize_buffer(&mut self.out_buff, sizes.buff_out_size)?;
+            resize_buffer(
+                &mut self.in_buff,
+                &mut self.in_buff_size,
+                sizes.buff_in_size,
+            )?;
+            resize_buffer(
+                &mut self.out_buff,
+                &mut self.out_buff_size,
+                sizes.buff_out_size,
+            )?;
             self.in_to_compress = 0;
             self.in_buff_pos = 0;
             // One more byte, to tell an input of exactly one block from a longer one.
@@ -287,11 +316,12 @@ impl CCtx {
                         break;
                     }
                     {
-                        let loaded = limit_copy(
-                            self.in_buff
-                                .sub_mut(self.in_buff_pos..self.in_buff_target)?,
-                            input.src.sub(ip..)?,
-                        );
+                        let loaded = (self.in_buff_target - self.in_buff_pos).min(iend - ip);
+                        write_or_append(
+                            &mut self.in_buff,
+                            self.in_buff_pos,
+                            input.src.span(ip, loaded)?,
+                        )?;
                         self.in_buff_pos += loaded;
                         ip += loaded;
                         if flush_mode == EndDirective::Continue
@@ -312,6 +342,7 @@ impl CCtx {
                     let c_dst = if direct {
                         output.dst.sub_mut(op..)?
                     } else {
+                        self.out_buff.resize(self.out_buff_size, 0);
                         self.out_buff.as_mut_slice()
                     };
                     let last_block = flush_mode == EndDirective::End && ip == iend;
@@ -336,7 +367,7 @@ impl CCtx {
                     self.frame_ended = last_block;
                     // The next block goes after this one, or at the start if there is no room left.
                     self.in_buff_target = self.in_buff_pos + self.frame.block_size_max;
-                    if self.in_buff_target > self.in_buff.len() {
+                    if self.in_buff_target > self.in_buff_size {
                         self.in_buff_pos = 0;
                         self.in_buff_target = self.frame.block_size_max;
                     }

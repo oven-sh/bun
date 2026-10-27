@@ -5,6 +5,7 @@ use core::sync::atomic::{Ordering, compiler_fence};
 
 use super::fse::{FseCTable, FseRepeat};
 use super::huf::{HufCTable, HufRepeat};
+use super::sequences::SeqCodes;
 use crate::common::{
     BlockType, MINMATCH, REP_START_VALUE, SymbolEncodingType, WILDCOPY_OVERLENGTH,
     ZSTD_BLOCKHEADERSIZE, ZSTD_REP_NUM,
@@ -115,6 +116,16 @@ pub(crate) struct HufCTables {
     pub(crate) repeat_mode: HufRepeat,
 }
 
+impl HufCTables {
+    /// `*self = from.clone()`, but for a table that cannot be used again, which nothing reads.
+    pub(crate) fn copy_from(&mut self, from: &Self) {
+        self.repeat_mode = from.repeat_mode;
+        if from.repeat_mode != HufRepeat::None {
+            self.c_table.clone_from(&from.c_table);
+        }
+    }
+}
+
 /// `ZSTD_fseCTables_t`
 #[derive(Clone)]
 pub(crate) struct FseCTables {
@@ -124,6 +135,24 @@ pub(crate) struct FseCTables {
     pub(crate) offcode_repeat_mode: FseRepeat,
     pub(crate) matchlength_repeat_mode: FseRepeat,
     pub(crate) litlength_repeat_mode: FseRepeat,
+}
+
+impl FseCTables {
+    /// `*self = from.clone()`, but for the tables that cannot be used again, which nothing reads.
+    pub(crate) fn copy_from(&mut self, from: &Self) {
+        self.offcode_repeat_mode = from.offcode_repeat_mode;
+        if from.offcode_repeat_mode != FseRepeat::None {
+            self.offcode_c_table.clone_from(&from.offcode_c_table);
+        }
+        self.matchlength_repeat_mode = from.matchlength_repeat_mode;
+        if from.matchlength_repeat_mode != FseRepeat::None {
+            (self.matchlength_c_table).clone_from(&from.matchlength_c_table);
+        }
+        self.litlength_repeat_mode = from.litlength_repeat_mode;
+        if from.litlength_repeat_mode != FseRepeat::None {
+            self.litlength_c_table.clone_from(&from.litlength_c_table);
+        }
+    }
 }
 
 /// `ZSTD_entropyCTables_t`
@@ -142,7 +171,7 @@ pub(crate) struct CompressedBlockState {
 
 impl CompressedBlockState {
     /// `ZSTD_reset_compressedBlockState`, on tables that are all zeros.
-    pub(crate) fn new() -> Self {
+    pub(crate) const fn new() -> Self {
         Self {
             entropy: EntropyCTables {
                 huf: HufCTables {
@@ -238,15 +267,14 @@ pub(crate) enum LongLengthType {
 
 /// `SeqStore_t`: the sequences and the literals of a block.
 pub(crate) struct SeqStore {
-    /// Never grows beyond the capacity it is given by [`Self::reserve`].
+    /// Never grows beyond the capacity it is given by [`Self::start_block`].
     pub(crate) sequences: Vec<SeqDef>,
-    /// `max_nb_lit` bytes, and [`WILDCOPY_OVERLENGTH`] to copy in chunks.
+    /// As long as the longest block so far, and [`WILDCOPY_OVERLENGTH`] to copy in chunks.
     pub(crate) lit_buffer: Vec<u8>,
     /// How much of `lit_buffer` is literals.
     pub(crate) lit_len: usize,
-    pub(crate) ll_code: Vec<u8>,
-    pub(crate) ml_code: Vec<u8>,
-    pub(crate) of_code: Vec<u8>,
+    /// As many as the most sequences that a block had so far.
+    pub(crate) codes: Vec<SeqCodes>,
     pub(crate) max_nb_seq: usize,
     pub(crate) max_nb_lit: usize,
     pub(crate) long_length_type: LongLengthType,
@@ -322,9 +350,7 @@ impl SeqStore {
             sequences: Vec::new(),
             lit_buffer: Vec::new(),
             lit_len: 0,
-            ll_code: Vec::new(),
-            ml_code: Vec::new(),
-            of_code: Vec::new(),
+            codes: Vec::new(),
             max_nb_seq: 0,
             max_nb_lit: 0,
             long_length_type: LongLengthType::None,
@@ -332,23 +358,51 @@ impl SeqStore {
         }
     }
 
-    /// Room for `max_nb_seq` sequences and `max_nb_lit` bytes of literals.
-    pub(crate) fn reserve(&mut self, max_nb_seq: usize, max_nb_lit: usize) -> Result<()> {
-        fn grow<T: Clone + Default>(vec: &mut Vec<T>, len: usize) -> Result<()> {
-            vec.clear();
-            vec.try_reserve_exact(len)
-                .map_err(|_| ErrorCode::MemoryAllocation)?;
-            vec.resize(len, T::default());
-            Ok(())
-        }
-        grow(&mut self.sequences, max_nb_seq)?;
-        grow(&mut self.lit_buffer, max_nb_lit + WILDCOPY_OVERLENGTH)?;
-        grow(&mut self.ll_code, max_nb_seq)?;
-        grow(&mut self.ml_code, max_nb_seq)?;
-        grow(&mut self.of_code, max_nb_seq)?;
+    /// A block has at most `max_nb_seq` sequences and `max_nb_lit` bytes.
+    pub(crate) fn set_limits(&mut self, max_nb_seq: usize, max_nb_lit: usize) {
         self.max_nb_seq = max_nb_seq;
         self.max_nb_lit = max_nb_lit;
+    }
+
+    /// `ZSTD_resetSeqStore`, with room for the sequences and the literals of a block of `block_size` bytes.
+    pub(crate) fn start_block(&mut self, block_size: usize) -> Result<()> {
+        fn room<T>(vec: &mut Vec<T>, len: usize, max: usize) -> Result<()> {
+            if len <= vec.capacity() {
+                return Ok(());
+            }
+            let len = len.max(2 * vec.capacity()).min(max);
+            // What it holds is not worth a copy.
+            *vec = Vec::new();
+            vec.try_reserve_exact(len)
+                .map_err(|_| ErrorCode::MemoryAllocation)
+        }
         self.reset();
+        let block_size = block_size.min(self.max_nb_lit);
+        let nb_seq = (block_size / MINMATCH as usize).min(self.max_nb_seq);
+        room(&mut self.sequences, nb_seq, self.max_nb_seq)?;
+        let len = block_size + WILDCOPY_OVERLENGTH;
+        room(
+            &mut self.lit_buffer,
+            len,
+            self.max_nb_lit + WILDCOPY_OVERLENGTH,
+        )?;
+        if self.lit_buffer.len() < len {
+            self.lit_buffer.resize(len, 0);
+        }
+        Ok(())
+    }
+
+    /// Makes `codes` at least as long as `sequences`.
+    pub(crate) fn make_room_for_codes(&mut self) -> Result<()> {
+        let len = self.sequences.len();
+        if self.codes.capacity() < len {
+            self.codes = Vec::new();
+            (self.codes.try_reserve_exact(self.sequences.capacity()))
+                .map_err(|_| ErrorCode::MemoryAllocation)?;
+        }
+        if self.codes.len() < len {
+            self.codes.resize(len, SeqCodes::default());
+        }
         Ok(())
     }
 
@@ -1887,6 +1941,7 @@ pub(crate) const fn compare_packed_tags(packed_tag1: usize, packed_tag2: usize) 
 
 /// `ZSTD_match_t`
 #[derive(Clone, Copy, Default)]
+#[repr(C)]
 pub(crate) struct Match {
     /// As [`SeqDef::off_base`].
     pub(crate) off: u32,
@@ -1895,6 +1950,7 @@ pub(crate) struct Match {
 
 /// `rawSeq`: a sequence found by long distance matching.
 #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
+#[repr(C)]
 pub(crate) struct RawSeq {
     pub(crate) offset: u32,
     pub(crate) lit_length: u32,
@@ -1986,10 +2042,15 @@ impl OptState {
 
 pub(crate) const ZSTD_ROW_HASH_CACHE_SIZE: usize = 8;
 
-/// A table that starts where a cache line does, as those of the C code do: a row of the row-based match finder is then
-/// in as few cache lines as can be.
+/// A table of a match finder.
+///
+/// It starts where a cache line does, as those of the C code do: a row of the row-based match finder is then in as few
+/// cache lines as can be.
+///
+/// A frame that needs a shorter one than a frame before it had uses the start of that one. The rest stays as it is, for
+/// a frame that needs more again, so that nothing is cleared as long as indices go on.
 pub(crate) struct Table<T> {
-    /// Longer than the table, by what it takes to have such a start.
+    /// Starts before the table, by what it takes to have such a start, and ends where the longest one so far did.
     storage: Vec<T>,
     start: usize,
     len: usize,
@@ -2006,6 +2067,15 @@ impl<T> Table<T> {
         }
     }
 
+    /// For when indices get lower: the ones behind the part in use would seem valid later.
+    pub(crate) fn forget_rest(&mut self) {
+        self.storage.truncate(self.start + self.len);
+    }
+
+    pub(crate) fn capacity(&self) -> usize {
+        self.storage.capacity()
+    }
+
     #[inline]
     pub(crate) fn as_slice(&self) -> &[T] {
         let table = self.storage.get(self.start..self.start + self.len);
@@ -2020,11 +2090,11 @@ impl<T> Table<T> {
 }
 
 impl<T: bun_pod::Zeroable + Copy + Default> Table<T> {
-    /// Gives it the length `len`. What it holds is 0, or if `clean` is false possibly what it held before. Returns
+    /// Gives it the length `len`. What it holds is 0, or if `clean` is false possibly what it held at some time. Returns
     /// whether it is new memory.
     pub(crate) fn reset(&mut self, len: usize, clean: bool) -> Result<bool> {
-        let is_new = self.len != len;
-        if is_new {
+        let end = self.start + len;
+        if end > self.storage.capacity() {
             // First, so that both are not allocated at once.
             *self = Self::new();
             let slack = Self::CACHE_LINE / size_of::<T>();
@@ -2035,11 +2105,16 @@ impl<T: bun_pod::Zeroable + Copy + Default> Table<T> {
                 start: if start <= slack { start } else { 0 },
                 len,
             };
+            return Ok(true);
         }
-        if clean && !is_new {
-            self.fill(T::default());
+        if clean {
+            self.storage.truncate(self.start);
         }
-        Ok(is_new)
+        if self.storage.len() < end {
+            self.storage.resize(end, T::default());
+        }
+        self.len = len;
+        Ok(false)
     }
 }
 
@@ -2094,8 +2169,8 @@ pub(crate) struct MatchState {
     pub(crate) hash_salt: u64,
     pub(crate) hash_salt_entropy: u32,
     pub(crate) hash_table: Table<u32>,
-    pub(crate) hash_table3: Vec<u32>,
-    pub(crate) chain_table: Vec<u32>,
+    pub(crate) hash_table3: Table<u32>,
+    pub(crate) chain_table: Table<u32>,
     pub(crate) force_non_contiguous: bool,
     pub(crate) opt: OptState,
     /// `dictMatchState != NULL`: the match state of the dictionary is searched beside this one.
@@ -2116,8 +2191,8 @@ impl MatchState {
             hash_salt: 0,
             hash_salt_entropy: 0,
             hash_table: Table::new(),
-            hash_table3: Vec::new(),
-            chain_table: Vec::new(),
+            hash_table3: Table::new(),
+            chain_table: Table::new(),
             force_non_contiguous: false,
             opt: OptState::new(),
             has_dict_match_state: false,
@@ -2288,6 +2363,7 @@ impl DictMatchState<'_> {
 
 /// `ldmEntry_t`
 #[derive(Clone, Copy, Default)]
+#[repr(C)]
 pub(crate) struct LdmEntry {
     pub(crate) offset: u32,
     pub(crate) checksum: u32,
@@ -2323,3 +2399,5 @@ impl LdmState {
         }
     }
 }
+
+bun_pod::impl_zeroable!(Match, RawSeq, LdmEntry);

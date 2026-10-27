@@ -34,6 +34,13 @@ struct Upsampler {
     buffer: Plane,
 }
 
+pub struct DecodeOptions {
+    /// The size of the result, from 1 to 8 eighths of the size of the image.
+    pub eighths: u32,
+    /// A stream with more scans is refused. A scan can be 10 bytes long and still costs a pass over the whole image.
+    pub max_scans: u32,
+}
+
 impl Decoder<'_> {
     /// The size of the image that `decode` makes.
     pub fn scaled_size(&self, eighths: u32) -> (u32, u32) {
@@ -43,9 +50,10 @@ impl Decoder<'_> {
         )
     }
 
-    /// Decodes the image at 1 to 8 eighths of its size, into 4 bytes per pixel: RGB and an alpha of 255, or for
-    /// `ColorSpace::Cmyk` and `ColorSpace::Ycck`, CMYK as the stream has it, which in Adobe's files means 255 is no ink.
-    pub fn decode(mut self, eighths: u32) -> Result<Vec<u8>> {
+    /// Decodes the image into 4 bytes per pixel: RGB and an alpha of 255, or for `ColorSpace::Cmyk` and
+    /// `ColorSpace::Ycck`, CMYK as the stream has it, which in Adobe's files means 255 is no ink.
+    pub fn decode(mut self, options: &DecodeOptions) -> Result<Vec<u8>> {
+        let &DecodeOptions { eighths, max_scans } = options;
         if !(1..=DCTSIZE).contains(&eighths) || (eighths != DCTSIZE && !self.scalable()) {
             return Err(Error::InvalidArgument);
         }
@@ -109,6 +117,9 @@ impl Decoder<'_> {
                 match self.read_markers()? {
                     Reached::Sos => self.start_input_pass(&mut source)?,
                     Reached::Eoi => break,
+                }
+                if self.input_scan_number > max_scans {
+                    return Err(Error::TooManyScans(max_scans));
                 }
             }
         }

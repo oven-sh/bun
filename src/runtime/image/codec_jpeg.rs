@@ -1,7 +1,7 @@
 //! JPEG decode/encode for `Bun.Image`, on `bun_jpeg`.
 //! Dispatch lives in codecs.rs; this file is the codec body.
 
-use bun_jpeg::{ColorSpace, Decoder, EncodeOptions};
+use bun_jpeg::{ColorSpace, DecodeOptions, Decoder, EncodeOptions};
 
 use super::codecs;
 
@@ -76,7 +76,12 @@ pub(crate) fn decode(
         decoder.icc_profile().map_err(decode_error)?
     };
 
-    let mut rgba = decoder.decode(eighths).map_err(decode_error)?;
+    let options = DecodeOptions {
+        eighths,
+        // What TurboJPEG's TJFLAG_LIMITSCANS stood for. Encoders make about 10.
+        max_scans: 500,
+    };
+    let mut rgba = decoder.decode(&options).map_err(decode_error)?;
     if cmyk {
         codecs::cmyk_to_rgba(&mut rgba);
     }

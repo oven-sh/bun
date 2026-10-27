@@ -29,7 +29,7 @@ Bun sniffs the format from the bytes and ignores extensions and `Content-Type`.
 
 When passing a `TypedArray`/`ArrayBuffer`, don't mutate it while a terminal is pending — decode runs off-thread and borrows the bytes. Bun refuses `SharedArrayBuffer` and resizable buffers; use `buf.slice()` to pass a fixed view.
 
-Bun decodes a damaged JPEG in the cases where libjpeg-turbo finishes the decode with only a warning. Examples are stray bytes between segments, a missing end-of-image marker, and truncated scan data. The blocks that have no data come back flat grey. A progressive file that is cut after its first scan has data for every block, so Bun returns the whole picture with less detail. When the decode cannot finish, the terminal rejects with `ERR_IMAGE_DECODE_FAILED`. `metadata()` reads only the header, so it can resolve for a file that a terminal rejects.
+Bun decodes a damaged JPEG in the cases where libjpeg-turbo finishes the decode with only a warning. Examples are stray bytes between segments, a missing end-of-image marker, and truncated scan data. The blocks that have no data come back flat grey. A progressive file that is cut after its first scan has data for every block, so Bun returns the whole picture with less detail. When the decode cannot finish, the terminal rejects with `ERR_IMAGE_DECODE_FAILED`. So does a JPEG with more than 500 scans: encoders write about 10, and each one costs a pass over the whole image however few bytes it has. `metadata()` reads only the header, so it can resolve for a file that a terminal rejects.
 
 A second `options` argument guards against decompression bombs and controls EXIF handling:
 

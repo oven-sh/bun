@@ -500,6 +500,52 @@ describe("malformed JPEG", () => {
     expect(await survives(new Bun.Image(buf).metadata())).toBe("rejected");
   });
 
+  /** A gray progressive JPEG with no entropy-coded data at all. Each of `scans` is [Ss, Se, Ah << 4 | Al]. */
+  function progressiveWithoutData(width: number, height: number, scans: number[][]): Buffer {
+    const segment = (marker: number, ...data: number[]) => [0xff, marker, 0, data.length + 2, ...data];
+    const table = [0, 1, 5, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
+    return Buffer.from([
+      ...[0xff, 0xd8],
+      ...segment(0xdb, 0, ...new Array(64).fill(16)),
+      ...segment(0xc2, 8, height >> 8, height & 255, width >> 8, width & 255, 1, 1, 0x11, 0),
+      ...segment(0xc4, 0x00, ...table),
+      ...segment(0xc4, 0x10, ...table),
+      ...scans.flatMap(scan => segment(0xda, 1, 1, 0x00, ...scan)),
+      ...[0xff, 0xd9],
+    ]);
+  }
+
+  // Every scan costs a pass over the whole image, and an empty one is 10 bytes long.
+  test("more than 500 scans are refused", async () => {
+    const withScans = (count: number) =>
+      progressiveWithoutData(16, 16, [[0, 0, 0x01], ...new Array(count - 1).fill([0, 0, 0x10])]);
+    expect(await new Bun.Image(withScans(500)).png().bytes()).toBeInstanceOf(Uint8Array);
+    await expect(new Bun.Image(withScans(501)).png().bytes()).rejects.toMatchObject({
+      code: "ERR_IMAGE_DECODE_FAILED",
+    });
+  });
+
+  test("a bad first scan is refused before there is room for the coefficients of 268 megapixels", async () => {
+    // A scan of the DC coefficient cannot go on to the AC coefficients.
+    const buf = progressiveWithoutData(16383, 16383, [[0, 63, 0x00]]);
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const peak = () => process.resourceUsage().maxRSS;
+        const before = peak();
+        const error = await new Bun.Image(Buffer.from(process.argv[1], "base64")).png().bytes().catch(e => e);
+        console.log(error.code, (peak() - before) >> 10 < 128 ? "little memory" : "much memory");`,
+        buf.toString("base64"),
+      ],
+      env: bunEnv,
+      stderr: "inherit",
+    });
+    // The coefficients would take 512 MB.
+    expect(await proc.stdout.text()).toBe("ERR_IMAGE_DECODE_FAILED little memory\n");
+    expect(await proc.exited).toBe(0);
+  });
+
   // EXIF-specific: hostile IFD0 count / offsets must not loop or read OOB.
   test("EXIF with IFD count = 0xFFFF (entry walk bounds-check)", async () => {
     // Build the same minimal-EXIF JPEG as image.test.ts but lie about count.

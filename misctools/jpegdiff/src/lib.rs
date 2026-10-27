@@ -13,6 +13,9 @@ pub enum OurFailure {
     Header(bun_jpeg::Error),
     Decode(bun_jpeg::Error),
 }
+/// As in codec_jpeg.rs.
+pub const MAX_SCANS: u32 = 500;
+
 pub fn ours(bytes: &[u8], eighths: u32, max_pixels: u64) -> Result<Ours, OurFailure> {
     let d = Decoder::new(bytes).map_err(OurFailure::Header)?;
     if d.width() as u64 * d.height() as u64 > max_pixels {
@@ -22,7 +25,8 @@ pub fn ours(bytes: &[u8], eighths: u32, max_pixels: u64) -> Result<Ours, OurFail
     let cmyk = matches!(d.color_space(), ColorSpace::Cmyk | ColorSpace::Ycck);
     let scale = if d.scalable() { eighths } else { 8 };
     let (width, height) = d.scaled_size(scale);
-    let pixels = d.decode(scale).map_err(OurFailure::Decode)?;
+    let options = bun_jpeg::DecodeOptions { eighths: scale, max_scans: MAX_SCANS };
+    let pixels = d.decode(&options).map_err(OurFailure::Decode)?;
     Ok(Ours { pixels, width, height, cmyk, icc })
 }
 

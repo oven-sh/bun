@@ -17,6 +17,7 @@ use crate::error::{Error, Result};
 use crate::tables::{HuffSpec, MAX_DIMENSION, natural_order};
 use input::Input;
 use marker::Reached;
+pub use output::DecodeOptions;
 use std::borrow::Cow;
 
 pub(crate) const NUM_QUANT_TABLES: usize = 4;

@@ -59,6 +59,8 @@ pub enum Error {
     UnknownColorSpace,
     #[error("Invalid progressive parameters Ss={0} Se={1} Ah={2} Al={3}")]
     BadProgression(u8, u8, u8, u8),
+    #[error("Progressive JPEG image has more than {0} scans")]
+    TooManyScans(u32),
     #[error("Bogus virtual array access")]
     BadVirtualAccess,
     #[error(

@@ -26,6 +26,6 @@ mod lanes;
 mod markers;
 mod tables;
 
-pub use decode::{ColorSpace, Decoder};
+pub use decode::{ColorSpace, DecodeOptions, Decoder};
 pub use encode::{EncodeOptions, encode};
 pub use error::{Error, Result};

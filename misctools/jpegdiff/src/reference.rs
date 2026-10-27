@@ -38,6 +38,7 @@ const TJPARAM_JPEGWIDTH: c_int = 5;
 const TJPARAM_JPEGHEIGHT: c_int = 6;
 const TJPARAM_COLORSPACE: c_int = 8;
 const TJPARAM_PROGRESSIVE: c_int = 12;
+const TJPARAM_SCANLIMIT: c_int = 13;
 const TJPARAM_MAXPIXELS: c_int = 24;
 const TJPARAM_SAVEMARKERS: c_int = 25;
 const TJPF_RGBA: c_int = 7;
@@ -84,6 +85,8 @@ pub fn decode(bytes: &[u8], eighths: u32, max_pixels: u64) -> Result<Decoded, Fa
         let handle = H(tj3Init(1));
         let h = handle.0;
         tj3Set(h, TJPARAM_SAVEMARKERS, 2);
+        // The one thing here that Bun did not do.
+        tj3Set(h, TJPARAM_SCANLIMIT, crate::MAX_SCANS as c_int);
         let rc = tj3DecompressHeader(h, bytes.as_ptr(), bytes.len());
         let header_warned = rc != 0 && tj3BunCompletedWithWarning(h) != 0;
         if rc != 0 && !header_warned {

@@ -2472,11 +2472,13 @@ it("doesn't crash when a subprocess pipe is canceled and the event loop runs ins
 });
 
 // Runs a command under a seccomp filter that fails, with EACCES, every open(2) flavour that carries
-// O_CREAT. `skip` means this host cannot do that (no cc, missing headers, or a kernel or sandbox
-// that refuses the filter). `error` is a compile failure of the helper itself.
+// O_CREAT. `skip` means this host cannot do that (no C compiler, no kernel headers, or a kernel or
+// sandbox that refuses the filter). `error` is a bug in the helper itself.
 const denyCreat: { bin: string } | { skip: true } | { error: string } = (() => {
-  if (!isLinux) return { skip: true };
+  const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
+  if (!isLinux || !cc) return { skip: true };
   const dir = tempDir("deny-creat", {
+    "kernel-headers.c": "#include <linux/filter.h>\n#include <linux/seccomp.h>\n",
     "deny-creat.c": `
 #include <errno.h>
 #include <fcntl.h>
@@ -2528,15 +2530,19 @@ int main(int argc, char **argv) {
   const result = ((): typeof denyCreat => {
     const bin = join(String(dir), "deny-creat");
     try {
-      const compile = spawnSync({ cmd: ["cc", "-O0", "-o", bin, join(String(dir), "deny-creat.c")], stderr: "pipe" });
+      const compile = spawnSync({ cmd: [cc, "-O0", "-o", bin, join(String(dir), "deny-creat.c")], stderr: "pipe" });
       if (compile.exitCode !== 0) {
-        const stderr = compile.stderr.toString();
-        // A missing header or libc means this host cannot build C. Anything else is a bug in the helper.
-        return stderr.includes("No such file or directory") ? { skip: true } : { error: stderr };
+        // A host without the kernel headers (a separate package on some distros) skips. Any other failure is a bug.
+        const headers = spawnSync({
+          cmd: [cc, "-E", join(String(dir), "kernel-headers.c")],
+          stdout: "ignore",
+          stderr: "ignore",
+        });
+        return headers.exitCode === 0 ? { error: compile.stderr.toString() } : { skip: true };
       }
       return spawnSync({ cmd: [bin, "--probe"] }).exitCode === 0 ? { bin } : { skip: true };
     } catch {
-      // spawnSync throws when there is no cc, or when the host cannot run the binary it built.
+      // spawnSync throws when the host cannot run the binary it built.
       return { skip: true };
     }
   })();

@@ -581,7 +581,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
 
     /// `await import('mod')` for the module of an import record
     fn repl_await_import(&mut self, import_record_index: u32, loc: bun_ast::Loc) -> Expr {
-        let path_str: &'static [u8] = self.import_records.items()[import_record_index as usize]
+        let path_str: &'a [u8] = self.import_records.items()[import_record_index as usize]
             .path
             .text;
         let str_expr = self.new_expr(

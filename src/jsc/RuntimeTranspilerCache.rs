@@ -6,7 +6,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use bun_ast::ExportsKind;
 use bun_ast::Source;
 use bun_core::{FeatureFlags, env_var};
-use bun_core::{String as BunString, ZStr};
+use bun_core::{String as BunString, StringView, ZStr};
 use bun_js_parser::ParserOptions;
 use bun_paths::resolve_path::{self as path_handler, platform};
 use bun_paths::{self as paths, MAX_PATH_BYTES, PathBuffer, SEP};
@@ -69,7 +69,15 @@ bun_core::declare_scope!(cache, visible);
 /// an abstract class are mapped elsewhere.
 /// Version 37: A JSX spread no longer empties an object `--define`. Older entries can print it as `{}`.
 /// Version 38: `finally` is mapped, and the `{` after it is mapped elsewhere.
-const EXPECTED_VERSION: u32 = 38;
+/// Version 39: `emitDecoratorMetadata` names the right type in the body of `a ? (b): T => {...} : c`.
+/// Version 40: `else` and the name of an `async` method are mapped elsewhere, the `}` of a pattern
+/// that became an assignment is mapped, what is in the value of a define is not, and `--coverage`
+/// participates in the features hash.
+/// Version 41: `case` and `default` are mapped.
+/// Version 42: The body of a class with lowered class decorators names the class by the
+/// binding that holds what the decorators return.
+/// Version 43: A `bun:` specifier that names no builtin is printed as it is written.
+const EXPECTED_VERSION: u32 = 43;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a
@@ -998,7 +1006,7 @@ bun_ast::link_impl_TranspilerCacheImpl! {
             // Borrowed Latin-1 view: `to_file` only reads `byte_slice()` + the encoding
             // tag (unmarked 8-bit EncodedSlice -> Encoding::LATIN1, same as clone_latin1),
             // and `output_code_bytes` outlives the synchronous `to_file` call.
-            let output_code = BunString::ascii(output_code_bytes);
+            let output_code = StringView::ascii(output_code_bytes);
             let result = RuntimeTranspilerCache::to_file(
                 this.input_byte_length.unwrap(),
                 this.input_hash.unwrap(),

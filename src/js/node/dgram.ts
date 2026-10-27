@@ -146,7 +146,7 @@ const UV_EINVAL = process.platform === "win32" ? -4071 : -22;
 // Unlike the codes above, ECANCELED's number differs across the POSIX
 // platforms (Linux 125, Darwin 89, FreeBSD 85) and is a libuv-synthetic
 // -4081 on Windows, so it has to come from native.
-const UV_ECANCELED = $bindgen("node_util_binding.bind.ts", "ecanceledErrorCode")();
+const UV_ECANCELED = $bindgen("node_util_binding.bind.ts", "ecanceledErrorCode");
 
 // Node's --test-udp-no-try-send makes udp_wrap skip uv_udp_try_send so every
 // request is counted until its callback runs. Only Node's own tests use it.
@@ -164,7 +164,7 @@ const getSockNameFn = $bindgen("udp_socket.bind.ts", "dgramGetSockNameFd");
 
 let BlockList;
 function isBlockList(value) {
-  BlockList ??= $rust("node_net_binding.rs", "BlockList");
+  BlockList ??= $bindgen("BlockList.bind.ts", "BlockList");
   return BlockList.isBlockList(value);
 }
 

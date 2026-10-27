@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, nodeExeAtLeast, tempDir } from "harness";
+import { bunEnv, bunExe, runInBunAndNode, tempDir } from "harness";
 import { join } from "node:path";
 
 describe("node:test", () => {
@@ -554,23 +554,7 @@ test("mock.timers.enable({ now }) takes the time of a Date when Date is mocked a
     `,
   });
   // Date.prototype.getTime replaced, and the global Date replaced (a getter counts the reads).
-  const node = nodeExeAtLeast("26.3.0");
-  const cases = (node ? [bunExe(), node] : [bunExe()]).flatMap(exe =>
-    ["Date.prototype.getTime", "Date"].map(mocked => ({ exe, mocked })),
-  );
-  const results = await Promise.all(
-    cases.map(async ({ exe, mocked }) => {
-      await using proc = Bun.spawn({
-        cmd: [exe, "fixture.cjs", mocked],
-        cwd: String(dir),
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      return { exe, mocked, stdout: stdout.trim(), stderr: exitCode === 0 ? "" : stderr, exitCode };
-    }),
-  );
+  const runs = await runInBunAndNode(String(dir), "fixture.cjs", ["Date.prototype.getTime", "Date"], "26.3.0");
   const stdout = `{"whileMocked":["enabled","ERR_INVALID_ARG_TYPE"],"afterRestore":["enabled","ERR_INVALID_ARG_TYPE"],"now":5000,"calls":0,"reads":0}`;
-  expect(results).toEqual(cases.map(each => ({ ...each, stdout, stderr: "", exitCode: 0 })));
+  expect(runs).toEqual(runs.map(({ exe, arg }) => ({ exe, arg, stdout, stderr: "", exitCode: 0 })));
 });

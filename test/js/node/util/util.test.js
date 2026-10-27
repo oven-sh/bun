@@ -24,7 +24,7 @@
 import assert from "assert";
 import { exposedInternals } from "bun:internal-for-testing";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, nodeExeAtLeast, tempDir } from "harness";
+import { bunEnv, bunExe, runInBunAndNode, tempDir } from "harness";
 import util from "util";
 // const context = require('vm').runInNewContext; // TODO: Use a vm polyfill
 
@@ -708,25 +708,9 @@ it("inspect() formats a Date with the engine's functions when Date is mocked at 
     `,
   });
   // Three Date.prototype methods replaced, and the global Date replaced (a getter counts the reads).
-  const node = nodeExeAtLeast("26.3.0");
-  const cases = (node ? [bunExe(), node] : [bunExe()]).flatMap(exe =>
-    ["Date.prototype", "Date"].map(mocked => ({ exe, mocked })),
-  );
-  const results = await Promise.all(
-    cases.map(async ({ exe, mocked }) => {
-      await using proc = Bun.spawn({
-        cmd: [exe, "fixture.cjs", mocked],
-        cwd: String(dir),
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      return { exe, mocked, stdout: stdout.trim(), stderr: exitCode === 0 ? "" : stderr, exitCode };
-    }),
-  );
+  const runs = await runInBunAndNode(String(dir), "fixture.cjs", ["Date.prototype", "Date"], "26.3.0");
   const stdout = `{"whileMocked":["1970-01-01T00:00:00.000Z","Invalid Date"],"afterRestore":["1970-01-01T00:00:00.000Z","Invalid Date"],"calls":0,"reads":0}`;
-  expect(results).toEqual(cases.map(each => ({ ...each, stdout, stderr: "", exitCode: 0 })));
+  expect(runs).toEqual(runs.map(({ exe, arg }) => ({ exe, arg, stdout, stderr: "", exitCode: 0 })));
 });
 
 describe("util.parseEnv", () => {

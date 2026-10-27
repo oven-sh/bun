@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, nodeExeAtLeast, tempDir } from "harness";
+import { bunEnv, bunExe, runInBunAndNode, tempDir } from "harness";
 import inspector from "node:inspector";
 
 test("inspector.url()", () => {
@@ -767,25 +767,9 @@ test("the consoleAPICalled timestamp is the current time when Date is mocked at 
     `,
   });
   // Date.now replaced, the global Date replaced (a getter counts the reads), and the Date mock of node:test.
-  const node = nodeExeAtLeast("26.3.0");
-  const cases = (node ? [bunExe(), node] : [bunExe()]).flatMap(exe =>
-    ["Date.now", "Date", "mock.timers"].map(mocked => ({ exe, mocked })),
-  );
-  const results = await Promise.all(
-    cases.map(async ({ exe, mocked }) => {
-      await using proc = Bun.spawn({
-        cmd: [exe, "fixture.cjs", mocked],
-        cwd: String(dir),
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      return { exe, mocked, stdout: stdout.trim(), stderr: exitCode === 0 ? "" : stderr, exitCode };
-    }),
-  );
+  const runs = await runInBunAndNode(String(dir), "fixture.cjs", ["Date.now", "Date", "mock.timers"], "26.3.0");
   const stdout = `{"whileMocked":true,"afterRestore":true,"calls":0,"reads":0}`;
-  expect(results).toEqual(cases.map(each => ({ ...each, stdout, stderr: "", exitCode: 0 })));
+  expect(runs).toEqual(runs.map(({ exe, arg }) => ({ exe, arg, stdout, stderr: "", exitCode: 0 })));
 });
 
 test("Object.prototype pollution does not cause Runtime.enable to hook extra console methods", () => {

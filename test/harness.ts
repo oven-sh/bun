@@ -223,6 +223,23 @@ export function nodeExeAtLeast(version: string): string | null {
   }
 }
 
+/**
+ * Runs `file` in `cwd` once for each of `args`, each run in a fresh process: under this Bun, and under Node.js
+ * `nodeVersion` or later when one is installed. For a fixture that Bun and Node.js must answer alike. A run keeps
+ * its stderr only when it fails.
+ */
+export async function runInBunAndNode(cwd: string, file: string, args: string[], nodeVersion: string) {
+  const node = nodeExeAtLeast(nodeVersion);
+  const cases = (node ? [bunExe(), node] : [bunExe()]).flatMap(exe => args.map(arg => ({ exe, arg })));
+  return Promise.all(
+    cases.map(async ({ exe, arg }) => {
+      await using proc = Bun.spawn({ cmd: [exe, file, arg], cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { exe, arg, stdout: stdout.trim(), stderr: exitCode === 0 ? "" : stderr, exitCode };
+    }),
+  );
+}
+
 let abiMatchingNode: Promise<string> | undefined;
 
 /**

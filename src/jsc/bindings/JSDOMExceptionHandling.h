@@ -29,6 +29,7 @@
 #include <JavaScriptCore/ThrowScope.h>
 
 namespace JSC {
+class Exception;
 class TopExceptionScope;
 }
 
@@ -58,6 +59,16 @@ WEBCORE_EXPORT JSC::EncodedJSValue rejectPromiseWithThisTypeError(DeferredPromis
 WEBCORE_EXPORT JSC::EncodedJSValue rejectPromiseWithThisTypeError(JSC::JSGlobalObject&, ASCIILiteral interfaceName, ASCIILiteral operationName);
 
 String retrieveErrorMessage(JSC::JSGlobalObject&, JSC::VM&, JSC::JSValue exception, JSC::TopExceptionScope&);
+
+// An ErrorEvent's filename, lineno and colno for an uncaught value. Empty and 0 when no frame of the program is known.
+struct ScriptPosition {
+    // As `.stack` names the frame: a path for a module on disk, else its URL.
+    String sourceURL;
+    unsigned line { 0 };
+    unsigned column { 0 };
+};
+// `exception` carried `thrownValue`, or is null when only the value is left. Runs no script.
+ScriptPosition scriptPositionOfThrownValue(JSC::JSGlobalObject&, JSC::JSValue thrownValue, JSC::Exception*);
 WEBCORE_EXPORT void reportException(JSC::JSGlobalObject*, JSC::JSValue exception, CachedScript* = nullptr, bool = false);
 WEBCORE_EXPORT void reportException(JSC::JSGlobalObject*, JSC::Exception*, CachedScript* = nullptr, bool = false, ExceptionDetails* = nullptr);
 

@@ -25,6 +25,7 @@
 #include <JavaScriptCore/FunctionCodeBlock.h>
 
 #include "ErrorStackFrame.h"
+#include "InternalModuleRegistry.h"
 
 using namespace JSC;
 using namespace WebCore;
@@ -412,6 +413,28 @@ String sourceURL(JSC::VM& vm, const JSC::StackFrame& frame)
     }
 
     return sourceURL(frame.codeBlock());
+}
+
+// "bun:main" and "bun:wrap" are generated around the program. They are not builtin functions.
+static bool isGeneratedModuleURL(const String& sourceURL)
+{
+    return sourceURL == "bun:main"_s || sourceURL == "bun:wrap"_s;
+}
+
+bool isScriptFrame(const JSC::StackFrame& frame)
+{
+    // Every module built into Bun is compiled as a builtin function, whatever it is named ("ws").
+    auto* codeBlock = frame.codeBlock();
+    if (!codeBlock || codeBlock->unlinkedCodeBlock()->isBuiltinFunction())
+        return false;
+
+    String url = sourceURL(codeBlock);
+    return !url.isEmpty() && !isGeneratedModuleURL(url);
+}
+
+bool isScriptSourceURL(const String& sourceURL)
+{
+    return !sourceURL.isEmpty() && !isGeneratedModuleURL(sourceURL) && !Bun::isInternalModuleName(sourceURL);
 }
 
 String sourceURL(JSC::StackVisitor& visitor)

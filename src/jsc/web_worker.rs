@@ -166,11 +166,13 @@ unsafe extern "C" {
     /// Loads `node:worker_threads` in this VM (it rebinds process stdio and
     /// registers parentPort). May leave an exception pending.
     safe fn Bun__Worker__loadNodeWorkerThreadsModule(global: &JSGlobalObject);
+    /// `thrown` is what came up, maybe as the `JSC::Exception` cell: the event's position comes from it.
     safe fn WebWorker__dispatchError(
         global: &JSGlobalObject,
         proxy: *mut c_void,
         message: BunString,
-        err: JSValue,
+        error: JSValue,
+        thrown: JSValue,
     );
     safe fn Bun__freeSharedHeaderBufferForThreadExit();
     // Raw FFI (no RAII guard) so `thread_main` can take the API lock and abandon
@@ -1141,7 +1143,7 @@ impl WebWorker {
             }
         };
         let dispatch = jsc::host_fn::from_js_host_call_generic(global, || {
-            WebWorker__dispatchError(global, self.messaging_proxy, str, err)
+            WebWorker__dispatchError(global, self.messaging_proxy, str, err, err)
         });
         if let Err(e) = dispatch {
             let _ = crate::task::report_error_or_terminate(global, e);
@@ -1202,10 +1204,13 @@ fn on_unhandled_rejection(
             ..Default::default()
         },
     );
-    if let Err(err) = format_result {
-        error_instance = global_object.take_exception(err);
-    }
     // Formatting ran script; if this worker was terminated meanwhile there is no error to dispatch.
+    // Anything else that formatting threw costs only the text: the value stays the error.
+    if let Err(err) = format_result
+        && global_object.take_exception(err).is_termination_exception()
+    {
+        return;
+    }
     if error_instance.is_termination_exception() {
         return;
     }
@@ -1227,6 +1232,7 @@ fn on_unhandled_rejection(
             worker.messaging_proxy,
             error_message,
             error_instance,
+            error_instance_or_exception,
         );
     })
     .is_err()

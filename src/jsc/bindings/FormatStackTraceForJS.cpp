@@ -661,13 +661,8 @@ WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& sta
     return result;
 }
 
-void computeLineColumnWithSourcemap(JSC::VM& vm, JSC::SourceProvider* _Nonnull sourceProvider, JSC::LineColumn& lineColumn, WTF::String& remappedSourceURL)
+void remapLineColumn(JSC::VM& vm, const WTF::String& sourceURL, JSC::LineColumn& lineColumn, WTF::String& remappedSourceURL)
 {
-    auto sourceURL = sourceProvider->sourceURL();
-    if (sourceURL.isEmpty()) {
-        return;
-    }
-
     OrdinalNumber line = OrdinalNumber::fromOneBasedInt(lineColumn.line);
     OrdinalNumber column = OrdinalNumber::fromOneBasedInt(lineColumn.column);
 
@@ -684,6 +679,16 @@ void computeLineColumnWithSourcemap(JSC::VM& vm, JSC::SourceProvider* _Nonnull s
         lineColumn.column = frame.position.column().oneBasedInt();
         remappedSourceURL = frame.source_url.toWTFString();
     }
+}
+
+void computeLineColumnWithSourcemap(JSC::VM& vm, JSC::SourceProvider* _Nonnull sourceProvider, JSC::LineColumn& lineColumn, WTF::String& remappedSourceURL)
+{
+    const auto& sourceURL = sourceProvider->sourceURL();
+    if (sourceURL.isEmpty()) {
+        return;
+    }
+
+    remapLineColumn(vm, sourceURL, lineColumn, remappedSourceURL);
 }
 
 // ErrorInstance holds a frame's callee and code block weakly. Root them while user JS can run.

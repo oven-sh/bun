@@ -196,6 +196,11 @@ String sourceURL(JSC::VM& vm, const JSC::StackFrame& frame);
 String sourceURL(JSC::StackVisitor& visitor);
 String sourceURL(JSC::VM& vm, JSC::JSFunction* function);
 
+// The frame runs the program's own JavaScript: not a JavaScriptCore builtin, not a module built into Bun.
+bool isScriptFrame(const JSC::StackFrame&);
+// The same, when only the frame's source URL is left.
+bool isScriptSourceURL(const String& sourceURL);
+
 class FunctionNameFlags {
 public:
     static constexpr unsigned None = 0;

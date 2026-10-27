@@ -12,8 +12,8 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isASAN, isLinux, libcPathForDlopen, rss } from "harness";
 import { readFileSync } from "node:fs";
 import zlib from "node:zlib";
-import frames from "./zstd-frames-fixture.json";
 import path from "path";
+import frames from "./zstd-frames-fixture.json";
 
 // A hand-written empty frame: magic, a descriptor without a content size (so it goes through the
 // streaming decoder), the window descriptor (the decoder allocates a window of 2^windowLog bytes before

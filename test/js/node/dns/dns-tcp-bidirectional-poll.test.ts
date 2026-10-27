@@ -1,7 +1,6 @@
-// c-ares opens a TCP socket when the UDP response has TC=1. At
-// ares_open_connection() it reports (readable=1, writable=1) for that fd via
-// the sock_state_cb so it learns when the nonblocking connect() completes.
-// onDNSSocketState registers both directions on one FilePoll; before the fix,
+// The resolver opens a TCP socket when the UDP response has TC=1, and watches
+// it for both directions so that it learns when the nonblocking connect()
+// completes. `SystemIo::watch` registers both on one FilePoll; before the fix,
 // unregisterWithFd asserted !(poll_readable && poll_writable) and crashed the
 // debug build, and on epoll the second register()'s CTL_MOD silently dropped
 // the first direction's mask so the response was never read.
@@ -13,7 +12,7 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows } from "harness";
 import { join } from "node:path";
 
-test.skipIf(isWindows)("c-ares TCP DNS fd registers readable+writable on one FilePoll without asserting", async () => {
+test.skipIf(isWindows)("a TCP DNS fd registers readable+writable on one FilePoll without asserting", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), join(import.meta.dir, "dns-tcp-bidirectional-poll-fixture.ts")],
     env: bunEnv,

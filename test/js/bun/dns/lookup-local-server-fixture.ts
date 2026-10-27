@@ -1,7 +1,7 @@
 // Looks up each [name, options] of the JSON in argv with the "c-ares" backend, which asks a local server for a small zone.
 // Prints what each lookup gave and the questions it took.
 import dns from "node:dns";
-import { a, aaaa, cname, dnsServer, RCODE, TYPE } from "../../node/dns/dns-server";
+import { a, aaaa, cname, distinctQuestions, dnsServer, RCODE, TYPE } from "../../node/dns/dns-server";
 
 const mixed = [a("mixed.test", 60, "10.0.0.7"), aaaa("mixed.test", 60, "20010db8000000000000000000000007")];
 const zone: Record<string, Record<number, Buffer[]>> = {
@@ -31,8 +31,6 @@ for (const [name, options] of JSON.parse(process.argv[2])) {
     addresses => addresses.map(({ address, family }) => `${address} ${family}`).sort(),
     error => error.code,
   );
-  // A question that was sent again, as on a slow machine, keeps its id.
-  const asked = new Map(server.queries.slice(before).map(query => [query.id, `${query.name} ${query.type}`]));
-  results.push([name, result, [...asked.values()]]);
+  results.push([name, result, distinctQuestions(server.queries.slice(before))]);
 }
 console.log(JSON.stringify(results));

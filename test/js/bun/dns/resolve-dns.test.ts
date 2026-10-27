@@ -346,49 +346,49 @@ describe("dns", () => {
           ["v6.test", { family: 4 }],
         ),
       ).toEqual([
-        ["host.corp.test", ["10.0.0.1 4", "2001:db8::1 6"], ["host.corp.test 1", "host.corp.test 28"]],
+        ["host.corp.test", ["10.0.0.1 4", "2001:db8::1 6"], ["udp 1 host.corp.test", "udp 28 host.corp.test"]],
         ["host.corp.test", ["10.0.0.1 4"], []],
         ["host.corp.test", ["2001:db8::1 6"], []],
-        ["v6.test", ["2001:db8::6 6"], ["v6.test 1", "v6.test 28"]],
-        ["v6.test", "DNS_ENOTFOUND", ["v6.test 1", "v6.test.corp.test 1"]],
+        ["v6.test", ["2001:db8::6 6"], ["udp 1 v6.test", "udp 28 v6.test"]],
+        ["v6.test", "DNS_ENOTFOUND", ["udp 1 v6.test", "udp 1 v6.test.corp.test"]],
       ]);
     });
 
     test("an alias is followed", async () => {
       expect(await lookups({}, ["alias.test"])).toEqual([
-        ["alias.test", ["10.0.0.4 4", "10.0.0.5 4"], ["alias.test 1", "alias.test 28"]],
+        ["alias.test", ["10.0.0.4 4", "10.0.0.5 4"], ["udp 1 alias.test", "udp 28 alias.test"]],
       ]);
     });
 
     test("a name with fewer dots than ndots goes through the search list first", async () => {
       expect(await lookups({}, ["host", { family: 4 }], ["missing", { family: 4 }])).toEqual([
-        ["host", ["10.0.0.1 4"], ["host.corp.test 1"]],
-        ["missing", "DNS_ENOTFOUND", ["missing.corp.test 1", "missing 1"]],
+        ["host", ["10.0.0.1 4"], ["udp 1 host.corp.test"]],
+        ["missing", "DNS_ENOTFOUND", ["udp 1 missing.corp.test", "udp 1 missing"]],
       ]);
     });
 
     test("a name with as many dots as ndots is tried as it is first", async () => {
       expect(await lookups({}, ["host.other.test", { family: 4 }], ["missing.test", { family: 4 }])).toEqual([
-        ["host.other.test", ["10.0.0.2 4"], ["host.other.test 1"]],
-        ["missing.test", "DNS_ENOTFOUND", ["missing.test 1", "missing.test.corp.test 1"]],
+        ["host.other.test", ["10.0.0.2 4"], ["udp 1 host.other.test"]],
+        ["missing.test", "DNS_ENOTFOUND", ["udp 1 missing.test", "udp 1 missing.test.corp.test"]],
       ]);
       expect(await lookups({ RES_OPTIONS: "ndots:3" }, ["host.other.test", { family: 4 }])).toEqual([
-        ["host.other.test", ["10.0.0.2 4"], ["host.other.test.corp.test 1", "host.other.test 1"]],
+        ["host.other.test", ["10.0.0.2 4"], ["udp 1 host.other.test.corp.test", "udp 1 host.other.test"]],
       ]);
     });
 
     test("only addresses of the type that was asked for are taken", async () => {
       expect(await lookups({}, ["mixed.test", { family: 4 }], ["mixed.test", { family: 6 }], ["mixed.test"])).toEqual([
-        ["mixed.test", ["10.0.0.7 4"], ["mixed.test 1"]],
-        ["mixed.test", ["2001:db8::7 6"], ["mixed.test 28"]],
+        ["mixed.test", ["10.0.0.7 4"], ["udp 1 mixed.test"]],
+        ["mixed.test", ["2001:db8::7 6"], ["udp 28 mixed.test"]],
         ["mixed.test", ["10.0.0.7 4", "2001:db8::7 6"], []],
       ]);
     });
 
     test("a name that ends with a dot is complete", async () => {
       expect(await lookups({}, ["missing.", { family: 4 }], ["host.corp.test.", { family: 4 }])).toEqual([
-        ["missing.", "DNS_ENOTFOUND", ["missing 1"]],
-        ["host.corp.test.", ["10.0.0.1 4"], ["host.corp.test 1"]],
+        ["missing.", "DNS_ENOTFOUND", ["udp 1 missing"]],
+        ["host.corp.test.", ["10.0.0.1 4"], ["udp 1 host.corp.test"]],
       ]);
     });
 
@@ -403,8 +403,8 @@ describe("dns", () => {
           ["short.x", { family: 4 }],
         ),
       ).toEqual([
-        ["short", ["10.0.0.2 4"], ["host.other.test 1"]],
-        ["short.x", "DNS_ENOTFOUND", ["short.x 1", "short.x.corp.test 1"]],
+        ["short", ["10.0.0.2 4"], ["udp 1 host.other.test"]],
+        ["short.x", "DNS_ENOTFOUND", ["udp 1 short.x", "udp 1 short.x.corp.test"]],
       ]);
     });
 

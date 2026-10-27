@@ -6049,7 +6049,7 @@ done 1 name=BAR 10.0.0.1#80/0
 ? @
 done 2 name=Foo.Test bar
 ? @
-=== nothing is asked after shutdown
+=== shutdown ends a query in flight with EDESTRUCTION and closes its socket
 query A a.test
 shutdown
 ---
@@ -6167,7 +6167,7 @@ close 1
 done 0 b.test
 timer none
 ? @
-=== differs: 031, by a TAB in resolv.conf
+=== differs: 031, where a TAB inside a value of resolv.conf drops the line
 file /etc/resolv.conf options%09timeout:256%20%0Aoptions%09ndots:3%09ndots:5%0Anameserver%20fec0::1%254294967296%0Asearch%20-,%20.%20x;c%0Ahostresorder%20%09%20bind,file%0Anameserver%20fe80::1%25eth0%0A
 lookup a.test 0 0
 ---
@@ -6196,7 +6196,7 @@ send 1 dd740100000100000000000001610474657374012d0000010001
 send 1 547d0100000100000000000001610474657374012d00001c0001
 timer 5000
 ? @
-=== differs: 045, by the hosts file
+=== differs: 045, where lines of the hosts file that share a name or an address are one entry
 file /etc/hosts ::ffff:1.2.3.4%09host2%09LOCALHOST.%0A2002:102:304::1%09LOCALHOST.%20%20localhost%20host2%0Aff02::1%0A
 lookup localhost 0 0
 query TXT foo.onion.
@@ -6222,7 +6222,7 @@ done 0 name=localhost 127.0.0.1#0/0 2002:102:304::1#0/0
 ? @
 done 1 error ENOTFOUND
 ? @
-=== differs: 058, by the hosts file
+=== differs: 058, where lines of the hosts file that share a name or an address are one entry
 file /etc/hosts 3ffe::1%20%20host2%20x.localhost%0A224.0.0.1%20%20host%09host2%20b.t%7Festtt%20#%20c
 lookup host 80 0
 ---
@@ -6243,7 +6243,7 @@ servers 127.0.0.1#53#53#0
 read /etc/hosts
 done 0 name=host 224.0.0.1#80/0
 ? @
-=== differs: 103, by `localhost.`
+=== differs: 103, where `localhost.` is asked of the servers
 nameinfo 10.0.0.1 80
 deliver 1 dd748180000100000000000101310130013002313007696e2d61646472046172706100000c00010000010001ffffffff00040a00025c
 lookup 1.2.3 0 0
@@ -7354,4 +7354,37 @@ timer 2000
 close 1
 done 0 error ENODATA
 timer none
+? @
+=== differs: a hosts file replaced by another of the same size and time is not read again
+file /etc/resolv.conf nameserver%2010.0.0.1%0A
+file /etc/hosts 10.1.1.1%20box%0A 1600000000 1
+lookup box 0 4
+file /etc/hosts 10.1.1.2%20box%0A 1600000000 2
+lookup box 0 4
+---
+? @
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+read /etc/hosts
+done 0 name=box 10.1.1.1#0/0
+? @
+? @
+done 1 name=box 10.1.1.1#0/0
+? @
++++
+? @
+? @
+start
+read /etc/resolv.conf
+read /etc/nsswitch.conf
+servers 10.0.0.1#53#53#0
+read /etc/hosts
+done 0 name=box 10.1.1.1#0/0
+? @
+? @
+read /etc/hosts
+done 1 name=box 10.1.1.2#0/0
 ? @

@@ -64,18 +64,23 @@ export const aaaa = (owner: string | Buffer, ttl: number, address: string) =>
 export const cname = (owner: string | Buffer, ttl: number, target: string) =>
   record(owner, TYPE.CNAME, ttl, name(target));
 
+export const soa = (owner: string | Buffer, ttl: number, minimum: number) =>
+  record(owner, TYPE.SOA, ttl, Buffer.concat([name("ns.test"), name("admin.test"), u32(1, 2, 3, 4, minimum)]));
+
 /** A compression pointer to the name of the question. */
 export const QUESTION_NAME = Buffer.from([0xc0, 0x0c]);
 
-export interface Query {
-  transport: "udp" | "tcp";
+export interface Message {
   message: Buffer;
   id: number;
-  flags: number;
   name: string;
   type: number;
   /** The question section as it was sent. */
   question: Buffer;
+}
+
+export interface Query extends Message {
+  transport: "udp" | "tcp";
   /** How many queries came before this one. */
   index: number;
   /** The address it came from. */
@@ -94,9 +99,9 @@ export interface Reply {
 
 /** A `Buffer` is sent as it is, several are sent one after the other, and nothing is sent for `undefined`. */
 type Answer = Reply | Buffer | Buffer[] | "hang up" | undefined;
-export type Handler = (query: Query) => Answer | Promise<Answer>;
+type Handler = (query: Query) => Answer | Promise<Answer>;
 
-export function encode(query: Query, reply: Reply): Buffer {
+export function encode(query: Message, reply: Reply): Buffer {
   const { answers = [], authority = [], additional = [] } = reply;
   return Buffer.concat([
     u16(
@@ -114,7 +119,7 @@ export function encode(query: Query, reply: Reply): Buffer {
   ]);
 }
 
-export function parse(message: Buffer, transport: Query["transport"], index: number, from: string): Query {
+export function parse(message: Buffer): Message {
   const labels: string[] = [];
   let offset = 12;
   while (message[offset]) {
@@ -122,20 +127,29 @@ export function parse(message: Buffer, transport: Query["transport"], index: num
     offset += message[offset] + 1;
   }
   return {
-    transport,
     message,
     id: message.readUInt16BE(0),
-    flags: message.readUInt16BE(2),
     name: labels.join("."),
     type: message.readUInt16BE(offset + 1),
     question: message.subarray(12, offset + 5),
-    index,
-    from,
   };
 }
 
+/**
+ * `udp 1 a.test` for each question. One that was sent again over the same transport, as on a machine too slow to answer
+ * in time, keeps its id and is counted once.
+ */
+export function distinctQuestions(queries: Query[]): string[] {
+  const questions = new Map(
+    queries.map(query => {
+      const question = `${query.transport} ${query.type} ${query.name}`;
+      return [`${query.id} ${question}`, question];
+    }),
+  );
+  return [...questions.values()];
+}
+
 export interface DnsServer extends AsyncDisposable {
-  port: number;
   /** For `setServers()`. */
   address: string;
   queries: Query[];
@@ -153,7 +167,7 @@ export async function dnsServer(handler: Handler): Promise<DnsServer> {
     send: (reply: Buffer) => void,
     hangUp?: () => void,
   ) {
-    const query = parse(message, transport, queries.length, from);
+    const query = { ...parse(message), transport, index: queries.length, from };
     queries.push(query);
     const reply = await handler(query);
     if (reply === undefined) return;
@@ -170,11 +184,10 @@ export async function dnsServer(handler: Handler): Promise<DnsServer> {
     await once(udp, "listening");
     const { port } = udp.address();
     let isClosed = false;
-    /** What went wrong with the UDP socket, for the test that owns the server to fail with. */
+    /** What went wrong with the UDP socket or in the handler, for the test that owns the server to fail with. */
     let failure: Error | undefined;
 
     const server: DnsServer = {
-      port,
       address: `127.0.0.1:${port}`,
       queries,
       connections: 0,

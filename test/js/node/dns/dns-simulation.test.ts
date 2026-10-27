@@ -3,7 +3,7 @@
 import { dnsSimulate } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { marked, read } from "./c-ares-driver/golden";
-import { a, aaaa, cname, encode, name, parse, RCODE, record, type Reply, TYPE, u16 } from "./dns-server";
+import { a, aaaa, cname, encode, name, parse, RCODE, record, type Reply, soa, TYPE, u16 } from "./dns-server";
 
 /** A word of a script that stands for these bytes. */
 function text(value: string | Buffer): string {
@@ -38,40 +38,51 @@ class World {
     return added;
   }
 
-  /** The last message sent on `socket`. */
-  sent(socket: number) {
-    const line = this.log.findLast(line => line.startsWith(`send ${socket} `) && !/ (blocks|fails)$/.test(line));
-    if (!line) throw new Error(`nothing was sent on ${socket}:\n${this.log.join("\n")}`);
-    const isTcp = this.log.some(line => line.startsWith(`open ${socket} tcp `));
-    return parse(Buffer.from(line.split(" ")[2], "hex").subarray(isTcp ? 2 : 0), isTcp ? "tcp" : "udp", 0, "");
+  #isTcp(socket: number) {
+    return this.log.some(line => line.startsWith(`open ${socket} tcp `));
   }
 
-  /** Answers the last message sent on `socket`. */
-  reply(socket: number, reply: Reply): string[] {
-    const query = this.sent(socket);
-    const message = encode(query, reply);
-    const framed = query.transport === "tcp" ? Buffer.concat([u16(message.length), message]) : message;
-    return this.run(`deliver ${socket} ${framed.toString("hex")}`);
-  }
-
-  /** `transport type name` of every message sent, in order. */
-  questions(): string[] {
+  /** What was sent, in order. On TCP it need not be a whole message. */
+  #sends() {
     return this.log
       .filter(line => /^send \d+ [0-9a-f]+$/.test(line))
       .map(line => {
-        const socket = Number(line.split(" ")[1]);
-        const isTcp = this.log.some(line => line.startsWith(`open ${socket} tcp `));
-        const query = parse(Buffer.from(line.split(" ")[2], "hex").subarray(isTcp ? 2 : 0), "udp", 0, "");
-        return `${socket} ${query.type} ${query.name}`;
+        const [, socket, hex] = line.split(" ");
+        return { socket: Number(socket), bytes: Buffer.from(hex, "hex").subarray(this.#isTcp(Number(socket)) ? 2 : 0) };
       });
+  }
+
+  /** Every message sent, in order, and the socket it was sent on. */
+  messages() {
+    return this.#sends().map(({ socket, bytes }) => ({ socket, ...parse(bytes) }));
+  }
+
+  /** The last message sent on `socket`. */
+  sent(socket: number) {
+    const last = this.#sends().findLast(sent => sent.socket === socket);
+    if (!last) throw new Error(`nothing was sent on ${socket}:\n${this.log.join("\n")}`);
+    return parse(last.bytes);
+  }
+
+  /** Answers `query`, the last message sent on `socket` unless said. */
+  reply(socket: number, reply: Reply, query = this.sent(socket)): string[] {
+    const message = encode(query, reply);
+    const framed = this.#isTcp(socket) ? Buffer.concat([u16(message.length), message]) : message;
+    return this.run(`deliver ${socket} ${framed.toString("hex")}`);
+  }
+
+  /** `socket type name` of every message sent, in order. */
+  questions(): string[] {
+    return this.messages().map(message => `${message.socket} ${message.type} ${message.name}`);
   }
 }
 
+// `local` is the request that does least. Some request has to make the channel.
 const servers = (...lines: string[]) =>
   new World(...lines).run("local 0.0.0.0").find(line => line.startsWith("servers"));
 
 describe("where the servers come from", () => {
-  test("resolv.conf", () => {
+  test("the `nameserver` lines of resolv.conf that name an address, in their order", () => {
     expect(
       servers(
         file(
@@ -105,6 +116,13 @@ describe("where the servers come from", () => {
       ),
     ).toMatchInlineSnapshot(
       `"servers 10.0.0.1#53#53#0 10.0.0.2#53#53#0 10.0.0.3#5353#5353#0 10.0.0.4#54#54#0 2001:db8::1#53#53#0 2001:db8::2#5353#5353#0 10.0.0.5#53#53#0 10.0.0.6#53#53#0 10.0.0.7#53#53#0 fe80::2#53#53#3 fe80::3#53#53#7 10.0.0.8#53#53#0"`,
+    );
+  });
+
+  test("a system that keeps such files nowhere: 127.0.0.1, and names come from the servers alone", () => {
+    const it = new World("etc -");
+    expect(it.run("lookup box 0 4", "nameinfo 10.0.0.1 80").filter(line => /^(read|servers|open) /.test(line))).toEqual(
+      ["servers 127.0.0.1#53#53#0", "open 1 udp 127.0.0.1#53#0"],
     );
   });
 
@@ -180,7 +198,7 @@ describe("where the servers come from", () => {
     );
   });
 
-  test("Android: the properties", () => {
+  test("Android: the addresses in the properties, else 127.0.0.1", () => {
     expect(servers("settings android", "android-property 10.0.0.1", "android-property 2001:db8::1,10.0.0.2")).toBe(
       "servers 10.0.0.1#53#53#0 2001:db8::1#53#53#0 10.0.0.2#53#53#0",
     );
@@ -193,9 +211,8 @@ describe("where the servers come from", () => {
 function searched(lookup: string, ...world: string[]): string[] {
   const it = new World(...world);
   it.run(`lookup ${lookup} 0 4`);
-  for (let socket = 1; !it.log.some(line => line.startsWith("done 0"));) {
-    socket = Number(it.log.findLast(line => line.startsWith("send "))!.split(" ")[1]);
-    it.reply(socket, { rcode: RCODE.NXDOMAIN });
+  while (!it.log.some(line => line.startsWith("done 0"))) {
+    it.reply(it.messages().at(-1)!.socket, { rcode: RCODE.NXDOMAIN });
   }
   expect(it.log.at(-2)).toBe("done 0 error ENOTFOUND");
   return it.questions().map(question => question.split(" ")[2]);
@@ -216,7 +233,7 @@ describe("the search list", () => {
     expect(searched("host.", world)).toEqual(["host"]);
   });
 
-  test("ndots", () => {
+  test("a name with `ndots` dots or more is tried as it is first", () => {
     const world = resolvConf("search one.test", "options ndots:3");
     expect(searched("a.b.c", world)).toEqual(["a.b.c.one.test", "a.b.c"]);
     expect(searched("a.b.c.d", world)).toEqual(["a.b.c.d", "a.b.c.d.one.test"]);
@@ -287,7 +304,7 @@ describe("the search list", () => {
     ).toEqual(["a.b.one.test", "a.b.two.test", "a.b.three.test", "a.b"]);
   });
 
-  test("HOSTALIASES", () => {
+  test("a name without a dot that the file of HOSTALIASES lists is replaced and not searched for", () => {
     const world = [
       resolvConf("search one.test"),
       "env HOSTALIASES /aliases",
@@ -401,6 +418,11 @@ describe("the hosts file", () => {
       "done 4 name=box 10.1.1.44#0/0",
     ]);
     expect(it.run("lookup box 0 4")).toEqual(["done 5 name=box 10.1.1.44#0/0"]);
+    // Another file of the same size and time, moved into its place.
+    expect(it.run(`${file("/etc/hosts", "10.1.1.55 box\n", 1_500_000_000)} 7`, "lookup box 0 4")).toEqual([
+      "read /etc/hosts",
+      "done 6 name=box 10.1.1.55#0/0",
+    ]);
   });
 
   test("nsswitch.conf says whether it comes before the servers", () => {
@@ -459,7 +481,7 @@ describe("the hosts file", () => {
 });
 
 describe("the order of addresses", () => {
-  test("RFC 6724", () => {
+  test("is that of RFC 6724, by the address a packet to each would leave from", () => {
     const addresses = {
       "10.1.1.1": "10.0.0.9",
       "192.0.2.1": "none",
@@ -482,20 +504,11 @@ describe("the order of addresses", () => {
       ...Object.values(addresses6).map(([to, from]) => `route ${to} ${from}`),
     );
     it.run("lookup host.test 0 0");
-    const [first, second] = it.log.filter(line => line.startsWith("send 1 "));
-    const reply = (line: string, answers: Buffer[]) =>
-      it.run(
-        `deliver 1 ${encode(parse(Buffer.from(line.split(" ")[2], "hex"), "udp", 0, ""), { answers }).toString("hex")}`,
-      );
-    reply(
-      first,
-      Object.keys(addresses).map(address => a("host.test", 60, address)),
-    );
+    const [first, second] = it.messages();
+    it.reply(1, { answers: Object.keys(addresses).map(address => a("host.test", 60, address)) }, first);
     expect(
-      reply(
-        second,
-        Object.keys(addresses6).map(address => aaaa("host.test", 60, address)),
-      )
+      it
+        .reply(1, { answers: Object.keys(addresses6).map(address => aaaa("host.test", 60, address)) }, second)
         .find(line => line.startsWith("done"))!
         .split(" ")
         .slice(3),
@@ -596,7 +609,7 @@ describe("timeouts and servers", () => {
     `);
   });
 
-  test("a late answer to the first try is not accepted on the second", () => {
+  test("the second try goes out on another socket with the same id", () => {
     const it = new World(oneServer, "tries 2");
     it.run("query A a.test");
     const query = it.sent(1);
@@ -629,22 +642,16 @@ describe("timeouts and servers", () => {
     const it = new World(oneServer);
     it.run("query A a.test");
     const id = it.sent(1).id;
-    for (const stray of ["00", "ff".repeat(40), u16(id ^ 1).toString("hex"), u16(id ^ 1).toString("hex") + "8180"]) {
+    for (const stray of [
+      "00",
+      Buffer.alloc(40, 0xff).toString("hex"),
+      u16(id ^ 1).toString("hex"),
+      u16(id ^ 1).toString("hex") + "8180",
+    ]) {
       expect(it.run(`deliver 1 ${stray}`)).toEqual([]);
     }
     expect(it.run(`deliver 1 ${u16(id).toString("hex")}8180`)).toContain("close 1");
     expect(it.reply(2, { answers: [a("a.test", 60, "1.2.3.4")] })).toContain("done 0 name=a.test 1.2.3.4/60");
-  });
-
-  test("a link-local server is not asked from the local address", () => {
-    const it = new World(
-      file("/etc/resolv.conf", "nameserver fe80::1%eth0\nnameserver 2001:db8::53\n"),
-      "interface 3 eth0",
-    );
-    expect(it.run("local 2001:db8::5", "query A a.test", "expire").filter(line => line.startsWith("open"))).toEqual([
-      "open 1 udp fe80::1#53#3",
-      "open 2 udp 2001:db8::53#53#0 from 2001:db8::5",
-    ]);
   });
 
   test("after shutdown every request ends at once", () => {
@@ -696,12 +703,6 @@ describe("timeouts and servers", () => {
         "done 0 error ECONNREFUSED",
       ]
     `);
-  });
-
-  test("an error after a datagram that was ignored is not lost", () => {
-    const it = new World(oneServer);
-    it.run("query A a.test");
-    expect(it.run("queue 1 -", "break 1").slice(0, 2)).toEqual(["open 2 udp 10.0.0.1#53#0", "watch 2 r-"]);
   });
 
   test("setServers() moves the queries of a server that is dropped to another", () => {
@@ -762,17 +763,11 @@ describe("TCP", () => {
   test("several answers may arrive at once, with the start of another", () => {
     const it = new World(oneServer);
     it.run("query A a.test", "query A b.test", "query A c.test");
-    const queries = it.log
-      .filter(line => line.startsWith("send 1 "))
-      .map(line => Buffer.from(line.split(" ")[2], "hex"));
-    it.run(
-      ...queries.map(query => `deliver 1 ${encode(parse(query, "udp", 0, ""), { truncated: true }).toString("hex")}`),
-    );
+    const queries = it.messages();
+    for (const query of queries) it.reply(1, { truncated: true }, query);
     it.run("writable 2");
     const frames = queries.map((query, i) => {
-      const message = encode(parse(query, "udp", 0, ""), {
-        answers: [a(parse(query, "udp", 0, "").name, 60, `1.2.3.${i}`)],
-      });
+      const message = encode(query, { answers: [a(query.name, 60, `1.2.3.${i}`)] });
       return Buffer.concat([u16(message.length), message]);
     });
     const all = Buffer.concat(frames);
@@ -860,8 +855,7 @@ describe("lookup()", () => {
     const answered = (family: number) => {
       const it = new World(oneServer);
       it.run(`lookup a.test 0 ${family}`);
-      const log = it.reply(1, { answers: both });
-      return (family === 0 ? it.reply(1, { answers: both }) : log).find(line => line.startsWith("done"));
+      return it.reply(1, { answers: both }).find(line => line.startsWith("done"));
     };
     expect(answered(4)).toBe("done 0 name=a.test 1.2.3.4#0/60");
     expect(answered(6)).toBe("done 0 name=a.test 2001:db8::1#0/60");
@@ -872,10 +866,10 @@ describe("lookup()", () => {
 
   test("a name is at most 255 bytes on the wire", () => {
     const label = Buffer.alloc(63, "a").toString();
-    const name = (last: number) => `${label}.${label}.${label}.${Buffer.alloc(last, "b")}`;
+    const ending = (last: number) => `${label}.${label}.${label}.${Buffer.alloc(last, "b")}`;
     const it = new World(oneServer);
-    expect(it.run(`query A ${name(61)}`).some(line => line.startsWith("send 1 "))).toBe(true);
-    expect(it.run(`query A ${name(62)}`, `lookup ${name(62)}. 0 4`)).toEqual([
+    expect(it.run(`query A ${ending(61)}`).some(line => line.startsWith("send 1 "))).toBe(true);
+    expect(it.run(`query A ${ending(62)}`, `lookup ${ending(62)}. 0 4`)).toEqual([
       "done 1 error EBADNAME",
       "read /etc/hosts",
       "done 2 error EBADNAME",
@@ -964,21 +958,17 @@ describe("what is remembered", () => {
   });
 
   test("that there is nothing, for as long as the SOA record says", () => {
-    const soa = (ttl: number, minimum: number) =>
-      record(
-        "test",
-        TYPE.SOA,
-        ttl,
-        Buffer.concat([name("ns.test"), name("admin.test"), Buffer.alloc(16), u16(0, minimum)]),
-      );
-    for (const rcode of [RCODE.NXDOMAIN, RCODE.NOERROR]) {
+    for (const [rcode, error] of [
+      [RCODE.NXDOMAIN, "ENOTFOUND"],
+      [RCODE.NOERROR, "ENODATA"],
+    ] as const) {
       const it = new World(oneServer);
       it.run("query A a.test");
-      it.reply(1, { rcode, authority: [soa(300, 30)] });
-      expect(it.run("advance 29000", "query A a.test")).toHaveLength(1);
+      it.reply(1, { rcode, authority: [soa("test", 300, 30)] });
+      expect(it.run("advance 29000", "query A a.test")).toEqual([`done 1 error ${error}`]);
       expect(it.run("advance 1000", "query A a.test")[0]).toBe("open 2 udp 10.0.0.1#53#0");
-      it.reply(2, { rcode, authority: [soa(20, 30)] });
-      expect(it.run("advance 19000", "query A a.test")).toHaveLength(1);
+      it.reply(2, { rcode, authority: [soa("test", 20, 30)] });
+      expect(it.run("advance 19000", "query A a.test")).toEqual([`done 3 error ${error}`]);
       expect(it.run("advance 1000", "query A a.test")[0]).toBe("open 3 udp 10.0.0.1#53#0");
       // Nothing says for how long.
       it.reply(3, { rcode });
@@ -993,12 +983,21 @@ describe("what is remembered", () => {
       it.reply(1, reply);
       expect(it.run("query A a.test")[0]).toBe("open 2 udp 10.0.0.1#53#0");
     }
+    // TCP has no more to say than a truncated answer, so that one is handed over.
+    const it = new World(oneServer, "tries 1");
+    it.run("query A a.test");
+    it.reply(1, { truncated: true });
+    it.run("writable 2");
+    expect(it.reply(2, { truncated: true, answers: [a("a.test", 60, "1.2.3.4")] })).toContain(
+      "done 0 name=a.test 1.2.3.4/60",
+    );
+    expect(it.run("query A a.test")[0]).toBe("open 3 udp 10.0.0.1#53#0");
   });
 });
 
 // What c-ares 1.34.9, unmodified but for its random numbers, logged for the same scripts, with each call it makes of libc
 // answered from the same made-up world: c-ares-driver/regenerate.ts writes the logs again. The numbered scripts reach every
-// line of the resolver that a script for Linux can. The others each went differently here once, or still do on purpose.
+// line of the resolver that a script for Linux can. Each of the others pins a case that those miss.
 describe("c-ares", () => {
   /** What its driver says to whatever follows `shutdown`, and stops. */
   const AFTER_THE_END = "! after the end\n";

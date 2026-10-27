@@ -160,6 +160,7 @@ typedef struct {
   size_t         len;
   int            readable, has_mtime;
   int64_t        mtime;
+  uint64_t       inode;
 } File;
 
 enum { ROUTE_FROM, ROUTE_NONE, ROUTE_FAILS };
@@ -195,7 +196,6 @@ static struct {
   int      last_socket;
   int     *opens;
   size_t   nopens, opens_pos;
-  int      quiet;
   /* simulation */
   ares_channel_t *channel;
   int             made, dead;
@@ -210,7 +210,6 @@ static void wlog(const char *fmt, ...)
 {
   char    tmp[512];
   va_list ap;
-  if (W.quiet) return;
   va_start(ap, fmt);
   int n = vsnprintf(tmp, sizeof tmp, fmt, ap);
   va_end(ap);
@@ -397,20 +396,18 @@ int sim_connect(int fd, const struct sockaddr *sa, socklen_t len)
   }
   int         ok   = W.opens_pos < W.nopens ? W.opens[W.opens_pos++] : 1;
   const char *kind = s->is_tcp ? "tcp" : "udp";
-  if (!W.quiet) {
-    if (!ok) str_printf(&W.log, "open fails %s ", kind);
-    else {
-      s->number = ++W.last_socket;
-      str_printf(&W.log, "open %d %s ", s->number, kind);
-    }
-    str_ip(&W.log, s->server.ip.family, s->server.ip.b);
-    str_printf(&W.log, "#%u#%u", s->server.port, scope);
-    if (ok && s->has_local) {
-      str_add(&W.log, " from ", 6);
-      str_ip(&W.log, s->local.family, s->local.b);
-    }
-    str_add(&W.log, "\n", 1);
+  if (!ok) str_printf(&W.log, "open fails %s ", kind);
+  else {
+    s->number = ++W.last_socket;
+    str_printf(&W.log, "open %d %s ", s->number, kind);
   }
+  str_ip(&W.log, s->server.ip.family, s->server.ip.b);
+  str_printf(&W.log, "#%u#%u", s->server.port, scope);
+  if (ok && s->has_local) {
+    str_add(&W.log, " from ", 6);
+    str_ip(&W.log, s->local.family, s->local.b);
+  }
+  str_add(&W.log, "\n", 1);
   if (!ok) {
     errno = ECONNREFUSED;
     return -1;
@@ -482,11 +479,9 @@ ssize_t sim_sendto(int fd, const void *buf, size_t len, int flags, const struct 
       if (count < n) n = count;
     }
   }
-  if (!W.quiet) {
-    str_printf(&W.log, "send %d ", s->number);
-    str_hex(&W.log, buf, n);
-    str_add(&W.log, "\n", 1);
-  }
+  str_printf(&W.log, "send %d ", s->number);
+  str_hex(&W.log, buf, n);
+  str_add(&W.log, "\n", 1);
   return (ssize_t)n;
 }
 ssize_t sim_send(int fd, const void *buf, size_t len, int flags) { return sim_sendto(fd, buf, len, flags, NULL, 0); }
@@ -540,11 +535,9 @@ FILE *sim_fopen(const char *path, const char *mode)
     return NULL;
   }
   char *mapped = map_path(path);
-  if (!W.quiet) {
-    str_add(&W.log, "read ", 5);
-    str_ctext(&W.log, mapped);
-    str_add(&W.log, "\n", 1);
-  }
+  str_add(&W.log, "read ", 5);
+  str_ctext(&W.log, mapped);
+  str_add(&W.log, "\n", 1);
   File *f = find_file(mapped);
   free(mapped);
   if (!f) {
@@ -570,6 +563,8 @@ int sim_stat(const char *path, struct stat *st)
   }
   memset(st, 0, sizeof *st);
   st->st_mtime = (time_t)f->mtime;
+  st->st_size  = (off_t)f->len;
+  st->st_ino   = (ino_t)f->inode;
   return 0;
 }
 
@@ -648,11 +643,9 @@ int sim_getservbyport_r(int port, const char *proto, struct servent *se, char *b
 {
   *result      = NULL;
   char *mapped = map_path("/etc/services");
-  if (!W.quiet) {
-    str_add(&W.log, "read ", 5);
-    str_ctext(&W.log, mapped);
-    str_add(&W.log, "\n", 1);
-  }
+  str_add(&W.log, "read ", 5);
+  str_ctext(&W.log, mapped);
+  str_add(&W.log, "\n", 1);
   File *f = find_file(mapped);
   free(mapped);
   if (!f || !f->readable) return 0;
@@ -896,14 +889,15 @@ static int configure(Word cmd, Word *w, size_t n)
   uint64_t u;
   if (weq(cmd, "file") && n >= 2) {
     int64_t mtime = START_UNIX - 1000;
-    if (n > 3 || (n == 3 && !w_i64(w[2], &mtime))) return READ_FAIL;
+    u             = 0;
+    if (n > 4 || (n >= 3 && !w_i64(w[2], &mtime)) || (n == 4 && !w_u64(w[3], UINT64_MAX, &u))) return READ_FAIL;
     size_t         dlen, plen;
     unsigned char *data = w_text(w[1], &dlen);
     if (!data) return READ_FAIL;
     unsigned char *path = w_text(w[0], &plen);
     if (!path) { free(data); return READ_FAIL; }
     File *f = file_slot(path);
-    f->data = data; f->len = dlen; f->readable = 1; f->has_mtime = 1; f->mtime = mtime;
+    f->data = data; f->len = dlen; f->readable = 1; f->has_mtime = 1; f->mtime = mtime; f->inode = u;
     return READ_OK;
   }
   if (weq(cmd, "unreadable") && n == 1) {
@@ -1232,10 +1226,8 @@ static void query_cb(void *arg, int status, int timeouts, unsigned char *abuf, i
 {
   Req *r = arg;
   (void)timeouts;
-  if (!W.quiet) {
-    if (done_head(r, status)) c_reply(&W.done, r->kind, abuf, alen);
-    str_add(&W.done, "\n", 1);
-  }
+  if (done_head(r, status)) c_reply(&W.done, r->kind, abuf, alen);
+  str_add(&W.done, "\n", 1);
   free(r);
 }
 
@@ -1243,26 +1235,24 @@ static void addrinfo_cb(void *arg, int status, int timeouts, struct ares_addrinf
 {
   Req *r = arg;
   (void)timeouts;
-  if (!W.quiet) {
-    if (done_head(r, status)) {
-      out_name(&W.done, ai->name);
-      for (struct ares_addrinfo_cname *c = ai->cnames; c; c = c->next) {
-        str_add(&W.done, " ", 1);
-        str_ctext(&W.done, c->alias ? c->alias : "");
-        str_add(&W.done, ">", 1);
-        str_ctext(&W.done, c->name ? c->name : "");
-        str_printf(&W.done, "/%d", c->ttl);
-      }
-      for (struct ares_addrinfo_node *n = ai->nodes; n; n = n->ai_next) {
-        IpPort ip;
-        sa_to_ipport(n->ai_addr, &ip, NULL);
-        str_add(&W.done, " ", 1);
-        str_ip(&W.done, ip.ip.family, ip.ip.b);
-        str_printf(&W.done, "#%u/%d", ip.port, n->ai_ttl);
-      }
+  if (done_head(r, status)) {
+    out_name(&W.done, ai->name);
+    for (struct ares_addrinfo_cname *c = ai->cnames; c; c = c->next) {
+      str_add(&W.done, " ", 1);
+      str_ctext(&W.done, c->alias ? c->alias : "");
+      str_add(&W.done, ">", 1);
+      str_ctext(&W.done, c->name ? c->name : "");
+      str_printf(&W.done, "/%d", c->ttl);
     }
-    str_add(&W.done, "\n", 1);
+    for (struct ares_addrinfo_node *n = ai->nodes; n; n = n->ai_next) {
+      IpPort ip;
+      sa_to_ipport(n->ai_addr, &ip, NULL);
+      str_add(&W.done, " ", 1);
+      str_ip(&W.done, ip.ip.family, ip.ip.b);
+      str_printf(&W.done, "#%u/%d", ip.port, n->ai_ttl);
+    }
   }
+  str_add(&W.done, "\n", 1);
   if (ai) ares_freeaddrinfo(ai);
   free(r);
 }
@@ -1271,14 +1261,12 @@ static void host_cb(void *arg, int status, int timeouts, struct hostent *host)
 {
   Req *r = arg;
   (void)timeouts;
-  if (!W.quiet) {
-    if (done_head(r, status)) {
-      str_add(&W.done, " name=", 6);
-      str_ctext(&W.done, host->h_name ? host->h_name : "");
-      out_aliases(&W.done, host);
-    }
-    str_add(&W.done, "\n", 1);
+  if (done_head(r, status)) {
+    str_add(&W.done, " name=", 6);
+    str_ctext(&W.done, host->h_name ? host->h_name : "");
+    out_aliases(&W.done, host);
   }
+  str_add(&W.done, "\n", 1);
   free(r);
 }
 
@@ -1286,17 +1274,15 @@ static void nameinfo_cb(void *arg, int status, int timeouts, char *node, char *s
 {
   Req *r = arg;
   (void)timeouts;
-  if (!W.quiet) {
-    if (done_head(r, status)) {
-      str_add(&W.done, " name=", 6);
-      str_ctext(&W.done, node ? node : "");
-      if (service) {
-        str_add(&W.done, " service=", 9);
-        str_ctext(&W.done, service);
-      }
+  if (done_head(r, status)) {
+    str_add(&W.done, " name=", 6);
+    str_ctext(&W.done, node ? node : "");
+    if (service) {
+      str_add(&W.done, " service=", 9);
+      str_ctext(&W.done, service);
     }
-    str_add(&W.done, "\n", 1);
   }
+  str_add(&W.done, "\n", 1);
   free(r);
 }
 
@@ -1605,9 +1591,11 @@ static char *c_sim_run(const unsigned char *script, size_t script_len, size_t *o
     }
   }
   free(words);
-  W.quiet = 1;
+  /* What the end of the channel does is not part of the script. */
+  size_t end = W.log.len;
   if (W.channel) ares_destroy(W.channel);
   W.channel = NULL;
+  W.log.len = end;
   str_add(&W.log, "", 0);
   *out_len    = W.log.len;
   char *result = W.log.p;

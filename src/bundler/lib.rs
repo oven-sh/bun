@@ -114,6 +114,8 @@ pub mod DeferredBatchTask;
 pub mod Graph;
 pub mod IndexStringMap;
 pub mod PathToSourceIndexMap;
+#[path = "InputPathSet.rs"]
+pub mod input_path_set;
 
 pub mod BundleThread;
 

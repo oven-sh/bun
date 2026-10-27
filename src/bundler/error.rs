@@ -16,6 +16,8 @@ pub enum Error {
     WriteFailed,
     #[error("DuplicateOutputPath")]
     DuplicateOutputPath,
+    #[error("OutputOverwritesInput")]
+    OutputOverwritesInput,
     #[error("MultipleOutputFilesWithoutOutputDir")]
     MultipleOutputFilesWithoutOutputDir,
     #[error("InvalidJSON")]
@@ -110,6 +112,7 @@ impl Error {
             Self::PrintError => "PrintError",
             Self::WriteFailed => "WriteFailed",
             Self::DuplicateOutputPath => "DuplicateOutputPath",
+            Self::OutputOverwritesInput => "OutputOverwritesInput",
             Self::MultipleOutputFilesWithoutOutputDir => "MultipleOutputFilesWithoutOutputDir",
             Self::InvalidJSON => "InvalidJSON",
             Self::Fail => "Fail",

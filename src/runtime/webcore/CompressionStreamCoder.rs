@@ -165,6 +165,12 @@ pub(crate) struct CompressionStreamCoder {
 // heap state with no thread affinity; TransformStream serializes writes so at
 // most one chunk is ever in flight per coder.
 unsafe impl Send for CompressionStreamCoder {}
+// The impl above also covers these, which the compiler can check.
+const _: fn() = || {
+    fn assert_send<T: Send>() {}
+    assert_send::<bun_brotli::Encoder>();
+    assert_send::<bun_brotli::Decoder>();
+};
 
 impl Drop for CompressionStreamCoder {
     fn drop(&mut self) {
@@ -197,9 +203,8 @@ enum CodecError {
     /// The output buffer or the codec's own state could not be allocated.
     OutOfMemory,
     Message(&'static str),
-    /// Brotli decoder error; `DecoderErrorCode::name`.
-    /// Surfaced as TypeError with `.code = "ERR_" + <this>` for node:zlib compat.
-    Brotli(&'static str),
+    /// Surfaced as TypeError with the `.code` that node:zlib gives it.
+    Brotli(bun_brotli::DecoderErrorCode),
 }
 
 impl CompressionStreamCoder {
@@ -544,7 +549,7 @@ impl CompressionStreamCoder {
                             if ec.is_alloc_failure() {
                                 return Err(CodecError::OutOfMemory);
                             }
-                            return Err(CodecError::Brotli(ec.name()));
+                            return Err(CodecError::Brotli(ec));
                         }
                     }
                 }
@@ -799,12 +804,11 @@ fn codec_error_to_js(global: &JSGlobalObject, e: &CodecError) -> JSValue {
             .to_js(),
         CodecError::OutOfMemory => global.create_out_of_memory_error(),
         CodecError::Message(msg) => global.create_type_error_instance(format_args!("{msg}")),
-        CodecError::Brotli(detail) => {
-            let code = format!("ERR_{detail}");
+        CodecError::Brotli(error) => {
             let err = global.create_type_error_instance(format_args!("brotli decode failed"));
-            let code_js = EncodedSlice::latin1(code.as_bytes()).to_js(global);
+            let code_js = EncodedSlice::latin1(error.node_code().to_bytes()).to_js(global);
             err.put(global, b"code", code_js);
-            let cause = global.create_error_instance(format_args!("{detail}"));
+            let cause = global.create_error_instance(format_args!("{}", error.name()));
             cause.put(global, b"code", code_js);
             err.put(global, b"cause", cause);
             err

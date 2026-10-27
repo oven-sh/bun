@@ -212,8 +212,20 @@ void MessagePort::close()
     if (m_isDispatching) {
         // The loop on the stack delivers what is queued now, as node does. Then ~DispatchScope closes.
         m_pipe->grantQueuedToDrain(m_side);
+        // Unless a handler waits on the event loop first: that nested turn runs this task.
+        queueTaskKeepingObjectAlive(*this, TaskSource::PostedMessageQueue, [](MessagePort& port) {
+            port.closeInNestedTurn();
+        });
         return;
     }
+    closeNow();
+}
+
+void MessagePort::closeInNestedTurn()
+{
+    if (!isClosing())
+        return;
+    flushQueuedMessagesBeforeClose();
     closeNow();
 }
 
@@ -237,7 +249,7 @@ void MessagePort::closeNow()
         deref();
     }
 
-    // close() can run without a prior jsUnref() (warn-and-close, contextDestroyed());
+    // closeNow() can run without a prior jsUnref() (warn-and-close, stop(), contextDestroyed(), ref() after a deferred close());
     // clear the listener keepalive so a later listener add can't re-ref the loop.
     if (m_isRefd) {
         m_isRefd = false;
@@ -266,15 +278,14 @@ void MessagePort::dispatchCloseEvent()
     if (!context || !context->globalObject())
         return;
     auto* globalObject = defaultGlobalObject(context->globalObject());
-    // Bypass the isDetached() guard in MessagePort::dispatchEvent: the deferred
-    // close task runs after the port is detached.
+    // Not MessagePort::dispatchEvent: it drops events on a detached port, and the close task runs on one.
     if (Zig::GlobalObject::scriptExecutionStatus(globalObject, globalObject) == ScriptExecutionStatus::Running)
         EventTarget::dispatchEvent(Event::create(eventNames().closeEvent, Event::CanBubble::No, Event::IsCancelable::No));
 }
 
 void MessagePort::peerClosed()
 {
-    // A closing port is under a DispatchScope, which delivers the rest and fires 'close'.
+    // A closing port is under a DispatchScope: the close it waits for delivers the rest and fires 'close'.
     if (!isOpen())
         return;
     auto* context = scriptExecutionContext();
@@ -318,7 +329,7 @@ TransferredMessagePort MessagePort::disentangle()
     }
 
     // A transferred port is inert; clear the listener keepalive too so hasRef()
-    // reports false (the disentangle analogue of the close() reset above).
+    // reports false (the disentangle analogue of the closeNow() reset above).
     if (m_isRefd) {
         m_isRefd = false;
         updateListenerEventLoopRef();
@@ -423,7 +434,7 @@ bool MessagePort::virtualHasPendingActivity() const
     // Called from the GC thread concurrently with the mutator; must be
     // lockless. m_pipe is a Ref<> held for the port's whole lifetime, so
     // the dereference is always safe; state() and isOtherSideOpen() are
-    // atomic loads. The plain bool reads can observe stale values but
+    // atomic loads. The plain reads (m_state and the bools) can observe stale values but
     // cannot crash — at worst the wrapper is collected one cycle early
     // or late, which is the same tolerance as before this refactor.
     if (!scriptExecutionContext() || isDetached())
@@ -568,7 +579,7 @@ void MessagePort::jsRef(JSGlobalObject* lexicalGlobalObject)
 {
     // A closed or transferred-away port can never receive messages again, so
     // taking a self-ref (and an event-loop ref) here would only leak:
-    // close()/disentangle() have already run and nothing will ever release a
+    // closeNow()/disentangle() have already run and nothing will ever release a
     // ref taken afterwards. Same once the peer has closed: peerClosed() already
     // ran jsUnref(), and nothing releases a ref re-taken after it, so `.ref()`
     // or a late `onmessage =` would pin the loop forever. Node no-ops both.

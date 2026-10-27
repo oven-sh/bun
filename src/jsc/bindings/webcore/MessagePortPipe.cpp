@@ -73,7 +73,7 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
     // messages one at a time, but without a separate posted task per
     // message. The per-invocation limit is a fixed count (not "whatever was
     // queued when the drain began", which a sender on another thread can make
-    // arbitrarily large); the rest continues after the loop has polled.
+    // arbitrarily large); the rest continues after the loop has polled, unless the port closed itself (closeGrant).
     //
     // Messages move inbox -> `draining` a small batch per lock acquisition and are
     // popped from `draining` one at a time (still under the lock, but without a
@@ -129,7 +129,7 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
             // may have closed or transferred this port. A same-context
             // detach+re-attach restores ctxId but installs a different
             // MessagePort, so compare port identity too — dispatching to
-            // the stale (now m_isDetached) `port` would silently drop.
+            // the stale (now detached) `port` would silently drop.
             // The new owner's attach() scheduled its own drain, and detach()
             // already returned anything we had taken to the inbox.
             if (s.ctxId != expectedCtx || s.port.get() != port)

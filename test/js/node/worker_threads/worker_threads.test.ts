@@ -1680,7 +1680,7 @@ test("MessagePort NodeEventTarget methods", () => {
   port1.close();
 });
 
-// jsRef() only gated on m_isDetached, so .ref()/onmessage= after the peer closed
+// jsRef() only gated on isDetached(), so .ref()/onmessage= after the peer closed
 // re-took an event-loop ref that nothing releases and the process hung. Node no-ops
 // both. Spawned, because the symptom is "the process never exits".
 test("ref()/onmessage after the peer closes does not pin the loop", async () => {
@@ -2346,6 +2346,22 @@ test("parentPort.close() ends a worker that is only listening for messages", asy
   w.postMessage("close");
   expect(await exited).toBe(0);
   expect(messages).toEqual(["got hello", "got close"]);
+});
+
+// The one-shot worker: reply, then parentPort.close(), with more requests already queued.
+// The listener still runs for each of them, and only the reply made before close() leaves.
+test("a worker that replies and then closes parentPort sends one reply for three queued requests", async () => {
+  const w = new Worker(
+    `const { parentPort } = require("worker_threads");
+     parentPort.on("message", value => { parentPort.postMessage("pong for " + value); parentPort.close(); });`,
+    { eval: true },
+  );
+  const replies: string[] = [];
+  w.on("message", m => replies.push(m));
+  const exited = new Promise<number>(resolve => w.on("exit", resolve));
+  for (let i = 1; i <= 3; i++) w.postMessage("ping" + i);
+  expect(await exited).toBe(0);
+  expect(replies).toEqual(["pong for ping1"]);
 });
 
 test("parentPort.unref() lets a listening worker exit", async () => {

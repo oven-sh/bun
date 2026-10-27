@@ -141,21 +141,23 @@ private:
     bool addEventListener(const AtomString& eventType, Ref<EventListener>&&, const AddEventListenerOptions&) final;
     bool removeEventListener(const AtomString& eventType, EventListener&, const EventListenerOptions&) final;
 
-    // ActiveDOMObject. Teardown closes at once: a DispatchScope on the stack never resumes.
+    // ActiveDOMObject. Teardown closes at once, also under a DispatchScope.
     void contextDestroyed() final;
     void stop() final { closeNow(); }
     bool virtualHasPendingActivity() const final;
 
     // close() without the DispatchScope deferral. Runs no script.
     void closeNow();
+    // The port is still closing when an event loop turn runs inside its DispatchScope: deliver the rest there and close.
+    void closeInNestedTurn();
 
-    // peerClosed(): deliver what the peer sent before it closed, ahead of its 'close'.
+    // Deliver what is queued ahead of a 'close' that cannot wait for the drain: the peer closed, or closeInNestedTurn().
     void flushQueuedMessagesBeforeClose();
 
     bool isEntangled() const { return m_state != State::Detached; }
 
 public:
-    // Closing: close() ran under a DispatchScope, which completes it. The port receives, and does not send or transfer.
+    // Closing: close() ran under a DispatchScope. The port receives, and does not send or transfer, until that close completes.
     bool isClosing() const { return m_state == State::Closing; }
     bool isOpen() const { return m_state == State::Open; }
 

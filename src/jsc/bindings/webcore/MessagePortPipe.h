@@ -15,8 +15,8 @@
 // InternalCallbackScope behavior), up to a fixed 1024 per task before
 // continuing on the loop's next iteration. A port transferred mid-loop carries
 // the whole remaining queue to the new owner: detach() puts `draining` back in
-// front of the inbox, in order. A port that closes itself mid-loop gets no later
-// task: the loop also delivers what was queued at that point.
+// front of the inbox, in order.
+// A port that closes itself mid-loop gets no later drain: that loop also delivers what was queued then.
 //
 // The Web API semantics (start(), close(), transfer, event dispatch) live in
 // MessagePort; this class knows nothing about EventTarget or JS.

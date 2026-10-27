@@ -170,7 +170,7 @@ panic = "abort"
 # `dsymutil` already expects.
 split-debuginfo = "unpacked"
 
-# Unoptimised, a 640x612 image takes 20 s to encode. Overflow checks and debug assertions stay on.
+# Unoptimised, a photo 640 pixels wide takes 20 s to encode instead of 2. Overflow checks and debug assertions stay on.
 [profile.dev.package.bun_webp]
 opt-level = 3
 

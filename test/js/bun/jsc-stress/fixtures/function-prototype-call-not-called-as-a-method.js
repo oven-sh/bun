@@ -1,9 +1,15 @@
 // @bun
 // f.call(...) is compiled to a call of f. These are the ways to reach Function.prototype.call itself.
+function describe(value)
+{
+    // By default JSON.stringify() prints these as null.
+    return JSON.stringify(value, (key, value) => value === undefined || (typeof value === "number" && !isFinite(value)) ? `<${value}>` : value);
+}
+
 function shouldBe(actual, expected, what)
 {
-    actual = JSON.stringify(actual);
-    expected = JSON.stringify(expected);
+    actual = describe(actual);
+    expected = describe(expected);
     if (actual !== expected)
         throw new Error(what + ": expected " + expected + " but got " + actual);
 }
@@ -60,8 +66,8 @@ function test()
     shouldBe(uncurried("t", 1, 2), ["t", 2, 1, 2], "3");
     shouldBe(uncurried("t", 1, 2, 3), ["t", 3, 1, 2, 3], "4");
     shouldBe(uncurried("t", 1, 2, 3, 4), ["t", 4, 1, 2, 3, 4], "5");
-    shouldBe(uncurried("t", undefined), ["t", 1, null], "an undefined argument counts");
-    shouldBe(uncurried(undefined, undefined, undefined), ["undefined", 2, null, null], "undefined arguments count");
+    shouldBe(uncurried("t", undefined), ["t", 1, undefined], "an undefined argument counts");
+    shouldBe(uncurried(undefined, undefined, undefined), ["undefined", 2, undefined, undefined], "undefined arguments count");
     shouldBe(uncurried(null), [null, 0], "null this, strict");
     shouldBe(uncurriedSloppy(), ["global", 0], "no this, sloppy");
     shouldBe(uncurriedSloppy(null, 1), ["global", 1, 1], "null this, sloppy");
@@ -77,7 +83,7 @@ function test()
     shouldBe([includes("abc", "b"), includes("abc", "b", 2), includes("abc")], [true, false, false], "includes");
     const array = [];
     shouldBe([push(array), push(array, 1), push(array, 2, 3), push(array, 4, 5, 6), push(array, 7, 8, 9, 10, 11), array], [0, 1, 3, 6, 11, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]], "push");
-    shouldBe([max(null, 1, 3, 2), max(null, 1, 3, 2, 5, 4), max()], [3, 5, null], "Math.max");
+    shouldBe([max(null, 1, 3, 2), max(null, 1, 3, 2, 5, 4), max()], [3, 5, -Infinity], "Math.max");
 
     shouldThrow(() => hasOwn(undefined, "a"), TypeError, "hasOwnProperty of undefined");
     shouldThrow(() => hasOwn(null, "a"), TypeError, "hasOwnProperty of null");

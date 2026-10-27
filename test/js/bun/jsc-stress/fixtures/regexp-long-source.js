@@ -17,9 +17,9 @@ function shouldBeTooLarge(source, flags)
 }
 
 const limit = 1024 * 1024;
-const limitWithCharacterClasses = 16 * limit;
+const limitWithCharacterClasses = 4 * limit;
 
-// Few terms, long source: nearly all of it is the \u{...} escapes of the ranges.
+// A long source with few terms. Almost all of it is \u{...} escapes inside character classes.
 let ranges = "";
 for (let i = 0; i < 2000; ++i) {
     const from = 0xf0000 + i * 4;
@@ -46,21 +46,31 @@ for (const flags of ["u", "iu", "giu", "v"]) {
     shouldBe(regExp.test("\u{f0002}x" + "x".repeat(count - 1)), false);
 }
 
-// What ends a class, and what does not.
+// The scan has to find where each class really starts and ends.
 const filler = "a".repeat(limit);
 shouldBe(new RegExp(`^[${filler}\\]b]$`).test("]"), true);
 shouldBe(new RegExp(`^[${filler}[]$`).test("["), true);
-shouldBe(new RegExp(`^[${filler}[b]c]$`, "v").test("b"), true);
-shouldBe(new RegExp(`^[${filler}\\q{bc}]$`, "v").test("bc"), true);
-shouldBe(new RegExp(`^[\\q{${filler}}]$`).test("q"), true);
+shouldBe(new RegExp(`^[^${filler}]$`, "v").test("b"), true);
 shouldBeTooLarge(`[b]${filler}`);
 shouldBeTooLarge(`[b\\]]${filler}`);
 shouldBeTooLarge(`\\[${filler}]`);
 shouldBeTooLarge(`[[b]${filler}`);
 shouldBeTooLarge(`[[b]]${filler}`, "v");
-shouldBeTooLarge(`[\\q{${filler}}]`, "v");
 
-// Outside of classes the limit is what it was.
+// A class that contains anything besides characters and ranges still counts toward the limit.
+for (const [inClass, flags] of [["\\p{L}", "u"], ["\\P{L}", "u"], ["\\S", "u"], ["\\w", ""], ["\\d", "v"], ["[b]", "v"], ["--b", "v"], ["&&b", "v"], ["\\q{bc}", "v"]]) {
+    shouldBeTooLarge(`[${filler}${inClass}]`, flags);
+    shouldBeTooLarge(`[${inClass}${filler}]`, flags);
+    shouldBeTooLarge(`[${filler}${inClass}`, flags);
+}
+shouldBeTooLarge("[\\p{L}a]".repeat(limit / 8 + 1), "u");
+shouldBeTooLarge("[\\S--a]".repeat(limit / 7 + 1), "v");
+shouldBeTooLarge("[[^a]]".repeat(limit / 6 + 1), "v");
+shouldBeTooLarge("[a[\\p{L}]]".repeat(limit / 10 + 1), "v");
+shouldBe(new RegExp(`^[${filler}]\\p{L}[\\S--a][${filler}]$`, "v").test("abba"), true);
+shouldBe(new RegExp(`^[${filler}&&b]$`, "u").test("&"), true);
+
+// The limit hasn't changed for anything outside a class.
 shouldBeTooLarge("a" + filler);
 shouldBeTooLarge("a|".repeat(limit / 2) + "a");
 shouldBeTooLarge("[a]".repeat(limit + 1));

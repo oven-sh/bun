@@ -244,7 +244,10 @@ describe("Bun.build", () => {
       entrypoints: [path.join(dir.root, "index.css"), path.join(dir.root, "virtual.css")],
       files: {
         [path.join(dir.root, "index.css")]: `@import "tailwindcss/utilities";`,
-        [path.join(dir.root, "virtual.css")]: new TextEncoder().encode(`.virtual { @apply overline; }`),
+        // Bun takes either separator in a key, on every platform.
+        [path.join(dir.root, "virtual.css").replaceAll("/", "\\")]: new TextEncoder().encode(
+          `.virtual { @apply overline; }`,
+        ),
       },
       plugins: [tailwind],
     });

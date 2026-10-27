@@ -11,6 +11,10 @@ const plugin: BunPlugin = {
     const projectRoot = build.config?.root ?? process.cwd();
     const context = native?.twctxCreate();
     const roots = new Map<string, InstanceType<Awaited<typeof loading>["Root"]>>();
+    // Bun keeps the keys of `Bun.build({ files })` with `/` separators, and gives `onLoad` such a key as the path.
+    const files = new Map(
+      Object.entries(build.config?.files ?? {}).map(([key, contents]) => [key.replaceAll("\\", "/"), contents]),
+    );
 
     // The files of the module graph are scanned for candidates, natively and on the bundler's threads.
     if (native && context) {
@@ -21,8 +25,7 @@ const plugin: BunPlugin = {
     }
 
     build.onLoad({ filter: /\.css$/ }, async ({ defer, loader, path }) => {
-      // `path` is the key of a file that Bun took from `Bun.build({ files })`, as it is written there.
-      const file = new Blob([build.config?.files?.[path] ?? Bun.file(path)]);
+      const file = new Blob([files.get(path.replaceAll("\\", "/")) ?? Bun.file(path)]);
 
       const { Root } = await loading;
       let root = roots.get(path);

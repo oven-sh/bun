@@ -234,7 +234,7 @@ pub(crate) fn parse(
     Ok(ast)
 }
 
-/// Gives each `url()` of the CSS module script `file` its text, as the CSS printer does for a stylesheet of the page: a `data:` URL, the key of a copied file, or the URL as the resolver left it. Returns false after an error.
+/// Gives each `url()` of the CSS module script `file` its text: the `data:` URL of an inlined file, the key of a copied file, or the URL as the resolver left it (the rule of `Printer::get_import_record_url`). Returns false after an error.
 #[cold]
 #[allow(clippy::too_many_arguments)]
 fn fill_urls(
@@ -244,7 +244,6 @@ fn fill_urls(
     file: usize,
     import_records: &[ImportRecord],
     parts: &[bun_ast::Part],
-    css_asts: &[crate::bundled_ast::CssCol],
     urls_for_css: &[&[u8]],
     unique_keys: &[Box<[u8], bun_alloc::AstAlloc>],
     sources: &[Source],
@@ -261,14 +260,6 @@ fn fill_urls(
     };
     let urls = &import_records[first..];
     let errors = log.errors;
-    let _ = crate::LinkerContext::scan_css_imports(
-        file as u32,
-        urls,
-        std::ptr::from_ref(css_asts),
-        sources,
-        loaders,
-        log,
-    );
 
     let with_suffix = |url: &[u8], suffix: &[u8]| -> bun_ast::StoreStr {
         let text = bump.alloc_slice_fill_copy(url.len() + suffix.len(), 0u8);
@@ -299,16 +290,26 @@ fn fill_urls(
                         Box::new([bun_ast::range_data(
                             None,
                             bun_ast::Range::NONE,
-                            b"The bundle copies this file: it is too large for a \"data:\" URL.".to_vec(),
+                            b"Use the \"esm\" format, or set a public path that starts with \"/\" or has a scheme.".to_vec(),
                         )]),
                         format_args!(
-                            "A stylesheet that is imported with {{ type: \"css\" }} resolves this \"url()\" against the location of the bundle. Only the \"esm\" format knows that location. Use it, or set a public path."
+                            "The bundle copies the file of this \"url()\". A stylesheet that is imported with {{ type: \"css\" }} resolves the copy against the location of the bundle, and only the \"esm\" format knows that location."
                         ),
                     );
                 }
                 texts.push(with_suffix(&unique_keys[target], suffix));
                 continue;
             }
+            // The file is a module of the bundle, not a file to copy or inline. Its path on this machine must not go in the bundle.
+            log.add_range_error_fmt(
+                Some(&sources[file]),
+                record.range,
+                format_args!(
+                    "The bundle loads \"{}\" with the \"{}\" loader. A \"url()\" in a stylesheet that is imported with {{ type: \"css\" }} needs a file that the bundle copies or inlines.",
+                    bstr::BStr::new(sources[target].path.pretty),
+                    <&'static str>::from(loaders[target]),
+                ),
+            );
         }
         texts.push(with_suffix(record.path.text, b""));
     }
@@ -362,17 +363,18 @@ pub(crate) fn check_imports(this: &mut BundleV2<'_>) -> Result<(), AnyError> {
             .is_ok()
     };
 
-    // The file of a bundle has a URL that the stylesheet can use in the esm format (`import.meta.url`), or with a public path.
+    // The stylesheet can find a copied file in the esm format (`import.meta.url`), or with a public path that does not depend on the document.
     let browser_options = &this.transpiler_for_target(options::Target::Browser).options;
+    let public_path: &[u8] = &browser_options.public_path;
     let bundle_has_url = browser_options.output_format == options::Format::Esm
-        || !browser_options.public_path.is_empty();
+        || public_path.starts_with(b"/")
+        || strings::contains(public_path, b"://");
     let mut placeholder_prefix = Vec::<u8>::new();
     write_url_placeholder_prefix(&mut placeholder_prefix, this.unique_key);
 
     let bump = this.arena();
     let all_import_records = this.graph.ast.items_import_records();
     let all_parts = this.graph.ast.items_parts();
-    let css_asts = this.graph.ast.items_css();
     let urls_for_css = this.graph.ast.items_url_for_css();
     let loaders = this.graph.input_files.items_loader();
     let sources = this.graph.input_files.items_source();
@@ -395,7 +397,6 @@ pub(crate) fn check_imports(this: &mut BundleV2<'_>) -> Result<(), AnyError> {
                 importer,
                 import_records.as_slice(),
                 all_parts[importer].as_slice(),
-                css_asts,
                 urls_for_css,
                 unique_keys,
                 sources,

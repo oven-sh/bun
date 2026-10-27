@@ -269,7 +269,7 @@ describe("bundler", () => {
       outdir: "/out",
       target: "browser",
       bundleErrors: {
-        "/widget.css": ['resolves this "url()" against the location of the bundle'],
+        "/widget.css": ['The bundle copies the file of this "url()".'],
       },
     });
 
@@ -500,21 +500,47 @@ describe("bundler", () => {
     },
   });
 
-  // The same error as for a stylesheet of the page.
-  itBundled("css-module-script/UrlToAModuleIsAnError", {
+  // A `url()` needs a file that the bundle copies or inlines. The path of a
+  // module on the build machine must not go in the bundle.
+  for (const loader of ["json", "toml"] as const) {
+    itBundled(`css-module-script/UrlToA${loader[0].toUpperCase()}${loader.slice(1)}ModuleIsAnError`, {
+      files: {
+        "/entry.js": /* js */ `
+          import sheet from "./widget.css" with { type: "css" };
+          console.log(sheet.cssText);
+        `,
+        "/widget.css": `p.w { background: url(./data.${loader}) }`,
+        "/data.json": `{}`,
+        "/data.toml": `a = 1`,
+      },
+      entryPoints: ["/entry.js"],
+      outdir: "/out",
+      target: "browser",
+      bundleErrors: {
+        "/widget.css": [
+          `The bundle loads "data.${loader}" with the "${loader}" loader. A "url()" in a stylesheet that is imported with { type: "css" } needs a file that the bundle copies or inlines.`,
+        ],
+      },
+    });
+  }
+
+  // A relative public path depends on the document, like no public path.
+  itBundled("css-module-script/UrlIIFEWithRelativePublicPath", {
     files: {
       "/entry.js": /* js */ `
         import sheet from "./widget.css" with { type: "css" };
         console.log(sheet.cssText);
       `,
-      "/widget.css": /* css */ `p.w { background: url(./data.json) }`,
-      "/data.json": `{}`,
+      "/widget.css": /* css */ `p.w { background: url("./image.png") }`,
+      "/image.png": largeFile,
     },
     entryPoints: ["/entry.js"],
+    format: "iife",
+    publicPath: "./",
     outdir: "/out",
     target: "browser",
     bundleErrors: {
-      "/widget.css": ['Cannot import a ".json" file into a CSS file'],
+      "/widget.css": ['The bundle copies the file of this "url()".'],
     },
   });
 

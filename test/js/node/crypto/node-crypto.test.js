@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, withoutAggressiveGC } from "harness";
 
 import crypto from "node:crypto";
 import { PassThrough, Readable } from "node:stream";
@@ -800,6 +800,81 @@ describe("DiffieHellman", () => {
     bob.generateKeys();
     expect(alice.publicKeyHex()).toBe(alice.getPublicKey("hex"));
     expect(alice.computeSecret(bob.getPublicKey())).toEqual(bob.computeSecret(alice.getPublicKey()));
+  });
+
+  // Nothing a script can read shows whether DH_check() ran for a built-in group, so this compares
+  // CPU time. The yardstick is one 64-round primality test of the smallest built-in prime. DH_check()
+  // runs two such tests on the group's own prime: about 4.5 yardsticks for modp14.
+  it("a built-in group is not checked when it is constructed or when verifyError is read", () => {
+    withoutAggressiveGC(() => {
+      const cpuTime = fn => {
+        const before = process.threadCpuUsage();
+        fn();
+        const { user, system } = process.threadCpuUsage(before);
+        return user + system;
+      };
+      const smallestPrime = crypto.getDiffieHellman("modp5").getPrime();
+      let onePrimalityTest = Infinity;
+      for (let i = 0; i < 3; i++) {
+        onePrimalityTest = Math.min(
+          onePrimalityTest,
+          cpuTime(() => crypto.checkPrimeSync(smallestPrime, { checks: 64 })),
+        );
+      }
+
+      let group = Infinity;
+      for (let i = 0; i < 3 && group >= onePrimalityTest; i++) {
+        group = cpuTime(() => crypto.getDiffieHellman("modp14").verifyError);
+      }
+      expect(group).toBeLessThan(onePrimalityTest);
+    });
+  });
+
+  // BoringSSL's DH_check() flags generator 2 unless p mod 24 is 11, and every RFC 3526 prime is
+  // 23 mod 24. So it reports DH_NOT_SUITABLE_GENERATOR for each built-in group. Bun reports the
+  // same flag without running the check. Node on OpenSSL reports 0.
+  it.each([
+    ["modp5", 1536],
+    ["modp14", 2048],
+    ["modp15", 3072],
+    ["modp16", 4096],
+    ["modp17", 6144],
+    ["modp18", 8192],
+  ])("%s reports the flag that DH_check() gives for it", (name, bits) => {
+    const group = crypto.getDiffieHellman(name);
+    const prime = group.getPrime();
+    expect({
+      bits: prime.length * 8,
+      generator: group.getGenerator("hex"),
+      primeMod24: BigInt("0x" + prime.toString("hex")) % 24n,
+      verifyError: group.verifyError,
+    }).toEqual({
+      bits,
+      generator: "02",
+      primeMod24: 23n,
+      verifyError: crypto.constants.DH_NOT_SUITABLE_GENERATOR,
+    });
+  });
+
+  // A failed createDiffieHellman(2) leaves an error in the OpenSSL error queue, and the next
+  // createDiffieHellman() that fails reports that stale error and not its own. Constructing a
+  // built-in group in between clears the queue, as it does in Node.
+  it("constructing a built-in group clears the OpenSSL error queue", () => {
+    const prime = crypto.getDiffieHellman("modp5").getPrime();
+    const leaveStaleError = () =>
+      expect(() => crypto.createDiffieHellman(2)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }));
+    const badGenerator = () => crypto.createDiffieHellman(prime, Buffer.from([0]));
+
+    leaveStaleError();
+    crypto.getDiffieHellman("modp5");
+    expect(badGenerator).toThrow(expect.objectContaining({ code: "ERR_OSSL_DH_BAD_GENERATOR" }));
+
+    // The control: with no group in between, the stale error is the one reported.
+    leaveStaleError();
+    expect(badGenerator).toThrow(
+      expect.objectContaining({ code: expect.stringMatching(/^ERR_OSSL_(BN_BITS|DH_MODULUS)_TOO_SMALL$/) }),
+    );
+    crypto.getDiffieHellman("modp5");
   });
 });
 

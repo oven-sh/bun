@@ -21,16 +21,15 @@ public:
         return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
     }
 
-    static JSDiffieHellmanGroup* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject, ncrypto::DHPointer&& dh, int verifyError)
+    static JSDiffieHellmanGroup* create(JSC::VM& vm, JSC::Structure* structure, JSC::JSGlobalObject* globalObject, ncrypto::DHPointer&& dh)
     {
-        JSDiffieHellmanGroup* instance = new (NotNull, JSC::allocateCell<JSDiffieHellmanGroup>(vm)) JSDiffieHellmanGroup(vm, structure, WTF::move(dh), verifyError);
+        JSDiffieHellmanGroup* instance = new (NotNull, JSC::allocateCell<JSDiffieHellmanGroup>(vm)) JSDiffieHellmanGroup(vm, structure, WTF::move(dh));
         instance->finishCreation(vm, globalObject);
         return instance;
     }
 
     ncrypto::DHPointer& getImpl() { return m_dh; }
     const ncrypto::DHPointer& getImpl() const { return m_dh; }
-    int verifyError() const { return m_verifyError; }
 
     static void destroy(JSC::JSCell* cell) { static_cast<JSDiffieHellmanGroup*>(cell)->~JSDiffieHellmanGroup(); }
 
@@ -43,17 +42,15 @@ public:
     }
 
 private:
-    JSDiffieHellmanGroup(JSC::VM& vm, JSC::Structure* structure, ncrypto::DHPointer&& dh, int verifyError)
+    JSDiffieHellmanGroup(JSC::VM& vm, JSC::Structure* structure, ncrypto::DHPointer&& dh)
         : Base(vm, structure)
         , m_dh(WTF::move(dh))
-        , m_verifyError(verifyError)
     {
     }
 
     void finishCreation(JSC::VM&, JSC::JSGlobalObject*);
 
     ncrypto::DHPointer m_dh;
-    int m_verifyError = 0;
     unsigned m_sizeForGC = 0;
 };
 

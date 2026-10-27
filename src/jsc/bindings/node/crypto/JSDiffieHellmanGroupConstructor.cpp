@@ -43,15 +43,13 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellmanGroup, (JSC::JSGlobalObject * glo
         return Bun::ERR::CRYPTO_UNKNOWN_DH_GROUP(scope, globalObject);
     }
 
-    auto checkResult = dh.check();
-    if (checkResult == ncrypto::DHPointer::CheckResult::CHECK_FAILED) {
-        return Bun::ERR::CRYPTO_OPERATION_FAILED(scope, globalObject, "Checking DH parameters failed"_s);
-    }
+    // No dh.check() for a built-in group: BoringSSL's DH_check() takes 0.2 s (modp5) to 26 s (modp18). Only its error-queue clear is kept.
+    ncrypto::ClearErrorOnReturn clearErrorOnReturn;
 
     JSC::Structure* structure = structureForNewTarget(globalObject, callFrame->newTarget(), &Zig::GlobalObject::m_JSDiffieHellmanGroupClassStructure);
     RETURN_IF_EXCEPTION(scope, {});
 
-    return JSC::JSValue::encode(JSDiffieHellmanGroup::create(vm, structure, globalObject, WTF::move(dh), static_cast<int>(checkResult)));
+    return JSC::JSValue::encode(JSDiffieHellmanGroup::create(vm, structure, globalObject, WTF::move(dh)));
 }
 
 } // namespace Bun

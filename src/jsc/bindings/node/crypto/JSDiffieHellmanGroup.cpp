@@ -63,7 +63,9 @@ JSC_DEFINE_HOST_FUNCTION(jsDiffieHellmanGroupGetter_verifyError, (JSC::JSGlobalO
         return ERR::INVALID_THIS(scope, globalObject, "DiffieHellmanGroup"_s);
     }
 
-    return JSValue::encode(JSC::jsNumber(thisObject->verifyError()));
+    // What DH_check() reports for every built-in group (g = 2, p mod 24 == 23), without running it: https://github.com/oven-sh/boringssl/blob/41bf9b59c2ebf277a7aa427e1ecad5cc80dd4d4f/crypto/fipsmodule/dh/check.cc.inc#L158-L165
+    // Node on OpenSSL reports 0 for these groups. Node's own code on BoringSSL reports this flag.
+    return JSValue::encode(JSC::jsNumber(static_cast<int>(ncrypto::DHPointer::CheckResult::NOT_SUITABLE_GENERATOR)));
 }
 
 } // namespace Bun

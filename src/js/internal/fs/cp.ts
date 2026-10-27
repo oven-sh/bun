@@ -30,7 +30,6 @@ const {
 const { dirname, isAbsolute, join, parse, resolve } = require("node:path");
 
 const PromisePrototypeThen = $Promise.prototype.$then;
-const PromiseReject = Promise.$reject;
 
 async function checkPaths(src, dest, opts) {
   if (opts.filter && !(await opts.filter(src, dest))) {
@@ -201,7 +200,7 @@ function pathExistsFulfilled() {
   return true;
 }
 function pathExistsRejected(err) {
-  return err.code === "ENOENT" ? false : PromiseReject(err);
+  return err.code === "ENOENT" ? false : Promise.$reject(err);
 }
 function pathExists(dest) {
   return PromisePrototypeThen.$call(stat(dest), pathExistsFulfilled, pathExistsRejected);

@@ -1000,10 +1000,6 @@ impl JSGlobalObject {
         })
     }
 
-    fn bun_vm_unsafe(&self) -> *mut c_void {
-        JSC__JSGlobalObject__bunVM(self)
-    }
-
     /// The Bun `VirtualMachine` that owns this global: its thread's.
     ///
     /// Reads the thread-local directly (one `mov fs:[OFF]`) instead of calling
@@ -1022,7 +1018,7 @@ impl JSGlobalObject {
             //   make bindings -j10
             if let Some(vm_) = VirtualMachine::get_or_null() {
                 debug_assert!(core::ptr::eq(
-                    self.bun_vm_unsafe().cast::<VirtualMachine>(),
+                    JSC__JSGlobalObject__bunVM(self).cast::<VirtualMachine>(),
                     vm_
                 ));
             } else {
@@ -1420,6 +1416,7 @@ unsafe extern "C" {
 
     safe fn ZigGlobalObject__makeNapiEnvForFFI(this: &JSGlobalObject) -> *mut c_void;
 
+    #[cfg(debug_assertions)]
     safe fn JSC__JSGlobalObject__bunVM(this: &JSGlobalObject) -> *mut c_void;
     safe fn JSC__JSGlobalObject__vm(this: &JSGlobalObject) -> *mut VM;
     safe fn JSC__JSGlobalObject__deleteModuleRegistryEntry(

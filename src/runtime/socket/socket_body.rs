@@ -1147,7 +1147,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 Some(super::listener::UnixOrHost::Host { host, .. }) => host,
                 _ => b"",
             };
-            crate::dns_jsc::cares_jsc::system_error_with_syscall_and_hostname(
+            crate::dns_jsc::dns_resolver_jsc::system_error_with_syscall_and_hostname(
                 dns_err,
                 b"getaddrinfo",
                 hostname,

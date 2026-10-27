@@ -1412,11 +1412,12 @@ impl FetchTasklet {
                 // on the HTTP thread; never reconstruct it from `self.http`,
                 // whose post-redirect URL slices are freed by then.
                 let hostname: &[u8] = self.result.dns_hostname.as_deref().unwrap_or(b"");
-                let mut err = crate::dns_jsc::cares_jsc::system_error_with_syscall_and_hostname(
-                    dns_err,
-                    b"getaddrinfo",
-                    hostname,
-                );
+                let mut err =
+                    crate::dns_jsc::dns_resolver_jsc::system_error_with_syscall_and_hostname(
+                        dns_err,
+                        b"getaddrinfo",
+                        hostname,
+                    );
                 err.path = path;
                 return BodyValueError::SystemTypeError(err);
             }

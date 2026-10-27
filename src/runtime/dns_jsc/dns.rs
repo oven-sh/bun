@@ -34,7 +34,7 @@ use bun_sys::{self as sys};
 use bun_uws::{ConnectingSocket, Loop};
 use bun_wyhash::hash as wyhash;
 
-use super::cares_jsc::error_to_deferred;
+use super::dns_resolver_jsc::error_to_deferred;
 use crate::generated_bindgen::dns::LookupOptions;
 use crate::generated_bindgen::dns_internals::ResolverOptions;
 use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
@@ -77,8 +77,8 @@ type Sockaddr = netc::sockaddr;
 /// `Option<Box<GlobalData>>`, freed by `deinit_runtime_state` on VM teardown.
 ///
 /// R-2: returns `&Resolver` (shared). All Resolver mutation routes through
-/// `Cell` / `JsCell` fields, so a shared borrow is sufficient and avoids the
-/// `noalias` hazard when c-ares callbacks re-enter on the same global resolver.
+/// `Cell` / `RefCell` / `JsCell` fields, so a shared borrow is sufficient when
+/// script run by a settled lookup re-enters the same global resolver.
 #[inline]
 fn global_resolver(global_this: &JSGlobalObject) -> &'static Resolver {
     let gd = crate::jsc_hooks::global_dns_data().get_or_init(|| {
@@ -106,13 +106,7 @@ fn js_event_loop_ctx() -> Async::EventLoopCtx {
 }
 
 bun_output::declare_scope!(LibUVBackend, visible);
-bun_output::declare_scope!(ResolveInfoRequest, hidden);
-bun_output::declare_scope!(GetHostByAddrInfoRequest, visible);
-bun_output::declare_scope!(CAresNameInfo, hidden);
-bun_output::declare_scope!(GetNameInfoRequest, visible);
 bun_output::declare_scope!(GetAddrInfoRequest, visible);
-bun_output::declare_scope!(CAresReverse, visible);
-bun_output::declare_scope!(CAresLookup, hidden);
 bun_output::declare_scope!(DNSLookup, visible);
 bun_output::declare_scope!(dns, hidden);
 bun_output::declare_scope!(DNSResolver, visible);
@@ -936,7 +930,7 @@ impl Outcome {
         }
     }
 
-    /// The resolver backends' completion callbacks (c-ares poll, libinfo,
+    /// The resolver backends' completions (the channel, libinfo,
     /// libuv) land here to settle the lookup's promise with a value built by
     /// the resolver: this is their fold for what settling leaves pending
     /// (allocation failure, a terminating VM).
@@ -992,14 +986,6 @@ impl GlobalData {
 }
 
 impl Resolver {
-    /// Worker-terminate / main-VM-destruct hook: tear down the c-ares channel
-    /// while the JSC VM, `RareData.file_polls`, event loop, and `runtime_state`
-    /// are all still live. `ares_destroy()` synchronously fires every pending
-    /// query callback with `ARES_EDESTRUCTION` and then the socket-state
-    /// callback for each fd it closes; those callback chains dereference
-    /// `DNSLookup::global_this` (to enqueue the rejection task) and the hive
-    /// `FilePoll` (to unregister it from the loop). Running this after either
-    /// is freed is a UAF (Node `test-worker-dns-terminate.js`).
     /// Windows: `uv_getaddrinfo` requests are uv *requests* on this thread's
     /// loop, which the teardown drains before closing the loop; cancel the ones
     /// still in flight so that drain is prompt (each completes through its
@@ -1026,8 +1012,15 @@ impl Resolver {
         }
     }
 
-    /// `Stopped` if a channel was open (its pending queries just failed with
-    /// `ARES_EDESTRUCTION` into their callbacks).
+    /// Worker-terminate / main-VM-destruct hook: tear down the channel while
+    /// the JSC VM, `RareData.file_polls`, event loop, and `runtime_state` are
+    /// all still live. Every pending request fails with `EDESTRUCTION`, which
+    /// dereferences `Waiter::global_this` (to enqueue the rejection task), and
+    /// every socket is closed, which unregisters its hive `FilePoll` from the
+    /// loop. Running this after either is freed is a UAF (Node
+    /// `test-worker-dns-terminate.js`).
+    ///
+    /// `Stopped` if a channel was open.
     ///
     /// # Safety
     /// `this` is a live resolver. It may be freed by the time this returns (a
@@ -1037,8 +1030,8 @@ impl Resolver {
         this: *mut Self,
     ) -> bun_jsc::virtual_machine::SweepResult {
         use bun_jsc::virtual_machine::SweepResult;
-        // Failing the pending queries releases their refs on this resolver from
-        // inside `ares_destroy`; hold one so it outlives its own channel close.
+        // Failing the pending requests releases their refs on this resolver;
+        // hold one so it outlives its own channel close.
         // SAFETY: fn contract.
         let _guard = unsafe { RefPtr::init_ref(this) };
         // SAFETY: alive under the ref just taken.
@@ -1047,9 +1040,8 @@ impl Resolver {
         } else {
             SweepResult::Idle
         };
-        // `GetAddrInfoRequest`'s EDESTRUCTION path does not call
-        // `request_completed()`, so the c-ares timeout timer (and its +1 ref on
-        // this resolver plus the uws active-handle bump) can still be linked.
+        // The timer for the channel's next timeout (and its +1 ref on this
+        // resolver plus the uws active-handle bump) can still be linked.
         // SAFETY: as above. `_guard` then releases our ref (may free `this`).
         unsafe { (*this).remove_timer() };
         result
@@ -1966,7 +1958,7 @@ pub(crate) mod internal {
             )));
         };
         match bun_dns::error_from_eai(rc) {
-            Some(err) => crate::dns_jsc::cares_jsc::error_to_js_with_syscall_and_hostname(
+            Some(err) => crate::dns_jsc::dns_resolver_jsc::error_to_js_with_syscall_and_hostname(
                 err,
                 global,
                 b"getaddrinfo",
@@ -2561,11 +2553,10 @@ impl Resolver {
 
     // ─── R-2 interior-mutability helpers ────────────────────────────────────
 
-    /// `self`'s address as `*mut Self` for c-ares / `FilePoll` / `RefPtr`
-    /// ctx slots and `Self::deref`. Callbacks deref it as `&*const` (shared) —
-    /// see `on_dns_poll`, `on_cares_complete` — so no write provenance is
-    /// required; the `*mut` spelling is purely to match the C signature. All
-    /// mutation routes through `Cell` / `JsCell` (UnsafeCell-backed).
+    /// `self`'s address as `*mut Self` for `FilePoll` / `RefPtr` ctx slots and
+    /// `Self::deref`. Callbacks deref it as `&*const` (shared) — see
+    /// `on_dns_poll` — so no write provenance is required. All mutation routes
+    /// through `Cell` / `RefCell` / `JsCell` (UnsafeCell-backed).
     #[inline]
     pub(crate) fn as_ctx_ptr(&self) -> *mut Self {
         std::ptr::from_ref::<Self>(self).cast_mut()
@@ -2824,7 +2815,7 @@ impl Resolver {
             return;
         };
         let answer = match completion.result {
-            Ok(answer) if super::cares_jsc::is_empty(&answer) => Err(DnsError::ENOTFOUND),
+            Ok(answer) if super::dns_resolver_jsc::is_empty(&answer) => Err(DnsError::ENOTFOUND),
             Ok(answer) => Ok(answer),
             Err(error) => Err(error.as_node_reports_it()),
         };
@@ -2851,7 +2842,7 @@ impl Resolver {
                 Some((of, outcome)) if core::ptr::eq(of, global) => outcome,
                 _ => Outcome::of(
                     global,
-                    super::cares_jsc::answer_to_js(kind, &answer, global),
+                    super::dns_resolver_jsc::answer_to_js(kind, &answer, global),
                 ),
             };
             converted = Some((global, outcome));

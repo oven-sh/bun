@@ -344,7 +344,9 @@ pub(crate) fn run_task(
         task_tag::DnsErrorDeferred => {
             // SAFETY: boxed in `reject_later`; the arm consumes it.
             unsafe {
-                bun_core::heap::take(cast_ptr!(crate::dns_jsc::cares_jsc::ErrorDeferredTask))
+                bun_core::heap::take(cast_ptr!(
+                    crate::dns_jsc::dns_resolver_jsc::ErrorDeferredTask
+                ))
             }
             .run()?;
         }
@@ -1452,7 +1454,7 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         }
         task_tag::RunTestsTask => release!(crate::test_runner::bun_test::RunTestsTask),
         task_tag::ValkeyDeferredFailure => release!(crate::valkey_jsc::valkey::DeferredFailure),
-        task_tag::DnsErrorDeferred => release!(crate::dns_jsc::cares_jsc::ErrorDeferredTask),
+        task_tag::DnsErrorDeferred => release!(crate::dns_jsc::dns_resolver_jsc::ErrorDeferredTask),
         task_tag::HandledPromise => release!(bun_jsc::virtual_machine_exports::HandledPromiseTask),
         task_tag::GraphContextStopAgain => {
             release!(bun_jsc::virtual_machine::GraphContextStopAgain)

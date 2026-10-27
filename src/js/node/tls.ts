@@ -42,7 +42,7 @@ const getExtraCACertificates = $newCppFunction("NodeTLS.cpp", "getExtraCACertifi
 // Node warns at the first secure context; the once-per-process native load is what prints it.
 const maybeWarnAboutExtraCACerts = $newCppFunction("NodeTLS.cpp", "loadExtraCACertificates", 0);
 const getSystemCACertificates = $newCppFunction("NodeTLS.cpp", "getSystemCACertificates", 1);
-const canonicalizeIP = $bindgen("cares_jsc.bind.ts", "canonicalizeIP");
+const canonicalizeIP = $bindgen("dns_resolver_jsc.bind.ts", "canonicalizeIP");
 const parseCACertificates = $newCppFunction("NodeTLS.cpp", "parseCACertificates", 1);
 
 const getTLSDefaultCiphers = $bindgen("rare_data.bind.ts", "getTLSDefaultCiphers");

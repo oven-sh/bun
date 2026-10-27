@@ -13,7 +13,7 @@ export const highlightJavaScript = (code: string) => fmtBinding(code, "highlight
 export const highlightJavaScriptRedacted = (code: string) => fmtBinding(code, "highlight-javascript-redacted");
 export const escapePowershell = (code: string) => fmtBinding(code, "escape-powershell");
 
-export const canonicalizeIP = $bindgen("cares_jsc.bind.ts", "canonicalizeIP");
+export const canonicalizeIP = $bindgen("dns_resolver_jsc.bind.ts", "canonicalizeIP");
 
 // Process-wide additions to the public keys no certificate chain may hold (blocked_spkis.cpp). `hash` is the SHA-256 of
 // a DER SubjectPublicKeyInfo.

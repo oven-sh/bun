@@ -617,18 +617,18 @@ impl UDPSocket {
         let config = this.config.get();
         let hostname_z = config.hostname.to_owned_slice_z();
         if config.fd.is_none() && !bun_dns::is_valid_hostname(hostname_z.as_bytes()) {
-            return Err(cx
-                .global()
-                .throw_value(crate::dns_jsc::cares_jsc::not_a_hostname_error(
+            return Err(cx.global().throw_value(
+                crate::dns_jsc::dns_resolver_jsc::not_a_hostname_error(
                     cx.global(),
                     hostname_z.as_bytes(),
-                )));
+                ),
+            ));
         }
         if let Some(connect) = &config.connect {
             let address = connect.address.to_utf8();
             if !bun_dns::is_valid_hostname(&address) {
                 return Err(cx.global().throw_value(
-                    crate::dns_jsc::cares_jsc::not_a_hostname_error(cx.global(), &address),
+                    crate::dns_jsc::dns_resolver_jsc::not_a_hostname_error(cx.global(), &address),
                 ));
             }
         }
@@ -759,7 +759,7 @@ impl UDPSocket {
 
                 if let Some(eai_err) = bun_dns::error_from_eai(ret) {
                     return Err(cx.global().throw_value(
-                        crate::dns_jsc::cares_jsc::error_to_js_with_syscall_and_hostname(
+                        crate::dns_jsc::dns_resolver_jsc::error_to_js_with_syscall_and_hostname(
                             eai_err,
                             cx.global(),
                             b"connect",
@@ -1691,12 +1691,12 @@ pub(crate) fn connect(
 
     let connect_host = host.to_owned_slice_z();
     if !bun_dns::is_valid_hostname(connect_host.as_bytes()) {
-        return Err(
-            global_this.throw_value(crate::dns_jsc::cares_jsc::not_a_hostname_error(
+        return Err(global_this.throw_value(
+            crate::dns_jsc::dns_resolver_jsc::not_a_hostname_error(
                 global_this,
                 connect_host.as_bytes(),
-            )),
-        );
+            ),
+        ));
     }
 
     let port = u16::try_from(port).unwrap_or(0);

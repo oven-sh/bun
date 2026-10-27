@@ -1,0 +1,32 @@
+{
+  "_id": "bundled-shadow-mid",
+  "name": "bundled-shadow-mid",
+  "dist-tags": {
+    "latest": "2.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "bundled-shadow-mid",
+      "version": "1.0.0",
+      "dependencies": {
+        "bundled-shadow-shared": "1.0.0"
+      },
+      "_id": "bundled-shadow-mid@1.0.0",
+      "dist": {
+        "integrity": "sha512-4MOqBV/VRn5PtCNewlOA7+eOJKtsuccEieFuQ96Lu4OTZS1OPnyUJzIRa2HeRi5WK35gljqjl8CyPrIqscI6zw==",
+        "shasum": "f91280a96d184e738029c7b5aeb4f71f23e547b6",
+        "tarball": "http://localhost:4873/bundled-shadow-mid/-/bundled-shadow-mid-1.0.0.tgz"
+      }
+    },
+    "2.0.0": {
+      "name": "bundled-shadow-mid",
+      "version": "2.0.0",
+      "_id": "bundled-shadow-mid@2.0.0",
+      "dist": {
+        "integrity": "sha512-j+uNZ9sZt6/3vbWIGpYJ47vFQA7LA1LbcLvYxkr5uqWqwwJKl80HhTaad/HJ34sT9se8bZdEEk5ZGHKQQUHuUA==",
+        "shasum": "80339c1747d9733eeddfa4d67045ce92191a510e",
+        "tarball": "http://localhost:4873/bundled-shadow-mid/-/bundled-shadow-mid-2.0.0.tgz"
+      }
+    }
+  }
+}

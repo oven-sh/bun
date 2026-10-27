@@ -197,7 +197,7 @@ if (values.verbose) {
 }
 await pipeline(certdata.body, createWriteStream(certdataFile));
 
-// Run generate-root-certs.pl to generate src/crypto/root_certs.h.
+// Run generate-root-certs.pl to generate root_certs.der and root_certs.txt.
 if (values.verbose) {
   console.log("Running generate-root-certs.pl");
 }
@@ -209,13 +209,13 @@ if (values.verbose) {
 }
 
 // Determine certificates added and/or removed.
-const certHeaderFile = relative(process.cwd(), join(checkoutDir, "src", "crypto", "root_certs.h"));
-const diff = execFileSync("git", ["diff-files", "-u", "--", certHeaderFile], opts);
+const certListFile = relative(process.cwd(), join(checkoutDir, "root_certs.txt"));
+const diff = execFileSync("git", ["diff-files", "-u", "--", certListFile], opts);
 if (values.verbose) {
   console.log(diff);
 }
-const certsAddedRE = /^\+\/\* (.*) \*\//gm;
-const certsRemovedRE = /^-\/\* (.*) \*\//gm;
+const certsAddedRE = /^\+([^+#\n].*)$/gm;
+const certsRemovedRE = /^-([^-#\n].*)$/gm;
 const added = [...diff.matchAll(certsAddedRE)].map(m => m[1]);
 const removed = [...diff.matchAll(certsRemovedRE)].map(m => m[1]);
 

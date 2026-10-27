@@ -17,7 +17,7 @@
 //   to refer to the private slot.
 // - Some magic macros (see replacements.ts) such as `$assert()` (which forcibly
 //   deletes the argument in a release build, unlike a define macro), and the
-//   magical `$cpp` and `$bindgenFn` bindgen stuff -- a story for another day.
+//   magical `$cpp` and `$bindgen` bindgen stuff -- a story for another day.
 //
 // Part of the transpilation process involves removing type annotations. And
 // that is done with Bun's bundler. But we need to construct an IIFE, and the
@@ -43,7 +43,7 @@
 // single JSC::SourceProvider. Passing start/end positions to each function's
 // JSC::SourceCode. JSC does this, but WebCore does not seem to as of writing.
 import assert from "assert";
-import { readdirSync, rmSync } from "fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import path from "path";
 import { sliceSourceCode } from "./builtin-parser";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
@@ -79,11 +79,7 @@ interface ParsedBuiltin {
 interface BundledBuiltin {
   name: string;
   directives: Record<string, any>;
-  isGetter: boolean;
   constructAbility: string;
-  constructKind: string;
-  isLinkTimeConstant: boolean;
-  intrinsic: string;
   overriddenName: string;
   source: string;
   params: string[];
@@ -96,7 +92,7 @@ interface BundledBuiltin {
  */
 async function processFileSplit(filename: string): Promise<{ functions: BundledBuiltin[]; internal: boolean }> {
   const basename = path.basename(filename, ".ts");
-  let contents = await Bun.file(filename).text();
+  let contents = readFileSync(filename, "utf8");
 
   contents = applyGlobalReplacements(contents);
   const originalContents = contents;
@@ -193,9 +189,6 @@ async function processFileSplit(filename: string): Promise<{ functions: BundledB
       }
       if (name === "constructor") {
         directives.ConstructAbility = "CanConstruct";
-      } else if (name === "nakedConstructor") {
-        directives.ConstructAbility = "CanConstruct";
-        directives.ConstructKind = "Naked";
       } else {
         directives[name] = value;
       }
@@ -293,7 +286,7 @@ async function processFileSplit(filename: string): Promise<{ functions: BundledB
     const useThis = true;
 
     // TODO: we should use format=IIFE so we could bundle imports and extra functions.
-    await Bun.write(
+    writeFileSync(
       tmpFile,
       `// @ts-nocheck
 // GENERATED TEMP FILE - DO NOT EDIT
@@ -328,15 +321,13 @@ $$capture_start$$(${fn.async ? "async " : ""}${
     let usesAssert = output.includes("$assert");
     const captured = output.match(/\$\$capture_start\$\$([\s\S]+)\.\$\$capture_end\$\$/)![1];
     const finalReplacement =
-      (fn.directives.sloppy
-        ? captured
-        : captured.replace(
-            /function\s*\(.*?\)\s*{/,
-            '$&"use strict";' +
-              (usesDebug ? createLogClientJS("BUILTINS", fn.name) : "") +
-              (usesAssert ? createAssertClientJS(fn.name) : ""),
-          )
-      )
+      captured
+        .replace(
+          /function\s*\(.*?\)\s*{/,
+          '$&"use strict";' +
+            (usesDebug ? createLogClientJS("BUILTINS", fn.name) : "") +
+            (usesAssert ? createAssertClientJS(fn.name) : ""),
+        )
         .replace(/^\((async )?function\(/, "($1function (")
         .replace(/__intrinsic__/g, "@")
         .replace(/__no_intrinsic__/g, "") + "\n";
@@ -354,11 +345,7 @@ $$capture_start$$(${fn.async ? "async " : ""}${
       // Async functions automatically get Private visibility because the parser
       // upgrades them when they use await (see Parser.cpp parseFunctionBody)
       visibility: fn.directives.visibility ?? (fn.directives.linkTimeConstant || fn.async ? "Private" : "Public"),
-      isGetter: !!fn.directives.getter,
       constructAbility: fn.directives.ConstructAbility ?? "CannotConstruct",
-      constructKind: fn.directives.ConstructKind ?? "None",
-      isLinkTimeConstant: !!fn.directives.linkTimeConstant,
-      intrinsic: fn.directives.intrinsic ?? "NoIntrinsic",
 
       // Not known yet.
       sourceOffset: 0,
@@ -394,9 +381,12 @@ async function processFunctionFile(x: string) {
 
 interface BundleBuiltinFunctionsArgs {
   requireTransformer: (x: string, filename: string) => string;
+  /** Where WebCoreJSBuiltins.d.ts goes. */
+  typesDir: string;
 }
 
-export async function bundleBuiltinFunctions({ requireTransformer }: BundleBuiltinFunctionsArgs) {
+export async function bundleBuiltinFunctions({ requireTransformer, typesDir }: BundleBuiltinFunctionsArgs) {
+  mkdirSync(TMP_DIR, { recursive: true });
   const filesToProcess = readdirSync(SRC_DIR)
     .filter(x => x.endsWith(".ts") && !x.endsWith(".d.ts"))
     .sort();
@@ -463,11 +453,11 @@ export async function bundleBuiltinFunctions({ requireTransformer }: BundleBuilt
     for (const fn of functions) {
       const name = `${basename}${cap(fn.name)}`;
       bundledCPP += `
-JSC::FunctionExecutable* ${lowerBasename}${cap(fn.name)}CodeGenerator(JSC::VM& vm)
+JSC::BuiltinCode ${lowerBasename}${cap(fn.name)}CodeGenerator(JSC::VM& vm)
 {
     auto &builtins = static_cast<JSVMClientData*>(vm.clientData)->builtinFunctions().${lowerBasename}Builtins();
     auto *executable = builtins.${lowerBasename}${cap(fn.name)}CodeExecutable();
-    return executable->link(vm, nullptr, builtins.${lowerBasename}${cap(fn.name)}CodeSource(), std::nullopt, JSC::NoIntrinsic);
+    return { executable->link(vm, nullptr, builtins.${lowerBasename}${cap(fn.name)}CodeSource(), std::nullopt, JSC::NoIntrinsic), 0 };
 }
 `;
     }
@@ -475,7 +465,7 @@ JSC::FunctionExecutable* ${lowerBasename}${cap(fn.name)}CodeGenerator(JSC::VM& v
 
   const initializeSourceCodeFn = (fn: BundledBuiltin, basename: string) => {
     const name = `${low(basename)}${cap(fn.name)}CodeSource`;
-    return `m_${name}(SourceCode(sourceProvider.copyRef(), ${fn.sourceOffset}, ${fn.source.length + fn.sourceOffset}, 1, 1))`;
+    return `m_${name}(SourceCode(sourceProvider.copyRef(), ${fn.sourceOffset}, ${fn.source.length + fn.sourceOffset}))`;
   };
   for (const { basename, internal, functions } of files) {
     bundledCPP += `
@@ -492,8 +482,11 @@ ${basename}BuiltinsWrapper::${basename}BuiltinsWrapper(JSC::VM& vm, RefPtr<JSC::
   }
 
   bundledCPP += `
+static constexpr unsigned internalCombinedSourceStarts[] = { ${files.flatMap(({ functions }) => functions.map(fn => fn.sourceOffset)).join(", ")} };
+
 RefPtr<JSC::SourceProvider> createBuiltinsSourceProvider() {
-    return JSC::StringSourceProvider::create(StringImpl::createWithoutCopying(internalCombinedSource), SourceOrigin(), String(), SourceTaintedOrigin());
+    // JavaScriptCore numbers its own built-in functions from 0.
+    return JSC::BuiltinsSourceProvider::create(StringImpl::createWithoutCopying(internalCombinedSource), internalCombinedSourceStarts, 0x10000);
 }
 `;
 
@@ -622,7 +615,7 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
     #define WEBCORE_BUILTIN_${basename.toUpperCase()}_${fn.name.toUpperCase()} 1
     static constexpr JSC::ConstructAbility s_${name}ConstructAbility = JSC::ConstructAbility::${fn.constructAbility};
     static constexpr JSC::InlineAttribute s_${name}InlineAttribute = JSC::InlineAttribute::${fn.directives.alwaysInline ? "Always" : "None"};
-    static constexpr JSC::ConstructorKind s_${name}ConstructorKind = JSC::ConstructorKind::${fn.constructKind};
+    static constexpr JSC::ConstructorKind s_${name}ConstructorKind = JSC::ConstructorKind::None;
     static constexpr JSC::ImplementationVisibility s_${name}ImplementationVisibility = JSC::ImplementationVisibility::${fn.visibility};
 
     `;
@@ -644,7 +637,7 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
     }
     bundledHeader += `
     #define DECLARE_BUILTIN_GENERATOR(codeName, functionName, overriddenName, argumentCount) \\
-        JSC::FunctionExecutable* codeName##Generator(JSC::VM&);
+        JSC::BuiltinCode codeName##Generator(JSC::VM&);
 
     WEBCORE_FOREACH_${basename.toUpperCase()}_BUILTIN_CODE(DECLARE_BUILTIN_GENERATOR)
     #undef DECLARE_BUILTIN_GENERATOR
@@ -794,6 +787,7 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
     } // namespace WebCore
     `;
   // Handle builtin names
+  let privateNames: string[];
   {
     const BunBuiltinNamesHeader = require("fs").readFileSync(
       path.join(import.meta.dir, "../js/builtins/BunBuiltinNames.h"),
@@ -839,6 +833,7 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
 `;
 
     writeIfNotChanged(path.join(CODEGEN_DIR, "BunBuiltinNames+extras.h"), additionalPrivateNamesHeader);
+    privateNames = [...definedBuiltinNames, ...(additionalPrivateNames as Set<string>)];
   }
   writeIfNotChanged(path.join(CODEGEN_DIR, "WebCoreJSBuiltins.h"), bundledHeader);
   writeIfNotChanged(path.join(CODEGEN_DIR, "WebCoreJSBuiltins.cpp"), bundledCPP);
@@ -854,7 +849,7 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
       dts += `\n// ${basename}.ts\n`;
       for (const fn of functions) {
         dts += `declare const \$${fn.name}: RemoveThis<typeof import("${path.relative(
-          CODEGEN_DIR,
+          typesDir,
           path.join(SRC_DIR, basename),
         )}")[${JSON.stringify(fn.name)}]>;\n`;
       }
@@ -863,7 +858,7 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
 
   dts += getJS2NativeDTS();
 
-  writeIfNotChanged(path.join(CODEGEN_DIR, "WebCoreJSBuiltins.d.ts"), dts);
+  writeIfNotChanged(path.join(typesDir, "WebCoreJSBuiltins.d.ts"), dts);
 
   const totalJSSize = files.reduce(
     (acc, { functions }) => acc + functions.reduce((acc, fn) => acc + fn.source.length, 0),
@@ -880,6 +875,6 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
 
   // bundle-modules.ts prepends this to InternalModuleRegistryConstants.bin so the
   // same linked blob carries both the builtin function sources and the internal
-  // module sources.
-  return { combinedSourceCode };
+  // module sources. `privateNames` lists every private name registered by BunBuiltinNames.
+  return { combinedSourceCode, privateNames };
 }

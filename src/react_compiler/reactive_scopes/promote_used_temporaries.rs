@@ -700,14 +700,8 @@ fn promote_interposed_block(
                 promote_interposed_instruction(instr, state, inter_state, consts, globals, env);
             }
             ReactiveStatement::Scope(scope) => {
-                // The memo block compares its dependencies before anything inside it runs.
-                let dependencies = &env.scopes[scope.scope.0 as usize].dependencies;
-                if dependencies.iter().any(|dependency| {
-                    !dependency.path.is_empty()
-                        || is_reassignable(dependency.identifier, consts, env)
-                }) {
-                    inter_state.statement(Effect::Read);
-                }
+                // The memo block compares its dependencies first, and what writes must not print in it: it may not run.
+                inter_state.statement(Effect::Read);
                 promote_interposed_block(
                     &scope.instructions,
                     state,

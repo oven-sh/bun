@@ -220,7 +220,7 @@ export function registerRustRules(n: Ninja, cfg: Config): void {
  */
 export interface RustBuildInputs {
   /**
-   * Generated files the workspace crates `include!` / `include_bytes!` or need to exist (`generated_classes.rs`
+   * Generated files the workspace crates `include!` / `include_bytes!` or need to exist (`generated_host_exports.rs`
    * and friends are undeclared side effects of the scripts producing these). Order-only for the crate edges:
    * they must exist before a workspace crate compiles, and from then on rustc's dep-info names exactly the
    * files each crate read, so a changed one rebuilds just its includers.

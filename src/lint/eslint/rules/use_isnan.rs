@@ -93,7 +93,7 @@ impl UseIsnan {
     fn report_comparison<'a>(e: Expr<'a>, op: BinOp, nan: Expr<'a>, compared: Expr<'a>, cx: &mut Cx<'a, Self>) {
         // oxlint points at the `NaN`, with its parentheses.
         let report = match (cx.language().is_oxlint, op) {
-            (false, _) => cx.report(e, COMPARISON_WITH_NAN).hint("Nothing is equal to NaN, not even NaN itself."),
+            (false, _) => cx.report(e, COMPARISON_WITH_NAN).hint("Nothing equals NaN, not even NaN."),
             (true, BinOp::NotEq | BinOp::NotEqEq) => cx.report(nan.outer_span(), INEQUALITY_WITH_NAN),
             (true, BinOp::EqEq | BinOp::EqEqEq) => cx.report(nan.outer_span(), EQUALITY_WITH_NAN),
             (true, _) => cx.report(nan.outer_span(), ORDER_WITH_NAN),

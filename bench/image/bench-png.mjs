@@ -42,10 +42,10 @@ const each = (files, fn) => async () => {
 
 await report("decode 24 screenshots", 7, each(screenshots, decode));
 await report("decode a photo", 15, () => decode(photo));
-const some = screenshots.filter((_, i) => i % 4 === 0);
+const everyFourth = screenshots.filter((_, i) => i % 4 === 0);
 for (const compressionLevel of [0, 1, 6, 9]) {
   const encode = png => new Bun.Image(png).png({ compressionLevel }).bytes();
-  await report(`decode 6 screenshots and encode them at level ${compressionLevel}`, 3, each(some, encode));
+  await report(`decode 6 screenshots and encode them at level ${compressionLevel}`, 3, each(everyFourth, encode));
   await report(`decode a photo and encode it at level ${compressionLevel}`, 5, () => encode(photo));
 }
 
@@ -76,14 +76,14 @@ function noise(width, height, depth, colorType, channels, filter, interlaced = f
   ihdr.writeUInt32BE(height, 4);
   ihdr.set([depth, colorType, 0, 0, Number(interlaced)], 8);
   const passes = (interlaced ? adam7 : whole).map(([x, y, xStep, yStep]) => ({
-    line: 1 + Math.ceil((Math.ceil((width - x) / xStep) * channels * depth) / 8),
+    lineLength: 1 + Math.ceil((Math.ceil((width - x) / xStep) * channels * depth) / 8),
     rows: Math.ceil((height - y) / yStep),
   }));
-  const lines = Buffer.alloc(passes.reduce((sum, pass) => sum + pass.line * pass.rows, 0));
+  const lines = Buffer.alloc(passes.reduce((sum, pass) => sum + pass.lineLength * pass.rows, 0));
   let seed = 1;
   for (let i = 0; i < lines.length; i++) lines[i] = (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) >>> 24;
   let at = 0;
-  for (const pass of passes) for (let y = 0; y < pass.rows; y++, at += pass.line) lines[at] = filter;
+  for (const pass of passes) for (let y = 0; y < pass.rows; y++, at += pass.lineLength) lines[at] = filter;
   return Buffer.concat([
     Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
     chunk("IHDR", ihdr),

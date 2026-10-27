@@ -487,15 +487,15 @@ describe("malformed PNG structure", () => {
   });
 
   // The largest image the default maxPixels allows, 1 GiB of RGBA, and its first row.
-  test.each([
+  test.concurrent.each([
     ["1-bit", 16383, 16383, 1, 0, 0, 1 + 2048],
-    ["interlaced 1-bit", 16383, 16383, 1, 0, 1, 1 + 256],
+    ["1-bit, interlaced", 16383, 16383, 1, 0, 1, 1 + 256],
     ["RGBA", 16383, 16383, 8, 6, 0, 1 + 16383 * 4],
     ["RGB", 16383, 16383, 8, 2, 0, 1 + 16383 * 3],
-    ["interlaced RGB", 16383, 16383, 8, 2, 1, 1 + 2048 * 3],
-    // A row of 512 MiB, and only its filter byte.
-    ["very wide", 1 << 26, 1, 16, 6, 0, 1],
-  ])("a %s image takes memory as its rows come, not when its header does", async (_, ...args) => {
+    ["RGB, interlaced", 16383, 16383, 8, 2, 1, 1 + 2048 * 3],
+    // A row of 512 MiB, and only its filter type.
+    ["one very wide row", 1 << 26, 1, 16, 6, 0, 1],
+  ])("memory is written to as the rows come, not when the header does: %s", async (_, ...args) => {
     const [width, height, depth, colorType, interlace, bytes] = args;
     const ihdr = Buffer.alloc(13);
     ihdr.writeUInt32BE(width, 0);

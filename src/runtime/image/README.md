@@ -53,7 +53,7 @@ flag stays set only when the call ran to completion. `codec_jpeg.rs` accepts a d
   configured to emit it; encoders are fed it. Nothing branches on channels.
 - **Decode** output is `bun.default_allocator`-owned `[]u8`. **Encode** output
   is `Encoded{bytes, free}` where `free` is the _codec's_ deallocator
-  (`tj3Free`/`WebPFree`/`std.c.free`/`mi_free`); `then()` hands that buffer
+  (`tj3Free`/`WebPFree`/`mi_free`); `then()` hands that buffer
   straight to JS via `ArrayBuffer.toJSWithContext(..., free)` — no dupe. New
   codecs return `Encoded` with the right `free`, not a default_allocator slice.
 - The `max_pixels` guard fires **after the header read, before the RGBA alloc**

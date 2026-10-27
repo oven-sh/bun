@@ -26,6 +26,19 @@ export async function loadCases(path: string): Promise<Cases> {
 
 const sha256 = (bytes: Uint8Array) => new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
 
+export function* chunksOf(file: Uint8Array) {
+  const bytes = Buffer.from(file);
+  for (let at = 8; at < bytes.length;) {
+    const length = bytes.readUInt32BE(at);
+    yield { type: bytes.toString("latin1", at + 4, at + 8), data: bytes.subarray(at + 8, at + 8 + length) };
+    at += 12 + length;
+  }
+}
+
+/** What the IDAT chunks inflate to: each row behind its filter type. */
+export const linesOf = (chunks: { type: string; data: Buffer }[]) =>
+  Buffer.from(Bun.inflateSync(Buffer.concat(chunks.filter(c => c.type === "IDAT").map(c => c.data)).subarray(2, -4)));
+
 /**
  * Only the last line depends on how zlib compresses. Should that change, the lines before it still hold what
  * was recorded with libspng: the chunks, the filter chosen for each row with the filtered row, and the profile.
@@ -37,24 +50,20 @@ async function observe(png: Uint8Array, maxPixels: number | undefined, options: 
   } catch (error: any) {
     return `${error.code}: ${error.message}\n`;
   }
+  const chunks = [...chunksOf(out)];
   const types: string[] = [];
-  const idat: Buffer[] = [];
-  let rest = "";
-  for (let at = 8; at < out.length;) {
-    const length = out.readUInt32BE(at);
-    const type = out.toString("latin1", at + 4, at + 8);
-    const data = out.subarray(at + 8, at + 8 + length);
-    if (type === "IDAT") idat.push(data);
-    else if (type === "iCCP") {
-      const name = data.indexOf(0);
-      rest += `iCCP ${data.toString("latin1", 0, name)} ${sha256(Bun.inflateSync(data.subarray(name + 4, -4)))}\n`;
-    } else if (type !== "IEND") rest += `${type} ${data.toString("hex")}\n`;
+  let otherChunks = "";
+  for (const { type, data } of chunks) {
+    if (type === "iCCP") {
+      const nameLength = data.indexOf(0);
+      const profile = Bun.inflateSync(data.subarray(nameLength + 4, -4));
+      otherChunks += `iCCP ${data.toString("latin1", 0, nameLength)} ${sha256(profile)}\n`;
+    } else if (type !== "IDAT" && type !== "IEND") otherChunks += `${type} ${data.toString("hex")}\n`;
     if (types.at(-1) !== type) types.push(type);
-    at += 12 + length;
   }
-  const lines = Bun.inflateSync(Buffer.concat(idat).subarray(2, -4));
+  const lines = linesOf(chunks);
   return (
-    `${types.join(" ")}\n${rest}IDAT ${lines.length} bytes ${sha256(lines)}\n` +
+    `${types.join(" ")}\n${otherChunks}IDAT ${lines.length} bytes ${sha256(lines)}\n` +
     (wholeFile ? `file ${out.length} bytes ${sha256(out)}\n` : "")
   );
 }
@@ -64,13 +73,3 @@ export const observeDecode = (png: Uint8Array, maxPixels?: number) =>
   observe(png, maxPixels, { compressionLevel: 0 }, false);
 
 export const observeEncode = (png: Uint8Array, options: PngOptions) => observe(png, undefined, options, true);
-
-/** One failure message for all the cases that differ, instead of one test per case. */
-export function differences(results: { name: string; expected: string; actual: string }[]) {
-  const different = results.filter(r => r.actual !== r.expected);
-  if (different.length === 0) return "";
-  return [
-    `${different.length} of ${results.length} differ`,
-    ...different.slice(0, 5).map(r => `${r.name}\n--- expected\n${r.expected}--- actual\n${r.actual}`),
-  ].join("\n");
-}

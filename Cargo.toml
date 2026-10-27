@@ -497,8 +497,8 @@ bun_simdutf_sys = { path = "src/simdutf_sys" }
 bun_which = { path = "src/which" }
 bun_transpiler = { path = "src/transpiler" }
 
-# Loops over every byte of an image: unoptimized, a debug build takes seconds per megapixel. libspng, which this
-# replaced, was optimized in debug builds too. Assertions and overflow checks stay on.
+# Loops over every byte of an image: unoptimized, a debug build takes seconds per megapixel. Assertions and overflow
+# checks stay on. scripts/build/flags.ts does the same for highway_json.cpp and highway_xml.cpp.
 [profile.dev.package.bun_png]
 opt-level = 3
 

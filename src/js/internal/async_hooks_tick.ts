@@ -17,4 +17,8 @@ export default {
   newAsyncId() {
     return ++nextAsyncId;
   },
+  // For internal/process/after_tick_drain.ts. Set when process.nextTick is first read, which creates the tick queue.
+  ensureTickLoop: undefined as (() => void) | undefined,
+  // Set by internal/process/after_tick_drain.ts. The tick loop calls it each time both queues are empty.
+  runAfterTickDrainCallback: undefined as (() => boolean) | undefined,
 };

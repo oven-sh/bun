@@ -783,10 +783,7 @@ describe.concurrent("a failed resolution checks again what it read from the cach
         "\uFEFF" + JSON.stringify({ extends: "./nowhere.json", compilerOptions: { baseUrl: ".", paths } }),
       );
       write("s6.cjs", "");
-      // Not every Windows user may create a link. Without it the lookup misses all the same.
-      try {
-        symlinkSync("nowhere.cjs", join(dir, "s7.cjs"));
-      } catch {}
+      symlinkSync("nowhere.cjs", join(dir, "s7.cjs"), "file");
     };
     expect(await runGroup("steady", undefined, steadyFiles)).toMatchInlineSnapshot(`
       {

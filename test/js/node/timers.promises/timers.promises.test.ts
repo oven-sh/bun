@@ -173,24 +173,39 @@ describe("setInterval", () => {
     const onRejectionHandled = () => events.push("rejectionHandled");
     process.on("unhandledRejection", onUnhandledRejection);
     process.on("rejectionHandled", onRejectionHandled);
+    const controller = new AbortController();
+    const iterator = setInterval(1, "tick", { signal: controller.signal })[Symbol.asyncIterator]();
     try {
-      const controller = new AbortController();
-      const pending = setInterval(60_000, "tick", { signal: controller.signal })[Symbol.asyncIterator]().next();
+      const outcome = iterator.next().then(
+        () => "fulfilled",
+        error => ({ name: error.name, code: error.code }),
+      );
       expect(() => controller.abort()).not.toThrow();
-      await expect(pending).rejects.toThrow(expect.objectContaining({ name: "AbortError" }));
+      expect(await outcome).toEqual({ name: "AbortError", code: "ABORT_ERR" });
       // 'rejectionHandled' comes from a task on a later turn of the loop.
       for (let turn = 0; turn < 4; turn++) await setImmediate();
       expect(events).toEqual([]);
     } finally {
       process.off("unhandledRejection", onUnhandledRejection);
       process.off("rejectionHandled", onRejectionHandled);
+      await iterator.return!();
     }
   });
 
   // As in node, the first next() starts the interval. Nothing reads this iterator, so nothing keeps the child alive.
+  // The unref'd timer only ends a child that a leaked interval keeps alive: a failed run leaves no process behind.
   it.concurrent("an iterator that is never read does not keep the process alive", async () => {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", `require("node:timers/promises").setInterval(100_000_000); console.log("created");`],
+      cmd: [
+        bunExe(),
+        "-e",
+        `require("node:timers/promises").setInterval(100_000_000);
+         console.log("created");
+         setTimeout(() => {
+           console.log("an interval is still running");
+           process.exit(1);
+         }, 2000).unref();`,
+      ],
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
@@ -205,7 +220,8 @@ describe("setInterval", () => {
   });
 
   // mock.timers of node:test replaces globalThis.clearInterval. This iterator started before that, so its
-  // interval is a real one, and the child exits only if the real clearInterval stops it.
+  // interval is a real one, and the child exits only if the real clearInterval stops it. The unref'd
+  // timer is as above.
   it.concurrent("an iterator that is closed while node:test mock timers are enabled stops its interval", async () => {
     await using proc = Bun.spawn({
       cmd: [
@@ -213,6 +229,10 @@ describe("setInterval", () => {
         "-e",
         `const { mock } = require("node:test");
          const { setInterval } = require("node:timers/promises");
+         setTimeout(() => {
+           console.log("an interval is still running");
+           process.exit(1);
+         }, 2000).unref();
          (async () => {
            const iterator = setInterval(1, "tick");
            await iterator.next();

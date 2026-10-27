@@ -3780,11 +3780,13 @@ impl<'a> HTTPClient<'a> {
         // here once `clone_metadata()` has deep-copied the parsed headers.
         let mut buffer = std::mem::take(&mut self.state.response_message_buffer);
         let needs_move = buffer.list.is_empty();
+        let mut head_scanner = picohttp::HeadScanner::default();
         let mut to_read: &[u8] = if needs_move {
             incoming_data
         } else {
-            // this one probably won't be another chunk, so we use appendSliceExact() to avoid over-allocating
-            let _ = buffer.append_slice_exact(incoming_data);
+            head_scanner = self.state.response_head_scanner;
+            // Not `append_slice_exact`: a head can take thousands of reads, each of which would copy all of it.
+            let _ = buffer.append(incoming_data);
             buffer.list.as_slice()
         };
 
@@ -3809,6 +3811,7 @@ impl<'a> HTTPClient<'a> {
                         .drain_front(buffer.list.len().saturating_sub(keep));
                     self.state.response_message_buffer = buffer;
                 }
+                self.state.response_head_scanner = head_scanner;
                 return;
             }};
         }
@@ -3821,7 +3824,11 @@ impl<'a> HTTPClient<'a> {
                 short_read!();
             }
 
-            let parsed = match picohttp::Response::parse(to_read, &mut shared_resp[..]) {
+            let parsed = match picohttp::Response::parse_received(
+                to_read,
+                &mut shared_resp[..],
+                &mut head_scanner,
+            ) {
                 Ok(r) => r,
                 Err(picohttp::ParseResponseError::ShortRead) => {
                     // `MAX_HTTP_HEADER_SIZE` (default 16 KB) is the *server*/

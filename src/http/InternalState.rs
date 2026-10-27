@@ -25,6 +25,8 @@ fn gzip_trailer_size(buffer: &[u8]) -> Option<usize> {
 
 pub struct InternalState<'a> {
     pub(crate) response_message_buffer: MutableString,
+    /// How much of `response_message_buffer` has been read. Means nothing while that is empty.
+    pub(crate) response_head_scanner: bun_picohttp::HeadScanner,
     /// This is the cloned metadata containing the response headers, url and status code after the .headers phase are received
     /// will be turned None once returned to the user (the ownership is transferred to the user)
     /// this can happen after await fetch(...) and the body can continue streaming when this is already None
@@ -122,6 +124,7 @@ impl Default for InternalState<'_> {
     fn default() -> Self {
         Self {
             response_message_buffer: MutableString::init_empty(),
+            response_head_scanner: bun_picohttp::HeadScanner::default(),
             cloned_metadata: None,
             flags: InternalStateFlags::new(),
             transfer_encoding: Encoding::Identity,

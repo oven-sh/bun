@@ -196,6 +196,8 @@ pub struct HTTPClient<const SSL: bool> {
     to_send_len: Cell<usize>,
     /// Unconsumed bytes received since the last request (CONNECT or upgrade) was sent.
     body: JsCell<Vec<u8>>,
+    /// How much of the head at the start of `body` has been read.
+    head_scanner: Cell<picohttp::HeadScanner>,
     /// Bytes of interim 1xx responses skipped since the last final response.
     interim_len: Cell<usize>,
     /// Created by the `ws` module, which runs its own handshake timer, validates the 101 itself and
@@ -464,6 +466,7 @@ where
             input_body_buf: JsCell::new(input_body_buf),
             to_send_len: Cell::new(0),
             body: JsCell::new(Vec::new()),
+            head_scanner: Cell::default(),
             interim_len: Cell::new(0),
             ws_mode: websocket.is_ws_mode(),
             response_body: Cell::new(None),
@@ -856,31 +859,37 @@ where
         data: &[u8],
         on_head: impl FnOnce(&picohttp::Response, &[u8]),
     ) {
-        this.body.with_mut(|b| b.extend_from_slice(data));
-        let received = this.body.get().clone();
+        // Nothing runs JS, and so nothing reads `body`, before either is put back.
+        let mut received = this.body.take();
+        received.extend_from_slice(data);
+        let mut head_scanner = this.head_scanner.take();
         let mut unparsed: &[u8] = &received;
         let cap = max_response_head_len();
-        let drop_interim = |unparsed: &[u8]| {
-            this.body
-                .with_mut(|b| drop(b.drain(..received.len() - unparsed.len())));
-        };
         loop {
             let window = &unparsed[..unparsed.len().min(cap)];
-            let mut slots = header_slots(window);
-            let error = match picohttp::Response::parse(window, &mut slots) {
-                Ok(response) if matches!(response.status_code, 100 | 102..=199) => {
-                    unparsed = &unparsed[response.bytes_read..];
-                    this.interim_len
-                        .set(this.interim_len.get() + response.bytes_read);
-                    if this.interim_len.get() <= cap {
-                        continue;
+            let error = match head_scanner.scan(window, usize::MAX) {
+                Ok(head_len) => {
+                    let (head, rest) = unparsed.split_at(head_len);
+                    let mut slots = header_slots(head);
+                    match picohttp::Response::parse(head, &mut slots) {
+                        Ok(response) if matches!(response.status_code, 100 | 102..=199) => {
+                            unparsed = rest;
+                            this.interim_len.set(this.interim_len.get() + head_len);
+                            if this.interim_len.get() <= cap {
+                                continue;
+                            }
+                            ErrorCode::ResponseHeadersTooLarge
+                        }
+                        Ok(response) => {
+                            this.body.set(unparsed.to_vec());
+                            this.interim_len.set(0);
+                            return on_head(&response, rest);
+                        }
+                        Err(error) => {
+                            debug_assert!(false, "{error:?} in a head that the scanner accepted");
+                            ErrorCode::InvalidResponse
+                        }
                     }
-                    ErrorCode::ResponseHeadersTooLarge
-                }
-                Ok(response) => {
-                    drop_interim(unparsed);
-                    this.interim_len.set(0);
-                    return on_head(&response, &unparsed[response.bytes_read..]);
                 }
                 Err(picohttp::ParseResponseError::MalformedHttpResponse) => {
                     ErrorCode::InvalidResponse
@@ -894,7 +903,13 @@ where
                 Err(picohttp::ParseResponseError::ShortRead) if unparsed.len() > cap => {
                     ErrorCode::ResponseHeadersTooLarge
                 }
-                Err(picohttp::ParseResponseError::ShortRead) => return drop_interim(unparsed),
+                Err(picohttp::ParseResponseError::ShortRead) => {
+                    let interim_len = received.len() - unparsed.len();
+                    received.drain(..interim_len);
+                    this.body.set(received);
+                    this.head_scanner.set(head_scanner);
+                    return;
+                }
             };
             return Self::terminate(this, error);
         }

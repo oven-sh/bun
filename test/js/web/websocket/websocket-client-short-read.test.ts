@@ -462,11 +462,23 @@ describe("data received while a handshake listener spins the event loop", () => 
     expect(until).resolves.toBeUndefined();
   }
 
-  test("a frame received during a 101's handshake listener is delivered after 'open'", async () => {
+  test.each<[string, (connection: RawSocket) => unknown]>([
+    ["", connection => write(connection, response101(connection))],
+    [
+      // Longer than the 101, so that a place in the one is not a place in the other.
+      ", which follows an interim response that took two reads",
+      connection =>
+        writeSplit(
+          connection,
+          `HTTP/1.1 103 Early Hints\r\nLink: ${Buffer.alloc(1000, "a")}\r\n\r\n` + response101(connection),
+          500,
+        ),
+    ],
+  ])("a frame received during a 101's handshake listener is delivered after 'open'%s", async (_, respond) => {
     let peer!: RawSocket;
     await using server = await listen(connection => {
       peer = connection;
-      write(connection, response101(connection));
+      respond(connection);
     });
     const order: string[] = [];
     const frameDelivered = Promise.withResolvers<void>();

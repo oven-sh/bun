@@ -905,6 +905,10 @@ export const http1Internals = {
    * header, where each part is `<offset in data>+<length>`.
    */
   parseResponse: $bindgen("http1_testing.bind.ts", "parseResponse"),
+  /** After how many bytes of `data`, `piece` at a time, its head ends or fails, and which. A line each for parsing all of them every time, `fetch` and `ws`. */
+  receiveResponse: $bindgen("http1_testing.bind.ts", "receiveResponse"),
+  /** How many bytes this process has read to parse response heads and to find their ends, a byte read twice counted twice. */
+  headBytesRead: $bindgen("http1_testing.bind.ts", "headBytesRead"),
   /**
    * `data` decoded as a chunked body, in pieces that end at `cuts` and at its end. A line per piece, also for those
    * after the body has ended or failed:

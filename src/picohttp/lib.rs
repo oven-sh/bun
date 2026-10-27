@@ -1,5 +1,6 @@
 #![warn(unused_must_use)]
 use core::fmt;
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 use bstr::BStr;
 
@@ -377,6 +378,40 @@ pub enum ParseResponseError {
 }
 bun_core::impl_tag_error!(ParseResponseError);
 
+impl ParseResponseError {
+    fn from_http1(error: bun_http1::ParseError, buf: &[u8]) -> Self {
+        match error {
+            bun_http1::ParseError::Malformed => {
+                bun_core::debug!("Malformed HTTP response:\n{}", BStr::new(buf));
+                Self::MalformedHttpResponse
+            }
+            bun_http1::ParseError::Incomplete => Self::ShortRead,
+        }
+    }
+}
+
+/// Bytes read to parse response heads and to find their ends, for `http1Internals.headBytesRead`.
+pub static HEAD_BYTES_READ: AtomicUsize = AtomicUsize::new(0);
+
+fn count_head_bytes_read(count: usize) {
+    // Relaxed: nothing is ordered by a sum.
+    HEAD_BYTES_READ.fetch_add(count, Ordering::Relaxed);
+}
+
+/// Finds the end of a head that takes several reads to arrive, without starting over at each as `Response::parse` does.
+#[derive(Clone, Copy, Default)]
+pub struct HeadScanner(bun_http1::HeadScanner);
+
+impl HeadScanner {
+    /// `bytes_read` or the error of `Response::parse` with `max_headers` headers. See `bun_http1::HeadScanner::scan`.
+    pub fn scan(&mut self, buf: &[u8], max_headers: usize) -> Result<usize, ParseResponseError> {
+        let scanned = self.0.scanned();
+        let result = self.0.scan(buf, max_headers);
+        count_head_bytes_read(result.unwrap_or(buf.len()).saturating_sub(scanned));
+        result.map_err(|error| ParseResponseError::from_http1(error, buf))
+    }
+}
+
 #[derive(Clone, Copy)]
 pub struct Response<'a> {
     pub minor_version: usize,
@@ -416,22 +451,40 @@ impl<'a> Response<'a> {
     }
 
     pub fn parse(buf: &'a [u8], src: &'a mut [Header]) -> Result<Response<'a>, ParseResponseError> {
-        match bun_http1::parse_response(buf, src) {
-            Ok(head) => Ok(Response {
-                minor_version: head.minor_version.into(),
-                status_code: head.status_code.into(),
-                status: head.reason,
-                headers: HeaderList {
-                    list: &src[..head.header_count],
-                },
-                bytes_read: head.len,
-            }),
-            Err(bun_http1::ParseError::Malformed) => {
-                bun_core::debug!("Malformed HTTP response:\n{}", BStr::new(buf));
-                Err(ParseResponseError::MalformedHttpResponse)
+        let result = bun_http1::parse_response(buf, src);
+        count_head_bytes_read(result.as_ref().map_or(buf.len(), |head| head.len));
+        let head = result.map_err(|error| ParseResponseError::from_http1(error, buf))?;
+        Ok(Response {
+            minor_version: head.minor_version.into(),
+            status_code: head.status_code.into(),
+            status: head.reason,
+            headers: HeaderList {
+                list: &src[..head.header_count],
+            },
+            bytes_read: head.len,
+        })
+    }
+
+    /// `parse` for after every read. After `ShortRead`, the next `buf` begins with this one and `src` is as long.
+    pub fn parse_received(
+        buf: &'a [u8],
+        src: &'a mut [Header],
+        scanner: &mut HeadScanner,
+    ) -> Result<Response<'a>, ParseResponseError> {
+        let max_headers = src.len();
+        // Most heads come whole, and those are read once.
+        if scanner.0.scanned() == 0 {
+            let result = Self::parse(buf, src);
+            if matches!(result, Err(ParseResponseError::ShortRead)) {
+                let scanned = scanner.scan(buf, max_headers);
+                debug_assert_eq!(scanned, Err(ParseResponseError::ShortRead));
             }
-            Err(bun_http1::ParseError::Incomplete) => Err(ParseResponseError::ShortRead),
+            return result;
         }
+        let len = scanner.scan(buf, max_headers)?;
+        let result = Self::parse(&buf[..len], src);
+        debug_assert!(result.is_ok_and(|response| response.bytes_read == len));
+        result
     }
 }
 

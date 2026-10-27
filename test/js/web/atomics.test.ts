@@ -428,9 +428,9 @@ test.skipIf(isASAN /* malloc is not mimalloc */)(
 
 // One release does not hand back the large blocks (96 KiB and up) that the thread used a moment ago: the allocator
 // leaves those for a thread that takes them again at once. A waiter that keeps waiting releases again 100 ms later,
-// which does. With one release the 44 MiB that the worker frees here stay for the whole wait (18 to 22 MiB of them
-// resident). Linux only: reads RSS. Not ASAN or debug: malloc is not mimalloc there.
-test.skipIf(!isLinux || isASAN || isDebug)(
+// which does. With one release 18 to 22 MiB of the 44 MiB that the worker frees here stay for the whole wait.
+// Not ASAN or debug: malloc is not mimalloc there.
+test.skipIf(isASAN || isDebug)(
   "Atomics.wait releases the large blocks that this thread freed right before it",
   async () => {
     await using proc = Bun.spawn({
@@ -447,8 +447,11 @@ test.skipIf(!isLinux || isASAN || isDebug)(
               \`
               self.onmessage = event => {
                 const view = new Int32Array(event.data);
-                // The allocator frees the large blocks of a thread at once while that thread has never released.
-                // A wait that times out makes this thread one that has.
+                // Start-up has to be over before the base is read and before the blocks are allocated: RSS still
+                // grows by 2 to 6 MiB in the first 100 ms of this handler, and about 100 ms in, the JSC warm-up
+                // thread (and this thread, in this wait) sweep. A sweep moves the clock by which the allocator
+                // tells which large blocks were used a moment ago: one that came right after the allocation would
+                // let a single release hand the blocks back.
                 Atomics.wait(view, 0, 0, 150);
                 // The main thread reads RSS in each phase, and sets GO to the phase when it has.
                 Atomics.store(view, 1, 1);
@@ -516,6 +519,9 @@ test.skipIf(!isLinux || isASAN || isDebug)(
 );
 
 // ..and the waiter drops the lock of the waiter list for that second release as well, about 200 ms into the wait.
+// The worker keeps one block of each size alive over the wait, so that no page becomes free as a whole: the waiting
+// thread then has about 30 MiB to discard by itself in the second release, which takes 3 to 5 ms. The main thread
+// notifies when RSS begins to fall, or on the clock where RSS does not show it.
 test.skipIf(isASAN /* malloc is not mimalloc */)(
   "a notify that arrives while Atomics.wait releases a second time is not lost",
   async () => {
@@ -525,7 +531,7 @@ test.skipIf(isASAN /* malloc is not mimalloc */)(
         "-e",
         `
       const view = new Int32Array(new SharedArrayBuffer(16));
-      const [VALUE, WAITING, LAST] = [0, 1, 2];
+      const [VALUE, WAITING, LAST, STOPPED] = [0, 1, 2, 3];
       const worker = new Worker(
         URL.createObjectURL(
           new Blob(
@@ -534,22 +540,31 @@ test.skipIf(isASAN /* malloc is not mimalloc */)(
               self.onmessage = event => {
                 const view = new Int32Array(event.data);
                 const results = [];
+                let kept = [];
                 for (;;) {
-                  // Large blocks, freed right before the wait: the first release leaves them, and the second one
-                  // has 44 MiB to hand back and takes a while.
                   const blocks = [];
                   for (let kib = 96; kib <= 480; kib += 32) {
                     for (let i = 0; i < 12; i++) blocks.push(new Uint8Array(kib * 1024).fill(1));
                   }
-                  for (const block of blocks) block.buffer.transfer(0);
+                  // transfer(0) frees the memory here and now. What the last round kept goes first, so that
+                  // nothing is freed during the wait.
+                  for (const block of kept) block.buffer.transfer(0);
+                  kept = [];
+                  for (let i = 0; i < blocks.length; i++) {
+                    if (i % 12 === 5) kept.push(blocks[i]);
+                    else blocks[i].buffer.transfer(0);
+                  }
                   Atomics.store(view, 1, 1);
                   // A waiter that misses its notification is off the list already: it sleeps for the whole
                   // timeout and then still answers "ok".
                   const start = performance.now();
                   const result = Atomics.wait(view, 0, 0, 10000);
                   results.push(performance.now() - start > 5000 ? "late" : result);
+                  // One late wait is enough: stop, so that the test reports it before its own timeout.
+                  const last = Atomics.load(view, 2) || results.at(-1) === "late";
+                  if (last) Atomics.store(view, 3, 1);
                   Atomics.store(view, 0, 0);
-                  if (Atomics.load(view, 2)) return postMessage(results);
+                  if (last) return postMessage(results);
                 }
               };
               \`,
@@ -560,19 +575,32 @@ test.skipIf(isASAN /* malloc is not mimalloc */)(
       );
       worker.postMessage(view.buffer);
       const results = new Promise(resolve => (worker.onmessage = event => resolve(event.data)));
-      const delays = [];
-      for (let delay = 200; delay <= 207; delay += 1) delays.push(delay);
-      for (const delay of delays) {
-        while (Atomics.load(view, WAITING) !== 1);
+      const rss = () => process.memoryUsage.rss() / 1048576;
+      const rounds = 8;
+      let duringRelease = 0;
+      for (let round = 0; round < rounds; round++) {
+        while (Atomics.load(view, WAITING) !== 1 && !Atomics.load(view, STOPPED));
+        if (Atomics.load(view, STOPPED)) break;
         Atomics.store(view, WAITING, 0);
         const start = performance.now();
-        while (performance.now() - start < delay);
-        if (delay === delays.at(-1)) Atomics.store(view, LAST, 1);
+        // The first release, 100 ms into the wait, is over by now. It leaves the blocks.
+        while (performance.now() - start < 150);
+        const before = rss();
+        // The second release begins 200 ms into the wait.
+        const onTheClock = 201 + round;
+        while (performance.now() - start < onTheClock && before - rss() < 2);
+        if (round === rounds - 1) Atomics.store(view, LAST, 1);
+        const atNotify = rss();
         Atomics.store(view, VALUE, 1);
         Atomics.notify(view, VALUE);
+        // The worker stores 0 when its wait has returned, which is after the release. A release that went on
+        // discarding after the notify was under way when the notify came.
+        while (Atomics.load(view, VALUE) !== 0);
+        if (atNotify - rss() > 4) duringRelease++;
       }
       // ("not-equal" if the worker was held up for that long before it got to wait)
-      console.log(JSON.stringify((await results).filter(result => result !== "ok" && result !== "not-equal")), delays.length);
+      const lost = (await results).filter(result => result !== "ok" && result !== "not-equal");
+      console.log(JSON.stringify({ lost, rounds, duringRelease, cpus: navigator.hardwareConcurrency }));
       process.exit(0);
       `,
       ],
@@ -580,6 +608,21 @@ test.skipIf(isASAN /* malloc is not mimalloc */)(
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "[] 8\n", stderr: "", exitCode: 0 });
+    expect(stderr).toBe("");
+    const { lost, rounds, duringRelease, cpus } = JSON.parse(stdout);
+    // On Linux a notify has to arrive while the second release runs, or this tests nothing. With one CPU the two
+    // threads take turns and that is left to chance (1 notify of 8, and none in 1 run of 16). Elsewhere the clock
+    // decides when the notifies are sent, and the number is only printed.
+    expect({ lost, rounds, duringRelease, cpus, met: !isLinux || cpus === 1 || duringRelease > 0 }).toEqual({
+      lost: [],
+      rounds: 8,
+      duringRelease,
+      cpus,
+      met: true,
+    });
+    expect(exitCode).toBe(0);
   },
+  // About 2.5 s when it passes. A lost notification makes the wait take its whole 10 s timeout, and that is to be
+  // reported by the assertion and not as a timeout.
+  30_000,
 );

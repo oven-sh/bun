@@ -1,6 +1,6 @@
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isLinux, isMacOS, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, isMacOS, tempDir } from "harness";
 
 describe("heapStats() mimalloc integration", () => {
   test("mimalloc aggregate stats are present", () => {
@@ -299,8 +299,8 @@ describe("heapStats() mimalloc integration", () => {
   // pages. A sweep also passes the pages that other threads use, and each sweep moves the clock by which the allocator
   // tells which blocks were used a moment ago: helper threads that came back for those pages took the buffers of a
   // thread that uses them again every few hundred ms, which then faulted all of them in again (2500 faults for 10 MiB).
-  // Linux only: reads the minor faults of the thread from /proc. Not ASAN: malloc is not mimalloc there.
-  test.skipIf(!isLinux || isASAN)(
+  // Linux only: reads the minor faults of the thread from /proc. Not ASAN or debug: malloc is not mimalloc there.
+  test.skipIf(!isLinux || isASAN || isDebug)(
     "idle helper threads leave the large buffers that a busy thread takes again",
     async () => {
       await using proc = Bun.spawn({
@@ -330,15 +330,16 @@ describe("heapStats() mimalloc integration", () => {
             }
             // The helper threads work in a collection and go idle after it.
             Bun.gc(true);
-            // No await: this thread does not go idle. The 200 ms are the input of this test, two intervals of the
-            // helper threads' sweeps.
-            const end = performance.now() + 200;
+            // No await: this thread does not go idle. The 300 ms are the input of this test: a helper thread that
+            // comes back does so 200 ms after the collection.
+            const end = performance.now() + 300;
             while (performance.now() < end);
           }
           console.log(JSON.stringify({ perRound, kept: kept.length }));
         `,
         ],
-        env: bunEnv,
+        // `bun -e` runs with one GC marker, which means no helper threads. This gives it 7 on any machine.
+        env: { ...bunEnv, BUN_JSC_numberOfGCMarkers: "8" },
         stdout: "pipe",
         stderr: "inherit",
       });

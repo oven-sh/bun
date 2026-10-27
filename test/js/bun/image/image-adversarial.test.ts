@@ -430,7 +430,7 @@ describe("malformed PNG structure", () => {
     expect(await survives(new Bun.Image(buf).bytes())).toBe("rejected");
   });
 
-  test("IHDR CRC mismatch is tolerated (spng default ignores CRC)", async () => {
+  test("IHDR CRC mismatch is tolerated (checksums are skipped on decode)", async () => {
     const buf = Buffer.from(tinyPng);
     buf[29] ^= 0xff;
     expect(await new Bun.Image(buf).metadata()).toEqual({ width: 2, height: 2, format: "png" });

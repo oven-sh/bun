@@ -19,7 +19,7 @@ mod util;
 mod vp8;
 mod vp8l;
 
-pub use error::{DecodeError, EncodeError};
+pub use error::{Error, Result};
 use util::{Bug, Checked, SliceExt};
 
 /// Where the decoders write: non-premultiplied R, G, B, A bytes.
@@ -30,17 +30,17 @@ pub(crate) struct Output<'a> {
 
 impl Output<'_> {
     /// `WebPAllocateDecBuffer` for memory of the caller's.
-    pub(crate) fn check(&self, width: usize, height: usize) -> Result<(), DecodeError> {
-        let row = width.checked_mul(4).ok_or(DecodeError::InvalidParam)?;
-        let last = height.checked_sub(1).ok_or(DecodeError::InvalidParam)?;
+    pub(crate) fn check(&self, width: usize, height: usize) -> Result<(), Error> {
+        let row = width.checked_mul(4).ok_or(Error::InvalidParam)?;
+        let last = height.checked_sub(1).ok_or(Error::InvalidParam)?;
         // The last row needs no padding.
         let size = self
             .stride
             .checked_mul(last)
             .and_then(|size| size.checked_add(row))
-            .ok_or(DecodeError::InvalidParam)?;
+            .ok_or(Error::InvalidParam)?;
         if width == 0 || size > self.rgba.len() || self.stride < row {
-            return Err(DecodeError::InvalidParam);
+            return Err(Error::InvalidParam);
         }
         Ok(())
     }
@@ -53,13 +53,19 @@ impl Output<'_> {
     }
 }
 
-/// `WebPGetInfo`: the width and the height, from as little of the file as it takes.
-pub fn get_info(data: &[u8]) -> Result<(u32, u32), DecodeError> {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Info {
+    pub width: u32,
+    pub height: u32,
+}
+
+/// `WebPGetInfo`, from as little of the file as it takes.
+pub fn get_info(data: &[u8]) -> Result<Info> {
     riff::get_info(data)
 }
 
 /// `WebPDecodeRGBAInto`. Rows are `stride` bytes apart. What `rgba` holds after an error is unspecified.
-pub fn decode_rgba_into(data: &[u8], rgba: &mut [u8], stride: usize) -> Result<(), DecodeError> {
+pub fn decode_rgba_into(data: &[u8], rgba: &mut [u8], stride: usize) -> Result<()> {
     let headers = riff::parse_headers(data)?;
     let mut output = Output { rgba, stride };
     if headers.is_lossless {
@@ -90,7 +96,7 @@ pub fn encode_rgba(
     stride: usize,
     compression: Compression,
     icc_profile: Option<&[u8]>,
-) -> Result<Vec<u8>, EncodeError> {
+) -> Result<Vec<u8>> {
     let input = Input::new(rgba, width, height, stride)?;
     let image = match compression {
         Compression::Lossy { quality } => vp8::enc::encode(&input, quality)?,
@@ -111,17 +117,17 @@ pub(crate) struct Input<'a> {
 }
 
 impl<'a> Input<'a> {
-    fn new(rgba: &'a [u8], width: u32, height: u32, stride: usize) -> Result<Self, EncodeError> {
+    fn new(rgba: &'a [u8], width: u32, height: u32, stride: usize) -> Result<Self, Error> {
         if width == 0 || height == 0 || width > MAX_DIMENSION || height > MAX_DIMENSION {
-            return Err(EncodeError::BadDimension);
+            return Err(Error::BadDimension);
         }
         let (width, height) = (width as usize, height as usize);
         let size = stride
             .checked_mul(height - 1)
             .and_then(|size| size.checked_add(4 * width))
-            .ok_or(EncodeError::BadDimension)?;
+            .ok_or(Error::BadDimension)?;
         if stride < 4 * width || rgba.len() < size {
-            return Err(EncodeError::BadDimension);
+            return Err(Error::BadDimension);
         }
         Ok(Self {
             rgba,

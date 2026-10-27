@@ -31,8 +31,9 @@ use super::format_constants::{
     sub_sample_size,
 };
 use crate::container::Image;
-use crate::util::{Bug, Checked, OutOfMemory, SliceExt, try_vec};
-use crate::{EncodeError, Input};
+use crate::util::{Bug, Checked, SliceExt, try_vec};
+use crate::{Error, Input};
+use bun_alloc::AllocError;
 use predictors::sub_pixels;
 
 /// The most tiles that can each have prefix codes of their own.
@@ -297,7 +298,7 @@ const GROUP_SIZE_WITHOUT_LITERAL: usize = 3 * NUM_LITERAL_CODES + NUM_DISTANCE_C
 
 impl HuffmanCodes {
     /// `GetHuffBitLengthsAndCodes`
-    fn new(histogram_image: &mut [Histogram], cache_bits: u32) -> Result<Self, EncodeError> {
+    fn new(histogram_image: &mut [Histogram], cache_bits: u32) -> Result<Self, Error> {
         let num_literal_symbols = histogram_num_codes(cache_bits);
         let group_size = num_literal_symbols + GROUP_SIZE_WITHOUT_LITERAL;
         let mut symbols = try_vec(Symbol::default(), group_size * histogram_image.len())?;
@@ -329,12 +330,12 @@ impl HuffmanCodes {
     }
 
     /// Writes the codes of the first `num_groups` histograms. After that a code with a single symbol takes no bits.
-    fn store(&mut self, bw: &mut BitWriter, num_groups: usize) -> Result<(), EncodeError> {
+    fn store(&mut self, bw: &mut BitWriter, num_groups: usize) -> Result<(), Error> {
         let mut scratch = Scratch::new(CODE_LENGTH_CODES)?;
         let mut tokens = Vec::new();
         tokens
             .try_reserve_exact(self.group_size - GROUP_SIZE_WITHOUT_LITERAL)
-            .map_err(|_| OutOfMemory)?;
+            .map_err(|_| AllocError)?;
         for group in self
             .symbols
             .chunks_exact_mut(self.group_size)
@@ -568,7 +569,7 @@ fn encode_image_no_huffman(
     argb: &[u32],
     width: usize,
     quality: i32,
-) -> Result<(), EncodeError> {
+) -> Result<(), Error> {
     let mut hash_chain = HashChain::new(argb.len())?;
     let mut refs = BackwardRefs::default();
     hash_chain.fill(quality, argb, width)?;
@@ -608,7 +609,7 @@ fn encode_image_internal(
     sub_configs: &[&[Lz77]],
     cache_bits: u32,
     histogram_bits_in: u32,
-) -> Result<(), EncodeError> {
+) -> Result<(), Error> {
     let histogram_image_xysize =
         sub_sample_size(width, histogram_bits_in) * sub_sample_size(height, histogram_bits_in);
     let mut histogram_argb = try_vec(0u32, histogram_image_xysize)?;
@@ -726,7 +727,7 @@ fn apply_predict_filter(
     config: Config,
     transform_bits: u32,
     bw: &mut BitWriter,
-) -> Result<(), EncodeError> {
+) -> Result<(), Error> {
     let bits = clamp_bits(
         width,
         height,
@@ -753,7 +754,7 @@ fn apply_cross_color_filter(
     quality: i32,
     transform_bits: u32,
     bw: &mut BitWriter,
-) -> Result<(), EncodeError> {
+) -> Result<(), Error> {
     let (transform_data, best_bits) = color_space_transform(width, height, transform_bits, argb)?;
     put_transform(bw, TransformType::CrossColor);
     bw.put_bits(best_bits - MIN_TRANSFORM_BITS, NUM_TRANSFORM_BITS);
@@ -808,7 +809,7 @@ fn apply_palette_for(
     xbits: u32,
     first_color: u32,
     color_index: impl Fn(u32) -> u8,
-) -> Result<(), EncodeError> {
+) -> Result<(), Error> {
     let mut tmp_row = try_vec(0u8, width)?;
     let dst_stride = sub_sample_size(width, xbits);
     let mut prev_pix = first_color;
@@ -833,7 +834,7 @@ fn apply_palette(
     width: usize,
     height: usize,
     xbits: u32,
-) -> Result<(), EncodeError> {
+) -> Result<(), Error> {
     let first_color = palette.at(0)?;
     macro_rules! with_table {
         ($hash:expr) => {
@@ -869,7 +870,7 @@ fn map_image_from_palette(
     palette: &[u32],
     width: usize,
     height: usize,
-) -> Result<usize, EncodeError> {
+) -> Result<usize, Error> {
     let xbits = match palette.len() {
         ..=2 => 3,
         3..=4 => 2,
@@ -882,7 +883,7 @@ fn map_image_from_palette(
     Ok(current_width)
 }
 
-fn encode_palette(bw: &mut BitWriter, palette: &[u32]) -> Result<(), EncodeError> {
+fn encode_palette(bw: &mut BitWriter, palette: &[u32]) -> Result<(), Error> {
     // A decoder fills its palette up with transparent black, which only helps where the indices are not packed.
     let encoded_palette = match palette {
         [rest @ .., 0] if palette.len() > 17 => rest,
@@ -913,7 +914,7 @@ pub(crate) fn encode_stream(
     width: usize,
     height: usize,
     bw: &mut BitWriter,
-) -> Result<(), EncodeError> {
+) -> Result<(), Error> {
     if width == 0 || argb.len() != width * height || argb.is_empty() {
         return Err(Bug.into());
     }
@@ -984,7 +985,7 @@ pub(crate) fn encode_stream(
 }
 
 /// `WebPEncodeLosslessRGBA`, without the container.
-pub(crate) fn encode(input: &Input<'_>) -> Result<Image, EncodeError> {
+pub(crate) fn encode(input: &Input<'_>) -> Result<Image, Error> {
     let (width, height) = (input.width, input.height);
     let mut argb = try_vec(0u32, width * height)?;
     let mut has_alpha = false;

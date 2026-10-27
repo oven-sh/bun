@@ -1,11 +1,12 @@
 //! `huffman_utils.c`: two-level lookup tables for decoding prefix codes.
 
-use crate::DecodeError;
-use crate::util::{Bug, Checked, OutOfMemory, SliceExt};
+use crate::Error;
+use crate::util::{Bug, Checked, SliceExt};
 use crate::vp8l::format_constants::{
     CODE_LENGTH_CODES, HUFFMAN_CODES_PER_META_CODE, MAX_ALLOWED_CODE_LENGTH, MAX_CACHE_BITS,
     NUM_LENGTH_CODES, NUM_LITERAL_CODES,
 };
+use bun_alloc::AllocError;
 
 pub(super) const HUFFMAN_TABLE_BITS: u32 = 8;
 pub(super) const HUFFMAN_TABLE_MASK: u32 = (1 << HUFFMAN_TABLE_BITS) - 1;
@@ -255,12 +256,12 @@ pub(super) fn append_huffman_table(
     tables: &mut Vec<HuffmanCode>,
     code_lengths: &[u8],
     sorted: &mut [u16; MAX_CODE_LENGTHS_SIZE],
-) -> Result<usize, DecodeError> {
+) -> Result<usize, Error> {
     let root_bits = HUFFMAN_TABLE_BITS as usize;
     let size = build_huffman_table(None, root_bits, code_lengths, &mut [])?
-        .ok_or(DecodeError::BitstreamError)?;
+        .ok_or(Error::BitstreamError)?;
     let start = tables.len();
-    tables.try_reserve(size).map_err(|_| OutOfMemory)?;
+    tables.try_reserve(size).map_err(|_| AllocError)?;
     tables.resize(start + size, HuffmanCode::default());
     build_huffman_table(
         Some(tables.sub_mut(start..)?),

@@ -1,5 +1,6 @@
 //! `demux.c`: finds the ICC profile. libwebp hands out chunks only if the whole container is valid, so this walks it.
 
+use crate::Info;
 use crate::riff::{
     self, ALPHA_FLAG, ANIMATION_FLAG, CHUNK_HEADER_SIZE, ICCP_FLAG, MAX_CHUNK_PAYLOAD,
     MAX_IMAGE_AREA, RIFF_HEADER_SIZE, TAG_SIZE, VP8X_CHUNK_SIZE,
@@ -91,7 +92,10 @@ impl Frame {
                 b"VP8L" if self.alpha.is_some() => return None,
                 b"VP8 " | b"VP8L" if self.image.is_none() => {
                     let chunk = reader.buf.get(start..start + CHUNK_HEADER_SIZE + padded)?;
-                    (self.width, self.height) = riff::get_info(chunk).ok()?;
+                    Info {
+                        width: self.width,
+                        height: self.height,
+                    } = riff::get_info(chunk).ok()?;
                     self.image = Some(start);
                 }
                 _ => {

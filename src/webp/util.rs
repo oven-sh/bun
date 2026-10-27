@@ -1,5 +1,6 @@
 //! Slice access that reports a broken invariant instead of panicking, and allocation that can fail.
 
+use bun_alloc::AllocError;
 use core::slice::SliceIndex;
 
 /// An index or a length that the algorithm keeps in range was out of range. No input should be able to cause it.
@@ -109,14 +110,10 @@ impl<T> SliceExt<T> for [T] {
     }
 }
 
-/// The allocation failed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct OutOfMemory;
-
 /// `len` copies of `value`, or nothing if there is no memory for them.
-pub(crate) fn try_vec<T: Clone>(value: T, len: usize) -> Result<Vec<T>, OutOfMemory> {
+pub(crate) fn try_vec<T: Clone>(value: T, len: usize) -> Result<Vec<T>, AllocError> {
     let mut vec = Vec::new();
-    vec.try_reserve_exact(len).map_err(|_| OutOfMemory)?;
+    vec.try_reserve_exact(len).map_err(|_| AllocError)?;
     vec.resize(len, value);
     Ok(vec)
 }

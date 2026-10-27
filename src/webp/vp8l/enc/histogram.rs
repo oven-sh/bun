@@ -5,11 +5,12 @@ use super::lossless::{
     BitEntropy, LOG_2_PRECISION_BITS, Streaks, add_vector_eq, bits_entropy_unrefined, div_round,
     extra_cost, get_combined_entropy_unrefined, get_entropy_unrefined, prefix_encode,
 };
-use crate::EncodeError;
-use crate::util::{Bug, Checked, OutOfMemory, SliceExt, try_vec};
+use crate::Error;
+use crate::util::{Bug, Checked, SliceExt, try_vec};
 use crate::vp8l::format_constants::{
     CODE_LENGTH_CODES, NUM_DISTANCE_CODES, NUM_LENGTH_CODES, NUM_LITERAL_CODES, sub_sample_size,
 };
+use bun_alloc::AllocError;
 
 /// Into how many ranges the cost of the literal, the red and the blue symbols each is split.
 const NUM_PARTITIONS: usize = 4;
@@ -58,7 +59,7 @@ pub(crate) const fn histogram_num_codes(palette_code_bits: u32) -> usize {
 
 impl Histogram {
     /// All counts are 0.
-    pub(crate) fn new(palette_code_bits: u32) -> Result<Self, OutOfMemory> {
+    pub(crate) fn new(palette_code_bits: u32) -> Result<Self, AllocError> {
         Ok(Self {
             literal: try_vec(0, histogram_num_codes(palette_code_bits))?,
             red: [0; NUM_LITERAL_CODES],
@@ -72,10 +73,7 @@ impl Histogram {
     }
 
     /// `VP8LHistogramCreate`
-    pub(crate) fn from_refs(
-        refs: &BackwardRefs,
-        palette_code_bits: u32,
-    ) -> Result<Self, EncodeError> {
+    pub(crate) fn from_refs(refs: &BackwardRefs, palette_code_bits: u32) -> Result<Self, Error> {
         let mut histo = Self::new(palette_code_bits)?;
         histo.store_refs(refs, |distance| distance)?;
         Ok(histo)
@@ -377,13 +375,13 @@ struct HistogramSet {
 }
 
 impl HistogramSet {
-    fn new(max_size: usize, cache_bits: u32) -> Result<Self, OutOfMemory> {
+    fn new(max_size: usize, cache_bits: u32) -> Result<Self, AllocError> {
         let mut histograms = Vec::new();
         let mut slots = Vec::new();
         histograms
             .try_reserve_exact(max_size + 1)
-            .map_err(|_| OutOfMemory)?;
-        slots.try_reserve_exact(max_size).map_err(|_| OutOfMemory)?;
+            .map_err(|_| AllocError)?;
+        slots.try_reserve_exact(max_size).map_err(|_| AllocError)?;
         for _ in 0..=max_size {
             histograms.push(Histogram::new(cache_bits)?);
         }
@@ -627,9 +625,9 @@ struct HistoQueue {
 }
 
 impl HistoQueue {
-    fn new(max_size: usize) -> Result<Self, OutOfMemory> {
+    fn new(max_size: usize) -> Result<Self, AllocError> {
         let mut queue = Vec::new();
-        queue.try_reserve_exact(max_size).map_err(|_| OutOfMemory)?;
+        queue.try_reserve_exact(max_size).map_err(|_| AllocError)?;
         Ok(Self { queue, max_size })
     }
 
@@ -674,7 +672,7 @@ impl HistoQueue {
 // -----------------------------------------------------------------------------
 
 /// Merges the pair that saves the most, over and over.
-fn histogram_combine_greedy(image_histo: &mut HistogramSet) -> Result<(), EncodeError> {
+fn histogram_combine_greedy(image_histo: &mut HistogramSet) -> Result<(), Error> {
     let image_histo_size = image_histo.size;
     // Each pair of the histograms there are now, and each that a merged histogram forms later.
     let mut histo_queue = HistoQueue::new(image_histo_size * image_histo_size)?;
@@ -713,7 +711,7 @@ fn histogram_combine_greedy(image_histo: &mut HistogramSet) -> Result<(), Encode
 fn histogram_combine_stochastic(
     image_histo: &mut HistogramSet,
     min_cluster_size: usize,
-) -> Result<bool, EncodeError> {
+) -> Result<bool, Error> {
     const HISTO_QUEUE_SIZE: usize = 9;
     let mut seed = 1u32;
     let mut tries_with_no_success = 0;
@@ -853,12 +851,12 @@ pub(crate) fn get_histo_image_symbols(
     histogram_bits: u32,
     cache_bits: u32,
     histogram_symbols: &mut [u32],
-) -> Result<Vec<Histogram>, EncodeError> {
+) -> Result<Vec<Histogram>, Error> {
     let image_histo_raw_size = histogram_symbols.len();
     let mut orig_histo = Vec::new();
     orig_histo
         .try_reserve_exact(image_histo_raw_size)
-        .map_err(|_| OutOfMemory)?;
+        .map_err(|_| AllocError)?;
     for _ in 0..image_histo_raw_size {
         orig_histo.push(Histogram::new(cache_bits)?);
     }

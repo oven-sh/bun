@@ -2047,6 +2047,7 @@ dependencies = [
 name = "bun_webp"
 version = "0.0.0"
 dependencies = [
+ "bun_alloc",
  "thiserror",
 ]
 

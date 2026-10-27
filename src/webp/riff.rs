@@ -1,7 +1,7 @@
 //! The chunks in front of the bitstream, as the decoder reads them (`webp_dec.c`).
 
-use crate::DecodeError;
 use crate::util::{Checked, SliceExt};
+use crate::{Error, Info};
 use crate::{vp8, vp8l};
 
 pub(crate) const TAG_SIZE: usize = 4;
@@ -41,20 +41,20 @@ struct Parsed<'a> {
 }
 
 /// Skips the RIFF header if there is one and returns its size field, or 0.
-fn parse_riff(data: &mut &[u8], have_all_data: bool) -> Result<u32, DecodeError> {
+fn parse_riff(data: &mut &[u8], have_all_data: bool) -> Result<u32, Error> {
     if data.len() < RIFF_HEADER_SIZE || !data.starts_with(b"RIFF") {
         return Ok(0);
     }
     if data.sub(8..12)? != b"WEBP" {
-        return Err(DecodeError::BitstreamError);
+        return Err(Error::BitstreamError);
     }
     let size = le32(data, TAG_SIZE)?;
     // At least one chunk: "WEBP" + "VP8?nnnn".
     if (size as usize) < TAG_SIZE + CHUNK_HEADER_SIZE || size > MAX_CHUNK_PAYLOAD {
-        return Err(DecodeError::BitstreamError);
+        return Err(Error::BitstreamError);
     }
     if have_all_data && size as usize > data.len() - CHUNK_HEADER_SIZE {
-        return Err(DecodeError::NotEnoughData);
+        return Err(Error::NotEnoughData);
     }
     *data = data.sub(RIFF_HEADER_SIZE..)?;
     Ok(size)
@@ -67,24 +67,24 @@ struct Vp8x {
 }
 
 /// Skips the `VP8X` chunk if the data starts with one.
-fn parse_vp8x(data: &mut &[u8]) -> Result<Option<Vp8x>, DecodeError> {
+fn parse_vp8x(data: &mut &[u8]) -> Result<Option<Vp8x>, Error> {
     if data.len() < CHUNK_HEADER_SIZE {
-        return Err(DecodeError::NotEnoughData);
+        return Err(Error::NotEnoughData);
     }
     if !data.starts_with(b"VP8X") {
         return Ok(None);
     }
     if le32(data, TAG_SIZE)? as usize != VP8X_CHUNK_SIZE {
-        return Err(DecodeError::BitstreamError);
+        return Err(Error::BitstreamError);
     }
     if data.len() < CHUNK_HEADER_SIZE + VP8X_CHUNK_SIZE {
-        return Err(DecodeError::NotEnoughData);
+        return Err(Error::NotEnoughData);
     }
     let flags = le32(data, 8)?;
     let width = 1 + le24(data, 12)?;
     let height = 1 + le24(data, 15)?;
     if u64::from(width) * u64::from(height) >= MAX_IMAGE_AREA {
-        return Err(DecodeError::BitstreamError);
+        return Err(Error::BitstreamError);
     }
     *data = data.sub(CHUNK_HEADER_SIZE + VP8X_CHUNK_SIZE..)?;
     Ok(Some(Vp8x {
@@ -98,30 +98,30 @@ fn parse_vp8x(data: &mut &[u8]) -> Result<Option<Vp8x>, DecodeError> {
 fn parse_optional_chunks<'a>(
     data: &mut &'a [u8],
     riff_size: u32,
-) -> Result<Option<&'a [u8]>, DecodeError> {
+) -> Result<Option<&'a [u8]>, Error> {
     let mut total_size = (TAG_SIZE + CHUNK_HEADER_SIZE + VP8X_CHUNK_SIZE) as u32;
     let mut alpha = None;
     loop {
         let buf = *data;
         if buf.len() < CHUNK_HEADER_SIZE {
-            return Err(DecodeError::NotEnoughData);
+            return Err(Error::NotEnoughData);
         }
         let chunk_size = le32(buf, TAG_SIZE)?;
         if chunk_size > MAX_CHUNK_PAYLOAD {
-            return Err(DecodeError::BitstreamError);
+            return Err(Error::BitstreamError);
         }
         // An odd payload is followed by one byte of padding.
         let disk_chunk_size = (CHUNK_HEADER_SIZE as u32 + chunk_size + 1) & !1;
         total_size = total_size.wrapping_add(disk_chunk_size);
         if riff_size > 0 && total_size > riff_size {
-            return Err(DecodeError::BitstreamError);
+            return Err(Error::BitstreamError);
         }
         // Before the length check below, so that the bitstream chunk may be incomplete.
         if buf.starts_with(b"VP8 ") || buf.starts_with(b"VP8L") {
             return Ok(alpha);
         }
         if buf.len() < disk_chunk_size as usize {
-            return Err(DecodeError::NotEnoughData);
+            return Err(Error::NotEnoughData);
         }
         if buf.starts_with(b"ALPH") {
             alpha = Some(buf.sub(CHUNK_HEADER_SIZE..CHUNK_HEADER_SIZE + chunk_size as usize)?);
@@ -135,38 +135,38 @@ fn parse_vp8_header(
     data: &mut &[u8],
     have_all_data: bool,
     riff_size: u32,
-) -> Result<(usize, bool), DecodeError> {
+) -> Result<(usize, bool), Error> {
     let is_vp8 = data.starts_with(b"VP8 ");
     let is_vp8l = data.starts_with(b"VP8L");
     let minimal_size = (TAG_SIZE + CHUNK_HEADER_SIZE) as u32;
     if data.len() < CHUNK_HEADER_SIZE {
-        return Err(DecodeError::NotEnoughData);
+        return Err(Error::NotEnoughData);
     }
     if !is_vp8 && !is_vp8l {
         return Ok((data.len(), vp8l::dec::check_signature(data)));
     }
     let size = le32(data, TAG_SIZE)?;
     if riff_size >= minimal_size && size > riff_size - minimal_size {
-        return Err(DecodeError::BitstreamError);
+        return Err(Error::BitstreamError);
     }
     if have_all_data && size as usize > data.len() - CHUNK_HEADER_SIZE {
-        return Err(DecodeError::NotEnoughData);
+        return Err(Error::NotEnoughData);
     }
     *data = data.sub(CHUNK_HEADER_SIZE..)?;
     Ok((size as usize, is_vp8l))
 }
 
 /// `want_headers`: the input is the whole file, and an animation is refused. Else it reads no further than the size.
-fn parse(input: &[u8], want_headers: bool) -> Result<Parsed<'_>, DecodeError> {
+fn parse(input: &[u8], want_headers: bool) -> Result<Parsed<'_>, Error> {
     if input.len() < RIFF_HEADER_SIZE {
-        return Err(DecodeError::NotEnoughData);
+        return Err(Error::NotEnoughData);
     }
     let mut data = input;
     let riff_size = parse_riff(&mut data, want_headers)?;
     let found_riff = riff_size > 0;
     let vp8x = parse_vp8x(&mut data)?;
     if !found_riff && vp8x.is_some() {
-        return Err(DecodeError::BitstreamError);
+        return Err(Error::BitstreamError);
     }
     let animated = vp8x
         .as_ref()
@@ -188,10 +188,8 @@ fn parse(input: &[u8], want_headers: bool) -> Result<Parsed<'_>, DecodeError> {
         from_canvas,
     ) {
         // libwebp parses an animation to the end before it refuses it.
-        (Ok(_) | Err(DecodeError::NotEnoughData), _) if animated => {
-            Err(DecodeError::UnsupportedFeature)
-        }
-        (Err(DecodeError::NotEnoughData), Some(parsed)) => Ok(parsed),
+        (Ok(_) | Err(Error::NotEnoughData), _) if animated => Err(Error::UnsupportedFeature),
+        (Err(Error::NotEnoughData), Some(parsed)) => Ok(parsed),
         (result, _) => result,
     }
 }
@@ -202,9 +200,9 @@ fn parse_image(
     have_all_data: bool,
     riff_size: u32,
     canvas: Option<(u32, u32)>,
-) -> Result<Parsed<'_>, DecodeError> {
+) -> Result<Parsed<'_>, Error> {
     if data.len() < TAG_SIZE {
-        return Err(DecodeError::NotEnoughData);
+        return Err(Error::NotEnoughData);
     }
     let found_riff = riff_size > 0;
     let mut alpha = None;
@@ -215,22 +213,22 @@ fn parse_image(
     }
     let (compressed_size, is_lossless) = parse_vp8_header(&mut data, have_all_data, riff_size)?;
     if compressed_size > MAX_CHUNK_PAYLOAD as usize {
-        return Err(DecodeError::BitstreamError);
+        return Err(Error::BitstreamError);
     }
     let (width, height) = if is_lossless {
         if data.len() < vp8l::dec::FRAME_HEADER_SIZE {
-            return Err(DecodeError::NotEnoughData);
+            return Err(Error::NotEnoughData);
         }
-        let info = vp8l::dec::get_info(data).ok_or(DecodeError::BitstreamError)?;
+        let info = vp8l::dec::get_info(data).ok_or(Error::BitstreamError)?;
         (info.width, info.height)
     } else {
         if data.len() < vp8::dec::FRAME_HEADER_SIZE {
-            return Err(DecodeError::NotEnoughData);
+            return Err(Error::NotEnoughData);
         }
-        vp8::dec::get_info(data, compressed_size).ok_or(DecodeError::BitstreamError)?
+        vp8::dec::get_info(data, compressed_size).ok_or(Error::BitstreamError)?
     };
     if canvas.is_some_and(|canvas| canvas != (width, height)) {
-        return Err(DecodeError::BitstreamError);
+        return Err(Error::BitstreamError);
     }
     Ok(Parsed {
         width,
@@ -243,13 +241,13 @@ fn parse_image(
     })
 }
 
-/// `WebPGetInfo`: the width and the height.
-pub(crate) fn get_info(data: &[u8]) -> Result<(u32, u32), DecodeError> {
-    let parsed = parse(data, false)?;
-    Ok((parsed.width, parsed.height))
+/// `WebPGetInfo`
+pub(crate) fn get_info(data: &[u8]) -> Result<Info, Error> {
+    let Parsed { width, height, .. } = parse(data, false)?;
+    Ok(Info { width, height })
 }
 
 /// `WebPParseHeaders` of a whole file.
-pub(crate) fn parse_headers(data: &[u8]) -> Result<Headers<'_>, DecodeError> {
-    parse(data, true)?.headers.ok_or(DecodeError::Bug)
+pub(crate) fn parse_headers(data: &[u8]) -> Result<Headers<'_>, Error> {
+    parse(data, true)?.headers.ok_or(Error::Bug)
 }

@@ -6,6 +6,7 @@ mod lossless;
 mod predictors;
 
 use bit_reader::BitReader;
+use bun_alloc::AllocError;
 use huffman::{
     HTreeGroup, HUFFMAN_PACKED_BITS, HUFFMAN_PACKED_TABLE_SIZE, HUFFMAN_TABLE_BITS,
     HUFFMAN_TABLE_MASK, HuffmanCode, HuffmanCode32, LENGTHS_TABLE_MASK, MAX_CODE_LENGTHS_SIZE,
@@ -20,8 +21,8 @@ use super::format_constants::{
     NUM_DISTANCE_CODES, NUM_HUFFMAN_BITS, NUM_LENGTH_CODES, NUM_LITERAL_CODES, NUM_TRANSFORM_BITS,
     NUM_TRANSFORMS, TransformType, VERSION_BITS, sub_sample_size,
 };
-use crate::util::{Bug, Checked, OutOfMemory, SliceExt, try_vec};
-use crate::{DecodeError, Output};
+use crate::util::{Bug, Checked, SliceExt, try_vec};
+use crate::{Error, Output};
 use predictors::{Pixel, add_pixels, block_of, first_pixel};
 
 pub(crate) use super::format_constants::FRAME_HEADER_SIZE;
@@ -171,16 +172,15 @@ fn read_huffman_code_lengths(
     br: &mut BitReader<'_>,
     code_length_code_lengths: &[u8; CODE_LENGTH_CODES],
     code_lengths: &mut [u8],
-) -> Result<(), DecodeError> {
-    let table =
-        build_lengths_table(code_length_code_lengths)?.ok_or(DecodeError::BitstreamError)?;
+) -> Result<(), Error> {
+    let table = build_lengths_table(code_length_code_lengths)?.ok_or(Error::BitstreamError)?;
     let num_symbols = code_lengths.len();
     let mut max_symbol = num_symbols;
     if br.read_bits(1) != 0 {
         let length_nbits = 2 + 2 * br.read_bits(3);
         max_symbol = 2 + br.read_bits(length_nbits) as usize;
         if max_symbol > num_symbols {
-            return Err(DecodeError::BitstreamError);
+            return Err(Error::BitstreamError);
         }
     }
 
@@ -204,7 +204,7 @@ fn read_huffman_code_lengths(
             let repeat_offset = CODE_LENGTH_REPEAT_OFFSETS.at(slot)?;
             let repeat = br.read_bits(extra_bits.into()) as usize + usize::from(repeat_offset);
             let Some(repeated) = code_lengths.get_mut(symbol..symbol + repeat) else {
-                return Err(DecodeError::BitstreamError);
+                return Err(Error::BitstreamError);
             };
             if code_len == CODE_LENGTH_REPEAT_CODE {
                 repeated.fill(prev_code_len);
@@ -227,7 +227,7 @@ fn read_huffman_code(
     br: &mut BitReader<'_>,
     buffers: &mut CodeBuffers,
     tables: Option<&mut Vec<HuffmanCode>>,
-) -> Result<usize, DecodeError> {
+) -> Result<usize, Error> {
     let code_lengths = buffers.code_lengths.sub_mut(..alphabet_size)?;
     code_lengths.fill(0);
 
@@ -252,13 +252,13 @@ fn read_huffman_code(
         read_huffman_code_lengths(br, &code_length_code_lengths, code_lengths)?;
     }
     if br.eos {
-        return Err(DecodeError::BitstreamError);
+        return Err(Error::BitstreamError);
     }
 
     let Some(tables) = tables else {
         return match is_valid_huffman_code(code_lengths)? {
             true => Ok(0),
-            false => Err(DecodeError::BitstreamError),
+            false => Err(Error::BitstreamError),
         };
     };
     append_huffman_table(tables, code_lengths, &mut buffers.sorted)
@@ -314,7 +314,7 @@ fn read_huffman_codes_helper(
     num_htree_groups: usize,
     num_htree_groups_max: usize,
     mapping: Option<&[Option<u32>]>,
-) -> Result<(Vec<HTreeGroup>, Vec<HuffmanCode>), DecodeError> {
+) -> Result<(Vec<HTreeGroup>, Vec<HuffmanCode>), Error> {
     let mut alphabet_sizes = ALPHABET_SIZE;
     if color_cache_bits > 0 {
         alphabet_sizes[GREEN] += 1 << color_cache_bits;
@@ -376,12 +376,12 @@ fn read_metadata(
     xsize: usize,
     ysize: usize,
     is_level0: bool,
-) -> Result<Metadata, DecodeError> {
+) -> Result<Metadata, Error> {
     let mut color_cache_bits = 0;
     if br.read_bits(1) != 0 {
         color_cache_bits = br.read_bits(4);
         if !(1..=MAX_CACHE_BITS).contains(&color_cache_bits) {
-            return Err(DecodeError::BitstreamError);
+            return Err(Error::BitstreamError);
         }
     }
 
@@ -416,7 +416,7 @@ fn read_metadata(
         }
     }
     if br.eos {
-        return Err(DecodeError::BitstreamError);
+        return Err(Error::BitstreamError);
     }
 
     let (htree_groups, huffman_tables) = read_huffman_codes_helper(
@@ -466,9 +466,9 @@ fn copy_block<T: Copy>(data: &mut Vec<T>, dist: usize, length: usize) -> Checked
 }
 
 /// An empty vector with room for `capacity` elements.
-fn try_with_capacity<T>(capacity: usize) -> Result<Vec<T>, OutOfMemory> {
+fn try_with_capacity<T>(capacity: usize) -> Result<Vec<T>, AllocError> {
     let mut vec = Vec::new();
-    vec.try_reserve_exact(capacity).map_err(|_| OutOfMemory)?;
+    vec.try_reserve_exact(capacity).map_err(|_| AllocError)?;
     Ok(vec)
 }
 
@@ -489,7 +489,7 @@ fn decode_image_data(
     width: usize,
     height: usize,
     process_rows: &mut dyn FnMut(&[u32], usize) -> Checked,
-) -> Result<Vec<u32>, DecodeError> {
+) -> Result<Vec<u32>, Error> {
     let num_pixels = width * height;
     let mut data = try_with_capacity(num_pixels)?;
     // Apart from it, `hdr` stays borrowed.
@@ -557,7 +557,7 @@ fn decode_image_data(
                 break 'decode;
             }
             if data.len() < dist || num_pixels - data.len() < length {
-                return Err(DecodeError::BitstreamError);
+                return Err(Error::BitstreamError);
             }
             copy_block(&mut data, dist, length)?;
             col += length;
@@ -593,7 +593,7 @@ fn decode_image_data(
 
     br.eos = br.is_end_of_stream();
     if br.eos {
-        return Err(DecodeError::BitstreamError);
+        return Err(Error::BitstreamError);
     }
     process_rows(&data, row)?;
     Ok(data)
@@ -604,13 +604,13 @@ fn decode_image_stream(
     br: &mut BitReader<'_>,
     xsize: usize,
     ysize: usize,
-) -> Result<Vec<u32>, DecodeError> {
+) -> Result<Vec<u32>, Error> {
     let mut hdr = read_metadata(br, xsize, ysize, false)?;
     decode_image_data(br, &mut hdr, xsize, ysize, &mut |_, _| Ok(()))
 }
 
 /// The colours are stored as differences.
-fn expand_color_map(colors: &[u32]) -> Result<Vec<u32>, OutOfMemory> {
+fn expand_color_map(colors: &[u32]) -> Result<Vec<u32>, AllocError> {
     let mut color_map = try_vec(0, COLOR_MAP_SIZE)?;
     let mut previous = block_of([0; 4]);
     for (new, color) in color_map.iter_mut().zip(colors) {
@@ -626,7 +626,7 @@ fn read_transform(
     xsize: &mut usize,
     ysize: usize,
     transforms: &mut Vec<Transform>,
-) -> Result<(), DecodeError> {
+) -> Result<(), Error> {
     let kind = match br.read_bits(2) {
         0 => TransformType::Predictor,
         1 => TransformType::CrossColor,
@@ -634,7 +634,7 @@ fn read_transform(
         _ => TransformType::ColorIndexing,
     };
     if transforms.iter().any(|transform| transform.kind == kind) {
-        return Err(DecodeError::BitstreamError);
+        return Err(Error::BitstreamError);
     }
     let mut transform = Transform {
         kind,
@@ -680,7 +680,7 @@ struct Decoder<'a> {
 
 impl<'a> Decoder<'a> {
     /// `DecodeImageStream` of the main image, up to the pixels.
-    fn new(mut br: BitReader<'a>, xsize: usize, ysize: usize) -> Result<Self, DecodeError> {
+    fn new(mut br: BitReader<'a>, xsize: usize, ysize: usize) -> Result<Self, Error> {
         let mut width = xsize;
         let mut transforms = Vec::with_capacity(NUM_TRANSFORMS);
         while br.read_bits(1) != 0 {
@@ -714,7 +714,7 @@ impl<'a> ArgbCache<'a> {
         transforms: &'a [Transform],
         width: usize,
         final_width: usize,
-    ) -> Result<Self, OutOfMemory> {
+    ) -> Result<Self, AllocError> {
         Ok(Self {
             transforms,
             width,
@@ -746,9 +746,9 @@ impl<'a> ArgbCache<'a> {
 }
 
 /// `VP8LDecodeHeader` and `VP8LDecodeImage`. `data` starts at the signature byte and goes on to the end of the file.
-pub(crate) fn decode(data: &[u8], output: &mut Output<'_>) -> Result<(), DecodeError> {
+pub(crate) fn decode(data: &[u8], output: &mut Output<'_>) -> Result<(), Error> {
     let mut br = BitReader::new(data);
-    let info = read_image_info(&mut br).ok_or(DecodeError::BitstreamError)?;
+    let info = read_image_info(&mut br).ok_or(Error::BitstreamError)?;
     let (width, height) = (info.width as usize, info.height as usize);
     let mut dec = Decoder::new(br, width, height)?;
     output.check(width, height)?;
@@ -777,7 +777,7 @@ fn decode_alpha_data(
     hdr: &Metadata,
     width: usize,
     height: usize,
-) -> Result<Vec<u8>, DecodeError> {
+) -> Result<Vec<u8>, Error> {
     let num_pixels = width * height;
     let mut data = try_with_capacity(num_pixels)?;
     let tables = hdr.huffman_tables.as_slice();
@@ -800,7 +800,7 @@ fn decode_alpha_data(
             }
         } else {
             if code >= LEN_CODE_LIMIT {
-                return Err(DecodeError::Bug);
+                return Err(Error::Bug);
             }
             let length = get_copy_length(code - NUM_LITERAL_CODES, br);
             let dist_symbol = read_symbol(tables, htree_group.htrees[DIST], br)?;
@@ -808,7 +808,7 @@ fn decode_alpha_data(
             let dist_code = get_copy_distance(dist_symbol, br);
             let dist = plane_code_to_distance(width, dist_code)?;
             if data.len() < dist || num_pixels - data.len() < length {
-                return Err(DecodeError::BitstreamError);
+                return Err(Error::BitstreamError);
             }
             copy_block(&mut data, dist, length)?;
             col += length;
@@ -824,7 +824,7 @@ fn decode_alpha_data(
     }
     // Unlike `decode_image_data`, this lets the last symbol go past the end of the data.
     if data.len() < num_pixels {
-        return Err(DecodeError::BitstreamError);
+        return Err(Error::BitstreamError);
     }
     Ok(data)
 }
@@ -835,7 +835,7 @@ pub(crate) fn decode_alpha(
     width: usize,
     height: usize,
     output: &mut [u8],
-) -> Result<(), DecodeError> {
+) -> Result<(), Error> {
     let mut dec = Decoder::new(BitReader::new(data), width, height)?;
 
     if let [transform] = dec.transforms.as_slice()

@@ -44,27 +44,63 @@ fn blocks(pixels: &[Pixel]) -> &[Block] {
     pixels.as_flattened().as_chunks().0
 }
 
-/// `VP8LPredictorsAdd[MODE]` for `row[x..x_end]`, `x` not 0. Not inlined: each mode compiles to a better loop alone.
-#[inline(never)]
-fn predictor_add<const MODE: u32>(
-    upper: &[Pixel],
-    row: &mut [Pixel],
-    x: usize,
-    x_end: usize,
-) -> Checked {
-    let (done, out) = row.sub_mut(..x_end)?.halves_mut(x)?;
-    let first = *done.first().ok_or(Bug)?;
-    let mut left = block_of(*done.last().ok_or(Bug)?);
-    let (top_left, top, top_right) = (upper.sub(x - 1..)?, upper.sub(x..)?, upper.sub(x + 1..)?);
+/// `row[x..x_end]`, with `x` not 0, as blocks of four pixels and the pixels that are left, and the row above.
+struct Span<'a> {
+    left: Pixel,
+    whole: &'a mut [Block],
+    rest: &'a mut [Pixel],
+    top_left: &'a [Pixel],
+    top: &'a [Pixel],
+    top_right: &'a [Pixel],
+    /// To the top right of the last pixel of a row is the first pixel of that row.
+    first: Pixel,
+}
 
-    let num_whole = out.len().min(top_right.len()) & !3;
-    let (whole, rest) = out.halves_mut(num_whole)?;
-    let neighbors = blocks(top_left)
-        .iter()
-        .zip(blocks(top))
-        .zip(blocks(top_right));
-    let whole = whole.as_flattened_mut().as_chunks_mut().0;
-    for (out, ((&top_left, &top), &top_right)) in whole.iter_mut().zip(neighbors) {
+impl<'a> Span<'a> {
+    fn new(upper: &'a [Pixel], row: &'a mut [Pixel], x: usize, x_end: usize) -> Checked<Self> {
+        let (done, out) = row.sub_mut(..x_end)?.halves_mut(x)?;
+        let top_right = upper.sub(x + 1..)?;
+        let (whole, rest) = out.halves_mut(out.len().min(top_right.len()) & !3)?;
+        Ok(Self {
+            left: *done.last().ok_or(Bug)?,
+            whole: whole.as_flattened_mut().as_chunks_mut().0,
+            rest,
+            top_left: upper.sub(x - 1..)?,
+            top: upper.sub(x..)?,
+            top_right,
+            first: *done.first().ok_or(Bug)?,
+        })
+    }
+
+    /// Each block with those to its top left, top and top right.
+    #[inline(always)]
+    fn whole(&mut self) -> impl Iterator<Item = (&mut Block, Block, Block, Block)> {
+        let above = blocks(self.top_left).iter().zip(blocks(self.top));
+        let above = above.zip(blocks(self.top_right));
+        let whole = self.whole.iter_mut().zip(above);
+        whole.map(|(out, ((&top_left, &top), &top_right))| (out, top_left, top, top_right))
+    }
+
+    /// The same for each pixel that is left.
+    #[inline(always)]
+    fn rest(&mut self) -> impl Iterator<Item = (&mut Pixel, Block, Block, Block)> {
+        let skip = 4 * self.whole.len();
+        let top_right = self.top_right.iter().skip(skip).chain([&self.first]);
+        let above = self.top_left.iter().zip(self.top).skip(skip).zip(top_right);
+        self.rest
+            .iter_mut()
+            .zip(above)
+            .map(|(out, ((&top_left, &top), &top_right))| {
+                (out, block_of(top_left), block_of(top), block_of(top_right))
+            })
+    }
+}
+
+/// `VP8LPredictorsAdd[MODE]`. Not inlined: each mode compiles to a better loop alone.
+#[inline(never)]
+fn predictor_add<const MODE: u32>(mut span: Span<'_>) {
+    let mut left = block_of(span.left);
+    for (out, top_left, top, top_right) in span.whole() {
         if !uses_left(MODE) {
             *out = add_pixels(*out, predict(MODE, left, top_left, top, top_right));
             continue;
@@ -78,20 +114,13 @@ fn predictor_add<const MODE: u32>(
             (top_left, top, top_right) = (shift(top_left), shift(top), shift(top_right));
         }
     }
-
-    // To the top right of the last pixel of a row is the first pixel of that row.
-    let top_right = top_right.sub(num_whole..)?.iter().chain([&first]);
-    let (top_left, top) = (top_left.sub(num_whole..)?, top.sub(num_whole..)?);
-    let neighbors = top_left.iter().zip(top).zip(top_right);
-    for (out, ((&top_left, &top), &top_right)) in rest.iter_mut().zip(neighbors) {
-        let (top_left, top, top_right) = (block_of(top_left), block_of(top), block_of(top_right));
+    for (out, top_left, top, top_right) in span.rest() {
         left = add_pixels(
             block_of(*out),
             predict(MODE, left, top_left, top, top_right),
         );
         *out = first_pixel(left);
     }
-    Ok(())
 }
 
 fn predictor_add_mode(
@@ -101,22 +130,24 @@ fn predictor_add_mode(
     x: usize,
     x_end: usize,
 ) -> Checked {
+    let span = Span::new(upper, row, x, x_end)?;
     match mode {
-        1 => predictor_add::<1>(upper, row, x, x_end),
-        2 => predictor_add::<2>(upper, row, x, x_end),
-        3 => predictor_add::<3>(upper, row, x, x_end),
-        4 => predictor_add::<4>(upper, row, x, x_end),
-        5 => predictor_add::<5>(upper, row, x, x_end),
-        6 => predictor_add::<6>(upper, row, x, x_end),
-        7 => predictor_add::<7>(upper, row, x, x_end),
-        8 => predictor_add::<8>(upper, row, x, x_end),
-        9 => predictor_add::<9>(upper, row, x, x_end),
-        10 => predictor_add::<10>(upper, row, x, x_end),
-        11 => predictor_add::<11>(upper, row, x, x_end),
-        12 => predictor_add::<12>(upper, row, x, x_end),
-        13 => predictor_add::<13>(upper, row, x, x_end),
-        _ => predictor_add::<0>(upper, row, x, x_end),
+        1 => predictor_add::<1>(span),
+        2 => predictor_add::<2>(span),
+        3 => predictor_add::<3>(span),
+        4 => predictor_add::<4>(span),
+        5 => predictor_add::<5>(span),
+        6 => predictor_add::<6>(span),
+        7 => predictor_add::<7>(span),
+        8 => predictor_add::<8>(span),
+        9 => predictor_add::<9>(span),
+        10 => predictor_add::<10>(span),
+        11 => predictor_add::<11>(span),
+        12 => predictor_add::<12>(span),
+        13 => predictor_add::<13>(span),
+        _ => predictor_add::<0>(span),
     }
+    Ok(())
 }
 
 /// `VP8LAddGreenToBlueAndRed`
@@ -167,7 +198,7 @@ impl Transform {
             *first = first_pixel(add_pixels(block_of(*first), block_of(above)));
             if y == 0 {
                 if width > 1 {
-                    predictor_add::<1>(upper, row, 1, width)?;
+                    predictor_add_mode(1, upper, row, 1, width)?;
                 }
             } else {
                 let modes = self.data.sub((y >> self.bits) * tiles_per_row..)?;

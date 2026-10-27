@@ -1,11 +1,11 @@
 //! Writing the RIFF container (`syntax_enc.c`, `vp8l_enc.c` and, for a profile, `mux/`).
 
-use crate::EncodeError;
+use crate::Error;
 use crate::riff::{
     ALPHA_FLAG, CHUNK_HEADER_SIZE, ICCP_FLAG, MAX_CHUNK_PAYLOAD, RIFF_HEADER_SIZE, TAG_SIZE,
     VP8X_CHUNK_SIZE,
 };
-use crate::util::OutOfMemory;
+use bun_alloc::AllocError;
 
 /// What the encoders return.
 pub(crate) struct Image {
@@ -34,10 +34,10 @@ impl<T: AsRef<[u8]>> Chunk<'_, T> {
             .sum()
     }
 
-    fn disk_size(&self) -> Result<u64, EncodeError> {
+    fn disk_size(&self) -> Result<u64, Error> {
         let size = self.payload_size();
         if size > u64::from(MAX_CHUNK_PAYLOAD) {
-            return Err(EncodeError::FileTooBig);
+            return Err(Error::FileTooBig);
         }
         Ok((CHUNK_HEADER_SIZE as u64 + size + 1) & !1)
     }
@@ -56,7 +56,7 @@ impl<T: AsRef<[u8]>> Chunk<'_, T> {
     }
 }
 
-pub(crate) fn assemble(image: &Image, icc_profile: Option<&[u8]>) -> Result<Vec<u8>, EncodeError> {
+pub(crate) fn assemble(image: &Image, icc_profile: Option<&[u8]>) -> Result<Vec<u8>, Error> {
     let icc_profile = icc_profile.filter(|profile| !profile.is_empty());
     let mut flags = 0;
     if icc_profile.is_some() {
@@ -99,12 +99,12 @@ pub(crate) fn assemble(image: &Image, icc_profile: Option<&[u8]>) -> Result<Vec<
     }
     let riff_size = size - CHUNK_HEADER_SIZE as u64;
     if riff_size > 0xffff_fffe {
-        return Err(EncodeError::FileTooBig);
+        return Err(Error::FileTooBig);
     }
 
     let mut out = Vec::new();
     out.try_reserve_exact(size as usize)
-        .map_err(|_| OutOfMemory)?;
+        .map_err(|_| AllocError)?;
     out.extend_from_slice(b"RIFF");
     out.extend_from_slice(&(riff_size as u32).to_le_bytes());
     out.extend_from_slice(b"WEBP");

@@ -2,16 +2,16 @@
 
 use super::bit_writer::BitWriter;
 use super::tree::{code_intra_modes, write_probas};
-use super::{EncodeError, Encoder};
-use crate::util::OutOfMemory;
+use super::{Encoder, Error};
 use crate::vp8::common::{FRAME_HEADER_SIZE, SIGNATURE};
+use bun_alloc::AllocError;
 
 const VP8_MAX_PARTITION0_SIZE: usize = 1 << 19;
 
 /// Paragraph 9.1.
-fn frame_header(enc: &Encoder<'_>, size0: usize) -> Result<[u8; FRAME_HEADER_SIZE], EncodeError> {
+fn frame_header(enc: &Encoder<'_>, size0: usize) -> Result<[u8; FRAME_HEADER_SIZE], Error> {
     if size0 >= VP8_MAX_PARTITION0_SIZE {
-        return Err(EncodeError::Partition0Overflow);
+        return Err(Error::Partition0Overflow);
     }
     // A key frame (1 bit), of profile 0 (3 bits), to be shown (1 bit), and the size of the first partition (19 bits).
     let [b0, b1, b2, _] = ((1 << 4) | ((size0 as u32) << 5)).to_le_bytes();
@@ -65,7 +65,7 @@ fn put_quant(bw: &mut BitWriter, enc: &Encoder<'_>) {
     bw.put_signed_bits(enc.dq_uv_ac, 4);
 }
 
-fn generate_partition0(enc: &Encoder<'_>) -> Result<Vec<u8>, EncodeError> {
+fn generate_partition0(enc: &Encoder<'_>) -> Result<Vec<u8>, Error> {
     // About 7 bits a macroblock.
     let mut bw = BitWriter::new(enc.mb_w * enc.mb_h * 7 / 8)?;
     // The color space, and the clamping type.
@@ -85,11 +85,11 @@ fn generate_partition0(enc: &Encoder<'_>) -> Result<Vec<u8>, EncodeError> {
 }
 
 /// `VP8EncWrite`: the payload of the `VP8 ` chunk, in pieces. libwebp counts the padding to an even size as part of it.
-pub(super) fn write(enc: &Encoder<'_>, mut tokens: Vec<u8>) -> Result<Vec<Vec<u8>>, EncodeError> {
+pub(super) fn write(enc: &Encoder<'_>, mut tokens: Vec<u8>) -> Result<Vec<Vec<u8>>, Error> {
     let part0 = generate_partition0(enc)?;
     let header = frame_header(enc, part0.len())?;
     if (header.len() + part0.len() + tokens.len()) & 1 != 0 {
-        tokens.try_reserve_exact(1).map_err(|_| OutOfMemory)?;
+        tokens.try_reserve_exact(1).map_err(|_| AllocError)?;
         tokens.push(0);
     }
     Ok(vec![header.to_vec(), part0, tokens])

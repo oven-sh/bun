@@ -1,6 +1,7 @@
 //! `dsp/upsampling.c`, `dsp/yuv.h`. Pixels `2x + 1` (odd) and `2x + 2` (even) stay apart to the end: no shuffles.
 
-use crate::util::{Bug, Checked, OutOfMemory, SliceExt, try_vec};
+use crate::util::{Bug, Checked, SliceExt, try_vec};
+use bun_alloc::AllocError;
 
 /// A sample times 256, kept in memory so that the multiplications compile to the high half of a 16-bit product.
 type Wide = u16;
@@ -20,7 +21,7 @@ struct Plane {
 }
 
 impl Plane {
-    fn new(pairs: usize) -> Result<Self, OutOfMemory> {
+    fn new(pairs: usize) -> Result<Self, AllocError> {
         Ok(Self {
             first: 0,
             odd: try_vec(0, pairs)?,
@@ -103,7 +104,7 @@ pub(super) struct Upsampler {
 }
 
 impl Upsampler {
-    pub(super) fn new(width: usize) -> Result<Self, OutOfMemory> {
+    pub(super) fn new(width: usize) -> Result<Self, AllocError> {
         let plane = || Plane::new(width.saturating_sub(1) / 2);
         Ok(Self {
             chroma: [[plane()?, plane()?], [plane()?, plane()?]],

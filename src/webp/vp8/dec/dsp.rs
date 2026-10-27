@@ -375,8 +375,9 @@ pub(super) struct Thresholds {
     pub(super) hev_thresh: u8,
 }
 
-/// Paragraph 15.3: `FilterLoop24` (`INNER`) or `FilterLoop26`. The lines are `p3..p0`, then across the edge `q0..q3`.
-fn complex_filter<const INNER: bool>(lines: &mut [Line; 8], t: Thresholds) {
+/// Paragraph 15.3: `FilterLoop24` (`inner`) or `FilterLoop26`. The lines are `p3..p0`, then across the edge `q0..q3`.
+#[inline(always)]
+fn complex_filter(inner: bool, lines: &mut [Line; 8], t: Thresholds) {
     let [p3, p2, p1, p0, q0, q1, q2, q3] = lines;
     let lanes = p3.iter().zip(p2).zip(p1).zip(p0);
     let lanes = lanes.zip(q0).zip(q1).zip(q2).zip(q3.iter());
@@ -388,7 +389,7 @@ fn complex_filter<const INNER: bool>(lines: &mut [Line; 8], t: Thresholds) {
         let hev = near > t.hev_thresh;
         let (p1s, p0s, q0s, q1s) = (signed(*p1), signed(*p0), signed(*q0), signed(*q1));
         let outer = p1s.saturating_sub(q1s);
-        if INNER {
+        if inner {
             // `DoFilter2` with high edge variance, else `DoFilter4`.
             let a = base_delta(if hev { outer } else { 0 }, p0s, q0s);
             let a = if mask { a } else { 0 };
@@ -456,12 +457,12 @@ fn simple_filter_lines(lines: &mut [Line], edges: Edges<u8>) -> Checked {
 fn complex_filter_lines(lines: &mut [Line], edges: Edges<Thresholds>) -> Checked {
     let mut at = 0;
     if let Some(t) = edges.outer {
-        complex_filter::<false>(lines.array_at_mut(at)?, t);
+        complex_filter(false, lines.array_at_mut(at)?, t);
         at += 4;
     }
     if let Some(t) = edges.inner {
         while at + 8 <= lines.len() {
-            complex_filter::<true>(lines.array_at_mut(at)?, t);
+            complex_filter(true, lines.array_at_mut(at)?, t);
             at += 4;
         }
     }

@@ -103,11 +103,22 @@ pub(crate) const fn bits_log2_floor(n: u32) -> u32 {
     31 - (n | 1).leading_zeros()
 }
 
-/// For `v >= LOG_LOOKUP_IDX_MAX`: `v >> log_cnt`, which is below it, then `log_cnt` and what the shift dropped.
+/// `(small << log_cnt) + rest`, with `small` below `LOG_LOOKUP_IDX_MAX`.
+struct Split {
+    small: u32,
+    log_cnt: u32,
+    rest: u32,
+}
+
+/// `v` is at least `LOG_LOOKUP_IDX_MAX`.
 #[inline]
-fn split_for_lookup(v: u32) -> (u32, u32, u32) {
+fn split_for_lookup(v: u32) -> Split {
     let log_cnt = bits_log2_floor(v).saturating_sub(7);
-    (v >> log_cnt, log_cnt, v & ((1 << log_cnt) - 1))
+    Split {
+        small: v >> log_cnt,
+        log_cnt,
+        rest: v & ((1 << log_cnt) - 1),
+    }
 }
 
 #[inline]
@@ -117,7 +128,11 @@ fn lookup_log2(v: u32) -> u32 {
 
 fn fast_slog2_slow(v: u32) -> u64 {
     if v < APPROX_LOG_WITH_CORRECTION_MAX {
-        let (small, log_cnt, rest) = split_for_lookup(v);
+        let Split {
+            small,
+            log_cnt,
+            rest,
+        } = split_for_lookup(v);
         // log2(1 + d) is about d / ln(2) for the small d that `rest` amounts to.
         let correction = LOG_2_RECIPROCAL_FIXED * u64::from(rest);
         let log_2 = u64::from(lookup_log2(small)) + (u64::from(log_cnt) << LOG_2_PRECISION_BITS);
@@ -130,7 +145,11 @@ fn fast_slog2_slow(v: u32) -> u64 {
 
 fn fast_log2_slow(v: u32) -> u32 {
     if v < APPROX_LOG_WITH_CORRECTION_MAX {
-        let (small, log_cnt, rest) = split_for_lookup(v);
+        let Split {
+            small,
+            log_cnt,
+            rest,
+        } = split_for_lookup(v);
         let mut log_2 = lookup_log2(small) + (log_cnt << LOG_2_PRECISION_BITS);
         if v >= APPROX_LOG_MAX {
             let correction = LOG_2_RECIPROCAL_FIXED * u64::from(rest);

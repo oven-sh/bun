@@ -3,7 +3,7 @@
 use super::dsp::{self, DC_PRED, Histogram, Lanes, TM_PRED};
 use super::iterator::EncIterator;
 use super::tables::NUM_MB_SEGMENTS;
-use super::{EncodeError, Encoder};
+use super::{Encoder, Error};
 use crate::util::{Checked, SliceExt};
 
 const MAX_ITERS_K_MEANS: usize = 6;
@@ -119,7 +119,7 @@ fn mb_analyze(it: &EncIterator) -> Checked<(u8, i32)> {
 }
 
 /// `VP8EncAnalyze`
-pub(super) fn analyze(enc: &mut Encoder<'_>) -> Result<(), EncodeError> {
+pub(super) fn analyze(enc: &mut Encoder<'_>) -> Result<(), Error> {
     let mut alphas = [0; MAX_ALPHA as usize + 1];
     let mut uv_alpha = 0i32;
     let mut it = EncIterator::new(enc)?;

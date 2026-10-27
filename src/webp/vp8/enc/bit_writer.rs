@@ -1,6 +1,6 @@
 //! `bit_writer_utils.c`: the boolean entropy coder of VP8.
 
-use crate::util::OutOfMemory;
+use bun_alloc::AllocError;
 
 pub(super) struct BitWriter {
     /// The range, minus 1.
@@ -15,9 +15,9 @@ pub(super) struct BitWriter {
 }
 
 impl BitWriter {
-    pub(super) fn new(expected_size: usize) -> Result<Self, OutOfMemory> {
+    pub(super) fn new(expected_size: usize) -> Result<Self, AllocError> {
         let mut buf = Vec::new();
-        buf.try_reserve(expected_size).map_err(|_| OutOfMemory)?;
+        buf.try_reserve(expected_size).map_err(|_| AllocError)?;
         Ok(Self {
             range: 255 - 1,
             value: 0,
@@ -104,12 +104,12 @@ impl BitWriter {
         );
     }
 
-    pub(super) fn finish(mut self) -> Result<Vec<u8>, OutOfMemory> {
+    pub(super) fn finish(mut self) -> Result<Vec<u8>, AllocError> {
         self.put_bits(0, (9 - self.nb_bits) as u32);
         self.nb_bits = 0;
         self.flush();
         if self.out_of_memory {
-            return Err(OutOfMemory);
+            return Err(AllocError);
         }
         Ok(self.buf)
     }

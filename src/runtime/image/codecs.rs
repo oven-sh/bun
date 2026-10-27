@@ -359,7 +359,11 @@ pub(crate) fn probe(bytes: &[u8], max_pixels: u64) -> Result<Probe, Error> {
             let handle = jpeg::Handle::init(1).ok_or(Error::OutOfMemory)?;
             (w, h) = handle.read_header(bytes)?;
         }
-        Format::Webp => (w, h) = webp::probe(bytes)?,
+        Format::Webp => {
+            let info = webp::probe(bytes)?;
+            w = info.width;
+            h = info.height;
+        }
         Format::Bmp => {
             let ih = bmp::parse_header(bytes)?;
             w = ih.width;

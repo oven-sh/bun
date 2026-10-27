@@ -2,7 +2,7 @@
 
 use super::tables::{GAMMA_TO_LINEAR, LINEAR_TO_GAMMA};
 use crate::util::{Checked, SliceExt, try_vec};
-use crate::{EncodeError, Input};
+use crate::{Error, Input};
 
 pub(super) struct Picture {
     pub(super) width: usize,
@@ -166,7 +166,7 @@ fn convert_rgb_to_uv(rgb: &[Rgb], u: &mut [u8], v: &mut [u8]) {
 
 impl Picture {
     /// `ImportYUVAFromRGBA`
-    pub(super) fn import(input: &Input<'_>) -> Result<Self, EncodeError> {
+    pub(super) fn import(input: &Input<'_>) -> Result<Self, Error> {
         let (width, height) = (input.width, input.height);
         let mut has_alpha = false;
         for y in 0..height {
@@ -269,25 +269,25 @@ fn smoothen_block(
     luma: &mut [u8],
     stride: usize,
     start: usize,
-    width: usize,
-    height: usize,
+    w: usize,
+    h: usize,
 ) -> Checked<bool> {
     let alpha = alpha.sub(start..)?;
     let luma = luma.sub_mut(start..)?;
     let (mut sum, mut count) = (0, 0);
-    for (alpha, luma) in alpha.chunks(stride).zip(luma.chunks(stride)).take(height) {
-        for (&alpha, &luma) in alpha.iter().zip(luma).take(width) {
+    for (alpha, luma) in alpha.chunks(stride).zip(luma.chunks(stride)).take(h) {
+        for (&alpha, &luma) in alpha.iter().zip(luma).take(w) {
             if alpha != 0 {
                 count += 1;
                 sum += u32::from(luma);
             }
         }
     }
-    if count > 0 && count < (width * height) as u32 {
+    if count > 0 && count < (w * h) as u32 {
         let avg = (sum / count) as u8;
         let rows = alpha.chunks(stride).zip(luma.chunks_mut(stride));
-        for (alpha, luma) in rows.take(height) {
-            for (&alpha, luma) in alpha.iter().zip(luma).take(width) {
+        for (alpha, luma) in rows.take(h) {
+            for (&alpha, luma) in alpha.iter().zip(luma).take(w) {
                 if alpha == 0 {
                     *luma = avg;
                 }

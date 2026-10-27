@@ -7,7 +7,7 @@ use super::iterator::EncIterator;
 use super::quant::{ModeScore, decimate, set_segment_params};
 use super::tables::{COEFFS_PROBA0, COEFFS_UPDATE_PROBA, NUM_MB_SEGMENTS, flatten, flatten_mut};
 use super::token::TokenBuffer;
-use super::{EncodeError, Encoder};
+use super::{Encoder, Error};
 use crate::util::Checked;
 
 /// The limit on the size of the first partition, with 2 KiB of headroom, in 1/256 bit.
@@ -98,7 +98,7 @@ fn record_tokens(
     rd: &ModeScore,
     proba: &mut Proba,
     tokens: &mut TokenBuffer,
-) -> Result<(), EncodeError> {
+) -> Result<(), Error> {
     let stats = flatten_mut(&mut proba.stats);
     tokens.reserve(1 + 16 + 8)?;
     it.nz_to_bytes()?;
@@ -154,7 +154,7 @@ fn set_loop_params(enc: &mut Encoder<'_>) -> Checked {
 const MIN_COUNT: usize = 96;
 
 /// `VP8EncTokenLoop`: returns the token partition.
-pub(super) fn token_loop(enc: &mut Encoder<'_>) -> Result<Vec<u8>, EncodeError> {
+pub(super) fn token_loop(enc: &mut Encoder<'_>) -> Result<Vec<u8>, Error> {
     // Refresh the probabilities about eight times.
     let max_count = ((enc.mb_w * enc.mb_h) >> 3).max(MIN_COUNT);
     let mut it = EncIterator::new(enc)?;

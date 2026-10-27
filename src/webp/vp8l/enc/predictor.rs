@@ -4,13 +4,14 @@ use super::lossless::{
     Accumulated, ColorTile, LOG_2_PRECISION_BITS, Multipliers, combined_shannon_entropy, div_round,
     transform_color,
 };
-use crate::EncodeError;
+use crate::Error;
 use crate::util::{Checked, SliceExt, try_vec};
 use crate::vp8l::enc::predictors::{
     predictor0, predictor1, predictor2, predictor3, predictor4, predictor5, predictor6, predictor7,
     predictor8, predictor9, predictor10, predictor11, predictor12, predictor13, sub_pixels,
 };
 use crate::vp8l::format_constants::{ARGB_BLACK, MAX_TRANSFORM_BITS, sub_sample_size};
+use core::ops::Range;
 
 const SPATIAL_PREDICTOR_BIAS: i64 = 15 << LOG_2_PRECISION_BITS;
 const MASK_ALPHA: u32 = 0xff00_0000;
@@ -206,40 +207,49 @@ struct Rows<'a> {
     current: &'a mut [u32],
 }
 
+/// The part of a tile that is inside the image.
+struct TileArea {
+    x: Range<usize>,
+    y: Range<usize>,
+    /// `x` and the column to its left, if there is one.
+    context_x: Range<usize>,
+}
+
+impl TileArea {
+    fn new(width: usize, height: usize, tile_x: usize, tile_y: usize, bits: u32) -> Self {
+        let (start_x, start_y) = (tile_x << bits, tile_y << bits);
+        let x = start_x..width.min(start_x + (1 << bits));
+        Self {
+            context_x: start_x.saturating_sub(1)..x.end,
+            x,
+            y: start_y..height.min(start_y + (1 << bits)),
+        }
+    }
+}
+
 /// Adds to `all_argb` the residuals that each predictor leaves in a tile.
 fn compute_residuals_for_tile<const EXACT: bool>(
     width: usize,
     height: usize,
-    tile_x: usize,
-    tile_y: usize,
-    bits: u32,
+    tile: &TileArea,
     all_argb: &mut [HistoArgb],
     rows: &mut Rows<'_>,
     argb: &[u32],
 ) -> Checked {
-    let start_x = tile_x << bits;
-    let start_y = tile_y << bits;
-    let tile_size = 1 << bits;
-    let max_y = tile_size.min(height - start_y);
-    let max_x = tile_size.min(width - start_x);
-    // The tile and the column to its left, if there is one.
-    let have_left = usize::from(start_x > 0);
-    let context_start_x = start_x - have_left;
-    let context_width = max_x + have_left;
     let mut residuals = [0u32; 1 << MAX_TRANSFORM_BITS];
-    let residuals = residuals.sub_mut(..max_x)?;
+    let residuals = residuals.sub_mut(..tile.x.len())?;
 
     for (mode, histo_argb) in all_argb.iter_mut().enumerate() {
         // A row is read with the pixel right of the tile, or else the next row's first. Only the last has none.
         let read_row = |row: &mut [u32], y: usize| -> Checked {
-            let len = context_width + usize::from(y + 1 < height);
-            let start = y * width + context_start_x;
-            row.write_at(context_start_x, argb.sub(start..start + len)?)
+            let len = tile.context_x.len() + usize::from(y + 1 < height);
+            let start = y * width + tile.context_x.start;
+            row.write_at(tile.context_x.start, argb.sub(start..start + len)?)
         };
-        if start_y > 0 {
-            read_row(rows.current, start_y - 1)?;
+        if tile.y.start > 0 {
+            read_row(rows.current, tile.y.start - 1)?;
         }
-        for y in start_y..start_y + max_y {
+        for y in tile.y.clone() {
             core::mem::swap(&mut rows.upper, &mut rows.current);
             read_row(rows.current, y)?;
             get_residual::<EXACT>(
@@ -247,8 +257,8 @@ fn compute_residuals_for_tile<const EXACT: bool>(
                 rows.upper,
                 rows.current,
                 mode,
-                start_x,
-                start_x + max_x,
+                tile.x.start,
+                tile.x.end,
                 y,
                 residuals,
             )?;
@@ -360,7 +370,7 @@ fn residual_image_with<const EXACT: bool>(
     height: usize,
     bits: u32,
     argb: &mut [u32],
-) -> Result<(Vec<u32>, u32), EncodeError> {
+) -> Result<(Vec<u32>, u32), Error> {
     let tiles_per_row = sub_sample_size(width, bits);
     let tiles_per_col = sub_sample_size(height, bits);
     let mut modes = try_vec(0u32, tiles_per_row * tiles_per_col)?;
@@ -375,9 +385,7 @@ fn residual_image_with<const EXACT: bool>(
             compute_residuals_for_tile::<EXACT>(
                 width,
                 height,
-                tile_x,
-                tile_y,
-                bits,
+                &TileArea::new(width, height, tile_x, tile_y, bits),
                 &mut all_argb,
                 &mut rows,
                 argb,
@@ -407,7 +415,7 @@ pub(crate) fn residual_image(
     bits: u32,
     argb: &mut [u32],
     exact: bool,
-) -> Result<(Vec<u32>, u32), EncodeError> {
+) -> Result<(Vec<u32>, u32), Error> {
     // Without transparent pixels it makes no difference, and pixels that stay as they are can be dealt with in parallel.
     if exact || argb.iter().all(|pixel| pixel & MASK_ALPHA != 0) {
         residual_image_with::<true>(width, height, bits, argb)
@@ -552,7 +560,7 @@ pub(crate) fn color_space_transform(
     height: usize,
     bits: u32,
     argb: &mut [u32],
-) -> Result<(Vec<u32>, u32), EncodeError> {
+) -> Result<(Vec<u32>, u32), Error> {
     let max_tile_size = 1 << bits;
     let tile_xsize = sub_sample_size(width, bits);
     let tile_ysize = sub_sample_size(height, bits);

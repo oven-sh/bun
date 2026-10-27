@@ -1,10 +1,8 @@
-use crate::util::{Bug, OutOfMemory};
+use crate::util::Bug;
 
-/// Those of libwebp's `VP8StatusCode` that a decode of a whole file ends with.
+/// Those of libwebp's `VP8StatusCode` and `WebPEncodingError` that a whole file or image can end with.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum DecodeError {
-    #[error("out of memory")]
-    OutOfMemory,
+pub enum Error {
     #[error("the output buffer is too small for the image")]
     InvalidParam,
     #[error("invalid bitstream")]
@@ -13,27 +11,6 @@ pub enum DecodeError {
     UnsupportedFeature,
     #[error("truncated file")]
     NotEnoughData,
-    #[error("the decoder broke one of its own invariants")]
-    Bug,
-}
-
-impl From<Bug> for DecodeError {
-    fn from(_: Bug) -> Self {
-        Self::Bug
-    }
-}
-
-impl From<OutOfMemory> for DecodeError {
-    fn from(_: OutOfMemory) -> Self {
-        Self::OutOfMemory
-    }
-}
-
-/// Those of libwebp's `WebPEncodingError` that the two ways to encode end with.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
-pub enum EncodeError {
-    #[error("out of memory")]
-    OutOfMemory,
     #[error("the quality is not 0 to 100")]
     InvalidConfiguration,
     #[error("a side is 0 or more than 16383 pixels, or the input is shorter than the image")]
@@ -42,18 +19,16 @@ pub enum EncodeError {
     Partition0Overflow,
     #[error("the file would be over 4 GiB")]
     FileTooBig,
-    #[error("the encoder broke one of its own invariants")]
+    #[error("bun_webp broke one of its own invariants")]
     Bug,
+    #[error(transparent)]
+    Alloc(#[from] bun_alloc::AllocError),
 }
 
-impl From<Bug> for EncodeError {
+impl From<Bug> for Error {
     fn from(_: Bug) -> Self {
         Self::Bug
     }
 }
 
-impl From<OutOfMemory> for EncodeError {
-    fn from(_: OutOfMemory) -> Self {
-        Self::OutOfMemory
-    }
-}
+pub type Result<T, E = Error> = core::result::Result<T, E>;

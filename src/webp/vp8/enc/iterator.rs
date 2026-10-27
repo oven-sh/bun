@@ -3,7 +3,8 @@
 use super::dsp::{Block, Chroma, Luma};
 use super::picture::Picture;
 use super::{DError, Encoder};
-use crate::util::{Bug, Checked, OutOfMemory, SliceExt, try_vec};
+use crate::util::{Bug, Checked, SliceExt, try_vec};
+use bun_alloc::AllocError;
 
 pub(super) struct EncIterator {
     /// The current macroblock.
@@ -107,7 +108,7 @@ fn import_line(src: &[u8], start: usize, step: usize, dst: &mut [u8], len: usize
 }
 
 impl EncIterator {
-    pub(super) fn new(enc: &Encoder<'_>) -> Result<Self, OutOfMemory> {
+    pub(super) fn new(enc: &Encoder<'_>) -> Result<Self, AllocError> {
         let mut it = Self {
             x: 0,
             y: 0,

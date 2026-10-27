@@ -15,7 +15,7 @@ use crate::vp8::common::{
     NUM_REF_LF_DELTAS, SIGNATURE,
 };
 use crate::vp8::tables::{CAT3, CAT4, CAT5, CAT6, ZIGZAG};
-use crate::{DecodeError, Output};
+use crate::{Error, Output};
 use bit_reader::BitReader;
 use frame::Frame;
 use quant::{Quant, QuantMatrix};
@@ -154,10 +154,10 @@ struct Partitions<'a> {
 
 impl<'a> Partitions<'a> {
     /// Paragraph 9.5. `buf` is what follows the first partition.
-    fn parse(br: &mut BitReader<'_>, buf: &'a [u8]) -> Result<Self, DecodeError> {
+    fn parse(br: &mut BitReader<'_>, buf: &'a [u8]) -> Result<Self, Error> {
         let last_part = (1usize << br.get_value(2)) - 1;
         let Some((sizes, mut rest)) = buf.split_at_checked(3 * last_part) else {
-            return Err(DecodeError::NotEnoughData);
+            return Err(Error::NotEnoughData);
         };
         let mut parts = [BitReader::new(&[]); MAX_NUM_PARTITIONS];
         for (p, part) in parts.iter_mut().enumerate().take(last_part) {
@@ -167,7 +167,7 @@ impl<'a> Partitions<'a> {
             rest = after;
         }
         if rest.is_empty() {
-            return Err(DecodeError::NotEnoughData);
+            return Err(Error::NotEnoughData);
         }
         parts.put(last_part, BitReader::new(rest))?;
         Ok(Self {
@@ -200,7 +200,7 @@ struct Decoder<'a> {
 
 impl<'a> Decoder<'a> {
     /// `VP8GetHeaders`, of a frame that `get_info` accepts.
-    fn get_headers(data: &'a [u8]) -> Result<Self, DecodeError> {
+    fn get_headers(data: &'a [u8]) -> Result<Self, Error> {
         let (header, buf) = data.split_first_chunk::<FRAME_HEADER_SIZE>().ok_or(Bug)?;
         let &[b0, b1, b2, _, _, _, w0, w1, h0, h1] = header;
         let partition_length = (u32::from_le_bytes([b0, b1, b2, 0]) >> 5) as usize;
@@ -209,18 +209,18 @@ impl<'a> Decoder<'a> {
         let height = usize::from(u16::from_le_bytes([h0, h1]) & 0x3fff);
 
         let Some((first, buf)) = buf.split_at_checked(partition_length) else {
-            return Err(DecodeError::NotEnoughData);
+            return Err(Error::NotEnoughData);
         };
         let mut br = BitReader::new(first);
         // The colour space and whether the decoder has to clamp.
         br.get_value(2);
         let (segment_hdr, segments) = SegmentHeader::parse(&mut br);
         if br.eof() {
-            return Err(DecodeError::BitstreamError);
+            return Err(Error::BitstreamError);
         }
         let filter_hdr = FilterHeader::parse(&mut br);
         if br.eof() {
-            return Err(DecodeError::BitstreamError);
+            return Err(Error::BitstreamError);
         }
         let parts = Partitions::parse(&mut br, buf)?;
         let dqm = quant::parse_quant(&mut br, &segment_hdr)?;
@@ -497,11 +497,7 @@ fn decode_mb(
 
 impl Decoder<'_> {
     /// `ParseFrame`: each row of macroblocks is parsed, then reconstructed, filtered and written.
-    fn parse_frame(
-        mut self,
-        frame: &mut Frame<'_>,
-        output: &mut Output<'_>,
-    ) -> Result<(), DecodeError> {
+    fn parse_frame(mut self, frame: &mut Frame<'_>, output: &mut Output<'_>) -> Result<(), Error> {
         for mb_y in 0..self.mb_h {
             let update_map = self.segment_hdr.update_map;
             for (top, block) in frame.intra_t.iter_mut().zip(&mut frame.mb_data) {
@@ -509,13 +505,13 @@ impl Decoder<'_> {
                 tree::parse_intra_mode(&mut self.br, &self.proba, update_map, top, left, block)?;
             }
             if self.br.eof() {
-                return Err(DecodeError::NotEnoughData);
+                return Err(Error::NotEnoughData);
             }
             let token_br = self.parts.of_row(mb_y)?;
             for mb_x in 0..self.mb_w {
                 decode_mb(&self.proba, &self.dqm, frame, mb_x, token_br)?;
                 if token_br.eof() {
-                    return Err(DecodeError::NotEnoughData);
+                    return Err(Error::NotEnoughData);
                 }
             }
             frame.init_scanline();
@@ -530,7 +526,7 @@ pub(crate) fn decode(
     data: &[u8],
     alpha: Option<&[u8]>,
     output: &mut Output<'_>,
-) -> Result<(), DecodeError> {
+) -> Result<(), Error> {
     let dec = Decoder::get_headers(data)?;
     output.check(dec.width, dec.height)?;
     let mut frame = Frame::new(&dec, alpha)?;

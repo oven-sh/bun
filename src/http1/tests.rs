@@ -3,11 +3,23 @@
 #![allow(clippy::indexing_slicing, clippy::unwrap_used, clippy::panic)]
 
 use crate::ParseError::{Incomplete, Malformed};
-use crate::{ChunkedDecoder, ChunkedStatus, Header, ParseError, ResponseHead, parse_response};
+use crate::{
+    ChunkedDecoder, ChunkedStatus, HeadScanner, Header, ParseError, ResponseHead, parse_response,
+};
 
 type Parsed<'a> = Result<(ResponseHead<'a>, Vec<(&'a [u8], &'a [u8])>), ParseError>;
 
 fn parse_with_slots(buf: &[u8], slots: usize) -> Parsed<'_> {
+    // Too slow for Miri, which gets `the_scanner_finds_what_the_parser_finds`.
+    if !cfg!(miri) {
+        for piece_len in [1, 2, 3, 16, 17] {
+            assert_scanner_agrees(buf, slots, piece_len);
+        }
+    }
+    parse_only(buf, slots)
+}
+
+fn parse_only(buf: &[u8], slots: usize) -> Parsed<'_> {
     let mut headers = vec![Header::default(); slots];
     let head = parse_response(buf, &mut headers)?;
     headers.truncate(head.header_count);
@@ -347,6 +359,87 @@ fn every_byte_in_a_header_value_and_a_reason() {
             }
         }
     }
+}
+
+/// After every `piece_len` more bytes of `buf`, one scanner returns what the parser returns for all of them so far.
+#[track_caller]
+fn assert_scanner_agrees(buf: &[u8], slots: usize, piece_len: usize) {
+    let mut scanner = HeadScanner::default();
+    for len in (0..buf.len()).step_by(piece_len).chain([buf.len()]) {
+        let scanned = scanner.scan(&buf[..len], slots);
+        assert_eq!(
+            scanned,
+            parse_only(&buf[..len], slots).map(|(head, _)| head.len),
+            "{:?} with {slots} slots in pieces of {piece_len}",
+            buf[..len].escape_ascii().to_string()
+        );
+        match scanned {
+            Err(Incomplete) => {}
+            Err(Malformed) => return,
+            Ok(_) => return assert_eq!(scanner, HeadScanner::default()),
+        }
+    }
+}
+
+#[test]
+fn the_scanner_finds_what_the_parser_finds() {
+    for (head, slots) in [
+        (&b"HTTP/1.1  200  OK\r\na-|: \t b \r\nc:\n\r\nrest"[..], 2),
+        (b"HTTP/1.1 200\n\nrest", 0),
+        (b"HTTP/1.1 200\r\na:b\r\n c\r\n\r\n", 2),
+        (b"HTTP/1.1 200\r\na:b\r\n c\r\n\r\n", 1),
+        (b"HTTP/1.1 200\r\n a:b\r\n\r\n", 1),
+        (b"HTTP/1.1 200X\r\n\r\n", 1),
+        (b"HTTP/1.1 20x \r\n\r\n", 1),
+        (b"HTTP/1.1\t200\r\n\r\n", 1),
+        (b"HTTP/1.1 200 O\rK\r\n\r\n", 1),
+        (b"HTTP/1.1 200\r\na b: c\r\n\r\n", 1),
+        (b"HTTP/1.1 200\r\n: c\r\n\r\n", 1),
+        (b"HTTP/1.1 200\r\na: \0\r\n\r\n", 1),
+        (b"HTTP/1.1 200\r\na: b\r\n\rc", 1),
+    ] {
+        for piece_len in [1, 2] {
+            assert_scanner_agrees(head, slots, piece_len);
+        }
+    }
+}
+
+/// However long a part of the head is, and every one that can be long is here.
+#[test]
+fn the_scanner_does_not_read_a_byte_again() {
+    let long = if cfg!(miri) { 40 } else { 4000 };
+    let head = [
+        b"HTTP/1.1 ",
+        &vec![b' '; long][..],
+        b"200 ",
+        &vec![b'r'; long][..],
+        b"\r\n",
+        &vec![b'n'; long][..],
+        &vec![b'|'; long][..],
+        b":",
+        &vec![b'\t'; long][..],
+        &vec![b'v'; long][..],
+        b"\r\n ",
+        &vec![b'f'; long][..],
+        b"\r",
+    ]
+    .concat();
+    let mut scanner = HeadScanner::default();
+    for len in 0..=head.len() {
+        assert_eq!(scanner.scan(&head[..len], 2), Err(Incomplete));
+        // The version is read when it is whole, and so is the status with the byte after it.
+        assert!(len - scanner.scanned() <= 8, "{len}");
+    }
+}
+
+#[test]
+fn the_scanner_goes_on_to_the_next_head() {
+    let heads = b"HTTP/1.1 100 Continue\r\na: b\r\n\r\nHTTP/1.1 200 OK\r\nc: d\r\n\r\n";
+    let mut scanner = HeadScanner::default();
+    assert_eq!(scanner.scan(&heads[..30], 1), Err(Incomplete));
+    assert_eq!(scanner.scan(heads, 1), Ok(31));
+    assert_eq!(scanner.scan(&heads[31..40], 1), Err(Incomplete));
+    assert_eq!(scanner.scan(&heads[31..], 1), Ok(25));
 }
 
 /// Feeds `encoded` in pieces of `piece_len`. Returns the data, the last status, and what followed the data in the last

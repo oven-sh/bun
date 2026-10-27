@@ -1,16 +1,19 @@
 import type { Subprocess } from "bun";
 import { spawn } from "bun";
-import { afterEach, expect, it } from "bun:test";
+import { afterAll, afterEach, expect, it } from "bun:test";
 import { bunEnv, bunExe, isBroken, isLinux, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import {
   copyFileSync,
+  linkSync,
   readdirSync,
   readFileSync,
   readlinkSync,
   realpathSync,
   renameSync,
   rmSync,
+  statSync,
   symlinkSync,
+  writeFileSync,
 } from "node:fs";
 import { basename, join } from "node:path";
 
@@ -21,8 +24,9 @@ function stdoutWaiter(proc: Subprocess<"ignore", "pipe", any>) {
   const decoder = new TextDecoder();
   let output = "";
   return {
-    waitFor: async (needle: string) => {
-      while (!output.includes(needle)) {
+    /** Resolves once `needle` has been printed `count` times. */
+    waitFor: async (needle: string, count = 1) => {
+      while (output.split(needle).length <= count) {
         const { value, done } = await reader.read();
         if (done) throw new Error(`stream closed, output so far: ${JSON.stringify(output)}`);
         output += decoder.decode(value, { stream: true });
@@ -776,4 +780,340 @@ it.skipIf(!isLinux)("watcher opens the watched directory with O_CLOEXEC and no w
   expect(Object.fromEntries([...watched].sort().map(([rel, fds]) => [rel, flagsOf(fds)]))).toEqual({
     "/": [O_CLOEXEC],
   });
+});
+
+// A save by rename (write a temp file, rename() it over the target) puts a new
+// inode at the path. An inotify watch stays on the old inode, and the kernel
+// reports that inode as deleted only once nothing holds it open. The watcher
+// used to keep the descriptor each file was read through, so it saw the save
+// only through the watch on the file's directory. A file outside the working
+// directory has no such watch, and the directory's event is not matched to a
+// dot-file, to an extension without a loader, or to a package behind a symlink.
+// Linux only: kqueue watches through a descriptor and reports the replaced
+// file at once, and the Windows watcher matches events by path.
+function saveByRename(path: string, content: string) {
+  writeFileSync(path + ".tmp", content);
+  renameSync(path + ".tmp", path);
+}
+
+// vim, Neovim and Helix move the file to a backup name, write a new file and
+// remove the backup. The watch follows the old inode to the backup name, so
+// the new file is seen only when the backup goes.
+function saveByBackup(path: string, content: string) {
+  renameSync(path, path + "~");
+  writeFileSync(path, content);
+  rmSync(path + "~");
+}
+
+// The tests below run concurrently, each with its own process. One that times
+// out never reaches the end of its `await using` scope.
+const concurrentWatchees = new Set<Subprocess>();
+function spawnWatchee(cwd: string, args: readonly string[], env: Record<string, string | undefined> = bunEnv) {
+  const proc = spawn({ cwd, cmd: [bunExe(), ...args], env, stdout: "pipe", stderr: "inherit", stdin: "ignore" });
+  concurrentWatchees.add(proc);
+  return proc;
+}
+afterAll(() => {
+  for (const proc of concurrentWatchees) proc.kill("SIGKILL");
+});
+
+// Resolves once an inotify watch is on the file that `path` names now.
+async function watchOn(pid: number, path: string) {
+  const inode = statSync(path).ino.toString(16);
+  const started = Date.now();
+  let told = false;
+  while (!inotifyInodes(pid).includes(inode)) {
+    if (!told && Date.now() - started > 3000) {
+      told = true;
+      console.error(`watchOn: no inotify watch on ${path} (inode ${inode}) after 3 s`);
+    }
+    await Bun.sleep(10);
+  }
+}
+
+const keepAlive = "setInterval(() => {}, 1e6);\n";
+const entryPoint = (n: number) => `console.log("run ${n}");\n${keepAlive}`;
+const importer = (specifier: string) =>
+  `import { n } from ${JSON.stringify(specifier)};\nconsole.log("run", n);\n${keepAlive}`;
+const exporter = (n: number) => `export const n = ${n};\n`;
+
+const renameSaveCases: {
+  name: string;
+  /** Relative to a temp directory. The working directory is `app`. */
+  files: Record<string, string>;
+  symlink?: [target: string, path: string];
+  args: string[];
+  saved: string;
+  content: (n: number) => string;
+  save?: (path: string, content: string) => void;
+  /** A hard link keeps each replaced inode alive, so only the event of the directory reports the save. */
+  held?: boolean;
+  saves?: number;
+}[] = [
+  // The module loader does not register a path with the letters "node_modules"
+  // in it, which leaves that entry point with the watch it gets by path: that
+  // one reloaded before. Both must reload, however the loader treats the path.
+  ...["tools", "node_modules-tools"].flatMap(dir =>
+    ["--watch", "--hot"].map(flag => ({
+      name: `${flag} entry point in ../${dir}`,
+      files: { "app/.keep": "", [`${dir}/server.js`]: entryPoint(1) },
+      args: [flag, "--no-clear-screen", `../${dir}/server.js`],
+      saved: `${dir}/server.js`,
+      content: entryPoint,
+    })),
+  ),
+  ...["--watch", "--hot"].map(flag => ({
+    name: `${flag} import outside the working directory`,
+    files: { "app/main.js": importer("../lib/dep.js"), "lib/dep.js": exporter(1) },
+    args: [flag, "--no-clear-screen", "main.js"],
+    saved: "lib/dep.js",
+    content: exporter,
+  })),
+  {
+    name: "test --watch import outside the working directory",
+    files: {
+      "app/a.test.js": `import { test } from "bun:test";\nimport { n } from "../lib/dep.js";\ntest("t", () => console.log("run", n));\n`,
+      "lib/dep.js": exporter(1),
+    },
+    args: ["test", "--watch", "a.test.js"],
+    saved: "lib/dep.js",
+    content: exporter,
+  },
+  {
+    name: "--watch dot-named import",
+    files: { "app/main.js": importer("./.dep.js"), "app/.dep.js": exporter(1) },
+    args: ["--watch", "--no-clear-screen", "main.js"],
+    saved: "app/.dep.js",
+    content: exporter,
+  },
+  {
+    name: "--hot text import with an extension that has no loader",
+    files: {
+      "app/main.js": `import n from "./n.data" with { type: "text" };\nconsole.log("run", n.trim());\n${keepAlive}`,
+      "app/n.data": "1\n",
+    },
+    args: ["--hot", "--no-clear-screen", "main.js"],
+    saved: "app/n.data",
+    content: n => `${n}\n`,
+  },
+  {
+    name: "--watch workspace package behind a symlink",
+    files: {
+      "app/main.js": importer("@repo/db"),
+      "app/packages/db/package.json": JSON.stringify({ name: "@repo/db", main: "index.js" }),
+      "app/packages/db/index.js": exporter(1),
+      "app/node_modules/@repo/.keep": "",
+    },
+    symlink: [join("..", "..", "packages", "db"), "app/node_modules/@repo/db"],
+    args: ["--watch", "--no-clear-screen", "main.js"],
+    saved: "app/packages/db/index.js",
+    content: exporter,
+  },
+  // Under --watch these reloaded before: the restart watches the new file.
+  {
+    name: "--hot import outside the working directory, saved through a backup file,",
+    files: { "app/main.js": importer("../lib/dep.js"), "lib/dep.js": exporter(1) },
+    args: ["--hot", "--no-clear-screen", "main.js"],
+    saved: "lib/dep.js",
+    content: exporter,
+    save: saveByBackup,
+  },
+  {
+    name: "--hot entry point in ../tools, saved through a backup file,",
+    files: { "app/.keep": "", "tools/server.js": entryPoint(1) },
+    args: ["--hot", "--no-clear-screen", "../tools/server.js"],
+    saved: "tools/server.js",
+    content: entryPoint,
+    save: saveByBackup,
+  },
+  // Only the event of the directory reports these saves. Without the fix they
+  // reload too, and fail on the descriptor that is left open.
+  ...["--watch", "--hot"].map(flag => ({
+    name: `${flag} import in the working directory whose replaced inode stays alive`,
+    files: { "app/main.js": importer("./dep.js"), "app/dep.js": exporter(1) },
+    args: [flag, "--no-clear-screen", "main.js"],
+    saved: "app/dep.js",
+    content: exporter,
+    held: true,
+    saves: 2,
+  })),
+];
+
+for (const { name, files, symlink, args, saved, content, save = saveByRename, held, saves = 3 } of renameSaveCases) {
+  it.concurrent.skipIf(!isLinux)(
+    `${name} reloads after each save${save === saveByRename ? " by rename" : ""}`,
+    async () => {
+      using dir = tempDir("watch-rename-save", files);
+      const root = realpathSync(String(dir));
+      if (symlink) symlinkSync(symlink[0], join(root, symlink[1]));
+      await using proc = spawnWatchee(join(root, "app"), args);
+      const out = stdoutWaiter(proc);
+      const target = join(root, saved);
+      for (let n = 1; n <= saves + 1; n++) {
+        if (n > 1) {
+          if (held) linkSync(target, join(root, `held-${n}`));
+          save(target, content(n));
+        }
+        await out.waitFor(`run ${n}\n`);
+        // A file that only the watcher registers, by path, is registered after
+        // the run that loaded it has started. The next save must not come first.
+        await watchOn(proc.pid, target);
+      }
+      out.release();
+      // Each save replaced the inode and the watch is on the current one, with no
+      // descriptor open on the file.
+      expect(openPaths(proc.pid).filter(path => path.startsWith(target))).toEqual([]);
+    },
+  );
+}
+
+it.concurrent.skipIf(!isLinux)(
+  "build --watch rebuilds an input outside the working directory after each save by rename",
+  async () => {
+    using dir = tempDir("watch-build-rename-save", { "app/.keep": "", "src/entry.js": `console.log("run 1");\n` });
+    const root = realpathSync(String(dir));
+    await using proc = spawnWatchee(join(root, "app"), ["build", "--watch", "../src/entry.js", "--outdir", "out"]);
+    const out = stdoutWaiter(proc);
+    const entry = join(root, "src", "entry.js");
+    await out.waitFor("Bundled");
+    for (let n = 2; n <= 4; n++) {
+      await watchOn(proc.pid, entry);
+      saveByRename(entry, `console.log("run ${n}");\n`);
+      await out.waitFor("Bundled", n);
+      expect(readFileSync(join(root, "app", "out", "entry.js"), "utf8")).toContain(`"run ${n}"`);
+    }
+    out.release();
+    expect(openPaths(proc.pid).filter(path => path.startsWith(entry))).toEqual([]);
+  },
+);
+
+// On Windows the handle that the watcher kept on a watched file also made the
+// rename itself fail with EPERM (#41045). Nothing reports that the watcher of
+// a new run has started, so a save is repeated until that run sees it. The
+// module loader of that run holds the file while it reads it, and a rename in
+// that moment fails on Windows as well. That save is tried again: only a
+// handle that stays open keeps the reload away.
+for (const flag of ["--watch", "--hot"]) {
+  it.concurrent(`${flag} lets a save by rename replace the entry point`, async () => {
+    using dir = tempDir("watch-rename-over-entry", { "main.js": entryPoint(1) });
+    const cwd = realpathSync(String(dir));
+    await using proc = spawnWatchee(cwd, [flag, "--no-clear-screen", "main.js"]);
+    const out = stdoutWaiter(proc);
+    await out.waitFor("run 1\n");
+    for (let n = 2; n <= 4; n++) {
+      let reloaded = false;
+      const reload = out.waitFor(`run ${n}\n`).then(() => {
+        reloaded = true;
+      });
+      while (!reloaded) {
+        try {
+          saveByRename(join(cwd, "main.js"), entryPoint(n));
+        } catch (error) {
+          const code = (error as NodeJS.ErrnoException).code;
+          if (!isWindows || (code !== "EPERM" && code !== "EACCES" && code !== "EBUSY")) throw error;
+        }
+        await Promise.race([reload, Bun.sleep(250)]);
+      }
+    }
+    out.release();
+  });
+}
+
+// The other side of the same events. A removed file is also reported as a
+// deleted inode. These guard against a restart loop: a program that writes a
+// module, imports it and removes it, once, runs once where the directory's
+// event is not matched to the module (outside the working directory, or under
+// a dot-name). Under a matched name in the working directory the removal
+// restarts such a program, as it does on kqueue and Windows everywhere (see
+// "reloads when an import in the working directory is removed" below). A
+// program that creates the same path again can still restart.
+const removesItsImport = `const { RUNS, GENERATED } = process.env;
+appendFileSync(RUNS, "x");
+writeFileSync(GENERATED, "export const n = 1;");
+const { n } = await import(GENERATED);
+rmSync(GENERATED);
+console.log("ran", n);
+`;
+const importsFs = `import { appendFileSync, rmSync, writeFileSync } from "node:fs";\n`;
+for (const [name, args, generated] of [
+  ["--watch, module outside the working directory", ["--watch", "--no-clear-screen", "main.js"], "generated/mod.mjs"],
+  ["--hot, dot-named module in the working directory", ["--hot", "--no-clear-screen", "main.js"], "app/.mod.mjs"],
+  ["test --watch, module outside the working directory", ["test", "--watch", "main.test.js"], "generated/mod.mjs"],
+] as const) {
+  it.concurrent.skipIf(!isLinux)(`a program that removes a module it imported runs once (${name})`, async () => {
+    using dir = tempDir("watch-removes-import", {
+      "app/main.js": importsFs + removesItsImport + keepAlive,
+      "app/main.test.js": `import { test } from "bun:test";\n${importsFs}test("t", async () => {\n${removesItsImport}});\n`,
+      "generated/.keep": "",
+      "runs": "",
+    });
+    const root = realpathSync(String(dir));
+    const runs = join(root, "runs");
+    const started = performance.now();
+    await using proc = spawnWatchee(join(root, "app"), args, {
+      ...bunEnv,
+      RUNS: runs,
+      GENERATED: join(root, generated),
+    });
+    const out = stdoutWaiter(proc);
+    await out.waitFor("ran 1\n");
+    out.release();
+    // A restart takes about as long as the start did, and nothing signals that
+    // none is coming. Look for one for twice that long.
+    const deadline = performance.now() + Math.max(2 * (performance.now() - started), 300);
+    while (performance.now() < deadline) {
+      expect(readFileSync(runs, "utf8")).toBe("x");
+      await Bun.sleep(10);
+    }
+  });
+}
+
+// An import that the user removes from the working directory reloads, and the
+// run reports it. The event of the directory does that, on the old inode's
+// entry. This passes without the fix.
+for (const flag of ["--watch", "--hot"]) {
+  it.concurrent.skipIf(!isLinux)(`${flag} reloads when an import in the working directory is removed`, async () => {
+    using dir = tempDir("watch-removed-import", { "main.js": importer("./dep.js"), "dep.js": exporter(1) });
+    const cwd = realpathSync(String(dir));
+    await using proc = spawn({
+      cwd,
+      cmd: [bunExe(), flag, "--no-clear-screen", "main.js"],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    concurrentWatchees.add(proc);
+    const out = stdoutWaiter(proc);
+    await out.waitFor("run 1\n");
+    out.release();
+    await watchOn(proc.pid, join(cwd, "dep.js"));
+    rmSync(join(cwd, "dep.js"));
+    let stderr = "";
+    for await (const chunk of proc.stderr) {
+      stderr += new TextDecoder().decode(chunk);
+      if (stderr.includes("Cannot find module")) break;
+    }
+    expect(stderr).toContain("Cannot find module");
+  });
+}
+
+// A stylesheet that a program imports once is registered by path, and no run
+// registers it again. The event of the directory must leave its entry in the
+// watchlist, or the second save is lost. This passes without the fix.
+it.concurrent.skipIf(!isLinux)("--hot reloads on each save of a stylesheet that was imported once", async () => {
+  using dir = tempDir("watch-once-imported", {
+    "main.js": `import { readFileSync } from "node:fs";\nglobalThis.once ??= await import("./a.css");\nconsole.log("read", readFileSync("a.css", "utf8"));\n${keepAlive}`,
+    "a.css": "/* 1 */\n",
+  });
+  const cwd = realpathSync(String(dir));
+  await using proc = spawnWatchee(cwd, ["--hot", "--no-clear-screen", "main.js"]);
+  const out = stdoutWaiter(proc);
+  await out.waitFor("read /* 1 */\n");
+  await watchOn(proc.pid, join(cwd, "a.css"));
+  for (let n = 2; n <= 4; n++) {
+    writeFileSync(join(cwd, "a.css"), `/* ${n} */\n`);
+    await out.waitFor(`read /* ${n} */\n`);
+  }
+  out.release();
 });

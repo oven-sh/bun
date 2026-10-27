@@ -150,6 +150,20 @@ fn get_argv0(
     })
 }
 
+/// `Array.isArray`: an Array, an Array subclass, or a Proxy of one. `options.cmd` has always
+/// run a Proxy of an array, so its check keeps that.
+fn is_array_or_proxy_of_array(mut value: JSValue) -> bool {
+    loop {
+        if value.is_array() {
+            return true;
+        }
+        if !value.is_cell() || value.js_type() != jsc::JSType::ProxyObject {
+            return false;
+        }
+        value = value.get_proxy_target();
+    }
+}
+
 /// `argv` for `Bun.spawn` & `Bun.spawnSync`
 ///
 /// `storage` receives ownership of every NUL-terminated string whose pointer is
@@ -164,7 +178,7 @@ fn get_argv(
     argv: &mut Vec<CStrPtr>,
     storage: &mut Vec<ZBox>,
 ) -> JsResult<()> {
-    debug_assert!(args.is_array());
+    debug_assert!(is_array_or_proxy_of_array(args));
 
     let mut cmds_array = args.array_iterator(global_this)?;
 
@@ -430,7 +444,7 @@ fn spawn_maybe_sync(
                 .global()
                 .throw_invalid_arguments(format_args!("cmd must be an array")));
         } else if let Some(cmd_value_) = args.get_truthy(cx.global(), "cmd")?
-            && cmd_value_.is_array()
+            && is_array_or_proxy_of_array(cmd_value_)
         {
             cmd_value = cmd_value_;
         } else {

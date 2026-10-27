@@ -25,8 +25,9 @@ describe("spawn with spoofed array length", () => {
   });
 });
 
-describe("non-array cmd in the options object", () => {
+describe("cmd in the options object", () => {
   const notAnArray = { name: "TypeError", code: "ERR_INVALID_ARG_TYPE", message: "cmd must be an array" };
+  class Cmd extends Array<string> {}
 
   function outcome(call: () => any) {
     try {
@@ -59,7 +60,7 @@ describe("non-array cmd in the options object", () => {
           return arguments;
         })(bunExe(), "--version"),
     ],
-    ["a Proxy of an array", () => new Proxy([bunExe(), "--version"], {})],
+    ["a Proxy of an array-like object", () => new Proxy({ 0: bunExe(), 1: "--version", length: 2 }, {})],
   ];
 
   const fns: [string, (...args: any[]) => any][] = [
@@ -81,9 +82,9 @@ describe("non-array cmd in the options object", () => {
       expect(outcome(() => fn(options))).toEqual(notAnArray);
     });
 
-    test("does not run the traps of a Proxy cmd", () => {
+    test("does not run the traps of a Proxy that it rejects", () => {
       const traps: string[] = [];
-      const cmd = new Proxy([bunExe(), "--version"], {
+      const cmd = new Proxy({ 0: bunExe(), 1: "--version", length: 2 } as Record<PropertyKey, unknown>, {
         get(target, key, receiver) {
           traps.push(`get ${String(key)}`);
           return Reflect.get(target, key, receiver);
@@ -130,6 +131,9 @@ describe("non-array cmd in the options object", () => {
 
     test.each<[string, unknown[], string]>([
       ["{ cmd: [] }", [{ cmd: [] }], "cmd must not be empty"],
+      ["an empty Array subclass", [{ cmd: new Cmd() }], "cmd must not be empty"],
+      ["a Proxy of an empty array", [{ cmd: new Proxy([], {}) }], "cmd must not be empty"],
+      ["a Proxy of a Proxy of an empty array", [{ cmd: new Proxy(new Proxy([], {}), {}) }], "cmd must not be empty"],
       ['{ cmd: "" }', [{ cmd: "" }], "cmd must be an array"],
       ["{ cmd: null }", [{ cmd: null }], "cmd must be an array"],
       ["{}", [{}], "cmd must be an array"],
@@ -139,17 +143,19 @@ describe("non-array cmd in the options object", () => {
     });
   });
 
-  class Cmd extends Array<string> {}
-  const subclass = () => new Cmd(bunExe(), "-e", "console.log('ran')");
+  describe.each<[string, () => string[]]>([
+    ["an Array subclass", () => new Cmd(bunExe(), "-e", "console.log('ran')")],
+    ["a Proxy of an array", () => new Proxy([bunExe(), "-e", "console.log('ran')"], {})],
+  ])("%s", (_, cmd) => {
+    test.concurrent("runs with Bun.spawn", async () => {
+      await using proc = Bun.spawn({ cmd: cmd(), env: bunEnv, stderr: "ignore" });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect({ stdout, exitCode }).toEqual({ stdout: "ran\n", exitCode: 0 });
+    });
 
-  test("Bun.spawn accepts an Array subclass", async () => {
-    await using proc = Bun.spawn({ cmd: subclass(), env: bunEnv, stderr: "ignore" });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect({ stdout, exitCode }).toEqual({ stdout: "ran\n", exitCode: 0 });
-  });
-
-  test("Bun.spawnSync accepts an Array subclass", () => {
-    const { stdout, exitCode } = Bun.spawnSync({ cmd: subclass(), env: bunEnv, stderr: "ignore" });
-    expect({ stdout: stdout.toString(), exitCode }).toEqual({ stdout: "ran\n", exitCode: 0 });
+    test.concurrent("runs with Bun.spawnSync", () => {
+      const { stdout, exitCode } = Bun.spawnSync({ cmd: cmd(), env: bunEnv, stderr: "ignore" });
+      expect({ stdout: stdout.toString(), exitCode }).toEqual({ stdout: "ran\n", exitCode: 0 });
+    });
   });
 });

@@ -78,6 +78,9 @@ pub struct EnvironmentConfig {
     pub enable_name_anonymous_functions: bool,
     pub validate_hooks_usage: bool,
     pub validate_ref_access_during_render: bool,
+    /// For `validate_ref_access_during_render`: a nested function whose ref types do not converge is one that reads a
+    /// ref, and the validation of the function around it goes on. Upstream throws there, which gives the component up.
+    pub functions_that_do_not_converge_read_refs: bool,
     /// For `validate_ref_access_during_render`: a ref value that meets a value of another kind, at a
     /// phi or in an object, stays the ref value that it was. It is then reported where `.current`
     /// is read. Upstream forgets where that was, and reports it at each use.
@@ -85,9 +88,6 @@ pub struct EnvironmentConfig {
     /// For `validate_ref_access_during_render`: a function expression knows which of the variables
     /// that it captures are refs and values of refs. Upstream does not look at them.
     pub captured_refs_are_known_in_functions: bool,
-    /// For `validate_ref_access_during_render`: a nested function whose ref types do not converge is one that reads a
-    /// ref, and the validation of the function around it goes on. Upstream throws there, which gives the component up.
-    pub functions_that_do_not_converge_read_refs: bool,
     /// An effect on a variable is reported where it is. Upstream puts the first effect of a kind on a variable for
     /// all the later ones, so that each write to a captured variable is reported at the first.
     pub effects_keep_their_place: bool,
@@ -161,9 +161,9 @@ impl Default for EnvironmentConfig {
             enable_name_anonymous_functions: false,
             validate_hooks_usage: true,
             validate_ref_access_during_render: true,
+            functions_that_do_not_converge_read_refs: false,
             joined_ref_values_keep_their_place: false,
             captured_refs_are_known_in_functions: true,
-            functions_that_do_not_converge_read_refs: false,
             effects_keep_their_place: false,
             jsx_can_be_reordered: true,
             arguments_of_no_alias_methods_escape: true,

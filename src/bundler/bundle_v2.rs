@@ -7317,9 +7317,12 @@ pub mod bv2_impl {
                             continue 'outer;
                         }
 
-                        // Do not use cached files for CSS. An import with `type: "css"`
+                        // Do not use cached files for CSS. A browser import with `type: "css"`
                         // goes to the loader decision below, which reports it.
-                        if loader == Loader::Css || import_record.loader == Some(Loader::Css) {
+                        if loader == Loader::Css
+                            || (import_record.loader == Some(Loader::Css)
+                                && target == Target::Browser)
+                        {
                             break 'brk;
                         }
 

@@ -336,37 +336,36 @@ pub(crate) fn check_imports(this: &mut BundleV2<'_>) -> Result<(), AnyError> {
         }
     }
 
-    // One error for each file, at its first typed import, with a note at each other use.
-    // The order does not depend on which import the scan resolved first.
+    // One error for each file, at its first typed import, with a note at each use without the
+    // attribute. The order does not depend on which import the scan resolved first.
     conflicts.sort_unstable();
     conflicts.dedup();
     conflicts.sort_unstable_by_key(|file| sources[*file as usize].path.text);
     for &file in &conflicts {
-        let mut typed = Vec::<(&[u8], i32, usize, usize)>::new();
-        let mut others = Vec::<(&[u8], i32, usize, usize)>::new();
+        // (not typed, path of the importer, offset in the importer, importer, import record)
+        let mut uses = Vec::<(bool, &[u8], i32, usize, usize)>::new();
         for (importer, import_records) in all_import_records.iter().enumerate() {
             for (i, record) in import_records.as_slice().iter().enumerate() {
                 if record.source_index.is_valid() && record.source_index.get() == file {
-                    let entry = (
+                    uses.push((
+                        !is_typed_import(importer, i),
                         sources[importer].path.text,
                         record.range.loc.start,
                         importer,
                         i,
-                    );
-                    if is_typed_import(importer, i) {
-                        typed.push(entry);
-                    } else {
-                        others.push(entry);
-                    }
+                    ));
                 }
             }
         }
-        typed.sort_unstable();
-        others.sort_unstable();
+        uses.sort_unstable();
+        let Some((&(_, _, _, importer, i), others)) = uses.split_first() else {
+            continue;
+        };
         let pretty = bstr::BStr::new(sources[file as usize].path.pretty);
         let notes: Vec<bun_ast::Data> = others
             .iter()
-            .map(|&(_, _, importer, i)| {
+            .filter(|(not_typed, ..)| *not_typed)
+            .map(|&(_, _, _, importer, i)| {
                 let mut text = Vec::<u8>::new();
                 let _ = write!(
                     &mut text,
@@ -379,9 +378,6 @@ pub(crate) fn check_imports(this: &mut BundleV2<'_>) -> Result<(), AnyError> {
                 )
             })
             .collect();
-        let Some(&(_, _, importer, i)) = typed.first() else {
-            continue;
-        };
         has_error = true;
         this.transpiler.log_mut().add_range_error_fmt_with_notes(
             Some(&sources[importer]),

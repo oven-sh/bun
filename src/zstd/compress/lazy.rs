@@ -606,6 +606,8 @@ struct Longest<'a> {
     ip: u32,
     /// A match has to be more than 3 bytes longer than this.
     tail_start: u32,
+    /// `segment` from `tail_start` on.
+    tails: Near<'a>,
     /// What such a match has in common with `ip`: the 4 bytes from `tail_start` on.
     tail: u32,
     /// 0 as long as there is no match.
@@ -623,6 +625,7 @@ impl<'a> Longest<'a> {
             start_index,
             ip,
             tail_start,
+            tails: segment.tail(tail_start)?,
             tail: segment.read32(ip + tail_start)?,
             off_base: best.off_base,
         })
@@ -634,9 +637,13 @@ impl<'a> Longest<'a> {
         if len > self.tail_start + 3 {
             self.tail_start = len - 3;
             self.off_base = off_base;
-            let Some(tail) = self.segment.read32(self.ip + self.tail_start) else {
+            let (Some(tails), Some(tail)) = (
+                self.segment.tail(self.tail_start),
+                self.segment.read32(self.ip + self.tail_start),
+            ) else {
                 return Offered::Longest;
             };
+            self.tails = tails;
             self.tail = tail;
         }
         Offered::Considered
@@ -664,12 +671,18 @@ impl<'a> Longest<'a> {
         Ok(self.offer_match(len, offset_to_offbase(offset)))
     }
 
-    /// There may be a match at `match_index`.
+    /// There may be a match at `match_index`. `IN_TAILS` is which of two ways its tail is read: the one that takes fewer
+    /// instructions, or the one that has less to wait for after a match.
     #[inline(always)]
-    fn offer(&mut self, match_index: u32) -> Offered {
+    fn offer<const IN_TAILS: bool>(&mut self, match_index: u32) -> Offered {
         let match_pos = match_index.wrapping_sub(self.start_index);
-        let tail_pos = match_pos as usize + self.tail_start as usize;
-        let Some(tail) = self.segment.read32_at(tail_pos) else {
+        let tail = if IN_TAILS {
+            self.tails.read32(match_pos)
+        } else {
+            self.segment
+                .read32_at(match_pos as usize + self.tail_start as usize)
+        };
+        let Some(tail) = tail else {
             return Offered::Outside;
         };
         if tail != self.tail {
@@ -686,6 +699,24 @@ impl<'a> Longest<'a> {
             off_base: self.off_base,
         }
     }
+}
+
+/// Where the parser is, when it has no match.
+#[derive(Clone, Copy)]
+struct LiteralRun {
+    ip: u32,
+    /// Where the literals start.
+    anchor: u32,
+    /// Positions are searched up to this one, which is not.
+    ilimit: u32,
+    offset_1: u32,
+}
+
+/// Where the parser goes on after [`Finder::skip_literals`].
+struct Skipped {
+    ip: u32,
+    /// The repeat offset is known to give no match at the next position.
+    no_repeat: bool,
 }
 
 /// `ZSTD_searchMax`, with the state of the search in local variables for as long as a block lasts.
@@ -706,6 +737,16 @@ trait Finder<'a>: Sized {
         wanted: Wanted,
         skipping: bool,
     ) -> Result<Option<Found>>;
+
+    /// Goes past positions where the parser would find nothing, neither with [`Self::find`] nor with the repeat offset
+    /// at the next position: goes on from `run.ip`, or from a later position that the parser would come to.
+    #[inline(always)]
+    fn skip_literals(&mut self, run: LiteralRun) -> Result<Skipped> {
+        Ok(Skipped {
+            ip: run.ip,
+            no_repeat: false,
+        })
+    }
 
     /// Every position is indexed again from now on.
     fn stop_skipping(&mut self) -> Result<()>;
@@ -819,66 +860,121 @@ impl Chains<'_> {
 
     /// Adds every position that has 8 bytes in `positions`. The first one has the index `index`.
     #[inline(never)]
-    fn insert_all(mut self, hasher: Hash8, positions: &[u8], mut index: u32) {
-        for bytes in positions.array_windows() {
-            self.insert(hasher, u64::from_le_bytes(*bytes), index);
-            index = index.wrapping_add(1);
+    fn insert_all(self, hasher: Hash8, positions: &[u8], index: u32) {
+        let (Some(hash_mask), Some(chain_mask)) = (
+            self.hash_table.len().checked_sub(1),
+            self.chain_table.len().checked_sub(1),
+        ) else {
+            return;
+        };
+        for (n, bytes) in positions.array_windows().enumerate() {
+            let index = index as usize + n;
+            let hash = hasher.of_unsalted(u64::from_le_bytes(*bytes)) as usize;
+            if let Some(head) = self.hash_table.get_mut(hash & hash_mask)
+                && let Some(next) = self.chain_table.get_mut(index & chain_mask)
+            {
+                *next = core::mem::replace(head, index as u32);
+            }
         }
     }
 }
 
-/// `ZSTD_HcFindBestMatch`
-struct ChainFinder<'a, const DICT_MODE: u8> {
+/// Where the search of a position is at.
+#[derive(Clone, Copy)]
+struct Candidate {
+    /// The first candidate that is a match.
+    match_index: u32,
+    /// How many there may be, with that one.
+    nb_attempts: u32,
+}
+
+/// `ZSTD_HcFindBestMatch`. `SIMPLE` tells that all along the block, every index from that of the position 0 on is within
+/// reach and in the chain table, and none below it is valid.
+struct ChainFinder<'a, const DICT_MODE: u8, const SIMPLE: bool> {
     block: LazyBlock<'a>,
     chains: Chains<'a>,
     hasher: Hash8,
+    mls: u32,
     nb_attempts: u32,
     /// `ms.next_to_update`, as a position.
     next_to_update: u32,
+    /// The hash of `next_to_update`, if it was searched. Else it is out of the hash table.
+    next_hash: usize,
+    /// What the hash table had for it, and still has.
+    next_head: u32,
+    /// The index from which every position is in the chains, up to `next_to_update`.
+    dense_from: u32,
+    /// Where the search of `next_to_update` is at, if [`Finder::skip_literals`] started it.
+    started: Option<Candidate>,
     ms_next_to_update: &'a mut u32,
     dms: Option<ChainDict<'a>>,
 }
 
-impl<const DICT_MODE: u8> ChainFinder<'_, DICT_MODE> {
+/// Whether [`ChainFinder`] can be `SIMPLE`.
+fn chains_are_simple(ms: &MatchState, block: &LazyBlock<'_>) -> bool {
+    let reach = block.reach.max_distance.min(ms.chain_table.len() as u32);
+    block.reach.lowest_valid == block.base_index && block.near.len() <= reach
+}
+
+impl<const DICT_MODE: u8, const SIMPLE: bool> ChainFinder<'_, DICT_MODE, SIMPLE> {
     /// `ZSTD_insertAndFindFirstIndex_internal`: returns the index of the first candidate for `ip`.
     #[inline(always)]
     fn insert_and_find_first_index(&mut self, ip: u32, skipping: bool) -> Result<u32> {
         let near = self.block.near;
         let first = self.next_to_update;
-        let index = self.block.base_index.wrapping_add(first);
-        // While skipping, not every position is inserted.
-        if first.wrapping_add(1) == ip || (skipping && first < ip) {
-            let bytes = near.read64(first).ok_or(BUG)?;
-            self.chains.insert(self.hasher, bytes, index);
-        } else if first < ip {
-            let positions = near.bytes().sub(first as usize..ip as usize + 7)?;
-            let chains = Chains {
-                hash_table: self.chains.hash_table,
-                chain_table: self.chains.chain_table,
-            };
-            chains.insert_all(self.hasher, positions, index);
+        if first < ip {
+            let index = self.block.base_index.wrapping_add(first);
+            if let Some(head) = self.chains.hash_table.get_mut(self.next_hash) {
+                *head = index;
+                table_put(self.chains.chain_table, index as usize, self.next_head);
+            } else {
+                let bytes = near.read64(first).ok_or(BUG)?;
+                self.chains.insert(self.hasher, bytes, index);
+            }
+            if skipping {
+                // Not every position is inserted.
+                self.dense_from = self.block.base_index.wrapping_add(ip);
+            } else if first + 1 < ip {
+                let positions = near.bytes().sub(first as usize + 1..ip as usize + 7)?;
+                let chains = Chains {
+                    hash_table: self.chains.hash_table,
+                    chain_table: self.chains.chain_table,
+                };
+                chains.insert_all(self.hasher, positions, index.wrapping_add(1));
+            }
         }
         self.next_to_update = ip;
         let hash = self.hasher.of(near.read64(ip).ok_or(BUG)?) as usize;
-        Ok(table_get(self.chains.hash_table, hash))
+        let hash = hash & self.chains.hash_table.len().wrapping_sub(1);
+        let head = self.chains.hash_table.get(hash).copied().unwrap_or(0);
+        self.next_hash = hash;
+        self.next_head = head;
+        Ok(head)
     }
 }
 
-impl<'a, const DICT_MODE: u8> Finder<'a> for ChainFinder<'a, DICT_MODE> {
+impl<'a, const DICT_MODE: u8, const SIMPLE: bool> Finder<'a>
+    for ChainFinder<'a, DICT_MODE, SIMPLE>
+{
     const MARGIN: u32 = 8;
 
     #[inline(always)]
     fn new(ms: &'a mut MatchState, src: &'a BlockSrc<'a>, block: LazyBlock<'a>) -> Result<Self> {
         let mls = ms.c_params.min_match.clamp(4, 6);
         Ok(Self {
+            started: None,
             block,
             chains: Chains {
                 hash_table: &mut ms.hash_table,
                 chain_table: &mut ms.chain_table,
             },
             hasher: Hash8::new(mls, ms.c_params.hash_log, 0),
+            mls,
             nb_attempts: 1 << ms.c_params.search_log,
             next_to_update: ms.next_to_update.wrapping_sub(block.base_index),
+            next_hash: usize::MAX,
+            next_head: 0,
+            dense_from: ms.next_to_update,
             ms_next_to_update: &mut ms.next_to_update,
             dms: src.dms.as_ref().map(|dms| ChainDict::new(dms, mls)),
         })
@@ -893,12 +989,22 @@ impl<'a, const DICT_MODE: u8> Finder<'a> for ChainFinder<'a, DICT_MODE> {
     ) -> Result<Option<Found>> {
         let block = self.block;
         let curr = block.base_index.wrapping_add(ip);
-        let low_limit = block.reach.low_limit(curr);
+        let low_limit = if SIMPLE {
+            block.base_index
+        } else {
+            block.reach.low_limit(curr)
+        };
         let min_chain = curr.saturating_sub(self.chains.chain_table.len() as u32);
         let mut nb_attempts = self.nb_attempts;
-        let mut match_index = self.insert_and_find_first_index(ip, skipping)?;
-        if DICT_MODE == NO_DICT && match_index < low_limit {
-            return Ok(None);
+        let mut match_index;
+        if let Some(started) = self.started.take() {
+            match_index = started.match_index;
+            nb_attempts = started.nb_attempts;
+        } else {
+            match_index = self.insert_and_find_first_index(ip, skipping)?;
+            if DICT_MODE == NO_DICT && match_index < low_limit {
+                return Ok(None);
+            }
         }
 
         let closest = if DICT_MODE == DICT_MATCH_STATE {
@@ -919,11 +1025,22 @@ impl<'a, const DICT_MODE: u8> Finder<'a> for ChainFinder<'a, DICT_MODE> {
             len: wanted.floor::<BY_GAIN>(curr, closest),
             off_base: 0,
         };
+        // A match that long has a position in the chains for each of its bytes, but the last ones.
+        if BY_GAIN
+            && DICT_MODE == NO_DICT
+            && best.len > 3
+            && low_limit >= self.dense_from
+            && let Some(end) = (best.len + 1).checked_sub(self.mls)
+            && let Some(bytes) = block.near.read64(ip + end)
+            && table_get(self.chains.hash_table, self.hasher.of(bytes) as usize) < low_limit
+        {
+            return Ok(None);
+        }
         let Some(mut longest) = Longest::new(segment, start_index, curr, best) else {
             return Ok(None);
         };
         while nb_attempts > 0 {
-            let mut offered = longest.offer(match_index);
+            let mut offered = longest.offer::<true>(match_index);
             if offered == Offered::Outside {
                 if DICT_MODE != EXT_DICT || match_index < low_limit {
                     break;
@@ -931,7 +1048,7 @@ impl<'a, const DICT_MODE: u8> Finder<'a> for ChainFinder<'a, DICT_MODE> {
                 let match_pos = (match_index - block.dict.start_index) as usize;
                 offered = longest.offer_in_dict(&block, ip, match_pos)?;
             }
-            if offered == Offered::Longest || match_index <= min_chain {
+            if offered == Offered::Longest || (!SIMPLE && match_index <= min_chain) {
                 break;
             }
             match_index = table_get(self.chains.chain_table, match_index as usize);
@@ -957,6 +1074,51 @@ impl<'a, const DICT_MODE: u8> Finder<'a> for ChainFinder<'a, DICT_MODE> {
         }
 
         Ok(longest.best().found())
+    }
+
+    #[inline(always)]
+    fn skip_literals(&mut self, run: LiteralRun) -> Result<Skipped> {
+        let near = self.block.near;
+        let mut ip = run.ip;
+        let no_repeat = false;
+        if !SIMPLE {
+            return Ok(Skipped { ip, no_repeat });
+        }
+        while ip < run.ilimit {
+            let step = (ip - run.anchor) >> K_SEARCH_STRENGTH;
+            let bytes = near.read64(ip).ok_or(BUG)?;
+            if step + 1 > K_LAZY_SKIPPING_STEP
+                || (run.offset_1 > 0
+                    && near.read32((ip + 1).wrapping_sub(run.offset_1))
+                        == Some((bytes >> 8) as u32))
+            {
+                break;
+            }
+
+            let mut match_index = self.insert_and_find_first_index(ip, false)?;
+            let mut nb_attempts = self.nb_attempts;
+            while let Some(match_bytes) =
+                near.read32(match_index.wrapping_sub(self.block.base_index))
+            {
+                if match_bytes == bytes as u32 {
+                    self.started = Some(Candidate {
+                        match_index,
+                        nb_attempts,
+                    });
+                    return Ok(Skipped {
+                        ip,
+                        no_repeat: true,
+                    });
+                }
+                nb_attempts -= 1;
+                if nb_attempts == 0 {
+                    break;
+                }
+                match_index = table_get(self.chains.chain_table, match_index as usize);
+            }
+            ip += step + 1;
+        }
+        Ok(Skipped { ip, no_repeat })
     }
 
     #[inline(always)]
@@ -1174,6 +1336,11 @@ fn row_prefetch<const ROW_ENTRIES: usize, const SECOND_TAGS: bool>(
     let start = rel_row::<ROW_ENTRIES>(hash);
     prefetch_l1(indices, start);
     prefetch_l1(indices, start + 16);
+    if ROW_ENTRIES == 64 {
+        // The C code leaves this half out.
+        prefetch_l1(indices, start + 32);
+        prefetch_l1(indices, start + 48);
+    }
     let start = rel_tag_row::<ROW_ENTRIES, SECOND_TAGS>(hash);
     prefetch_l1(tags, start);
     if SECOND_TAGS {
@@ -1487,7 +1654,7 @@ impl RowSearch<'_> {
             while candidates.matches != 0 && nb_attempts > 0 {
                 let match_index = candidates.first();
                 candidates.remove_first();
-                let mut offered = longest.offer(match_index);
+                let mut offered = longest.offer::<BY_GAIN>(match_index);
                 if offered == Offered::Outside {
                     if DICT_MODE != EXT_DICT || match_index < low_limit {
                         break;
@@ -1842,8 +2009,27 @@ fn compress_block_lazy_generic<'a, F: Finder<'a>, const DEPTH: u32, const DICT_M
     let mut skipping = false;
 
     'parse: while ip < ilimit {
+        let mut no_repeat = false;
+        if !skipping {
+            let skipped = finder.skip_literals(LiteralRun {
+                ip,
+                anchor,
+                ilimit,
+                offset_1,
+            })?;
+            ip = skipped.ip;
+            no_repeat = skipped.no_repeat;
+            if ip >= ilimit {
+                break;
+            }
+        }
+
         // Check the repeat offset.
-        let mut best = Found::repeat(rep_length::<DICT_MODE>(block, ip + 1, offset_1)?);
+        let mut best = Found::repeat(if DEPTH == 0 && no_repeat {
+            0
+        } else {
+            rep_length::<DICT_MODE>(block, ip + 1, offset_1)?
+        });
         let mut start = ip + 1;
 
         if DEPTH > 0 || best.len == 0 {
@@ -1889,12 +2075,14 @@ fn compress_block_lazy_generic<'a, F: Finder<'a>, const DEPTH: u32, const DICT_M
                 }
                 ip += 1;
                 let rep_len = rep_length::<DICT_MODE>(block, ip, offset_1)?;
-                let weight = 2 + since_best;
-                let gain2 = (rep_len * weight) as i32;
-                let gain1 = (best.len * weight) as i32 - best.cost() + 1;
-                if rep_len >= 4 && gain2 > gain1 {
-                    best = Found::repeat(rep_len);
-                    start = ip;
+                if rep_len >= 4 {
+                    let weight = 2 + since_best;
+                    let gain2 = (rep_len * weight) as i32;
+                    let gain1 = (best.len * weight) as i32 - best.cost() + 1;
+                    if gain2 > gain1 {
+                        best = Found::repeat(rep_len);
+                        start = ip;
+                    }
                 }
                 wanted = Wanted {
                     longer_than: 3,
@@ -1981,7 +2169,12 @@ fn compress_block_lazy_hashed<const DEPTH: u32, const DICT_MODE: u8>(
     use_row: bool,
 ) -> Result<usize> {
     if !use_row {
-        return compress_block_lazy_generic::<ChainFinder<DICT_MODE>, DEPTH, DICT_MODE>(args);
+        if DICT_MODE == NO_DICT && chains_are_simple(args.ms, &args.block) {
+            return compress_block_lazy_generic::<ChainFinder<NO_DICT, true>, DEPTH, NO_DICT>(args);
+        }
+        return compress_block_lazy_generic::<ChainFinder<DICT_MODE, false>, DEPTH, DICT_MODE>(
+            args,
+        );
     }
     // With a dictionary, the second tags are given up: how many candidates there are matters if it is searched next.
     if DICT_MODE != NO_DICT {

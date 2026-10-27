@@ -10,7 +10,6 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpmc::{Receiver, Sender, TryRecvError, channel};
-use std::thread::JoinHandle;
 
 use super::cctx::{
     CDict, DictContentType, FrameCompressor, Input, Span, reset_table, write_last_empty_block,
@@ -379,7 +378,8 @@ impl PendingJob {
 
 /// `ZSTDMT_CCtx`
 pub(crate) struct MtCtx {
-    workers: Vec<JoinHandle<()>>,
+    /// They are on their own: they share nothing, and leave once there is no queue or the frame is given up.
+    nb_workers: usize,
     /// Whichever worker is free takes the next job, so that a job does not wait for one thread to be scheduled.
     queue: Sender<Job>,
     /// The other end, for workers to come.
@@ -450,7 +450,7 @@ impl MtCtx {
     pub(crate) fn new(nb_workers: u32) -> Result<Self> {
         let (queue, queue_end) = channel();
         let mut mtctx = Self {
-            workers: Vec::new(),
+            nb_workers: 0,
             queue,
             queue_end,
             cancelled: Arc::new(AtomicBool::new(false)),
@@ -476,29 +476,23 @@ impl MtCtx {
 
     /// `ZSTDMT_resize`: no job is under way.
     fn resize(&mut self, nb_workers: usize) -> Result<()> {
-        if nb_workers < self.workers.len() {
-            self.stop_workers();
+        if nb_workers < self.nb_workers {
+            // They leave when nothing can be sent to the queue they have.
+            (self.queue, self.queue_end) = channel();
+            self.nb_workers = 0;
         }
-        while self.workers.len() < nb_workers {
+        while self.nb_workers < nb_workers {
             let queue_end = self.queue_end.clone();
             let cancelled = Arc::clone(&self.cancelled);
-            let worker = std::thread::Builder::new()
+            std::thread::Builder::new()
                 .name("zstd".into())
                 .stack_size(2 << 20)
                 .spawn(move || worker_main(&queue_end, &cancelled))
                 .map_err(|_| ErrorCode::MemoryAllocation)?;
-            self.workers.push(worker);
+            self.nb_workers += 1;
         }
         self.params.nb_workers = nb_workers as i32;
         Ok(())
-    }
-
-    fn stop_workers(&mut self) {
-        // They leave when nothing can be sent to the queue they have.
-        (self.queue, self.queue_end) = channel();
-        for worker in self.workers.drain(..) {
-            let _ = worker.join();
-        }
     }
 
     /// `ZSTDMT_waitForAllJobsCompleted` and `ZSTDMT_releaseAllJobResources`, for a frame that is given up.
@@ -585,7 +579,7 @@ impl MtCtx {
 
     /// The most jobs at a time, which bounds memory as the size of the round buffer does in the C code.
     fn max_jobs(&self) -> usize {
-        self.workers.len() + 2
+        self.nb_workers + 2
     }
 
     /// `ZSTDMT_createCompressionJob`: of the input there is in `in_buff`.
@@ -820,7 +814,7 @@ impl MtCtx {
 
 impl Drop for MtCtx {
     fn drop(&mut self) {
+        // Nobody waits for them, which could take as long as a job does.
         self.cancelled.store(true, Ordering::SeqCst);
-        self.stop_workers();
     }
 }

@@ -75,3 +75,5 @@ src/cli/init/tsconfig.default.json linguist-language=JSON-with-Comments
 
 # Every byte of these files is part of a CI image's name (scripts/build/ci-images/spec.ts).
 scripts/build/ci-images/** text eol=lf
+
+src/brotli/common/dictionary.bin binary

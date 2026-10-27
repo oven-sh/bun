@@ -1174,6 +1174,11 @@ fn row_prefetch<const ROW_ENTRIES: usize, const SECOND_TAGS: bool>(
     let start = rel_row::<ROW_ENTRIES>(hash);
     prefetch_l1(indices, start);
     prefetch_l1(indices, start + 16);
+    if ROW_ENTRIES == 64 {
+        // The C code leaves this half out.
+        prefetch_l1(indices, start + 32);
+        prefetch_l1(indices, start + 48);
+    }
     let start = rel_tag_row::<ROW_ENTRIES, SECOND_TAGS>(hash);
     prefetch_l1(tags, start);
     if SECOND_TAGS {

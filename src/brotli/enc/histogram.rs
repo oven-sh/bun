@@ -112,7 +112,7 @@ pub(crate) fn build_histograms_with_context(
     literal_split: &BlockSplit,
     command_split: &BlockSplit,
     distance_split: &BlockSplit,
-    ringbuffer: &[u8],
+    ring_buffer: &[u8],
     start_pos: usize,
     mask: usize,
     mut prev_byte: u8,
@@ -136,7 +136,7 @@ pub(crate) fn build_histograms_with_context(
                 context = (context << LITERAL_CONTEXT_BITS)
                     + usize::from(lut.context(prev_byte, prev_byte2));
             }
-            let literal = ringbuffer.at(pos & mask)?;
+            let literal = ring_buffer.at(pos & mask)?;
             literal_histograms
                 .at_mut(context)?
                 .add(usize::from(literal))?;
@@ -146,8 +146,8 @@ pub(crate) fn build_histograms_with_context(
         }
         pos += cmd.copy_len() as usize;
         if cmd.copy_len() != 0 {
-            prev_byte2 = ringbuffer.at(pos.wrapping_sub(2) & mask)?;
-            prev_byte = ringbuffer.at(pos.wrapping_sub(1) & mask)?;
+            prev_byte2 = ring_buffer.at(pos.wrapping_sub(2) & mask)?;
+            prev_byte = ring_buffer.at(pos.wrapping_sub(1) & mask)?;
             if cmd.has_distance_symbol() {
                 let context = (distance_blocks.advance()? << DISTANCE_CONTEXT_BITS)
                     + cmd.distance_context() as usize;

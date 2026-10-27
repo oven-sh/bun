@@ -95,7 +95,7 @@ fn compute_distance_cost(
 /// Splits with the slow shortest-path block splitter and clusters the contexts. Also picks the distance parameters that
 /// suit `cmds` best, returns them and encodes the distances of `cmds`, which are encoded for `params.dist`, for them.
 pub(crate) fn build_meta_block(
-    ringbuffer: &[u8],
+    ring_buffer: &[u8],
     pos: usize,
     mask: usize,
     params: &EncoderParams,
@@ -146,7 +146,7 @@ pub(crate) fn build_meta_block(
     recompute_distance_prefixes(cmds, &orig_params, &best_params);
 
     let (literal_split, command_split, distance_split) =
-        split_block(cmds, ringbuffer, pos, mask, params.quality)?;
+        split_block(cmds, ring_buffer, pos, mask, params.quality)?;
 
     let mut literal_context_multiplier = 1usize;
     let mut literal_context_lut = None;
@@ -169,7 +169,7 @@ pub(crate) fn build_meta_block(
         &literal_split,
         &command_split,
         &distance_split,
-        ringbuffer,
+        ring_buffer,
         pos,
         mask,
         prev_byte,
@@ -426,7 +426,7 @@ fn map_static_contexts(
 /// [`build_meta_block_greedy`] without the context map. `literal_context` maps the two bytes before a literal, the last
 /// one first, to one of `num_contexts`.
 fn split_greedily(
-    ringbuffer: &[u8],
+    ring_buffer: &[u8],
     mut pos: usize,
     mask: usize,
     mut prev_byte: u8,
@@ -449,7 +449,7 @@ fn split_greedily(
     for cmd in commands {
         command_blocks.add_symbol(usize::from(cmd.cmd_prefix), 0)?;
         for _ in 0..cmd.insert_len {
-            let literal = ringbuffer.at(pos & mask)?;
+            let literal = ring_buffer.at(pos & mask)?;
             literal_blocks.add_symbol(
                 usize::from(literal),
                 literal_context(prev_byte, prev_byte2)?,
@@ -460,8 +460,8 @@ fn split_greedily(
         }
         pos += cmd.copy_len() as usize;
         if cmd.copy_len() != 0 {
-            prev_byte2 = ringbuffer.at(pos.wrapping_sub(2) & mask)?;
-            prev_byte = ringbuffer.at(pos.wrapping_sub(1) & mask)?;
+            prev_byte2 = ring_buffer.at(pos.wrapping_sub(2) & mask)?;
+            prev_byte = ring_buffer.at(pos.wrapping_sub(1) & mask)?;
             if cmd.has_distance_symbol() {
                 distance_blocks.add_symbol(cmd.dist_prefix.symbol(), 0)?;
             }
@@ -487,7 +487,7 @@ fn split_greedily(
 /// more than one context, `static_context_map` maps the literal contexts to `num_contexts` histograms, in the same way
 /// for all block types.
 pub(crate) fn build_meta_block_greedy(
-    ringbuffer: &[u8],
+    ring_buffer: &[u8],
     pos: usize,
     mask: usize,
     prev_byte: u8,
@@ -499,7 +499,7 @@ pub(crate) fn build_meta_block_greedy(
 ) -> Fallible<MetaBlockSplit> {
     if num_contexts == 1 {
         return split_greedily(
-            ringbuffer,
+            ring_buffer,
             pos,
             mask,
             prev_byte,
@@ -511,7 +511,7 @@ pub(crate) fn build_meta_block_greedy(
     }
     let static_context_map = static_context_map.ok_or(Bug)?;
     let mut mb = split_greedily(
-        ringbuffer,
+        ring_buffer,
         pos,
         mask,
         prev_byte,

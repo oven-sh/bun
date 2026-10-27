@@ -1,6 +1,0 @@
-02602415 webp: lossless encoder: skip runs of equal counts 16 at a time
-bc2da5c3 webp: lossless encoder: drop branches that no caller reaches, faster long matches and palette mapping
-27739eb8 webp: lossless encoder: faster predictor residuals and colour cache size search
-f5e3eca0 webp: lossless encoder: faster colour transform search
-c785ded1 webp: lossless encoder: clippy and rustfmt
-49f73393 webp: port the lossless encoder and the alpha plane encoder

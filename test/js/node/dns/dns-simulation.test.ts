@@ -903,8 +903,8 @@ describe("what is remembered", () => {
 });
 
 // What c-ares 1.34.9, unmodified but for its random numbers, logged for the same scripts, with each call it makes of libc
-// answered from the same made-up world. The numbered scripts reach every line of the resolver that a script for Linux can.
-// The others each went differently here once, or still do because c-ares is wrong.
+// answered from the same made-up world: c-ares-driver/regenerate.ts writes the logs again. The numbered scripts reach every
+// line of the resolver that a script for Linux can. The others each went differently here once, or still do on purpose.
 describe("c-ares", () => {
   /** What its driver says to whatever follows `shutdown`, and stops. */
   const AFTER_THE_END = "! after the end\n";

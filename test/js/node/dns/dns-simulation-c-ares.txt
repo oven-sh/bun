@@ -3356,7 +3356,7 @@ close 1
 done 0 error ENODATA
 timer none
 ? @
-=== went wrong once 01
+=== a name server with an over-long %interface is skipped
 file /etc/resolv.conf nameserver%202001::1%2599999999999999999999999999999999999999999;c
 lookup a.test 443 6
 ---
@@ -3371,7 +3371,7 @@ send 1 dd74010000010000000000000161047465737400001c0001
 watch 1 r-
 timer 2000
 ? @
-=== went wrong once 02
+=== a query refused for its name still draws an id
 query A aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.test
 nameinfo 10.0.0.3 80
 ---
@@ -3387,7 +3387,7 @@ send 1 547d0100000100000000000001330130013002313007696e2d61646472046172706100000
 watch 1 r-
 timer 2000
 ? @
-=== went wrong once 03
+=== that id draw shifts the jitter of later retries
 nameinfo 192.168.1.1 53
 opens fail fail
 opens fail fail fail fail fail fail fail fail
@@ -3453,7 +3453,7 @@ watch 5 r-
 close 4
 timer 3697
 ? @
-=== went wrong once 04
+=== on equal rank, a new server precedes a leaving one
 opens ok fail
 opens ok fail
 servers ff02::1#0#53#0 10.0.0.1#53#5353#0 2002:102:304::1#0#53#0
@@ -3480,7 +3480,7 @@ watch 2 r-
 close 1
 servers 10.0.0.1#53#53#0 10.0.0.1#5353#5353#0
 ? @
-=== went wrong once 05
+=== over-long %interface skips that server, not the line's others
 file /etc/resolv.conf nameserver%20[10.0.0.1]%20127.0.0.1%25nopppppppppppppppppppppppppppppppppppppppppe;%0Bc
 reverse 10.0.0.1
 ---
@@ -3495,7 +3495,7 @@ send 1 dd740100000100000000000001310130013002313007696e2d61646472046172706100000
 watch 1 r-
 timer 2000
 ? @
-=== went wrong once 06
+=== rotate over TCP: each moved query draws its own server
 file /etc/resolv.conf options%20timeout:0%0Aoptions%20use-vc:25%20rotate%20#%20c%0Anameserver%20127.0.0.1:0%20#%20c%0Anameserver%2010.0.0.3%259
 lookup host2 443 0
 servers 10.0.0.2#5353#5353#0 10.0.0.1#0#0#0 10.0.0.1#0#0#0
@@ -3520,7 +3520,7 @@ watch 4 rw
 close 1
 servers 10.0.0.2#5353#5353#0 10.0.0.1#53#53#0
 ? @
-=== went wrong once 08
+=== a refused lookup draws an id: next lookup's id shifts
 lookup %04 80 4
 lookup host 443 4
 ---
@@ -3537,7 +3537,7 @@ send 1 547d0100000100000000000004686f73740000010001
 watch 1 r-
 timer 2000
 ? @
-=== went wrong once 09
+=== a reply from source port 0 is accepted
 query NS b.test
 deliver 1 dd7481800001000000000000016204746573740000020001 127.0.0.1#0
 ---
@@ -3554,7 +3554,7 @@ close 1
 done 0 error ENODATA
 timer none
 ? @
-=== went wrong once 10
+=== rotate: where queries go when both servers leave
 file /etc/resolv.conf options%20rotate:+1%20rotate%20ndots:0%20#%20c%0Anameserver%20[10.0.0.1],fc00::1%0Anameserver%20fc00::1%0A
 reverse 10.0.0.1
 query AAAA x.localhost
@@ -3587,7 +3587,7 @@ close 2
 close 1
 servers fe80::1#53#53#0 192.168.1.1#5353#5353#0
 ? @
-=== went wrong once 11
+=== queries move once, to the twin server that stays
 nameinfo 2001:db8::2 65535
 servers 10.0.0.1#53#5353#0 10.0.0.1#0#0#0 fc00::1#0#0#0
 deliver 2 01ff1800ff
@@ -3632,7 +3632,7 @@ watch 5 r-
 close 4
 servers 10.0.0.1#53#53#0
 ? @
-=== went wrong once 12
+=== opens failing: new servers tried before equal-ranked leaving ones
 query AAAA a.test.
 servers ::1#5353#5353#0 10.0.0.1#0#0#0 10.0.0.1#53#5353#0
 opens fail fail fail fail fail fail fail fail
@@ -3673,7 +3673,7 @@ close 3
 servers fec0::1#53#5353#0 2002:102:304::1#5353#5353#0 ::102:304#53#53#0
 timer 7360
 ? @
-=== went wrong once 13
+=== after failed opens, a moved query still has tries left
 opens fail fail fail fail fail fail fail fail
 lookup host 0 0
 servers 10.0.0.1#53#53#0 10.0.0.1#53#5353#0 10.0.0.3#53#5353#0
@@ -3711,7 +3711,7 @@ close 1
 servers 10.0.0.1#53#5353#0
 timer 2641
 ? @
-=== went wrong once 14
+=== a refused lookup draws an id: next query's id shifts
 lookup %04 80 4
 query A host
 ---
@@ -3727,7 +3727,7 @@ send 1 547d0100000100000000000004686f73740000010001
 watch 1 r-
 timer 2000
 ? @
-=== went wrong once 15
+=== query moved onto a leaving twin runs out of tries
 opens ok ok fail fail fail fail
 query AAAA c.example.com
 servers 10.0.0.2#0#0#0 10.0.0.3#53#5353#0
@@ -3762,7 +3762,7 @@ servers 10.0.0.3#53#53#0 127.0.0.1#53#53#0
 done 0 error ECONNREFUSED
 timer none
 ? @
-=== went wrong once 16
+=== a query moves twice, first onto a leaving twin
 lookup host 80 0
 servers fe80::1#53#5353#0 10.0.0.1#0#53#0
 opens fail fail fail fail fail fail fail fail
@@ -3809,7 +3809,7 @@ close 3
 servers 10.0.0.1#53#5353#0 10.0.0.3#5353#5353#0
 timer 5282
 ? @
-=== went wrong once 17
+=== rotate: a moved query may land on a leaving server
 file /etc/resolv.conf options%09rotate%0Aoptions%09attempts:30%0Adomain%20%20x%0Anameserver%0910.0.0.1,%201.2.3.4%0Ahostresorder%20file%0Asearch%0A
 query AAAA host
 query AAAA a.test.
@@ -3849,7 +3849,7 @@ close 1
 servers 10.0.0.2#53#53#0 224.0.0.1#53#53#0
 timer 3530
 ? @
-=== went wrong once 18
+=== malformed reply from source port 0 fails the connection
 reverse 0.0.0.0
 deliver 1 5d7481800001000000000000013001 127.0.0.1#0
 ---
@@ -3869,7 +3869,7 @@ watch 2 r-
 close 1
 timer 3340
 ? @
-=== went wrong once 19
+=== tries allowed count servers still listed during setServers
 query AAAA 1
 servers 2001:db8:1:2:3:4:5:6#53#53#0
 servers 127.0.0.1#53#5353#0 127.0.0.1#53#53#0 2001:db8:1:2:3:4:5:6#5353#5353#0
@@ -3919,7 +3919,7 @@ close 5
 servers 127.0.0.1#53#53#0
 timer 6506
 ? @
-=== went wrong once 20
+=== a refused lookup draws an id: next reverse's id shifts
 lookup %04 80 4
 reverse 3ffe::1
 ---
@@ -3936,7 +3936,7 @@ send 1 547d010000010000000000000131013001300130013001300130013001300130013001300
 watch 1 r-
 timer 2000
 ? @
-=== went wrong once 21
+=== a new server is tried before a connected leaving one
 query AAAA a.test.
 servers ::1#5353#5353#0 127.0.0.1#0#0#0 10.0.0.1#0#53#0
 query AAAA a.test
@@ -3977,7 +3977,7 @@ close 1
 servers 127.0.0.1#53#5353#0 10.0.0.1#5353#5353#0 10.0.0.1#53#53#0
 timer 2641
 ? @
-=== went wrong once 22
+=== rotate, TCP Fast Open: each moved query draws its server
 file /etc/resolv.conf options%20rotate%20retrans:5%20ndots:2%0Aoptions%09rotate%0Anameserver%09169.254.1.1%0Anameserver%09[2002:102:304::1]%20;%20c%0Aoptions%20retrans:4294968%0Aoptions%20usevc
 fast-open
 lookup host2 443 0
@@ -4008,7 +4008,7 @@ watch 4 rw
 close 1
 servers 2001:db8::1#53#53#0 127.0.0.1#53#53#0
 ? @
-=== went wrong once 23
+=== rotate: a refused name's id draw shifts the server picked
 env RES_OPTIONS rotate%20use-vc:1
 query CAA .a.test
 servers ::#0#0#0 2001::1#53#53#0 ::1#0#53#0
@@ -4031,7 +4031,7 @@ timer 2000
 ? @
 read /etc/hosts
 ? @
-=== went wrong once 24
+=== queries due at the same time: newest is resent first
 query A 010.1.1.1
 lookup . 0 4
 advance 61000
@@ -4055,7 +4055,7 @@ watch 2 r-
 close 1
 timer 63641
 ? @
-=== went wrong once 25
+=== over-long %interface: the next server on the line stays
 file /etc/resolv.conf nameserver%0910.0.0.3%25nopeeeeeeeeeeeeeeeeeeEeeeEeeeeeeeeeeeeeeeeee%20,%2010.0.0.2:53
 nameinfo 10.0.0.1 80
 ---
@@ -4070,7 +4070,7 @@ send 1 dd740100000100000000000001310130013002313007696e2d61646472046172706100000
 watch 1 r-
 timer 2000
 ? @
-=== went wrong once 26
+=== same deadline at expire: newest query is resent first
 lookup . 80 4
 query ANY host
 expire
@@ -4094,7 +4094,7 @@ watch 2 r-
 close 1
 timer 4641
 ? @
-=== went wrong once 27
+=== rotate, three servers leave: order and targets of moved queries
 file /etc/resolv.conf nameserver%20[10.0.0.3]%2010.0.0.2%0Aoptions%20timeout:256%20rotate:256%0Anameserver%20fc00::1%0A
 query NAPTR A.Test
 query AAAA .
@@ -4145,7 +4145,7 @@ watch 5 r-
 close 1
 servers 224.0.0.1#53#53#0 10.0.0.1#53#53#0
 ? @
-=== went wrong once 28
+=== rotate over TCP: second query waits on the first's connection
 file /etc/resolv.conf options%20rotate:+1%20rotate%20use-vc:0%0Anameserver%20[10.0.0.1],%20fc00::1%20#%20c%0Anameserver%20fc00::1%0A
 query MX .a.test
 query NAPTR A.Test
@@ -4163,7 +4163,7 @@ watch 1 rw
 timer 2000
 ? @
 ? @
-=== went wrong once 29
+=== rotate, both servers leave: a query hops via the other
 file /etc/resolv.conf nameserver%20fc00::1%0Aoptions%20%20ndots:16%0A%20#%01T%0Anameserver%20%202002:102:304::1%0Aoptions%20rotate:255%20timeout:16%0A#T%1C%0A
 query NAPTR a.test
 query A .
@@ -4194,7 +4194,7 @@ watch 4 r-
 close 1
 servers 224.0.0.1#53#53#0 255.255.255.255#53#5353#0
 ? @
-=== went wrong once 30
+=== rotate: which new server a moved query draws
 env RES_OPTIONS rotate
 query A a.test
 query A %B30%8A:
@@ -4218,7 +4218,7 @@ watch 2 r-
 close 1
 servers 10.0.0.3#53#53#0 2001:db8::2#53#53#0 10.0.0.3#53#5353#0
 ? @
-=== went wrong once 31
+=== rotate: query moved onto a leaving twin moves again
 env RES_OPTIONS rotate
 query A a.test
 query A %B30%8A:
@@ -4254,7 +4254,7 @@ close 3
 servers 10.0.0.3#53#53#0 10.0.0.2#53#53#0 127.0.0.1#53#53#0
 timer 2253
 ? @
-=== went wrong once 32
+=== lookupService moved onto a leaving twin ends with ENOTFOUND
 opens ok ok fail fail fail fail
 nameinfo 10.0.0.3 80
 servers 10.0.0.2#0#0#0 10.0.0.3#53#5353#0
@@ -4290,7 +4290,7 @@ servers 10.0.0.3#53#53#0 127.0.0.1#53#53#0
 done 0 error ENOTFOUND
 timer none
 ? @
-=== went wrong once 33
+=== rotate over TCP: next deadline after setServers moves queries
 env RES_OPTIONS rotate%20use-vc:1
 query CAA .a.test
 servers ::#0#0#0 2001::1#53#53#0 ::1#0#53#0
@@ -4329,7 +4329,7 @@ close 3
 servers 169.254.1.1#53#53#0 ::1#53#53#0
 timer 4421
 ? @
-=== went wrong once 34
+=== rotate over TCP: which new connection times out first
 file /etc/resolv.conf options%20rotate:+1%20rotate%20use-vc:0%0Anameserver%20[10.0.0.1],%20fc00::1%20#%20c%0Anameserver%20fc00::1%0A
 query MX .a.test
 query NAPTR A.Test
@@ -4368,7 +4368,7 @@ servers ::1#53#53#0 fe80::1#53#53#0
 close 4
 timer 7107
 ? @
-=== went wrong once 35
+=== rotate: setServers draws as many random numbers as c-ares
 env RES_OPTIONS use-vc%20rotate:15
 nameinfo 255.255.255.255 1
 servers 2002:102:304::1#0#53#0 ::#0#0#0 10.0.0.1#0#53#0
@@ -4412,7 +4412,7 @@ servers 10.0.0.1#53#53#0 127.0.0.1#53#53#0
 read /etc/hosts
 send 3 00279ea10100000100000000000001330130013002313007696e2d61646472046172706100000c0001
 ? @
-=== went wrong once 36
+=== new servers are tried before a leaving server's blocked socket
 reverse 10.0.0.2
 sends 1 block block
 opens ok fail
@@ -4460,7 +4460,7 @@ close 3
 servers ::#53#5353#0 2001:db8:1:2:3:4:5:6#53#53#0
 timer 2641
 ? @
-=== went wrong once 37
+=== rotate: order in which leaving servers hand over queries
 env RES_OPTIONS rotate
 query MX fe80::1
 reverse 0.0.0.0

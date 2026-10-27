@@ -115,7 +115,9 @@ fn set_cost(histogram: &[u32], literal_histogram: bool, cost: &mut [f32]) {
     let log2sum = fast_log2(sum) as f32;
     let mut missing_symbol_sum = sum;
     if !literal_histogram {
-        missing_symbol_sum += histogram.iter().filter(|&&count| count == 0).count();
+        for &count in histogram {
+            missing_symbol_sum += usize::from(count == 0);
+        }
     }
     let missing_symbol_cost = fast_log2(missing_symbol_sum) as f32 + 2.0;
     for (cost, &count) in cost.iter_mut().zip(histogram) {

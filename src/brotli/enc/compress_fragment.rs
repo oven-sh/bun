@@ -12,7 +12,7 @@ use super::hash::HASH_MUL_32;
 use crate::common::constants::{
     NUM_COMMAND_SYMBOLS, NUM_LITERAL_SYMBOLS, WINDOW_GAP, max_backward_limit,
 };
-use crate::util::{Checked, SliceExt, load_u32_le, load_u64_le};
+use crate::util::{Bug, Checked, SliceExt, load_u64_le};
 
 const MAX_DISTANCE: usize = max_backward_limit(18);
 
@@ -59,25 +59,16 @@ impl OnePassArena {
     }
 }
 
-/// A hash of the 5 bytes at `p`.
+/// A hash of `TABLE_BITS` bits of the low 5 bytes of `v`.
 #[inline(always)]
-fn hash(input: &[u8], p: usize, shift: usize) -> Checked<usize> {
-    let h = (load_u64_le(input, p)? << 24).wrapping_mul(u64::from(HASH_MUL_32));
-    Ok((h >> shift) as u32 as usize)
+fn hash<const TABLE_BITS: u32>(v: u64) -> usize {
+    ((v << 24).wrapping_mul(u64::from(HASH_MUL_32)) >> (64 - TABLE_BITS)) as usize
 }
 
-/// A hash of the 5 bytes from byte `offset` of `v` on. `offset` is at most 3.
+/// Whether the low 5 bytes of `a` and of `b` are the same.
 #[inline(always)]
-fn hash_bytes_at_offset(v: u64, offset: u32, shift: usize) -> usize {
-    let h = ((v >> (8 * offset)) << 24).wrapping_mul(u64::from(HASH_MUL_32));
-    (h >> shift) as u32 as usize
-}
-
-/// Whether the 5 bytes at `p1` and at `p2` are the same.
-#[inline(always)]
-fn is_match(input: &[u8], p1: usize, p2: usize) -> Checked<bool> {
-    Ok(load_u32_le(input, p1)? == load_u32_le(input, p2)?
-        && input.at(p1 + 4)? == input.at(p2 + 4)?)
+fn is_match(a: u64, b: u64) -> bool {
+    (a ^ b) << 24 == 0
 }
 
 /// Builds a prefix code for literals from `input`, which only approximates the literals that are left once the matches
@@ -192,9 +183,22 @@ struct CommandWriter<'a> {
 impl CommandWriter<'_> {
     #[inline(always)]
     fn emit(&mut self, code: usize, bw: &mut BitWriter<'_>) -> Checked {
+        self.emit_with_extra(code, 0, 0, bw)
+    }
+
+    /// `code` and then the low `n_extra` bits of `extra`, at most 24. The others are 0.
+    #[inline(always)]
+    fn emit_with_extra(
+        &mut self,
+        code: usize,
+        n_extra: usize,
+        extra: usize,
+        bw: &mut BitWriter<'_>,
+    ) -> Checked {
+        let depth = usize::from(self.depth.at(code)?);
         bw.write_bits(
-            usize::from(self.depth.at(code)?),
-            u64::from(self.bits.at(code)?),
+            depth + n_extra,
+            u64::from(self.bits.at(code)?) | ((extra as u64) << depth),
         )?;
         *self.histo.at_mut(code)? += 1;
         Ok(())
@@ -209,27 +213,27 @@ impl CommandWriter<'_> {
             let tail = insertlen - 2;
             let nbits = log2_floor_nonzero(tail) as usize - 1;
             let prefix = tail >> nbits;
-            self.emit((nbits << 1) + prefix + 42, bw)?;
-            bw.write_bits(nbits, (tail - (prefix << nbits)) as u64)
+            self.emit_with_extra(
+                (nbits << 1) + prefix + 42,
+                nbits,
+                tail - (prefix << nbits),
+                bw,
+            )
         } else if insertlen < 2114 {
             let tail = insertlen - 66;
             let nbits = log2_floor_nonzero(tail) as usize;
-            self.emit(nbits + 50, bw)?;
-            bw.write_bits(nbits, (tail - (1 << nbits)) as u64)
+            self.emit_with_extra(nbits + 50, nbits, tail - (1 << nbits), bw)
         } else {
-            self.emit(61, bw)?;
-            bw.write_bits(12, (insertlen - 2114) as u64)
+            self.emit_with_extra(61, 12, insertlen - 2114, bw)
         }
     }
 
     #[inline(always)]
     fn emit_long_insert_len(&mut self, insertlen: usize, bw: &mut BitWriter<'_>) -> Checked {
         if insertlen < 22594 {
-            self.emit(62, bw)?;
-            bw.write_bits(14, (insertlen - 6210) as u64)
+            self.emit_with_extra(62, 14, insertlen - 6210, bw)
         } else {
-            self.emit(63, bw)?;
-            bw.write_bits(24, (insertlen - 22594) as u64)
+            self.emit_with_extra(63, 24, insertlen - 22594, bw)
         }
     }
 
@@ -241,16 +245,18 @@ impl CommandWriter<'_> {
             let tail = copylen - 6;
             let nbits = log2_floor_nonzero(tail) as usize - 1;
             let prefix = tail >> nbits;
-            self.emit((nbits << 1) + prefix + 20, bw)?;
-            bw.write_bits(nbits, (tail - (prefix << nbits)) as u64)
+            self.emit_with_extra(
+                (nbits << 1) + prefix + 20,
+                nbits,
+                tail - (prefix << nbits),
+                bw,
+            )
         } else if copylen < 2118 {
             let tail = copylen - 70;
             let nbits = log2_floor_nonzero(tail) as usize;
-            self.emit(nbits + 28, bw)?;
-            bw.write_bits(nbits, (tail - (1 << nbits)) as u64)
+            self.emit_with_extra(nbits + 28, nbits, tail - (1 << nbits), bw)
         } else {
-            self.emit(39, bw)?;
-            bw.write_bits(24, (copylen - 2118) as u64)
+            self.emit_with_extra(39, 24, copylen - 2118, bw)
         }
     }
 
@@ -263,22 +269,23 @@ impl CommandWriter<'_> {
             let tail = copylen - 8;
             let nbits = log2_floor_nonzero(tail) as usize - 1;
             let prefix = tail >> nbits;
-            self.emit((nbits << 1) + prefix + 4, bw)?;
-            bw.write_bits(nbits, (tail - (prefix << nbits)) as u64)
+            self.emit_with_extra(
+                (nbits << 1) + prefix + 4,
+                nbits,
+                tail - (prefix << nbits),
+                bw,
+            )
         } else if copylen < 136 {
             let tail = copylen - 8;
-            self.emit((tail >> 5) + 30, bw)?;
-            bw.write_bits(5, (tail & 31) as u64)?;
+            self.emit_with_extra((tail >> 5) + 30, 5, tail & 31, bw)?;
             self.emit(64, bw)
         } else if copylen < 2120 {
             let tail = copylen - 72;
             let nbits = log2_floor_nonzero(tail) as usize;
-            self.emit(nbits + 28, bw)?;
-            bw.write_bits(nbits, (tail - (1 << nbits)) as u64)?;
+            self.emit_with_extra(nbits + 28, nbits, tail - (1 << nbits), bw)?;
             self.emit(64, bw)
         } else {
-            self.emit(39, bw)?;
-            bw.write_bits(24, (copylen - 2120) as u64)?;
+            self.emit_with_extra(39, 24, copylen - 2120, bw)?;
             self.emit(64, bw)
         }
     }
@@ -289,8 +296,7 @@ impl CommandWriter<'_> {
         let nbits = log2_floor_nonzero(d) as usize - 1;
         let prefix = (d >> nbits) & 1;
         let offset = (2 + prefix) << nbits;
-        self.emit(2 * (nbits - 1) + prefix + 80, bw)?;
-        bw.write_bits(nbits, (d - offset) as u64)
+        self.emit_with_extra(2 * (nbits - 1) + prefix + 80, nbits, d - offset, bw)
     }
 }
 
@@ -301,7 +307,18 @@ fn emit_literals(
     bits: &[u16; 256],
     bw: &mut BitWriter<'_>,
 ) -> Checked {
-    for &lit in literals {
+    // No code is longer than 14 bits, so 4 of them fit in one write.
+    let (chunks, rest) = literals.as_chunks::<4>();
+    for chunk in chunks {
+        let (mut n_bits, mut v) = (0, 0);
+        for &lit in chunk {
+            let lit = usize::from(lit);
+            v |= u64::from(bits.at(lit)?) << n_bits;
+            n_bits += usize::from(depth.at(lit)?);
+        }
+        bw.write_bits(n_bits, v)?;
+    }
+    for &lit in rest {
         let lit = usize::from(lit);
         bw.write_bits(usize::from(depth.at(lit)?), u64::from(bits.at(lit)?))?;
     }
@@ -350,14 +367,6 @@ fn update_bits(mut n_bits: usize, mut bits: u32, mut pos: usize, array: &mut [u8
     Ok(())
 }
 
-pub(crate) fn rewind_bit_position(new_storage_ix: usize, bw: &mut BitWriter<'_>) -> Checked {
-    let bitpos = new_storage_ix & 7;
-    let mask = (1u32 << bitpos) - 1;
-    *bw.storage.at_mut(new_storage_ix >> 3)? &= mask as u8;
-    bw.pos = new_storage_ix;
-    Ok(())
-}
-
 /// Whether the literal code with code lengths `depths` suits `data` well enough to go on with it.
 fn should_merge_block(histo: &mut [u32; 256], data: &[u8], depths: &[u8; 256]) -> Checked<bool> {
     const SAMPLE_RATE: usize = 43;
@@ -392,11 +401,10 @@ fn emit_uncompressed_meta_block(
     storage_ix_start: usize,
     bw: &mut BitWriter<'_>,
 ) -> Checked {
-    rewind_bit_position(storage_ix_start, bw)?;
+    bw.rewind(storage_ix_start)?;
     store_meta_block_header(bytes.len(), true, bw)?;
-    bw.pos = (bw.pos + 7) & !7;
-    bw.write_bytes(bytes)?;
-    bw.prepare_storage()
+    bw.jump_to_byte_boundary()?;
+    bw.write_bytes(bytes)
 }
 
 #[rustfmt::skip]
@@ -413,16 +421,15 @@ static CMD_HISTO_SEED: [u32; 128] = [
 enum Scan {
     /// At the end of the block.
     EmitRemainder,
-    /// With the meta-block replaced by an uncompressed one.
-    NextBlock,
+    /// At `end`, with so many literals before it that the meta-block is better not compressed.
+    Uncompressed { end: usize },
 }
 
-fn compress_fragment_fast_impl(
+fn compress_fragment_fast_impl<const TABLE_BITS: u32, const TABLE_SIZE: usize>(
     s: &mut OnePassArena,
     all_input: &[u8],
     is_last: bool,
-    table: &mut [i32],
-    table_bits: usize,
+    table: &mut [i32; TABLE_SIZE],
     bw: &mut BitWriter<'_>,
 ) -> Checked {
     const FIRST_BLOCK_SIZE: usize = 3 << 15;
@@ -441,9 +448,7 @@ fn compress_fragment_fast_impl(
     let mut block_size = input_size.min(FIRST_BLOCK_SIZE);
     let mut total_block_size = block_size;
     // Where the MLEN field of the meta-block header is, in case the meta-block is made longer.
-    let mut mlen_storage_ix = bw.pos + 3;
-
-    let shift = 64 - table_bits;
+    let mut mlen_storage_ix = bw.pos() + 3;
 
     store_meta_block_header(block_size, false, bw)?;
     // No block splits, no contexts.
@@ -486,7 +491,7 @@ fn compress_fragment_fast_impl(
             let ip_limit = input + len_limit;
 
             ip += 1;
-            let mut next_hash = hash(all_input, ip, shift)?;
+            let mut next_bytes = load_u64_le(all_input, ip)?;
             loop {
                 // Step 1: look for a match of 5 bytes.
                 //
@@ -497,7 +502,8 @@ fn compress_fragment_fast_impl(
                 let mut next_ip = ip;
                 let mut candidate;
                 loop {
-                    let hash_now = next_hash;
+                    let bytes = next_bytes;
+                    let hash_now = hash::<TABLE_BITS>(bytes);
                     let bytes_between_hash_lookups = (skip >> 5) as usize;
                     skip += 1;
                     ip = next_ip;
@@ -505,16 +511,17 @@ fn compress_fragment_fast_impl(
                     if next_ip > ip_limit {
                         break 'scan Scan::EmitRemainder;
                     }
-                    next_hash = hash(all_input, next_ip, shift)?;
+                    next_bytes = load_u64_le(all_input, next_ip)?;
                     candidate = ip.wrapping_sub(last_distance as isize as usize);
-                    let found = if is_match(all_input, ip, candidate)? && candidate < ip {
-                        table.put(hash_now, ip as i32)?;
-                        true
-                    } else {
-                        candidate = table.at(hash_now)? as usize;
-                        table.put(hash_now, ip as i32)?;
-                        is_match(all_input, ip, candidate)?
-                    };
+                    let found =
+                        if candidate < ip && is_match(bytes, load_u64_le(all_input, candidate)?) {
+                            table.put(hash_now, ip as i32)?;
+                            true
+                        } else {
+                            candidate = table.at(hash_now)? as usize;
+                            table.put(hash_now, ip as i32)?;
+                            is_match(bytes, load_u64_le(all_input, candidate)?)
+                        };
                     if found && ip - candidate <= MAX_DISTANCE {
                         break;
                     }
@@ -539,15 +546,7 @@ fn compress_fragment_fast_impl(
                         insert,
                         literal_ratio,
                     ) {
-                        emit_uncompressed_meta_block(
-                            all_input.sub(metablock_start..base)?,
-                            mlen_storage_ix - 3,
-                            bw,
-                        )?;
-                        input_size -= base - input;
-                        input = base;
-                        next_emit = input;
-                        break 'scan Scan::NextBlock;
+                        break 'scan Scan::Uncompressed { end: base };
                     } else {
                         cmd.emit_long_insert_len(insert, bw)?;
                     }
@@ -573,14 +572,14 @@ fn compress_fragment_fast_impl(
                 loop {
                     // Some positions within the last copy go into the table, which helps compression.
                     let input_bytes = load_u64_le(all_input, ip - 3)?;
-                    table.put(hash_bytes_at_offset(input_bytes, 0, shift), (ip - 3) as i32)?;
-                    table.put(hash_bytes_at_offset(input_bytes, 1, shift), (ip - 2) as i32)?;
-                    table.put(hash_bytes_at_offset(input_bytes, 2, shift), (ip - 1) as i32)?;
-                    let cur_hash = hash_bytes_at_offset(input_bytes, 3, shift);
+                    table.put(hash::<TABLE_BITS>(input_bytes), (ip - 3) as i32)?;
+                    table.put(hash::<TABLE_BITS>(input_bytes >> 8), (ip - 2) as i32)?;
+                    table.put(hash::<TABLE_BITS>(input_bytes >> 16), (ip - 1) as i32)?;
+                    let cur_hash = hash::<TABLE_BITS>(input_bytes >> 24);
                     candidate = table.at(cur_hash)? as usize;
                     table.put(cur_hash, ip as i32)?;
 
-                    if !is_match(all_input, ip, candidate)? {
+                    if !is_match(input_bytes >> 24, load_u64_le(all_input, candidate)?) {
                         break;
                     }
                     // A match right after the last one, with no literals in between.
@@ -605,11 +604,20 @@ fn compress_fragment_fast_impl(
                 }
 
                 ip += 1;
-                next_hash = hash(all_input, ip, shift)?;
+                next_bytes = load_u64_le(all_input, ip)?;
             }
         };
 
-        if let Scan::EmitRemainder = scan {
+        if let Scan::Uncompressed { end } = scan {
+            emit_uncompressed_meta_block(
+                all_input.sub(metablock_start..end)?,
+                mlen_storage_ix - 3,
+                bw,
+            )?;
+            input_size -= end - input;
+            input = end;
+            next_emit = input;
+        } else {
             input += block_size;
             input_size -= block_size;
             block_size = input_size.min(MERGE_BLOCK_SIZE);
@@ -629,7 +637,7 @@ fn compress_fragment_fast_impl(
                     20,
                     (total_block_size - 1) as u32,
                     mlen_storage_ix,
-                    bw.storage,
+                    bw.storage(),
                 )?;
                 continue;
             }
@@ -664,7 +672,7 @@ fn compress_fragment_fast_impl(
         metablock_start = input;
         block_size = input_size.min(FIRST_BLOCK_SIZE);
         total_block_size = block_size;
-        mlen_storage_ix = bw.pos + 3;
+        mlen_storage_ix = bw.pos() + 3;
         store_meta_block_header(block_size, false, bw)?;
         // No block splits, no contexts.
         bw.write_bits(13, 0)?;
@@ -676,12 +684,9 @@ fn compress_fragment_fast_impl(
     if !is_last {
         // The codes for commands and distances of the next call.
         let mut cmd_code = [0u8; 512];
-        let mut cmd_code_writer = BitWriter {
-            storage: &mut cmd_code,
-            pos: 0,
-        };
+        let mut cmd_code_writer = BitWriter::new(&mut cmd_code, 0)?;
         build_and_store_command_prefix_code(s, &mut cmd_code_writer)?;
-        s.cmd_code_numbits = cmd_code_writer.pos;
+        s.cmd_code_numbits = cmd_code_writer.pos();
         s.cmd_code = cmd_code;
     }
     Ok(())
@@ -698,8 +703,7 @@ pub(crate) fn compress_fragment_fast(
     table: &mut [i32],
     bw: &mut BitWriter<'_>,
 ) -> Checked {
-    let initial_storage_ix = bw.pos;
-    let table_bits = log2_floor_nonzero(table.len()) as usize;
+    let initial_storage_ix = bw.pos();
 
     if input.is_empty() {
         debug_assert!(is_last);
@@ -707,14 +711,31 @@ pub(crate) fn compress_fragment_fast(
         bw.write_bits(1, 1)?;
         // ISLASTEMPTY
         bw.write_bits(1, 1)?;
-        bw.pos = (bw.pos + 7) & !7;
+        bw.jump_to_byte_boundary()?;
         return Ok(());
     }
 
-    compress_fragment_fast_impl(s, input, is_last, table, table_bits, bw)?;
+    macro_rules! run {
+        ($bits:literal) => {
+            compress_fragment_fast_impl::<$bits, { 1 << $bits }>(
+                s,
+                input,
+                is_last,
+                table.try_into().map_err(|_| Bug)?,
+                bw,
+            )
+        };
+    }
+    match table.len().trailing_zeros() {
+        9 => run!(9),
+        11 => run!(11),
+        13 => run!(13),
+        15 => run!(15),
+        _ => Err(Bug),
+    }?;
 
     // If that took more room than the input as it is, write that instead.
-    if bw.pos - initial_storage_ix > 31 + (input.len() << 3) {
+    if bw.pos() - initial_storage_ix > 31 + (input.len() << 3) {
         emit_uncompressed_meta_block(input, initial_storage_ix, bw)?;
     }
 
@@ -723,7 +744,7 @@ pub(crate) fn compress_fragment_fast(
         bw.write_bits(1, 1)?;
         // ISLASTEMPTY
         bw.write_bits(1, 1)?;
-        bw.pos = (bw.pos + 7) & !7;
+        bw.jump_to_byte_boundary()?;
     }
     Ok(())
 }

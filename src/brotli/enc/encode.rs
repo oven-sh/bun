@@ -475,7 +475,7 @@ fn write_meta_block_internal(
     if bytes == 0 {
         // ISLAST and ISLASTEMPTY.
         bw.write_bits(2, 3)?;
-        bw.pos = (bw.pos + 7) & !7;
+        bw.jump_to_byte_boundary()?;
         return Ok(());
     }
 
@@ -493,9 +493,9 @@ fn write_meta_block_internal(
         return Ok(());
     }
 
-    debug_assert!(bw.pos <= 14);
-    let last_bytes: [u8; 2] = *bw.storage.array_at(0)?;
-    let last_bytes_bits = bw.pos;
+    debug_assert!(bw.pos() <= 14);
+    let last_bytes: [u8; 2] = *bw.storage().array_at(0)?;
+    let last_bytes_bits = bw.pos();
     if params.quality <= MAX_QUALITY_FOR_STATIC_ENTROPY_CODES {
         store_meta_block_fast(
             data,
@@ -580,11 +580,11 @@ fn write_meta_block_internal(
             bw,
         )?;
     }
-    if bytes + 4 < (bw.pos >> 3) {
+    if bytes + 4 < (bw.pos() >> 3) {
         // That was larger than the input. Start over.
         dist_cache.write_at(0, saved_dist_cache)?;
-        bw.storage.write_at(0, &last_bytes)?;
-        bw.pos = last_bytes_bits;
+        bw.storage().write_at(0, &last_bytes)?;
+        bw.rewind(last_bytes_bits)?;
         store_uncompressed_meta_block(is_last, data, wrapped_last_flush_pos, mask, bytes, bw)?;
     }
     Ok(())
@@ -1072,10 +1072,7 @@ impl Encoder {
         let metablock_size = (self.input_pos - self.last_flush_pos) as usize;
         let storage = get_storage(&mut self.storage, 2 * metablock_size + 503)?;
         storage.write_at(0, &self.last_bytes.to_le_bytes())?;
-        let mut bw = BitWriter {
-            storage,
-            pos: usize::from(self.last_bytes_bits),
-        };
+        let mut bw = BitWriter::new(storage, usize::from(self.last_bytes_bits))?;
         write_meta_block_internal(
             self.ringbuffer.buffer(),
             mask as usize,
@@ -1092,7 +1089,7 @@ impl Encoder {
             &mut self.dist_cache,
             &mut bw,
         )?;
-        let storage_ix = bw.pos;
+        let storage_ix = bw.pos();
         self.last_bytes = u16::from(self.storage.at(storage_ix >> 3)?);
         self.last_bytes_bits = (storage_ix & 7) as u8;
         self.last_flush_pos = self.input_pos;
@@ -1120,10 +1117,7 @@ impl Encoder {
     /// `tiny_buf`. Returns how many bytes that is.
     fn write_metadata_header(&mut self, block_size: usize) -> Checked<usize> {
         self.tiny_buf.write_at(0, &self.last_bytes.to_le_bytes())?;
-        let mut bw = BitWriter {
-            storage: &mut self.tiny_buf,
-            pos: usize::from(self.last_bytes_bits),
-        };
+        let mut bw = BitWriter::new(&mut self.tiny_buf, usize::from(self.last_bytes_bits))?;
         self.last_bytes = 0;
         self.last_bytes_bits = 0;
 
@@ -1143,7 +1137,7 @@ impl Encoder {
             bw.write_bits(2, nbytes as u64)?;
             bw.write_bits(8 * nbytes, block_size as u64 - 1)?;
         }
-        Ok((bw.pos + 7) >> 3)
+        Ok((bw.pos() + 7) >> 3)
     }
 
     /// Completes the last byte of the output with an empty metadata block.
@@ -1249,10 +1243,7 @@ impl Encoder {
             }
             let storage = get_storage(&mut self.storage, max_out_size)?;
             storage.write_at(0, &self.last_bytes.to_le_bytes())?;
-            let mut bw = BitWriter {
-                storage,
-                pos: usize::from(self.last_bytes_bits),
-            };
+            let mut bw = BitWriter::new(storage, usize::from(self.last_bytes_bits))?;
             let table = get_hash_table(&mut self.table, self.params.quality, block_size)?;
             let (block, rest) = input.split_at_checked(block_size).ok_or(Bug)?;
 
@@ -1272,7 +1263,7 @@ impl Encoder {
                 return Err(Bug.into());
             }
             *input = rest;
-            let storage_ix = bw.pos;
+            let storage_ix = bw.pos();
             self.next_out = NextOut::Storage(0);
             self.available_out = storage_ix >> 3;
             self.last_bytes = u16::from(self.storage.at(storage_ix >> 3)?);

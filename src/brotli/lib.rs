@@ -1,4 +1,5 @@
 //! Brotli (RFC 7932), and its "large window" extension. Derived from https://github.com/google/brotli (LICENSE.md).
+#![feature(hint_prefetch)]
 #![forbid(unsafe_code)]
 // Streams come from anywhere and a panic aborts the process.
 #![deny(

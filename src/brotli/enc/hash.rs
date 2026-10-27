@@ -13,7 +13,7 @@ use self::composite::HashComposite;
 use self::forgetful_chain::HashForgetfulChain;
 use self::longest_match::HashLongestMatch;
 use self::longest_match_quickly::HashLongestMatchQuickly;
-use self::longest_match_tagged::HashLongestMatchTagged;
+use self::longest_match_tagged::{DenseBuckets, HashLongestMatchTagged, SparseBuckets};
 use self::rolling::HashRolling;
 pub(crate) use self::to_binary_tree::{H10, MAX_NUM_MATCHES_H10};
 use super::Fallible;
@@ -210,6 +210,7 @@ fn find_longest_match_at_last_distances(
     out: &mut HasherSearchResult,
 ) -> Checked {
     let cur_ix_masked = cur_ix & ring_buffer_mask;
+    let window = data.get(..=ring_buffer_mask).unwrap_or(data);
     let mut best_score = out.score;
     for (i, &distance) in distance_cache
         .iter()
@@ -226,12 +227,11 @@ fn find_longest_match_at_last_distances(
         }
         prev_ix &= ring_buffer_mask;
 
-        if cur_ix_masked + *best_len > ring_buffer_mask {
+        // The byte that a longer match has to include. It has to be inside the window.
+        let Some(wanted) = window.get(cur_ix_masked + *best_len) else {
             break;
-        }
-        if prev_ix + *best_len > ring_buffer_mask
-            || data.at(cur_ix_masked + *best_len)? != data.at(prev_ix + *best_len)?
-        {
+        };
+        if window.get(prev_ix + *best_len) != Some(wanted) {
             continue;
         }
         let len = find_match_length_with_limit(
@@ -365,8 +365,9 @@ pub(crate) type H40 = HashForgetfulChain<15, 1, 16, 4>;
 pub(crate) type H41 = HashForgetfulChain<15, 1, 16, 10>;
 pub(crate) type H42 = HashForgetfulChain<15, 512, 9, 16>;
 pub(crate) type H54 = HashLongestMatchQuickly<20, 2, 7, false>;
-pub(crate) type H58 = HashLongestMatchTagged<false>;
-pub(crate) type H68 = HashLongestMatchTagged<true>;
+pub(crate) type H58<const N: usize> = HashLongestMatchTagged<false, N, DenseBuckets<N>>;
+pub(crate) type H58Sparse<const N: usize> = HashLongestMatchTagged<false, N, SparseBuckets<N>>;
+pub(crate) type H68<const N: usize> = HashLongestMatchTagged<true, N, DenseBuckets<N>>;
 // For large windows.
 pub(crate) type H35 = HashComposite<H3, HashRolling<4>>;
 pub(crate) type H55 = HashComposite<H54, HashRolling<4>>;
@@ -388,9 +389,13 @@ pub(crate) enum HasherKind {
     H42(Box<H42>),
     H54(H54),
     H55(H55),
-    H58(H58),
+    H58x16(H58<16>),
+    H58x32(H58<32>),
+    H58x16Sparse(H58Sparse<16>),
+    H58x32Sparse(H58Sparse<32>),
     H65(H65),
-    H68(H68),
+    H68x16(H68<16>),
+    H68x32(H68<32>),
 }
 
 pub(crate) struct Hasher {
@@ -415,9 +420,13 @@ macro_rules! with_hasher {
             HasherKind::H42($hasher) => $body,
             HasherKind::H54($hasher) => $body,
             HasherKind::H55($hasher) => $body,
-            HasherKind::H58($hasher) => $body,
+            HasherKind::H58x16($hasher) => $body,
+            HasherKind::H58x32($hasher) => $body,
+            HasherKind::H58x16Sparse($hasher) => $body,
+            HasherKind::H58x32Sparse($hasher) => $body,
             HasherKind::H65($hasher) => $body,
-            HasherKind::H68($hasher) => $body,
+            HasherKind::H68x16($hasher) => $body,
+            HasherKind::H68x32($hasher) => $body,
         }
     };
 }
@@ -466,12 +475,35 @@ impl Hasher {
                 42 => HasherKind::H42(Box::new(H42::new(params)?)),
                 54 => HasherKind::H54(H54::new()?),
                 55 => HasherKind::H55(H55::new(H54::new()?, HashRolling::new()?)),
-                58 => HasherKind::H58(H58::new(params)?),
+                58 if params.hasher.block_bits == 4 => {
+                    if input_size > H58Sparse::<16>::MAX_INPUT {
+                        HasherKind::H58x16(H58::new()?)
+                    } else {
+                        HasherKind::H58x16Sparse(H58Sparse::new()?)
+                    }
+                }
+                58 if params.hasher.block_bits == 5 => {
+                    if input_size > H58Sparse::<32>::MAX_INPUT {
+                        HasherKind::H58x32(H58::new()?)
+                    } else {
+                        HasherKind::H58x32Sparse(H58Sparse::new()?)
+                    }
+                }
                 65 => HasherKind::H65(H65::new(H6::new(params)?, HashRolling::new()?)),
-                68 => HasherKind::H68(H68::new(params)?),
+                68 if params.hasher.block_bits == 4 => HasherKind::H68x16(H68::new()?),
+                68 if params.hasher.block_bits == 5 => HasherKind::H68x32(H68::new()?),
                 _ => return Err(Bug.into()),
             };
             self.reset();
+        }
+        match &self.kind {
+            HasherKind::H58x16Sparse(h) if position + input_size > H58Sparse::<16>::MAX_INPUT => {
+                self.kind = HasherKind::H58x16(h.to_dense()?);
+            }
+            HasherKind::H58x32Sparse(h) if position + input_size > H58Sparse::<32>::MAX_INPUT => {
+                self.kind = HasherKind::H58x32(h.to_dense()?);
+            }
+            _ => {}
         }
 
         if !self.common.is_prepared {

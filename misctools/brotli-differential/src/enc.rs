@@ -62,13 +62,14 @@ impl Pair {
     /// One call on both. Returns (ok, consumed).
     pub fn step(&mut self, op: i32, input: &[u8], cap: usize) -> Result<(bool, usize), String> {
         self.calls += 1;
-        self.cbuf.clear();
-        self.cbuf.resize(cap, 0xAA);
-        self.rbuf.clear();
-        self.rbuf.resize(cap, 0xAA);
-        let (c_ok, c_used, c_made) = self.c.stream(op, input, &mut self.cbuf);
+        // What neither writes differs. Only what was written is filled again, at the end.
+        if self.cbuf.len() < cap {
+            self.cbuf.resize(cap, 0x55);
+            self.rbuf.resize(cap, 0xAA);
+        }
+        let (c_ok, c_used, c_made) = self.c.stream(op, input, &mut self.cbuf[..cap]);
         let mut rin = input;
-        let mut rout: &mut [u8] = &mut self.rbuf;
+        let mut rout: &mut [u8] = &mut self.rbuf[..cap];
         let r_ok = self.r.compress_stream(op_of(op), &mut rin, &mut rout);
         let r_made = cap - rout.len();
         let r_used = input.len() - rin.len();
@@ -97,6 +98,8 @@ impl Pair {
             return Err(format!("{at}: has_more_output C {cm} Rust {rm}; is_finished C {cf} Rust {rf}"));
         }
         self.out.extend_from_slice(&self.cbuf[..c_made]);
+        self.cbuf[..c_made].fill(0x55);
+        self.rbuf[..r_made].fill(0xAA);
         Ok((c_ok, c_used))
     }
 
@@ -250,6 +253,47 @@ pub fn compare_one_shot(quality: i32, lgwin: i32, mode: i32, data: &[u8], cap: u
     let (a, b) = (unsafe { crate::ffi::BrotliEncoderMaxCompressedSize(data.len()) }, bun_brotli::max_compressed_size(data.len()));
     if a != b {
         return Err(format!("max_compressed_size({}): C {a} Rust {b}", data.len()));
+    }
+    Ok(())
+}
+
+/// One piece of the input and what to do with it.
+#[derive(Clone, Copy, Debug)]
+pub struct Step {
+    pub op: i32,
+    pub n: usize,
+}
+
+/// Like [`compare`], with the input cut as `steps` says. What is left after them goes into the final Finish.
+pub fn compare_steps(case: &EncCase, steps: &[Step]) -> Result<Vec<u8>, String> {
+    let mut p = Pair::new(case)?;
+    let mut rng = Rng(case.schedule);
+    let big = case.schedule == 0;
+    let mut rest: &[u8] = &case.data;
+    for s in steps {
+        let (chunk, tail) = rest.split_at(s.n.min(rest.len()));
+        if !run_op(&mut p, &mut rng, s.op, chunk, big)? {
+            return Ok(p.out);
+        }
+        rest = tail;
+    }
+    run_op(&mut p, &mut rng, 2, rest, big)?;
+    Ok(p.out)
+}
+
+/// Decodes `stream` with both decoders, in lock step, and expects `data`.
+pub fn round_trip(stream: &[u8], data: &[u8], dicts: &[Vec<u8>], large_window: bool, schedule: u64) -> Result<(), String> {
+    let case = crate::dec::DecCase {
+        stream: stream.to_vec(),
+        large_window,
+        no_realloc: false,
+        dicts: dicts.to_vec(),
+        schedule,
+        max_output: usize::MAX,
+    };
+    let o = crate::dec::compare(&case, Some(data)).map_err(|e| format!("round trip: {e}"))?;
+    if o.result != 1 {
+        return Err(format!("round trip: result {} error {}", o.result, o.error));
     }
     Ok(())
 }

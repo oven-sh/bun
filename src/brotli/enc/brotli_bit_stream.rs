@@ -1328,8 +1328,6 @@ pub(crate) fn store_uncompressed_meta_block(
     }
     bw.write_bytes(input.sub(masked_pos..masked_pos + len)?)?;
 
-    bw.prepare_storage()?;
-
     // An uncompressed meta-block cannot be the last one, so an empty one follows.
     if is_final_block {
         // ISLAST

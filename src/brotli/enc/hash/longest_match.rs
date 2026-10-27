@@ -9,7 +9,8 @@ use super::{
 use crate::enc::Fallible;
 use crate::enc::find_match_length::find_match_length_with_limit;
 use crate::enc::params::EncoderParams;
-use crate::util::{Checked, SliceExt, load_u32_le, load_u64_le};
+use crate::util::{Checked, Loads, SliceExt, load_u32_le, load_u64_le};
+use core::hint::{Locality, prefetch_read};
 
 /// Hashes 5 bytes if `LONG`, which is for large inputs, else 4.
 pub(crate) struct HashLongestMatch<const LONG: bool> {
@@ -26,12 +27,17 @@ impl<const LONG: bool> HashLongestMatch<LONG> {
 
     #[inline(always)]
     fn hash_bytes(&self, data: &[u8], pos: usize) -> Checked<usize> {
+        Self::hash_bytes_with(self.table.hash_shift, data, pos)
+    }
+
+    #[inline(always)]
+    fn hash_bytes_with(hash_shift: u32, data: &[u8], pos: usize) -> Checked<usize> {
         if LONG {
             let h = load_u64_le(data, pos)?.wrapping_mul(HASH_MUL_64 << (64 - 5 * 8));
             Ok((h >> (64 - 15)) as usize)
         } else {
             let h = load_u32_le(data, pos)?.wrapping_mul(HASH_MUL_32);
-            Ok((h >> self.table.hash_shift) as usize)
+            Ok((h >> hash_shift) as usize)
         }
     }
 }
@@ -61,8 +67,30 @@ impl<const LONG: bool> HasherImpl for HashLongestMatch<LONG> {
     fn store(&mut self, data: &[u8], mask: usize, ix: usize) -> Checked {
         let key = self.hash_bytes(data, ix & mask)?;
         let (start, num) = self.table.add_to_bucket(key)?;
-        let offset = start + (usize::from(num) & self.table.block_mask);
+        let offset = start + (usize::from(num) & (self.table.block_size - 1));
         self.table.blocks.put(offset, ix as u32)
+    }
+
+    #[inline(always)]
+    fn store_range(&mut self, data: &[u8], mask: usize, ix_start: usize, ix_end: usize) -> Checked {
+        let hash_shift = self.table.hash_shift;
+        let mut ix = ix_start;
+        loop {
+            let mut buckets = self.table.buckets();
+            let without_block = loop {
+                if ix >= ix_end {
+                    return Ok(());
+                }
+                let key = Self::hash_bytes_with(hash_shift, data, ix & mask)?;
+                let Some((start, added)) = buckets.add(key)? else {
+                    break key;
+                };
+                let offset = start + (usize::from(added) & buckets.block_mask);
+                buckets.blocks.put(offset, ix as u32)?;
+                ix += 1;
+            };
+            self.table.give_block(without_block)?;
+        }
     }
 
     #[inline(always)]
@@ -90,10 +118,16 @@ impl<const LONG: bool> HasherImpl for HashLongestMatch<LONG> {
         let min_score = out.score;
         let mut best_len = out.len;
         let key = self.hash_bytes(data, cur_ix_masked)?;
-        let (block_size, block_mask) = (self.table.block_size, self.table.block_mask);
+        let block_size = self.table.block_size;
         let (start, newest) = self.table.add_to_bucket(key)?;
         let newest = usize::from(newest);
         let bucket = self.table.blocks.sub_mut(start..)?.sub_mut(..block_size)?;
+        let block_mask = bucket.len().wrapping_sub(1);
+        prefetch_read(bucket.as_ptr(), Locality::L1);
+        if block_size > 16 {
+            prefetch_read(bucket.as_ptr().wrapping_add(16), Locality::L1);
+        }
+        let window = Loads::<4>::new(data.get(..=ring_buffer_mask).unwrap_or(data))?;
         out.len = 0;
         out.len_code_delta = 0;
 
@@ -114,42 +148,46 @@ impl<const LONG: bool> HasherImpl for HashLongestMatch<LONG> {
             best_len = 3;
         }
         let down = newest.saturating_sub(block_size);
-        for i in (down..newest).rev() {
-            let mut prev_ix = bucket.at(i & block_mask)? as usize;
-            let backward = cur_ix.wrapping_sub(prev_ix);
-            if backward > max_backward {
-                break;
-            }
-            prev_ix &= ring_buffer_mask;
-            if cur_ix_masked + best_len > ring_buffer_mask {
-                break;
-            }
-            // The 4 bytes up to the one that a longer match has to include.
-            if prev_ix + best_len > ring_buffer_mask
-                || load_u32_le(current, best_len - 3)? != load_u32_le(data, prev_ix + best_len - 3)?
-            {
-                continue;
-            }
-            let len = if LONG {
-                if load_u32_le(current, 0)? != load_u32_le(data, prev_ix)? {
+        'search: {
+            // The 4 bytes up to the one that a longer match has to include. They have to be inside the window.
+            let Ok(mut wanted) = window.u32_le(cur_ix_masked + best_len - 3) else {
+                break 'search;
+            };
+            for i in (down..newest).rev() {
+                let mut prev_ix = bucket.at(i & block_mask)? as usize;
+                let backward = cur_ix.wrapping_sub(prev_ix);
+                if backward > max_backward {
+                    break;
+                }
+                prev_ix &= ring_buffer_mask;
+                if window.u32_le(prev_ix + best_len - 3) != Ok(wanted) {
                     continue;
                 }
-                find_match_length_with_limit(
-                    data.sub(prev_ix + 4..)?,
-                    current.sub(4..)?,
-                    max_length.wrapping_sub(4),
-                ) + 4
-            } else {
-                find_match_length_with_limit(data.sub(prev_ix..)?, current, max_length)
-            };
-            if len >= 4 {
-                let score = backward_reference_score(len, backward);
-                if best_score < score {
-                    best_score = score;
-                    best_len = len;
-                    out.len = best_len;
-                    out.distance = backward;
-                    out.score = best_score;
+                let len = if LONG {
+                    if load_u32_le(current, 0)? != load_u32_le(data, prev_ix)? {
+                        continue;
+                    }
+                    find_match_length_with_limit(
+                        data.sub(prev_ix + 4..)?,
+                        current.sub(4..)?,
+                        max_length.wrapping_sub(4),
+                    ) + 4
+                } else {
+                    find_match_length_with_limit(data.sub(prev_ix..)?, current, max_length)
+                };
+                if len >= 4 {
+                    let score = backward_reference_score(len, backward);
+                    if best_score < score {
+                        best_score = score;
+                        best_len = len;
+                        out.len = best_len;
+                        out.distance = backward;
+                        out.score = best_score;
+                        let Ok(next) = window.u32_le(cur_ix_masked + best_len - 3) else {
+                            break 'search;
+                        };
+                        wanted = next;
+                    }
                 }
             }
         }

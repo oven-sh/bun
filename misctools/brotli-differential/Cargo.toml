@@ -13,6 +13,7 @@ bun_brotli = { path = "../../src/brotli" }
 [profile.release]
 debug = "line-tables-only"
 overflow-checks = false
+codegen-units = 1
 
 [profile.dev]
 opt-level = 1

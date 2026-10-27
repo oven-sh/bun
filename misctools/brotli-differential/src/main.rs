@@ -2,6 +2,7 @@ mod dec;
 mod enc;
 mod ffi;
 mod r#gen;
+mod ring;
 mod rng;
 
 use dec::{DecCase, compare, mutate};
@@ -271,15 +272,21 @@ fn bench_enc(path: &str, quality: u32, lgwin: u32, reps: usize) {
     let mut out = vec![0u8; cap];
     let mut best = [f64::MAX; 2];
     let mut sizes = [0usize; 2];
+    // ONLY=c or ONLY=rust leaves the other one out, for a profiler.
+    let only = std::env::var("ONLY").unwrap_or_default();
     for _ in 0..reps {
-        let t = std::time::Instant::now();
-        let mut n = cap;
-        assert!(unsafe { ffi::BrotliEncoderCompress(quality as i32, lgwin as i32, 0, data.len(), data.as_ptr(), &mut n, out.as_mut_ptr()) } != 0);
-        best[0] = best[0].min(t.elapsed().as_secs_f64());
-        sizes[0] = n;
-        let t = std::time::Instant::now();
-        sizes[1] = bun_brotli::compress(quality as i32, lgwin as i32, bun_brotli::EncoderMode::Generic, &data, &mut out).unwrap();
-        best[1] = best[1].min(t.elapsed().as_secs_f64());
+        if only != "rust" {
+            let t = std::time::Instant::now();
+            let mut n = cap;
+            assert!(unsafe { ffi::BrotliEncoderCompress(quality as i32, lgwin as i32, 0, data.len(), data.as_ptr(), &mut n, out.as_mut_ptr()) } != 0);
+            best[0] = best[0].min(t.elapsed().as_secs_f64());
+            sizes[0] = n;
+        }
+        if only != "c" {
+            let t = std::time::Instant::now();
+            sizes[1] = bun_brotli::compress(quality as i32, lgwin as i32, bun_brotli::EncoderMode::Generic, &data, &mut out).unwrap();
+            best[1] = best[1].min(t.elapsed().as_secs_f64());
+        }
     }
     let mb = data.len() as f64 / 1e6;
     println!("{path} q{quality} w{lgwin}: {} -> C {} Rust {}; C {:.1} MB/s, Rust {:.1} MB/s ({:.0}%)", data.len(), sizes[0], sizes[1], mb / best[0], mb / best[1], 100.0 * best[0] / best[1]);
@@ -381,6 +388,8 @@ fn main() {
         Some("dec-garbage") => dec_garbage(num(2, 1), num(3, 100000)),
         Some("bench-dec") => bench_dec(&args[2], num(3, 5) as u32, num(4, 22) as u32, num(5, 10) as usize),
         Some("enc-fuzz") => enc_fuzz(num(2, 1), num(3, 1000), num(4, 1 << 22) as usize, num(5, 0xFFF)),
+        Some("enc-ring") => ring::run(num(2, 1), num(3, 1000), num(4, 1 << 22) as usize, num(5, 0xFFC), &r#gen::Corpus::load(CORPUS_DIRS, 4 << 20)),
+        Some("enc-hash") => ring::run_hash(num(2, 1), num(3, 1000), num(4, 1 << 22) as usize, num(5, 0x3E0), &r#gen::Corpus::load(CORPUS_DIRS, 4 << 20)),
         Some("enc-files") => enc_files(num(2, 0xFFF), num(3, 22) as u32),
         Some("bench-small") => bench_small(&args[2], num(3, 1000) as usize, num(4, 5) as u32, num(5, 22) as u32, num(6, 1000) as usize),
         Some("enc-one") => enc_one(&args[2], &args[3..]),

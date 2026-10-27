@@ -4,7 +4,7 @@
 use super::bit_cost::bits_entropy;
 use super::bit_writer::BitWriter;
 use super::brotli_bit_stream::{build_and_store_huffman_tree_fast, store_huffman_tree};
-use super::compress_fragment::{rewind_bit_position, store_meta_block_header};
+use super::compress_fragment::store_meta_block_header;
 use super::entropy_encode::{HuffmanTree, convert_bit_depths_to_symbols, create_huffman_tree};
 use super::fast_log::log2_floor_nonzero;
 use super::find_match_length::find_match_length_with_limit;
@@ -502,9 +502,8 @@ fn should_compress(s: &mut TwoPassArena, input: &[u8], num_literals: usize) -> C
 
 fn emit_uncompressed_meta_block(input: &[u8], bw: &mut BitWriter<'_>) -> Checked {
     store_meta_block_header(input.len(), true, bw)?;
-    bw.pos = (bw.pos + 7) & !7;
-    bw.write_bytes(input)?;
-    bw.prepare_storage()
+    bw.jump_to_byte_boundary()?;
+    bw.write_bytes(input)
 }
 
 /// Writes `input`, of at most `1 << 24` bytes, as one or more meta-blocks, and an empty last meta-block if `is_last`.
@@ -521,7 +520,7 @@ pub(crate) fn compress_fragment_two_pass(
     table: &mut [i32],
     bw: &mut BitWriter<'_>,
 ) -> Checked {
-    let initial_storage_ix = bw.pos;
+    let initial_storage_ix = bw.pos();
     let table_bits = log2_floor_nonzero(table.len()) as usize;
     let min_match = if table_bits <= 15 { 4 } else { 6 };
 
@@ -554,8 +553,8 @@ pub(crate) fn compress_fragment_two_pass(
     }
 
     // If that took more room than the input as it is, write that instead.
-    if bw.pos - initial_storage_ix > 31 + (input.len() << 3) {
-        rewind_bit_position(initial_storage_ix, bw)?;
+    if bw.pos() - initial_storage_ix > 31 + (input.len() << 3) {
+        bw.rewind(initial_storage_ix)?;
         emit_uncompressed_meta_block(input, bw)?;
     }
 
@@ -564,7 +563,7 @@ pub(crate) fn compress_fragment_two_pass(
         bw.write_bits(1, 1)?;
         // ISLASTEMPTY
         bw.write_bits(1, 1)?;
-        bw.pos = (bw.pos + 7) & !7;
+        bw.jump_to_byte_boundary()?;
     }
     Ok(())
 }

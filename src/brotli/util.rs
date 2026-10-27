@@ -107,6 +107,42 @@ pub(crate) fn load_u64_le(data: &[u8], pos: usize) -> Checked<u64> {
     Ok(u64::from_le_bytes(*data.array_at(pos)?))
 }
 
+/// Reads `N` bytes at a time from anywhere in a slice, at the cost of one comparison each.
+#[derive(Clone, Copy)]
+pub(crate) struct Loads<'a, const N: usize> {
+    data: &'a [u8],
+    /// The last position that can be read.
+    last: usize,
+}
+
+impl<'a, const N: usize> Loads<'a, N> {
+    /// `data` has at least `N` bytes.
+    #[inline(always)]
+    pub(crate) fn new(data: &'a [u8]) -> Checked<Self> {
+        let last = data.len().checked_sub(N).ok_or(Bug)?;
+        Ok(Self { data, last })
+    }
+
+    #[inline(always)]
+    pub(crate) fn at(&self, pos: usize) -> Checked<&'a [u8; N]> {
+        if pos > self.last {
+            return Err(Bug);
+        }
+        // The compiler sees that this cannot fail.
+        self.data
+            .get(pos..)
+            .and_then(<[u8]>::first_chunk)
+            .ok_or(Bug)
+    }
+}
+
+impl Loads<'_, 4> {
+    #[inline(always)]
+    pub(crate) fn u32_le(&self, pos: usize) -> Checked<u32> {
+        Ok(u32::from_le_bytes(*self.at(pos)?))
+    }
+}
+
 /// The allocation failed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct OutOfMemory;

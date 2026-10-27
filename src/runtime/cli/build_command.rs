@@ -890,6 +890,7 @@ impl BuildCommand {
                     bun_standalone_module_graph::StandaloneModuleGraph::RuntimeOptions {
                         jit_policy: ctx.bundler_options.compile_jit_policy,
                     },
+                    bun_standalone_module_graph::StandaloneModuleGraph::WaitForReader::Yes,
                 ) {
                     Ok(r) => r,
                     Err(err) => {

@@ -31,7 +31,7 @@ use bun_paths::resolve_path::{join_abs_string, platform};
 use bun_paths::{self as paths, SEP};
 use bun_ptr::{BackRef, RefCount, RefPtr};
 use bun_standalone_graph::StandaloneModuleGraph::{
-    CompileErrorReason, CompileResult, Flags as StandaloneFlags, RuntimeOptions,
+    CompileErrorReason, CompileResult, Flags as StandaloneFlags, RuntimeOptions, WaitForReader,
     target_base_public_path, to_executable,
 };
 use bun_sys::Dir;
@@ -476,6 +476,8 @@ impl JSBundleCompletionTask {
             RuntimeOptions {
                 jit_policy: compile_options.jit_policy,
             },
+            // This runs on the JS thread.
+            WaitForReader::No,
         ) {
             Ok(r) => r,
             Err(err) => {

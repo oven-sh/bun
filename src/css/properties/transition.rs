@@ -365,9 +365,10 @@ mod transition_handler_body {
             let mut _timing_functions: Option<(SmallList<EasingFunction, 1>, VendorPrefix)> =
                 self.timing_functions.take();
 
+            let mut sources: Option<Vec<u32>> = None;
             let mut rtl_properties: Option<SmallList<PropertyId, 1>> =
                 if let Some(p) = &mut _properties {
-                    expand_properties(&mut p.0, arena, context)
+                    expand_properties(&mut p.0, &mut sources, arena, context)
                 } else {
                     None
                 };
@@ -389,13 +390,20 @@ mod transition_handler_body {
                 let intersection =
                     *property_prefixes & *duration_prefixes & *delay_prefixes & *timing_prefixes;
                 if !intersection.is_empty() {
-                    let transitions =
-                        get_transitions(arena, properties, durations, delays, timing_functions);
+                    let transitions = get_transitions(
+                        arena,
+                        properties,
+                        sources.as_deref(),
+                        durations,
+                        delays,
+                        timing_functions,
+                    );
 
                     if let Some(rtl_properties2) = &mut rtl_properties {
                         let rtl_transitions = get_transitions(
                             arena,
                             rtl_properties2,
+                            sources.as_deref(),
                             durations,
                             delays,
                             timing_functions,
@@ -468,40 +476,35 @@ mod transition_handler_body {
     fn get_transitions(
         arena: &bun_alloc::Arena,
         properties: &mut SmallList<PropertyId, 1>,
+        sources: Option<&[u32]>,
         durations: &mut SmallList<Time, 1>,
         delays: &mut SmallList<Time, 1>,
         timing_functions: &mut SmallList<EasingFunction, 1>,
     ) -> SmallList<Transition, 1> {
-        #[inline]
-        fn cycle_bump(idx: &mut u32, len: u32) {
-            *idx = (*idx + 1) % len;
-        }
-
         // transition-property determines the number of transitions. The values of other
         // properties are repeated to match this length.
         let mut transitions = SmallList::<Transition, 1>::init_capacity(1);
-        let mut durations_idx: u32 = 0;
-        let mut delays_idx: u32 = 0;
-        let mut timing_idx: u32 = 0;
-        for property_id in properties.slice() {
-            let duration = if durations.len() > durations_idx {
-                durations.at(durations_idx).deep_clone(arena)
+        debug_assert!(sources.is_none_or(|sources| sources.len() == properties.slice().len()));
+        for (index, property_id) in (0u32..).zip(properties.slice()) {
+            // Each name takes the values of its entry as written. lightningcss matches by position, which shifts them.
+            let source = sources.map_or(index, |sources| sources[index as usize]);
+            let duration = if !durations.is_empty() {
+                durations.at(source % durations.len()).deep_clone(arena)
             } else {
                 Time::Seconds(0.0)
             };
-            let delay = if delays.len() > delays_idx {
-                delays.at(delays_idx).deep_clone(arena)
+            let delay = if !delays.is_empty() {
+                delays.at(source % delays.len()).deep_clone(arena)
             } else {
                 Time::Seconds(0.0)
             };
-            let timing_function = if timing_functions.len() > timing_idx {
-                timing_functions.at(timing_idx).deep_clone(arena)
+            let timing_function = if !timing_functions.is_empty() {
+                timing_functions
+                    .at(source % timing_functions.len())
+                    .deep_clone(arena)
             } else {
                 EasingFunction::Ease
             };
-            cycle_bump(&mut durations_idx, durations.len());
-            cycle_bump(&mut delays_idx, delays.len());
-            cycle_bump(&mut timing_idx, timing_functions.len());
             let transition = Transition {
                 property: property_id.deep_clone(arena),
                 duration,
@@ -525,6 +528,7 @@ mod transition_handler_body {
 
     fn expand_properties(
         properties: &mut SmallList<PropertyId, 1>,
+        sources: &mut Option<Vec<u32>>,
         arena: &bun_alloc::Arena,
         context: &mut PropertyHandlerContext,
     ) -> Option<SmallList<PropertyId, 1>> {
@@ -541,11 +545,24 @@ mod transition_handler_body {
             }
         }
 
+        // Once an entry becomes several names, each name keeps the index of its entry as written.
+        #[cold]
+        fn record_names(sources: &mut Option<Vec<u32>>, source: u32, names: u32, capacity: u32) {
+            let sources = sources.get_or_insert_with(|| {
+                let mut sources = Vec::with_capacity(capacity as usize);
+                sources.extend(0..source);
+                sources
+            });
+            sources.resize(sources.len() + names as usize, source);
+        }
+
         let mut rtl_properties: Option<SmallList<PropertyId, 1>> = None;
         let mut i: u32 = 0;
+        let mut source: u32 = 0;
 
         // Expand logical properties in place.
         while i < properties.len() {
+            let start = i;
             let result = get_logical_properties(properties.at(i));
             match result {
                 LogicalPropertyId::Block(feature, block)
@@ -555,7 +572,7 @@ mod transition_handler_body {
                     if let Some(rtl) = &mut rtl_properties {
                         replace(arena, rtl, block, i);
                     }
-                    i += 1;
+                    i += u32::try_from(block.len()).expect("int cast");
                 }
                 LogicalPropertyId::Inline(feature, ltr, rtl)
                     if context.should_compile_logical(feature) =>
@@ -611,6 +628,12 @@ mod transition_handler_body {
                     i += 1;
                 }
             }
+
+            let names = i - start;
+            if names > 1 || sources.is_some() {
+                record_names(sources, source, names, properties.len());
+            }
+            source += 1;
         }
 
         rtl_properties

@@ -609,6 +609,7 @@ is collected, make the class [`refCounted`](#refcounted).
 | `configurable`   | `true` makes the native properties configurable                                                |
 | `enumerable`     | `false` makes the native properties non-enumerable                                             |
 | `writable`       | `false` makes the native functions read-only. It is not the `writable` of a cached getter      |
+| `invalidThis`    | `"node"`: a wrong `this` is reported in the words of Node.js, by a getter too                  |
 | `memoryCost`     | [`fn memory_cost(&self) -> usize`](#memory), for a heap snapshot                               |
 | `estimatedSize`  | [`fn estimated_size(&self) -> usize`](#memory), for the GC                                     |
 | `construct`      | `new Name(..)`. Without it JavaScript cannot make one; Rust can, with `payload.into_js(heap)`. |
@@ -670,7 +671,9 @@ writable, configurable and not enumerable, like the built-in ones, whatever the 
 names itself with `$overriddenName`. `"@@inspectCustom"` is `Symbol.for("nodejs.util.inspect.custom")`.
 
 A native function throws `ERR_INVALID_THIS` when `this` is not an instance. With `invalidThis: "undefined"` it returns
-`undefined` instead, as some of Node's methods do.
+`undefined` instead, as some of Node's methods do. A getter throws the `TypeError` of a WebIDL attribute, which has no
+`code`. In a class with `invalidThis: "node"` both throw `ERR_INVALID_THIS` with Node's message,
+`Value of "this" must be of type Histogram`.
 
 `b.self` is the class itself as an argument, a result or a getter of its own members. It can also be `.optional` or
 `.nullable`. A result that is an instance is a `JsWrapper`, a `JsLocal` or a `JSValue`.
@@ -716,7 +719,7 @@ One class inherits from another as one WebIDL interface does:
 that has no capability. `payload.into_js(heap)` makes an instance of the base.
 
 The base has `final: false` and is not `refCounted`. The subclass declares `proto`, `construct: "illegal"`, `final`,
-`rustTraits` and the three attributes, which it does not inherit. The rest is the base's: how it is created and
+`rustTraits`, `invalidThis` and the three attributes, which it does not inherit. The rest is the base's: how it is created and
 collected, its internal fields, which no member of the subclass names, and the memory it reports.
 
 An instance of the subclass is of both [kinds](#unions-and-kinds), so a union or the overloads of a function take the

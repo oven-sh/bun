@@ -461,12 +461,9 @@ impl Histogram {
         let (second, other) = self.slots().fold((0.0, 0.0), |(second, other), (slot, n)| {
             let deviation = slot.median() as f64 - mean;
             let squared = deviation * deviation;
-            let raised = if power == 3 {
-                squared * deviation
-            } else {
-                squared * squared
-            };
-            (second + n as f64 * squared, other + n as f64 * raised)
+            let weighted = n as f64 * squared;
+            let factor = if power == 3 { deviation } else { squared };
+            (second + weighted, other + weighted * factor)
         });
         (second / self.count as f64, other / self.count as f64)
     }

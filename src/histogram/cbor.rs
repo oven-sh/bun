@@ -206,8 +206,7 @@ impl Histogram {
 
     /// `None` unless `bytes` start with what [`Self::export`] or Node.js writes.
     ///
-    /// Node.js: the minimum and the maximum are whatever the bytes say, and so is an offset between the slots and their
-    /// counts, which nothing ever writes. Here the first two are those of the counts, and the offset is 0.
+    /// Node.js: the minimum and the maximum are whatever the bytes say. Here they are those of the counts.
     pub fn import(bytes: &[u8]) -> Option<Self> {
         const MAX_I64: u64 = i64::MAX as u64;
         const MAX_I32: u64 = i32::MAX as u64;
@@ -216,6 +215,8 @@ impl Histogram {
         let (mut lowest, mut highest, mut figures) = (1, MAX_I64, 3);
         let mut total_count = None;
         let mut counts_len = 0;
+        // How far the counts are rotated: the count of a slot is this many places before it. Nothing writes one but 0.
+        let mut offset = 0;
         let mut counts = Vec::new();
         let mut ewma = Ewma::default();
         let (mut seen, mut seen_of_ewma) = (0, 0);
@@ -243,7 +244,7 @@ impl Histogram {
                 key::FIGURES => figures = reader.uint(MAX_I32)?,
                 key::TOTAL_COUNT => total_count = Some(reader.uint(MAX_I64)?),
                 key::MIN | key::MAX => _ = reader.uint(MAX_I64)?,
-                key::NORMALIZING_INDEX_OFFSET => _ = reader.uint(0)?,
+                key::NORMALIZING_INDEX_OFFSET => offset = reader.uint(MAX_I32)?,
                 key::CONVERSION_RATIO => _ = reader.number()?,
                 key::COUNTS_LEN => counts_len = reader.uint(MAX_I32)?,
                 key::COUNTS => {
@@ -291,7 +292,7 @@ impl Histogram {
         }
 
         let mut histogram = Self::new(lowest, highest, u32::try_from(figures).ok()?)?;
-        if histogram.slot_count() as u64 != counts_len {
+        if histogram.slot_count() as u64 != counts_len || offset >= counts_len {
             return None;
         }
         for (index, n) in counts {
@@ -299,7 +300,10 @@ impl Histogram {
                 .count
                 .checked_add(n)
                 .filter(|&count| count <= MAX_I64)?;
-            if index >= counts_len || (n > 0 && !histogram.add_at(index as usize, n)) {
+            if index >= counts_len {
+                return None;
+            }
+            if n > 0 && !histogram.add_at(((index + offset) % counts_len) as usize, n) {
                 return None;
             }
         }

@@ -980,7 +980,9 @@ ${cppHostFunction(
         ${
           (fn.signatures[0] as Method).invalidThis === "undefined"
             ? "return JSC::JSValue::encode(JSC::jsUndefined());"
-            : `RELEASE_AND_RETURN(scope, Bun::throwInvalidThisCallError(globalObject, callFrame, ${asciiLiteral(type.name)}));`
+            : type.nodeInvalidThis
+              ? `return Bun::ERR::INVALID_THIS(scope, globalObject, ${asciiLiteral(type.name)});`
+              : `RELEASE_AND_RETURN(scope, Bun::throwInvalidThisCallError(globalObject, callFrame, ${asciiLiteral(type.name)}));`
         }
 `,
 )}
@@ -1132,7 +1134,11 @@ ${
     ? `    auto* thisObject = ${cppCastThisValue(type, "JSC::JSValue::decode(thisValue)")};
     if (!thisObject) [[unlikely]]
         return JSC::throwVMDOMAttributeGetterTypeError(globalObject, scope, ${type.cpp}::info(), attributeName);`
-    : `    // DOMAttribute: JSC has checked the receiver's ClassInfo.
+    : type.nodeInvalidThis
+      ? `    auto* thisObject = ${cppCastThisValue(type, "JSC::JSValue::decode(thisValue)")};
+    if (!thisObject) [[unlikely]]
+        return Bun::ERR::INVALID_THIS(scope, globalObject, ${asciiLiteral(type.name)});`
+      : `    // DOMAttribute: JSC has checked the receiver's ClassInfo.
     auto* thisObject = uncheckedDowncast<${type.cpp}>(JSC::JSValue::decode(thisValue));`
 }
     JSC::EnsureStillAliveScope ensureThisStillAlive { thisObject };
@@ -1164,12 +1170,12 @@ function cppSourceForClass(type: ClassType): string {
       `JSC::PropertyAttribute::Function${type.writable ? "" : " | JSC::PropertyAttribute::ReadOnly"}${attributes()}`,
       `JSC::HashTableValue::NativeFunctionType, ${methodHostFunctionName(type, fn)}, ${fn.length}`,
     );
-  // DOMAttribute has JSC check that the receiver is an instance. A static getter ignores it, and a forBind getter's is a bound function.
+  // DOMAttribute has JSC check that the receiver is an instance. A static getter ignores it, a forBind getter's is a bound function, and `invalidThis` has its own error.
   const getterRow = (getter: Getter | InternalFieldAccessor) => {
     const assignable = getter.hasSetter || (getter instanceof Getter && getter.writable);
     return row(
       getter.name,
-      `${assignable ? "" : "JSC::PropertyAttribute::ReadOnly | "}JSC::PropertyAttribute::CustomAccessor${type.forBind || (getter instanceof Getter && getter.isStatic) ? "" : " | JSC::PropertyAttribute::DOMAttribute"}${getter instanceof Getter ? attributes(getter.configurable, getter.enumerable) : attributes()}`,
+      `${assignable ? "" : "JSC::PropertyAttribute::ReadOnly | "}JSC::PropertyAttribute::CustomAccessor${type.forBind || type.nodeInvalidThis || (getter instanceof Getter && getter.isStatic) ? "" : " | JSC::PropertyAttribute::DOMAttribute"}${getter instanceof Getter ? attributes(getter.configurable, getter.enumerable) : attributes()}`,
       `JSC::HashTableValue::GetterSetterType, ${getter instanceof Getter && getter.isStatic ? getterSymbolName(type, getter) : getterHostFunctionName(type, getter)}, ${assignable ? setterHostFunctionName(type, getter) : "0"}`,
     );
   };
@@ -1182,7 +1188,7 @@ function cppSourceForClass(type: ClassType): string {
   const builtinRow = (builtin: Builtin) =>
     row(
       builtin.name,
-      "JSC::PropertyAttribute::Builtin",
+      `JSC::PropertyAttribute::Builtin${type.enumerable ? "" : " | JSC::PropertyAttribute::DontEnum"}`,
       `JSC::HashTableValue::BuiltinGeneratorType, ${builtinCodeGenerator(builtin)}, ${builtin.length}`,
     );
   const constantRow = (constant: Constant) =>

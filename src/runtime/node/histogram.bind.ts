@@ -3,7 +3,7 @@ import * as b from "../../codegen/bindgen-lib.ts";
 export default b.module({ rustPath: "crate::node::histogram" });
 
 /** What the members of a class that Node.js writes in JavaScript are. */
-const nodeClass = { construct: "illegal", configurable: true, enumerable: false } as const;
+const nodeClass = { construct: "illegal", configurable: true, enumerable: false, invalidThis: "node" } as const;
 const bigInt = { getter: b.u64.asBigInt } as const;
 const percentile = {
   args: { percentile: b.f64 },
@@ -34,7 +34,10 @@ export const HistogramJSON = b.dictionary({
   percentiles: b.any,
 });
 
-export const ConfidenceOptions = b.dictionary({ confidence: b.f64.default(0.95) }, { reportedAs: "options" });
+export const ConfidenceOptions = b.dictionary(
+  { confidence: { type: b.f64.default(0.95), expected: ["number"] } },
+  { reportedAs: "options" },
+);
 export const MeanCI = b.dictionary({ mean: b.f64, lower: b.f64, upper: b.f64 }, { nullPrototype: true });
 export const PercentileCI = b.dictionary({ value: b.u64, lower: b.u64, upper: b.u64 }, { nullPrototype: true });
 export const ConfidenceInterval = b.dictionary({ lower: b.f64, upper: b.f64 }, { nullPrototype: true });
@@ -67,6 +70,7 @@ export const Histogram = b.class({
     mean: { getter: b.f64 },
     meanCI: {
       args: { options: ConfidenceOptions.default({}) },
+      expected: { options: ["object"] },
       length: 0,
       returns: MeanCI,
       capability: "heap",
@@ -88,7 +92,7 @@ export const Histogram = b.class({
     ksTest: { ...comparison, returns: b.f64 },
     welchTest: {
       args: { other: b.self, options: ConfidenceOptions.default({}) },
-      expected: comparison.expected,
+      expected: { ...comparison.expected, options: ["object"] },
       length: 1,
       returns: WelchTest,
       capability: "heap",
@@ -118,7 +122,7 @@ export const Histogram = b.class({
     percentileBigInt: { ...percentile, returns: b.u64.asBigInt, rustName: "percentile" },
     percentileCI: {
       args: { percentile: b.f64, options: ConfidenceOptions.default({}) },
-      expected: percentile.expected,
+      expected: { ...percentile.expected, options: ["object"] },
       length: 1,
       returns: PercentileCI,
       capability: "heap",

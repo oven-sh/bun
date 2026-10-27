@@ -25,6 +25,7 @@ export function inspectCustom(this: Histogram, depth: number, options) {
 }
 
 // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/histogram.js#L589
+$overriddenName = "percentilesAt";
 export function percentilesAt(this: Histogram, percentiles: number[]) {
   if (!$bindgen("histogram.bind.ts", "isHistogram")(this)) throw $ERR_INVALID_THIS("Histogram");
   const { validateArray, validateNumber } = require("internal/validators");
@@ -42,10 +43,9 @@ export function percentilesAt(this: Histogram, percentiles: number[]) {
 }
 
 // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/histogram.js#L630
-export function qrde(
-  this: Histogram,
-  options?: { bins?: number; probabilities?: number[]; dequantize?: string; cache?: boolean },
-) {
+$overriddenName = "qrde";
+export function qrde(this: Histogram) {
+  let options: { bins?: number; probabilities?: number[]; dequantize?: string; cache?: boolean } = $argument(0);
   if (!$bindgen("histogram.bind.ts", "isHistogram")(this)) throw $ERR_INVALID_THIS("Histogram");
   const {
     validateArray,
@@ -69,8 +69,11 @@ export function qrde(
     boundaries = $newArrayWithSize(binCount + 1);
     for (let i = 0; i <= binCount; i++) $putByValDirect(boundaries, i, i / binCount);
   } else {
-    validateArray(probabilities, "options.probabilities", 2);
+    validateArray(probabilities, "options.probabilities");
     const length = probabilities.length;
+    if (length < 2) {
+      throw $ERR_INVALID_ARG_VALUE("options.probabilities", probabilities, "must have a length of at least 2");
+    }
     if (length > 1001) {
       throw $ERR_OUT_OF_RANGE("options.probabilities.length", ">= 2 && <= 1001", length);
     }

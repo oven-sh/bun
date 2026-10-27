@@ -210,7 +210,7 @@ function createSlidingWindowHistogram(
 
 // https://github.com/nodejs/node/blob/v26.12.1/lib/internal/histogram.js#L1027
 function importHistogram(data: Uint8Array) {
-  if (!require("node:util/types").isUint8Array(data)) throw $ERR_INVALID_ARG_TYPE("data", "Uint8Array", data);
+  if (!require("node:util/types").isUint8Array(data)) throw $ERR_INVALID_ARG_TYPE("data", ["Uint8Array"], data);
   return importHistogramBytes(data);
 }
 

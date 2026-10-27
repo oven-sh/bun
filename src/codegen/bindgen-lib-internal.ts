@@ -2605,6 +2605,8 @@ export interface ClassOptions {
   enumerable?: boolean;
   /** `false`: native functions are read-only. */
   writable?: boolean;
+  /** `"node"`: a function or a getter whose `this` is not an instance throws `ERR_INVALID_THIS` with the message of Node.js. */
+  invalidThis?: "node";
   /** `fn memory_cost(&self) -> usize`: the extra memory the struct owns, for a heap snapshot. */
   memoryCost?: boolean;
   /** `fn estimated_size(&self) -> usize`: the same for the GC, whose marking threads call it. For a heap snapshot too, without `memoryCost`. */
@@ -2893,6 +2895,7 @@ export class ClassType extends NamedType {
   readonly configurable: boolean;
   readonly enumerable: boolean;
   readonly writable: boolean;
+  readonly nodeInvalidThis: boolean;
   readonly prototypeBase: "Error" | undefined;
   /** Index in `AdditionsToGlobalObject::m_classes`. Set by the generator. */
   classIndex = -1;
@@ -3079,6 +3082,11 @@ export class ClassType extends NamedType {
     this.configurable = options.configurable ?? false;
     this.enumerable = options.enumerable ?? true;
     this.writable = options.writable ?? true;
+    this.nodeInvalidThis = options.invalidThis === "node";
+    assert(
+      !this.nodeInvalidThis || (!this.forBind && getters.every(getter => !getter.hasSetter && !getter.writable)),
+      'invalidThis: "node" is for a class without forBind and without setters',
+    );
     this.prototypeBase = options.prototypeBase;
   }
   /** The class that declares the struct and the fields: the base of its base, and so on. */

@@ -474,12 +474,14 @@ auto WorkerMessagingProxy::postSerializedErrorToWorkerObject(Zig::GlobalObject& 
     // The serializer writes an engine cell (a JSC::Exception) as null, which is what `throw null` sends.
     ASSERT(!value.isCell() || value.isObject() || value.isString() || value.isHeapBigInt() || value.isSymbol());
 
-    bool couldRunScript = WebCore::clientData(vm)->scriptAllowed();
+    // A getter of the clone or of `code` can call process.exit(). Nothing is posted then, as in node. A stop from before this step does not count.
+    auto stoppedHere = [&vm, couldRunScript = WebCore::clientData(vm)->scriptAllowed()] {
+        return couldRunScript && !WebCore::clientData(vm)->scriptAllowed();
+    };
     auto serialized = SerializedScriptValue::create(workerGlobalObject, value, SerializationForStorage::No, SerializationErrorMode::NonThrowing);
     CLEAR_IF_EXCEPTION(scope);
-    // process.exit() in a getter stops the worker and fails the clone. A node:vm timeout fails it too, and stops nothing.
     if (!serialized)
-        return couldRunScript && !WebCore::clientData(vm)->scriptAllowed() ? ErrorCloneResult::Abandoned : ErrorCloneResult::NotCloneable;
+        return stoppedHere() ? ErrorCloneResult::Abandoned : ErrorCloneResult::NotCloneable;
 
     // Structured clone keeps only the standard Error fields; Node's worker 'error' event also
     // preserves a string `error.code` (lib/internal/error_serdes.js).
@@ -490,6 +492,8 @@ auto WorkerMessagingProxy::postSerializedErrorToWorkerObject(Zig::GlobalObject& 
             errorCode = codeValue.toWTFString(&workerGlobalObject);
         CLEAR_IF_EXCEPTION(scope);
     }
+    if (stoppedHere())
+        return ErrorCloneResult::Abandoned;
 
     bool posted = ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }, serialized = serialized.releaseNonNull(), errorCode = WTF::move(errorCode).isolatedCopy()](ScriptExecutionContext& context) {
         RefPtr workerObject = protectedThis->m_workerObject;

@@ -1216,7 +1216,7 @@ fn on_unhandled_rejection(
         Ok(()) => global_object.try_take_exception(),
     };
     // Formatting ran script. A stop requested meanwhile ends the report, also when format2() swallowed the termination.
-    if !vm.script_allowed() {
+    if thrown.is_some_and(JSValue::is_termination_exception) || !vm.script_allowed() {
         return;
     }
     jsc::mark_binding();
@@ -1231,7 +1231,6 @@ fn on_unhandled_rejection(
     // `flush_logs` above) and discard any actual exception: we are already the
     // last-resort error handler and about to arm termination.
     let error_message = BunString::clone_utf8(&array);
-    // A termination that stops nothing (a node:vm timeout) is a render that threw too.
     let text = match thrown {
         None => WorkerErrorText::Rendered,
         Some(_) => WorkerErrorText::RenderFailed,

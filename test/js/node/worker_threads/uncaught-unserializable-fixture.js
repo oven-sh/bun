@@ -11,10 +11,17 @@ const rows = {
   // Bun's render of this one wrote "{ a: 1, b: " before it threw.
   "an object that holds an unprintable object": `throw { a: 1, b: { ${unprintable} }, fn() {} };`,
   "an object whose clone throws": `throw { ${unprintable}, get a() { throw new Error("g"); } };`,
+  // Bun's error printer swallows what the nested inspector throws and returns with it pending.
+  "an Error whose stack and whose nested render throw": `const e = Object.assign(new Error("boom"), { p: new Proxy({ ${unprintable} }, {}) });
+    Object.defineProperty(e, "stack", { get() { throw new Error("s"); } });
+    throw e;`,
   "an object thrown from a callback": `setImmediate(() => { throw { ${unprintable}, fn() {} }; });`,
   // The clone stopped the worker. That is an exit, not a value that cannot be cloned.
   "process.exit() in a getter of a printable object": `throw { get a() { process.exit(4); } };`,
   "process.exit() in a getter of an unprintable object": `throw { ${unprintable}, get a() { process.exit(4); } };`,
+  "process.exit() in the code getter of an Error": `const e = new Error("boom");
+    Object.defineProperty(e, "code", { get() { process.exit(4); } });
+    throw e;`,
   // The worker in the middle throws what its own worker reported.
   "an object, through a worker with no 'error' listener": `new (require("node:worker_threads").Worker)(${JSON.stringify(`throw { ${unprintable}, fn() {} };`)}, { eval: true });`,
 };

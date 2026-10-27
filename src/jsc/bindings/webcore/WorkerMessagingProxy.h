@@ -137,7 +137,7 @@ private:
         Posted,
         // Structured clone refused the value.
         NotCloneable,
-        // Nothing to report: script that the clone ran stopped the worker, or the parent takes no more tasks.
+        // Nothing to report: script that the clone or the `code` read ran stopped the worker, or the parent takes no more tasks.
         Abandoned,
     };
     void postMessageErrorToWorkerObject(String&& message);

@@ -730,9 +730,11 @@ an object: {"events":["online",${unserializable}],"exitCode":1}
 an object whose render throws null: {"events":["online",${unserializable}],"exitCode":1}
 an object that holds an unprintable object: {"events":["online",${unserializable}],"exitCode":1}
 an object whose clone throws: {"events":["online",${unserializable}],"exitCode":1}
+an Error whose stack and whose nested render throw: {"events":["online",${unserializable}],"exitCode":1}
 an object thrown from a callback: {"events":["online",${unserializable}],"exitCode":1}
 process.exit() in a getter of a printable object: {"events":["online"],"exitCode":4}
 process.exit() in a getter of an unprintable object: {"events":["online"],"exitCode":4}
+process.exit() in the code getter of an Error: {"events":["online"],"exitCode":4}
 an object, through a worker with no 'error' listener: {"events":["online",${unserializable}],"exitCode":1}
 `;
   for (const [name, runtime] of [
@@ -772,29 +774,41 @@ an object, through a worker with no 'error' listener: {"events":["online",${unse
     });
   });
 
-  // A node:vm timeout ends the render or the clone with a termination, as process.exit() does, but it stops no
-  // worker. Only that watchdog can end the spin, at its deadline. The deadline has to fire inside the spin: a
-  // debug build under load needs up to 250 ms to get there, and an earlier deadline gives another row's outcome.
-  test.concurrent.each([
+  const shown = (err: any) => (err instanceof Error ? { message: err.message, code: err.code } : err);
+
+  // "Nothing to report" is for a worker that the clone stopped. A stop from before the clone is not that: the
+  // worker's own 'error' listener runs first, and its process.exit() does not take the report away.
+  test.each([
+    ["a value that does not clone", `{ fn() {} }`, { message: "{\n  fn: [Function: fn],\n}", code: undefined }],
     [
-      "the render of a value that does not clone",
-      `{ [Symbol.for("nodejs.util.inspect.custom")]() { for (;;) {} }, fn() {} }`,
+      "a value that neither clones nor prints",
+      `{ [Symbol.for("nodejs.util.inspect.custom")]() { throw new Error("x"); }, fn() {} }`,
       { message: "Serializing an uncaught exception failed", code: "ERR_WORKER_UNSERIALIZABLE_ERROR" },
     ],
-    ["the clone", `{ get a() { for (;;) {} } }`, { message: "{\n  a: [Getter],\n}", code: undefined }],
-  ])("still reports when a node:vm timeout cuts short %s", async (_where, thrown, expected) => {
+  ])("process.exit() in the worker's own 'error' listener keeps the report of %s", async (_what, thrown, expected) => {
+    const worker = new Worker(`addEventListener("error", () => { process.exit(5); }); throw ${thrown};`, {
+      eval: true,
+    });
+    const errors: any[] = [];
+    worker.on("error", err => errors.push(shown(err)));
+    const exitCode = await new Promise(resolve => worker.on("exit", resolve));
+    expect({ errors, exitCode }).toEqual({ errors: [expected], exitCode: 5 });
+  });
+
+  // A node:vm timeout also ends the clone with a termination, and it stops no worker, so the render is still the
+  // report. This passes on main too: it guards the rule above. Only the watchdog can end the spin, at its deadline.
+  // The deadline has to fire inside the spin, and a debug build under load needs up to 250 ms to get there.
+  test("falls back to the render when a node:vm timeout cuts the clone short", async () => {
     const worker = new Worker(
       `globalThis.target = new EventTarget();
-       target.addEventListener("x", () => { throw ${thrown}; });
+       target.addEventListener("x", () => { throw { get a() { for (;;) {} } }; });
        try { require("node:vm").runInThisContext("target.dispatchEvent(new Event('x'))", { timeout: 2000 }); } catch {}`,
       { eval: true },
     );
     const errors: any[] = [];
-    worker.on("error", err => errors.push(err));
+    worker.on("error", err => errors.push(shown(err)));
     await new Promise(resolve => worker.on("exit", resolve));
-    expect(errors.map(err => (err instanceof Error ? { message: err.message, code: err.code } : err))).toEqual([
-      expected,
-    ]);
+    expect(errors).toEqual([{ message: "{\n  a: [Getter],\n}", code: undefined }]);
   });
 
   test("falls back to string when the error cannot be serialized", async () => {

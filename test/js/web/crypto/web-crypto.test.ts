@@ -45,6 +45,94 @@ describe("Web Crypto", () => {
     expect(lines).toStrictEqual(results);
   });
 
+  // unwrapKey imports the key in the realm that started it, after the decrypt has come back from
+  // the thread pool. That realm, or the Bun.ModuleGraph the promise belongs to, can be gone by then.
+  describe("unwrapKey whose realm is gone when the decrypt comes back", () => {
+    async function run(script: string) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim(), stderr, exitCode };
+    }
+
+    it.each(["jwk", "raw"])("a collected Bun.ModuleGraph, %s", async format => {
+      const script = /* js */ `
+        const iv = new Uint8Array(12);
+        const kek = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["wrapKey", "unwrapKey"]);
+        const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt"]);
+        const wrapped = await crypto.subtle.wrapKey("${format}", key, kek, { name: "AES-GCM", iv });
+        (() => {
+          new Bun.ModuleGraph().run(() => {
+            crypto.subtle.unwrapKey("${format}", wrapped, kek, { name: "AES-GCM", iv }, "AES-GCM", true, ["encrypt"]);
+          });
+        })();
+        Bun.gc(true);
+        Bun.gc(true);
+        // The process ends when the decrypt has come back.
+        process.on("exit", () => console.log("exited"));
+      `;
+      expect(await run(script)).toEqual({ stdout: "exited", stderr: "", exitCode: 0 });
+    });
+
+    it("a disposed Bun.ModuleGraph: the key is not converted", async () => {
+      const script = /* js */ `
+        const iv = new Uint8Array(12);
+        const kek = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt", "unwrapKey"]);
+        // Not a JWK: to convert it throws a TypeError, and a disposed graph has nobody to take it.
+        const wrapped = await crypto.subtle.encrypt({ name: "AES-GCM", iv }, kek, new TextEncoder().encode("123"));
+        const graph = new Bun.ModuleGraph();
+        graph.run(() => {
+          crypto.subtle.unwrapKey("jwk", wrapped, kek, { name: "AES-GCM", iv }, "AES-GCM", true, ["encrypt"]).catch(() => {});
+        });
+        graph.dispose();
+        // Round trips through the thread pool: the decrypt queued before them has come back by the last one.
+        for (let i = 0; i < 20; i++) await crypto.subtle.digest("SHA-256", new Uint8Array(65536));
+        console.log("host finished");
+      `;
+      expect(await run(script)).toEqual({ stdout: "host finished", stderr: "", exitCode: 0 });
+    });
+
+    it("a dropped ShadowRealm", async () => {
+      const script = /* js */ `
+        let realm = new ShadowRealm();
+        // The realm makes its keys, then hands out a function that starts the unwrapKey.
+        await new Promise(resolve =>
+          realm.evaluate(\`ready => {
+            (async () => {
+              const kek = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["wrapKey", "unwrapKey"]);
+              const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["encrypt"]);
+              const iv = new Uint8Array(12);
+              const wrapped = await crypto.subtle.wrapKey("jwk", key, kek, { name: "AES-GCM", iv });
+              globalThis.start = () => {
+                crypto.subtle.unwrapKey("jwk", wrapped, kek, { name: "AES-GCM", iv }, "AES-GCM", true, ["encrypt"]);
+              };
+              ready();
+            })();
+          }\`)(() => resolve()),
+        );
+        let start = realm.evaluate("() => globalThis.start()");
+        realm = undefined;
+        // The frame that calls into the realm has returned when the collection runs.
+        function fire() {
+          const unwrap = start;
+          start = undefined;
+          unwrap();
+        }
+        setImmediate(() => {
+          fire();
+          Bun.gc(true);
+        });
+        // The process ends when the decrypt has come back.
+        process.on("exit", () => console.log("exited"));
+      `;
+      expect(await run(script)).toEqual({ stdout: "exited", stderr: "", exitCode: 0 });
+    });
+  });
+
   it("has globals", () => {
     expect(crypto.subtle !== undefined).toBe(true);
     expect(CryptoKey.name).toBe("CryptoKey");

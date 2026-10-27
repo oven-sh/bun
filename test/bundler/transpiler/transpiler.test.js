@@ -1,5 +1,14 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, bunRun, hideFromStackTrace, integersThatNeedRounding, isDebug, tempDir } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunRun,
+  hideFromStackTrace,
+  integersThatNeedRounding,
+  isDebug,
+  isWindows,
+  tempDir,
+} from "harness";
 import { join } from "path";
 
 describe("Bun.Transpiler", () => {
@@ -3076,6 +3085,66 @@ console.log(<div {...obj} key="after" />);`),
 }, undefined, true, undefined, this);
 `,
     );
+  });
+
+  describe("JSX entities", () => {
+    const jsx = new Bun.Transpiler({
+      loader: "jsx",
+      tsconfig: { compilerOptions: { jsx: "react", jsxFactory: "h" } },
+    });
+    const h = (_tag, props, child) => props?.title ?? child;
+    /** The values of the JSX elements in `code`: the `title` of an element that has one, or else its child. */
+    const valuesOf = code => new Function("h", jsx.transformSync(`return [${code}];`))(h);
+
+    // An entity ends at the first `;` after its `&`, and the lexer remembers where it found that `;`. So each row
+    // has a `&` before, between or after the `;` of other entities.
+    it.each([
+      ["&amp;&lt;", "&<"],
+      ["a & b &amp; c", "a & b & c"],
+      ["&amp; & &lt;", "& & <"],
+      ["&lt;;&amp;", "<;&"],
+      ["& &; &amp", "& &; &amp"],
+      ["&&&amp;;&", "&&&;&"],
+      ["&amp &lt; &nope; &gt;", "&amp < &nope; >"],
+      ["&#65;&#x42;&amp;&#67;", "AB&C"],
+      ["& &#65; & &#x42; &", "& A & B &"],
+    ])("%s is %s as an attribute and as a child", (text, expected) => {
+      expect(valuesOf(`<p title="${text}"/>, <p>${text}</p>`)).toEqual([expected, expected]);
+    });
+
+    it("decodes each line of child text on its own", () => {
+      expect(valuesOf("<p>\n  a &amp; b &\n  &lt; c &; d\n  & e &gt;\n</p>")).toEqual(["a & b & < c &; d & e >"]);
+    });
+
+    // Each `&` used to search all of the text after it for a `;`.
+    describe("text with many `&` takes linear time", () => {
+      const pieces = isDebug ? 24_000 : 125_000;
+      const repeated = piece => Buffer.alloc(piece.length * pieces, piece).toString();
+      /** The least CPU time of three runs, in microseconds. Wall-clock time means little on a busy machine. */
+      const cpuTimeOf = code => {
+        let least = Infinity;
+        for (let run = 0; run < 3; run++) {
+          const start = process.cpuUsage();
+          jsx.transformSync(code);
+          const { user, system } = process.cpuUsage(start);
+          least = Math.min(least, user + system);
+        }
+        return least;
+      };
+
+      it.each([
+        ["an attribute without `;`", text => `<p title="${text}"/>`, ""],
+        ["child text with one `;` at the end", text => `<p>${text}</p>`, ";"],
+      ])("%s", (_, element, end) => {
+        const odd = repeated("& x ") + end;
+        // Not `toEqual`, which would print the whole text.
+        expect(valuesOf(element(odd))[0] === odd).toBe(true);
+        // In `&; x` each `&` has its `;` next to it, so this text takes the same path without the long searches.
+        const plain = cpuTimeOf(`x(${element(repeated("&; x") + end)});`);
+        // Windows measures CPU time in ticks of 1/64 s, so there a transform reads 0 or one tick.
+        expect(cpuTimeOf(`x(${element(odd)});`) / Math.max(plain, isWindows ? 1e6 / 64 : 1)).toBeLessThan(8);
+      });
+    });
   });
 
   it("JSX tag names containing '-' or ':' are string tags regardless of case", () => {

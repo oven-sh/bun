@@ -2803,12 +2803,18 @@ impl<'a> Lexer<'a> {
         Ok(())
     }
 
-    fn maybe_decode_jsx_entity(&mut self, text: &[u8], cursor: &mut strings::Cursor) {
-        if let Some(length) =
-            strings::index_of_char(&text[cursor.width as usize + cursor.i as usize..], b';')
-        {
-            let length = length as usize;
-            let end = cursor.width as usize + cursor.i as usize;
+    fn maybe_decode_jsx_entity(
+        &mut self,
+        text: &[u8],
+        cursor: &mut strings::Cursor,
+        semicolon: &mut usize,
+    ) {
+        let end = cursor.width as usize + cursor.i as usize;
+        if *semicolon < end {
+            *semicolon = strings::index_of_char_pos(text, b';', end).unwrap_or(text.len());
+        }
+        if *semicolon < text.len() {
+            let length = *semicolon - end;
             let entity = &text[end..end + length];
             if entity.is_empty() {
                 return;
@@ -2880,10 +2886,12 @@ impl<'a> Lexer<'a> {
     ) -> Result<(), Error> {
         let iterator = CodepointIterator::init(text);
         let mut cursor = strings::Cursor::default();
+        // Where the last search found a `;`. Behind the cursor: search again. `text.len()`: none.
+        let mut semicolon = 0;
 
         while iterator.next(&mut cursor) {
             if cursor.c == 0x26 {
-                self.maybe_decode_jsx_entity(text, &mut cursor);
+                self.maybe_decode_jsx_entity(text, &mut cursor, &mut semicolon);
             }
 
             strings::push_codepoint_utf16(out, cursor.c as u32);

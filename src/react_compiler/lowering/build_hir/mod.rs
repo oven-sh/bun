@@ -14,7 +14,7 @@
 //! | 6242–6468 | `jsx` (`lower_jsx_*`) |
 //! | 4257–4361, 5985–6241 | this file: `lower()` entry + `lower_inner()` driver |
 
-use crate::collections::{IndexMap, IndexSet};
+use crate::collections::IndexMap;
 use crate::diagnostics::{
     CompilerDiagnostic, CompilerDiagnosticDetail, CompilerError, ErrorCategory,
 };
@@ -34,6 +34,7 @@ use super::hir_builder::{
     reserved_identifier_diagnostic,
 };
 use crate::program::Host;
+use std::rc::Rc;
 
 mod expr;
 mod function;
@@ -50,7 +51,7 @@ pub(super) use super::hir_builder::FunctionNode;
     clippy::disallowed_types,
     reason = "vendored react_compiler_hir HashSet<BindingId> contract"
 )]
-type RefSet = std::collections::HashSet<Ref>;
+type RefSet = crate::collections::FxHashSet<Ref>;
 
 /// Port of upstream `lower()` (build_hir.rs:4257).
 pub(crate) fn lower(
@@ -84,26 +85,28 @@ pub(crate) fn lower(
     // read `Ref` + `Loc` straight off the AST node via `convert_loc`.
 
     // Pre-compute context identifiers: variables captured across function boundaries
-    let context_identifiers = find_context_identifiers(func, host, env)?;
+    let context_identifiers = Rc::new(find_context_identifiers(func, host, env)?);
 
     // For top-level functions, context is empty (no captured refs)
     let context_map: IndexMap<Ref, Option<SourceLocation>> = IndexMap::new();
 
-    let (hir_func, _used_refs, _child_bindings) = lower_inner(
+    let (hir_func, _child_bindings) = lower_inner(
         func,
         ast_id,
         loc,
         host,
         env,
         None, // no pre-existing bindings for top-level
-        None, // no pre-existing used_refs for top-level
-        &context_map,
+        context_map,
         scope,
         scope, // component_scope = function_scope for top-level
-        &context_identifiers,
+        context_identifiers,
         import_bindings,
         true, // is_top_level
     )?;
+    if !env.has_stack() {
+        return Err(super::nested_too_deeply().into());
+    }
 
     Ok(hir_func)
 }
@@ -117,14 +120,13 @@ pub(super) fn lower_inner<'h>(
     host: &'h dyn Host,
     env: &'h mut Environment,
     parent_bindings: Option<IndexMap<Ref, IdentifierId>>,
-    parent_used_refs: Option<IndexSet<Ref>>,
-    context_map: &IndexMap<Ref, Option<SourceLocation>>,
+    context_map: IndexMap<Ref, Option<SourceLocation>>,
     function_scope: &'h ast::Scope,
     component_scope: &'h ast::Scope,
-    context_identifiers: &RefSet,
-    import_bindings: &IndexMap<Ref, VariableBinding>,
+    context_identifiers: Rc<RefSet>,
+    import_bindings: &'h IndexMap<Ref, VariableBinding>,
     is_top_level: bool,
-) -> Result<(HirFunction, IndexSet<Ref>, IndexMap<Ref, IdentifierId>), CompilerError> {
+) -> Result<(HirFunction, IndexMap<Ref, IdentifierId>), CompilerError> {
     // `validate_ts_this_parameter`: Bun's parser strips `this` parameters
     // before this pass runs, so the upstream check is a no-op here.
 
@@ -139,13 +141,11 @@ pub(super) fn lower_inner<'h>(
         host,
         function_scope,
         component_scope,
-        context_identifiers.clone(),
+        context_identifiers,
         parent_bindings,
-        Some(context_map.clone()),
+        import_bindings,
         None,
-        parent_used_refs,
     );
-    builder.set_import_bindings(import_bindings.clone());
 
     // Enter the function's own lexical scopes so `resolve_ref` walks from the
     // right starting point (parser keys `FunctionArgs` at the open-paren loc
@@ -155,7 +155,7 @@ pub(super) fn lower_inner<'h>(
 
     // Build context places from the captured refs
     let mut context: HirVec<Place> = AstAlloc::vec();
-    for (&ref_, ctx_loc) in context_map {
+    for (&ref_, ctx_loc) in &context_map {
         let identifier = builder.resolve_binding(ref_)?;
         context.push(Place {
             identifier,
@@ -164,13 +164,14 @@ pub(super) fn lower_inner<'h>(
             loc: *ctx_loc,
         });
     }
+    builder.set_context(context_map);
 
     // Process parameters
     let mut hir_params: HirVec<ParamPattern> = AstAlloc::vec();
     let last = params.len().saturating_sub(1);
     for (i, param) in params.iter().enumerate() {
         let is_rest = has_rest_arg && i == last;
-        let param_loc = convert_loc(param.binding.loc);
+        let param_loc = convert_loc(builder.with_default(param.binding.loc));
 
         if is_rest {
             // Create a temporary place for the spread param
@@ -306,7 +307,7 @@ pub(super) fn lower_inner<'h>(
     builder.pop_scope();
 
     // Build the HIR
-    let (hir_body, instructions, used_refs, child_bindings) = builder.build()?;
+    let (hir_body, instructions, child_bindings) = builder.build()?;
 
     // Create the returns place
     let returns = create_temporary_place(env, loc);
@@ -332,7 +333,6 @@ pub(super) fn lower_inner<'h>(
             directives,
             aliasing_effects: None,
         },
-        used_refs,
         child_bindings,
     ))
 }
@@ -384,9 +384,11 @@ pub(super) fn gather_captured_context<'h>(
     func: &FunctionNode<'_>,
     enclosing_scope: &'h ast::Scope,
     _component_scope: &ast::Scope,
-) -> IndexMap<Ref, Option<SourceLocation>> {
+) -> Result<IndexMap<Ref, Option<SourceLocation>>, CompilerDiagnostic> {
     let mut walker = CaptureWalker {
         host,
+        stack: bun_core::StackCheck::init(),
+        is_out_of_stack: false,
         scope_stack: vec![enclosing_scope],
         declared: RefSet::default(),
         referenced: Vec::new(),
@@ -395,8 +397,10 @@ pub(super) fn gather_captured_context<'h>(
     walker.push_scope(func.body().loc);
     walker.walk_args(func.args());
     walker.walk_stmts(func.body().stmts.slice());
+    if walker.is_out_of_stack {
+        return Err(super::nested_too_deeply());
+    }
 
-    let module_scope = host.module_scope();
     let symbols = host.symbols();
 
     // Collect the earliest (lowest source position) reference location for each
@@ -407,8 +411,8 @@ pub(super) fn gather_captured_context<'h>(
         clippy::disallowed_types,
         reason = "vendored react_compiler_hir HashMap<BindingId, _> contract"
     )]
-    let mut captured: std::collections::HashMap<Ref, (i32, Option<SourceLocation>)> =
-        std::collections::HashMap::new();
+    let mut captured: crate::collections::FxHashMap<Ref, (i32, Option<SourceLocation>)> =
+        crate::collections::FxHashMap::default();
 
     for (ref_, ref_loc) in walker.referenced {
         if !ref_.is_symbol() {
@@ -427,10 +431,8 @@ pub(super) fn gather_captured_context<'h>(
         ) {
             continue;
         }
-        if let Some(member) = module_scope.members.get(sym.original_name.slice()) {
-            if member.ref_ == ref_ {
-                continue;
-            }
+        if host.is_module_level(ref_) {
+            continue;
         }
         let pos = ref_loc.start;
         let loc = convert_loc(ref_loc);
@@ -448,22 +450,29 @@ pub(super) fn gather_captured_context<'h>(
     // Sort captured entries by source position so context declarations appear
     // in source order, matching the TS compiler's position-ordered traversal.
     let mut sorted: Vec<_> = captured.into_iter().collect();
-    sorted.sort_unstable_by_key(|(_, (pos, _))| *pos);
+    sorted.sort_unstable_by_key(|(ref_, (pos, _))| (*pos, ref_.inner_index()));
 
-    sorted
+    Ok(sorted
         .into_iter()
         .map(|(ref_, (_, loc))| (ref_, loc))
-        .collect()
+        .collect())
 }
 
 struct CaptureWalker<'h> {
     host: &'h dyn Host,
+    stack: bun_core::StackCheck,
+    is_out_of_stack: bool,
     scope_stack: Vec<&'h ast::Scope>,
     declared: RefSet,
     referenced: Vec<(Ref, Loc)>,
 }
 
 impl<'h> CaptureWalker<'h> {
+    fn has_stack(&mut self) -> bool {
+        self.is_out_of_stack |= !self.stack.is_safe_to_recurse();
+        !self.is_out_of_stack
+    }
+
     fn push_scope(&mut self, loc: Loc) {
         let next = self
             .host
@@ -510,6 +519,9 @@ impl<'h> CaptureWalker<'h> {
     }
 
     fn walk_binding_decl(&mut self, binding: &ast::Binding) {
+        if !self.has_stack() {
+            return;
+        }
         match &binding.data {
             b::B::BIdentifier(id) => self.record_decl(id.r#ref),
             b::B::BArray(arr) => {
@@ -566,6 +578,9 @@ impl<'h> CaptureWalker<'h> {
     }
 
     fn walk_stmt(&mut self, stmt: &Stmt) {
+        if !self.has_stack() {
+            return;
+        }
         let stmt_loc = stmt.loc;
         match &stmt.data {
             StmtData::SBlock(b) => {
@@ -689,6 +704,9 @@ impl<'h> CaptureWalker<'h> {
     }
 
     fn walk_expr(&mut self, e: &Expr) {
+        if !self.has_stack() {
+            return;
+        }
         match &e.data {
             ExprData::EIdentifier(id) => self.record_ref(id.ref_, e.loc),
             ExprData::EImportIdentifier(id) => self.record_ref(id.ref_, e.loc),

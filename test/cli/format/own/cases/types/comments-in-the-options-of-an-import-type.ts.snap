@@ -1,0 +1,103 @@
+------------------
+{ printWidth: 80 }
+------------------
+type C = import("x", { with: { "resolution-mode": "import" } } /* c */).B;
+type D = import("x", { with: { "resolution-mode": "import" } /* c */ }).B;
+type E = import("x", { with: { "resolution-mode": /* c */ "import" } }).B;
+type F = import("x", {
+  with: {
+    "resolution-mode": // c
+      "import",
+  },
+}).B;
+type G = import("x", {
+  with: {
+    "resolution-mode":
+      // c
+      "import",
+  },
+}).B;
+type H = import("x", {
+  with: { "resolution-mode": "import" },
+  // c
+}).B;
+type I = import("x", { with: { "resolution-mode": "import" } }).// c
+B;
+type J = import("x", { with /* c */: { "resolution-mode": "import" } }).B;
+type K = import("x", {
+  with: // c
+    { "resolution-mode": "import" },
+}).B;
+type L = import("x", {
+  with:
+    // c
+    { "resolution-mode": "import" },
+}).B;
+type M = import("x", {
+  with: /* a */ // b
+    { "resolution-mode": "import" },
+}).B;
+type N = import("x", {
+  with:
+    /**
+     * doc
+     */ { "resolution-mode": "import" },
+}).B;
+type O = import("x", {
+  with:
+    // prettier-ignore
+    { "resolution-mode":   "import" },
+}).B;
+
+-------------------
+{ printWidth: 100 }
+-------------------
+type C = import("x", { with: { "resolution-mode": "import" } } /* c */).B;
+type D = import("x", { with: { "resolution-mode": "import" } /* c */ }).B;
+type E = import("x", { with: { "resolution-mode": /* c */ "import" } }).B;
+type F = import("x", {
+  with: {
+    "resolution-mode": // c
+      "import",
+  },
+}).B;
+type G = import("x", {
+  with: {
+    "resolution-mode":
+      // c
+      "import",
+  },
+}).B;
+type H = import("x", {
+  with: { "resolution-mode": "import" },
+  // c
+}).B;
+type I = import("x", { with: { "resolution-mode": "import" } }).// c
+B;
+type J = import("x", { with /* c */: { "resolution-mode": "import" } }).B;
+type K = import("x", {
+  with: // c
+    { "resolution-mode": "import" },
+}).B;
+type L = import("x", {
+  with:
+    // c
+    { "resolution-mode": "import" },
+}).B;
+type M = import("x", {
+  with: /* a */ // b
+    { "resolution-mode": "import" },
+}).B;
+type N = import("x", {
+  with:
+    /**
+     * doc
+     */ { "resolution-mode": "import" },
+}).B;
+type O = import("x", {
+  with:
+    // prettier-ignore
+    { "resolution-mode":   "import" },
+}).B;
+
+===================== End =====================

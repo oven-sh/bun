@@ -1,0 +1,10 @@
+{
+  "name": "v9-local-tarballs",
+  "version": "1.0.0",
+  "dependencies": {
+    "plain": "file:../plain-1.0.0.tar",
+    "tar-gz-pkg": "file:../tar-gz-pkg-1.0.0.tar.gz",
+    "tar-pkg": "file:../tar-pkg-1.0.0.tgz",
+    "upper": "file:../UPPER-1.0.0.TGZ"
+  }
+}

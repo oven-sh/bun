@@ -33,11 +33,8 @@
 
 namespace WebCore {
 
-class CachedResource;
 class PerformanceServerTiming;
-class ResourceResponse;
 class ResourceLoadTiming;
-class SecurityOrigin;
 
 DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(ResourceTiming);
 
@@ -53,7 +50,6 @@ public:
     Vector<Ref<PerformanceServerTiming>> populateServerTiming() const;
     bool isSameOriginRequest() const { return m_isSameOriginRequest; }
 
-    void overrideInitiatorType(const String& type) { m_initiatorType = type; }
     bool isLoadedFromServiceWorker() const { return m_isLoadedFromServiceWorker; }
 
 private:

@@ -405,8 +405,15 @@ describe.concurrent("console %s", () => {
       vm.runInNewContext("console.log(format, Symbol('id'), /(?<year>[0-9]{4})/.exec('2026').groups)", { console, format: format("vm") });
       const source = "const values = " + values + "; console.log(" + JSON.stringify(format("worker")) + ", ...values()); postMessage(0);";
       const worker = new Worker(URL.createObjectURL(new Blob([source])));
-      await new Promise(resolve => (worker.onmessage = resolve));
-      worker.terminate();
+      try {
+        await new Promise((resolve, reject) => {
+          worker.onmessage = resolve;
+          worker.onerror = event => reject(new Error("the worker failed: " + event.message));
+          worker.addEventListener("close", () => reject(new Error("the worker closed before its message")));
+        });
+      } finally {
+        worker.terminate();
+      }
     `);
     const printed = [...(stdout + stderr).matchAll(/<([\w:. ]+): (.*)>/g)].map(([, name, text]) => [name, text]);
     const text = 'Symbol(id) [Object: null prototype] { year: "2026" }';

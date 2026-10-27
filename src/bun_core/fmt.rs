@@ -3690,9 +3690,26 @@ pub trait OutOfRangeValue {
     fn type_name() -> &'static str;
 }
 
+/// `is_large`: with Node's `addNumericalSeparator`, as `ERR_OUT_OF_RANGE` prints an integer beyond 2 ** 32.
+fn write_received_number(f: &mut Formatter<'_>, digits: &str, is_large: bool) -> fmt::Result {
+    f.write_str(" Received ")?;
+    let sign = usize::from(digits.starts_with('-'));
+    let ungrouped = match digits.len() - sign {
+        length if is_large && length > 3 => sign + (length - 1) % 3 + 1,
+        _ => digits.len(),
+    };
+    f.write_str(&digits[..ungrouped])?;
+    for group in digits.as_bytes()[ungrouped..].chunks(3) {
+        f.write_char('_')?;
+        write_bytes(f, group)?;
+    }
+    Ok(())
+}
+
 impl OutOfRangeValue for f64 {
     fn write_received(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, " Received {}", double(*self))
+        let is_large = self.is_finite() && self.fract() == 0.0 && self.abs() > 4294967296.0;
+        write_received_number(f, &double(*self).to_string(), is_large)
     }
     fn type_name() -> &'static str {
         "f64"
@@ -3700,7 +3717,7 @@ impl OutOfRangeValue for f64 {
 }
 impl OutOfRangeValue for i64 {
     fn write_received(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, " Received {}", self)
+        write_received_number(f, &self.to_string(), self.unsigned_abs() > 4294967296)
     }
     fn type_name() -> &'static str {
         "i64"

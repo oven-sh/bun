@@ -2,57 +2,87 @@ import * as b from "../../codegen/bindgen-lib.ts";
 
 export default b.module({ rustPath: "crate::node::histogram" });
 
+/** What the members of a class that Node.js writes in JavaScript are. */
+const nodeClass = { construct: "illegal", configurable: true, enumerable: false } as const;
+const bigInt = { getter: b.u64.asBigInt } as const;
+/** It can make the counts grow, which it tells the GC of the object. */
+const grows = { passThis: true, capability: "heap" } as const;
+
+export const HistogramJSON = b.dictionary({
+  count: b.u64,
+  min: b.u64,
+  max: b.u64,
+  mean: b.f64,
+  exceeds: b.u64,
+  stddev: b.f64,
+  percentiles: b.any,
+});
+
 /**
- * What every histogram of `node:perf_hooks` is. The classes are written in JavaScript (`internal/perf_hooks/histogram`),
- * which gives an instance its prototype, and the struct says which of them it belongs to. JavaScript never sees the
- * prototype it is made with.
+ * https://github.com/nodejs/node/blob/v26.3.0/lib/internal/histogram.js
+ * An instance that is of neither subclass is the structured clone of an `ELDHistogram`.
  */
 export const Histogram = b.class({
+  ...nodeClass,
   rustPath: "crate::node::histogram::Histogram",
+  final: false,
   estimatedSize: true,
+  proto: {
+    count: { getter: b.u64 },
+    countBigInt: { ...bigInt, rustName: "count" },
+    min: { getter: b.u64 },
+    minBigInt: { ...bigInt, rustName: "min" },
+    max: { getter: b.u64 },
+    maxBigInt: { ...bigInt, rustName: "max" },
+    mean: { getter: b.f64 },
+    exceeds: { getter: b.u64 },
+    exceedsBigInt: { ...bigInt, rustName: "exceeds" },
+    stddev: { getter: b.f64 },
+    percentile: { args: { percentile: b.f64 }, returns: b.u64, capability: "heap", throws: true },
+    percentileBigInt: {
+      args: { percentile: b.f64 },
+      returns: b.u64.asBigInt,
+      capability: "heap",
+      throws: true,
+      rustName: "percentile",
+    },
+    /** A `Map`. */
+    percentiles: { getter: b.any, capability: "js", throws: true },
+    percentilesBigInt: { getter: b.any, capability: "js", throws: true },
+    reset: {},
+    toJSON: { returns: HistogramJSON, capability: "heap", throws: true },
+    "@@inspectCustom": { builtin: true, length: 2 },
+  },
 });
 
-/** A `RecordableHistogram`, or `null` if no histogram has this range and precision. */
+export const RecordableHistogram = b.class({
+  ...nodeClass,
+  extends: Histogram,
+  proto: {
+    record: { args: { val: b.any }, length: 1, passThis: true, capability: "js", throws: true },
+    recordDelta: grows,
+    add: { ...grows, args: { other: b.self } },
+  },
+});
+
+/** https://github.com/nodejs/node/blob/v26.3.0/lib/internal/perf/event_loop_delay.js */
+export const ELDHistogram = b.class({
+  ...nodeClass,
+  extends: Histogram,
+  proto: {
+    /** Whether it was disabled. */
+    enable: { returns: b.bool },
+    /** Whether it was enabled. */
+    disable: { returns: b.bool },
+    "@@dispose": {},
+  },
+});
+
+/** `null` if no histogram has this range and precision. */
 export const createRecordable = b.fn({
   args: { lowest: b.u64.allowBigInt, highest: b.u64.allowBigInt, figures: b.u32 },
-  returns: Histogram.nullable,
+  returns: RecordableHistogram.nullable,
   capability: "heap",
 });
-/** An `ELDHistogram`. */
-export const createInterval = b.fn({ args: { resolution: b.f64 }, returns: Histogram, capability: "heap" });
+export const createInterval = b.fn({ args: { resolution: b.f64 }, returns: ELDHistogram, capability: "heap" });
 export const isHistogram = b.fn({ args: { value: b.any }, returns: b.bool });
-export const isRecordable = b.fn({ args: { value: b.any }, returns: b.bool });
-
-// `receiver` is the `this` of a member of one of the classes. One that is not an instance throws `ERR_INVALID_THIS`,
-// before the arguments are looked at. An argument that Node's validators refuse makes the result `false` or `null`, and
-// the method then calls the validator for its error.
-const member = { capability: "heap", throws: true } as const;
-const receiver = { receiver: b.any };
-const getter = (rustName: string, returns: b.Type) =>
-  b.fn({ ...member, args: receiver, returns, rustPath: `crate::node::histogram::${rustName}` });
-
-export const count = getter("count", b.u64);
-export const countBigInt = getter("count", b.u64.asBigInt);
-export const min = getter("min", b.u64);
-export const minBigInt = getter("min", b.u64.asBigInt);
-export const max = getter("max", b.u64);
-export const maxBigInt = getter("max", b.u64.asBigInt);
-export const mean = getter("mean", b.f64);
-export const exceeds = getter("exceeds", b.u64);
-export const exceedsBigInt = getter("exceeds", b.u64.asBigInt);
-export const stddev = getter("stddev", b.f64);
-/** A `Map`. */
-export const percentiles = b.fn({ capability: "js", throws: true, args: receiver, returns: b.any });
-export const percentilesBigInt = b.fn({ capability: "js", throws: true, args: receiver, returns: b.any });
-export const percentile = b.fn({ ...member, args: { ...receiver, percentile: b.any }, returns: b.u64.nullable });
-export const percentileBigInt = b.fn({ ...member, args: { ...receiver, percentile: b.any }, returns: b.any });
-export const reset = b.fn({ ...member, args: receiver });
-
-export const record = b.fn({ ...member, args: { ...receiver, value: b.any }, returns: b.bool });
-export const recordDelta = b.fn({ ...member, args: receiver });
-export const add = b.fn({ ...member, args: { ...receiver, other: b.any }, returns: b.bool });
-
-/** Whether it was disabled. */
-export const enable = b.fn({ ...member, args: receiver, returns: b.bool });
-/** Whether it was enabled. */
-export const disable = b.fn({ ...member, args: receiver, returns: b.bool });

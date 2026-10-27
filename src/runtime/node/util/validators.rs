@@ -77,13 +77,11 @@ pub(crate) fn validate_integer(
         return Err(global_this.throw_invalid_argument_type_value(name, "number", value));
     }
 
-    if !value.is_integer() {
-        return Err(throw_range_error_msg(
-            global_this,
-            value.as_number(),
-            name,
-            b"an integer",
-        ));
+    let num = value.as_number();
+
+    // `Number.isInteger`, which is true of an integer beyond 2 ** 53.
+    if !num.is_finite() || num.fract() != 0.0 {
+        return Err(throw_range_error_msg(global_this, num, name, b"an integer"));
     }
 
     if let Some(min) = min_value {
@@ -102,15 +100,13 @@ pub(crate) fn validate_integer(
     let min: f64 = min_value.unwrap_or(jsc::MIN_SAFE_INTEGER) as f64;
     let max: f64 = max_value.unwrap_or(jsc::MAX_SAFE_INTEGER) as f64;
 
-    let num = value.as_number();
-
     if num < min || num > max {
-        return Err(throw_range_error(
+        let range = format!(">= {min} && <= {max}");
+        return Err(throw_range_error_msg(
             global_this,
-            format_args!(
-                "The value of \"{}\" is out of range. It must be >= {} && <= {}. Received {}",
-                name, min, max, num
-            ),
+            num,
+            name,
+            range.as_bytes(),
         ));
     }
 

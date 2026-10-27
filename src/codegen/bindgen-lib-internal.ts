@@ -2545,7 +2545,7 @@ export interface InternalFieldField {
   setter?: true;
 }
 
-/** A function written in JavaScript: the export of this name in `src/js/builtins/<class name>.ts`. */
+/** A function written in JavaScript: the export of this name in `src/js/builtins/<class name>.ts`, without the `@@` of a symbol's key. */
 export interface BuiltinField {
   builtin: true;
   length: number;
@@ -2560,7 +2560,7 @@ export interface ConstantField {
   enumerable?: boolean;
 }
 
-/** Several functions are the overloads of one. `rustName` tells their Rust functions apart. A key that starts with `@@` is a well-known symbol: `@@iterator` is `Symbol.iterator`. */
+/** Several functions are the overloads of one. `rustName` tells their Rust functions apart. A key that starts with `@@` is a well-known symbol: `@@iterator` is `Symbol.iterator`. `@@inspectCustom` is `Symbol.for("nodejs.util.inspect.custom")`. */
 export type Field =
   FunctionField | readonly FunctionField[] | GetterField | InternalFieldField | BuiltinField | ConstantField;
 export type StaticField =
@@ -2573,13 +2573,19 @@ export interface ConstructOptions extends Omit<SignatureOptions, "rustPath" | "r
 }
 
 export interface ClassOptions {
-  /** Path of the Rust struct. The members are its own methods. */
-  rustPath: string;
+  /** Path of the Rust struct. The members are its own methods. A class with `extends` has its base's. */
+  rustPath?: string;
+  /**
+   * The class inherits from this one, which has `final: false`, as one WebIDL interface does from another. `JSName` is a subclass of the base's
+   * C++ class, so an instance is also an instance of the base. The prototype and the constructor inherit from the base's. The struct is the
+   * base's, and `js_Name::create` makes an instance from one.
+   */
+  extends?: ClassType;
   /** The struct is intrusively refcounted and the JS object holds one ref, so it can outlive the object. Every member takes `&self`. */
   refCounted?: boolean;
   /** With `refCounted`: call `fn finalize(&self)` when the object is collected, before its ref is dropped. */
   finalize?: boolean;
-  /** `false`: hand-written C++ can subclass `JSName`, and an instance of the subclass is an instance of this class. With `refCounted`. */
+  /** `false`: a class with `extends` or hand-written C++ can subclass `JSName`, and an instance of the subclass is an instance of this class. The subclass adds no fields. */
   final?: boolean;
   /** `impl bun_jsc::JsClass` is not generated: write it by hand, calling `js_Name::to_js` and `js_Name::from_js`. With `refCounted`. */
   overridesToJS?: boolean;
@@ -2620,8 +2626,14 @@ export interface ClassOptions {
 
 /** The property's name without a leading `_` or `@@`, for use in generated identifiers. */
 export const memberIdentifier = (name: string) => name.replace(/^(_+|@@)/, "");
-/** `iterator` for the key `@@iterator`, `undefined` for a key that is not a well-known symbol. */
+/** `iterator` for the key `@@iterator`, `undefined` for a key that is not a symbol. */
 export const wellKnownSymbol = (name: string) => (name.startsWith("@@") ? name.slice(2) : undefined);
+/** What JavaScript writes for the symbol of an `@@` key. */
+export const symbolExpression = (name: string) =>
+  name === "@@inspectCustom" ? 'Symbol.for("nodejs.util.inspect.custom")' : `Symbol.${wellKnownSymbol(name)}`;
+/** The `description` of the symbol of an `@@` key. */
+export const symbolDescription = (name: string) =>
+  name === "@@inspectCustom" ? "nodejs.util.inspect.custom" : `Symbol.${wellKnownSymbol(name)}`;
 
 type Receiver = "ref" | "mut" | "static";
 const memberReceiver = (isStatic: boolean, sharedThis: boolean, mutates: boolean): Receiver =>
@@ -2841,6 +2853,8 @@ export const selfType = new SelfType();
 
 /** As a result: the wrapper, `JsWrapper<'a, T>`. As an argument: `&'a T`. */
 export class ClassType extends NamedType {
+  /** What it `extends`. */
+  readonly base: ClassType | undefined;
   readonly rustPath: string;
   readonly refCounted: boolean;
   /** No member has `mutates`, so every member takes `&self`. */
@@ -2881,7 +2895,33 @@ export class ClassType extends NamedType {
   classIndex = -1;
   constructor(options: ClassOptions) {
     super();
-    this.rustPath = options.rustPath;
+    this.base = options.extends;
+    if (this.base) {
+      assert(!this.base.final, "extends: the base has final: false");
+      assert(!this.base.refCounted && !this.base.forBind, "extends: the base is not refCounted or forBind");
+      for (const key of [
+        "rustPath",
+        "refCounted",
+        "finalize",
+        "overridesToJS",
+        "forBind",
+        "prototypeBase",
+        "memoryCost",
+        "estimatedSize",
+        "call",
+        "internalFields",
+        "static",
+        "calledFromCpp",
+        "calledFromRust",
+      ] as const)
+        assert(options[key] === undefined, `${key}: a class with extends has what its base has`);
+      assert(
+        options.construct === undefined || (options.construct === "illegal" && this.base.construct),
+        'extends: construct is "illegal", and the base has a constructor too',
+      );
+    }
+    assert(this.base || options.rustPath !== undefined, "a class has a rustPath");
+    this.rustPath = this.base?.rustPath ?? options.rustPath!;
     this.refCounted = options.refCounted ?? false;
     this.finalize = options.finalize ?? false;
     assert(this.refCounted || !this.finalize, "finalize is only for a refCounted class: otherwise implement Drop");
@@ -2889,6 +2929,10 @@ export class ClassType extends NamedType {
       .flat()
       .some(field => "mutates" in field && field.mutates);
     assert(this.sharedThis || !this.refCounted, "a refCounted class has no mutates: every member takes &self");
+    assert(
+      this.sharedThis || (!this.base && (options.final ?? true)),
+      "a class that is or has a subclass has no mutates",
+    );
     assert(
       this.sharedThis || !options.estimatedSize,
       "estimatedSize: a marking thread would read the struct while a mutates member writes it",
@@ -2916,10 +2960,6 @@ export class ClassType extends NamedType {
     this.overridesToJS = options.overridesToJS ?? false;
     assert(this.refCounted || !this.overridesToJS, "overridesToJS is only for a refCounted class");
     this.final = options.final ?? true;
-    assert(
-      this.refCounted || this.final,
-      "final: false is only for a refCounted class: otherwise the struct is stored in the object, where a subclass's fields would go",
-    );
     this.rustTraits = options.rustTraits ?? [];
     this.forBind = options.forBind ?? false;
     assert(
@@ -2929,8 +2969,7 @@ export class ClassType extends NamedType {
     const members = (fields: Record<string, Field>, isStatic: boolean) =>
       Object.entries(fields).map(([name, field]): ClassMember => {
         assert(
-          !wellKnownSymbol(name) ||
-            !("builtin" in field || "internalField" in field || "getter" in field || "constant" in field),
+          !wellKnownSymbol(name) || !("internalField" in field || "getter" in field || "constant" in field),
           `${name}: only a function has an @@ key`,
         );
         if ("builtin" in field) {
@@ -3009,6 +3048,7 @@ export class ClassType extends NamedType {
     }
     for (const field of this.internalFields)
       assert(/^[a-z][A-Za-z0-9]*$/.test(field), `${field}: an internal field is named in camelCase`);
+    assert(!this.base || this.internalFields.length === 0, "cache: a class with extends adds no internal field");
     // A `rustName` may be another member's function.
     assertDistinct(
       [
@@ -3034,6 +3074,13 @@ export class ClassType extends NamedType {
     this.enumerable = options.enumerable ?? true;
     this.writable = options.writable ?? true;
     this.prototypeBase = options.prototypeBase;
+  }
+  /** The class that declares the struct and the fields: the base of its base, and so on. */
+  get root(): ClassType {
+    return this.base?.root ?? this;
+  }
+  get dependencies(): readonly Type[] {
+    return this.base ? [this.base] : [];
   }
   /** The prototype's and the constructor's functions, and `call`. */
   get nativeFunctions(): readonly FunctionDefinition[] {

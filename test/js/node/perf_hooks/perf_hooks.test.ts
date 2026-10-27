@@ -64,7 +64,7 @@ test("histograms that grew are collected without an explicit GC", () => {
         for (const value of valuesInEveryChunk) histogram.record(value);
       }
       created += 100;
-    } while (created < 2000 && heapStats().objectTypeCounts.Histogram > created / 2);
+    } while (created < 2000 && heapStats().objectTypeCounts.RecordableHistogram > created / 2);
   });
   expect(created).toBeLessThan(2000);
 });
@@ -78,7 +78,7 @@ test("structured clones are collected without an explicit GC", () => {
     do {
       for (let i = 0; i < 100; i++) structuredClone(histogram);
       created += 100;
-    } while (created < 2000 && heapStats().objectTypeCounts.Histogram > created / 2);
+    } while (created < 2000 && heapStats().objectTypeCounts.RecordableHistogram > created / 2);
   });
   expect(created).toBeLessThan(2000);
 });
@@ -126,7 +126,7 @@ test.each([
         if (Atomics.load(turn, 0) < 0) return;
         for (let i = 0; i < 100; i++) expect(receiveMessageOnPort(port1)).toBeDefined();
         received += 100;
-      } while (received < 2000 && heapStats().objectTypeCounts.Histogram > received / 2);
+      } while (received < 2000 && heapStats().objectTypeCounts.RecordableHistogram > received / 2);
     });
     if (Atomics.load(turn, 0) < 0) throw await failed;
     expect(received).toBeLessThan(2000);

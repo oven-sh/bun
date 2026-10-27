@@ -3400,15 +3400,6 @@ private:
             fail();
             return JSValue();
         }
-        // The classes are written in JavaScript.
-        JSValue module = globalObject->internalModuleRegistry()->requireId(globalObject, vm, Bun::InternalModuleRegistry::InternalPerfHooksHistogram);
-        RETURN_IF_EXCEPTION(scope, JSValue());
-        JSValue adopt = module.get(globalObject, Identifier::fromString(vm, "adopt"_s));
-        RETURN_IF_EXCEPTION(scope, JSValue());
-        MarkedArgumentBuffer args;
-        args.append(histogram);
-        JSC::call(globalObject, adopt, args, "adopt is not a function"_s);
-        RETURN_IF_EXCEPTION(scope, JSValue());
         addTerminalToObjectPool(histogram);
         return histogram;
     }

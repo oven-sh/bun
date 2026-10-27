@@ -7,7 +7,14 @@ const {
   PerformanceNodeEntry,
   kEmptyObject,
 } = require("internal/shared");
-const { validateFunction, validateObject } = require("internal/validators");
+const { validateFunction, validateInteger, validateObject } = require("internal/validators");
+
+const createRecordable = $bindgen("histogram.bind.ts", "createRecordable");
+const createInterval = $bindgen("histogram.bind.ts", "createInterval");
+const isHistogram = $bindgen("histogram.bind.ts", "isHistogram");
+
+const NumberMAX_SAFE_INTEGER = Number.MAX_SAFE_INTEGER;
+const kInt64Max = 2n ** 63n - 1n;
 
 var {
   Performance,
@@ -211,10 +218,7 @@ function timerify(fn, options = kEmptyObject) {
   validateFunction(fn, "fn");
   validateObject(options, "options");
   const { histogram } = options;
-  if (
-    histogram !== undefined &&
-    (!require("internal/perf_hooks/histogram").isHistogram(histogram) || typeof histogram.record !== "function")
-  ) {
+  if (histogram !== undefined && (!isHistogram(histogram) || typeof histogram.record !== "function")) {
     throw $ERR_INVALID_ARG_TYPE("options.histogram", ["RecordableHistogram"], histogram);
   }
 
@@ -304,13 +308,40 @@ export default {
   PerformanceObserverEntryList,
   PerformanceNodeTiming,
   eventLoopUtilization,
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/perf/event_loop_delay.js#L81
   monitorEventLoopDelay: function monitorEventLoopDelay(options: { resolution?: number } = kEmptyObject) {
-    return require("internal/perf_hooks/histogram").monitorEventLoopDelay(options);
+    validateObject(options, "options");
+
+    const { resolution = 10 } = options;
+    validateInteger(resolution, "options.resolution", 1);
+
+    return createInterval(resolution);
   },
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/histogram.js#L367
   createHistogram: function createHistogram(
     options: { lowest?: number | bigint; highest?: number | bigint; figures?: number } = kEmptyObject,
-  ): import("node:perf_hooks").RecordableHistogram {
-    return require("internal/perf_hooks/histogram").createHistogram(options);
+  ) {
+    validateObject(options, "options");
+    const { lowest = 1, highest = NumberMAX_SAFE_INTEGER, figures = 3 } = options;
+    if (typeof lowest !== "bigint") {
+      validateInteger(lowest, "options.lowest", 1, NumberMAX_SAFE_INTEGER);
+    } else if (lowest < 1n || lowest > kInt64Max) {
+      throw $ERR_OUT_OF_RANGE("options.lowest", `>= 1n && <= ${kInt64Max}n`, lowest);
+    }
+    if (typeof highest !== "bigint") {
+      validateInteger(highest, "options.highest", 2 * Number(lowest), NumberMAX_SAFE_INTEGER);
+    } else if (highest < 2n * BigInt(lowest)) {
+      throw $ERR_INVALID_ARG_VALUE_RangeError("options.highest", highest);
+    } else if (highest > kInt64Max) {
+      throw $ERR_OUT_OF_RANGE("options.highest", `<= ${kInt64Max}n`, highest);
+    }
+    validateInteger(figures, "options.figures", 1, 5);
+
+    const histogram = createRecordable(lowest, highest, figures);
+    if (histogram === null) {
+      throw $ERR_INVALID_ARG_VALUE("options.lowest", lowest, `is too large for ${figures} significant figures`);
+    }
+    return histogram;
   },
   PerformanceResourceTiming,
 };

@@ -464,20 +464,82 @@ describe("Bun.Transpiler", () => {
       exp("x = a ? /*! L */ (b) : c => { return d }", "x = a ? b : (c) => {\n  /*! L */\n  return d;\n};\n");
       exp('x = a ? /*! L */ (b) : T => import("m") : c', 'x = a ? (b) => import("m") : c;\n');
 
+      // The outcome of an attempt does not depend on where its ":" is reached from.
+      // "async (h) : R => ..." is tried as an async arrow function first. In its
+      // body "await" is a keyword, so "/x? class { p = /" is a regular expression,
+      // and "(a) : T => #q in o" is tried outside a class. The attempt for
+      // "async (h)" is then discarded, and the real parse reads
+      // "await / x ? class { ... } : no". It reaches the same "(a) :" inside the
+      // class this time.
+      exp(
+        "x = y ? async (h) : R => await /x? class { p = /.y/g.test(s) ? (a) : T => #q in o : e; #q = 1 } : no;",
+        "x = y ? async(h) : (R) => await / x ? class {\n  p = /.y/g.test(s) ? (a) => (#q in o) : e;\n  #q = 1;\n} : no;\n",
+      );
+      // The same in parentheses: the ": e" was taken for a type annotation of "p" and dropped.
+      exp(
+        "x = y ? async (h) : R => await /x? class { #p = 1; static async m(){ q = (p = /.y/g.test(s) ? (a) : T => #p in o : e) => body; } } : no;",
+        "x = y ? async(h) : (R) => await / x ? class {\n  #p = 1;\n  static async m() {\n    q = (p = /.y/g.test(s) ? (a) => (#p in o) : e) => body;\n  }\n} : no;\n",
+      );
+      // An attempt outside the class that said "no" because of "#q" made the attempt for "async (h)" say "yes".
+      exp(
+        "x = y ? async (h) : R => await /x? class { #q = 1; p = /.y/g.test(s) ? async (d) : U => await /r/ /(#q in o)/y : e } : no;",
+        "x = y ? async(h) : (R) => await / x ? class {\n  #q = 1;\n  p = /.y/g.test(s) ? async (d) => await /r/ / (#q in o) / y : e;\n} : no;\n",
+      );
+      // The attempt reaches ": T" after "(p = await /x? async (a, c = /.y/g)", which is not
+      // async: "await" is a name there, and the "z" on the next line is an error. The real
+      // parse reaches the same ":" after "async (a, c = /.y/g)", where "await z" is the body.
+      exp(
+        "x = y ? async (h) : R => q ? (p = await /x? async (a, c = /.y/g) : T => await\nz : no) : w;",
+        "x = y ? async(h) : (R) => q ? p = await / x ? async (a, c = /.y/g) => await z : no : w;\n",
+      );
+      // The second visit of the ":" happens inside the attempt for "async (h2)",
+      // where a debug build does not compute a memo hit again.
+      exp(
+        "x = w ? async (h2) : R2 => await /P/ /[q ? async (h) : R => await /y] ? class { p = /.y/g.test(s) ? (a) : T => #q in o : e; #q = 1 } : no : z;",
+        "x = w ? async (h2) => await /P/ / [q ? async(h) : (R) => await / y] ? class {\n  p = /.y/g.test(s) ? (a) => (#q in o) : e;\n  #q = 1;\n} : no : z;\n",
+      );
+      exp(
+        "x = w ? async (h2) : R2 => await /P/ /[y ? async (h) : R => q ? (p = await /x? async (a, c = /.y/g) : T => await\nz : no) : w] : z2;",
+        "x = w ? async (h2) => await /P/ / [y ? async(h) : (R) => q ? p = await / x ? async (a, c = /.y/g) => await z : no : w] : z2;\n",
+      );
+      // The real parse takes a memo hit at a ":" that holds both outcomes.
+      exp(
+        "x = y ? async (h) : R => await /x? class { p = /.y/g.test(s) ? (a) : T => o.p || ( u ? async (b) : U => #q in o : w ) : e; #q = 1 } : no;",
+        "x = y ? async(h) : (R) => await / x ? class {\n  p = /.y/g.test(s) ? (a) => o.p || (u ? async (b) => (#q in o) : w) : e;\n  #q = 1;\n} : no;\n",
+      );
+      exp(
+        "x = y ? async (h) : R => await /x? class { p = /.y/g.test(s) ? async (a) : T => #q in o : e; #q = 1 } : no;",
+        "x = y ? async(h) : (R) => await / x ? class {\n  p = /.y/g.test(s) ? async (a) => (#q in o) : e;\n  #q = 1;\n} : no;\n",
+      );
+      exp(
+        "x = w ? (k) : K => (y ? async (h) : R => await /x? class { p = /.y/g.test(s) ? (a) : T => #q in o : e; #q = 1 } : no) : z;",
+        "x = w ? (k) => y ? async(h) : (R) => await / x ? class {\n  p = /.y/g.test(s) ? (a) => (#q in o) : e;\n  #q = 1;\n} : no : z;\n",
+      );
+      // This one was printed without the ": g" through the stale outcome. It is an error, as without "await /x? ... /".
+      err(
+        "x = y ? async (h) : R => await /x? class { #q = 1; m() { q = c1 ? /.y/g.test(s) ? (a) : T => #q in o : g; } } : no;",
+        'Expected ":" but found ";"',
+      );
+
       // The attempt parses the body, so an attempt nested in the body must not
       // run again when the body is parsed for real: 2^40 parses would hang.
-      let kept = "d";
-      let discarded = "d";
-      let keptOut = "d";
-      let discardedOut = "d";
-      for (let i = 0; i < 40; i++) {
-        kept = `a ? (b) : c => ${kept} : e`;
-        keptOut = `a ? (b) => ${keptOut} : e`;
-        discarded = `a ? (b) : c => ${discarded}`;
-        discardedOut = `a ? b : (c) => ${discardedOut}`;
+      for (const [head, call] of [
+        ["(b)", "b"],
+        ["async (b)", "async(b)"],
+      ]) {
+        let kept = "d";
+        let discarded = "d";
+        let keptOut = "d";
+        let discardedOut = "d";
+        for (let i = 0; i < 40; i++) {
+          kept = `a ? ${head} : c => ${kept} : e`;
+          keptOut = `a ? ${head} => ${keptOut} : e`;
+          discarded = `a ? ${head} : c => ${discarded}`;
+          discardedOut = `a ? ${call} : (c) => ${discardedOut}`;
+        }
+        exp(`x = ${kept}`, `x = ${keptOut};\n`);
+        exp(`x = ${discarded}`, `x = ${discardedOut};\n`);
       }
-      exp(`x = ${kept}`, `x = ${keptOut};\n`);
-      exp(`x = ${discarded}`, `x = ${discardedOut};\n`);
     });
 
     it('a call of "async" before a ":" stays a call', async () => {
@@ -567,6 +629,23 @@ describe("Bun.Transpiler", () => {
       const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
       expect(stdout).toBe("() Date Map\n(b) Date Map\n(b: B) Date Map\n");
       expect(exitCode).toBe(0);
+    });
+
+    it("a discarded arrow function attempt leaves no JSX import behind", () => {
+      const scanner = new Bun.Transpiler({ loader: "tsx" });
+      // In the attempt for "async (h) : R =>", "/x? class { p = /" is a regular expression and
+      // "[<div/>]" is JSX. The real parse reads "/.y + [<div/>] /g" as a regular expression.
+      expect(
+        scanner.scanImports(
+          "x = y ? async (h) : R => await /x? class { p = /.y + [<div/>] /g.test(s) ? (a) : T => d : e } : no;",
+        ),
+      ).toEqual([]);
+      // The same behind a private name. The attempt reads past it, outside of the class.
+      expect(
+        scanner.scanImports(
+          "x = y ? async (h) : R => await /x? class { #q = 1; p = /.y + (#q in o) + [<div/>] /g.test(s) ? (a) : T => d : e } : no;",
+        ),
+      ).toEqual([]);
     });
 
     it("type-only import syntax", () => {

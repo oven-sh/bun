@@ -1596,24 +1596,55 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     /// state, so the whole parser is restored from a snapshot. The current
     /// scope is the arrow's `FunctionArgs` scope; no arguments are declared so
     /// that its members stay untouched. The outcome is memoized by the offset
-    /// of the ":" in `ts_conditional_arrow_attempts`, so the real parse does not
+    /// of the ":" and the parser state that the body reads, in `ts_conditional_arrow_attempts`, so the real parse does not
     /// repeat the attempts nested inside the body.
     pub(crate) fn is_type_script_arrow_return_type_after_question_and_before_colon(
         &mut self,
         arrow_data: &FnOrArrowDataParse,
     ) -> Result<bool, Error> {
         self.mark_type_script_only();
-        debug_assert!(self.lexer.start <= (u32::MAX >> 1) as usize);
-        let memo_key = self.lexer.start as u32;
+        debug_assert!(
+            self.allow_in,
+            "the memo key has no `allow_in`: the \"?\" sets it before the branch"
+        );
+        // The same ":" can be reached in another state: a discarded `async (a) :` attempt reads `await /x/` in its body as a regular expression, the real parse reads a division.
+        let memo_key = (self.lexer.start as u64) << 2 | arrow_data.allow_await as u64;
         if let Ok(i) = self
             .ts_conditional_arrow_attempts
             .binary_search_by_key(&memo_key, |&packed| packed >> 1)
         {
-            return Ok(self.ts_conditional_arrow_attempts[i] & 1 == 1);
+            let is_arrow_fn = self.ts_conditional_arrow_attempts[i] & 1 == 1;
+            debug_assert!(
+                self.lexer.is_log_disabled
+                    || self.attempt_arrow_fn_before_colon(arrow_data).ok() != Some(!is_arrow_fn),
+                "the memo holds the outcome of another parser state"
+            );
+            return Ok(is_arrow_fn);
         }
 
+        let is_arrow_fn = self.attempt_arrow_fn_before_colon(arrow_data)?;
+
+        // Search again for the insertion point: attempts nested inside this one may have added entries of their own.
+        if let Err(insert_at) = self
+            .ts_conditional_arrow_attempts
+            .binary_search_by_key(&memo_key, |&packed| packed >> 1)
+        {
+            self.ts_conditional_arrow_attempts
+                .insert(insert_at, (memo_key << 1) | is_arrow_fn as u64);
+        }
+        Ok(is_arrow_fn)
+    }
+
+    // A function of its own for the debug check above. A frame of its own would make chains of attempts nest less deep.
+    #[inline(always)]
+    fn attempt_arrow_fn_before_colon(
+        &mut self,
+        arrow_data: &FnOrArrowDataParse,
+    ) -> Result<bool, Error> {
         let snapshot = self.parser_snapshot();
         self.lexer.is_log_disabled = true;
+        // The outcome must not depend on the class around the ":". The real parse reports a private name outside a class.
+        self.allow_private_identifiers = true;
         // Metadata looks up type names, which adds unbound symbols to the module scope.
         let emit_decorator_metadata =
             core::mem::take(&mut self.options.features.emit_decorator_metadata);
@@ -1630,23 +1661,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         self.restore_parser_snapshot(snapshot);
         self.options.features.emit_decorator_metadata = emit_decorator_metadata;
-        let is_arrow_fn = match result {
-            Ok(()) => true,
+        match result {
+            Ok(()) => Ok(true),
             // Stack and memory exhaustion are not properties of the attempt
-            Err(err @ (Error::StackOverflow | Error::Alloc(_))) => return Err(err),
-            Err(_) => false,
-        };
-
-        // Re-search for the insertion point: attempts nested inside this one may
-        // have added entries of their own.
-        if let Err(insert_at) = self
-            .ts_conditional_arrow_attempts
-            .binary_search_by_key(&memo_key, |&packed| packed >> 1)
-        {
-            self.ts_conditional_arrow_attempts
-                .insert(insert_at, (memo_key << 1) | is_arrow_fn as u32);
+            Err(err @ (Error::StackOverflow | Error::Alloc(_))) => Err(err),
+            Err(_) => Ok(false),
         }
-        Ok(is_arrow_fn)
     }
 
     // ─────────────────────── try_* wrappers ───────────────────────

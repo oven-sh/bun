@@ -161,6 +161,9 @@ pub(crate) struct ParserSnapshot<'a> {
     allow_in: bool,
     allow_private_identifiers: bool,
     has_classic_runtime_warned: bool,
+    has_import_meta: bool,
+    has_with_scope: bool,
+    needs_jsx_import: NeedsJSXType,
     has_non_local_export_declare_inside_namespace: bool,
     should_fold_typescript_constant_expressions: bool,
     fn_or_arrow_data_parse: FnOrArrowDataParse,
@@ -372,14 +375,14 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub(crate) ts_infer_constraint_backtracks: Vec<u32>,
 
     /// Outcomes of `is_type_script_arrow_return_type_after_question_and_before_colon`,
-    /// keyed by the byte offset of the `:` shifted left by one, with the low bit set
+    /// keyed by the byte offset of the `:` and the parser state that the attempt reads (`memo_key` there), shifted left by one, with the low bit set
     /// when the attempt parsed an arrow function. The outcome depends only on the
-    /// source from that offset on, so the real parse that follows a discarded
+    /// key, so the real parse that follows a discarded
     /// attempt can reuse it. Without this memo every nested
     /// `a ? (b) : c => <body> : e` inside the body is parsed once by the attempt and
     /// once for real, which is exponential in the nesting depth. Kept sorted for
     /// binary search.
-    pub(crate) ts_conditional_arrow_attempts: Vec<u32>,
+    pub(crate) ts_conditional_arrow_attempts: Vec<u64>,
 
     /// When this flag is enabled, we attempt to fold all expressions that
     /// TypeScript would consider to be "constant expressions". This flag is
@@ -8194,6 +8197,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             allow_in: self.allow_in,
             allow_private_identifiers: self.allow_private_identifiers,
             has_classic_runtime_warned: self.has_classic_runtime_warned,
+            has_import_meta: self.has_import_meta,
+            has_with_scope: self.has_with_scope,
+            needs_jsx_import: self.needs_jsx_import,
             has_non_local_export_declare_inside_namespace: self
                 .has_non_local_export_declare_inside_namespace,
             should_fold_typescript_constant_expressions: self
@@ -8228,6 +8234,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.allow_in = snapshot.allow_in;
         self.allow_private_identifiers = snapshot.allow_private_identifiers;
         self.has_classic_runtime_warned = snapshot.has_classic_runtime_warned;
+        self.has_import_meta = snapshot.has_import_meta;
+        self.has_with_scope = snapshot.has_with_scope;
+        self.needs_jsx_import = snapshot.needs_jsx_import;
         self.has_non_local_export_declare_inside_namespace =
             snapshot.has_non_local_export_declare_inside_namespace;
         self.should_fold_typescript_constant_expressions =

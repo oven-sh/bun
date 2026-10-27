@@ -1,5 +1,6 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
+import { join } from "node:path";
 
 // An HTML route served without the DevServer bundles on its first request. The
 // plugin load and the build finish on later event-loop turns and call back into
@@ -39,6 +40,8 @@ const fixture = {
     };
   `,
   "run.ts": /* ts */ `
+    import { jscDescribe } from "bun:jsc";
+    import { heapFromTimer } from ${JSON.stringify(join(import.meta.dir, "..", "module-graph", "module-graph-lifetimes.ts"))};
     import html from "./index.html";
 
     // Read by plugin.ts, which Bun.serve loads into this same global on the
@@ -48,6 +51,7 @@ const fixture = {
     Object.assign(globalThis, { __mode: process.argv[2], __parked: parked.resolve, __release: release.promise });
 
     let collected = false;
+    let serverAddress = 0n;
     const registry = new FinalizationRegistry(() => void (collected = true));
     const turn = () => new Promise<void>(r => setTimeout(r, 0));
     async function collectServer() {
@@ -68,6 +72,7 @@ const fixture = {
         fetch: () => new Response("fallback"),
       });
       registry.register(server, "server");
+      serverAddress = BigInt(/0x[0-9a-fA-F]+/.exec(jscDescribe(server))![0]);
       const controller = new AbortController();
       const request = fetch(server.url, { signal: controller.signal }).then(
         response => "status " + response.status,
@@ -98,7 +103,10 @@ const fixture = {
         fetch: fetchResult,
         pendingRequestsWhileParked,
         stopBeforeRelease,
-        collectedAfterwards: await collectServer(),
+        // A server that survives is reported with what holds it.
+        collectedAfterwards:
+          (await collectServer()) ||
+          "held by " + ((await heapFromTimer()).pathTo(serverAddress) ?? "nothing that a root reaches"),
       }),
     );
   `,

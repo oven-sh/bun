@@ -5,7 +5,3 @@ json, the name made: true true true
 text: true true true
 text, the name made: true true true
 no type, the name made: true true true
-native code, json: true true true
-native code, json, the name made: true true true
-native code, text, the name made: true true true
-native code, no type, the name made: true true true

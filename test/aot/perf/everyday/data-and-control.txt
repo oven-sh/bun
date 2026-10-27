@@ -89,6 +89,12 @@ function turn(i: number): number {
   const row = JSON.parse(text) as { name: string };
   return Object.keys(row).length + row.name.length + (i & 1);
 }
+//// json-parse-by-a-type-that-lists-fewer-members-and-write-it-again
+const text = '{"id":7,"name":"row","ok":true}';
+function turn(i: number): number {
+  const row = JSON.parse(text) as { name: string };
+  return JSON.stringify(row).length + (i & 1);
+}
 //// json-parse-nested-objects-by-types-that-list-fewer-members
 const text = '{"version":2,"user":{"id":7,"name":"row","ok":true},"total":3,"place":{"city":"Oslo","zip":"0150","country":"NO"}}';
 function turn(i: number): number {
@@ -104,6 +110,14 @@ function turn(i: number): number {
   let sum = i & 1;
   for (const row of rows) sum += row.label.length;
   return sum;
+}
+//// json-parse-a-list-by-a-type-that-lists-one-of-three-members-and-write-it-again
+const rowsOfText: string[] = [];
+for (let k = 0; k < 8; k++) rowsOfText.push('{"id":' + k + ',"label":"row ' + k + '","ok":' + (k % 2 === 0) + "}");
+const text = "[" + rowsOfText.join(",") + "]";
+function turn(i: number): number {
+  const rows = JSON.parse(text) as { label: string }[];
+  return JSON.stringify(rows).length + (i & 1);
 }
 //// json-parse-texts-with-other-values-each-time-by-a-type-that-lists-one-of-three-members
 const texts: string[] = [];

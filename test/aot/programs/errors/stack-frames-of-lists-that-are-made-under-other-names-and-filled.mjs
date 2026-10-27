@@ -154,7 +154,9 @@ for (const length of [-1, 1.5, 2 ** 32, 2 ** 53]) {
     try {
       shown = String(row(length)).slice(0, 20);
     } catch (error) {
-      shown = `${error.name}: ${error.message} at ${error.line}:${error.column} < ${framesIn(error.stack)}`;
+      const frames = framesIn(error.stack);
+      const place = /^[^<]*\(native\)/.test(frames) ? "a built-in function" : `${error.line}:${error.column}`;
+      shown = `${error.name}: ${error.message} at ${place} < ${frames}`;
     }
     console.log(`${name} ${length}: ${shown}`);
   }

@@ -12,6 +12,8 @@ import { Realm } from "./members";
 import { Table, type CallMode } from "./table-description";
 
 export type WorkerRequest = { tablePath: string | null; calls: [entry: string, mode: CallMode][] };
+// The contents of `<reports.jsonl>.current`: the call in progress, why no call has started yet, or null once every call is done.
+export type WorkerNote = [entry: string, mode: CallMode] | { notStarted: string } | null;
 // `failure`: the test itself threw, which says nothing about the built-in.
 export type WorkerReport = CallReport & { entry: string; failure?: string };
 
@@ -23,8 +25,15 @@ process.on("uncaughtException", () => {});
 
 const table = new Table(tablePath === null ? aotBuiltinEntries() : JSON.parse(readFileSync(tablePath, "utf8")));
 const realm = new Realm(table);
-await addLiveCandidates(realm);
-await addHostInstances(realm, candidatesForTheirClass, openersOfWhatTheLibraryHolds);
+try {
+  await addLiveCandidates(realm);
+  const failures = await addHostInstances(realm, candidatesForTheirClass, openersOfWhatTheLibraryHolds);
+  if (failures.length > 0) throw new Error(failures.join("\n"));
+} catch (error) {
+  // The handlers above would swallow this and the process would exit quietly without making any of its calls.
+  writeFileSync(`${reportsPath}.current`, JSON.stringify({ notStarted: Bun.inspect(error) } satisfies WorkerNote));
+  process.exit(1);
+}
 
 for (const [token, mode] of calls) {
   const entry = table.entries.get(token);

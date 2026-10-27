@@ -87,7 +87,7 @@ function f1 name="write" module=m0 position=39 flags=[IsChecked, HasExplicitName
 # CHECK: Int64 b@[[pooled]] = Load(b@{{*}}, offset = {{*}}, ControlDependent|Reads:collectorState, {{*}}:StringBuilderBegin)
 # CHECK-NEXT: Branch(b@[[pooled]], Terminal, {{*}}:StringBuilderBegin)
 # CHECK-NEXT: Successors: Then:#{{*}}, Else:Rare:#
-# CHECK: Int64 b@[[next]] = Load(b@[[pooled]], offset = {{*}}, ControlDependent|Reads:StringBuilderContents, {{*}}:StringBuilderBegin)
+# CHECK: Int64 b@[[next]] = Load(b@[[pooled]], offset = {{*}}, ControlDependent|Reads:AOTStringBuilderStorage_fields, {{*}}:StringBuilderBegin)
 # CHECK-NEXT: Store(b@[[next]], b@{{*}}, offset = {{*}}, ControlDependent|Writes:collectorState, {{*}}:StringBuilderBegin)
 # The writer that was compiled for the layout is called directly with the object and the builder, and says whether it could write all of it.
 # CHECK: Int32 b@[[written]] = Patchpoint(b@{{*}}:Register({{*}}), b@[[builder]]:Register({{*}}), resultConstraints = Register({{*}}), ExitsSideways{{*}}:CallDirect)

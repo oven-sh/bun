@@ -627,7 +627,7 @@ enum Proof (lasts: ProofLifetime, readsOnlySubject: Bool) {
 
 `Forever` means that the proof is about the value itself. A value that was a number is a number, and an object never loses its layout. `Stretch` means that the proof is about state that something can change: whether a slot is filled, whether an index is in bounds, whether the object is frozen. Such a proof lasts until an operation whose [effects](#effects) can write that state.
 
-Then the passes that remove tests get to work. `EliminateGuards` folds a test whose condition holds on every path to it. `HoistTestsIntoPredecessors` and `HoistLoopInvariantReads` move work out of loops. `SkipAnsweredEntryChecks` sends a caller straight to the typed body. `TestNarrowerTypesFirst` orders what is left.
+Then the passes that remove tests get to work. `EliminateGuards` folds a test whose condition holds on every path to it. `HoistTestsIntoPredecessors` and `HoistLoopInvariantReads` move work out of loops. `SimplifyControlFlow` decides a test by what the tests above it have left of the value: behind `shape instanceof Circle` a `Circle | Square` is a `Circle` on one edge and a `Square` on the other, whatever type the next test asks for. `SkipAnsweredEntryChecks` sends a caller straight to the typed body. `ProveResults` takes the result of a function for proven once every `Return` that is left hands over a value of its type, and simplifies the callers, whose own results may be proven in turn. `TestNarrowerTypesFirst` orders what is left.
 
 ### Lies, and what really happens
 
@@ -1790,7 +1790,7 @@ Cells are aligned to at least eight bytes, so 32 bits reach 32 GB. The cage is a
 
 A field that holds an object takes four bytes, not eight. On programs that are mostly graphs of small objects, such as a compiler's syntax tree, that's a large part of the memory saved. References in registers, on the stack and in `JSValue` slots are full pointers.
 
-The operating system picks the cage's address, and each Worker has a cage of its own. Where the address space of the process is limited (`ulimit -v`), the cage takes address space as it fills, and all threads share one. An executable that is started with less address space than it maps before its program runs prints how much it needs and exits with code 1. `--aot-huge-heap` compiles with 64-bit references and no limit.
+The operating system picks the cage's address, and each Worker has a cage of its own. Where the address space of the process is limited (`ulimit -v`), the cage takes address space as it fills, and all threads share one. The storage of arrays, typed arrays and the characters of strings come from `malloc`, where a request that can fail gets a `RangeError` once the address space is taken. For requests that can't fail the executable keeps 8 MB of address space that nothing uses. Such a request lets go of 1 MB of it and asks again, and the thread it runs on collects garbage at its next check. If the 8 MB can't be kept again after that, the thread gets a `RangeError`. An executable that is started with less address space than it maps before its program runs prints how much it needs and exits with code 1. `--aot-huge-heap` compiles with 64-bit references and no limit.
 
 ### Exceptions and stack traces
 

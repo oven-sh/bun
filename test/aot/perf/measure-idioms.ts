@@ -21,6 +21,8 @@ export const isWhole = (row: Row): row is WholeRow => !!row.jit;
 /** The worse of the two compiled forms over the JIT. */
 export const ratioOf = (row: WholeRow) =>
   Math.max(row.typed.instructions, row.untyped.instructions) / row.jit.instructions;
+/** Compiled code is to take fewer instructions than the JIT's last tier. What takes more is listed, with the ratio. */
+export const lineAgainstTheJit = 1;
 export const behindPath = join(import.meta.dir, `behind-the-jit.${process.platform}-${process.arch}.json`);
 export const typedOverUntyped = (row: WholeRow) => row.typed.instructions / row.untyped.instructions;
 export const isTypedDearer = (row: WholeRow, bound = 1.05, slack = 1) =>

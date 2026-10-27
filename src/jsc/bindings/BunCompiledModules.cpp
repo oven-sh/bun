@@ -156,7 +156,7 @@ static constexpr bool hostHasTwoSeparators = true;
 static constexpr bool hostHasTwoSeparators = false;
 #endif
 
-static std::optional<AOT::ModuleID> moduleThatAnswersToPath(const String& path)
+std::optional<AOT::ModuleID> compiledModuleForPath(const String& path)
 {
     if (!hasCompiledModules())
         return std::nullopt;
@@ -171,30 +171,11 @@ static std::optional<AOT::ModuleID> moduleThatAnswersToPath(const String& path)
     return found;
 }
 
-// The executable holds no code of a module that is native code. Whoever asks for that module gets the one that the program imports.
-std::optional<AOT::ModuleID> compiledModuleForPath(const String& path)
-{
-    auto module = moduleThatAnswersToPath(path);
-    return module && AOT::isNativeModule(*module) ? std::nullopt : module;
-}
-
-static bool replacesNativeModule(JSGlobalObject* globalObject, const String& path)
-{
-    auto& plugins = uncheckedDowncast<Zig::GlobalObject>(globalObject)->onLoadPlugins;
-    return plugins.hasVirtualModules() && plugins.virtualModules->contains(path);
-}
-
-static std::optional<AOT::ModuleID> moduleForRequest(Zig::GlobalObject* globalObject, const String& path)
-{
-    auto module = moduleThatAnswersToPath(path);
-    return module && AOT::isNativeModule(*module) && replacesNativeModule(globalObject, path) ? std::nullopt : module;
-}
-
 static std::optional<AOT::ModuleID> compiledModuleForRequest(Zig::GlobalObject* globalObject, const String& path, bool hasImportAttributes)
 {
     if (hasImportAttributes)
         return std::nullopt;
-    auto module = moduleForRequest(globalObject, path);
+    auto module = compiledModuleForPath(path);
     if (module && AOT::leavesModuleToHost(globalObject, *module))
         return std::nullopt;
     return module;
@@ -263,10 +244,10 @@ static std::optional<AOT::ModuleID> compiledModuleOf(JSCommonJSModule* module)
     return AOT::ModuleID(module->compiledModule);
 }
 
-static void requireInto(Zig::GlobalObject* globalObject, JSCommonJSModule* target, AOT::ModuleID module)
+static void requireInto(Zig::GlobalObject* globalObject, JSCommonJSModule* target, AOT::ModuleID module, std::optional<AOT::ModuleID> referrer = std::nullopt)
 {
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
-    JSValue exports = AOT::requireModule(globalObject, module);
+    JSValue exports = AOT::requireModule(globalObject, module, referrer);
     RETURN_IF_EXCEPTION(scope, void());
     target->setExportsObject(exports);
 }
@@ -281,13 +262,10 @@ bool requireCompiledModule(Zig::GlobalObject* globalObject, JSCommonJSModule* ta
     JSCommonJSModule* requirer = target->m_parent.get();
     // `target` is the object that require() under a computed name has made to load the file into.
     auto referrer = requirer ? compiledModuleOf(requirer) : std::nullopt;
-    if (referrer && AOT::recordRequire(globalObject, *module, *referrer))
-        target->compiledModule = module->index();
-    RETURN_IF_EXCEPTION(scope, false);
-    requireInto(globalObject, target, *module);
-    RETURN_IF_EXCEPTION(scope, false);
+    // The engine says whose child the file is.
     if (referrer)
-        AOT::recordRequire(globalObject, *module, *referrer);
+        target->compiledModule = module->index();
+    requireInto(globalObject, target, *module, referrer);
     RETURN_IF_EXCEPTION(scope, false);
     // A module of the executable is in no cache. The next require() of the name asks the engine again, which answers what the module exports then.
     globalObject->requireMap()->remove(globalObject, jsString(vm, path));
@@ -309,7 +287,7 @@ JSObject* loaderOfCompiledESModule(Zig::GlobalObject* globalObject, const String
 
 JSValue loadCompiledModuleNamespace(Zig::GlobalObject* globalObject, const String& path)
 {
-    auto module = moduleForRequest(globalObject, path);
+    auto module = compiledModuleForPath(path);
     if (!module)
         return {};
     auto scope = DECLARE_THROW_SCOPE(getVM(globalObject));
@@ -408,7 +386,7 @@ static void createModuleObject(JSGlobalObject* realm, JSString* path, AOT::Modul
     auto scope = DECLARE_THROW_SCOPE(vm);
     // putDirectCustomAccessor() is for a name that the object does not have yet.
     JSValue exportsAsData = traits.contains(AOT::ModuleObjectTrait::HasExportsVariable) ? JSValue() : jsUndefined();
-    JSCommonJSModule* module = JSCommonJSModule::create(globalObject, path, exportsAsData, true, JSValue());
+    JSCommonJSModule* module = JSCommonJSModule::create(globalObject, path, exportsAsData, !traits.contains(AOT::ModuleObjectTrait::IsESModule), JSValue());
     RETURN_IF_EXCEPTION(scope, void());
     module->compiledModule = compiled.index();
     if (traits.contains(AOT::ModuleObjectTrait::IsMain))
@@ -418,6 +396,8 @@ static void createModuleObject(JSGlobalObject* realm, JSString* path, AOT::Modul
         module->putDirectCustomAccessor(vm, WebCore::clientData(vm)->builtinNames().exportsPublicName(), accessors, PropertyAttribute::CustomValue | 0);
     }
     out.module = module;
+    if (traits.contains(AOT::ModuleObjectTrait::IsNoCommonJSFile))
+        return;
     scope.release();
     out.require = attachRequireFunction(vm, globalObject, module, path);
 }
@@ -624,7 +604,6 @@ const AOT::ModuleHost compiledModuleHost = {
     &showChildren,
     &findModuleWithAttributes,
     &resolveFunctionOf,
-    &replacesNativeModule,
 };
 
 JSValue createNotInExecutableError(JSGlobalObject* globalObject, ErrorCode code, const String& path, NotInExecutable what)

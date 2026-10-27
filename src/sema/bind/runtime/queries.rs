@@ -411,6 +411,12 @@ impl Bound<'_> {
         self.runtime.import_meta_may_be_modified
     }
 
+    /// The file writes `import.meta`, or a `require` or a `__filename` that is the file's own. Without one of them no expression in it is the
+    /// file's `require`, one made for the file, or `import.meta.require`.
+    pub fn may_name_own_require(&self) -> bool {
+        self.runtime.may_name_own_require
+    }
+
     pub fn stores_to(&self, symbol: SymbolId) -> &[SymbolStore] {
         let stores = &self.runtime.references.stores[..];
         let start = stores.partition_point(|store| store.symbol < symbol);

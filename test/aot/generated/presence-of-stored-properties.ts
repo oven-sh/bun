@@ -1,5 +1,5 @@
 // A property that a function has just stored on an object it made is there, whatever kind of value was stored and whoever asks. Each case makes an object, stores under the key `n` what it reads from a row, and asks for the property.
-// The table: how the property is stored x where the rows come from x who asks. How the function is called rotates, so every pair of the other axes meets several callers.
+// Some objects are written in two places with the same names in another order. The table: how the property is stored x where the rows come from x who asks. How the function is called rotates, so every pair of the other axes meets several callers.
 //
 //   bun presence-of-stored-properties.ts <folder> [--typed] [--sample=<how many>] [--only=<regex over names>]
 //
@@ -33,12 +33,24 @@ const stores: Store[] = [
   { name: "deleted-and-stored", text: "const o@{: O} = { n: 0 }; delete o.n; if (row.n) o.n = row.n;" },
   { name: "class-field", text: "const o = new Box(); if (row.n) o.n = row.n;" },
   { name: "constructor", text: "const o = new Filled(row.n);" },
+  { name: "over-a-method", text: "const o@{: any} = new Shaped(); o.n = row.n;" },
+  { name: "sum-over-a-method", text: "const o@{: any} = new Shaped(); o.n = row.n + 1;", adds: true },
+  { name: "conditional-over-a-method", text: "const o@{: any} = new Shaped(); if (row.n) o.n = row.n;" },
   {
     name: "defined",
     text: `const o@{: O} = {}; Object.defineProperty(o, "n", { value: row.n, writable: true, enumerable: true, configurable: true });`,
   },
   { name: "assigned", text: "const o@{: O} = {}; Object.assign(o, row);" },
   { name: "spread", text: "const o@{: O} = { ...row };" },
+  { name: "over-one-of-two-orders", text: "const o@{: O} = idFirst(0, 0); o.n = row.n;" },
+  { name: "sum-over-one-of-two-orders", text: "const o@{: O} = idFirst(0, 0); o.n = row.n + 1;", adds: true },
+  { name: "conditional-over-one-of-two-orders", text: "const o@{: O} = idFirst(0, 0); if (row.n) o.n = row.n;" },
+  { name: "sum-over-the-other-order", text: "const o@{: O} = idLast(0, 0); o.n = row.n + 1;", adds: true },
+  { name: "both-over-one-of-two-orders", text: "const o@{: O} = idFirst(0, 0); o.id = row.n; o.n = row.n;" },
+  {
+    name: "over-either-order",
+    text: "const o@{: O} = row.n ? idFirst(0, 0) : idLast(0, 0); o.n = row.n;",
+  },
 ];
 
 interface Rows {
@@ -120,6 +132,21 @@ const readers: Reader[] = [
   { name: "filled-where-nullish", text: `o.n ??= "default"; return o;` },
   { name: "in-twice-around-a-delete", text: `const before = "n" in o; delete o.n; return before + "/" + ("n" in o);` },
   { name: "in-and-the-object", text: `return ["n" in o, o];` },
+  { name: "keys-for-each", text: `let names = ""; Object.keys(o).forEach(name => (names += name)); return names;` },
+  { name: "keys-for-of", text: `let names = ""; for (const name of Object.keys(o)) names += name; return names;` },
+  {
+    name: "values-for-of",
+    text: `let kinds = ""; for (const value of Object.values(o)) kinds += typeof value; return kinds;`,
+  },
+  {
+    name: "entries-for-of",
+    text: `let pairs = ""; for (const [name, value] of Object.entries(o)) pairs += name + typeof value; return pairs;`,
+  },
+  { name: "entries-joined", text: "return Object.entries(o).map(([name, value]) => name + typeof value).join();" },
+  { name: "values-joined", text: "return Object.values(o).map(value => typeof value).join();" },
+  { name: "spread-beside-a-member", text: "return Object.keys({ first: 1, ...o, last: 1 }).join();" },
+  { name: "assign-onto-the-other-order", text: "return Object.keys(Object.assign(idLast(1, 1), o)).join();" },
+  { name: "from-entries", text: "return Object.keys(Object.fromEntries(Object.entries(o))).join();" },
 ];
 
 const callers = [
@@ -154,6 +181,18 @@ class Filled {
     if (n) this.n = n;
   }
 }
+class Shaped {
+  n()@{: any} {
+    return "method";
+  }
+}
+Shaped.prototype.n.toString = () => "method";
+function idFirst(id@{: any}, n@{: any})@{: O} {
+  return { id, n };
+}
+function idLast(id@{: any}, n@{: any})@{: O} {
+  return { n, id };
+}
 function show(result@{: any})@{: string} {
   if (Array.isArray(result)) return result.map(show).join("&");
   return typeof result === "object" && result !== null ? Object.keys(result).join() + "=" + String(result.n) : String(result);
@@ -161,6 +200,7 @@ function show(result@{: any})@{: string} {
 function t(name@{: string}, run@{: () => string}) {
   console.log(name + ": " + run());
 }
+console.log(Object.keys(idFirst(0, 0)).join(), Object.keys(idLast(0, 0)).join());
 `;
 
 export function caseFiles(isTyped: boolean): CaseFile[] {

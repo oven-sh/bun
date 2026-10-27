@@ -1617,6 +1617,11 @@ export const linkerFlags: Flag[] = [
     when: c => c.linux || c.freebsd,
     desc: "Export list + version script",
   },
+  {
+    flag: c => `-Wl,--version-script=${libcFunctionsScriptPath(c)}`,
+    when: definesLibcFunctions,
+    desc: "Export the functions of libc that the executable defines, without a version",
+  },
   // ─── FreeBSD ───
   {
     flag: c => [`--target=${c.crossTarget!}`, `--sysroot=${c.sysroot!}`, "-stdlib=libc++"],
@@ -1782,7 +1787,22 @@ export function versionScriptPath(cfg: Pick<Config, "cwd" | "freebsd">): string 
   return join(cfg.cwd, "src", cfg.freebsd ? "linker-freebsd.lds" : "linker.lds");
 }
 
-/** `<buildDir>/exports.list`: the version script's `global:` block as lld's export list; configure writes it (bun.ts). */
+/** Whether BunSignalActions.cpp defines functions of libc: glibc and musl. A sanitizer's run time defines them itself. */
+export function definesLibcFunctions(cfg: Pick<Config, "linux" | "abi" | "asan">): boolean {
+  return cfg.linux && cfg.abi !== "android" && !cfg.asan;
+}
+
+/** A second, anonymous version script: the names in it are exported without a version. */
+export function libcFunctionsScriptPath(cfg: Pick<Config, "cwd">): string {
+  return join(cfg.cwd, "src", "libc-functions.lds");
+}
+
+/** The version scripts of an ELF link. */
+export function versionScriptPaths(cfg: Config): string[] {
+  return definesLibcFunctions(cfg) ? [versionScriptPath(cfg), libcFunctionsScriptPath(cfg)] : [versionScriptPath(cfg)];
+}
+
+/** `<buildDir>/exports.list`: the version scripts' `global:` blocks as lld's export list; configure writes it (bun.ts). */
 export function exportListPath(cfg: Pick<Config, "buildDir">): string {
   return join(cfg.buildDir, "exports.list");
 }
@@ -1801,7 +1821,7 @@ export function linkDepends(cfg: Config): string[] {
     ? [join(cfg.cwd, "src/symbols.def")]
     : cfg.darwin
       ? [join(cfg.cwd, "src/symbols.txt")]
-      : [exportListPath(cfg), versionScriptPath(cfg)];
+      : [exportListPath(cfg), ...versionScriptPaths(cfg)];
   if (usesOrderFile(cfg)) depends.push(orderFilePath(cfg));
   return depends;
 }

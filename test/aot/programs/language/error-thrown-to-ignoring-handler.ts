@@ -33,6 +33,8 @@ console.log(inALoop([1, 2, 3, 10, 20, 4]), seen.join(" | "))
 console.log(messageMayBeUndefined(1), messageMayBeUndefined(1, "given"), messageMayBeUndefined(9), twoHandlers(1), twoHandlers(9))
 const asValues: ((x: number) => number)[] = [ignoresInOneFunction, ignoresWhatACalleeThrows, ignoresABoundName, keepsIt, passesItOn]
 for (const each of asValues) console.log(each(7), each === passesItOn ? "" : each(2))
+// Whoever reads the global object may call them: each keeps a body of its own in the executable, whatever is copied into its callers.
+;(globalThis as unknown as { heldForWhoeverAsks: unknown }).heldForWhoeverAsks = asValues
 const prepared: string[] = []
 ;(Error as unknown as { prepareStackTrace: unknown }).prepareStackTrace = (error: Error) => { prepared.push(error.message); return "prepared" }
 const hostPreparesStackTraces = new Error("probe").stack === "prepared"

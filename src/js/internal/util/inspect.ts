@@ -1079,12 +1079,15 @@ function isInstanceof(object: unknown, proto) {
 }
 
 // Special-case for some builtin prototypes in case their `constructor` property has been tampered.
-let wellKnownPrototypes: Map<unknown, { name: string; constructor: new (...args: never[]) => unknown }> | undefined;
+let wellKnownPrototypes:
+  Map<unknown, { name: string; constructor: (new (...args: never[]) => unknown) | undefined }> | undefined;
+let wellKnownFunction: FunctionConstructor;
 function initializeWellKnownPrototypes() {
   wellKnownPrototypes = new SafeMap();
   wellKnownPrototypes.set(Array.prototype, { name: "Array", constructor: Array });
   wellKnownPrototypes.set(ArrayBuffer.prototype, { name: "ArrayBuffer", constructor: ArrayBuffer });
-  wellKnownPrototypes.set(Function.prototype, { name: "Function", constructor: Function });
+  wellKnownPrototypes.set(Function.prototype, { name: "Function", constructor: undefined });
+  wellKnownFunction = Function;
   wellKnownPrototypes.set(Map.prototype, { name: "Map", constructor: Map });
   wellKnownPrototypes.set(Object.prototype, { name: "Object", constructor: Object });
   wellKnownPrototypes.set(Set.prototype, { name: "Set", constructor: Set });
@@ -1099,7 +1102,7 @@ function getConstructorName(obj, ctx: Context, recurseTimes: number, protoProps?
     const wellKnownPrototypeNameAndConstructor = wellKnownPrototypes!.get(obj);
     if (wellKnownPrototypeNameAndConstructor != null) {
       const { name, constructor } = wellKnownPrototypeNameAndConstructor;
-      if (tmp instanceof constructor) {
+      if (constructor === undefined ? tmp instanceof wellKnownFunction : tmp instanceof constructor) {
         if (protoProps !== undefined && firstProto !== obj) {
           addPrototypeProperties(ctx, tmp, firstProto || tmp, recurseTimes, protoProps);
         }

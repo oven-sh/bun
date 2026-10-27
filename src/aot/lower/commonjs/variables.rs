@@ -350,13 +350,8 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             return None;
         };
         let (sources, modules) = (file.inputs.sources, file.inputs.modules);
-        // Which of several entry points has started the process is not known, and under an ES module `require.main` is undefined.
-        let main = match sources.entry_points() {
-            [entry_point] if modules.kind(entry_point.file) == ModuleKind::CommonJs => {
-                Some(entry_point.file)
-            }
-            _ => None,
-        };
+        // Under an ES module `require.main` is undefined.
+        let main = modules.find_commonjs_main(sources.entry_points());
         let owner = match mention.owner {
             ModuleObjectOwner::OwnFile if file.body_form() == BodyForm::Plain => file.file,
             ModuleObjectOwner::EntryPoint => main?,
@@ -367,7 +362,6 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         }
         let location = match field {
             ModuleField::Loaded => return Some(self.builder.boolean(true)),
-            // The first CommonJS file under an ES entry point is "." too.
             ModuleField::Id if main.is_none() => return None,
             ModuleField::Id if main == Some(owner) => return Some(self.emit_text(b".")),
             ModuleField::Id | ModuleField::Filename => BuiltinId::ImportMetaPath,

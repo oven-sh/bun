@@ -88,10 +88,6 @@ export const knownToday: Record<string, string> = {
     "each file: operations 13 -> 11; bundled: operations 13 -> 11",
   "constants are put where their names stand: a constant as a case label [ts]":
     "each file: operations 13 -> 11; bundled: operations 13 -> 11",
-  "constants are put where their names stand: a constant as a property key [ts, two files]":
-    "each file: code bytes 191 -> 129, operations 9 -> 6, run-time operations 241 -> 240; bundled: code bytes 191 -> 158",
-  "constants are put where their names stand: a constant as a property key [ts]":
-    "each file: code bytes 190 -> 128, operations 9 -> 6, run-time operations 241 -> 240; bundled: code bytes 190 -> 128, operations 9 -> 6, run-time operations 241 -> 240",
   "constants are put where their names stand: inside an arrow in a loop [ts, two files]":
     "each file: code bytes 2389 -> 2297, operations 86 -> 74; bundled: code bytes 2389 -> 2296, operations 86 -> 74",
   "constants are put where their names stand: inside an arrow in a loop [ts]":
@@ -102,10 +98,6 @@ export const knownToday: Record<string, string> = {
     "bundled: code bytes 513 -> 339, operations 24 -> 10, run-time operations 245 -> 241",
   "enums: a member as a case label [ts]":
     "bundled: code bytes 466 -> 339, operations 17 -> 10, run-time operations 245 -> 241",
-  "enums: a member as a key [ts, two files]":
-    "bundled: code bytes 213 -> 134, operations 10 -> 6, run-time operations 241 -> 240",
-  "enums: a member as a key [ts]":
-    "each file: code bytes 212 -> 134, operations 10 -> 6, run-time operations 241 -> 240; bundled: code bytes 212 -> 134, operations 10 -> 6, run-time operations 241 -> 240",
   "enums: an enum handed out whole [ts, two files]": "bundled: operations 15 -> 13",
   "enums: members are computed [ts]":
     "each file: code bytes 447 -> 375, run-time operations 251 -> 244; bundled: code bytes 447 -> 149, operations 24 -> 7, run-time operations 251 -> 238",
@@ -537,14 +529,6 @@ export const knownToday: Record<string, string> = {
   "files are linked: a namespace read by constant names [ts]": "bundled: operations 8 -> 5",
   "files are linked: a namespace read for a name that is not there [js]":
     "bundled: operations 7 -> 5, run-time operations 239 -> 238",
-  "names in brackets, keys and shorthand: a computed key that is a text [ts]":
-    "each file: code bytes 215 -> 142, operations 9 -> 7, run-time operations 241 -> 240; bundled: code bytes 215 -> 142, operations 9 -> 7, run-time operations 241 -> 240",
-  "names in brackets, keys and shorthand: a quoted key [ts]":
-    "each file: code bytes 201 -> 132, operations 9 -> 6, run-time operations 241 -> 240; bundled: code bytes 201 -> 132, operations 9 -> 6, run-time operations 241 -> 240",
-  "names in brackets, keys and shorthand: a text in brackets is a name [ts]":
-    "each file: code bytes 238 -> 137, operations 11 -> 6, run-time operations 241 -> 240; bundled: code bytes 238 -> 137, operations 11 -> 6, run-time operations 241 -> 240",
-  "names in brackets, keys and shorthand: joined texts in brackets [ts]":
-    "each file: code bytes 190 -> 128, operations 9 -> 6, run-time operations 241 -> 240; bundled: code bytes 190 -> 128, operations 9 -> 6, run-time operations 241 -> 240",
   "namespaces: a constant of a namespace [ts, two files]":
     "each file: run-time operations 241 -> 240; bundled: code bytes 294 -> 115, operations 17 -> 6, run-time operations 241 -> 239",
   "namespaces: a function of a namespace [ts, two files]":

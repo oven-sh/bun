@@ -182,7 +182,8 @@ so that `bun test test/aot` never needs more than a Bun. The top of each test fi
 - **Most CI machines cannot count instructions**, so `perf/generated-code.ts` (`perf/generated-code-of-idioms-<part>`, `perf/generated-code-of-operations-<part>`) reads the
   generated code of the same programs instead: the Air instructions and patchpoints of each function of the program, of its cheapest loop per element, and of one site
   of each operation, as `testaot print <program> --command="lower-to-air size loops entry-modules"` counts them. Nothing runs.
-  `perf/generated-code-of-idioms.<os>-<arch>.txt` and `perf/generated-code-of-operations.<os>-<arch>.txt` only go down: `AOT_PERF=lower`. A platform without a file prints
+  `perf/generated-code-of-idioms.<os>-<arch>.txt` and `perf/generated-code-of-operations.<os>-<arch>.txt` hold the numbers: `AOT_PERF=lower` writes the better ones, and a
+  change that moves one on purpose (a callee's fast path put in line) restates it with `AOT_PERF=update AOT_PERF_ONLY=<name>`. A platform without a file prints
   what it finds and judges nothing. The engine's `aot/tests/codegen`, and `engine-tests/codegen` here, check the B3 of the same lowerings:
   `tools/ir-test-from-source.ts` drafts such a test from a small program.
 - **What a script writes is not kept.** Some folders of `programs/` are written by a script, whole or in part: `generate.ts` lists

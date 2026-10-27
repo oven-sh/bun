@@ -805,8 +805,6 @@ typed-objects/plain-clone-takes-stores-behind-it	// CALLS+ both CloneObjectAndEx
 typed-objects/plain-clone-takes-stores-behind-it	// CALLS+ named CloneObjectAndExtend
 typed-objects/plain-clone-takes-stores-behind-it	// CALLS+ wide CloneObjectAndExtendWithNumber
 typed-objects/plain-clone-takes-stores-behind-it	// CALLS- both PutBy
-typed-objects/proxyless-generic-class-stays-closed	// IR- ^layout (L\d+) .*name="State" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
-typed-objects/proxyless-generic-function-stays-closed	// IR- ^layout (L\d+) .*name="State" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
 typed-objects/proxyless-generic-passed-to-map-stays-closed	// IR- ^layout (L\d+) .*name="State" [\s\S]*^    v\d+: [^=~\n]*(?<![=\w])\1(?![!\d])
 typed-objects/reads-after-cast-share-structure-check	// IRT= 1 maybe TypeTest v[0-9]+ testedType=L[0-9]+!
 typed-objects/reads-after-cast-share-structure-check	// IRT= 1 sumOfLeaf TypeTest v[0-9]+ testedType=L[0-9]+!
@@ -865,12 +863,8 @@ arrays/a-position-typed-number-is-an-integer-behind-one-test	// IRT= 1 twoOfAVie
 calls-fast-paths/members-that-the-program-stores-to-the-object-of-a-class	// IR= 0 loopClass AreMembersUnchanged
 constant-containers/a-constant-literal-where-a-class-is-declared-leaves-the-field-typed	// IR- layout .* name="Line" .*key="from" declared=\{type=[^}]*IsExpected
 narrowing/a-narrowed-variable-is-claimed-once-and-keeps-its-own-value	// IRT= 2 eachArm = TypeTest
-narrowing/instanceof-is-the-only-test-of-what-it-has-narrowed	// IRT= 1 conditional = TypeTest
-narrowing/instanceof-is-the-only-test-of-what-it-has-narrowed	// IRT= 1 leavesEarly = TypeTest
 narrowing/logical-operators-as-a-value-keep-what-they-have-tested	// IRT= 0 byNot RequireObjectCoercible
-narrowing/logical-operators-as-a-value-keep-what-they-have-tested	// IRT= 0 byTypeof = PropGet
 narrowing/logical-operators-as-a-value-keep-what-they-have-tested	// IRT= 0 chain RequireObjectCoercible .* name="b"
-narrowing/logical-operators-as-a-value-keep-what-they-have-tested	// IRT= 1 byTypeof = TypeTest
 structural-types/a-namespace-beside-a-function-or-a-class-makes-no-object-of-its-own	// IR= 0 loopMerged = Call .*calleeName="Tool"
 structural-types/a-namespace-beside-a-function-or-a-class-makes-no-object-of-its-own	// IR= 0 loopMerged L\d+\|f\d+ = GetModuleVariable
 structural-types/a-package-runs-from-its-sources-and-is-typed-by-its-declaration-file	// IRT= 0 callNorm = TypeTest

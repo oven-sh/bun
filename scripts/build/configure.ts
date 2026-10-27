@@ -191,6 +191,7 @@ function configureInputs(cwd: string): string[] {
     // The ELF link's export list is written from these (bun.ts linkImplicitInputs).
     resolve(cwd, "src", "linker.lds"),
     resolve(cwd, "src", "linker-freebsd.lds"),
+    resolve(cwd, "src", "libc-functions.lds"),
   ].sort();
 }
 

@@ -210,6 +210,8 @@ pub(super) struct OrderParts {
     pub is_required_during_load: Vec<bool>,
     pub may_be_imported_while_it_runs: Vec<bool>,
     pub prefix_roots: Vec<FileId>,
+    /// The files of the program that the host may ask for first.
+    pub first_requests_of_host: Vec<FileId>,
 }
 
 #[cfg(test)]
@@ -224,6 +226,7 @@ impl OrderParts {
             is_required_during_load: vec![false; file_count],
             may_be_imported_while_it_runs: vec![false; file_count],
             prefix_roots: Vec::new(),
+            first_requests_of_host: Vec::new(),
         }
     }
 }
@@ -928,6 +931,10 @@ pub(super) fn compute_order(
         is_required_during_load: loads.is_required_during_load,
         may_be_imported_while_it_runs: loads.may_be_imported_while_it_runs,
         prefix_roots,
+        first_requests_of_host: (input.sources.entry_points().iter())
+            .filter(|entry| entry.kind != EntryPointKind::Library)
+            .map(|entry| entry.file)
+            .collect(),
     };
     let order = EvaluationOrder {
         parts,

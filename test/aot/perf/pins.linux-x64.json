@@ -108,6 +108,16 @@
     "untyped": 4,
     "jit": 2.9
   },
+  "class/method-given-parsed-data-for-a-class-nothing-makes": {
+    "typed": 30,
+    "untyped": 42,
+    "jit": 11
+  },
+  "class/method-given-parsed-data-for-a-class-that-was-handed-out": {
+    "typed": 72,
+    "untyped": 70,
+    "jit": 16
+  },
   "class/new-extends-in-function": {
     "typed": 24.1,
     "untyped": 24.1,
@@ -1172,6 +1182,20 @@
       "untyped": 178
     }
   },
+  "text/two-parts-of-which-the-second-is-empty": {
+    "typed": 190.5,
+    "untyped": 190.4,
+    "jit": 193.3
+  },
+  "text/three-parts-that-all-have-characters": {
+    "typed": 317.3,
+    "untyped": 317.2,
+    "jit": 821,
+    "best": {
+      "typed": 313,
+      "untyped": 313.1
+    }
+  },
   "accessor/setter-of-a-literal-below-two-created-objects": {
     "typed": 530.8,
     "untyped": 433.8,
@@ -1472,5 +1496,10 @@
     "typed": 574.5,
     "untyped": 574.5,
     "jit": 2007.9
+  },
+  "spread/an-object-filled-by-name-once-then-one-in-function": {
+    "typed": 1005.1,
+    "untyped": 196.7,
+    "jit": 258.8
   }
 }

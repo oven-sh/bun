@@ -1,8 +1,8 @@
 // No everyday idiom may take much longer compiled ahead of time than under the same binary's JIT. Each idiom of ./everyday is measured as
 // ./idioms-against-the-jit.ts says: instructions a turn, as TypeScript and as JavaScript, against the JIT's last tier, inside one test.
 //
-// ./behind-the-jit.<os>-<arch>.json names the idioms, of ./idioms too, that took over 1.2 times the JIT's instructions when they were last measured, with the ratio.
-// Each is a todo: `bun test --todo` runs them and tells which have come under 1.2 times. `bun test/aot/perf/idioms-against-the-jit.ts --write-behind` rewrites the file.
+// ./behind-the-jit.<os>-<arch>.json names the idioms, of ./idioms too, that took more instructions than the JIT when they were last measured, with the ratio.
+// Each is a todo: `bun test --todo` runs them and tells which have come under the JIT. `bun test/aot/perf/idioms-against-the-jit.ts --write-behind` rewrites the file.
 // Every other idiom of ./everyday fails at over 1.35 times and 8 instructions: the JIT's own number moves by up to a tenth from run to run.
 // ./idioms.test.ts holds the idioms of ./idioms against pins.
 // A run measures one idiom in ten, others for each commit of Bun; AOT_SHARE=all measures all of them (../run-programs.ts).
@@ -22,6 +22,7 @@ import {
   idiomsAgainstTheJit,
   isTypedDearer,
   isWhole,
+  lineAgainstTheJit,
   ratioOf,
   type Row,
 } from "./measure-idioms";
@@ -73,7 +74,8 @@ describe.skipIf(!!skipped)("compile/aot/perf/idioms-against-the-jit", () => {
     );
 
   for (const name of names)
-    if (name in behind) test.todo(`${name}: ${behind[name]} times the JIT's instructions`, staysUnder(name, 1.2, 0));
+    if (name in behind)
+      test.todo(`${name}: ${behind[name]} times the JIT's instructions`, staysUnder(name, lineAgainstTheJit, 0));
   for (const name of taken)
     if (!(name in behind) && name.startsWith("everyday-")) test.concurrent(name, staysUnder(name, 1.35, 8), 900_000);
   for (const name of names)

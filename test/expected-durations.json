@@ -3039,6 +3039,9 @@
   "aot/generated-a-parse-by-a-type-that-reaches-very-many-objects.test.ts": {
     "default": 300
   },
+  "aot/generated-array-methods-on-primitive-receivers.test.ts": {
+    "default": 300
+  },
   "aot/generated-array-methods-whose-callbacks-change-the-array.test.ts": {
     "default": 300
   },
@@ -6365,6 +6368,9 @@
     "default": 6225,
     "asan": 11637,
     "windows": 5811
+  },
+  "aot/reading-a-property-of-null-throws-whatever-signal-actions-a-library-sets.test.ts": {
+    "default": 9000
   },
   "aot/reading-a-property-of-null-throws-whatever-signals-the-program-listens-for.test.ts": {
     "default": 2800

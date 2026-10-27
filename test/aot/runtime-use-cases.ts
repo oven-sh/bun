@@ -155,6 +155,9 @@ group("code from strings", () => {
     ["new Function in a handler", `try { console.log(1); } catch { new Function(process.argv[2]); }`, "eval: the program calls eval() or new Function() (Function)"],
     ["new Function in a closure that reaches unknown code", external + `try { const later = () => new Function(process.argv[2]); external(later); } catch {}`, "eval: the program calls eval() or new Function() (Function)"],
     ["an alias of Function that is also stored", `let F: any; try { const G = Function; F = G; new G(process.argv[2]); } catch {} console.log(F);`, "eval: the program calls eval() or new Function() (Function)"],
+    // Whoever is handed it may call it.
+    ["eval that reaches unknown code", external + `external(eval);`, "eval: the program calls eval() or new Function() (eval)"],
+    ["Function that reaches unknown code", external + `external(Function);`, "eval: the program calls eval() or new Function() (Function)"],
   ])("the report is open with %s", async (_, text, why) => {
     const use = await of(text);
     expect(completeness(use).whyOpen).toContain(why);
@@ -213,6 +216,7 @@ group("modules that are named at run time", () => {
     ["node:module out of process.getBuiltinModule in a function that is called", `function load() { return process.getBuiltinModule("node:module").createRequire((import.meta as any).url)(process.argv[2]); }\nconsole.log(load());`],
     ["node:module out of process.getBuiltinModule, for another file", `console.log(process.getBuiltinModule("node:module").createRequire(process.argv[2])("late-package"));`],
     ["process.getBuiltinModule of a computed name", `console.log(process.getBuiltinModule(process.argv[2]));`],
+    ["module.require that is printed", `const load = module.require; console.log(load);`],
   ])("the report is open with %s", async (_, text) => {
     expect(completeness(await of(text))).toEqual(open(computedModuleName));
   });
@@ -976,11 +980,8 @@ group("a member of Bun while Bun is in hands that nobody follows", () => {
 group("what the compiler follows, so that it is no longer so:", () => {
   test.each([
     ["any member of Bun or process may be used with a function defined on Bun, destructured out of the global object", "const { Bun: taken } = globalThis as any; Object.defineProperty(taken, \"mine\", { value: function (this: any) { return this; } }); console.log(taken.mine());"],
-    ["the report is open with eval that reaches unknown code", "declare const external: (...values: unknown[]) => unknown;\nexternal(eval);"],
-    ["the report is open with Function that reaches unknown code", "declare const external: (...values: unknown[]) => unknown;\nexternal(Function);"],
     ["the report is open with createRequire, called at once", "import { createRequire } from \"node:module\";\nconsole.log(typeof createRequire((import.meta as any).url)(\"node:path\").join);"],
     ["the report is open with createRequire, stored", "import { createRequire } from \"node:module\";\nconst load = createRequire((import.meta as any).url);\ntry { console.log(load(\"late-package\")); } catch {}"],
-    ["the report is open with module.require as a value", "const load = module.require; console.log(load);"],
     ["the report is open with module.require of a computed name", "console.log(module.require(process.argv[2]));"],
     ["the report is open with module.require of one of two literals", "console.log(module.require(process.argv[2] ? \"node:vm\" : \"node:fs\"));"],
     ["the report is open with import() of bun:main", "try { await import(\"bun:main\"); } catch {}\nexport {};"],

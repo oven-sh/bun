@@ -36,6 +36,7 @@ import {
   Demangler,
   describeFailures,
   megabytes,
+  writeRetainedFile,
   writeReviewFiles,
   writeSectionsFile,
   type LinkFailure,
@@ -503,6 +504,7 @@ export function layOut(session: LinkSession): Layout {
   format.writeTable(layout.table);
   writeReviewFiles(session.reviewDirectory, analysis.context, analysis.entries.entryPoints);
   writeSectionsFile(join(linker.work, "sections.txt"), analysis.context);
+  writeRetainedFile(join(linker.work, "retained.txt"), analysis.context);
   format.tidyUp();
   rmSync(plan.firstExecutable, { force: true });
   for (const folder of ["split", "named"]) rmSync(join(linker.work, folder), { recursive: true, force: true });

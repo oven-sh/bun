@@ -91,6 +91,8 @@ unsafe extern "C" {
 
 // ─── Local extern thin-wrappers (codegen / `bun_jsc` surface not yet wired) ──
 unsafe extern "C" {
+    /// `BunSignalActions.cpp`.
+    safe fn Bun__FFI__replaceSignalFunction(function: *mut c_void) -> *mut c_void;
     /// `host_fn::NewRuntimeFunction` — `Bun__CreateFFIFunctionValue`.
     fn Bun__CreateFFIFunctionValue(
         global: *const JSGlobalObject,
@@ -1593,7 +1595,8 @@ impl FFI {
                     return Ok(ret);
                 };
 
-                function.symbol_from_dynamic_library = Some(resolved_symbol);
+                function.symbol_from_dynamic_library =
+                    Some(Bun__FFI__replaceSignalFunction(resolved_symbol));
             }
 
             if let Some(err) = function.reject_napi_types_error(global) {

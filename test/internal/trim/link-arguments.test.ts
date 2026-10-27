@@ -520,7 +520,7 @@ describe("layOut", () => {
       "requires.txt",
       "retained-by.txt",
     ]);
-    expect(readdirSync(session.linker.work).sort()).toEqual(["second", "sections.txt"]);
+    expect(readdirSync(session.linker.work).sort()).toEqual(["retained.txt", "second", "sections.txt"]);
   });
 
   test("the summary reports the entry points, the ranges, the table and the timings", () => {

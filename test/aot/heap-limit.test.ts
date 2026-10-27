@@ -1168,6 +1168,54 @@ console.log("afterward", Object.keys({ a: 1, b: 2 }).join());
     });
   }, 240_000);
 
+  test.each([
+    ["is given a name under a key", `const object = {}; object["p" + i] = i;`],
+    [
+      "is given a name by Object.defineProperty",
+      `const object = {}; Object.defineProperty(object, "p" + i, { value: i });`,
+    ],
+    ["is a function that is given a name under a key", `const object = function () {}; object["p" + i] = i;`],
+    ["is given a prototype", `const object = { a: 1 }; Object.setPrototypeOf(object, {});`],
+    ["has a field and is given a name under a key", `const object = { a: 1 }; object["p" + i] = i;`],
+    ["is made by a class and is given a name under a key", `const object = new Thing(); object["p" + i] = i;`],
+  ])(
+    "a program that lets go of everything fills the room for the shapes of objects as far again, where each object %s",
+    async (_, makeObject) => {
+      using folder = tempDir("aot-heap-limit", {
+        "program.js": `class Thing { constructor() { this.a = 1; } }
+let keep = [];
+function fill() {
+  for (let i = 0; ; i++) {
+    ${makeObject}
+    keep.push(object);
+  }
+}
+const kept = [];
+for (let attempt = 0; attempt < 4; attempt++) {
+  try {
+    fill();
+  } catch (error) {
+    kept.push(keep.length);
+    keep = [];
+    if (!(error instanceof RangeError)) console.log(String(error));
+  }
+}
+console.log(kept.map(count => count > 10_000 && count * 2 > kept[0]).join());
+`,
+      });
+      const built = await run(
+        [bunExe(), "build", "--compile", "--aot", "program.js", "--outfile", "program"],
+        String(folder),
+      );
+      expect(built.exitCode).toBe(0);
+      const { stdout, stderr, exitCode } = await run([join(String(folder), "program")], String(folder), {
+        BUN_JSC_structureHeapSizeInKB: "16384",
+      });
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "true,true,true,true\n", stderr: "", exitCode: 0 });
+    },
+    240_000,
+  );
+
   test.skipIf(!isLinux)(
     "the range of a Worker that has ended is given back",
     async () => {

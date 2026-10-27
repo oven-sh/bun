@@ -233,8 +233,10 @@ impl<'s> Folder<'_, 's> {
     fn collect_constants(&self, dead: &MarkedNodes) -> Vec<FoldedConstant> {
         let mut constants = Vec::new();
         for (index, node) in self.hir.exprs.iter().enumerate() {
-            let is_literal = literal_constant(self.hir, node.kind).is_some();
-            if is_literal || dead.exprs.contains(index) {
+            if matches!(self.values[index], Value::Unknown) || dead.exprs.contains(index) {
+                continue;
+            }
+            if literal_constant(self.hir, node.kind).is_some() {
                 continue;
             }
             let expr = ExprId(index as u32);

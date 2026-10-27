@@ -106,6 +106,7 @@ define_tables! {
             depends_on_sloppy_mode: bool,
             file_uses_arguments: bool,
             import_meta_may_be_modified: bool,
+            may_name_own_require: bool,
             hoists_top_level_variables: bool,
             first_appended_symbol: u32,
             appended_symbol_end: u32,

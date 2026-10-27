@@ -1567,7 +1567,6 @@ exports.x = 2;
 export const x = 1;
 //// five-names/children-list-data-and-es-modules-too/main.cjs
 // What `module.children` lists where a file requires a JSON file, an ES module and a CommonJS file, under constant names and under computed ones.
-// `bun run` lists the JSON file that is required under a constant name too: "data.json,a.cjs". An executable has no module object for it. The expected output is written down.
 const nameOf = child => child.filename.slice(Math.max(child.filename.lastIndexOf("/"), child.filename.lastIndexOf("\\")) + 1);
 require("./data.json");
 require("./es.mjs");

@@ -28,7 +28,7 @@ import {
   type Origin,
   type TableDump,
 } from "./differential/table-description";
-import type { WorkerReport, WorkerRequest } from "./differential/worker";
+import type { WorkerNote, WorkerReport, WorkerRequest } from "./differential/worker";
 
 const notCheckedPath = join(import.meta.dir, "differential/not-checked.txt");
 const isUpdate = !!process.env.AOT_BUILTINS_UPDATE;
@@ -42,6 +42,8 @@ const secondsAsleepPerCall = 10;
 // At a level above 0 every matcher of expect() ends with a collection: thousands of them for one entry, ten times the time of the calls themselves.
 const workerEnv = { ...bunEnv, BUN_GARBAGE_COLLECTOR_LEVEL: "0" };
 const maxAttemptsPerWorker = 400;
+// Ports and file watchers can run out for a moment when many of these processes start together.
+const maxFailedStartsPerWorker = 8;
 
 const dump: TableDump = tablePath === null ? aotBuiltinEntries() : JSON.parse(readFileSync(tablePath, "utf8"));
 const table = new Table(dump);
@@ -349,6 +351,36 @@ function defineDescriptionTests(): void {
   });
 }
 
+function defineStartTest(): void {
+  test.skipIf(!callsOverloads)("a process that cannot prepare its operands says why", async () => {
+    // It writes a file of this name first.
+    using folder = tempDir("aot-builtins-differential-start", { "native-contract-scratch.txt": { "file.txt": "" } });
+    const requestPath = join(String(folder), "request.json");
+    const reportsPath = join(String(folder), "reports.jsonl");
+    writeFileSync(requestPath, JSON.stringify({ tablePath, calls: [] } satisfies WorkerRequest));
+    await using worker = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--no-install",
+        "--expose-internals",
+        join(import.meta.dir, "differential/worker.ts"),
+        requestPath,
+        reportsPath,
+      ],
+      cwd: String(folder),
+      env: workerEnv,
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    const exitCode = await worker.exited;
+    expect(JSON.parse(readFileSync(`${reportsPath}.current`, "utf8"))).toEqual({
+      notStarted: expect.stringContaining("EISDIR"),
+    });
+    expect(exitCode).toBe(1);
+  });
+}
+
 /** `part`: 1 to `parts`. Each takes its share of the entries, by their paths; the first has the tests that call none as well. */
 export function differential(part: number, parts: number): void {
   const checkedCalls = dump.entries
@@ -395,12 +427,16 @@ export function differential(part: number, parts: number): void {
     // A call may take away the rights to the folder it runs in, or the folder itself.
     const workingFolder = join(folder, `folder.${index}`, "inner");
     let remaining = calls;
+    let failedStarts = 0;
     for (let attempt = 0; attempt < maxAttemptsPerWorker && remaining.length > 0; attempt++) {
       writeFileSync(requestPath, JSON.stringify({ tablePath, calls: remaining } satisfies WorkerRequest));
       restoreRights(dirname(workingFolder));
       mkdirSync(workingFolder, { recursive: true });
       // The first call of this attempt may be the one that the last attempt noted.
-      writeFileSync(notePath, "null");
+      writeFileSync(
+        notePath,
+        JSON.stringify({ notStarted: "the process exited without a message" } satisfies WorkerNote),
+      );
       await using worker = Bun.spawn({
         // Without --no-install `require("a")` fetches the package of that name from the registry and runs it.
         cmd: [
@@ -448,8 +484,13 @@ export function differential(part: number, parts: number): void {
       }, 1000);
       await worker.exited;
       clearInterval(watch);
-      const current: [string, CallMode] | null = JSON.parse(readFileSync(notePath, "utf8"));
+      const current: WorkerNote = JSON.parse(readFileSync(notePath, "utf8"));
       if (current === null) break;
+      if (!Array.isArray(current)) {
+        if (++failedStarts < maxFailedStartsPerWorker) continue;
+        for (const call of remaining) endedProcess.set(keyOf(...call), `before its first call: ${current.notStarted}`);
+        break;
+      }
       const position = remaining.findIndex(([entry, mode]) => entry === current[0] && mode === current[1]);
       // What an earlier call left behind in the process may have ended this one, so it is the first of a new process once.
       if (position > 0) {
@@ -555,4 +596,5 @@ export function differential(part: number, parts: number): void {
 
   defineWrongEntryTests();
   defineDescriptionTests();
+  defineStartTest();
 }

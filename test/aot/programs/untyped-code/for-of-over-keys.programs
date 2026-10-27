@@ -886,7 +886,7 @@ console.log(inLoops(box.numbers.concat(box.others, [undefined])));
 // directly has its answer validated on every read.
 const count = typeof aotOperationCount === "function" ? aotOperationCount : () => 0;
 function counted() { return count("operationAOTGetByIdAndCache") > 0; }
-function validated() { return count("operationAOTValidateAnswerOfProxyTrap"); }
+function validated() { return count("operationAOTValidateAnswerOfProxyTrap") + count("operationAOTValidateAnswerOfGetTrap"); }
 function read(o) { return o.wanted; }
 function show(value) { return typeof value === "symbol" ? String(value) : typeof value === "bigint" ? value + "n" : Object.is(value, -0) ? "-0" : typeof value === "string" ? JSON.stringify(value) : typeof value === "object" && value !== null ? "object" : typeof value === "function" ? "function" : String(value); }
 function attempt(label, target, answer) {

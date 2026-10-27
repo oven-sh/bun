@@ -11,6 +11,7 @@ impl ReferencePass<'_, '_> {
         let (hir, bound) = (self.lookup.hir, self.lookup.bound);
         for (index, expr) in hir.exprs.iter().enumerate() {
             let e = ExprId(index as u32);
+            self.has_import_meta |= matches!(expr.kind, ExprKind::ImportMeta);
             if bound.parent_of_expr(e) == Parent::None {
                 continue;
             }

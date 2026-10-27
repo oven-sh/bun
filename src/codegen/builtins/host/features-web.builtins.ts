@@ -190,10 +190,10 @@ export default b.declarations(
   ),
 
   extendAll(
-    ["HttpClient"],
+    ["InternalForTesting", "HttpClient"],
     ...nativeBindings("Bindgen", "headers_jsc.bind.ts", "h2LiveCounts"),
     ...nativeBindings("Bindgen", "headers_jsc.bind.ts", "h3LiveCounts"),
     ...nativeBindings("Bindgen", "proxy_testing.bind.ts", "noProxyMatches", "parseURL", "proxyFor"),
   ),
-  extendAll(["WebStreams"], ...nativeBindings("Bindgen", "ByteStream.bind.ts", "cancelOnDrain")),
+  extendAll(["InternalForTesting", "WebStreams"], ...nativeBindings("Bindgen", "ByteStream.bind.ts", "cancelOnDrain")),
 );

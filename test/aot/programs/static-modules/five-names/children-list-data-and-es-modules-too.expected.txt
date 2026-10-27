@@ -1,2 +1,0 @@
-a.cjs
-a.cjs,more.json,b.cjs

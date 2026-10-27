@@ -70,6 +70,7 @@ const noUnify: readonly string[] = [
   "src/jsc/bindings/BunCompiledEntryPoint.cpp",
   "src/jsc/bindings/BunCompiledModules.cpp",
   "src/jsc/bindings/BunCompilers.cpp",
+  "src/jsc/bindings/BunSignalActions.cpp",
   "src/jsc/bindings/RemovedFeature.cpp",
 
   // Duplicates static MIME-parsing helpers from JSMIMEParams.cpp verbatim;

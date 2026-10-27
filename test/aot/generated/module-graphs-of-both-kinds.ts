@@ -165,6 +165,26 @@ export type Graph = {
   importsBesideTheRest: boolean;
 };
 
+/** Some file loads another through a function that has a module object of its own: what `createRequire` makes, `import.meta.require`, the `require` of an ES module. */
+export const hasRequirerOfItsOwn = (graph: Graph) => /createRequire|import\.meta\.require|\(require\)/.test(graph.notes);
+
+/** Each CommonJS file also says who its parent and its children are: where it begins, at its end, and when all files are through. The file with the id "." is shown as that. */
+export function sayingWhoRequiredWhom(graph: Graph): Graph {
+  const say = (file: string, text: string) => {
+    if (!/\.c[jt]s$/.test(file)) return text;
+    const name = file.replace(/\..*$/, "");
+    const who = `const who = (m${file.endsWith("ts") ? ": any" : ""})${file.endsWith("ts") ? ": string" : ""} => m === undefined ? "undefined" : m === null ? "null" : typeof m !== "object" ? typeof m : String(m.id === "." ? "." : require("node:path").basename(String(m.filename)));\n`;
+    const tell = (when: string) => `console.log("${name} ${when} is", who(module), "parent", who(module.parent), "children", module.children.map(who).join())`;
+    return (
+      who +
+      text
+        .replace(`console.log("${name} begins");`, `console.log("${name} begins");\n${tell("early")};`)
+        .replace(`console.log("${name} ends");`, `${tell("at its end")};\natTheEnd.push(() => ${tell("late")});\nconsole.log("${name} ends");`)
+    );
+  };
+  return { ...graph, text: say(graph.file, graph.text), files: Object.fromEntries(Object.entries(graph.files).map(([file, text]) => [file, say(file, text)])) };
+}
+
 export function program(seed: number, most = 4): Graph {
   const draw = random(seed);
   const count = 2 + draw.below(most - 1);

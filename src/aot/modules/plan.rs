@@ -12,6 +12,7 @@ use super::wrapped::InnerModuleKind;
 use crate::builtins::RuntimeModule;
 use crate::ir::generated::ModuleRequestKind;
 use crate::ir::parallel::{InParallel, for_each_mut};
+use crate::load::sources::EntryPoint;
 use bun_sema::atom::Atom;
 use bun_sema::bind::SymbolId;
 use bun_sema::hir::{ExprId, FnId, ImportEqualsId, StmtId};
@@ -123,6 +124,8 @@ pub(super) struct Plan {
     inner_callbacks: Vec<FnId>,
     keeps_module_object: Vec<bool>,
     names_way_to_module_objects: Vec<bool>,
+    /// A `require` of a file may run before the loader has come to a CommonJS file, and code names a way between module objects: whether one did says which file has the id ".".
+    is_first_require_seen: bool,
     is_namespace_seen: Vec<bool>,
     /// The statements that define inner modules, and those of modules that cannot be loaded.
     erased_statements: Vec<(FileId, StmtId)>,
@@ -143,6 +146,7 @@ impl Plan {
             inner_callbacks: inner_modules.map(|inner| inner.1).collect(),
             keeps_module_object: vec![false; order.numbers.len()],
             names_way_to_module_objects: vec![false; order.numbers.len()],
+            is_first_require_seen: false,
             is_namespace_seen: vec![false; order.numbers.len()],
             order,
             erased_statements,
@@ -252,7 +256,8 @@ impl ModuleGraph {
             is_bare: site.is_bare,
             records: shows_mark
                 || self.keeps_module_object(site.referrer)
-                || self.keeps_module_object(site.target),
+                || self.keeps_module_object(site.target)
+                || (self.plan.is_first_require_seen && matches!(site.target, ModuleRef::File(_))),
         }
     }
 
@@ -414,6 +419,16 @@ impl ModuleGraph {
         }
     }
 
+    /// The file that has the id "." in every run. Which of several entry points has started the process is not known, and under an ES module the loader of the run time says which file it came to first.
+    pub fn find_commonjs_main(&self, entry_points: &[EntryPoint]) -> Option<FileId> {
+        match entry_points {
+            [entry_point] if self.kind(entry_point.file) == ModuleKind::CommonJs => {
+                Some(entry_point.file)
+            }
+            _ => None,
+        }
+    }
+
     /// A read that the build resolved can reach the module object.
     pub fn keeps_module_object(&self, module: ModuleRef) -> bool {
         self.plan.has(&self.plan.keeps_module_object, module)
@@ -557,7 +572,16 @@ impl ModuleGraph {
         for (holder, needs_object) in holders.zip(needs_object) {
             holder.is_needed_as_value |= needs_object;
         }
-        (self.plan.final_requests, self.plan.final_ranges) = self.settle_requests(in_parallel);
+        let linked_files = self.find_linked_files();
+        (self.plan.final_requests, self.plan.final_ranges) =
+            self.settle_requests(&linked_files, in_parallel);
+        // Nothing of the program runs before the loader has come to the first CommonJS file that the imports below an entry point lead to.
+        let mut first_requests = self.plan.order.first_requests_of_host.iter();
+        self.plan.is_first_require_seen = self.plan.names_way_to_module_objects.contains(&true)
+            && first_requests.any(|&file| {
+                self.kind(file) == ModuleKind::SourceText
+                    && !linked_files.commonjs_files_below.leads_to_target(file)
+            });
         self.plan.is_finished = true;
     }
 
@@ -659,11 +683,11 @@ impl ModuleGraph {
 
     fn settle_requests(
         &self,
+        linked_files: &LinkedFiles,
         in_parallel: InParallel<'_>,
     ) -> (Vec<ModuleRequest>, FxHashMap<ModuleRef, Range<u32>>) {
         let mut requests: Vec<ModuleRequest> = Vec::new();
         let mut ranges = FxHashMap::default();
-        let linked_files = self.find_linked_files();
         let is_es_module = |file: FileId| {
             self.is_code_of_program(ModuleRef::File(file))
                 && self.kind(file) == ModuleKind::SourceText
@@ -678,7 +702,7 @@ impl ModuleGraph {
         for_each_mut(&mut prefixes, in_parallel, &|(root, prefix)| {
             // The loader runs the files of such a root where it comes to them.
             if !self.is_loaded_by_loader(ModuleRef::File(*root)) {
-                *prefix = self.collect_prefix(*root, &linked_files);
+                *prefix = self.collect_prefix(*root, linked_files);
             }
         });
         let mut prefixes = prefixes.into_iter();

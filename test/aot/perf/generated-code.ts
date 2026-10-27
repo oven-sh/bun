@@ -9,13 +9,16 @@
 //   an operation   [instructions, patchpoints] per site: the function with 12 sites less the one with 4, over 8, as ./operations.test.ts counts executed instructions
 //
 // A bounds check, a poll, a conversion, a spill or a call that gets into the code raises a number. Held against ./generated-code-of-idioms.<os>-<arch>.txt and
-// ./generated-code-of-operations.<os>-<arch>.txt, which only go down. A program that has no line there, and every program on a platform without such a file, is
-// printed and not judged: ./pins-from-a-log.ts writes the files from the log.
+// ./generated-code-of-operations.<os>-<arch>.txt. A program that has no line there, and every program on a platform without such a file, is printed and not
+// judged: ./pins-from-a-log.ts writes the files from the log.
+//
+// The code behind a patchpoint is not counted, so a change that puts the fast path of a callee in line makes the program faster and a number here larger. A change
+// that moves a number on purpose restates it, for both architectures: AOT_PERF=update with AOT_PERF_ONLY. Any other rise is a loss to look into.
 //
 //   TEST_PART=aot/perf/generated-code-of-idioms bun test test/aot/parts.test.ts       fails if a patchpoint was added, or more than 10% AND more than 1 instruction;
 //                                                                                     a patchpoint counts for 8 instructions, and a lower sum is never worse
 //   AOT_PERF=lower ..                                                                 writes every number that got better into the file
-//   AOT_PERF=update ..                                                                rewrites the file as measured
+//   AOT_PERF=update ..                                                                writes every number as measured into the file
 //   AOT_PERF_ONLY='^array/' ..                                                        only the programs whose name matches the regular expression
 //   AOT_PERF_OPTION_WORDS='disable=b3:UnrollLoops' ..                                 option words for testaot: to see what fails without one optimization
 //

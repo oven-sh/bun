@@ -17,7 +17,7 @@ import { describeUndescribedResults, summarizeUndescribedResults } from "./check
 import { collectBindgen } from "./collect-bindgen.ts";
 import { collectHostFunctions, collectPreludeFunctions } from "./collect-host-functions.ts";
 import { collectModules, ownPropertiesFile } from "./collect-modules.ts";
-import { collectNativeBindings } from "./collect-native-bindings.ts";
+import { collectNativeBindings, collectUsesOfBindingsForTests } from "./collect-native-bindings.ts";
 import { checkNativeCalls, collectBufferAccessors, collectNativeLoads } from "./collect-registrations.ts";
 import { collectRuntimeFunctions } from "./collect-runtime-functions.ts";
 import { collectStaticTables } from "./collect-static-tables.ts";
@@ -137,6 +137,7 @@ export async function collectHost(options: GenerateOptions, problems: Problems):
   checkNativeCalls(bunRoot, [...nativeModuleLoadSites, ...nativeCallSites], written, problems);
   // collectBindgen() asks which bindings src/js names, which this registers.
   const calls = nativeCalls(typesOnly);
+  const usesOfBindingsForTests = collectUsesOfBindingsForTests(calls, isLeftOut, findFeatureUses(written));
   const writtenMembers = new Set(
     written.flatMap(({ declaration }) => (declaration.declares === "Member" ? [declaration.path] : [])),
   );
@@ -145,11 +146,12 @@ export async function collectHost(options: GenerateOptions, problems: Problems):
     sources,
     findPlacements(staticTableMembers),
     writtenMembers,
-    findFeatureUses(written),
+    findFeatureUses([...written, ...usesOfBindingsForTests]),
     problems,
   );
   return [
     ...written,
+    ...usesOfBindingsForTests,
     ...staticTableMembers,
     ...collectModules(bunRoot, written, problems),
     ...collectOwnProperties(bunRoot, ownPropertiesFile, problems),

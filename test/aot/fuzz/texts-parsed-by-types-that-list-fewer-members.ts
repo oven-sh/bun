@@ -269,6 +269,7 @@ export const uses = [
   "in lists",
   "inside another object",
   "through a reviver",
+  "written again in many ways",
 ] as const;
 export type Use = (typeof uses)[number];
 
@@ -399,6 +400,8 @@ console.log(s);
     try {
       const list = JSON.parse(text) as T[];
       console.log(list.length);
+      show("list", () => JSON.stringify(list));
+      show("holder", () => JSON.stringify({ list, first: list[0], count: list.length }));
       for (const o of list) {
         show("json", () => JSON.stringify(o));
         show("keys", () => Object.keys((o as object) ?? {}).join("|"));
@@ -417,6 +420,8 @@ for (const text of texts) {
   for (let r = 0; r < 3; r++) {
     try {
       const p = JSON.parse(text) as P;
+      show("whole", () => JSON.stringify(p));
+      show("parts", () => JSON.stringify([p.first, p.second]));
       dump(p);
       dump(p.first);
       dump(p.second);
@@ -439,6 +444,98 @@ for (const text of texts) {
       console.log(seen.join("|"));
       show("json", () => JSON.stringify(o));
       show("keys", () => Object.keys((o as object) ?? {}).join("|"));
+    } catch (e) {
+      ${caught}
+    }
+  }
+}
+`;
+      break;
+    case "written again in many ways":
+      text = `${head(texts)}function write(o: any): void {
+  show("plain", () => JSON.stringify(o));
+  show("indented", () => JSON.stringify(o, null, 2));
+  show("in a list", () => JSON.stringify([o, o]));
+  show("in a holder", () => JSON.stringify({ a: o, b: [o] }));
+  show("by a function", () => JSON.stringify(o, (k, v) => (typeof v === "number" ? v + 1 : v)));
+  show("by names", () => JSON.stringify(o, ["x", "name", "y"]));
+  if (o === null || typeof o !== "object") return;
+  const values: [string, unknown][] = [
+    ["a function", () => 1],
+    ["a symbol", Symbol("s")],
+    ["undefined", undefined],
+    ["a bigint", 10n],
+    ["a wide text", "\\u65e5\\u672c"],
+    ["a text with escapes", 'a"b\\\\c\\n'],
+    ["no number", NaN],
+    ["no finite number", -Infinity],
+    ["minus zero", -0],
+    ["a fraction", 0.1],
+    ["a date", new Date(0)],
+    ["an object", { deep: [1, { er: 2 }] }],
+    ["an object that writes itself", { toJSON: () => "T" }],
+    ["null", null],
+  ];
+  for (const [label, value] of values) {
+    show("x is " + label, () => {
+      o.x = value;
+      return JSON.stringify(o);
+    });
+    show("late is " + label, () => {
+      o.late = value;
+      return JSON.stringify(o);
+    });
+  }
+  show("a name longer than a block", () => {
+    o.a_name_that_is_longer_than_sixteen_bytes = 1;
+    return JSON.stringify(o);
+  });
+  show("a name with an escape", () => {
+    o['q"q'] = 1;
+    return JSON.stringify(o);
+  });
+  show("a wide name", () => {
+    o["\\u65e5"] = 1;
+    return JSON.stringify(o);
+  });
+  show("toJSON of its own", () => {
+    o.toJSON = () => "own";
+    return JSON.stringify(o) + JSON.stringify([o]);
+  });
+  show("toJSON that is no function", () => {
+    o.toJSON = 1;
+    return JSON.stringify(o);
+  });
+  show("toJSON removed", () => {
+    delete o.toJSON;
+    return JSON.stringify(o);
+  });
+  show("a getter", () => {
+    Object.defineProperty(o, "got", { get: () => 7, enumerable: true, configurable: true });
+    return JSON.stringify(o);
+  });
+  show("a hidden member", () => {
+    Object.defineProperty(o, "hid", { value: 8, enumerable: false });
+    return JSON.stringify(o);
+  });
+  show("an index", () => {
+    o[3] = "three";
+    return JSON.stringify(o);
+  });
+  show("toJSON above", () => {
+    Object.setPrototypeOf(o, { toJSON: () => "above" });
+    try {
+      return JSON.stringify(o) + JSON.stringify([o]);
+    } finally {
+      Object.setPrototypeOf(o, Object.prototype);
+    }
+  });
+  show("at last", () => JSON.stringify(o));
+}
+for (const text of texts) {
+  for (let r = 0; r < 3; r++) {
+    try {
+      write(JSON.parse(text) as T);
     } catch (e) {
       ${caught}
     }

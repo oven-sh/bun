@@ -1592,6 +1592,19 @@ fn distance_of_candidate(
     {
         return None;
     }
+    // FOR SPEED: a character that only one of the two names holds, whatever its case, is inserted or deleted on the way from
+    // one to the other, which costs 1. Most names of a like length hold too many of them.
+    let characters_of = |name: &[u8]| {
+        let bit_of = |byte: &u8| 1u64 << (byte.to_ascii_lowercase() & 63);
+        name.iter().map(bit_of).fold(0, |set, bit| set | bit)
+    };
+    if name.is_ascii()
+        && candidate_name.is_ascii()
+        && f64::from((characters_of(name) ^ characters_of(candidate_name)).count_ones())
+            > best_distance
+    {
+        return None;
+    }
     let candidate_runes = runes_of(candidate_name);
     // Two-letter names are easy to distinguish, unless they differ only by case.
     let lower = |runes: &[char]| {
@@ -1771,4 +1784,69 @@ bun_core::comptime_string_set! {
         "Warang_Citi", "Wcho", "Wancho", "Xpeo", "Old_Persian", "Xsux", "Cuneiform", "Yezi", "Yezidi", "Yiii", "Yi", "Zanb",
         "Zanabazar_Square", "Zinh", "Inherited", "Qaai", "Zyyy", "Common", "Zzzz", "Unknown",
     };
+}
+
+#[cfg(test)]
+mod spelling_tests {
+    use super::{distance_of_candidate, levenshtein_with_max, runes_of};
+
+    fn names() -> Vec<Vec<u8>> {
+        let written: [&[u8]; 12] = [
+            b"parseInt",
+            b"parseFloat",
+            b"queueMicrotask",
+            b"Promise",
+            b"promises",
+            b"total_sum",
+            b"$total",
+            b"ab",
+            b"Ab",
+            b"x1",
+            b"lastIndexOf",
+            "na\u{ef}ve".as_bytes(),
+        ];
+        let mut names: Vec<Vec<u8>> = written.iter().map(|name| name.to_vec()).collect();
+        let mut state = 1u32;
+        for name in written.iter().filter(|name| name.is_ascii()) {
+            for _ in 0..24 {
+                let mut changed = name.to_vec();
+                for _ in 0..1 + state % 3 {
+                    state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                    let at = (state >> 8) as usize % changed.len();
+                    match state >> 28 {
+                        0..=4 => changed.insert(at, b'a' + (state >> 16) as u8 % 26),
+                        5..=8 if changed.len() > 1 => drop(changed.remove(at)),
+                        9..=12 => changed[at] = b'A' + (state >> 16) as u8 % 26,
+                        _ => changed[at] ^= 0x20 * u8::from(changed[at].is_ascii_alphabetic()),
+                    }
+                }
+                names.push(changed);
+            }
+        }
+        names
+    }
+
+    #[test]
+    fn characters_refuse_only_names_that_are_too_far_apart() {
+        let names = names();
+        let mut accepted = 0;
+        for name in &names {
+            let runes = runes_of(name);
+            let most = 2.max((runes.len() as f64 * 0.34) as usize);
+            for candidate in &names {
+                let is_compared = candidate.len().abs_diff(runes.len()) <= most
+                    && candidate != name
+                    && (candidate.len() >= 3 || candidate.eq_ignore_ascii_case(name));
+                for best_distance in [0.9, 1.9, 2.9, 4.9, 6.9] {
+                    let distance =
+                        || levenshtein_with_max(&runes, &runes_of(candidate), best_distance);
+                    let expected = is_compared.then(distance).flatten();
+                    let found = distance_of_candidate((name, &runes), candidate, best_distance);
+                    assert_eq!(found, expected, "{name:?} {candidate:?} {best_distance}");
+                    accepted += usize::from(found.is_some());
+                }
+            }
+        }
+        assert!(accepted > 1000);
+    }
 }

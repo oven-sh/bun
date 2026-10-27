@@ -130,8 +130,6 @@ function f1 name="turn" module=m0 position=38 flags=[IsChecked, HasExplicitName]
 # BRANCHES-NOT: Branch(
 # BRANCHES: Branch(b@{{*}}, Terminal, {{*}}:Less)
 # BRANCHES-NOT: Branch(
-# BRANCHES: Branch(b@{{*}}, Terminal, {{*}}:Less)
-# BRANCHES-NOT: Branch(
 # BRANCHES-LABEL: end of loop
 # HOT-LABEL: steps by 8
 # HOT-NOT: isLoopPoll
@@ -139,5 +137,5 @@ function f1 name="turn" module=m0 position=38 flags=[IsChecked, HasExplicitName]
 # HOT-NOT: IToD
 # HOT-NOT: Double
 # HOT-LABEL: end of loop
-# X64: instructions: 45, patchpoints: 8, {{*}} steps by 8
-# ARM64: instructions: 44, patchpoints: 8, {{*}} steps by 8
+# X64: instructions: 42, patchpoints: 8, {{*}} steps by 8
+# ARM64: instructions: 42, patchpoints: 8, {{*}} steps by 8

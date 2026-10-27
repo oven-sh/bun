@@ -66,6 +66,8 @@ export interface NativeCall {
   macro: "cpp" | "newCppFunction" | "bindgen";
   file: string;
   symbol: string;
+  /** The files under src/js that name it. */
+  namedBy: string[];
 }
 
 export function typesOnlySchemas(argv: readonly string[]): ReadonlySet<string> {
@@ -91,14 +93,17 @@ const keyOf = (match: RegExpMatchArray) => `${match[1]}\t${match[3]}\t${match[5]
 /** generate-js2native.ts keeps one numbering per process: only a process's first call returns the ids of a build. */
 export function nativeCalls(typesOnly: ReadonlySet<string>): NativeCall[] {
   const transpiler = new Bun.Transpiler({ loader: "ts" });
-  const seen = new Set<string>();
-  const list: NativeCall[] = [];
+  const found = new Map<string, NativeCall>();
   const files = [...sourceFiles, ...functionFiles];
   // The bundler of the modules numbers what the first texts call before it comes here: what only a second text calls is numbered behind all of that.
   // Such a function does what code of the first text does, and no stack trace lists it.
   const secondTexts = files.map(file => path.join(BASE, "ahead-of-time", file)).filter(file => fs.existsSync(file));
   for (const file of [...files.map(file => path.join(BASE, file)), ...secondTexts]) {
     const source = fs.readFileSync(file, "utf8");
+    const namer = path
+      .relative(BASE, file)
+      .replaceAll("\\", "/")
+      .replace(/^ahead-of-time\//, "");
     const calls = new Set(transpiler.transformSync(source).matchAll(nativeCall).map(keyOf));
     for (const match of source.matchAll(nativeCall)) {
       const key = keyOf(match);
@@ -119,10 +124,10 @@ export function nativeCalls(typesOnly: ReadonlySet<string>): NativeCall[] {
             length === undefined ? null : Number(length),
             secondTexts.includes(file),
           );
-      if (seen.has(key)) continue;
-      seen.add(key);
-      list.push({ id, macro, file: nativeFile, symbol });
+      const known = found.get(key);
+      if (known === undefined) found.set(key, { id, macro, file: nativeFile, symbol, namedBy: [namer] });
+      else if (!known.namedBy.includes(namer)) known.namedBy.push(namer);
     }
   }
-  return list;
+  return [...found.values()];
 }

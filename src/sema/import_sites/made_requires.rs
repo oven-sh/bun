@@ -473,6 +473,9 @@ pub(super) fn follow_to_own_require(
         bound,
         decisions,
     } = text;
+    if !bound.may_name_own_require() && hir.imported_requires.is_empty() {
+        return None;
+    }
     let is_parameter_with_require_of_file = |e: ExprId| {
         left.parameters.checked_sub(1).is_some_and(|parameters| {
             find_settled_parameter(hir, bound, e).is_some_and(|parameter| {
@@ -668,6 +671,9 @@ pub(super) fn follow_settled_bindings(hir: &File<'_>, bound: &Bound<'_>, e: Expr
 }
 
 pub fn holds_import_meta_require(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {
+    if !bound.may_name_own_require() {
+        return false;
+    }
     let mut held = settled_chain(hir, bound, e).skip(1);
     held.any(|e| is_import_meta_require(hir, e))
 }

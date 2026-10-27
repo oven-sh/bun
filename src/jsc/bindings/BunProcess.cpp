@@ -3,6 +3,7 @@
 
 #include "BunProcess.h"
 #include "BunCompiledModules.h"
+#include "BunSignalActions.h"
 #include "ObjectBindings.h"
 #include "DLHandleMap.h"
 #include "WebCoreJSBuiltins.h"
@@ -1585,66 +1586,6 @@ static int watchModeStickySignal = 0;
 extern "C" bool Bun__forwardSIGSYSToJS(bool enabled);
 #endif
 
-#if OS(LINUX) || OS(FREEBSD)
-extern "C" [[noreturn]] void Bun__raiseDefaultAction(int signalNumber);
-
-struct AccessFaultSignal {
-    struct sigaction actionBeforeListeners;
-    std::atomic<bool> hasListeners;
-};
-static AccessFaultSignal accessFaultSignals[2];
-
-// Compiled code takes access faults on purpose, on every thread: a listener of the program must not hide them from the engine's handler.
-static AccessFaultSignal* accessFaultSignalOfCompiledCode(int signalNumber)
-{
-    if (!Bun::hasCompiledModules()) [[likely]]
-        return nullptr;
-    if (signalNumber == SIGSEGV)
-        return &accessFaultSignals[0];
-    if (signalNumber == SIGBUS)
-        return &accessFaultSignals[1];
-    return nullptr;
-}
-
-static bool isRaisedByAnInstruction(const siginfo_t& info)
-{
-#if OS(FREEBSD)
-    return info.si_code > 0 && info.si_code < SI_USER;
-#else
-    return info.si_code > 0;
-#endif
-}
-
-__attribute__((noinline)) static void forwardSignalUnlessFault(int signalNumber, siginfo_t* info, void* context)
-{
-    AccessFaultSignal& accessFault = *accessFaultSignalOfCompiledCode(signalNumber);
-    if (!isRaisedByAnInstruction(*info)) {
-        if (!accessFault.hasListeners.load(std::memory_order_relaxed))
-            Bun__raiseDefaultAction(signalNumber);
-        Bun__onPosixSignal(signalNumber);
-        return;
-    }
-    const struct sigaction& before = accessFault.actionBeforeListeners;
-    if (before.sa_handler == SIG_DFL || before.sa_handler == SIG_IGN) {
-        signal(signalNumber, SIG_DFL);
-        return;
-    }
-    if (before.sa_flags & SA_SIGINFO)
-        before.sa_sigaction(signalNumber, info, context);
-    else
-        before.sa_handler(signalNumber);
-}
-#endif
-
-static bool isForwardSignalHandler(void (*handler)(int))
-{
-#if OS(LINUX) || OS(FREEBSD)
-    if (handler == reinterpret_cast<void (*)(int)>(forwardSignalUnlessFault))
-        return true;
-#endif
-    return handler == forwardSignal;
-}
-
 static void installForwardSignalHandler(int signalNumber)
 {
 #if OS(LINUX)
@@ -1657,21 +1598,7 @@ static void installForwardSignalHandler(int signalNumber)
     sigemptyset(&action.sa_mask);
     sigaddset(&action.sa_mask, signalNumber);
     action.sa_flags = SA_RESTART;
-#if OS(LINUX) || OS(FREEBSD)
-    if (auto* accessFault = accessFaultSignalOfCompiledCode(signalNumber)) {
-        accessFault->hasListeners.store(true, std::memory_order_relaxed);
-        struct sigaction current;
-        if (sigaction(signalNumber, nullptr, &current) || isForwardSignalHandler(current.sa_handler))
-            return;
-        // The handler that was there runs on the stack and under the mask it asked for.
-        accessFault->actionBeforeListeners = current;
-        action.sa_sigaction = forwardSignalUnlessFault;
-        action.sa_mask = current.sa_mask;
-        sigaddset(&action.sa_mask, signalNumber);
-        action.sa_flags = (current.sa_flags & ~SA_RESETHAND) | SA_RESTART | SA_SIGINFO;
-    }
-#endif
-    sigaction(signalNumber, &action, nullptr);
+    Bun::setSignalAction(signalNumber, &action, nullptr);
 }
 
 static void uninstallForwardSignalHandler(int signalNumber)
@@ -1680,16 +1607,9 @@ static void uninstallForwardSignalHandler(int signalNumber)
     if (signalNumber == SIGSYS && Bun__forwardSIGSYSToJS(false))
         return;
 #endif
-#if OS(LINUX) || OS(FREEBSD)
-    // The handler stays, so that no thread ever meets the signal without it.
-    if (auto* accessFault = accessFaultSignalOfCompiledCode(signalNumber)) {
-        accessFault->hasListeners.store(false, std::memory_order_relaxed);
-        return;
-    }
-#endif
-    if (void (*oldHandler)(int) = signal(signalNumber, SIG_DFL); oldHandler != forwardSignal) {
+    if (void (*oldHandler)(int) = Bun::setSignalHandler(signalNumber, SIG_DFL); oldHandler != forwardSignal) {
         // Don't uninstall the old handler if it's not the one we installed.
-        signal(signalNumber, oldHandler);
+        Bun::setSignalHandler(signalNumber, oldHandler);
     }
 }
 
@@ -5048,7 +4968,7 @@ static void bypassCrashHandlerForSelfSentSignal(int pid, int ownPid, int signalN
     if (!CrashHandler__isCrashSignal(signalNumber) || !killReachesThisProcess(pid, ownPid))
         return;
     struct sigaction current;
-    if (sigaction(signalNumber, nullptr, &current) != 0 || isForwardSignalHandler(current.sa_handler))
+    if (Bun::setSignalAction(signalNumber, nullptr, &current) != 0 || current.sa_handler == forwardSignal)
         return;
     restoreDefaultSignalDisposition(signalNumber);
 }

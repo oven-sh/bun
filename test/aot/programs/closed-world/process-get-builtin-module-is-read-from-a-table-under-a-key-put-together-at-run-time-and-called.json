@@ -1,5 +1,3 @@
 {
-  "skipInShell": "it uses require or process, which the jsc shell does not have",
-  "skipInVariants": "its output is what a program refuses that the flow analysis found closed, and a variant without the results of the analysis refuses nothing",
-  "alone": "what it prints hangs on what else the executable holds: whether anything evaluates text or loads a module by a name put together at run time"
+  "skipInShell": "it uses require or process, which the jsc shell does not have"
 }

@@ -72,8 +72,10 @@ row('private_read', 'r ^= P.g(o), g a static method that returns o.#h: a private
     ts=('(o: PN): number', 'let r = 0;', 'r ^= PN.g{i}(o);', 'r'), go=None, cc=None, call={'ts': 'x ^= F(pnA)'})
 row('private_store', 'P.s(o, v), s a static method that does o.#h = v', group='fields',
     ts=('(o: PN, v: number): PN', 'const w = v | 0;', 'PN.s{i}(o, w);', 'o'), go=None, cc=None, call={'ts': 'F(pnA, i)'}, final={'ts': ' ^ PN.g0(pnA) ^ PN.g11(pnA)'})
-row('private_read_generic', 'r ^= o.m(h), m a method that returns this.#h, entered with an h that fails its entry check: the read in the generic version of m', group='fields',
+row('private_read_generic', 'r ^= o.m(h), m a method that returns this.#h, h parsed data that is typed by a class of which nothing makes an instance', group='fields',
     ts=('(o: PG, h: Host): number', 'let r = 0;', 'r ^= o.m{i}(h);', 'r'), go=None, cc=None, call={'ts': 'x ^= F(pgA, noHost)'})
+row('private_read_generic_handed_out', 'private_read_generic where an instance of the class was handed to unknown code, so h fails an entry check: the read in the generic version of m', group='fields',
+    ts=('(o: PG, h: Host): number', 'let r = 0;', 'r ^= o.m{i}(h);', 'r'), go=None, cc=None, call={'ts': 'x ^= F(pgA, strayHost)'})
 row('field_read_builtin_parent', 'r ^= o.f with o: an instance of class B extends Error: field_read_int on a cell that a built-in constructor makes', group='fields', zero='slots for the fields of a class with a built-in parent; then it is `field_read_int`',
     ts=('(o: BP): number', 'let r = 0;', 'r ^= o.f{i};', 'r'), go=None, cc=None, call={'ts': 'x ^= F(bpA)'})
 row('private_read_builtin_parent', 'private_read with class B extends Error', group='fields', zero='slots for the fields of a class with a built-in parent; then it is `private_read`',
@@ -533,6 +535,7 @@ item('ringQ walkQ', 'const ringQ: (TQ | null)[] = [null, null, null, null, null,
 item('Host', 'class Host { name = "host"; }')
 item('PG', 'class PG {\n    ' + ' '.join('#h%d: number;' % i for i in R16) + '\n    constructor(seed: number) { ' + ' '.join('this.#h%d = (seed + %d) | 0;' % (i, i) for i in R16) + ' }\n    ' + ' '.join('m%d(h: Host): number { return this.#h%d ^ h.name.length; }' % (i, i) for i in R16) + '\n}')
 item('pgA noHost', 'const pgA = unknownCode(new PG(LEN));\nconst noHost = JSON.parse(\'{"name":"no","more":1}\') as Host;')
+item('madeHost strayHost', 'const madeHost = unknownCode(new Host());\nconst strayHost = JSON.parse(\'{"name":"no","more":1}\') as Host;')
 item('ring2 walk2', 'const ring2: (T2 | null)[] = [null, null, null, null, null, null, null, null];\nfunction walk2(): number { let r = 0; for (const h of ring2) for (let p = h; p !== null; p = p.next) r = (r + p.a + p.b) | 0; return r; }')
 item('ring3 walk3', 'const ring3: (L2 | null)[] = [null, null, null, null, null, null, null, null];\nfunction walk3(): number { let r = 0; for (const h of ring3) for (let p = h; p !== null; p = p.next) r = (r + p.a + p.b) | 0; return r; }')
 item('z0 sinkf', 'const z0 = (): number => G0; let sinkf: () => number = z0;')

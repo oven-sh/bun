@@ -701,8 +701,10 @@ impl WebWorker {
             // hook; the join result carries nothing further.
             let _ = handle.join();
         }
-        // SAFETY: parent thread; `parent` outlives its children (it joins them).
-        unsafe { Self::start_waiting_children(this.parent) };
+        bun_removable_features::removable_body!(WorkerConstructor, ReturnDefault, {
+            // SAFETY: parent thread; `parent` outlives its children (it joins them).
+            unsafe { Self::start_waiting_children(this.parent) }
+        });
     }
 
     // =========================================================================

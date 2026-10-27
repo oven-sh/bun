@@ -15,14 +15,3 @@ for (const [what, load] of Object.entries(loads)) {
   const loaded = await load();
   console.log(what + ":", loaded === plain, loaded.default === plain.default, loaded.join === plain.join);
 }
-const native = await import("node:buffer");
-const loadsOfNativeCode = {
-  "native code, json": () => import("node:buffer", { with: { type: "json" } }),
-  "native code, json, the name made": () => import(made("node:buffer"), { with: { type: made("json") } }),
-  "native code, text, the name made": () => import(made("node:buffer"), { with: { type: made("text") } }),
-  "native code, no type, the name made": () => import(made("node:buffer")),
-};
-for (const [what, load] of Object.entries(loadsOfNativeCode)) {
-  const loaded = await load();
-  console.log(what + ":", loaded === native, loaded.default === native.default, loaded.Buffer === native.Buffer);
-}

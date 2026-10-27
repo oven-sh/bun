@@ -22,7 +22,6 @@ const today: Record<string, string> = {
   "a-small-function-declared-beside-the-loop, typed": "13.4 | 10.4",
   "arithmetic-on-numbers-out-of-a-function, typed": "113 | 104",
   "fields-of-parsed-objects-out-of-an-array, typed": "55 | 48",
-  "methods-by-kind-with-arguments-out-of-a-list, typed": "29.5 | 27",
   "patterns-replace-in-a-short-label, typed": "2,408 | 790",
   "patterns-replace-in-a-short-label, untyped": "2,409 | 798",
 };

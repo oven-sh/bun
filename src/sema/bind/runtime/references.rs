@@ -6,7 +6,10 @@ use super::namespace_exports::ExportedBlockBindings;
 use super::queries::IDENTS_IN_RUN;
 use super::storage::RuntimeReferencesIn;
 use super::type_only_code::TypeOnlyCode;
-use super::{Binding, CodeUnit, FunctionFlags, RuntimeBindOptions, RuntimeInput, RuntimeScopes};
+use super::{
+    Binding, CodeUnit, CommonJsVariable, FunctionFlags, RuntimeBindOptions, RuntimeInput,
+    RuntimeScopes,
+};
 use crate::atom::{Atom, Intern, known};
 use crate::bind::{BoundBuilder, Decl, Parent, ScopeId, ScopeKind, SymbolId};
 use crate::hir::*;
@@ -44,6 +47,7 @@ pub(super) fn compute_references(input: &mut RuntimeInput<'_, '_>, scopes: &Runt
         uses_arguments: Vec::new(),
         has_direct_eval: Vec::new(),
         import_meta_may_be_modified: false,
+        has_import_meta: false,
     };
     pass.resolve_idents();
     pass.collect_eval_scopes();
@@ -65,9 +69,18 @@ pub(super) fn compute_references(input: &mut RuntimeInput<'_, '_>, scopes: &Runt
         uses_arguments,
         has_direct_eval,
         import_meta_may_be_modified,
+        has_import_meta,
         ..
     } = pass;
     let bound = &mut *input.bound;
+    let names_require_or_own_path = |&(_, binding): &(ExprId, Binding)| {
+        matches!(
+            binding,
+            Binding::CommonJs(CommonJsVariable::Require | CommonJsVariable::Filename)
+        )
+    };
+    let mut named = references.ident_bindings.iter();
+    bound.runtime.may_name_own_require = has_import_meta || named.any(names_require_or_own_path);
     bound.runtime.references = references;
     exported_block_bindings.record(&mut bound.runtime.declarations);
     bound.runtime.depends_on_sloppy_mode |= has_sloppy_eval;
@@ -132,6 +145,7 @@ pub(super) struct ReferencePass<'a, 's> {
     pub(super) uses_arguments: Vec<CodeUnit>,
     pub(super) has_direct_eval: Vec<FnId>,
     pub(super) import_meta_may_be_modified: bool,
+    pub(super) has_import_meta: bool,
 }
 
 impl ReferencePass<'_, '_> {

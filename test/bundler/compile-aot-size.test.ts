@@ -38,6 +38,7 @@ const toolStrings: Record<string, string[]> = {
   ],
   "linter": ["Unexpected any. Specify a different type."],
   "package manager": ["lockfile had changes, but lockfile is frozen"],
+  "options of bun test": ["--shard count must be greater than 0", "--retry cannot be used with --rerun-each"],
   "compiler": ["RequiredPassLeftOperation"],
 };
 const allToolStrings = Object.entries(toolStrings).flatMap(([tool, strings]) =>

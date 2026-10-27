@@ -24,4 +24,4 @@ for (let round = 0; round < 3; round++) {
 }
 const refusing = new Refusing, bottom = { alpha: 1 }, busy = new Proxy(bottom, refusing);
 for (let i = 0; i < 30000; i++) { busy.alpha = i; busy.beta = i; }
-console.log(refusing.stores, bottom);
+console.log(refusing.stores, JSON.stringify(bottom));

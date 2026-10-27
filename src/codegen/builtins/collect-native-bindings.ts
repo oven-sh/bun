@@ -2,7 +2,7 @@ import type { NativeCall } from "../builtins-manifest-model.ts";
 import { createdFunctionList, nativeCallList } from "../generate-js2native.ts";
 import type { Problems, Source, SourcedDeclaration } from "./declarations.ts";
 import { pathOfNativeBinding } from "./paths.ts";
-import type { BuiltinPath, NativeCallKind } from "./vocabulary.ts";
+import type { BuiltinPath, FeatureUseSpec, NativeCallKind } from "./vocabulary.ts";
 
 interface NativeMacro {
   kind: NativeCallKind;
@@ -54,6 +54,24 @@ function collectCreatedFunctions(): SourcedDeclaration[] {
     },
     source: callSites,
   }));
+}
+
+const modulesForTests: ReadonlySet<string> = new Set(["internal-for-testing.ts", "internal/test/binding.ts"]);
+
+// What only the modules for Bun's own tests name leaves an executable with them. One that needs more has a line that lists its features.
+export function collectUsesOfBindingsForTests(
+  calls: readonly NativeCall[],
+  isLeftOutOfTable: (schemaFileName: string) => boolean,
+  writtenUses: ReadonlyMap<BuiltinPath, readonly FeatureUseSpec[]>,
+): SourcedDeclaration[] {
+  return findDistinctCalls(calls)
+    .filter(({ file, namedBy }) => !isLeftOutOfTable(file) && namedBy.every(namer => modulesForTests.has(namer)))
+    .map(({ macro, file, symbol }) => pathOfNativeBinding(nativeMacros[macro].kind, file, symbol))
+    .filter(path => !writtenUses.has(path))
+    .map(path => ({
+      declaration: { declares: "Extension", path, columns: { usesFeature: ["InternalForTesting"] } },
+      source: callSites,
+    }));
 }
 
 export function collectNativeBindings(

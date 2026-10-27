@@ -1,7 +1,7 @@
 {
   "everyday-data-and-control/uint8-array-sum": {
-    "typed": 228,
-    "untyped": 223
+    "typed": 212,
+    "untyped": 206
   },
   "everyday-loops-over-lists-and-typed-arrays/uint8-array-copied-by-index": {
     "typed": 1467,
@@ -29,35 +29,35 @@
   },
   "everyday-benchmarks/matrix-multiply-flat": {
     "typed": 6496.9,
-    "untyped": 6501
+    "untyped": 6500.9
   },
   "everyday-loops-over-lists-and-typed-arrays/float64-matrix-transposed-flat": {
     "typed": 3168,
-    "untyped": 3051
+    "untyped": 3050.9
   },
   "everyday-loops-over-lists-and-typed-arrays/uint8-array-counted-into-bins": {
     "typed": 5155,
-    "untyped": 5151.1
+    "untyped": 5150.9
   },
   "everyday-loops-over-lists-and-typed-arrays/float32-array-scaled-in-place": {
     "typed": 1909.5,
     "untyped": 1835.5
   },
   "everyday-loops-over-lists-and-typed-arrays/rows-of-float64-arrays": {
-    "typed": 3019.1,
+    "typed": 3019,
     "untyped": 3142
   },
   "everyday-loops-over-lists-and-typed-arrays/list-of-integers-in-a-parameter": {
     "typed": 2525,
-    "untyped": 2651.1
+    "untyped": 2651
   },
   "everyday-loops-over-lists-and-typed-arrays/float64-array-running-sums": {
     "typed": 2297,
-    "untyped": 2299
+    "untyped": 2298.9
   },
   "everyday-loops-over-lists-and-typed-arrays/buffer-entries-summed": {
-    "typed": 9974.1,
-    "untyped": 9969.4
+    "typed": 7090,
+    "untyped": 7084
   },
   "everyday-small-programs/matrix-four-by-four-in-float32": {
     "typed": 745,
@@ -76,12 +76,12 @@
     "untyped": 2087
   },
   "everyday-loops-over-lists-and-typed-arrays/text-sum-of-char-codes": {
-    "typed": 2152,
-    "untyped": 2153.9
+    "typed": 1962,
+    "untyped": 1963.9
   },
   "everyday-loops-over-lists-and-typed-arrays/buffer-sum-of-a-thousand": {
-    "typed": 2917,
-    "untyped": 2914
+    "typed": 2548,
+    "untyped": 2546
   },
   "everyday-benchmarks/typed-array-sum-of-a-thousand": {
     "typed": 2540,
@@ -89,7 +89,7 @@
   },
   "everyday-loops-over-lists-and-typed-arrays/float64-array-that-a-closure-captured": {
     "typed": 2658,
-    "untyped": 2655
+    "untyped": 2654.9
   },
   "everyday-loops-over-lists-and-typed-arrays/float64-array-in-a-field": {
     "typed": 2533,
@@ -100,11 +100,11 @@
     "untyped": 3525
   },
   "everyday-loops-over-lists-and-typed-arrays/int32-array-sum-of-a-thousand": {
-    "typed": 3044,
-    "untyped": 3039
+    "typed": 2677,
+    "untyped": 2671
   },
   "everyday-loops-over-lists-and-typed-arrays/float64-array-walked-downward": {
-    "typed": 2670,
+    "typed": 2669.9,
     "untyped": 2665
   },
   "everyday-loops-over-lists-and-typed-arrays/float64-array-in-a-parameter": {
@@ -112,15 +112,15 @@
     "untyped": 2658
   },
   "everyday-loops-over-lists-and-typed-arrays/list-of-integers-sum-of-a-thousand": {
-    "typed": 2659.1,
+    "typed": 2658.9,
     "untyped": 2654
   },
   "everyday-benchmarks/generator-sum-of-a-thousand": {
-    "typed": 3412,
-    "untyped": 3414.1
+    "typed": 3045.1,
+    "untyped": 3047
   },
   "everyday-loops-over-lists-and-typed-arrays/buffer-values-summed": {
-    "typed": 2925.9,
-    "untyped": 2927.9
+    "typed": 2559,
+    "untyped": 2561.1
   }
 }

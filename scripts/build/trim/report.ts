@@ -616,3 +616,20 @@ export function writeSectionsFile(path: string, context: ReportContext): void {
   });
   writeLines(path, lines);
 }
+
+// For scripts/build/trim/why.ts. One line for each section that no feature takes along: its number, the number of the section before it on the shortest way from a root, and what it is.
+export function writeRetainedFile(path: string, context: ReportContext): void {
+  const partition = requirePartition(context);
+  const { graph } = context;
+  const previous = shortestChains(graph, rootNodes(graph, partition), partition.edgeKind);
+  const nodes: number[] = [];
+  for (let node = 0; node < graph.placedCount; node++) {
+    if (partition.isRetained[node]) nodes.push(node);
+  }
+  const printer = new Printer(context, nodes);
+  const lines = nodes.map(node => {
+    const place = `${hex(graph.address[node]!)} ${graph.size[node]} ${graph.output[node]}`;
+    return `${node} ${previous[node]} ${place} ${printer.demangledName(node)}`;
+  });
+  writeLines(path, lines);
+}

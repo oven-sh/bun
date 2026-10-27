@@ -145,7 +145,7 @@ export const callers: Record<string, Record<string, Case>> = {
       "the replacer of replace": f => `"a".replace("a", ${f})`,
       "the replacer of replace with a pattern": f => `"a".replace(/a/, ${f})`,
       "the replacer of replaceAll": f => `"a".replaceAll("a", ${f})`,
-      "a tagged template": f => `(0, ${f})\`\``,
+      "a tagged template": f => `(tag => tag\`\`)(${f})`,
     },
     returned,
   ),

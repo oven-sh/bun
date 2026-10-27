@@ -32,7 +32,7 @@ import {
   extraFlagsFor,
   linkDepends,
   linkerMapOutputs,
-  versionScriptPath,
+  versionScriptPaths,
 } from "./flags.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { Ninja } from "./ninja.ts";
@@ -1070,8 +1070,8 @@ function windowsSysrootIncludeDirs(winsysroot: string): string[] {
  * resource compiler; see emitWindowsResources.)
  */
 function linkImplicitInputs(cfg: Config): string[] {
-  // The ELF export list is the version script's `global:` block, written here so the link can take it as a file.
-  if (cfg.linux || cfg.freebsd) writeIfChanged(exportListPath(cfg), exportList(versionScriptPath(cfg)));
+  // The ELF export list is the version scripts' `global:` blocks, written here so the link can take it as a file.
+  if (cfg.linux || cfg.freebsd) writeIfChanged(exportListPath(cfg), exportList(versionScriptPaths(cfg)));
   return linkDepends(cfg);
 }
 

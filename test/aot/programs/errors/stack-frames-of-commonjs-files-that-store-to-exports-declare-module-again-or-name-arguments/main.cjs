@@ -7,7 +7,8 @@ globalThis.framesOf = function framesOf(stack) {
       line
         .trim()
         .slice(3)
-        .replace(/[^ ()]*[\\/]([\w.-]+:\d+:\d+)/, "$1"),
+        .replace(/[^ ()]*[\\/]([\w.-]+:\d+:\d+)/, "$1")
+        .replace(/native:\d+:\d+/, "native"),
     )
     .join(" < ");
 };

@@ -1,6 +1,6 @@
 import { builtinFeatureUses } from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
-import { readFileSync } from "node:fs";
+import { globSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { type Toolchain } from "../../../scripts/build/config.ts";
@@ -69,6 +69,29 @@ test.skipIf(!guardHeader)("the engine's header lists the engine features in orde
 test("the built-ins table names declared features only, each once for an entry, with ascending ids", () => {
   expect(uses.entries.length).toBeGreaterThan(1000);
   expect(() => checkBuiltinUses(uses, model, "builtinFeatureUses()")).not.toThrow();
+});
+
+test("a native binding that only the modules for Bun's own tests name uses a feature", () => {
+  const modulesForTests = ["internal-for-testing.ts", "internal/test/binding.ts"];
+  const kinds = { cpp: "Cpp", newCppFunction: "NewCppFunction", bindgen: "Bindgen" };
+  const nativeCall = /\$(cpp|newCppFunction|bindgen)\(\s*"([^"\n]+)"\s*,\s*"([^"\n]+)"/g;
+  const namersOf = new Map<string, Set<string>>();
+  for (const file of globSync("**/*.ts", { cwd: join(root, "src", "js") })) {
+    const namer = file.replaceAll("\\", "/").replace(/^ahead-of-time\//, "");
+    const text = readFileSync(join(root, "src", "js", file), "utf8");
+    for (const [, macro, nativeFile, symbol] of text.matchAll(nativeCall)) {
+      // A `*_test.bind.ts` is compiled into a build with assertions only, and the table leaves it out.
+      if (nativeFile.endsWith("_test.bind.ts")) continue;
+      const path = `native:${kinds[macro as keyof typeof kinds]}:${nativeFile}:${symbol}`;
+      namersOf.set(path, (namersOf.get(path) ?? new Set()).add(namer));
+    }
+  }
+  const namedByTestsOnly = [...namersOf]
+    .filter(([, namers]) => [...namers].every(namer => modulesForTests.includes(namer)))
+    .map(([path]) => path);
+  const pathsWithFeature = new Set(uses.entries.map(entry => entry.path));
+  expect(namedByTestsOnly.length).toBeGreaterThan(50);
+  expect(namedByTestsOnly.filter(path => !pathsWithFeature.has(path))).toEqual([]);
 });
 
 test("Bun.Build.TrimFeature lists every trim feature", () => {

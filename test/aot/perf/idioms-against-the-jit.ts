@@ -3,14 +3,14 @@
 //   bun test/aot/perf/idioms-against-the-jit.ts [--bun <path>] [--only <regular expression>] [--jobs 16] [--rows 60]
 //       [--out rows.tsv] [--against rows.tsv] [--write-behind] [--keep <folder>] [--build-flag <flag>].. [--in-a-very-large-program]
 //
-// It prints how many idioms are ahead | level (within 5%) | behind, then every idiom that takes over 1.2 times the JIT's instructions, worst first, then those
+// It prints how many idioms are ahead | level (within 5%) | behind, then every idiom that takes more instructions than the JIT, worst first, then those
 // that collect or hold much more than the JIT does, or hold more the longer they run. Every form must print the same.
 //
 // The cost of one turn is the difference between a run of n turns and a run of n / 4, divided by 3n / 4: start-up, warm-up and the JIT's compiling cancel out, so the
 // JIT's column is its last tier. Collections run on the program's own thread and the JIT compiles on it too. Instructions are counted in user mode around the whole
 // process: the same at any load. A cost under half an instruction counts as half. Collections and the most memory resident are those of the long run.
 //
-// --out writes a row an idiom; --against reads such a file of an earlier build and lists what came under 1.2 times, what went over it, and what a compiled form gained
+// --out writes a row an idiom; --against reads such a file of an earlier build and lists what came under the JIT's instructions, what went over them, and what a compiled form gained
 // or lost by over 10% and 3 instructions, and where the JIT's own number moved. --write-behind rewrites ./behind-the-jit.<os>-<arch>.json and ./typed-dearer-than-untyped.<os>-<arch>.json, the idioms that ./idioms-against-the-jit.test.ts lists as todo.
 // --keep leaves the programs' sources in the folder. Each --build-flag goes to every `bun build --compile --aot`: with --against, what an option of the compiler is worth.
 // --in-a-very-large-program compiles every idiom as its text would be compiled inside a very large program, where little counts as code that runs often, and lets the loop
@@ -27,6 +27,7 @@ import {
   idiomsAgainstTheJit,
   isTypedDearer,
   isWhole,
+  lineAgainstTheJit,
   ratioOf,
   type Row,
   typedOverUntyped,
@@ -100,7 +101,9 @@ if (options["write-behind"]) {
   const before: Record<string, number> = existsSync(behindPath) ? JSON.parse(readFileSync(behindPath, "utf8")) : {};
   const behind = [
     ...Object.entries(before).filter(([name]) => !measured.has(name) && all.includes(name)),
-    ...whole.filter(row => ratioOf(row) > 1.2).map(row => [row.name, Math.round(ratioOf(row) * 100) / 100] as const),
+    ...whole
+      .filter(row => ratioOf(row) > lineAgainstTheJit)
+      .map(row => [row.name, Math.ceil(ratioOf(row) * 100) / 100] as const),
   ].sort(([a], [b]) => (a < b ? -1 : 1));
   writeFileSync(behindPath, JSON.stringify(Object.fromEntries(behind), null, 2) + "\n");
   if (!inVeryLargeProgram) {
@@ -156,12 +159,12 @@ if (options.against) {
   };
   const byGain = (a: (typeof moved)[0], b: (typeof moved)[0]) => a.is / a.was - b.is / b.was;
   list(
-    "came under 1.2 times (instructions a turn, then the ratio to the JIT)",
-    moved.filter(row => row.ratioWas > 1.2 && row.ratioIs <= 1.2).sort(byGain),
+    "came under the JIT (instructions a turn, then the ratio to the JIT)",
+    moved.filter(row => row.ratioWas > lineAgainstTheJit && row.ratioIs <= lineAgainstTheJit).sort(byGain),
   );
   list(
-    "went over 1.2 times",
-    moved.filter(row => row.ratioWas <= 1.2 && row.ratioIs > 1.2).sort((a, b) => byGain(b, a)),
+    "went over the JIT",
+    moved.filter(row => row.ratioWas <= lineAgainstTheJit && row.ratioIs > lineAgainstTheJit).sort((a, b) => byGain(b, a)),
   );
   list(
     "take over 10% fewer instructions",
@@ -180,7 +183,8 @@ if (options.against) {
 }
 
 console.log(`\n${heading}`);
-for (const row of whole.filter(row => ratioOf(row) > 1.2).slice(0, Number(options.rows))) console.log(line(row));
+for (const row of whole.filter(row => ratioOf(row) > lineAgainstTheJit).slice(0, Number(options.rows)))
+  console.log(line(row));
 const most = (row: WholeRow, of: (cost: Cost) => number) => Math.max(of(row.typed), of(row.untyped));
 const collectsMore = whole.filter(row => most(row, cost => cost.collections) > 2 * row.jit.collections + 5);
 console.log(`\n${collectsMore.length} collect over twice as often as the JIT\n${heading}`);

@@ -1658,8 +1658,59 @@ class Scenes {
             "0",
           ])
         : this.pick(this.everyValue)[0];
+    let waits = false;
     for (let index = this.pick([2, 3, 4, 6]); index > 0; index--) {
       const id = `${number}_${index}`;
+      if (this.chance(30)) {
+        // Native code calls the built-in, with operands at which many of them throw, and a handler looks at what was thrown.
+        const handed = this.pick(Scenes.builtInFunctions);
+        const operand = () =>
+          this.chance(60)
+            ? this.pick([
+                "Symbol.iterator",
+                `Symbol("s")`,
+                "10n",
+                "null",
+                "undefined",
+                `{ valueOf() { throw new RangeError("v"); } }`,
+                `{ toString() { throw new RangeError("t"); } }`,
+                "Object.create(null)",
+                `new Proxy({}, { get() { throw new EvalError("p"); } })`,
+              ])
+            : this.pick(this.everyValue)[0];
+        const [a, b] = [operand(), operand()];
+        const seen = `(error${any}) => note("rejected " + (error${asAny})?.constructor?.name + " " + (error === undefined) + " " + typeof error)`;
+        const later = this.chance(35);
+        waits ||= later;
+        const statement = later
+          ? this.pick([
+              `Promise.resolve(${a}).then(${handed}${asAny}).then(note, ${seen});`,
+              `Promise.resolve(${a}).then(${handed}${asAny}).catch(${seen});`,
+              `Promise.reject(${a}).catch(${handed}${asAny}).then(note, ${seen});`,
+              `Promise.resolve(${a}).finally(${handed}${asAny}).then(note, ${seen});`,
+              `new Promise(${handed}${asAny}).then(note, ${seen}); note("made");`,
+              `(async () => ${handed}(${a}${asAny}))().then(note, ${seen});`,
+            ])
+          : this.pick([
+              `note([${a}, ${b}].map(${handed}${asAny}));`,
+              `note([${a}, ${b}].map(${handed}${asAny}));`,
+              `note(Array.from([${a}], ${handed}${asAny}));`,
+              `note([${a}, ${b}].sort(${handed}${asAny}));`,
+              `note([${a}, ${b}].reduce(${handed}${asAny}));`,
+              `note([${a}, ${b}].${this.pick(["find", "filter", "some", "every", "flatMap", "findLast", "forEach"])}(${handed}${asAny}));`,
+              `note("ab".replace(/a/, ${handed}${asAny}));`,
+              `note(JSON.stringify([${a}], ${handed}${asAny}));`,
+              `note(JSON.parse("[1, 2]", ${handed}${asAny}));`,
+              `new Map([[${a}, ${b}]]${asAny}).forEach(${handed}${asAny}); note("walked");`,
+              `note(Reflect.apply(${handed}, ${a}, [${b}]));`,
+              `note(new Uint8Array([1, 2]).map(${handed}${asAny}));`,
+            ]);
+        this.emit(
+          1,
+          `try { ${statement} } catch (error) { note("threw " + (error${asAny})?.constructor?.name + " " + (error === undefined) + " " + typeof error); }`,
+        );
+        continue;
+      }
       const areMethods = this.chance(25);
       const callees = this.several(2, 3, () => this.pick(areMethods ? Scenes.builtInMethods : Scenes.builtInFunctions));
       // Two objects are arguments that many of them take. A call that throws says little about its result.
@@ -1747,6 +1798,7 @@ class Scenes {
         ])(),
       );
     }
+    if (waits) this.emit(1, `await new Promise(resolve => setTimeout(resolve, 1));`);
     this.emit(1, `printValue("callees ${number}", out);`);
     this.lines.push("}");
   }
@@ -1938,6 +1990,423 @@ class Scenes {
     this.emit(1, `printValue("kinds ${number}", out);`);
     this.lines.push("}");
   }
+
+  /** A name that no other scene and no other program of a build has. What the compiler knows about a name ends where any code deletes or redefines it. */
+  nameOfItsOwn = (first: string) => first + Math.floor(this.random() * 36 ** 5).toString(36);
+
+  /** A function makes an object, stores what it reads out of data of mixed kinds under a name, and asks the object for that name before the object leaves. */
+  sceneOfPresenceBehindStores() {
+    const number = ++this.count;
+    const any = this.typed("any");
+    const asAny = this.isTypeScript ? " as any" : "";
+    this.lines.push("{");
+    this.emit(
+      1,
+      `let out = "";`,
+      `function note(value${any})${this.typed("void")} { out += (typeof value === "object" && value !== null ? JSON.stringify(value) : String(value)) + ";"; }`,
+    );
+    for (let index = this.pick([1, 1, 2, 3]); index > 0; index--) {
+      const id = `${number}_${index}`;
+      const [name, other] = [this.nameOfItsOwn("n"), this.nameOfItsOwn("m")];
+      const held = () =>
+        this.pick([
+          `"x"`,
+          "1",
+          `"a"`,
+          "1.5",
+          "null",
+          "true",
+          "false",
+          "0",
+          `""`,
+          "[1]",
+          `{"k":1}`,
+          "-1",
+          "2147483648",
+          "2",
+        ]);
+      const rows = this.several(3, 5, () =>
+        this.chance(75) ? `{"id":${this.below(9)},"${name}":${held()}}` : `{"id":${this.below(9)}}`,
+      );
+      const text = `[${rows.join(",")}]`;
+      const loose = this.plainly(50, "", () => any);
+      this.emit(
+        1,
+        `const rows${id}${loose} = ${this.pick([
+          `JSON.parse('${text}')`,
+          `JSON.parse('${text}')`,
+          `JSON.parse('${text}')`,
+          `[...new Map(JSON.parse('${text}').map((row${any}, at${any}) => [at, row])).values()]`,
+          `JSON.parse('${text}').map((row${any}) => Object.fromEntries(Object.entries(row)))`,
+          `structuredClone(${text})`,
+          text,
+        ])};`,
+      );
+      const value = this.pick([
+        `row.${name}`,
+        `row.${name}`,
+        `row.${name}`,
+        `row.${name} + 1`,
+        `row["${name}"]`,
+        `-row.${name}`,
+        `row.${name} || row.id`,
+      ]);
+      const store = this.pick([
+        `o.${name} = ${value};`,
+        `o.${name} = ${value};`,
+        `o.${name} = ${value};`,
+        `if (row.${name}) o.${name} = ${value};`,
+        `if (row.${name}) o.${name} = ${value};`,
+        `if (row.${name} !== undefined) o.${name} = ${value};`,
+        `if ("${name}" in row) o.${name} = ${value};`,
+        `o["${name}"] = ${value};`,
+        `o.id = row.id; if (row.${name}) o.${name} = ${value};`,
+        `o.${other} = 1; o.${name} = ${value};`,
+        `Object.assign(o, { ${name}: ${value} });`,
+        `Object.defineProperty(o, "${name}", { value: ${value}, enumerable: true, writable: true, configurable: true });`,
+      ]);
+      const asks = this.pick([
+        `"${name}" in o`,
+        `"${name}" in o`,
+        `"${name}" in o`,
+        `Object.hasOwn(o, "${name}")`,
+        `Object.hasOwn(o, "${name}")`,
+        `o.hasOwnProperty("${name}")`,
+        `Object.prototype.hasOwnProperty.call(o, "${name}")`,
+        `Reflect.has(o, "${name}")`,
+        `Object.keys(o).includes("${name}")`,
+        `Object.getOwnPropertyDescriptor(o, "${name}") !== undefined`,
+        `o.${name} !== undefined`,
+      ]);
+      const end = this.pick([
+        `if (!(${asks})) o.${name} = "default"; return o;`,
+        `if (!(${asks})) o.${name} = "default"; return o;`,
+        `return ${asks} ? o.${name} : "lost";`,
+        `return ${asks} ? o.${name} : "lost";`,
+        `return [${asks}, o.${name}];`,
+        `if (${asks}) return o; return "none";`,
+        `return (${asks}) && Object.keys(o).length;`,
+        `const has = ${asks}; return has ? o : [has];`,
+      ]);
+      const made = this.pick([
+        "{}",
+        "{}",
+        "{}",
+        "{}",
+        "Object.create(null)",
+        "new Object()",
+        "{ first: 1 }",
+        "new (class {})()",
+      ]);
+      this.emit(1, `function make${id}(row${loose})${loose} { const o${loose} = ${made}; ${store} ${end} }`);
+      const statement = this.pick([
+        `note(rows${id}.map(make${id}));`,
+        `note(rows${id}.map(make${id}));`,
+        `rows${id}.forEach((row${any}) => note(make${id}(row)));`,
+        `for (const row of rows${id}) note(make${id}(row));`,
+        `for (let at = 0; at < rows${id}.length; at++) note(make${id}(rows${id}[at]));`,
+        `{ const call = (row${any}) => make${id}(row); note(rows${id}.map(call)); }`,
+        `note(rows${id}.map((row${any}) => ({ run() { return make${id}(row); } }).run()));`,
+      ]);
+      this.emit(1, `try { ${statement} } catch (error) { note("threw " + (error${asAny})?.constructor?.name); }`);
+    }
+    this.emit(1, `printValue("presence ${number}", out);`);
+    this.lines.push("}");
+  }
+
+  /** An object literal with a spread and a member under a name that the spread object can have too, made in code that runs once or often. The member is deleted or stored to, and read. */
+  sceneOfMembersOverSpreads() {
+    const number = ++this.count;
+    const any = this.typed("any");
+    const asAny = this.isTypeScript ? " as any" : "";
+    this.lines.push("{");
+    this.emit(
+      1,
+      `let out = "";`,
+      `function note(value${any})${this.typed("void")} { out += (typeof value === "function" ? "function " + value.name : typeof value === "object" && value !== null ? JSON.stringify(value) : typeof value + " " + String(value)) + ";"; }`,
+    );
+    for (let index = this.pick([1, 2, 2, 3, 4]); index > 0; index--) {
+      const id = `${number}_${index}`;
+      const key = this.nameOfItsOwn("a");
+      const loose = this.plainly(50, "", () => any);
+      this.emit(
+        1,
+        `const A${id}${loose} = ${this.pick([
+          `{ ${key}: 2 }`,
+          `{ ${key}: 2 }`,
+          `{ ${key}: true }`,
+          `{ ${key}: 1.5 }`,
+          `{ ${key}: "t" }`,
+          `{ ${key}: null }`,
+          `{ ${key}: 2, z: 3 }`,
+          `{ z: 3, ${key}: false }`,
+          `{ z: 3 }`,
+          `{}`,
+          `{ get ${key}() { return 7; } }`,
+          `{ ${key}() { return 8; } }`,
+          `new (class { ${key} = 2; })()`,
+          `Object.create({ ${key}: 2 })`,
+          `null`,
+          `[5]`,
+        ])};`,
+      );
+      const A = `A${id}`;
+      const literal = this.pick([
+        `{ ...${A}, ${key}() {} }`,
+        `{ ...${A}, ${key}() {} }`,
+        `{ ...${A}, ${key}() {} }`,
+        `{ ...${A}, ${key}() { return 1; } }`,
+        `{ ...${A}, ${key}: 3 }`,
+        `{ ${key}: 1, ...${A} }`,
+        `{ ${key}() {}, ...${A} }`,
+        `{ ...${A}, get ${key}() { return 5; } }`,
+        `{ ...${A}, set ${key}(given${any}) {} }`,
+        `{ ...${A}, ["${key}"]: 4 }`,
+        `{ ...${A}, ["${key}"]() {} }`,
+        `{ ...${A}, ...${A} }`,
+        `{ ...${A}, ${key}: undefined }`,
+        `{ ...${A}, async ${key}() {} }`,
+        `{ ...${A}, *${key}() {} }`,
+        `{ ...${A}, ${key}: () => 1 }`,
+        `{ ...${A}, ${key}: function () {} }`,
+        `{ ...${A}, ${key}: class {} }`,
+        `{ __proto__: ${A}, ${key}() {} }`,
+        `Object.assign({}, ${A}, { ${key}() {} })`,
+      ]);
+      // Code that runs once is compiled otherwise than code that runs often.
+      this.emit(
+        1,
+        ...this.pick<() => string[]>([
+          () => [`const r${id}${loose} = (() => (${literal}))();`],
+          () => [`const r${id}${loose} = (() => (${literal}))();`],
+          () => [`const r${id}${loose} = ${literal};`],
+          () => [`const r${id}${loose} = (function ()${any} { return ${literal}; })();`],
+          () => [`function make${id}()${any} { return ${literal}; }`, `const r${id}${loose} = make${id}();`],
+          () => [
+            `function make${id}()${any} { return ${literal}; }`,
+            `let r${id}${any}; for (let turn = 0; turn < 3; turn++) r${id} = make${id}();`,
+          ],
+          // The same in steps: a value under the name by a copy or a store under a key, then a function by a plain store.
+          () => [`const r${id}${any} = {};`, `Object.assign(r${id}, ${A});`, `r${id}.${key} = () => 1;`],
+          () => [
+            `const r${id}${any} = {};`,
+            `{ const k = "${key}"; r${id}[k] = ${this.pick(["2", "true", "1.5"])}; }`,
+            `r${id}.${key} = function () {};`,
+          ],
+          () => [
+            `const r${id}${any} = {};`,
+            `Reflect.set(r${id}, "${key}", ${this.pick(["2", "false"])});`,
+            `r${id}.${key} = () => 1;`,
+          ],
+        ])(),
+      );
+      const r = `r${id}`;
+      const change = this.pick([
+        `delete ${r}.${key};`,
+        `delete ${r}.${key};`,
+        `delete ${r}.${key};`,
+        `delete ${r}["${key}"];`,
+        `Reflect.deleteProperty(${r}, "${key}");`,
+        `{ const k = "${key}"; delete ${r}[k]; }`,
+        `${r}.${key} = 9;`,
+        `Object.defineProperty(${r}, "${key}", { value: 6 });`,
+        ``,
+        `delete ${r}.${key}; ${r}.${key} = 9;`,
+        `delete ${r}.${key}; delete ${r}.${key};`,
+        `note(delete ${r}.${key});`,
+        `${r}.${key} = null; delete ${r}.${key};`,
+        `note([delete ${r}.${key}, ${r}.${key}, delete ${r}.${key}, ${r}.${key}]);`,
+      ]);
+      const reads = this.several(1, 3, () =>
+        this.pick([
+          `note(${r}.${key});`,
+          `note(${r}.${key});`,
+          `note(${r}.${key});`,
+          `note(typeof ${r}.${key});`,
+          `note("${key}" in ${r});`,
+          `note(Object.keys(${r}).join());`,
+          `note(JSON.stringify(${r}));`,
+          `note(Object.hasOwn(${r}, "${key}"));`,
+          `note(${r}["${key}"]);`,
+          `note({ ...${r} }.${key});`,
+          `note(${A}?.${key});`,
+        ]),
+      ).join(" ");
+      this.emit(1, `try { ${change} ${reads} } catch (error) { note("threw " + (error${asAny})?.constructor?.name); }`);
+    }
+    this.emit(1, `printValue("spreads ${number}", out);`);
+    this.lines.push("}");
+  }
+
+  /**
+   * Three to seven ordinary steps, all on one object and one name: stores, definitions, deletes, copies, freezes, other prototypes, and between them what a
+   * program can see of the name. Steps drawn for variables and names at random almost never meet on the same object.
+   */
+  sceneOfStepsOnOneObject() {
+    const number = ++this.count;
+    const any = this.typed("any");
+    const asAny = this.isTypeScript ? " as any" : "";
+    this.lines.push("{");
+    this.emit(
+      1,
+      `let out = "";`,
+      `function note(value${any})${this.typed("void")} { out += (typeof value === "function" ? "function " + value.name : typeof value === "object" && value !== null ? JSON.stringify(value) : typeof value + " " + String(value)) + ";"; }`,
+    );
+    for (let index = this.pick([1, 1, 2, 3]); index > 0; index--) {
+      const id = `${number}_${index}`;
+      const [n, other] = [this.nameOfItsOwn("n"), this.nameOfItsOwn("m")];
+      // Where the steps run for every row, a value can come out of data of mixed kinds.
+      const perRow = this.chance(40);
+      const written = () =>
+        this.pick([
+          "1",
+          "2",
+          "1.5",
+          `"t"`,
+          "true",
+          "false",
+          "null",
+          "undefined",
+          "{ k: 1 }",
+          "[1]",
+          "() => 1",
+          "function () {}",
+          "10n",
+          "-0",
+          "2147483648",
+          `""`,
+        ]);
+      const value = () =>
+        perRow && this.chance(60) ? this.pick(["row.x", "row.x", "row.x + 1", "row.y", "row.x ?? 0"]) : written();
+      const condition = () =>
+        perRow
+          ? this.pick(["row.x", "row.y", "row.x !== undefined", `typeof row.x === "string"`])
+          : this.pick(["out.length < 9999", `"${n}" in o`, `o.${n}`]);
+      const origin = this.pick([
+        "{}",
+        "{}",
+        "{}",
+        `{ ${n}: ${value()} }`,
+        `{ ${n}: ${value()} }`,
+        `{ ${other}: 1, ${n}: ${value()} }`,
+        `{ ${n}() { return 1; } }`,
+        `{ get ${n}() { return 7; } }`,
+        `{ ...{ ${n}: ${value()} } }`,
+        "Object.create(null)",
+        `Object.create({ ${n}: ${value()} })`,
+        `{ __proto__: { ${n}: ${value()} } }`,
+        `new (class { ${n} = ${value()}; })()`,
+        `new (class { ${n}() { return 2; } })()`,
+        `Object.assign({}, { ${n}: ${value()} })`,
+        `JSON.parse('{"${n}":${this.pick(["1", `"t"`, "null", "1.5", "[1]"])}}')`,
+        `Object.fromEntries([["${n}", ${value()}]])`,
+        "[]",
+        "function () {}",
+      ]);
+      const steps: (() => string)[] = [
+        () => `o.${n} = ${value()};`,
+        () => `o.${n} = ${value()};`,
+        () => `o.${n} = ${value()};`,
+        () => `o["${n}"] = ${value()};`,
+        () => `{ const k = "${n}"; o[k] = ${value()}; }`,
+        () => `Reflect.set(o, "${n}", ${value()});`,
+        () => `Object.assign(o, { ${n}: ${value()} });`,
+        () => `if (${condition()}) o.${n} = ${value()};`,
+        () => `if (${condition()}) o.${n} = ${value()};`,
+        () => `if (!("${n}" in o)) o.${n} = ${value()};`,
+        () => `o.${n} ??= ${value()};`,
+        () => `o.${n} ||= ${value()};`,
+        () => `o.${n} += 1;`,
+        () => `o.${n}++;`,
+        () => `o.${other} = ${value()};`,
+        () =>
+          `Object.defineProperty(o, "${n}", { value: ${value()}, writable: ${this.chance(50)}, enumerable: ${this.chance(50)}, configurable: ${this.chance(70)} });`,
+        () =>
+          `Object.defineProperty(o, "${n}", { get() { return ${value()}; }, enumerable: ${this.chance(50)}, configurable: true });`,
+        () => `delete o.${n};`,
+        () => `delete o.${n};`,
+        () => `delete o.${n};`,
+        () => `{ const k = "${n}"; delete o[k]; }`,
+        () => `Reflect.deleteProperty(o, "${n}");`,
+        () => `if (${condition()}) delete o.${n};`,
+        () => `delete o.${other};`,
+        () => `o = { ...o };`,
+        () => `o = { ...o };`,
+        () => `o = Object.assign({}, o);`,
+        () => `o = { ...o, ${n}() {} };`,
+        () => `o = { ...o, ${n}: ${value()} };`,
+        () => `o = { ${n}: ${value()}, ...o };`,
+        () => `o = Object.create(o);`,
+        () => `{ const { ${n}: taken, ...rest } = o; note(taken); o = rest; }`,
+        () => `Object.freeze(o);`,
+        () => `Object.seal(o);`,
+        () => `Object.preventExtensions(o);`,
+        () => `Object.setPrototypeOf(o, { ${n}: ${value()} });`,
+        () => `Object.setPrototypeOf(o, null);`,
+      ];
+      const looks: (() => string)[] = [
+        () => `note(o.${n});`,
+        () => `note(o.${n});`,
+        () => `note(o.${n});`,
+        () => `note(o["${n}"]);`,
+        () => `note(typeof o.${n});`,
+        () => `note("${n}" in o);`,
+        () => `note("${n}" in o);`,
+        () => `note(Object.hasOwn(o, "${n}"));`,
+        () => `note(Object.keys(o).join());`,
+        () => `note(JSON.stringify(o));`,
+        () => `note(Object.getOwnPropertyDescriptor(o, "${n}"));`,
+        () => `for (const key in o) note(key);`,
+        () => `note(Object.entries(o).length);`,
+        () => `note({ ...o }.${n});`,
+        () => `{ const { ${n}: read } = o; note(read); }`,
+        () => `note("${n}" in o ? o.${n} : "lost");`,
+        () => `note([delete o.${n}, o.${n}, delete o.${n}, o.${n}]);`,
+        () => `note(Reflect.ownKeys(o).length);`,
+      ];
+      const body = [
+        `let o${any} = ${origin};`,
+        ...this.several(2, 6, () => (this.chance(70) ? this.pick(steps)() : this.pick(looks)())),
+        ...this.several(1, 2, () => this.pick(looks)()),
+      ].join(" ");
+      const caught = `catch (error) { note("threw " + (error${asAny})?.constructor?.name); }`;
+      if (perRow) {
+        const held = () =>
+          this.pick([`"x"`, "1", `"a"`, "1.5", "null", "true", "0", `""`, "[1]", `{"k":1}`, "2147483648"]);
+        const rows = this.several(
+          3,
+          4,
+          () =>
+            `{${[this.chance(80) ? `"x":${held()}` : "", this.chance(50) ? `"y":${held()}` : ""].filter(Boolean).join(",")}}`,
+        );
+        this.emit(
+          1,
+          `const rows${id}${any} = JSON.parse('[${rows.join(",")}]');`,
+          `function run${id}(row${any})${this.typed("void")} { ${body} }`,
+          this.pick([
+            `for (const row of rows${id}) { try { run${id}(row); } ${caught} }`,
+            `try { rows${id}.forEach(run${id}); } ${caught}`,
+            `try { rows${id}.map((row${any}) => run${id}(row)); } ${caught}`,
+          ]),
+        );
+      } else
+        this.emit(
+          1,
+          ...this.pick<() => string[]>([
+            () => [`try { (() => { ${body} })(); } ${caught}`],
+            () => [`try { (() => { ${body} })(); } ${caught}`],
+            () => [`try { ${body} } ${caught}`],
+            () => [`function run${id}()${this.typed("void")} { ${body} }`, `try { run${id}(); } ${caught}`],
+            () => [
+              `function run${id}()${this.typed("void")} { ${body} }`,
+              `for (let turn = 0; turn < 3; turn++) { try { run${id}(); } ${caught} }`,
+            ],
+          ])(),
+        );
+    }
+    this.emit(1, `printValue("steps ${number}", out);`);
+    this.lines.push("}");
+  }
 }
 
 /**
@@ -1957,6 +2426,18 @@ export function writeOrdinaryScenes(text: string, isTypeScript: boolean) {
       () => scenes.sceneOfWalks(),
       () => scenes.sceneOfWalks(),
       () => scenes.sceneOfIdioms(),
+      () => scenes.sceneOfStepsOnOneObject(),
+      () => scenes.sceneOfStepsOnOneObject(),
+      () => scenes.sceneOfStepsOnOneObject(),
+      () => scenes.sceneOfStepsOnOneObject(),
+      () => scenes.sceneOfStepsOnOneObject(),
+      () => scenes.sceneOfStepsOnOneObject(),
+      () => scenes.sceneOfPresenceBehindStores(),
+      () => scenes.sceneOfPresenceBehindStores(),
+      () => scenes.sceneOfPresenceBehindStores(),
+      () => scenes.sceneOfMembersOverSpreads(),
+      () => scenes.sceneOfMembersOverSpreads(),
+      () => scenes.sceneOfMembersOverSpreads(),
       () => scenes.sceneOfOnePlaceForSeveralKinds(),
       () => scenes.sceneOfOnePlaceForSeveralKinds(),
       () => scenes.sceneOfOnePlaceForSeveralKinds(),

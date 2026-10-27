@@ -57,6 +57,7 @@ const textsOfLibraries: Record<string, string[]> = {
   libwebp: ["Frame setup failed", "Premature end-of-partition0 encountered", "NULL VP8Io parameter"],
   tar: ["Damaged tar archive", "Truncated tar archive", "Malformed pax attribute"],
   lsquic: ["Attempt to create second control stream", "Client cannot send HANDSHAKE_DONE frame", "Packet Tolerance of zero is invalid"],
+  BoringSSL: ["ALPN_MISMATCH_ON_EARLY_DATA", "APPLICATION_DATA_ON_SHUTDOWN", "ATTEMPT_TO_REUSE_SESSION_IN_DIFFERENT_CONTEXT"],
   SQLite: ["malformed database schema", "unable to open database file", "SQLite format 3"],
   TinyCC: ["cannot use local functions", "invalid operand types for binary operation"],
   "lol-html": ["The selector is empty", "Unexpected token in selector"],

@@ -997,6 +997,8 @@ function place(error) {
 }
 try { several(new Proxy(plain, { get(t, key) { if (key === "delta") throw new Error("thrown by the trap"); return 1; } })); } catch (error) { console.log(error.message, "at", place(error)); }
 try { several(new Proxy(fixed, { get(t, key) { return 0; } })); } catch (error) { console.log(error.constructor.name, "at", place(error)); }
+// The code above that runs once asks the run time, so not every count is zero.
+console.log("the run time was asked in the end:", !counts || trapLookups() + genericReads() > 0);
 //// reads-by-name-after-shapes-die-and-change.js
 // Reads by name of many shapes through a few functions: what was learned about a shape and a name must end when the shape dies and its place is taken by another,
 // when a prototype gains or loses the name, when a property moves out of the object, and when an object becomes a dictionary and is flattened.

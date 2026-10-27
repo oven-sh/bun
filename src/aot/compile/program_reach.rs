@@ -20,7 +20,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use smallvec::{SmallVec, smallvec};
 
 use super::removable::Removable;
-use crate::builtins::resolve::{ModuleObjectOwner, ModuleObjectUse};
+use crate::builtins::resolve::{ModuleField, ModuleObjectOwner, ModuleObjectUse};
 use crate::ir::generated::ModuleRequestKind;
 use crate::ir::{InParallel, for_each_mut};
 use crate::load::Sources;
@@ -2215,12 +2215,26 @@ impl<'a, 's> Walk<'a, 's> {
         }
     }
 
+    fn find_commonjs_main(&self) -> Option<FileId> {
+        let entry_points = self.input.sources.entry_points();
+        self.input.graph.find_commonjs_main(entry_points)
+    }
+
     fn find_required_modules(&self, module: ModuleRef) -> Vec<ModuleRef> {
         let requests = self.input.graph.requests_of(module).iter();
         let required = requests.filter(|request| request.kind == ModuleRequestKind::Require);
         let mut found: Vec<ModuleRef> = required
             .map(|request| module_with_code(request.target))
             .collect();
+        // The file has no request for what the loader of the run time answers.
+        self.for_each_answer_of_require(module, |answer| match answer {
+            SiteAnswer::Module(target) => found.push(module_with_code(target)),
+            SiteAnswer::Computed(Candidates::Modules(candidates)) => {
+                let candidates = candidates.iter();
+                found.extend(candidates.map(|candidate| module_with_code(candidate.module)));
+            }
+            SiteAnswer::Computed(Candidates::All) | SiteAnswer::Failed(_) | SiteAnswer::Erased => {}
+        });
         // A require under a name that the build cannot follow finds an entry point.
         if self.requires_under_computed_name(module) {
             let entry_points = self.input.sources.entry_points();
@@ -2233,24 +2247,32 @@ impl<'a, 's> Walk<'a, 's> {
         found
     }
 
-    fn requires_under_computed_name(&self, module: ModuleRef) -> bool {
+    fn for_each_answer_of_require(&self, module: ModuleRef, mut visit: impl FnMut(SiteAnswer<'_>)) {
         let ModuleRef::File(file) = module else {
-            return false;
+            return;
         };
-        self.input
-            .files
-            .analysis(file)
-            .import_sites
-            .iter()
-            .any(|site| {
-                matches!(
-                    site.kind,
-                    ImportSiteKind::Require(_) | ImportSiteKind::ImportMetaRequire(_)
-                ) && matches!(
-                    self.input.graph.find_site_answer(file, site.kind),
-                    Some(SiteAnswer::Computed(_))
-                )
-            })
+        for site in self.input.files.analysis(file).import_sites {
+            let is_require = matches!(
+                site.kind,
+                ImportSiteKind::Require(_)
+                    | ImportSiteKind::ImportMetaRequire(_)
+                    | ImportSiteKind::ImportEquals(_)
+            );
+            if let (true, Some(answer)) = (
+                is_require,
+                self.input.graph.find_site_answer(file, site.kind),
+            ) {
+                visit(answer);
+            }
+        }
+    }
+
+    fn requires_under_computed_name(&self, module: ModuleRef) -> bool {
+        let mut is_computed = false;
+        self.for_each_answer_of_require(module, |answer| {
+            is_computed |= matches!(answer, SiteAnswer::Computed(_));
+        });
+        is_computed
     }
 
     fn find_requirers(&mut self, module: ModuleRef) -> Vec<ModuleRef> {
@@ -2291,6 +2313,10 @@ impl<'a, 's> Walk<'a, 's> {
         object_use: ModuleObjectUse,
     ) {
         let follows = match object_use {
+            // The run time says which file has the id ".", and it keeps track in a program that names a way.
+            ModuleObjectUse::Field(ModuleField::Id) if self.find_commonjs_main().is_none() => {
+                return self.files_naming_ways.push(ModuleRef::File(file));
+            }
             // The record of the module answers these.
             ModuleObjectUse::Field(_) => return,
             // The host answers whether there is such an object, and it answers undefined in a program that names no way.

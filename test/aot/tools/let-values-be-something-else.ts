@@ -24,6 +24,7 @@
 //   comes=n     (never ? E : <kinds[n]>)
 // The file reads less off values that nobody knows:
 //   caught@0-0  the name and the message of what a `catch` has caught are taken out of `${caught}`, everywhere in the file
+//               (not out of a function that was thrown: `bun run` keeps another text of it than an executable)
 //
 // Line breaks stay where they are, but for those of an initializer that moves.
 import { readFileSync, writeFileSync } from "fs";
@@ -286,9 +287,9 @@ export function read(path: string, text: string): Variants {
       const taken =
         caught &&
         (node.name.text === "name"
-          ? `\`\${${caught.getText()}}\`.split(":", 1)[0]`
+          ? `(typeof ${caught.getText()} === "function" ? "function" : \`\${${caught.getText()}}\`.split(":", 1)[0])`
           : node.name.text === "message" && caught === holder
-            ? `\`\${${caught.getText()}}\`.replace(/^[^:]*:? ?/, "")`
+            ? `(typeof ${caught.getText()} === "function" ? "" : \`\${${caught.getText()}}\`.replace(/^[^:]*:? ?/, ""))`
             : undefined);
       if (taken) return void readsOfCaught.push({ start: node.getStart(), end: node.getEnd(), text: taken });
     }

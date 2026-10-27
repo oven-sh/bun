@@ -59,7 +59,7 @@ impl FileLowering<'_, '_, '_, '_> {
             }
             ShapeKind::Number => Mapped::checked(TypeTable::NUMBER),
             ShapeKind::NumberLiteral(value) => self.intern_checked(number_literal_type(value)),
-            ShapeKind::NumericEnumMember(value) => self.intern_checked(enum_member_type(value)),
+            ShapeKind::NumericEnumMember(value) => self.intern_checked(number_literal_type(value)),
             ShapeKind::BigInt | ShapeKind::BigIntLiteral { .. } => {
                 Mapped::checked(TypeTable::BIGINT)
             }
@@ -471,11 +471,8 @@ fn find_whether_numbers_are_integers(
     match file.queries.type_shape(ty).ok()?.kind {
         ShapeKind::Int32 { .. } => Some(true),
         ShapeKind::Number => Some(false),
-        ShapeKind::NumberLiteral(value) => {
+        ShapeKind::NumberLiteral(value) | ShapeKind::NumericEnumMember(value) => {
             Some(number_literal_type(value).integer_range().is_some())
-        }
-        ShapeKind::NumericEnumMember(value) => {
-            Some(enum_member_type(value).integer_range().is_some())
         }
         ShapeKind::Union(members) => members
             .iter()
@@ -493,11 +490,11 @@ pub(super) fn lists_only_integers(
     find_whether_numbers_are_integers(file, ty) == Some(true)
 }
 
-// TypeScript's `0` is also the type of `-0`, which no integer range holds.
+// TypeScript's `0` is also the type of `-0`. Whoever writes the type means the integer: a `-0` that arrives is treated as any value outside the type of its position.
 fn number_literal_type(value: f64) -> Type {
     let integer = value as i64;
     let is_tracked = integer as f64 == value
-        && integer != 0
+        && (integer != 0 || value.is_sign_positive())
         && (-MAX_TRACKED_INTEGER..=MAX_TRACKED_INTEGER).contains(&integer);
     if is_tracked {
         Type::integers(integer, integer)
@@ -506,35 +503,16 @@ fn number_literal_type(value: f64) -> Type {
     }
 }
 
-// A member that is written `0` is the integer.
-fn enum_member_type(value: f64) -> Type {
-    if value == 0.0 && value.is_sign_positive() {
-        return Type::integers(0, 0);
-    }
-    number_literal_type(value)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn enum_member_types() {
-        assert_eq!(enum_member_type(0.0), Type::integers(0, 0));
-        assert_eq!(enum_member_type(4.0), Type::integers(4, 4));
-        for value in [-0.0, 1.5] {
-            assert_eq!(
-                enum_member_type(value),
-                Type::primitives(Primitives::NUMBER)
-            );
-        }
-    }
-
-    #[test]
     fn number_literal_types() {
+        assert_eq!(number_literal_type(0.0), Type::integers(0, 0));
         assert_eq!(number_literal_type(1.0), Type::integers(1, 1));
         assert_eq!(number_literal_type(-1.0), Type::integers(-1, -1));
-        for value in [1.5, 0.0, -0.0, 4611686018427387904.0, f64::NAN] {
+        for value in [1.5, -0.0, 4611686018427387904.0, f64::NAN] {
             assert_eq!(
                 number_literal_type(value),
                 Type::primitives(Primitives::NUMBER)

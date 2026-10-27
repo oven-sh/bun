@@ -897,6 +897,12 @@ impl FileLowering<'_, '_, '_, '_> {
         if is_asking.get() {
             return None;
         }
+        let Binding::Symbol(symbol) = self.bound.binding(name) else {
+            return None;
+        };
+        if !self.scopes.is_used_once(symbol) {
+            return None;
+        }
         let remembered = &self.printed_operators.revisited_initializers;
         if let Some(&initializer) = remembered.borrow().get(&name) {
             return initializer;
@@ -940,6 +946,9 @@ impl FileLowering<'_, '_, '_, '_> {
     // `Level.High`, `Level["High"]`, or `High` in another member of `Level`.
     fn find_named_enum_member(&self, expression: ExprId) -> Option<EnumMemberId> {
         let (hir, bound) = (self.hir, self.bound);
+        if hir.enums.is_empty() {
+            return None;
+        }
         let declarations_of = |name: ExprId| match (hir[name].kind, bound.binding(name)) {
             (ExprKind::Ident(_), Binding::Symbol(symbol)) => Some(bound.symbol(symbol).decls),
             _ => None,
@@ -950,6 +959,10 @@ impl FileLowering<'_, '_, '_, '_> {
                 _ => None,
             };
         };
+        let declarations = declarations_of(self.skip_type_syntax(object))?;
+        if !(declarations.iter()).any(|declaration| matches!(declaration, Decl::Enum(_))) {
+            return None;
+        }
         let name = self.find_written_member_name(key)?;
         if !hir.is_name_resolved_by_transpiler(expression, self.queries.atom_bytes(name)) {
             return None;
@@ -958,7 +971,6 @@ impl FileLowering<'_, '_, '_, '_> {
             .inputs
             .limits
             .get(LimitId::MaxStepsToPrintedInitializer) as usize;
-        let declarations = declarations_of(self.skip_type_syntax(object))?;
         declarations
             .iter()
             .find_map(|&declaration| match declaration {

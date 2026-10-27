@@ -10,6 +10,7 @@ import { classOfIcuItem, itemsOf } from "../../../scripts/build/trim/icu-data.ts
 import { elfImage } from "../../../scripts/build/trim/linked-image.ts";
 import { unnamedSectionPrefix } from "../../../scripts/build/trim/linker-elf.ts";
 import { foldedEntryPointsHeading } from "../../../scripts/build/trim/report.ts";
+import { findHolders, parseRetained } from "../../../scripts/build/trim/why.ts";
 import { packageOf } from "../icu-data-package.ts";
 import {
   addressInMap,
@@ -250,6 +251,11 @@ describeLink("a trimmable link", () => {
     expect(result.trimmedResult).toEqual({ stdout, stderr: "", exitCode: 0 });
     const sections = readFileSync(join(folder, "work/sections.txt"), "utf8");
     expect(sections).toMatch(/^[0-9a-f]+ 26 Atomics \.data \S*feature_variable$/m);
+    const retained = parseRetained(readFileSync(join(folder, "work/retained.txt"), "utf8"));
+    expect(findHolders(retained, /\.retained_variable$/).map(({ bytes, way }) => [bytes, way.slice(0, 3)])).toEqual([
+      [22, [".data.retained_variable", "retained_says", "retained"]],
+    ]);
+    expect(findHolders(retained, /feature_variable$/)).toEqual([]);
   });
 
   test("finds an entry point that the link compiles from bitcode, and deletes the compiled objects", async () => {

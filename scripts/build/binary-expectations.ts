@@ -23,7 +23,7 @@ import {
   replacedLibcAllocationSymbols,
   replacedOperatorNewSymbols,
 } from "./deps/mimalloc.ts";
-import { versionScriptPath } from "./flags.ts";
+import { definesLibcFunctions, libcFunctionsScriptPath, versionScriptPath } from "./flags.ts";
 
 export type BinaryFormat = "elf" | "macho" | "pe";
 
@@ -186,9 +186,11 @@ export function versionScriptGlobals(path: string): { patterns: string[]; demang
   return { patterns, demangledPatterns };
 }
 
-/** A version script's `global:` block in the form lld's `--export-dynamic-symbol-list` reads. */
-export function exportList(versionScript: string): string {
-  const { patterns, demangledPatterns } = versionScriptGlobals(versionScript);
+/** The `global:` blocks of version scripts in the form lld's `--export-dynamic-symbol-list` reads. */
+export function exportList(versionScripts: string[]): string {
+  const globals = versionScripts.map(versionScriptGlobals);
+  const patterns = globals.flatMap(g => g.patterns);
+  const demangledPatterns = globals.flatMap(g => g.demangledPatterns);
   const lines = patterns.map(p => `  ${p};`);
   if (demangledPatterns.length > 0) lines.push('  extern "C++" {', ...demangledPatterns.map(p => `    ${p};`), "  };");
   return `{\n${lines.join("\n")}\n};\n`;
@@ -516,7 +518,11 @@ export function binaryExpectations(cfg: Config): BinaryExpectations {
 
       return {
         format,
-        exports: { versionScript: versionScriptPath(cfg), exact: [], patterns: [] },
+        exports: {
+          versionScript: versionScriptPath(cfg),
+          exact: definesLibcFunctions(cfg) ? versionScriptGlobals(libcFunctionsScriptPath(cfg)).patterns : [],
+          patterns: [],
+        },
         neededLibs: { names: neededLibs, exact: pinned, allowed: allowedLibs },
         ...(pinned && { maxSymbolVersions, versionNames }),
         forbiddenImports: forbiddenImports(cfg),

@@ -1,4 +1,4 @@
-// A proxy whose handler counts the reads and answers out of the target, beside the same handler called by hand. A read through the proxy may cost a little more than the call, not three times as much.
+// A proxy whose handler counts the reads and answers out of the target, made by the function that reads through it, beside the same handler called by hand. A read through the proxy may cost a little more than the call, not three times as much.
 class Counting {
   constructor() {
     this.reads = 0;
@@ -9,8 +9,7 @@ class Counting {
   }
 }
 const handler = new Counting(),
-  target = { alpha: 1, beta: 2 },
-  proxy = new Proxy(target, handler);
+  target = { alpha: 1, beta: 2 };
 let sums = 0;
 function fastestOf(turns, run) {
   let fastest = Infinity;
@@ -22,11 +21,13 @@ function fastestOf(turns, run) {
   return fastest;
 }
 const byHand = fastestOf(5, () => {
+  const proxy = new Proxy(target, handler);
   let sum = 0;
   for (let i = 0; i < 3_000_000; i++) sum = (sum + handler.get(target, "alpha", proxy) + handler.get(target, "beta", proxy) + i) | 0;
   sums = (sums + sum) | 0;
 });
 const throughTheProxy = fastestOf(5, () => {
+  const proxy = new Proxy(target, handler);
   let sum = 0;
   for (let i = 0; i < 3_000_000; i++) sum = (sum + proxy.alpha + proxy.beta + i) | 0;
   sums = (sums + sum) | 0;

@@ -1646,6 +1646,7 @@ describe("bundler", () => {
   // `Number(text)`, for an 8-bit string (ASCII, a define) and for a UTF-16 string (a literal that is not ASCII, a
   // macro's result). Each row gives what JavaScript computes.
   const digits = (count: number) => Buffer.alloc(count, "1234567890").toString();
+  const zeros = (count: number) => Buffer.alloc(count, "0").toString();
   const looseEquality: Record<string, [expression: string, value: boolean]> = {
     // `Infinity` has one spelling.
     Inf: [`"inf" == Infinity`, false],
@@ -1655,9 +1656,13 @@ describe("bundler", () => {
     HexSign: [`"0x+10" == 16`, false],
     OctalSign: [`"0o+7" != 7`, true],
     BinarySign: [`true == "0b+1"`, false],
-    // More digits than 64 bits hold. The number in the second row is `Number(BigInt(text))`, the nearest double.
+    // More digits than 64 bits hold. After the first row the number is `Number(BigInt(text))`, the nearest double,
+    // where a sum of the digits in a double gives the double next to it.
     Hex17Digits: [`"0x10000000000000000" == 18446744073709551616`, true],
     HexNearestDouble: [`"0x100000000000017fffffffffffff" == 3.245185536584268e32`, true],
+    // Both are 2^64 + 2^60 + 2^11 + 1.
+    OctalNearestDouble: [`"0o2100000000000000004001" == 19599665578316403000`, true],
+    BinaryNearestDouble: [`"0b10001${zeros(48)}1${zeros(10)}1" != 19599665578316403000`, false],
     // White space is what `String.prototype.trim` takes off: U+00A0, U+FEFF and U+2028 are, U+0085 is not.
     Nbsp: [`"\\u00A01" == 1`, true],
     BomAndLineSeparator: [`1 != "\\uFEFF1\\u2028"`, false],

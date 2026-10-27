@@ -5161,7 +5161,9 @@ impl<'a> HTTPClient<'a> {
         // ambiguous framing (response splitting) and is an error, whatever the
         // values are. Presence decides it, not the folded state: HEAD and
         // 1xx/204/304 overwrite content_length above, and a non-chunked coding
-        // leaves transfer_encoding at Identity.
+        // leaves transfer_encoding at Identity. Deliberately below the CONNECT
+        // return above: a refused CONNECT fails with the proxy's head attached,
+        // and its body is never read.
         if saw_content_length && saw_transfer_encoding {
             return Err(crate::Error::ConflictingFraming);
         }

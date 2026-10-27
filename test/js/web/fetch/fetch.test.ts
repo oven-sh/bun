@@ -3178,7 +3178,11 @@ it("rejects a response that carries both Transfer-Encoding and Content-Length", 
       .then(res => res.text())
       .catch(e => e);
     expect([path, result]).toEqual([path, expect.any(Error)]);
-    expect([path, (result as any).code]).toEqual([path, "ConflictingFraming"]);
+    expect([path, (result as any).code, (result as any).message]).toEqual([
+      path,
+      "ConflictingFraming",
+      expect.stringContaining("both a Transfer-Encoding and a Content-Length header"),
+    ]);
 
     // The rejected connection is closed, so the next request opens a new one.
     const before = connections;

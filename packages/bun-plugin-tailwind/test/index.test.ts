@@ -8,7 +8,9 @@ const packageRoot = path.join(import.meta.dirname, "..");
 
 /** A project in a temporary directory that can resolve `tailwindcss` and `bun-plugin-tailwind`. */
 function project(files: Record<string, string>) {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "bun-plugin-tailwind-")));
+  // `.native` also expands the short `RUNNER~1` in the temporary directory of a Windows runner. The dev server does not
+  // watch a file whose real path is outside of its working directory.
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "bun-plugin-tailwind-")));
   const write = (file: string, contents: string) => {
     fs.mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
     fs.writeFileSync(path.join(root, file), contents);

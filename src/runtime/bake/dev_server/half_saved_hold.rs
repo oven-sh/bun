@@ -4,10 +4,7 @@ use super::*;
 use std::cell::RefCell;
 use std::time::Duration;
 
-/// A held file has its text when no look saw its size change for this long: a writer can use more than one write.
-const SETTLE: Duration = Duration::from_millis(5);
-
-/// A hold ends this many times the wait for one file after its first event, at the latest.
+/// A hold ends this many times the wait for one file after it starts, at the latest.
 const MAX_WAITS: u32 = 10;
 
 thread_local! {
@@ -30,7 +27,7 @@ impl HeldFile {
         if self.size == 0 {
             self.deadline
         } else {
-            (self.size_since + SETTLE).min(self.deadline)
+            (self.size_since + settle()).min(self.deadline)
         }
     }
 }
@@ -43,6 +40,8 @@ pub(crate) struct HalfSavedHold {
     first_with_time_left: usize,
     /// `HotReloadEvent.timer` of the first event.
     timer: Instant,
+    /// No file gets a deadline after this time.
+    last_deadline: Instant,
 }
 
 impl HalfSavedHold {
@@ -60,10 +59,24 @@ fn wait() -> Duration {
     Duration::from_millis(ms.min(u32::MAX as u64))
 }
 
+/// A held file has its text when no look saw its size change for this long: a writer can use more than one write.
+fn settle() -> Duration {
+    let ms = bun_core::env_var::BUN_DEBUG_TEST_DEV_SERVER_HALF_SAVED_SETTLE_MS
+        .get()
+        .unwrap_or(5);
+    Duration::from_millis(ms.min(u32::MAX as u64))
+}
+
+/// `None` for a file that does not exist.
+fn size_of_existing_file(path: &[u8]) -> Option<u64> {
+    let mut buf = paths::path_buffer_pool::get();
+    let stat = sys::stat(paths::resolve_path::z(path, &mut *buf)).ok()?;
+    Some(stat.st_size as u64)
+}
+
 /// 0 for a file that does not exist.
 fn size_of_file(path: &[u8]) -> u64 {
-    let mut buf = paths::path_buffer_pool::get();
-    sys::stat(paths::resolve_path::z(path, &mut *buf)).map_or(0, |stat| stat.st_size as u64)
+    size_of_existing_file(path).unwrap_or(0)
 }
 
 /// Ends the holds of this thread. A run loop calls this before it waits with no timers: `bun --hot` after an uncaught error.
@@ -111,6 +124,11 @@ impl DevServer {
         half_saved: Vec<Box<[u8]>>,
         timer: &mut Instant,
     ) -> bool {
+        // A testing batch decides when its files are bundled. A hold that ends during the batch puts its files in it.
+        if !matches!(self.testing_batch_events, TestingBatchEvents::Disabled) {
+            return false;
+        }
+        let now = Instant::now();
         if self.half_saved_hold.is_none() {
             if half_saved.is_empty() {
                 return false;
@@ -120,6 +138,7 @@ impl DevServer {
                 files: StringArrayHashMap::default(),
                 first_with_time_left: 0,
                 timer: *timer,
+                last_deadline: now + wait() * MAX_WAITS,
             });
             let dev: *mut DevServer = self;
             HOLDING.with(|holding| holding.borrow_mut().push(dev));
@@ -128,8 +147,7 @@ impl DevServer {
         let mut joined = !entry_points.set.is_empty();
         // A bundle of these files now would read the half-saved files that they import.
         bun_core::handle_oom(hold.entry_points.append_list(entry_points));
-        let now = Instant::now();
-        let deadline = (now + wait()).min(hold.timer + wait() * MAX_WAITS);
+        let deadline = (now + wait()).min(hold.last_deadline);
         for path in half_saved {
             if !hold.files.contains(&path) {
                 let file = HeldFile {
@@ -212,8 +230,8 @@ impl DevServer {
     fn end_half_saved_hold(&mut self) -> HalfSavedHold {
         let hold = self.take_half_saved_hold().expect("the caller saw a hold");
         for path in hold.files.keys() {
-            // This file was saved empty, deleted or renamed. The next event that finds it empty starts no hold.
-            if size_of_file(path) == 0 {
+            // This file was saved empty. The next event that finds it empty starts no hold.
+            if size_of_existing_file(path) == Some(0) {
                 bun_core::handle_oom(self.files_left_empty.put(path, ()));
             }
         }

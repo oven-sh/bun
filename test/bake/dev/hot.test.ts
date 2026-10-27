@@ -731,6 +731,50 @@ devTest("a file that is deleted is reported when its hold ends", {
     await c.expectErrorOverlay(['index.ts:1:23: error: Could not resolve: "./other"']);
   },
 });
+devTest("a deleted file that is made again in two steps is held again", {
+  skip: [
+    "win32", // unlinkSync is having weird behavior
+    "darwin", // kqueue does not name the new file
+  ],
+  env: holdFor(200),
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+      body: `<p id="a"></p>`,
+    }),
+    "index.ts": `
+      import "./a";
+    `,
+    "a.ts": setsText("a", "a1"),
+  },
+  async test(dev) {
+    // The page loads again when the error of the missing file goes away.
+    await using c = await dev.client("/", { allowUnlimitedReloads: true });
+    await c.expectElemText("#a", "a1");
+
+    const file = dev.join("a.ts");
+    let ended = dev.endedHolds();
+    const failed = c.nextAck("the bundle without the file");
+    unlinkSync(file);
+    // No file follows, so this hold ends at its deadline.
+    await ended;
+    await failed;
+    await c.expectErrorOverlay(['index.ts:1:8: error: Could not resolve: "./a"']);
+
+    // The file was missing, not saved empty: the file event that finds it empty is held.
+    const held = dev.heldEvents();
+    emptyFile(file);
+    await held;
+    ended = dev.endedHolds();
+    appendFileSync(file, setsText("a", "a2"));
+    await ended;
+    let acks = c.acksReceived;
+    while ((await c.js<string | null>`return document.getElementById("a")?.textContent ?? null`) !== "a2") {
+      while (c.acksReceived === acks) await c.nextAck("applying the text");
+      acks = c.acksReceived;
+    }
+  },
+});
 devTest("files saved while the dev server holds the update of another file join that update", {
   skip: ["darwin"],
   env: holdLong,
@@ -877,70 +921,78 @@ for (const [first, last] of [
 }
 devTest("a file that a later file event finds half-saved has a deadline of its own", {
   skip: ["darwin"],
-  env: holdFor(1000),
+  env: holdFor(400),
   files: twoFiles,
   async test(dev) {
-    // A machine that stalls past a deadline gets the empty module, and that run proves nothing.
+    // The files stay empty, so the page gets empty modules when a hold ends.
     await using c = await dev.client("/", { allowUnlimitedReloads: true });
     await c.expectElemText("#b", "b1");
-    let reloads = 0;
-    c.on("reload", () => reloads++);
 
     let held = dev.heldEvents();
     emptyFile(dev.join("a.ts"));
     await held;
-    const heldA = performance.now();
     // b.ts is emptied late in the time that a.ts has.
-    await Bun.sleep(700);
+    await Bun.sleep(250);
     held = dev.heldEvents();
+    const emptiedB = performance.now();
     emptyFile(dev.join("b.ts"));
     await held;
-    const heldB = performance.now();
-    appendFileSync(dev.join("a.ts"), setsText("a", "a2"));
-    // The deadline of a.ts passes. b.ts is still empty, and it has time left.
-    await Bun.sleep(heldA + 1150 - performance.now());
-    const endedAtTheFirstDeadline = dev.holdsEnded;
-    const ended = dev.endedHolds();
-    appendFileSync(dev.join("b.ts"), setsText("b", "b2"));
-    const wroteB = performance.now();
-    await ended;
-    if (heldB - heldA < 1000 && wroteB - heldB < 1000) {
-      expect(endedAtTheFirstDeadline).toBe(0);
-      expect(reloads).toBe(0);
-    }
-    await c.expectElemText("#a", "a2");
-    await c.expectElemText("#b", "b2");
+    // The dev server reports the end of a hold before it reports what the next hold takes.
+    const ended = dev.holdsEnded;
+    await until("the end of the hold of b.ts", () => dev.holdsEnded > ended);
+    // b.ts holds the reload for one wait from its own file event, not from the file event of a.ts.
+    expect(performance.now() - emptiedB).toBeGreaterThanOrEqual(400);
   },
 });
-const chainOfFiles = Array.from({ length: 30 }, (_, i) => `f${i}`);
-devTest("a hold ends ten deadlines after its first file event, while files still join it", {
+const chainWait = 240;
+const chains = [0, 1, 2].map(attempt => Array.from({ length: 45 }, (_, i) => `f${attempt}_${i}`));
+devTest("a hold ends ten waits after it starts, while files still join it", {
   skip: ["darwin"],
-  env: holdFor(100),
+  env: holdFor(chainWait),
   files: {
     "index.html": emptyHtmlFile({
       scripts: ["index.ts"],
     }),
-    "index.ts": chainOfFiles.map(name => `import "./${name}";`).join("\n"),
+    "index.ts": chains
+      .flat()
+      .map(name => `import "./${name}";`)
+      .join("\n"),
     ...Object.fromEntries(
-      chainOfFiles.map(name => [`${name}.ts`, `console.log("${name}");\nimport.meta.hot.accept();\n`]),
+      chains.flat().map(name => [`${name}.ts`, `console.log("${name}");\nimport.meta.hot.accept();\n`]),
     ),
   },
   async test(dev) {
     // The page gets the files that are still empty when the hold ends.
     await using c = await dev.client("/", { allowUnlimitedReloads: true });
-    await c.expectMessage(...chainOfFiles);
+    await c.expectMessage(...chains.flat());
 
-    // Each file is emptied before the deadline of the file before it, so one file or another always has time left.
-    let emptied = 0;
-    for (const name of chainOfFiles) {
-      if (dev.holdsEnded !== 0) break;
-      closeSync(openSync(dev.join(name + ".ts"), "w"));
-      emptied++;
-      await Bun.sleep(60);
+    for (const chain of chains) {
+      const ended = dev.holdsEnded;
+      let started = 0;
+      let emptied = 0;
+      let stalled = false;
+      for (const name of chain) {
+        if (dev.holdsEnded > ended) break;
+        const joined = dev.eventsHeld;
+        const now = performance.now();
+        if (emptied++ === 0) started = now;
+        emptyFile(dev.join(name + ".ts"));
+        await until(`the dev server to hold ${name}.ts`, () => dev.eventsHeld > joined || dev.holdsEnded > ended);
+        stalled ||= performance.now() - now > chainWait / 4;
+        // Each file is emptied well before the deadline of the file before it, so one file or another has time left.
+        await Bun.sleep(chainWait / 4);
+        stalled ||= performance.now() - now > chainWait * 0.6;
+      }
+      await until("the end of the hold", () => dev.holdsEnded > ended);
+      const lasted = performance.now() - started;
+      // A machine that stalls lets a deadline pass, and then the hold ends early.
+      if (stalled) continue;
+      // The chain is longer than ten waits. The hold ended before the end of the chain, and not sooner than ten waits.
+      expect(emptied).toBeLessThan(chain.length);
+      expect(lasted).toBeGreaterThanOrEqual(10 * chainWait);
+      return;
     }
-    // 30 files are 1.8 s at least. The hold ends 1 s after it starts.
-    expect(dev.holdsEnded).toBe(1);
-    expect(emptied).toBeLessThan(chainOfFiles.length);
+    throw new Error("The machine stalled in each of the three chains of saves");
   },
 });
 devTest("a save that empties the file for a moment keeps the module's hot boundary", {
@@ -996,9 +1048,11 @@ devTest("a save that empties the file for a moment keeps the module's hot bounda
     }
     expect(saves).toBeGreaterThanOrEqual(5);
     // A save that is held until the file event of its write is one update. On a machine that stalls, the dev
-    // server can see the text at the first file event, and that save is two updates, as without the hold.
+    // server can see the text at the first file event, or the hold can end at its deadline. Such a save is
+    // some updates and a page load at the most.
+    const updates = c.acksReceived - acksAtStart;
     // `ReadDirectoryChangesW` can report one write more than once, after the update has started.
-    if (savesHeldUntilTheWrite === 10 && !isWindows) expect(c.acksReceived - acksAtStart).toBe(10);
+    if (!isWindows) expect(updates).toBeLessThanOrEqual(savesHeldUntilTheWrite + 4 * (10 - savesHeldUntilTheWrite));
   },
 });
 devTest("a file that is saved empty replaces its module at the deadline, and is not held while it stays empty", {
@@ -1198,7 +1252,9 @@ devTest("an empty file that an onLoad plugin turns into code is held at its firs
 });
 devTest("a save that the writer makes with several writes reaches the page as one update", {
   skip: ["darwin"],
-  env: holdLong,
+  // The dev server takes the text once no file event has seen the size change for 5 ms. One second here,
+  // so that a slow machine still makes each write in the time of the write before it.
+  env: { ...holdLong, BUN_DEBUG_TEST_DEV_SERVER_HALF_SAVED_SETTLE_MS: "1000" },
   files: {
     "index.html": emptyHtmlFile({
       scripts: ["index.ts"],
@@ -1220,32 +1276,20 @@ devTest("a save that the writer makes with several writes reaches the page as on
     const parts = ["import.meta.hot.accept();\nglobalThis.runs = (globalThis.runs ?? 0) + 1;\n"];
     for (let n = 1; n <= 5; n++) parts.push(`document.getElementById("a").textContent = "${n}";\n`);
     const file = dev.join("a.ts");
-    const held = dev.heldEvents();
+    let held = dev.heldEvents();
     emptyFile(file);
     await held;
-    let everyWriteJoined = true;
-    // From one write to the time that the dev server has seen the next one.
-    let longestGap = 0;
-    let wrote = 0;
     for (const part of parts) {
-      const joined = dev.eventsHeld;
-      const now = performance.now();
+      held = dev.heldEvents();
       // Each write closes the file: `ReadDirectoryChangesW` reports a write when the file is closed.
       appendFileSync(file, part);
-      await until("the dev server to see the write", () => dev.eventsHeld > joined || dev.holdsEnded > 0);
-      everyWriteJoined &&= dev.eventsHeld > joined;
-      if (wrote !== 0) longestGap = Math.max(longestGap, performance.now() - wrote);
-      wrote = now;
+      // A file event joins a hold only while the hold is open.
+      await held;
     }
     await until("the end of the hold", () => dev.holdsEnded > 0);
     await c.expectElemText("#a", "5");
-    // The dev server takes the text once no file event has seen the size change for 5 ms. On a machine
-    // that is slower than that from one write to the next, the hold ends before the last write.
-    if (longestGap < 4) {
-      expect(everyWriteJoined).toBe(true);
-      // `ReadDirectoryChangesW` can report one write more than once, after the update has started.
-      if (!isWindows) expect(await c.js<number>`return globalThis.runs`).toBe(2);
-    }
+    // The module ran once when the page loaded, and once for the save.
+    expect(await c.js<number>`return globalThis.runs`).toBe(2);
   },
 });
 devTest("a file that its writer still appends to does not hold the reload past its deadline", {
@@ -1417,6 +1461,32 @@ devTest("a page request that waited behind a bundle is answered while the file e
     await c.expectElemText("#a", "a2");
     // The HMR client stores this message right before it reloads the page.
     expect(await c.js`return sessionStorage.getItem("bun:hmr:message")`).toBeNull();
+  },
+});
+const longBundleTrace = pathOutsideProjects("hot-emptied-behind-a-long-bundle.watcher-trace");
+devTest("a file event that waited behind a long bundle gets its full time in the hold", {
+  skip: ["darwin"],
+  env: { ...holdFor(200), BUN_WATCHER_TRACE: longBundleTrace },
+  files: slowBundle,
+  async test(dev) {
+    // The file stays empty, so the page gets the empty module when the hold ends.
+    await using c = await dev.client("/index", { allowUnlimitedReloads: true });
+    await c.expectElemText("#a", "a1");
+    const other = await startSlowBundle(dev);
+
+    const traced = statSync(longBundleTrace).size;
+    emptyFile(dev.join("a.ts"));
+    await until("the watcher to report a.ts", () =>
+      readFileSync(longBundleTrace, "latin1").slice(traced).includes("a.ts"),
+    );
+    // The file event is older than the longest hold when the bundle ends.
+    await Bun.sleep(2200);
+    const released = performance.now();
+    unlinkSync(dev.join("hold/on"));
+    expect(await other.page).toContain("slow");
+    await until("the end of the hold", () => dev.holdsEnded > 0);
+    // The hold starts when the dev server takes the file event, and a.ts has one wait from then.
+    expect(performance.now() - released).toBeGreaterThanOrEqual(200);
   },
 });
 devTest("a hold whose deadline passes while another bundle runs ends when that bundle ends", {

@@ -568,7 +568,7 @@ pub(crate) struct DevServer {
     pub(crate) testing_batch_events: TestingBatchEvents,
     pub(crate) half_saved_hold: Option<HalfSavedHold>,
     pub(crate) half_saved_hold_timer: EventLoopTimer,
-    /// The files that a hold left empty or missing. No file event has seen bytes in them since.
+    /// The files that a hold left empty. No file event has seen bytes in them since.
     pub(crate) files_left_empty: StringArrayHashMap<()>,
 
     /// Number of bundles that have been executed. This is currently not read, but

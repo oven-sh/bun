@@ -365,12 +365,16 @@ describe("dev server", () => {
     using dir = project({
       ...files,
       "index.css": `@import "tailwindcss";`,
-      "app.ts": `document.body.className = "underline";`,
+      "app.ts": `import lib from "lib"; document.body.className = "underline " + lib;`,
+      // The scan of the file system skips node_modules, so this comes from the native hook or not at all.
+      "node_modules/lib/package.json": `{ "name": "lib", "main": "index.js" }`,
+      "node_modules/lib/index.js": `export default "overline";`,
     });
     await using server = await serve(dir.root);
 
     const { css } = await server.page();
     expect(css).toContain(".underline {");
+    expect(css).toContain(".overline {");
     expect(css).not.toContain(".line-through");
 
     dir.write("app.ts", `document.body.className = "line-through";`);

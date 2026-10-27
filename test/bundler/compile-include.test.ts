@@ -1,0 +1,710 @@
+// https://github.com/oven-sh/bun/issues/11732
+//
+// `--include <path|glob>` / `Bun.build({ compile: { include } })` embed extra files in a
+// `--compile` executable as lazily loaded MODULES (transpiled, resolvable by a computed
+// `import()`), distinct from `--asset` (raw bytes, read via `fs`/`Bun.file`, tested in
+// compile-asset-bunfs.test.ts). See docs/bundler/executables.mdx.
+import { describe, expect, test } from "bun:test";
+import { readdirSync, rmSync } from "fs";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { join } from "path";
+
+// `bun build --compile` copies + rewrites the whole bun binary (~1GB under
+// debug+ASAN), which blows the 5s default.
+const TIMEOUT = 60_000;
+const exe = process.platform === "win32" ? ".exe" : "";
+
+type Via = "cli" | "api";
+const vias: Via[] = ["cli", "api"];
+
+async function spawnCapture(cmd: string[], cwd: string) {
+  await using proc = Bun.spawn({ cmd, cwd, env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+// Builds `entries` into ./app through the CLI flag or through Bun.build. Returns the
+// failure text (empty on success) so rejection tests and success tests share one path.
+// `opts.target` lets a caller pin a non-default compile target (F2: an explicit
+// non-browser target must keep `compile.include` working, same as no target at all).
+async function buildEntries(
+  dir: string,
+  via: Via,
+  entries: string[],
+  include: string[],
+  opts: { bytecode?: boolean; target?: string } = {},
+) {
+  if (via === "cli") {
+    const args = include.map(p => `--include=${p}`);
+    if (opts.bytecode) args.push("--bytecode");
+    if (opts.target) args.push(`--target=${opts.target}`);
+    const { stderr, exitCode } = await spawnCapture(
+      [bunExe(), "build", "--compile", ...entries, "--outfile", "app", ...args],
+      dir,
+    );
+    return { failed: exitCode !== 0, message: stderr };
+  }
+  const script = /* js */ `
+    try {
+      const r = await Bun.build({
+        entrypoints: ${JSON.stringify(entries)},
+        bytecode: ${!!opts.bytecode},
+        ${opts.target ? `target: ${JSON.stringify(opts.target)},` : ""}
+        compile: { outfile: "app", include: ${JSON.stringify(include)} },
+      });
+      console.log(JSON.stringify({ failed: !r.success, message: r.logs.map(String).join("\\n") }));
+    } catch (e) {
+      console.log(JSON.stringify({ failed: true, message: String(e?.message ?? e) + (e?.errors ?? []).map(String).join("\\n") }));
+    }
+  `;
+  const { stdout } = await spawnCapture([bunExe(), "-e", script], dir);
+  return JSON.parse(stdout.trim());
+}
+
+async function build(dir: string, via: Via, include: string[], opts: { bytecode?: boolean; target?: string } = {}) {
+  return buildEntries(dir, via, ["./index.ts"], include, opts);
+}
+
+async function run(dir: string) {
+  // Delete every source file: an included module must resolve from the executable,
+  // never from the build directory (bytecode builds record it as import.meta.dirname).
+  for (const name of readdirSync(dir)) {
+    if (name !== "app" + exe) rmSync(join(dir, name), { recursive: true, force: true });
+  }
+  // cwd outside the build dir so the binary cannot accidentally find real files on disk
+  // (that gap is #44053 — an --external/bare-specifier resolution issue, not this feature;
+  // an --include'd module must resolve purely from $bunfs).
+  return spawnCapture(
+    [join(dir, "app" + exe)],
+    process.platform === "win32" ? process.env.TEMP || "C:\\Windows\\Temp" : "/tmp",
+  );
+}
+
+describe.concurrent("compile include", () => {
+  describe.each(vias)("via %s", via => {
+    test(
+      "a computed import() of an included directory resolves from $bunfs, and its module does not run at startup",
+      async () => {
+        using dir = tempDir(`compile-include-basic-${via}`, {
+          "index.ts": /* ts */ `
+            import { join } from "path";
+            const name = "target";
+            // Built from a runtime string, so the bundler cannot follow it statically.
+            const mod = await import(join(import.meta.dirname, "plugins", name + ".js"));
+            console.log(JSON.stringify({ value: mod.default, sawMarker: globalThis.__marker === true }));
+          `,
+          "plugins/target.js": /* js */ `
+            globalThis.__marker = true;
+            export default "included-value";
+          `,
+        });
+
+        const built = await build(String(dir), via, ["./plugins"]);
+        expect(built).toEqual({ failed: false, message: expect.any(String) });
+        const { stdout, stderr, exitCode } = await run(String(dir));
+        expect(stderr.trim()).toBe("");
+        // The marker is observed after import() evaluated the module, so it only proves
+        // the module ran; "not at startup" is the next test.
+        expect(JSON.parse(stdout.trim())).toEqual({ value: "included-value", sawMarker: true });
+        expect(exitCode).toBe(0);
+      },
+      TIMEOUT,
+    );
+
+    test(
+      "an included module is not executed unless something imports it",
+      async () => {
+        using dir = tempDir(`compile-include-not-eager-${via}`, {
+          "index.ts": /* ts */ `
+            import { join } from "path";
+            // Nothing above this line imports plugins/*.
+            const before = globalThis.__marker === true;
+            await import(join(import.meta.dirname, "plugins", "target.js"));
+            console.log(JSON.stringify({ before, after: globalThis.__marker === true }));
+          `,
+          "plugins/target.js": `globalThis.__marker = true; export default 1;`,
+          "plugins/other.js": `throw new Error("other.js must not run");`,
+        });
+
+        expect((await build(String(dir), via, ["./plugins/*.js"])).failed).toBe(false);
+        const { stdout, stderr, exitCode } = await run(String(dir));
+        expect(stderr.trim()).toBe("");
+        expect(JSON.parse(stdout.trim())).toEqual({ before: false, after: true });
+        expect(exitCode).toBe(0);
+      },
+      TIMEOUT,
+    );
+
+    test(
+      "directories include recursively and a glob matches only its own files",
+      async () => {
+        using dir = tempDir(`compile-include-dir-glob-${via}`, {
+          "index.ts": /* ts */ `
+            import { join } from "path";
+            const results: Record<string, string> = {};
+            for (const rel of ["plugins/sub/nested.js", "handlers/get.js", "handlers/post.md.js", "handlers/deep/x.js"]) {
+              try {
+                results[rel] = (await import(join(import.meta.dirname, rel))).default;
+              } catch {
+                results[rel] = "missing";
+              }
+            }
+            console.log(JSON.stringify(results));
+          `,
+          "plugins/sub/nested.js": `export default "from-dir";`,
+          "handlers/get.js": `export default "from-glob";`,
+          "handlers/post.md.js": `export default "from-glob-too";`,
+          "handlers/deep/x.js": `export default "not-matched";`,
+        });
+
+        expect((await build(String(dir), via, ["./plugins", "./handlers/*.js"])).failed).toBe(false);
+        const { stdout, stderr, exitCode } = await run(String(dir));
+        expect(stderr.trim()).toBe("");
+        expect(JSON.parse(stdout.trim())).toEqual({
+          "plugins/sub/nested.js": "from-dir",
+          "handlers/get.js": "from-glob",
+          "handlers/post.md.js": "from-glob-too",
+          "handlers/deep/x.js": "missing",
+        });
+        expect(exitCode).toBe(0);
+      },
+      TIMEOUT,
+    );
+
+    test(
+      "a glob walks from its literal directory prefix and needs no leading ./",
+      async () => {
+        using dir = tempDir(`compile-include-glob-prefix-${via}`, {
+          "index.ts": /* ts */ `
+            import { join } from "path";
+            const results: Record<string, string> = {};
+            for (const rel of ["a/b/x.js", "a/b/c/y.js", "a/z.js", "other/w.js"]) {
+              try {
+                results[rel] = (await import(join(import.meta.dirname, rel))).default;
+              } catch {
+                results[rel] = "missing";
+              }
+            }
+            console.log(JSON.stringify(results));
+          `,
+          "a/b/x.js": `export default "x";`,
+          "a/b/c/y.js": `export default "y";`,
+          "a/z.js": `export default "z";`,
+          "other/w.js": `export default "w";`,
+        });
+
+        expect((await build(String(dir), via, ["a/b/*.js"])).failed).toBe(false);
+        const { stdout, stderr, exitCode } = await run(String(dir));
+        expect(stderr.trim()).toBe("");
+        expect(JSON.parse(stdout.trim())).toEqual({
+          "a/b/x.js": "x",
+          "a/b/c/y.js": "missing",
+          "a/z.js": "missing",
+          "other/w.js": "missing",
+        });
+        expect(exitCode).toBe(0);
+      },
+      TIMEOUT,
+    );
+
+    test(
+      "a computed import() of a file outside the include set still fails (negative control)",
+      async () => {
+        using dir = tempDir(`compile-include-negative-${via}`, {
+          "index.ts": /* ts */ `
+            import { join } from "path";
+            try {
+              await import(join(import.meta.dirname, "plugins", "target.js"));
+              console.log(JSON.stringify({ threw: false }));
+            } catch (e: any) {
+              const kept = (await import(join(import.meta.dirname, "other", "keep.js"))).default;
+              console.log(JSON.stringify({ threw: true, hasMessage: typeof e.message === "string", kept }));
+            }
+          `,
+          "plugins/target.js": `export default "not-included";`,
+          "other/keep.js": `export default "included";`,
+        });
+
+        expect((await build(String(dir), via, ["./other"])).failed).toBe(false);
+        const { stdout, stderr, exitCode } = await run(String(dir));
+        expect(stderr.trim()).toBe("");
+        expect(JSON.parse(stdout.trim())).toEqual({ threw: true, hasMessage: true, kept: "included" });
+        expect(exitCode).toBe(0);
+      },
+      TIMEOUT,
+    );
+
+    test(
+      "include works together with bytecode",
+      async () => {
+        using dir = tempDir(`compile-include-bytecode-${via}`, {
+          "index.ts": /* ts */ `
+            // bytecode emits CJS: no top-level await, and import.meta.dirname is the
+            // build directory, so resolve relative to the module instead.
+            async function main() {
+              const name = "target";
+              const mod = await import("./plugins/" + name + ".js");
+              console.log(JSON.stringify({ value: mod.default }));
+            }
+            main();
+          `,
+          "plugins/target.js": `export default "included-value";`,
+        });
+
+        expect((await build(String(dir), via, ["./plugins"], { bytecode: true })).failed).toBe(false);
+        const { stdout, stderr, exitCode } = await run(String(dir));
+        expect(stderr.trim()).toBe("");
+        expect(JSON.parse(stdout.trim())).toEqual({ value: "included-value" });
+        expect(exitCode).toBe(0);
+      },
+      TIMEOUT,
+    );
+
+    test.each([
+      ["./does-not-exist", "failed to read --include path"],
+      ["./plugins/*.md", "matched no files"],
+    ])(
+      "rejects %s",
+      async (pattern, expected) => {
+        using dir = tempDir(`compile-include-reject-${via}`, {
+          "index.ts": `console.log("x");`,
+          "plugins/target.js": `export default 1;`,
+        });
+        const built = await build(String(dir), via, [pattern]);
+        expect(built.message).toContain(expected);
+        expect(built.failed).toBe(true);
+      },
+      TIMEOUT,
+    );
+
+    // On Windows `\` separates path components, so the glob must match; elsewhere it
+    // escapes the `*`, so the pattern is the literal file name `plugins*.js` and matches nothing.
+    test(
+      "a backslash-separated glob follows the platform's separator rules",
+      async () => {
+        using dir = tempDir(`compile-include-backslash-${via}`, {
+          "index.ts": /* ts */ `
+            async function main() {
+              const mod = await import("./plugins/" + "target" + ".js");
+              console.log(JSON.stringify({ value: mod.default }));
+            }
+            main();
+          `,
+          "plugins/target.js": `export default "included-value";`,
+        });
+        const built = await build(String(dir), via, ["plugins\\*.js"]);
+        if (process.platform === "win32") {
+          expect(built.failed).toBe(false);
+          const { stdout, exitCode } = await run(String(dir));
+          expect(JSON.parse(stdout.trim())).toEqual({ value: "included-value" });
+          expect(exitCode).toBe(0);
+        } else {
+          expect(built.message).toContain("matched no files");
+          expect(built.failed).toBe(true);
+        }
+      },
+      TIMEOUT,
+    );
+
+    // `..` that climbs above the cwd is the same escape as a leading `/`, just spelled
+    // differently — reject it the same way, for a literal path, a directory, and a glob.
+    test(
+      "rejects a literal path that climbs above the cwd",
+      async () => {
+        using dir = tempDir(`compile-include-dotdot-literal-${via}`, {
+          "index.ts": `console.log("x");`,
+        });
+        const built = await build(String(dir), via, ["../etc/passwd"]);
+        expect(built.message).toContain('--include pattern "../etc/passwd" must not escape cwd');
+        expect(built.failed).toBe(true);
+      },
+      TIMEOUT,
+    );
+
+    test(
+      "rejects a directory that climbs above the cwd",
+      async () => {
+        using dir = tempDir(`compile-include-dotdot-dir-${via}`, {
+          "index.ts": `console.log("x");`,
+        });
+        const built = await build(String(dir), via, ["../../etc"]);
+        expect(built.message).toContain('--include pattern "../../etc" must not escape cwd');
+        expect(built.failed).toBe(true);
+      },
+      TIMEOUT,
+    );
+
+    test(
+      "rejects a glob that climbs above the cwd",
+      async () => {
+        using dir = tempDir(`compile-include-dotdot-glob-${via}`, {
+          "index.ts": `console.log("x");`,
+        });
+        const built = await build(String(dir), via, ["../*.js"]);
+        expect(built.message).toContain('--include pattern "../*.js" must not escape cwd');
+        expect(built.failed).toBe(true);
+      },
+      TIMEOUT,
+    );
+
+    // A `..` that nets back inside the cwd is not an escape — reject only what actually
+    // climbs above the cwd, not the token itself.
+    test(
+      "accepts a glob whose .. nets back inside the cwd",
+      async () => {
+        using dir = tempDir(`compile-include-dotdot-netzero-${via}`, {
+          "index.ts": /* ts */ `
+            const mod = await import("./plugins/" + "target" + ".js");
+            console.log(JSON.stringify({ value: mod.default }));
+          `,
+          "plugins/target.js": `export default "included-value";`,
+        });
+        const built = await build(String(dir), via, ["./plugins/../plugins/*.js"]);
+        expect(built).toEqual({ failed: false, message: expect.any(String) });
+        const { stdout, stderr, exitCode } = await run(String(dir));
+        expect(stderr.trim()).toBe("");
+        expect(JSON.parse(stdout.trim())).toEqual({ value: "included-value" });
+        expect(exitCode).toBe(0);
+      },
+      TIMEOUT,
+    );
+
+    // Patterns are relative to the cwd: an absolute path is rejected, glob or not.
+    test(
+      "rejects an absolute pattern",
+      async () => {
+        using dir = tempDir(`compile-include-absolute-${via}`, {
+          "index.ts": `console.log("x");`,
+          "plugins/target.js": `export default 1;`,
+        });
+        const built = await build(String(dir), via, ["/abs/*.js"]);
+        expect(built.message).toContain('--include pattern "/abs/*.js" must be relative to cwd');
+        expect(built.failed).toBe(true);
+      },
+      TIMEOUT,
+    );
+
+    // `.//x` is `./x`: a doubled slash after the `./` prefix must not turn the pattern
+    // absolute once the prefix is dropped. The prefix forms below all look relative.
+    test.each([".//", "././/", ".///", ".//./"])(
+      "a glob written as %s<outside dir>/*.js is not resolved outside the cwd",
+      async prefix => {
+        using outside = tempDir(`compile-include-outside-${via}`, { "leak.js": `export default "leaked";` });
+        using dir = tempDir(`compile-include-doubleslash-${via}`, { "index.ts": `console.log("x");` });
+        const rel = String(outside).replace(/^[/\\]+/, "");
+        const built = await build(String(dir), via, [`${prefix}${rel}/*.js`]);
+        expect(built.failed).toBe(true);
+        expect(built.message).toMatch(
+          isWindows ? /must be relative to cwd/ : /failed to read --include path/,
+        );
+      },
+      TIMEOUT,
+    );
+
+    test.skipIf(isWindows)(
+      "a glob with a doubled slash after ./ stays relative to the cwd",
+      async () => {
+        using dir = tempDir(`compile-include-doubleslash-ok-${via}`, {
+          "index.ts": /* ts */ `
+            const mod = await import("./plugins/" + "target" + ".js");
+            console.log(JSON.stringify({ value: mod.default }));
+          `,
+          "plugins/target.js": `export default "included-value";`,
+        });
+        const built = await build(String(dir), via, [".//plugins/*.js"]);
+        expect(built).toEqual({ failed: false, message: expect.any(String) });
+        const { stdout, stderr, exitCode } = await run(String(dir));
+        expect(stderr.trim()).toBe("");
+        expect(JSON.parse(stdout.trim())).toEqual({ value: "included-value" });
+        expect(exitCode).toBe(0);
+      },
+      TIMEOUT,
+    );
+
+    test.skipIf(!isWindows)(
+      "rejects a drive-letter pattern behind a .\\ prefix",
+      async () => {
+        using dir = tempDir(`compile-include-dotdrive-${via}`, { "index.ts": `console.log("x");` });
+        const built = await build(String(dir), via, [".\\C:\\x\\*.js"]);
+        expect(built.message).toContain("must be relative to cwd");
+        expect(built.failed).toBe(true);
+      },
+      TIMEOUT,
+    );
+
+    test.skipIf(!isWindows)(
+      "rejects an absolute drive-letter pattern",
+      async () => {
+        using dir = tempDir(`compile-include-drive-${via}`, {
+          "index.ts": `console.log("x");`,
+          "plugins/target.js": `export default 1;`,
+        });
+        const built = await build(String(dir), via, ["C:\\x\\*.js"]);
+        expect(built.message).toContain('must be relative to cwd');
+        expect(built.failed).toBe(true);
+      },
+      TIMEOUT,
+    );
+
+    // `:` is only a drive separator on Windows; a relative name containing one is valid elsewhere.
+    test.skipIf(isWindows)(
+      "accepts a relative path with a colon in its second character",
+      async () => {
+        using dir = tempDir(`compile-include-colon-${via}`, {
+          "index.ts": /* ts */ `
+            import { join } from "path";
+            const mod = await import(join(import.meta.dirname, "c:d", "target.js"));
+            console.log(JSON.stringify({ value: mod.default }));
+          `,
+          "c:d/target.js": `export default "included-value";`,
+        });
+        const built = await build(String(dir), via, ["./c:d"]);
+        expect(built).toEqual({ failed: false, message: expect.any(String) });
+        const { stdout, stderr, exitCode } = await run(String(dir));
+        expect(stderr.trim()).toBe("");
+        expect(JSON.parse(stdout.trim())).toEqual({ value: "included-value" });
+        expect(exitCode).toBe(0);
+      },
+      TIMEOUT,
+    );
+
+    // Same name without the `./`: still a relative path off Windows.
+    test.skipIf(isWindows)(
+      "accepts a bare relative path with a colon in its second character",
+      async () => {
+        using dir = tempDir(`compile-include-bare-colon-${via}`, {
+          "index.ts": /* ts */ `
+            import { join } from "path";
+            const mod = await import(join(import.meta.dirname, "c:d", "target.js"));
+            console.log(JSON.stringify({ value: mod.default }));
+          `,
+          "c:d/target.js": `export default "included-value";`,
+        });
+        const built = await build(String(dir), via, ["c:d"]);
+        expect(built).toEqual({ failed: false, message: expect.any(String) });
+        const { stdout, stderr, exitCode } = await run(String(dir));
+        expect(stderr.trim()).toBe("");
+        expect(JSON.parse(stdout.trim())).toEqual({ value: "included-value" });
+        expect(exitCode).toBe(0);
+      },
+      TIMEOUT,
+    );
+
+    // On Windows `c:d` is a drive-relative path, which is not relative to the cwd.
+    test.skipIf(!isWindows)(
+      "rejects a bare drive-relative pattern",
+      async () => {
+        using dir = tempDir(`compile-include-drive-relative-${via}`, {
+          "index.ts": `console.log("x");`,
+          "c/d.js": `export default 1;`,
+        });
+        const built = await build(String(dir), via, ["c:d"]);
+        expect(built.message).toContain('--include pattern "c:d" must be relative to cwd');
+        expect(built.failed).toBe(true);
+      },
+      TIMEOUT,
+    );
+
+    // Backslashes separate components on Windows, including next to a `./` prefix.
+    test.skipIf(!isWindows)(
+      "a glob mixing / and \\ separators matches",
+      async () => {
+        using dir = tempDir(`compile-include-mixed-${via}`, {
+          "index.ts": /* ts */ `
+            const mod = await import("./plugins/" + "target" + ".js");
+            console.log(JSON.stringify({ value: mod.default }));
+          `,
+          "plugins/target.js": `export default "included-value";`,
+        });
+        const built = await build(String(dir), via, [".\\plugins/*.js"]);
+        expect(built.failed).toBe(false);
+        const { stdout, exitCode } = await run(String(dir));
+        expect(JSON.parse(stdout.trim())).toEqual({ value: "included-value" });
+        expect(exitCode).toBe(0);
+      },
+      TIMEOUT,
+    );
+  });
+
+  test(
+    "the CLI rejects --include without --compile",
+    async () => {
+      using dir = tempDir("compile-include-no-compile", {
+        "index.ts": `console.log("x");`,
+        "plugins/target.js": `export default 1;`,
+      });
+      const { stderr, exitCode } = await spawnCapture(
+        [bunExe(), "build", "./index.ts", "--include", "./plugins"],
+        String(dir),
+      );
+      expect(stderr).toContain("--include requires --compile");
+      expect(exitCode).not.toBe(0);
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "the CLI rejects --include with --compile --target=browser",
+    async () => {
+      using dir = tempDir("compile-include-browser-cli", {
+        "index.html": `<!doctype html>`,
+        "plugins/target.js": `export default 1;`,
+      });
+      const { stderr, exitCode } = await spawnCapture(
+        [bunExe(), "build", "--compile", "--target=browser", "./index.html", "--include", "./plugins/target.js"],
+        String(dir),
+      );
+      expect(stderr).toContain("cannot use --compile --target browser with --include");
+      expect(exitCode).not.toBe(0);
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "Bun.build rejects compile.include with target 'browser' for standalone HTML",
+    async () => {
+      using dir = tempDir("compile-include-browser-api", {
+        "index.html": `<!doctype html>`,
+        "plugins/target.js": `export default 1;`,
+      });
+      const script = /* js */ `
+        try {
+          await Bun.build({ entrypoints: ["./index.html"], target: "browser", compile: { include: ["./plugins"] } });
+          console.log("no error");
+        } catch (e) { console.log(String(e.message)); }
+      `;
+      const { stdout } = await spawnCapture([bunExe(), "-e", script], String(dir));
+      expect(stdout.trim()).toContain("Cannot use compile.include with target 'browser'");
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "the CLI rejects --include with --compile --target=browser and a non-HTML entrypoint",
+    async () => {
+      // Regression: the guard above only fired when every current entrypoint already
+      // ended in .html, so a non-HTML entry slipped past it.
+      using dir = tempDir("compile-include-browser-cli-nonhtml", {
+        "index.ts": `console.log(1);`,
+        "plugins/target.js": `export default 1;`,
+      });
+      const { stderr, exitCode } = await spawnCapture(
+        [bunExe(), "build", "--compile", "--target=browser", "./index.ts", "--include", "./plugins/target.js"],
+        String(dir),
+      );
+      expect(stderr).toContain("cannot use --compile --target browser with --include");
+      expect(exitCode).not.toBe(0);
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "Bun.build rejects compile.include with target 'browser' and a non-HTML entrypoint",
+    async () => {
+      using dir = tempDir("compile-include-browser-api-nonhtml", {
+        "index.ts": `console.log(1);`,
+        "plugins/target.js": `export default 1;`,
+      });
+      const script = /* js */ `
+        try {
+          await Bun.build({ entrypoints: ["./index.ts"], target: "browser", compile: { include: ["./plugins"] } });
+          console.log("no error");
+        } catch (e) { console.log(String(e.message)); }
+      `;
+      const { stdout } = await spawnCapture([bunExe(), "-e", script], String(dir));
+      expect(stdout.trim()).toContain("Cannot use compile.include with target 'browser'");
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "Bun.build rejects compile.include with no target, all-HTML entrypoints, and an .html include",
+    async () => {
+      // Regression (F1): `target` defaults to `Browser` when unset, and further down
+      // (`is_standalone_html`, below the include-parsing block) an all-HTML entrypoint
+      // list with no explicit target still infers a standalone-HTML build. Gating this
+      // guard on `did_set_target` alone let that exact case through: the entry list
+      // stayed all-HTML, so the build silently became standalone HTML with the `.html`
+      // include bundled eagerly instead of rejected as a lazily-loaded module.
+      using dir = tempDir("compile-include-notarget-allhtml", {
+        "index.html": `<!doctype html>`,
+        "extra.html": `<!doctype html>`,
+      });
+      const script = /* js */ `
+        try {
+          await Bun.build({ entrypoints: ["./index.html"], compile: { include: ["./extra.html"] } });
+          console.log("no error");
+        } catch (e) { console.log(String(e.message)); }
+      `;
+      const { stdout } = await spawnCapture([bunExe(), "-e", script], String(dir));
+      expect(stdout.trim()).toContain("Cannot use compile.include with target 'browser'");
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "Bun.build allows compile.include with no target and a mixed HTML/non-HTML entrypoint list",
+    async () => {
+      // The no-target guard above must reject only when EVERY entrypoint is `.html`.
+      // A mixed list (one `.html` entry alongside a non-HTML one) still infers a plain
+      // Bun executable, not standalone HTML, so `compile.include` must keep working
+      // exactly as it does for an all-non-HTML entrypoint list — this is the boundary
+      // a buggy "any entrypoint is .html" check (instead of "every") would get wrong.
+      using dir = tempDir("compile-include-mixed-entries", {
+        "index.ts": /* ts */ `
+          const mod = await import("./plugins/" + "target" + ".js");
+          console.log(JSON.stringify({ value: mod.default }));
+        `,
+        "index.html": `<!doctype html>`,
+        "plugins/target.js": `export default "included-value";`,
+      });
+      const built = await buildEntries(String(dir), "api", ["./index.ts", "./index.html"], ["./plugins"]);
+      expect(built).toEqual({ failed: false, message: expect.any(String) });
+      const { stdout, exitCode } = await run(String(dir));
+      expect(JSON.parse(stdout.trim())).toEqual({ value: "included-value" });
+      expect(exitCode).toBe(0);
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "Bun.build embeds compile.include lazily with an explicit non-browser target",
+    async () => {
+      // F2 (test gap / mutation survivor): the only existing negative test used an
+      // explicit `target: "browser"`, and the only positive test used the default
+      // target. Neither covers an explicit non-browser target, so the mutation
+      // `if (did_set_target) reject` (dropping the `target == Browser` comparison)
+      // stayed green while it would reject every explicitly-targeted include build.
+      using dir = tempDir("compile-include-explicit-bun-target", {
+        "index.ts": /* ts */ `
+          import { join } from "path";
+          const mod = await import(join(import.meta.dirname, "plugins", "target.js"));
+          console.log(JSON.stringify({ value: mod.default }));
+        `,
+        "plugins/target.js": `export default "included-value";`,
+      });
+      const built = await build(String(dir), "api", ["./plugins"], { target: "bun" });
+      expect(built).toEqual({ failed: false, message: expect.any(String) });
+      const { stdout, exitCode } = await run(String(dir));
+      expect(JSON.parse(stdout.trim())).toEqual({ value: "included-value" });
+      expect(exitCode).toBe(0);
+    },
+    TIMEOUT,
+  );
+
+  test(
+    "Bun.build accepts compile.include with an explicit cross-compile target",
+    async () => {
+      // Same F2 gap as above, for a cross-target build (`bun-linux-x64`). The produced
+      // executable is for a different platform than the build host, so this only
+      // checks that the build itself succeeds — it is never run.
+      using dir = tempDir("compile-include-cross-target", {
+        "index.ts": `console.log(1);`,
+        "plugins/target.js": `export default 1;`,
+      });
+      const built = await build(String(dir), "api", ["./plugins"], { target: "bun-linux-x64" });
+      expect(built).toEqual({ failed: false, message: expect.any(String) });
+    },
+    TIMEOUT,
+  );
+});

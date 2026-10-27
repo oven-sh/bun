@@ -3484,6 +3484,30 @@ console.log("abc");
     },
     run: { stdout: "abc" },
   });
+  // The same through the CLI, which runs the macro in its own VM. The macro
+  // imports a helper, so that VM resolves a relative import of its own too.
+  itBundled("edgecase/MacroWithWildcardExternalCli", {
+    files: {
+      ...relativeMacroFiles,
+      "/src/macro.ts": /* js */ `
+        import { wrap } from "./helper.ts";
+        export function identity(arg: any) {
+          return wrap(arg);
+        }
+      `,
+      "/src/helper.ts": /* js */ `
+        export const wrap = (arg: any) => arg;
+      `,
+    },
+    entryPoints: ["/src/entry.ts"],
+    target: "bun",
+    backend: "cli",
+    external: ["*"],
+    onAfterBundle(api) {
+      api.expectFile("out.js").toBe(macroInlinedOutput);
+    },
+    run: { stdout: "abc" },
+  });
   // A path is normalized against the cwd into the absolute-path set. That
   // check already returned the absolute path, so the macro loaded before the
   // fix too. This case guards the behavior.

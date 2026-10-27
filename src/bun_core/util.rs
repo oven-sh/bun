@@ -1,66 +1,3 @@
-// ─── byte ↔ typed-slice reinterpretation ─────────────────────────────────────
-/// Reinterpret `&mut [u8]` as `&mut [T]`.
-///
-/// SAFETY (caller-upheld):
-/// * `bytes.as_ptr()` must be aligned to `align_of::<T>()`. We enforce this
-///   with a hard `assert!` rather than
-///   `debug_assert!`: forming a misaligned `&mut [T]` is instant UB in Rust
-///   even if never dereferenced, so this must not be silently elided in
-///   release. The check is a single AND+CMP and every current call site is
-///   immediately followed by a syscall, so the cost is negligible.
-/// * `T` must be plain-old-data — every byte pattern in `bytes[..len/size]`
-///   must be a valid `T` (callers use `u16`/`u32` only),
-/// * the trailing `len % size_of::<T>()` bytes are silently dropped from the
-///   reinterpreted view.
-#[inline]
-pub unsafe fn bytes_as_slice_mut<T>(bytes: &mut [u8]) -> &mut [T] {
-    assert!(
-        bytes.as_ptr().cast::<T>().is_aligned(),
-        "bytes_as_slice_mut: misaligned for {}",
-        core::any::type_name::<T>(),
-    );
-    let len = bytes.len() / core::mem::size_of::<T>();
-    // SAFETY: alignment + validity preconditions documented above.
-    unsafe { core::slice::from_raw_parts_mut(bytes.as_mut_ptr().cast::<T>(), len) }
-}
-
-// ─── Unaligned<T> ─────────────────────────────────────────────────────────────
-/// Element wrapper with alignment 1. Rust references and slices require
-/// natural alignment for `T`; producing a `&[u16]` from an odd address is
-/// instant UB even if never dereferenced. `#[repr(packed)]` on this wrapper
-/// drops the alignment requirement to 1, so `&[Unaligned<T>]` is the sound
-/// translation of `[]align(1) T`. Reads/writes go through `ptr::read_unaligned`
-/// / `ptr::write_unaligned` (the compiler emits byte-wise or unaligned-load
-/// instructions as appropriate for the target).
-#[repr(C, packed)]
-#[derive(Copy, Clone)]
-pub struct Unaligned<T: Copy>(T);
-
-impl<T: Copy> Unaligned<T> {
-    #[inline(always)]
-    pub fn get(self) -> T {
-        // `self` is by-value (already moved into an aligned local), so a plain
-        // field read is fine; the `packed` repr only affects in-place borrows.
-        self.0
-    }
-
-    #[inline]
-    pub fn slice_align_cast_mut(slice: &mut [Unaligned<T>]) -> &mut [T] {
-        if slice.is_empty() {
-            return &mut [];
-        }
-        debug_assert!(
-            (slice.as_ptr() as usize).is_multiple_of(core::mem::align_of::<T>()),
-            "Unaligned::slice_align_cast_mut: pointer is not {}-byte aligned",
-            core::mem::align_of::<T>(),
-        );
-        // SAFETY: `#[repr(C, packed)]` around a single `T` gives identical size
-        // and field offset 0; the debug-asserted alignment upgrades it to `T`'s
-        // layout. `&mut` exclusivity is preserved.
-        unsafe { core::slice::from_raw_parts_mut(slice.as_mut_ptr().cast::<T>(), slice.len()) }
-    }
-}
-
 // ════════════════════════════════════════════════════════════════════════════
 // Low-tier primitives hoisted into bun_core.
 // Forward-referenced as `crate::X` by Global.rs / output.rs / fmt.rs / env.rs.
@@ -195,7 +132,7 @@ impl ZStr {
     }
     /// Borrow a NUL-terminated FFI C string as `&ZStr`, or `EMPTY` if `p` is
     /// null. Single audited funnel for the `strlen`-then-`from_raw` shape that
-    /// previously appeared as ad-hoc local helpers in libarchive / uSockets /
+    /// previously appeared as ad-hoc local helpers in uSockets /
     /// HTTPCertError. Returns `&'a ZStr` so the *caller* picks the lifetime.
     ///
     /// # Safety
@@ -467,22 +404,6 @@ impl WStr {
         // release) and `buf[..buf.len()-1]` is in-bounds by slice invariant.
         unsafe { Self::from_raw(buf.as_ptr(), buf.len() - 1) }
     }
-    /// Borrow a NUL-terminated FFI wide string as `&WStr`, or [`EMPTY`] if
-    /// `p` is null. UTF-16 mirror of [`ZStr::from_c_ptr`]; single audited
-    /// funnel for the `wcslen`-then-`from_raw` shape at libarchive `_w`
-    /// accessors and Windows path-API ingestion points.
-    ///
-    /// # Safety
-    /// If non-null, `p` must point to a NUL-terminated u16 sequence readable
-    /// for `'a`. Null is explicitly allowed (→ `WStr::EMPTY`).
-    #[inline]
-    pub unsafe fn from_ptr<'a>(p: *const u16) -> &'a WStr {
-        if p.is_null() {
-            return Self::EMPTY;
-        }
-        // SAFETY: non-null and NUL-terminated per caller contract.
-        unsafe { Self::from_raw(p, crate::ffi::wcslen(p)) }
-    }
     #[inline]
     pub const fn as_slice(&self) -> &[u16] {
         &self.0
@@ -722,7 +643,7 @@ pub use bun_alloc::SEP;
 /// is for long-lived struct fields: on Windows it is a 98 KB memset.
 ///
 /// NOTE on alignment: `os_path_kernel32` (Windows) reinterprets a
-/// `&mut PathBuffer` as `&mut [u16]` via [`bytes_as_slice_mut`]. The language
+/// `&mut PathBuffer` as `&mut [u16]` via [`cast_slice_mut`]. The language
 /// only guarantees align=1 for `[u8; N]`, so that reinterpret is guarded by a
 /// hard `assert!`. We do *not* bump this struct
 /// to `#[repr(align(2))]` because several call sites reinterpret an arbitrary
@@ -1528,7 +1449,7 @@ pub mod fd {
 }
 
 // ─── FileKind / Mode / kind_from_mode (from bun_sys) ──────────────────────
-// Pure S_IFMT arithmetic, no syscalls (libarchive_sys req).
+// Pure S_IFMT arithmetic, no syscalls.
 pub type Mode = u32; // POSIX `mode_t`
 
 /// `stat` mode-flag constants and predicates.
@@ -2702,7 +2623,15 @@ fn os_entropy(bytes: &mut [u8]) {
                 if err == libc::EINTR {
                     continue;
                 }
-                panic!("getrandom failed: errno {err}");
+                // Linux before 3.17 returns ENOSYS, and a seccomp filter can return EPERM.
+                use std::io::Read;
+                if std::fs::File::open("/dev/urandom")
+                    .and_then(|mut f| f.read_exact(&mut bytes[filled..]))
+                    .is_err()
+                {
+                    panic!("getrandom failed: errno {err}");
+                }
+                return;
             }
             filled += rc as usize;
         }
@@ -3069,59 +2998,12 @@ impl<H: core::hash::Hasher> Hasher for H {
     }
 }
 
-/// Re-export so downstream crates can write `T: bun_core::NoUninit` without a
-/// direct `bytemuck` dep.
-pub use bytemuck::NoUninit;
-
-/// Reinterpret a value's storage as a borrowed byte slice.
-///
-/// Safe: the [`bytemuck::NoUninit`] bound statically guarantees `T` is `Copy`,
-/// `'static`, and contains no uninitialized (padding) bytes, so every byte of
-/// the returned slice is initialized and reading it is defined behaviour.
-#[inline]
-pub fn bytes_of<T: bytemuck::NoUninit>(v: &T) -> &[u8] {
-    bytemuck::bytes_of(v)
-}
-
-// ─── Slice reinterpretation (canonical) ───────────────────────────────────────
-// Split by mutability, with two safety surfaces:
-//   - `cast_slice` / `cast_slice_mut`  → SAFE, bytemuck-bounded, panics on
-//     misalign or `len % size_of::<B>() != 0`. Use for Pod↔Pod (u8↔u16 etc.).
-//   - `bytes_as_slice_mut`             → UNSAFE escape hatch, unbounded `T`,
-//     TRUNCATES trailing bytes. Use only when `T` is not
-//     `AnyBitPattern` or the input length is intentionally not a multiple.
-// Every current caller targets `u16` over an even-length buffer, so the safe
-// path is the default.
-
-/// Read-only `&[A]` → `&[B]` reinterpretation. Safe: the [`bytemuck::NoUninit`] bound
-/// on `A` guarantees every source byte is initialized, and
-/// [`bytemuck::AnyBitPattern`] on `B` guarantees every byte pattern is a valid
-/// `B`. Panics if size/alignment don't divide evenly (same as `bytemuck`).
-#[inline]
-pub fn cast_slice<A: bytemuck::NoUninit, B: bytemuck::AnyBitPattern>(a: &[A]) -> &[B] {
-    bytemuck::cast_slice(a)
-}
-
-/// Mutable counterpart of [`cast_slice`]: reinterpret `&mut [A]` as `&mut [B]`.
-/// Safe: both [`bytemuck::Pod`] bounds guarantee every byte pattern is valid in
-/// both directions and there are no uninitialized bytes. Panics on misalignment
-/// or if `a.len() * size_of::<A>() % size_of::<B>() != 0` (same as `bytemuck`).
-#[inline]
-pub fn cast_slice_mut<A: bytemuck::Pod, B: bytemuck::Pod>(a: &mut [A]) -> &mut [B] {
-    bytemuck::cast_slice_mut(a)
-}
-
-/// Reinterpret `&[T]` as `&[u8]`.
-///
-/// This is [`cast_slice`] with the output type fixed to `u8`, so callers never
-/// need a `::<_, u8>` turbofish. Safe: [`bytemuck::NoUninit`] guarantees every
-/// byte of `T` is initialized; `align_of::<u8>() == 1` and
-/// `size_of::<T>() % 1 == 0` mean the bytemuck size/align checks are trivially
-/// satisfied and this never panics.
-#[inline]
-pub fn slice_as_bytes<T: bytemuck::NoUninit>(s: &[T]) -> &[u8] {
-    bytemuck::cast_slice(s)
-}
+// ─── plain-old-data casts ─────────────────────────────────────────────────────
+pub use bun_pod::{
+    AnyBitPattern, NoUninit, Pod, Unaligned, bytes_of, bytes_of_mut, cast_slice, cast_slice_mut,
+    impl_any_bit_pattern, impl_no_uninit, impl_pod, impl_zeroable, read_prefix, slice_as_bytes,
+    slice_as_bytes_mut, try_cast_slice, try_cast_slice_mut, vec_from_bytes,
+};
 
 // ─── extern_union_accessors! ──────────────────────────────────────────────────
 // Wraps each bare-union field read in a tag-asserted `unsafe` accessor so call
@@ -3211,37 +3093,10 @@ macro_rules! extern_union_accessors {
     };
 }
 
-/// Feed a value's raw bytes to a hasher. Taking a generic by-value-as-bytes
-/// safely requires a `bytemuck` bound, so this
-/// accepts anything that is itself viewable as bytes (covers the actual call
-/// sites: `u8` tags, `usize` lengths, `Index` newtypes).
+/// Feed a value's bytes to a hasher.
 #[inline]
-pub fn write_any_to_hasher<H: Hasher + ?Sized, T: AsBytes>(hasher: &mut H, thing: T) {
-    hasher.update(thing.as_bytes_for_hash());
-}
-
-/// Helper trait for `write_any_to_hasher` — "viewable as raw bytes".
-/// Blanket-implemented for all `Copy` plain-data ints and references-to-slices.
-pub trait AsBytes {
-    fn as_bytes_for_hash(&self) -> &[u8];
-}
-macro_rules! as_bytes_pod {
-    ($($t:ty),* $(,)?) => { $(
-        impl AsBytes for $t {
-            #[inline] fn as_bytes_for_hash(&self) -> &[u8] {
-                bytemuck::bytes_of(self)
-            }
-        }
-    )* }
-}
-as_bytes_pod!(
-    u8, i8, u16, i16, u32, i32, u64, i64, usize, isize, u128, i128
-);
-impl<T: AsBytes> AsBytes for &T {
-    #[inline]
-    fn as_bytes_for_hash(&self) -> &[u8] {
-        (**self).as_bytes_for_hash()
-    }
+pub fn write_any_to_hasher<H: Hasher + ?Sized, T: NoUninit>(hasher: &mut H, thing: T) {
+    hasher.update(bytes_of(&thing));
 }
 
 // ── GenericIndex ──────────────────────────────────────────────────────────
@@ -4310,7 +4165,7 @@ pub fn maybe_handle_panic_during_process_reload() {
     }
 }
 
-/// Port of `bun.reloadProcess`. `may_return == true` → returns on failure; `false` → panics.
+/// Port of `bun.reloadProcess`. `may_return == true` → returns on failure; `false` → exits with 1.
 /// `on_before_reload_process_posix` clears CLOEXEC on stdio/IPC and resets caught signal
 /// dispositions on all POSIX; the close_range sweep is Linux/BSD only.
 pub fn reload_process(clear_terminal: bool, may_return: bool) {
@@ -4402,19 +4257,26 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
         envp.push(core::ptr::null());
 
         // we must clone selfExePath in case argv[0] was not an absolute path
-        let exec_path = self_exe_path().expect("unreachable").as_ptr();
+        let exec_path = self_exe_path().expect("unreachable");
 
-        libc::execve(exec_path, newargv.as_ptr().cast(), envp.as_ptr().cast());
+        libc::execve(
+            exec_path.as_ptr(),
+            newargv.as_ptr().cast(),
+            envp.as_ptr().cast(),
+        );
         // execve only returns on error.
         let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(-1);
+        crate::err_generic!(
+            "Failed to reload \"<b>{}<r>\": {} <d>(execve)<r>",
+            bstr::BStr::new(exec_path.as_bytes()),
+            crate::ErrnoNames::SYS
+                .name(errno)
+                .unwrap_or("unknown error"),
+        );
         if may_return {
-            crate::output::pretty_errorln(format_args!(
-                "error: Failed to reload process: errno {}",
-                errno
-            ));
             return;
         }
-        panic!("Unexpected error while reloading: errno {}", errno);
+        crate::Global::exit(1);
     }
 
     #[cfg(not(any(unix, windows)))]
@@ -4834,11 +4696,7 @@ pub struct Timespec {
     pub sec: i64,
     pub nsec: i64,
 }
-// SAFETY: two `i64` fields; all-zero is the epoch.
-unsafe impl crate::ffi::Zeroable for Timespec {}
-// SAFETY: `#[repr(C)]` with two `i64` fields → size 16, align 8, no padding,
-// no interior mutability, `Copy + 'static`. Every byte is initialized.
-unsafe impl bytemuck::NoUninit for Timespec {}
+impl_pod!(Timespec);
 
 /// Lowercase alias (`bun.timespec`).
 #[allow(non_camel_case_types)]
@@ -5039,49 +4897,49 @@ pub mod timespec_mode {
 
 /// Mocked-time storage. The data lives at T0 so `Timespec::now` reads it
 /// directly; the test-runner (`useFakeTimers`) writes via `set`/`clear`
-/// from `bun_runtime::test_runner::timers::FakeTimers::CurrentTime`.
-/// Sentinel `i64::MIN` / `NaN` ⇒ not mocked.
+/// from `bun_runtime::test_runner::timers::FakeTimers`. Thread-local, like
+/// each VM's fake timer heap.
 pub mod mock_time {
-    use core::sync::atomic::{AtomicI64, AtomicU64, Ordering};
+    use core::cell::Cell;
 
-    static MOCKED_TIME_NS: AtomicI64 = AtomicI64::new(i64::MIN);
-    // Mocked wall-clock `Date.now()` in ms, stored as f64 bits; NaN = unset.
-    static MOCKED_WALL_MS: AtomicU64 = AtomicU64::new(f64::NAN.to_bits());
+    thread_local! {
+        static MOCKED_TIME_NS: Cell<Option<i64>> = const { Cell::new(None) };
+        /// Mocked wall-clock `Date.now()` in ms.
+        static MOCKED_WALL_MS: Cell<Option<f64>> = const { Cell::new(None) };
+    }
 
     /// Set the mocked monotonic time (nanoseconds). Called by fake-timers.
     #[inline]
     pub fn set(ns: i64) {
-        MOCKED_TIME_NS.store(ns, Ordering::Relaxed);
+        MOCKED_TIME_NS.set(Some(ns));
     }
     /// Clear the mocked time so `Timespec::now(AllowMockedTime)` reads the
     /// real clock again.
     #[inline]
     pub fn clear() {
-        MOCKED_TIME_NS.store(i64::MIN, Ordering::Relaxed);
+        MOCKED_TIME_NS.set(None);
     }
     /// Current mocked time, or `None` if not mocked.
     #[inline]
     pub fn get() -> Option<i64> {
-        let v = MOCKED_TIME_NS.load(Ordering::Relaxed);
-        if v == i64::MIN { None } else { Some(v) }
+        MOCKED_TIME_NS.get()
     }
     /// Set the mocked wall-clock time (`Date.now()` in ms). Called by
     /// fake-timers alongside `set` so calendar-based consumers and the
     /// monotonic timer heap move through the same mock.
     #[inline]
     pub fn set_wall_ms(ms: f64) {
-        MOCKED_WALL_MS.store(ms.to_bits(), Ordering::Relaxed);
+        MOCKED_WALL_MS.set(Some(ms));
     }
     /// Clear the mocked wall-clock time.
     #[inline]
     pub fn clear_wall() {
-        MOCKED_WALL_MS.store(f64::NAN.to_bits(), Ordering::Relaxed);
+        MOCKED_WALL_MS.set(None);
     }
     /// Current mocked wall-clock time in ms, or `None` if not mocked.
     #[inline]
     pub(crate) fn wall_ms() -> Option<f64> {
-        let v = f64::from_bits(MOCKED_WALL_MS.load(Ordering::Relaxed));
-        if v.is_nan() { None } else { Some(v) }
+        MOCKED_WALL_MS.get()
     }
 }
 
@@ -5132,13 +4990,7 @@ impl From<f16> for f32 {
         h.to_f64() as f32
     }
 }
-// SAFETY: `#[repr(transparent)]` over `u16` — every bit pattern is a valid
-// `f16`, no padding, `Copy + 'static`. Enables safe `bytemuck::cast_slice`
-// from `&[u8]` for Float16Array printing (ConsoleObject).
-unsafe impl bytemuck::Zeroable for f16 {}
-// SAFETY: `#[repr(transparent)]` over `u16` — no padding, every bit pattern is
-// valid, `Copy + Zeroable + 'static`; satisfies all `bytemuck::Pod` invariants.
-unsafe impl bytemuck::Pod for f16 {}
+impl_pod!(f16);
 impl core::fmt::Display for f16 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         self.to_f64().fmt(f)

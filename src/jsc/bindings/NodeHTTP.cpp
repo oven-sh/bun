@@ -14,21 +14,19 @@
 #include <bun-uws/src/App.h>
 #include <bun-uws/src/Http3Response.h>
 #include <bun-uws/src/Http2Context.h>
-#include "ZigGeneratedClasses.h"
 #include "ScriptExecutionContext.h"
 #include "AsyncContextFrame.h"
-#include "ZigGeneratedClasses.h"
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include "JSSocketAddressDTO.h"
 #include "node/JSNodeHTTPServerSocket.h"
 #include "node/JSNodeHTTPServerSocketPrototype.h"
+#include "GeneratedHwExports.h"
 namespace Bun {
 
 using namespace JSC;
 using namespace WebCore;
 
-BUN_DECLARE_HOST_FUNCTION(Bun__drainMicrotasksFromJS);
 extern "C" EncodedJSValue Server__setAppFlags(JSC::JSGlobalObject*, EncodedJSValue, bool require_host_header, bool use_strict_method_validation, uint8_t lenient_http_flags, bool http_allow_half_open);
 extern "C" EncodedJSValue Server__setOnClientError(JSC::JSGlobalObject*, EncodedJSValue, EncodedJSValue);
 extern "C" EncodedJSValue Server__setOnConnection(JSC::JSGlobalObject*, EncodedJSValue, EncodedJSValue);
@@ -419,7 +417,7 @@ static EncodedJSValue NodeHTTPServer__onRequest(
     const bool isCurrent = !isPipelinedDispatch || !httpResponseData->socketData;
 
     bool hasBody = false;
-    WebCore::JSNodeHTTPResponse* nodeHTTPResponseObject = uncheckedDowncast<WebCore::JSNodeHTTPResponse>(JSValue::decode(NodeHTTPResponse__createForJS(any_server, globalObject, &hasBody, request, isSSL, response, isCurrent, nodeHttpResponsePtr)));
+    JSNodeHTTPResponse* nodeHTTPResponseObject = uncheckedDowncast<JSNodeHTTPResponse>(JSValue::decode(NodeHTTPResponse__createForJS(any_server, globalObject, &hasBody, request, isSSL, response, isCurrent, nodeHttpResponsePtr)));
     if (!flatHeaders.isEmpty()) {
         NodeHTTPResponse__adoptRawRequestHeaders(*nodeHttpResponsePtr, flatHeaders.span().data(), flatHeaders.size());
     }
@@ -648,12 +646,12 @@ static void writeAutoHeaders(uWS::HttpResponse<isSSL>* response, uint32_t autoHe
 {
     if (autoHeaderBits & kAutoHeaderDate) {
         auto line = cachedDateHeaderLine();
-        response->uWS::template AsyncSocket<isSSL>::write(line.data(), (int)line.length());
+        response->uWS::template AsyncSocket<isSSL>::write(line.data(), line.length());
     }
     if (autoHeaderBits & kAutoHeaderConnKeepAlive) {
         if (autoHeaderBits & kAutoHeaderKeepAliveTimeout) {
             auto blob = keepAliveHeaderBlob(keepAliveTimeoutSecs);
-            response->uWS::template AsyncSocket<isSSL>::write(blob.data(), (int)blob.length());
+            response->uWS::template AsyncSocket<isSSL>::write(blob.data(), blob.length());
         } else {
             static constexpr const char ka[] = "Connection: keep-alive\r\n";
             response->uWS::template AsyncSocket<isSSL>::write(ka, sizeof(ka) - 1);
@@ -978,7 +976,7 @@ JSValue createNodeHTTPInternalBinding(Zig::GlobalObject* globalObject)
         JSC::JSFunction::create(vm, globalObject, 2, "setServerMaxHeadersCount"_s, jsHTTPSetMaxHeadersCount, ImplementationVisibility::Public), 0);
     obj->putDirectNativeFunction(
         vm, globalObject, JSC::PropertyName(JSC::Identifier::fromString(vm, "drainMicrotasks"_s)),
-        0, Bun__drainMicrotasksFromJS, ImplementationVisibility::Public, Intrinsic::NoIntrinsic, 0);
+        0, Bun::Bindgen::Generated::HwExports::jsDrainMicrotasks, ImplementationVisibility::Public, Intrinsic::NoIntrinsic, 0);
 
     return obj;
 }

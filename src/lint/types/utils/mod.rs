@@ -1,26 +1,22 @@
-//! `@typescript-eslint/type-utils`, and what in typescript-eslint's `eslint-plugin/src/util` works
-//! on types. The names are upstream's in snake_case, and everything is re-exported from here:
-//! `use bun_lint::types::utils::*;`
+//! `@typescript-eslint/type-utils`, plus the parts of typescript-eslint's `eslint-plugin/src/util` that work on types.
+//! The names are upstream's in snake_case, and everything is re-exported from here: `use bun_lint::types::utils::*;`
 //!
-//! The doc comment of each function starts with the call it is upstream, so
-//! `grep -rn 'isTypeAnyType' src/lint/types/utils` finds it.
+//! Each function's doc comment starts with the upstream call, so `grep -rn 'isTypeAnyType' src/lint/types/utils` finds
+//! it.
 //!
-//! What takes a `checker`, a `program` or `services` upstream does not here: a handle knows its
-//! checker. A `ts.Node` or a `TSESTree.Node` that is only handed on to the checker is any
-//! [`Locate`] where there is a [`Type`](super::Type) beside it, and a [`Located`]
-//! where there is none.
+//! Functions that take a `checker`, a `program` or `services` upstream don't here, because a handle knows its checker.
+//! A `ts.Node` or `TSESTree.Node` that's only passed on to the checker is any [`Locate`] if there's a
+//! [`Type`](super::Type) argument next to it, and a [`Located`] if there isn't.
 //!
-//! [`is_array_method_call_with_predicate`], [`is_promise_aggregator_method`] and
-//! [`is_rest_parameter_declaration`] have namesakes in [`ts_utils`](crate::utils::ts_utils), which
-//! know no types.
+//! [`is_array_method_call_with_predicate`], [`is_promise_aggregator_method`] and [`is_rest_parameter_declaration`] have
+//! namesakes in [`ts_utils`](crate::utils::ts_utils) that don't use types.
 //!
 //! # Where the checker gave up
 //!
-//! A type that [is unresolved](super::Type::is_unresolved) has [`TypeFlags::ANY`](super::TypeFlags),
-//! and TypeScript has no such type. It is not `any` for [`is_type_any_type`], and so for
-//! [`is_type_any_array_type`], [`discriminate_any_type`] and [`is_unsafe_assignment`]. The error type
-//! is `any` for these, as upstream: a rule tells it by
-//! [`tsutils::is_intrinsic_error_type`](super::tsutils::is_intrinsic_error_type).
+//! A type that [is unresolved](super::Type::is_unresolved) has [`TypeFlags::ANY`](super::TypeFlags), and TypeScript has
+//! no such type. [`is_type_any_type`] doesn't count it as `any`, and so neither do [`is_type_any_array_type`],
+//! [`discriminate_any_type`] and [`is_unsafe_assignment`]. They do count the error type as `any`, as upstream does. A
+//! rule can detect it with [`tsutils::is_intrinsic_error_type`](super::tsutils::is_intrinsic_error_type).
 
 mod assertion_function_utils;
 mod base_type_utils;
@@ -93,18 +89,18 @@ use crate::ast::{
     Stmt, TupleElem, TypeNode, TypeParam, VarDecl,
 };
 
-/// Whether the stack has room for a helper to follow constituents, base types, constraints, type
-/// arguments and the types of properties further. Upstream overflows its stack. Where there is none
-/// the answer is the one for which a rule reports nothing.
+/// True if the stack has room for a helper to keep following constituents, base types, constraints, type arguments and
+/// property types. Upstream overflows its stack. When there's no room, a helper returns the answer that makes a rule
+/// report nothing.
 #[inline]
 pub(crate) fn has_room_on_the_stack() -> bool {
     bun_core::StackCheck::init().is_safe_to_recurse()
 }
 
-/// A node that knows the file it is in, so that it can be asked for its type without `services`:
-/// every handle of [`ast`](crate::ast), [`NameOf`] one, and a [`TsNode`].
+/// A node that knows its file, so its type can be queried without `services`: every [`ast`](crate::ast) handle, a
+/// [`NameOf`] around one, and a [`TsNode`].
 ///
-/// An [`Ident`](crate::ast::Ident) is not one: `file.type_checker().ts_node(ident)` is.
+/// An [`Ident`](crate::ast::Ident) isn't one. Use `file.type_checker().ts_node(ident)`.
 pub trait Located<'a>: Copy {
     /// `services.esTreeNodeToTSNodeMap.get(node)`
     fn to_ts_node(self) -> TsNode<'a>;
@@ -177,7 +173,7 @@ located! {
 
 /// A name or a list of names: upstream's `string | string[]` and `Set<string>`.
 ///
-/// `"Promise"`, `&["Map", "ReadonlyMap"]`, a slice or a `&Vec` of anything that is bytes.
+/// Implemented for `"Promise"`, `&["Map", "ReadonlyMap"]`, and a slice or `&Vec` of anything byte-like.
 pub trait Names: Copy {
     /// `names.includes(name)`
     fn includes(self, name: &[u8]) -> bool;

@@ -13,10 +13,9 @@ use crate::{
     MAX_SAFE_INTEGER, MIN_SAFE_INTEGER, VM,
 };
 use bun_core::EncodedSlice;
-use bun_core::StringView;
 
-use bun_core::String as BunString;
 use bun_core::{Output, fmt as bun_fmt};
+use bun_core::{String as BunString, StringView};
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Opaque FFI handle (Nomicon pattern; !Send + !Sync + !Unpin).
@@ -95,9 +94,8 @@ impl JSGlobalObject {
 
     pub fn throw_stack_overflow(&self) -> JsError {
         // Wrap the raw FFI throw in a validation scope (mirrors `VM::throw_error`).
-        // The Rust `#[bun_jsc::host_fn]` thunk inserts an `ExceptionValidationScope`
-        // one frame above us; with that scope
-        // present `~ThrowScope` inside `JSGlobalObject__throwStackOverflow` no
+        // The generated C++ host function has a `ThrowScope` above us; with that
+        // scope present `~ThrowScope` inside `JSGlobalObject__throwStackOverflow` no
         // longer sees its previous scope as above `topEntryFrame`, so it
         // `simulateThrow()`s and leaves `m_needExceptionCheck` set. Observe the
         // exception here so the caller's scope dtor doesn't assert "unchecked
@@ -124,23 +122,31 @@ impl JSGlobalObject {
 
     #[cold]
     pub fn throw_string_too_long(&self) -> JsError {
+        self.throw_value(self.create_string_too_long_error())
+    }
+
+    pub fn create_string_too_long_error(&self) -> JSValue {
         const _: () = assert!(bun_core::string::WTF_STRING_MAX_LENGTH == 2147483647);
         self.err(
             crate::ErrorCode::STRING_TOO_LONG,
             format_args!("Cannot create a string longer than 2147483647 characters"),
         )
-        .throw()
+        .to_js()
     }
 
     /// Node's error for a failed allocation, as opposed to JSC's
     /// [`Self::throw_out_of_memory`].
     #[cold]
     pub fn throw_memory_allocation_failed(&self) -> JsError {
+        self.throw_value(self.create_memory_allocation_failed_error())
+    }
+
+    pub fn create_memory_allocation_failed_error(&self) -> JSValue {
         self.err(
             crate::ErrorCode::MEMORY_ALLOCATION_FAILED,
             format_args!("Failed to allocate memory"),
         )
-        .throw()
+        .to_js()
     }
 
     #[cold]
@@ -313,10 +319,6 @@ impl JSGlobalObject {
 
     pub fn throw_todo(&self, msg: &[u8]) -> JsError {
         let err = EncodedSlice::utf8(msg).to_error_instance(self);
-        if err.is_empty() {
-            debug_assert!(self.has_exception());
-            return JsError::Thrown;
-        }
         let name_value = match BunString::static_("TODOError").to_js(self) {
             Ok(v) => v,
             Err(_) => return JsError::Thrown,
@@ -344,22 +346,6 @@ impl JSGlobalObject {
     pub fn throw_invalid_arguments(&self, args: Arguments<'_>) -> JsError {
         let err = self.to_invalid_arguments(args);
         self.throw_value(err)
-    }
-
-    /// Throw `TypeError: Illegal constructor` with
-    /// `.code = "ERR_ILLEGAL_CONSTRUCTOR"`.
-    ///
-    /// Canonical body for hand-written `pub fn constructor` stubs whose
-    /// `.classes.ts` entry has `construct: true` but the class is not
-    /// user-instantiable. Matches the C++ default
-    /// (`JSDOMConstructorNotConstructable`) and Node.js.
-    ///
-    /// NOTE: do NOT add a stub that calls this when `.classes.ts` declares
-    /// `noConstructor: true` / `construct: false` — codegen omits the
-    /// `${T}Class__construct` thunk entirely, so the stub would be dead code.
-    #[cold]
-    pub fn throw_illegal_constructor(&self) -> JsError {
-        crate::ErrorCode::ILLEGAL_CONSTRUCTOR.throw(self, format_args!("Illegal constructor"))
     }
 
     #[inline]
@@ -669,31 +655,6 @@ impl JSGlobalObject {
         .throw()
     }
 
-    pub(crate) fn create_not_enough_arguments(
-        &self,
-        name_: &'static str,
-        expected: usize,
-        got: usize,
-    ) -> JSValue {
-        self.to_type_error(
-            JscError::MISSING_ARGS,
-            format_args!(
-                "Not enough arguments to '{}'. Expected {}, got {}.",
-                name_, expected, got
-            ),
-        )
-    }
-
-    /// Not enough arguments passed to function named `name_`
-    pub fn throw_not_enough_arguments(
-        &self,
-        name_: &'static str,
-        expected: usize,
-        got: usize,
-    ) -> JsError {
-        self.throw_value(self.create_not_enough_arguments(name_, expected, got))
-    }
-
     pub(crate) fn reload(&self) -> JsResult<()> {
         self.vm().drain_microtasks();
         self.vm().collect_async(false);
@@ -756,10 +717,10 @@ impl JSGlobalObject {
         let Some((namespace_, path)) = crate::module_loader::plugin_namespace_and_path(key) else {
             return Ok(false);
         };
-        let namespace_ = BunString::from_bytes(namespace_);
-        let ns = (namespace_.length() > 0).then_some(&namespace_);
+        let namespace_ = StringView::from_bytes(namespace_);
+        let ns = (namespace_.length() > 0).then_some(&*namespace_);
         crate::from_js_host_call_generic(self, || {
-            Bun__hasOnLoad(self, ns, &BunString::from_bytes(path))
+            Bun__hasOnLoad(self, ns, &StringView::from_bytes(path))
         })
     }
 
@@ -821,10 +782,6 @@ impl JSGlobalObject {
 
     pub fn throw_sys_error(&self, opts: &SysErrOptions, message: Arguments<'_>) -> JsError {
         let err = self.create_error_instance(message);
-        if err.is_empty() {
-            debug_assert!(self.has_exception());
-            return JsError::Thrown;
-        }
         err.put(
             self,
             b"code",
@@ -844,12 +801,7 @@ impl JSGlobalObject {
     /// Note: If you are throwing an error within somewhere in the Bun API,
     /// chances are you should be using `.err(...).throw()` instead.
     pub fn throw(&self, args: Arguments<'_>) -> JsError {
-        let instance = self.create_error_instance(args);
-        if instance.is_empty() {
-            debug_assert!(self.has_exception());
-            return JsError::Thrown;
-        }
-        self.throw_value(instance)
+        self.throw_value(self.create_error_instance(args))
     }
 
     pub fn queue_microtask(&self, function: JSValue, args: &[JSValue]) {
@@ -940,8 +892,8 @@ impl JSGlobalObject {
         })
     }
 
-    pub(crate) fn generate_heap_snapshot(&self) -> JSValue {
-        JSC__JSGlobalObject__generateHeapSnapshot(self)
+    pub(crate) fn generate_heap_snapshot(&self) -> JsResult<JSValue> {
+        crate::from_js_host_call(self, || JSC__JSGlobalObject__generateHeapSnapshot(self))
     }
 
     /// DEPRECATED — use [`TopExceptionScope`](crate::TopExceptionScope) to check for exceptions

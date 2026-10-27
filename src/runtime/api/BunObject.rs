@@ -67,12 +67,12 @@ use std::io::Write as _;
 
 use bun_core::Output;
 use bun_jsc::{
-    self as jsc, ArrayBuffer, CallFrame, ConsoleObject, ErrorCode, JSFunction, JSGlobalObject,
+    self as jsc, ArrayBuffer, ConsoleObject, ErrorCode, JSArray, JSFunction, JSGlobalObject,
     JSObject, JSPromise, JSString, JSValue, JsResult,
 };
 // `bun_jsc::VirtualMachine` is the *module* re-export; the struct lives one level deeper.
 use crate::cli::open::Editor;
-use bun_core::{EncodedSlice, String as BunString, strings};
+use bun_core::{EncodedSlice, String as BunString, StringView, strings};
 use bun_jsc::virtual_machine::{ResolveMode, VirtualMachine};
 use bun_paths::MAX_PATH_BYTES;
 use bun_shell_parser::braces as Braces;
@@ -80,119 +80,27 @@ use bun_sys::{self as sys, Fd, FdExt as _};
 use bun_zlib as zlib;
 
 use crate::node;
-use crate::test_runner::jest::Jest;
-use crate::valkey_jsc::js_valkey::SubscriptionCtx;
+use crate::valkey_jsc::js_valkey::{SubscriptionCtx, js as js_RedisClient};
 use bun_collections::index_sort;
 use bun_jsc::EncodedSliceJsc as _;
-use bun_jsc::call_frame::ArgumentsSlice;
 use bun_jsc::{StringJsc as _, bun_string_jsc};
 
 use crate::generated_bindgen::bun_object::{
-    BracesOptions, EditorOptions, MMapOptions, WhichOptions, ZlibCompressionOptions,
+    BracesOptions, Bun__BunObject__inspect, Bun__BunObject__table, EditorOptions, InspectOptions,
+    InspectOptionsOrDepth, MMapOptions, WhichOptions, ZlibCompressionOptions,
     ZlibDecompressionOptions, ZstdCompressionOptions,
 };
 use bun_jsc::bindgen::{self, BufferSource, JsHeap, JsLocal, JsScope, PinnedBytes};
 
-// ─── wrap_static_method adapters ───────────────────────────────────────────
-// `#[bun_jsc::host_fn(static)]` is not yet emitted,
-// so hand-roll the arg-extraction shims for the six call sites below.
-mod static_adapters {
-    use super::*;
-
-    pub(super) fn listener_connect(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        let [opts] = cf.arguments_as_array::<1>();
-        crate::socket::Listener::connect(&g.js_thread_of_caller(cf), opts)
-    }
-
-    pub(super) fn listener_listen(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        let [opts] = cf.arguments_as_array::<1>();
-        crate::socket::Listener::listen(&g.js_thread_of_caller(cf), opts)
-    }
-
-    pub(super) fn udp_socket(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        let [opts] = cf.arguments_as_array::<1>();
-        crate::socket::udp_socket::UDPSocket::udp_socket(&g.js_thread_of_caller(cf), opts)
-    }
-
-    pub(super) fn subprocess_spawn(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        let [a0] = cf.arguments_as_array::<1>();
-        let a1 = cf.arguments().get(1).copied();
-        crate::api::js_bun_spawn_bindings::spawn(&g.js_thread_of_caller(cf), a0, a1)
-    }
-
-    pub(super) fn subprocess_spawn_sync(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        let [a0] = cf.arguments_as_array::<1>();
-        let a1 = cf.arguments().get(1).copied();
-        crate::api::js_bun_spawn_bindings::spawn_sync(&g.js_thread_of_caller(cf), a0, a1)
-    }
-
-    pub(super) fn js_bundler_build(g: &JSGlobalObject, cf: &CallFrame) -> JsResult<JSValue> {
-        crate::api::js_bundler::JSBundler::build_fn(g, cf)
-    }
-    /// `Bun.$` parsed-script constructor — wraps the marked-argument-buffer host fn.
-    pub(super) fn parsed_shell_script_create(
-        g: &JSGlobalObject,
-        cf: &CallFrame,
-    ) -> JsResult<JSValue> {
-        // `CREATE_PARSED_SHELL_SCRIPT` is the safe `JSHostFnZig` produced by
-        // `marked_argument_buffer_wrap!` (the C-ABI shim is exported separately
-        // by the macro); call it directly.
-        crate::shell::parsed_shell_script::CREATE_PARSED_SHELL_SCRIPT(g, cf)
-    }
-    pub(super) fn shell_interpreter_create(
-        g: &JSGlobalObject,
-        cf: &CallFrame,
-    ) -> JsResult<JSValue> {
-        crate::shell::interpreter::create_shell_interpreter(g, cf)
-    }
-}
-
-/// How to add a new function or property to the Bun global
+/// How to add a new property to the Bun global (a function goes in `BunObject.bind.ts`)
 ///
-/// - Add a callback or property to the below struct
-/// - @export it in the appropriate place
+/// - Add a property to `export_lazy_prop_callbacks!` below
 /// - Update "@begin bunObjectTable" in BunObject.cpp
-///     - Getters use a generated wrapper function `BunObject_getter_wrap_<name>`
+///     - Getters use a generated wrapper function `BunObject_lazyPropCb_wrap_<name>`
 /// - Update "BunObject+exports.h"
 /// - Run `bun run build`
 pub(crate) mod bun_object {
     use super::*;
-
-    // Each callback is exported under
-    // `BunObject_callback_<name>` / `BunObject_lazyPropCb_<name>`. The
-    // two `macro_rules!` below expand the static export tables.
-    // ABI check vs the C++ declarations (BunObject+exports.h:90):
-    // `extern "C" EncodedJSValue SYSV_ABI (JSGlobalObject*, JSObject*)` for the
-    // property variants — matched here by `jsc_host_abi!` (`extern "sysv64"`
-    // on Windows-x64, `extern "C"` elsewhere) returning `JSValue`, which is
-    // `#[repr(transparent)]` over `EncodedJSValue`.
-
-    // Ident concat via `${concat()}` is unstable (`macro_metavar_expr_concat`),
-    // so the full `BunObject_callback_<name>` / `BunObject_lazyPropCb_<name>`
-    // export symbol is supplied verbatim by the caller (same pattern as
-    // `lazy_prop!` above).
-    macro_rules! export_callbacks {
-        ($( $(#[$attr:meta])* $sym:ident => $target:expr ),* $(,)?) => {
-            $(
-                // C++ declares
-                // these via `BUN_DECLARE_HOST_FUNCTION` → `JSC_HOST_CALL_ATTRIBUTES`
-                // = SysV on Windows-x64. Mismatching `extern "C"` here puts
-                // `globalObject` in RCX vs C++'s RDI → garbage deref.
-                bun_jsc::jsc_host_abi! {
-                    $(#[$attr])*
-                    #[unsafe(no_mangle)]
-                    pub unsafe fn $sym(
-                        g: *mut JSGlobalObject,
-                        f: *mut CallFrame,
-                    ) -> JSValue {
-                        // SAFETY: JSC always passes valid pointers here.
-                        let (g, f) = unsafe { (&*g, &*f) };
-                        bun_jsc::to_js_host_call(g, || $target(g, f))
-                    }
-                }
-            )*
-        };
-    }
 
     /// Adapter so `export_lazy_prop_callbacks!` accepts targets returning either
     /// a bare `JSValue` (most getters) or a `JsResult<JSValue>` (e.g.
@@ -217,7 +125,7 @@ pub(crate) mod bun_object {
         ($( $sym:ident => $target:path ),* $(,)?) => {
             $(
                 // C++ declares the extern as `SYSV_ABI`
-                // (`BunObject+exports.h:91`); on Windows-x64 that's RDI/RSI,
+                // (`BunObject+exports.h`); on Windows-x64 that's RDI/RSI,
                 // not RCX/RDX, so `extern "C"` reads garbage for both args.
                 bun_jsc::jsc_host_abi! {
                     #[unsafe(no_mangle)]
@@ -236,40 +144,9 @@ pub(crate) mod bun_object {
         };
     }
 
-    // --- Callbacks ---
-    export_callbacks! {
-        BunObject_callback_build => super::static_adapters::js_bundler_build,
-        BunObject_callback_color => bun_css_jsc::js_function_color,
-        BunObject_callback_connect => super::static_adapters::listener_connect,
-        BunObject_callback_file => crate::webcore::blob::construct_bun_file,
-        BunObject_callback_jest => Jest::call,
-        BunObject_callback_listen => super::static_adapters::listener_listen,
-        BunObject_callback_resolve => super::resolve,
-        BunObject_callback_resolveSync => super::resolve_sync,
-        BunObject_callback_serve => super::serve,
-        BunObject_callback_spawn => super::static_adapters::subprocess_spawn,
-        BunObject_callback_spawnSync => super::static_adapters::subprocess_spawn_sync,
-        BunObject_callback_udpSocket => super::static_adapters::udp_socket,
-        BunObject_callback_write => crate::webcore::blob::write_file,
-    }
-    // `createParsedShellScript` / `createShellInterpreter` go through the same
-    // `to_js_host_call` thunk as the macro-generated callbacks (their bodies
-    // are already `JSHostFnZig`-shaped).
-    export_callbacks! {
-        BunObject_callback_createParsedShellScript => super::static_adapters::parsed_shell_script_create,
-        BunObject_callback_createShellInterpreter => super::static_adapters::shell_interpreter_create,
-    }
-    // --- Callbacks ---
-
     // --- Lazy property callbacks ---
     export_lazy_prop_callbacks! {
-        BunObject_lazyPropCb_Archive => super::get_archive_constructor,
         BunObject_lazyPropCb_FFI => crate::ffi::ffi_object_draft::getter,
-        BunObject_lazyPropCb_FetchSession => super::get_fetch_session_constructor,
-        BunObject_lazyPropCb_FileSystemRouter => super::get_file_system_router,
-        BunObject_lazyPropCb_Image => super::get_image_constructor,
-        BunObject_lazyPropCb_markdown => super::get_markdown_object,
-        BunObject_lazyPropCb_Transpiler => super::get_transpiler_constructor,
         BunObject_lazyPropCb_argv => super::get_argv,
         BunObject_lazyPropCb_cron => super::get_cron_object,
         BunObject_lazyPropCb_cwd => super::get_cwd,
@@ -278,11 +155,8 @@ pub(crate) mod bun_object {
         BunObject_lazyPropCb_isStandaloneExecutable => super::get_is_standalone_executable,
         BunObject_lazyPropCb_inspect => super::get_inspect,
         BunObject_lazyPropCb_origin => super::get_origin,
-        BunObject_lazyPropCb_S3Client => super::get_s3_client_constructor,
         BunObject_lazyPropCb_s3 => super::get_s3_default_client,
-        BunObject_lazyPropCb_ValkeyClient => super::get_valkey_client_constructor,
         BunObject_lazyPropCb_valkey => super::get_valkey_default_client,
-        BunObject_lazyPropCb_Terminal => super::get_terminal_constructor,
     }
     // --- Lazy property callbacks ---
 
@@ -296,7 +170,7 @@ pub(crate) mod bun_object {
     // are spelled out verbatim in the `export_*!` macro invocations above.
 
     // type LazyPropertyCallback = extern "C" fn(*mut JSGlobalObject, *mut JSObject) -> JSValue
-    // (the `callconv(jsc.conv)` ABI is emitted by `#[bun_jsc::host_fn]` / the macro above;
+    // (the `callconv(jsc.conv)` ABI is emitted by the macro above;
     // see PORTING.md §FFI — cannot write `extern jsc_conv!()` in Rust.)
 
     // --- LazyProperty initializers ---
@@ -379,7 +253,7 @@ pub(crate) fn braces(
         // the JSON shape (`[{"<tag>": <payload>|{}} , …]`) by hand so the
         // debug-only `Bun.braces(str, {tokenize:true})` round-trips.
         let str = Braces::tokens_to_json(&lexer_output.tokens[..]);
-        let bun_str = BunString::from_bytes(&str);
+        let bun_str = StringView::from_bytes(&str);
         return bun_str.to_js(global);
     }
     if opts.parse {
@@ -392,7 +266,7 @@ pub(crate) fn braces(
         };
         // NOTE: see `tokenize` arm — manual JSON encoder for the AST.
         let str = Braces::ast_to_json(&ast_node);
-        let bun_str = BunString::from_bytes(&str);
+        let bun_str = StringView::from_bytes(&str);
         return bun_str.to_js(global);
     }
 
@@ -433,12 +307,12 @@ pub(crate) fn braces(
         }
     }
 
-    let mut out_strings: Vec<BunString> = Vec::with_capacity(expansion_count);
+    let mut out_strings: Vec<StringView<'_>> = Vec::with_capacity(expansion_count);
     for i in 0..expansion_count {
-        out_strings.push(BunString::from_bytes(&expanded_strings[i][..]));
+        out_strings.push(StringView::from_bytes(&expanded_strings[i][..]));
     }
 
-    bun_string_jsc::to_js_array(global, &out_strings[..])
+    bun_string_jsc::to_js_array(global, StringView::as_strings(&out_strings))
 }
 
 pub(crate) fn which<'a>(
@@ -462,27 +336,56 @@ pub(crate) fn which<'a>(
         .transpose()
 }
 
-#[bun_jsc::host_fn]
-fn inspect_table(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let mut args_buf = callframe.arguments_undef::<5>();
-    let all_arguments = args_buf.mut_();
-    if all_arguments[0].is_undefined_or_null() || !all_arguments[0].is_object() {
-        return Ok(JSValue::js_empty_string(global_this));
+fn apply_inspect_options(
+    format_options: &mut ConsoleObject::FormatOptions,
+    global_this: &JSGlobalObject,
+    options: &InspectOptions,
+) -> JsResult<()> {
+    if let Some(depth) = options.depth {
+        format_options.set_depth(global_this, depth)?;
     }
-
-    // NOTE: protect/unprotect over a copied [JSValue; 5]; the borrow of
-    // `all_arguments` cannot escape into a guard closure, so copy out into an
-    // array of RAII guards.
-    let _prot: [bun_jsc::ProtectedJSValue; 5] =
-        core::array::from_fn(|i| all_arguments[i].protected());
-
-    let arguments = &mut all_arguments[..];
-    let value = arguments[0];
-
-    if !arguments[1].is_array() {
-        arguments[2] = arguments[1];
-        arguments[1] = JSValue::UNDEFINED;
+    if let Some(colors) = options.colors {
+        format_options.enable_colors = colors;
     }
+    if let Some(sorted) = options.sorted {
+        format_options.ordered_properties = sorted;
+    }
+    if let Some(compact) = options.compact {
+        format_options.single_line = compact;
+    }
+    Ok(())
+}
+
+/// `Bun.inspect.table(tabularData, options)`
+pub(crate) fn table<'a>(
+    cx: &mut JsScope<'a>,
+    tabular_data: Option<JsLocal<'a, JSObject>>,
+    options: Option<&InspectOptions>,
+) -> JsResult<Vec<u8>> {
+    print_table(cx, tabular_data, JSValue::UNDEFINED, options)
+}
+
+/// `Bun.inspect.table(tabularData, properties, options)`
+pub(crate) fn table_with_properties<'a>(
+    cx: &mut JsScope<'a>,
+    tabular_data: Option<JsLocal<'a, JSObject>>,
+    properties: JsLocal<'a, JSArray>,
+    options: Option<&InspectOptions>,
+) -> JsResult<Vec<u8>> {
+    print_table(cx, tabular_data, properties.to_js(), options)
+}
+
+fn print_table(
+    cx: &mut JsScope<'_>,
+    tabular_data: Option<JsLocal<'_, JSObject>>,
+    properties: JSValue,
+    options: Option<&InspectOptions>,
+) -> JsResult<Vec<u8>> {
+    let global_this = cx.global();
+    let Some(value) = tabular_data else {
+        return Ok(Vec::new());
+    };
+    let value = value.to_js();
 
     let mut format_options = ConsoleObject::FormatOptions {
         enable_colors: false,
@@ -494,18 +397,13 @@ fn inspect_table(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
         single_line: true,
         ..Default::default()
     };
-    if arguments[2].is_object() {
-        format_options.from_js(global_this, &arguments[2..])?;
+    if let Some(options) = options {
+        apply_inspect_options(&mut format_options, global_this, options)?;
     }
 
     // very stable memory address
     let mut array: Vec<u8> = Vec::new();
 
-    let properties: JSValue = if arguments[1].js_type().is_array() {
-        arguments[1]
-    } else {
-        JSValue::UNDEFINED
-    };
     let mut table_printer = ConsoleObject::TablePrinter::init(
         global_this,
         ConsoleObject::MessageLevel::Log,
@@ -528,35 +426,20 @@ fn inspect_table(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResul
 
     // writer.flush(): Vec<u8> writer is unbuffered; nothing to flush.
 
-    bun_string_jsc::create_utf8_for_js(global_this, &array)
+    Ok(array)
 }
 
-#[bun_jsc::host_fn]
-fn inspect(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let arguments = callframe.arguments();
-    if arguments.is_empty() {
-        return Ok(JSValue::js_empty_string(global_this));
-    }
-
-    for arg in arguments {
-        arg.protect();
-    }
-    // Each arg is unprotected on scope exit.
-    // `arguments()` borrows the call-frame slot array; wrap the borrowed slice
-    // in the guard instead of heap-allocating a `Vec` per call.
-    //
-    // NOTE: this is *not* the fix for error-gc-test.test.js timing out under
-    // debug+ASAN — that test does 100k `Bun.inspect(new Error)` and the cost
-    // is spread across ASAN-instrumented memcpy/memset, mimalloc zero-checks
-    // and the source-file re-read in `remap_zig_exception`, none of which a
-    // 32-byte alloc elision can recover. The test is classified `[TIMEOUT]`
-    // for ASAN in test/expectations.txt instead.
-    let args_buf = scopeguard::guard(arguments, |buf| {
-        for arg in buf {
-            arg.unprotect();
-        }
-    });
-    let arguments = *args_buf;
+pub(crate) fn inspect<'a>(
+    cx: &mut JsScope<'a>,
+    arg: Option<JsLocal<'a>>,
+    options: InspectOptionsOrDepth<'a>,
+    colors: Option<bool>,
+) -> JsResult<Vec<u8>> {
+    let global_this = cx.global();
+    let Some(value) = arg else {
+        return Ok(Vec::new());
+    };
+    let value = value.to_js();
 
     let mut format_options = ConsoleObject::FormatOptions {
         enable_colors: false,
@@ -567,8 +450,15 @@ fn inspect(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
         ordered_properties: false,
         ..Default::default()
     };
-    if arguments.len() > 1 {
-        format_options.from_js(global_this, &arguments[1..])?;
+    match options {
+        InspectOptionsOrDepth::Options(options) => {
+            apply_inspect_options(&mut format_options, global_this, &options)?;
+        }
+        InspectOptionsOrDepth::Depth(depth) => {
+            format_options.set_depth(global_this, depth)?;
+            format_options.enable_colors = colors.unwrap_or(false);
+        }
+        InspectOptionsOrDepth::Ignored(_) => format_options.enable_colors = colors.unwrap_or(false),
     }
 
     // very stable memory address
@@ -578,7 +468,7 @@ fn inspect(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
     ConsoleObject::format2(
         ConsoleObject::MessageLevel::Debug,
         global_this,
-        &arguments[..1],
+        core::slice::from_ref(&value),
         &mut array,
         format_options,
     )?;
@@ -588,7 +478,7 @@ fn inspect(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
     }
     // writer.flush(): Vec<u8> is unbuffered.
 
-    bun_string_jsc::create_utf8_for_js(global_this, &array)
+    Ok(array)
 }
 
 // HOST_EXPORT(Bun__inspect_singleline, c)
@@ -624,7 +514,7 @@ fn get_inspect(global_object: &JSGlobalObject, _: &JSObject) -> JSValue {
     let fun = JSFunction::create(
         global_object,
         "inspect",
-        __jsc_host_inspect,
+        Bun__BunObject__inspect,
         2,
         Default::default(),
     );
@@ -639,7 +529,7 @@ fn get_inspect(global_object: &JSGlobalObject, _: &JSObject) -> JSValue {
         JSFunction::create(
             global_object,
             "table",
-            __jsc_host_inspect_table,
+            Bun__BunObject__table,
             3,
             Default::default(),
         ),
@@ -682,7 +572,7 @@ pub(crate) fn register_macro<'a>(
 }
 
 fn get_cwd(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    EncodedSlice::from_bytes(bun_resolver::fs::FileSystem::get().top_level_dir).to_js(global_this)
+    EncodedSlice::from_bytes(bun_resolver::fs::FileSystem::get().top_level_dir()).to_js(global_this)
 }
 
 fn get_origin(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
@@ -920,47 +810,8 @@ pub(crate) fn shrink(cx: &mut JsScope<'_>) {
     cx.global().vm().shrink_footprint();
 }
 
-fn do_resolve(global_this: &JSGlobalObject, arguments: &[JSValue]) -> JsResult<JSValue> {
-    // SAFETY: bun_vm() returns the live per-thread singleton.
-    let vm = global_this.bun_vm();
-    let mut args = ArgumentsSlice::init(vm, arguments);
-    let Some(specifier) = args.next_eat() else {
-        return Err(global_this
-            .throw_invalid_arguments(format_args!("Expected a specifier and a from path")));
-    };
-
-    if specifier.is_undefined_or_null() {
-        return Err(global_this.throw_invalid_arguments(format_args!("specifier must be a string")));
-    }
-
-    let Some(from) = args.next_eat() else {
-        return Err(global_this.throw_invalid_arguments(format_args!("Expected a from path")));
-    };
-
-    if from.is_undefined_or_null() {
-        return Err(global_this.throw_invalid_arguments(format_args!("from must be a string")));
-    }
-
-    let mut mode = ResolveMode::Esm;
-    if let Some(next) = args.next_eat() {
-        if next.is_boolean() {
-            mode = if next.to_boolean() {
-                ResolveMode::Esm
-            } else {
-                ResolveMode::Require
-            };
-        } else {
-            return Err(global_this.throw_invalid_arguments(format_args!("esm must be a boolean")));
-        }
-    }
-
-    let specifier_str = specifier.to_bun_string(global_this)?;
-    let from_str = from.to_bun_string(global_this)?;
-    do_resolve_with_args::<false>(global_this, &specifier_str, &from_str, mode)
-}
-
 enum Resolved {
-    Found(JSValue),
+    Found(BunString),
     /// The resolver's `ResolveMessage` for a specifier it could not resolve; not thrown yet.
     NotFound(JSValue),
 }
@@ -970,7 +821,7 @@ fn do_resolve_with_args<const IS_FILE_PATH: bool>(
     specifier: &BunString,
     from: &BunString,
     mode: ResolveMode,
-) -> JsResult<JSValue> {
+) -> JsResult<BunString> {
     match resolve_with_args::<IS_FILE_PATH>(ctx, specifier, from, mode)? {
         Resolved::Found(value) => Ok(value),
         Resolved::NotFound(err) => Err(ctx.throw_value(err)),
@@ -1013,30 +864,45 @@ fn resolve_with_args<const IS_FILE_PATH: bool>(
         // Vec<u8> writes are infallible.
         let _ = write!(&mut arraylist, "{}{}", result_value, query_string);
 
-        return Ok(Resolved::Found(bun_string_jsc::create_utf8_for_js(
-            ctx, &arraylist,
-        )?));
+        return Ok(Resolved::Found(BunString::clone_utf8(&arraylist)));
     }
 
-    Ok(Resolved::Found(result_value.into_js(ctx)?))
+    Ok(Resolved::Found(result_value))
 }
 
-#[bun_jsc::host_fn]
-fn resolve_sync(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    do_resolve(global_object, callframe.arguments())
-}
-
-#[bun_jsc::host_fn]
-fn resolve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    let value = match do_resolve(global_object, callframe.arguments()) {
-        Ok(v) => v,
-        Err(e) => {
-            return Ok(
-                JSPromise::rejected_promise_with_caught_exception(global_object, e)?.to_js(),
-            );
-        }
+pub(crate) fn resolve_sync(
+    cx: &mut JsScope<'_>,
+    module_id: Option<BunString>,
+    parent: Option<BunString>,
+    esm: bool,
+) -> JsResult<BunString> {
+    let global_this = cx.global();
+    let Some(module_id) = module_id else {
+        return Err(global_this.throw_invalid_arguments(format_args!("moduleId must be a string")));
     };
-    Ok(JSPromise::resolved_promise_value(global_object, value))
+    let Some(parent) = parent else {
+        return Err(global_this.throw_invalid_arguments(format_args!("parent must be a string")));
+    };
+    let mode = if esm {
+        ResolveMode::Esm
+    } else {
+        ResolveMode::Require
+    };
+    do_resolve_with_args::<false>(global_this, &module_id, &parent, mode)
+}
+
+pub(crate) fn resolve(
+    cx: &mut JsScope<'_>,
+    module_id: Option<BunString>,
+    parent: Option<BunString>,
+    esm: bool,
+) -> JsResult<JSValue> {
+    let resolved = resolve_sync(cx, module_id, parent, esm)?;
+    let global_object = cx.global();
+    Ok(JSPromise::resolved_promise_value(
+        global_object,
+        resolved.into_js(global_object)?,
+    ))
 }
 
 // HOST_EXPORT(Bun__resolveSync, c)
@@ -1071,7 +937,8 @@ pub(crate) fn bun_resolve_sync(
             &specifier_str,
             &source_str,
             ResolveMode::from_ffi_bools(is_esm, is_user_require_resolve),
-        )
+        )?
+        .into_js(global)
     })
 }
 
@@ -1134,7 +1001,8 @@ pub(crate) fn bun_resolve_sync_with_paths(
             &specifier_str,
             &source_str,
             ResolveMode::from_ffi_bools(is_esm, is_user_require_resolve),
-        )
+        )?
+        .into_js(global)
     })
 }
 
@@ -1159,7 +1027,8 @@ pub(crate) fn bun_resolve_sync_with_strings(
             specifier,
             source,
             ResolveMode::from_ffi_bools(is_esm, false),
-        )
+        )?
+        .into_js(global)
     })
 }
 
@@ -1178,16 +1047,15 @@ pub(crate) fn bun_resolve_sync_with_source_if_exists(
         return JSValue::ZERO;
     };
     jsc::to_js_host_call(global, || {
-        resolve_with_args::<true>(
+        match resolve_with_args::<true>(
             global,
             &specifier_str,
             source,
             ResolveMode::from_ffi_bools(is_esm, false),
-        )
-        .map(|r| match r {
-            Resolved::Found(value) => value,
-            Resolved::NotFound(_) => JSValue::UNDEFINED,
-        })
+        )? {
+            Resolved::Found(value) => value.into_js(global),
+            Resolved::NotFound(_) => Ok(JSValue::UNDEFINED),
+        }
     })
 }
 
@@ -1204,29 +1072,20 @@ pub(crate) fn index_of_line(buffer: &[u8], offset: f64) -> f64 {
     }
 }
 
-#[bun_jsc::host_fn]
-fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn serve(cx: &mut JsScope<'_>, options: JsLocal<'_>) -> JsResult<JSValue> {
+    let global_object = cx.global();
     // The server is the calling script's.
-    let context = global_object.bun_vm().context_of_caller(callframe);
-    let arguments = callframe.arguments();
-    // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
-    let vm = global_object.bun_vm().as_mut();
-    let mut config: crate::server::ServerConfig = 'brk: {
-        let mut args = ArgumentsSlice::init(vm, arguments);
-
-        let config = crate::server::ServerConfig::from_js(
-            global_object,
-            &mut args,
-            crate::server::server_config::FromJSOptions {
-                allow_bake_config: bun_core::FeatureFlags::bake(),
-                is_fetch_required: true,
-                previous_fetch: false,
-                previous_routes: false,
-            },
-        )?;
-
-        break 'brk config;
-    };
+    let context = global_object.bun_vm().context_of_caller();
+    let mut config = crate::server::ServerConfig::from_js(
+        global_object,
+        options.to_js(),
+        crate::server::server_config::FromJSOptions {
+            allow_bake_config: bun_core::FeatureFlags::bake(),
+            is_fetch_required: true,
+            previous_fetch: false,
+            previous_routes: false,
+        },
+    )?;
 
     // `init()` below `mem::take`s `config` into a heap-boxed `NewServer`, so
     // past that point the raw-`JSValue` handler shadows have no GC root until
@@ -1241,7 +1100,6 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
     let _handler_pins: [bun_jsc::js_value::Protected; 10] =
         crate::server::protect_handler_shadows(&config);
 
-    // SAFETY: same VM pointer; re-borrow after `args` is dropped.
     let vm = global_object.bun_vm().as_mut();
 
     // NOTE (layering): `HotMap` is a tagged union over the four
@@ -1251,6 +1109,7 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
     // (= the runtime-side discriminant) so a HotMap entry produced by `serve`
     // is round-trippable through `serve` again on hot-reload.
     use crate::server::{AnyServer, AnyServerTag};
+    use bun_jsc::JsCellRefExt as _;
     use bun_jsc::rare_data::HotMapEntry;
 
     if config.allow_hot {
@@ -1263,14 +1122,14 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
                 macro_rules! reload {
                     ($T:ty) => {{
                         // SAFETY: tag was matched; ptr was inserted as `*mut $T` below.
-                        let server: &mut $T = unsafe { &mut *entry.ptr.cast::<$T>() };
+                        let server: &$T = unsafe { &*entry.ptr.cast::<$T>() };
                         server.on_reload_from_zig(&mut config, global_object);
                         // Its handlers are the calling script's now, and so is the server: it goes
                         // with that script's context, not with the one that first listened.
                         server.abort_handle.leave();
                         server.context.set(context.id());
                         // SAFETY: heap-allocated; leaves its context in `stop_listening` / `deinit`.
-                        unsafe { bun_jsc::AbortHandle::arm_owner(std::ptr::from_mut(server), context) };
+                        unsafe { bun_jsc::AbortHandle::arm_owner(entry.ptr.cast::<$T>(), context) };
                         return Ok(server.js_value.try_get().unwrap_or(JSValue::UNDEFINED));
                     }};
                 }
@@ -1295,18 +1154,15 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
             if global_object.has_exception() {
                 return Ok(JSValue::ZERO);
             }
-            // SAFETY: `init` returned a live heap-allocated server pointer.
-            let server_ref: &mut $ServerType = unsafe { &mut *server };
             // SAFETY: `server` is the live heap-allocated server returned by `init`.
             let route_list_object = <$ServerType>::listen(server);
             if global_object.has_exception() {
                 return Ok(JSValue::ZERO);
             }
+            // SAFETY: `listen` frees the server only when it throws.
+            let server_ref: &$ServerType = unsafe { &*server };
             let obj = <$ServerType>::ptr_to_js(server, global_object);
             if route_list_object != JSValue::ZERO {
-                // NOTE: `ServerType.js.routeListSetCached` (codegen
-                // `.classes.ts`) — routed through the typed helper in
-                // `server_body` until per-type codegen externs land.
                 <$ServerType>::js_gc_route_list_set(obj, global_object, route_list_object);
             }
             // Mirror the handler callbacks into the wrapper's WriteBarrier
@@ -1314,31 +1170,35 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
             // / `Handler` only hold raw `JSValue` shadows for hot-path dispatch.
             // The async-context wrap is applied here (not in `from_js`) so the
             // freshly-allocated wrapper fn is rooted by the slot immediately.
-            crate::server::wrap_handler_slot(
-                &mut server_ref.config.on_request,
-                obj,
-                global_object,
-                <$ServerType>::js_gc_on_request_set,
-            );
-            crate::server::wrap_handler_slot(
-                &mut server_ref.config.on_error,
-                obj,
-                global_object,
-                <$ServerType>::js_gc_on_error_set,
-            );
-            crate::server::wrap_handler_slot(
-                &mut server_ref.config.on_node_http_request,
-                obj,
-                global_object,
-                <$ServerType>::js_gc_on_node_http_request_set,
-            );
+            server_ref.config.with_mut(|config| {
+                crate::server::wrap_handler_slot(
+                    &mut config.on_request,
+                    obj,
+                    global_object,
+                    <$ServerType>::js_gc_on_request_set,
+                );
+                crate::server::wrap_handler_slot(
+                    &mut config.on_error,
+                    obj,
+                    global_object,
+                    <$ServerType>::js_gc_on_error_set,
+                );
+                crate::server::wrap_handler_slot(
+                    &mut config.on_node_http_request,
+                    obj,
+                    global_object,
+                    <$ServerType>::js_gc_on_node_http_request_set,
+                );
+            });
             // Skip the 7-slot write when there's no websocket config: the
             // slots default ZERO so `write_ws_handler_slots`'s clear path
             // would be 7 wasted FFI calls.
-            if server_ref.config.websocket.is_some() {
+            if server_ref.config.get().websocket.is_some() {
                 server_ref.write_ws_handler_slots(obj, global_object);
             }
-            server_ref.js_value.set_strong(obj, global_object);
+            server_ref
+                .js_value
+                .with_mut(|js_value| js_value.set_strong(obj, global_object));
             // Slots are rooted; release the scoped gcProtects and run the
             // "server just started" GC nudge split out of `listen()`.
             drop(_handler_pins);
@@ -1355,12 +1215,12 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
             // local `config` is defaulted from here on — read `allow_hot`
             // and `id` from the server's own config or the registration is
             // keyed on the wrong (empty) id.
-            if server_ref.config.allow_hot {
+            if server_ref.config.get().allow_hot {
                 // SAFETY: same VM pointer; re-borrow after the earlier `vm` mut
                 // borrow was released by the `hot_map()` arm above.
                 if let Some(hot) = global_object.bun_vm().as_mut().hot_map() {
                     hot.insert_raw(
-                        &server_ref.config.id,
+                        &server_ref.config.get().id,
                         HotMapEntry {
                             tag: $tag as u8,
                             ptr: server.cast::<()>(),
@@ -1505,36 +1365,6 @@ pub(crate) fn mmap(cx: &mut JsScope<'_>, path: &[u8], options: &MMapOptions) -> 
     }
 }
 
-fn get_transpiler_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    jsc::codegen::js::get_constructor::<crate::api::js_transpiler::JSTranspiler>(global_this)
-}
-
-fn get_fetch_session_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    jsc::codegen::js::get_constructor::<crate::webcore::fetch::FetchSession>(global_this)
-}
-
-fn get_file_system_router(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    jsc::codegen::js::get_constructor::<crate::api::filesystem_router::FileSystemRouter>(
-        global_this,
-    )
-}
-
-fn get_markdown_object(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    crate::api::markdown_object::create(global_this)
-}
-
-fn get_archive_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    jsc::codegen::js::get_constructor::<crate::api::archive::Archive>(global_this)
-}
-
-fn get_image_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    jsc::codegen::js::get_constructor::<crate::image::Image>(global_this)
-}
-
-fn get_s3_client_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    jsc::codegen::js::get_constructor::<crate::webcore::s3_client::S3Client>(global_this)
-}
-
 fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JSValue> {
     // NOTE (layering): `RareData::s3_default_client` body lives in
     // `bun_jsc::rare_data::_accessor_body` and names `bun_runtime::s3` types.
@@ -1594,7 +1424,8 @@ fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSVa
     let vm = global_this.bun_vm();
     let valkey = match JSValkeyClient::create_no_js_no_pubsub(
         &global_this.js_thread(vm.root_context()),
-        &[JSValue::UNDEFINED],
+        JSValue::UNDEFINED,
+        JSValue::UNDEFINED,
     ) {
         Ok(p) => p,
         Err(jsc::JsError::Thrown) => return JSValue::ZERO,
@@ -1605,7 +1436,8 @@ fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSVa
         }
     };
 
-    let as_js = JSValkeyClient::ptr_to_js(valkey, global_this);
+    let valkey = valkey.into_raw();
+    let as_js = js_RedisClient::to_js(valkey, global_this);
 
     // SAFETY: `valkey` is a fresh heap allocation owned by the JS wrapper; we
     // hold the only reference for field init below.
@@ -1622,14 +1454,6 @@ fn get_valkey_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JSVa
     }
 
     as_js
-}
-
-fn get_valkey_client_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    jsc::codegen::js::get_constructor::<crate::valkey_jsc::JSValkeyClient>(global_this)
-}
-
-fn get_terminal_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
-    crate::api::bun_terminal_body::js::get_constructor(global_this)
 }
 
 fn get_is_standalone_executable(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {

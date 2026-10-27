@@ -69,13 +69,23 @@ impl core::fmt::Display for SystemError {
     /// `Display` stays side-effect-free. The colored path is handled by
     /// `bun_core::Output::pretty*` at the call site that prints the error.
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        if !self.path.is_empty() {
+        self.fmt_with_path(&self.path, f)
+    }
+}
+impl SystemError {
+    /// `Display` with `path` in place of `self.path`.
+    pub(crate) fn fmt_with_path(
+        &self,
+        path: &bun_core::String,
+        f: &mut core::fmt::Formatter<'_>,
+    ) -> core::fmt::Result {
+        if !path.is_empty() {
             // "<code>: <path>: <message> (<syscall>())"
             write!(
                 f,
                 "{}: {}: {} ({}())",
                 self.code,
-                bun_core::fmt::EscapeControlChars(&self.path),
+                bun_core::fmt::EscapeControlChars(path),
                 self.message,
                 self.syscall,
             )
@@ -95,6 +105,9 @@ pub mod copy_file;
 
 // Directory-entry kind — same set as `bun_core::FileKind`.
 pub use bun_core::FileKind as EntryKind;
+
+#[cfg(unix)]
+pub mod dirent;
 
 // `bun.DirIterator`.
 //
@@ -149,9 +162,11 @@ pub unsafe fn getdirentries64(fd: Fd, buf: *mut u8, len: usize, basep: *mut i64)
 }
 
 pub mod dir_iterator {
-    use super::{EntryKind, Fd, Result};
     #[cfg(not(target_os = "macos"))]
-    use super::{Error, Tag};
+    use super::Error;
+    #[cfg(unix)]
+    use super::dirent;
+    use super::{EntryKind, Fd, Result, Tag};
     use bun_paths::OSPathChar;
 
     const BUF_SIZE: usize = 8192;
@@ -227,9 +242,8 @@ pub mod dir_iterator {
         #[cfg(not(windows))]
         #[inline]
         fn borrow(s: &[u8]) -> Name {
-            // SAFETY: `s` is a slice into a kernel-written dirent record; the
-            // byte at `s.as_ptr().add(s.len())` is the in-record NUL terminator
-            // and lies within the same `reclen`-sized allocation.
+            // SAFETY: `s` is a `dirent::Entry` name, so the byte after it is its NUL,
+            // inside the same record.
             debug_assert!(unsafe { *s.as_ptr().add(s.len()) } == 0);
             Name {
                 ptr: core::ptr::NonNull::from(s).cast(),
@@ -278,7 +292,7 @@ pub mod dir_iterator {
         #[cfg(not(windows))]
         #[inline]
         pub fn as_zstr(&self) -> &bun_core::ZStr {
-            // SAFETY: `ptr[len] == 0` (kernel NUL-terminates `d_name`); see
+            // SAFETY: `dirent::parse` checked that `ptr[len] == 0`. See the
             // `borrow()` debug_assert.
             unsafe { bun_core::ZStr::from_raw(self.ptr.as_ptr(), self.len) }
         }
@@ -339,6 +353,19 @@ pub mod dir_iterator {
         }
     }
 
+    /// Parses the record at `index`. The last refill wrote `end_index` bytes. Returns `None` if the
+    /// record is malformed.
+    #[cfg(unix)]
+    #[inline]
+    fn record_at(buf: &AlignedBuf, index: usize, end_index: usize) -> Option<dirent::Record<'_>> {
+        if end_index > BUF_SIZE {
+            return None;
+        }
+        // SAFETY: the syscall filled `[0..end_index]`, and `end_index <= BUF_SIZE`.
+        let filled = unsafe { buf.filled(end_index) };
+        dirent::parse::<dirent::Native>(filled, index)
+    }
+
     // ── Linux / Android ──────────────────────────────────────────────────
     // Same `getdents64(2)` walk for both — Android is the same kernel, and
     // `linux_syscall::getdents64` is a raw syscall (no libc wrapper involved).
@@ -379,38 +406,16 @@ pub mod dir_iterator {
                     self.index = 0;
                     self.end_index = rc as usize;
                 }
-                // struct linux_dirent64 { u64 d_ino; i64 d_off; u16 d_reclen;
-                //                         u8 d_type; char d_name[]; }
-                let base = self.index;
-                // SAFETY: kernel filled `[0..end_index]`; `base < end_index` and
-                // each record fits entirely in `[base..base+reclen) ⊆ [0..end_index)`.
-                let buf = unsafe { self.buf.filled(self.end_index) };
-                let d_ino = u64::from_ne_bytes(
-                    buf[base..base + 8]
-                        .try_into()
-                        .expect("infallible: size matches"),
-                );
-                let reclen = u16::from_ne_bytes([buf[base + 16], buf[base + 17]]) as usize;
-                let d_type = buf[base + 18];
-                self.index = base + reclen;
-
-                // d_name is NUL-terminated within the record. Use a SIMD-vectorized
-                // scan for the terminator; a scalar
-                // byte loop here showed up in startup profiles on large directories.
-                let name_field = &buf[base + 19..base + reclen];
-                let nul = bun_core::strings::index_of_char_usize(name_field, 0)
-                    .unwrap_or(name_field.len());
-                let name = &name_field[..nul];
-
-                // skip . and .. entries
-                if name == b"." || name == b".." {
-                    continue;
-                }
+                let Some(record) = record_at(&self.buf, self.index, self.end_index) else {
+                    return dirent::end_walk(&mut self.end_index, Tag::getdents64);
+                };
+                self.index = record.next;
+                let Some(entry) = record.entry else { continue };
 
                 return Ok(Some(IteratorResult {
-                    name: Name::borrow(name),
-                    kind: kind_from_dt(d_type),
-                    ino: d_ino,
+                    name: Name::borrow(entry.name),
+                    kind: kind_from_dt(entry.d_type),
+                    ino: entry.ino,
                 }));
             }
         }
@@ -482,34 +487,16 @@ pub mod dir_iterator {
                     let flag = u32::from_ne_bytes(flag);
                     self.received_eof = self.end_index <= (BUF_SIZE - 4) && flag == 1;
                 }
-                // Darwin `struct dirent` (64-bit ino):
-                //   u64 d_ino; u64 d_seekoff; u16 d_reclen; u16 d_namlen;
-                //   u8 d_type; char d_name[];
-                let base = self.index;
-                // SAFETY: kernel filled `[0..end_index]`; each record fits in
-                // `[base..base+reclen) ⊆ [0..end_index)`.
-                let buf = unsafe { self.buf.filled(self.end_index) };
-                let d_ino = u64::from_ne_bytes(
-                    buf[base..base + 8]
-                        .try_into()
-                        .expect("infallible: size matches"),
-                );
-                let reclen = u16::from_ne_bytes([buf[base + 16], buf[base + 17]]) as usize;
-                let namlen = u16::from_ne_bytes([buf[base + 18], buf[base + 19]]) as usize;
-                let d_type = buf[base + 20];
-                self.index = base + reclen;
-
-                // `d_name` is NUL-terminated at `[namlen]` (within `reclen`).
-                let name = &buf[base + 21..base + 21 + namlen];
-
-                if name == b"." || name == b".." || d_ino == 0 {
-                    continue;
-                }
+                let Some(record) = record_at(&self.buf, self.index, self.end_index) else {
+                    return dirent::end_walk(&mut self.end_index, Tag::getdirentries64);
+                };
+                self.index = record.next;
+                let Some(entry) = record.entry else { continue };
 
                 return Ok(Some(IteratorResult {
-                    name: Name::borrow(name),
-                    kind: kind_from_dt(d_type),
-                    ino: d_ino,
+                    name: Name::borrow(entry.name),
+                    kind: kind_from_dt(entry.d_type),
+                    ino: entry.ino,
                 }));
             }
         }
@@ -555,34 +542,16 @@ pub mod dir_iterator {
                     self.index = 0;
                     self.end_index = rc as usize;
                 }
-                // FreeBSD 12+ `struct dirent` (ino64):
-                //   u64 d_fileno; i64 d_off; u16 d_reclen; u8 d_type; u8 pad0;
-                //   u16 d_namlen; u16 pad1; char d_name[];
-                let base = self.index;
-                // SAFETY: kernel filled `[0..end_index]`; each record fits in
-                // `[base..base+reclen) ⊆ [0..end_index)`.
-                let buf = unsafe { self.buf.filled(self.end_index) };
-                let fileno = u64::from_ne_bytes(
-                    buf[base..base + 8]
-                        .try_into()
-                        .expect("infallible: size matches"),
-                );
-                let reclen = u16::from_ne_bytes([buf[base + 16], buf[base + 17]]) as usize;
-                let d_type = buf[base + 18];
-                let namlen = u16::from_ne_bytes([buf[base + 20], buf[base + 21]]) as usize;
-                self.index = base + reclen;
-
-                // `d_name` is NUL-terminated at `[namlen]` (within `reclen`).
-                let name = &buf[base + 24..base + 24 + namlen];
-
-                if name == b"." || name == b".." || fileno == 0 {
-                    continue;
-                }
+                let Some(record) = record_at(&self.buf, self.index, self.end_index) else {
+                    return dirent::end_walk(&mut self.end_index, Tag::getdents64);
+                };
+                self.index = record.next;
+                let Some(entry) = record.entry else { continue };
 
                 return Ok(Some(IteratorResult {
-                    name: Name::borrow(name),
-                    kind: kind_from_dt(d_type),
-                    ino: fileno,
+                    name: Name::borrow(entry.name),
+                    kind: kind_from_dt(entry.d_type),
+                    ino: entry.ino,
                 }));
             }
         }
@@ -739,7 +708,7 @@ pub mod dir_iterator {
                 // name_byte_offset + name_len_u16*2 ≤ BUF_SIZE by clamp above.
                 // `AlignedBuf` is align(8) and `entry_offset`/`NAME_OFFSET` are
                 // both multiples of 4, so the u8→u16 cast is always aligned.
-                let dir_info_name: &[u16] = bytemuck::cast_slice(
+                let dir_info_name: &[u16] = bun_core::cast_slice(
                     &buf[name_byte_offset..name_byte_offset + name_len_u16 * 2],
                 );
 
@@ -1420,6 +1389,8 @@ impl Tag {
     pub(crate) const flistxattr: Tag = Tag(110);
     #[cfg(not(windows))]
     pub(crate) const fgetxattr: Tag = Tag(111);
+    pub const epoll_create1: Tag = Tag(112);
+    pub const pthread_create: Tag = Tag(113);
     // `inotify_init1`/`inotify_add_watch` fold under the generic `.watch`
     // tag; `INotifyWatcher.rs` spells it `.inotify`. Alias to `.watch`
     // so the JS-facing `err.syscall == "watch"` string stays node-compatible.
@@ -1427,7 +1398,7 @@ impl Tag {
     /// The tag name — spelling is frozen (JS-facing
     /// `err.syscall` string; node-compat code matches on it).
     pub fn name(self) -> &'static str {
-        const NAMES: [&str; 112] = [
+        const NAMES: [&str; 114] = [
             "TODO",
             "dup",
             "access",
@@ -1541,6 +1512,8 @@ impl Tag {
             "flock",
             "flistxattr",
             "fgetxattr",
+            "epoll_create1",
+            "pthread_create",
         ];
         NAMES.get(self.0 as usize).copied().unwrap_or("unknown")
     }
@@ -5248,9 +5221,8 @@ pub mod c {
         pub ldavg: [u32; 3],
         pub fscale: core::ffi::c_long,
     }
-    // SAFETY: integers only; all-zero is valid pre-`sysctl` state.
     #[cfg(target_os = "macos")]
-    unsafe impl bun_core::ffi::Zeroable for struct_loadavg {}
+    bun_core::impl_zeroable!(struct_loadavg);
 
     // ── <mach/mach_init.h> / <mach-o/dyld.h> — declared directly because the
     // `libc` crate has deprecated these in favour of the `mach2` crate. We
@@ -5348,9 +5320,8 @@ pub mod c {
         pub pbi_start_tvsec: u64,
         pub pbi_start_tvusec: u64,
     }
-    // SAFETY: integers + byte arrays only; all-zero is valid pre-`proc_pidinfo` state.
     #[cfg(target_os = "macos")]
-    unsafe impl bun_core::ffi::Zeroable for struct_proc_bsdinfo {}
+    bun_core::impl_zeroable!(struct_proc_bsdinfo);
     #[cfg(target_os = "macos")]
     pub const PROC_PIDTBSDINFO: c_int = 3;
     #[cfg(target_os = "macos")]
@@ -5999,6 +5970,7 @@ pub mod macho {
         pub nsects: u32,
         pub flags: u32,
     }
+    bun_core::impl_pod!(mach_header_64, load_command, segment_command_64);
     impl segment_command_64 {
         /// Segment name with trailing NULs trimmed.
         #[inline]
@@ -6007,115 +5979,58 @@ pub mod macho {
         }
     }
 
-    /// Raw `(*const u8, len)` pair so [`LoadCommandIterator`] does not hold a
-    /// Rust borrow of its backing buffer. `bun_exe_format::macho` interleaves
-    /// iterator reads with in-place mutation of the same `Vec<u8>`;
-    /// a `&'a [u8]` here would
-    /// force a structural rewrite of that consumer.
+    /// One parsed load command: header + bytes (header included).
     #[derive(Clone, Copy)]
-    pub struct RawSlice {
-        ptr: *const u8,
-        len: usize,
-    }
-    impl RawSlice {
-        #[inline]
-        pub fn as_ptr(&self) -> *const u8 {
-            self.ptr
-        }
-        #[inline]
-        pub fn len(&self) -> usize {
-            self.len
-        }
-    }
-
-    /// One parsed load command: header + raw bytes (header included).
-    #[derive(Clone, Copy)]
-    pub struct LoadCommand {
+    pub struct LoadCommand<'a> {
         pub hdr: load_command,
-        pub data: RawSlice,
+        pub data: &'a [u8],
         /// Byte offset of this command within the buffer passed to
         /// `LoadCommandIterator::new`.
         pub offset: usize,
     }
-    impl LoadCommand {
+    impl LoadCommand<'_> {
         #[inline]
         pub fn cmd(&self) -> u32 {
             self.hdr.cmd
         }
-        /// Reinterpret the command bytes
-        /// as `T` if large enough. Returns an owned `Copy` value (via
-        /// `read_unaligned`) rather than `&T`: the backing buffer may be a
-        /// heap `Vec<u8>` with arbitrary alignment, so materialising a typed
-        /// reference would be UB.
-        pub fn cast<T: Copy>(&self) -> Option<T> {
-            if self.data.len < core::mem::size_of::<T>() {
-                return None;
-            }
-            // SAFETY: `data.ptr` points into a live Mach-O image buffer with
-            // at least `size_of::<T>()` bytes (checked above); `T` is
-            // `#[repr(C)]` POD per all callers. `read_unaligned` tolerates any
-            // alignment.
-            Some(unsafe { core::ptr::read_unaligned(self.data.ptr.cast::<T>()) })
+        /// The command bytes as a `T`, if there are enough of them. A copy: the bytes have no alignment.
+        pub fn cast<T: bun_core::AnyBitPattern>(&self) -> Option<T> {
+            bun_core::read_prefix(self.data)
         }
     }
 
     /// Walks the load-command region
     /// that immediately follows a `mach_header_64`.
-    ///
-    /// SAFETY contract: callers must not reallocate, shrink, or free the
-    /// backing buffer while a `LoadCommandIterator` derived from it (or any
-    /// `LoadCommand` it yielded) is live.
-    pub struct LoadCommandIterator {
+    pub struct LoadCommandIterator<'a> {
         ncmds: u32,
-        index: u32,
-        buf_ptr: *const u8,
-        buf_len: usize,
+        rest: &'a [u8],
         offset: usize,
     }
-    impl LoadCommandIterator {
-        /// `buffer` must remain live (no realloc/free) for the lifetime of the
-        /// returned iterator and any `LoadCommand` it yields.
+    impl<'a> LoadCommandIterator<'a> {
         #[inline]
-        pub fn new(ncmds: u32, buffer: &[u8]) -> Self {
+        pub fn new(ncmds: u32, buffer: &'a [u8]) -> Self {
             Self {
                 ncmds,
-                index: 0,
-                buf_ptr: buffer.as_ptr(),
-                buf_len: buffer.len(),
+                rest: buffer,
                 offset: 0,
             }
         }
+    }
+    impl<'a> Iterator for LoadCommandIterator<'a> {
+        type Item = LoadCommand<'a>;
 
-        pub fn next(&mut self) -> Option<LoadCommand> {
-            if self.index >= self.ncmds || self.buf_len < core::mem::size_of::<load_command>() {
-                self.index = self.ncmds;
+        /// Ends at a malformed header as it does after the last command.
+        fn next(&mut self) -> Option<LoadCommand<'a>> {
+            self.ncmds = self.ncmds.checked_sub(1)?;
+            let hdr: load_command = bun_core::read_prefix(self.rest)?;
+            let (data, rest) = self.rest.split_at_checked(hdr.cmdsize as usize)?;
+            if data.len() < core::mem::size_of::<load_command>() {
                 return None;
             }
-            // SAFETY: `buf_ptr` was derived from a slice of `buf_len` bytes
-            // which the caller promised stays live, and at least
-            // `size_of::<load_command>()` bytes remain (checked above).
-            let hdr: load_command =
-                unsafe { core::ptr::read_unaligned(self.buf_ptr.cast::<load_command>()) };
-            let cmdsize = hdr.cmdsize as usize;
-            if cmdsize < core::mem::size_of::<load_command>() || cmdsize > self.buf_len {
-                // Malformed header — stop iteration rather than UB.
-                self.index = self.ncmds;
-                return None;
-            }
-            let lc = LoadCommand {
-                hdr,
-                data: RawSlice {
-                    ptr: self.buf_ptr,
-                    len: cmdsize,
-                },
-                offset: self.offset,
-            };
-            // SAFETY: advancing within the original buffer; bounds checked above.
-            self.buf_ptr = unsafe { self.buf_ptr.add(cmdsize) };
-            self.buf_len -= cmdsize;
-            self.offset += cmdsize;
-            self.index += 1;
-            Some(lc)
+            let offset = self.offset;
+            self.rest = rest;
+            self.offset += data.len();
+            Some(LoadCommand { hdr, data, offset })
         }
     }
 }
@@ -6157,7 +6072,7 @@ impl DynLib {
         // SAFETY: irreducible — `dlsym` yields an untyped symbol address as
         // `*mut c_void`; the caller asserts `T` is a pointer-sized fn pointer
         // (or `*mut c_void`) whose ABI matches the resolved symbol. fn pointers
-        // are not `bytemuck::Pod` (not zeroable), so no safe cast exists.
+        // are not `Pod` (not zeroable), so no safe cast exists.
         // `transmute_copy` is used over `transmute` because `T` is generic and
         // its size cannot be checked at the definition site; the `const` assert
         // above enforces `size_of::<T>() == size_of::<*mut c_void>()` at
@@ -6265,7 +6180,7 @@ macro_rules! dlsym_with_handle {
             )
         };
         // SAFETY: irreducible — `$T` is a fn-pointer type (caller contract);
-        // fn pointers are not `bytemuck::Pod`, so the `*mut c_void` → `$T`
+        // fn pointers are not `Pod`, so the `*mut c_void` → `$T`
         // reinterpretation cannot be expressed safely. `p` is non-null (checked
         // below) and was obtained from `dlsym`, so it is a valid code address;
         // `Once` provides happens-before for the store. The `const` assert above
@@ -8231,9 +8146,8 @@ pub mod posix {
         pub cur: u64,
         pub max: u64,
     }
-    // SAFETY: two `u64`; all-zero is a valid `Rlimit`.
     #[cfg(unix)]
-    unsafe impl bun_core::ffi::Zeroable for Rlimit {}
+    bun_core::impl_zeroable!(Rlimit);
     #[cfg(unix)]
     #[derive(Clone, Copy)]
     #[repr(i32)]
@@ -8577,6 +8491,8 @@ pub mod elf {
         /// `dlpi_name` copied to an owned buffer (empty when libc reports `NULL`,
         /// as Android does for the main program).
         pub name: Box<[u8]>,
+        /// End address (exclusive) of the `PT_LOAD` segment that contains the lookup address.
+        pub segment_end: usize,
     }
 
     /// Walk loaded ELF objects via `dl_iterate_phdr`, returning the one whose
@@ -8637,6 +8553,7 @@ pub mod elf {
                     context.result = Some(LoadedModule {
                         base_address: info.dlpi_addr as usize,
                         name,
+                        segment_end: seg_end,
                     });
                     return 1; // error.Found → stop iteration
                 }

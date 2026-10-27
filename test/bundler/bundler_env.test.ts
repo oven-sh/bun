@@ -1,4 +1,5 @@
-import { describe } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { itBundled } from "./expectBundled";
 
 for (let backend of ["api", "cli"] as const) {
@@ -125,3 +126,44 @@ for (let backend of ["api", "cli"] as const) {
       });
   });
 }
+
+// Assigning to a proxy variable in process.env updates the native env map and frees the old value.
+test("Bun.build inlines the env values from when it was called", async () => {
+  const atCall = "http://proxy-when-the-build-was-scheduled.example:1111/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+  const duringBuild = "http://proxy-assigned-while-bundling.example:2222/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+  using dir = tempDir("bun-build-env-copy", {
+    "entry.ts": "export {};",
+    "build-fixture.ts": /* ts */ `
+      process.env.HTTPS_PROXY = ${JSON.stringify(atCall)};
+      const result = await Bun.build({
+        entrypoints: ["./entry.ts"],
+        env: "inline",
+        plugins: [
+          {
+            name: "assign-proxy-env-while-bundling",
+            setup(build) {
+              build.onLoad({ filter: /entry\\.ts$/ }, () => {
+                process.env.HTTPS_PROXY = ${JSON.stringify(duringBuild)};
+                return { loader: "ts", contents: "console.log(process.env.HTTPS_PROXY);" };
+              });
+            },
+          },
+        ],
+      });
+      process.stdout.write(await result.outputs[0].text());
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build-fixture.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toContain(`console.log(${JSON.stringify(atCall)})`);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});

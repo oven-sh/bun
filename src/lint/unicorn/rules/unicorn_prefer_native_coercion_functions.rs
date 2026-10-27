@@ -18,12 +18,12 @@ const NATIVE_COERCION_FUNCTION_NAMES: [&str; 5] = ["BigInt", "Boolean", "Number"
 const ARRAY_METHODS_WITH_BOOLEAN_CALLBACK: [&str; 7] =
     ["every", "filter", "find", "findIndex", "findLast", "findLastIndex", "some"];
 
-/// The statements of the body, without the directives.
+/// The body's statements, without the directives.
 fn statements(func: Func<'_>) -> impl Iterator<Item = Stmt<'_>> {
     func.body_statements().into_iter().flatten().filter(|it| it.directive().is_none())
 }
 
-/// The `String` of `String(first_arg_name)`.
+/// The `String` in `String(first_arg_name)`.
 fn is_matching_native_coercion_function_call<'a>(e: Expr<'a>, first_arg_name: Name<'a>) -> Option<Name<'a>> {
     let call = e.as_call().filter(|it| it.chain() == Chain::No && !e.is_parenthesized())?;
     let (callee, argument) = (call.callee(), call.args().first()?);
@@ -45,7 +45,7 @@ fn check_function(func: Func<'_>) -> Option<Name<'_>> {
     }
 }
 
-/// The `a` of `return a`, in however many blocks that have nothing else.
+/// The `a` in `return a`, inside any number of blocks that contain nothing else.
 fn get_returned_ident(mut stmt: Stmt<'_>) -> Option<Name<'_>> {
     loop {
         match stmt.kind() {
@@ -100,7 +100,7 @@ impl Rule for PreferNativeCoercionFunctions {
             if func.body_statements().and_then(|it| it.last()).is_none_or(|it| it.tag() != StmtTag::Return) {
                 return;
             }
-            // Not what is directly in a property of an object: a method, or a value.
+            // Skip a function that's directly in an object property, as a method or a value.
             let is_in_object_property =
                 matches!(owner, Node::Expr(e) if !e.is_parenthesized() && matches!(e.parent(), Node::Prop(_)));
             if !is_in_object_property && let Some(called_fn) = check_function(func) {

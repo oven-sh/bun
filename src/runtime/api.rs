@@ -19,10 +19,7 @@ pub(crate) use crate::socket::SocketAddress;
 pub(crate) use crate::crypto;
 
 // ─── BuildMessage / ResolveMessage ───────────────────────────────────────────
-// Canonical defs live in `bun_jsc` (with `#[bun_jsc::JsClass]` derives wiring
-// the C++ `${T}__create`/`__fromJS`/`__finalize` symbols). `bun_runtime` already
-// depends on `bun_jsc`, so this is a plain downstream re-export — no cycle.
-// Exactly one Rust type backs each C++ `m_ctx` pointer.
+// Defined in `bun_jsc`.
 pub(crate) use bun_jsc::BuildMessage;
 pub(crate) use bun_jsc::ResolveMessage;
 
@@ -51,6 +48,8 @@ pub(crate) mod html_rewriter;
 pub(crate) mod js_bundle_completion_task;
 #[path = "api/JSBundler.rs"]
 pub(crate) mod js_bundler;
+#[path = "api/JSSourceMap.rs"]
+pub(crate) mod js_source_map;
 #[path = "api/JSTranspiler.rs"]
 pub(crate) mod js_transpiler;
 #[path = "api/JSON5Object.rs"]
@@ -87,7 +86,6 @@ pub(crate) mod bun_process;
 #[path = "api/bun/spawn.rs"]
 pub(crate) mod bun_spawn;
 
-// JS-facing `Bun.Subprocess` payload (.classes.ts m_ctx).
 #[path = "api/bun/subprocess.rs"]
 pub(crate) mod bun_subprocess;
 
@@ -119,7 +117,6 @@ pub(crate) mod bun_x509;
 
 pub(crate) mod bun {
     pub(crate) use super::bun_process as process;
-    pub(crate) use super::bun_secure_context as secure_context;
     pub(crate) use super::bun_ssl_context_cache as ssl_context_cache;
     pub(crate) use super::bun_subprocess as subprocess;
     pub(crate) use process::Rusage;
@@ -131,15 +128,11 @@ pub(crate) mod bun {
 
     pub(crate) mod h2_frame_parser {
         pub(crate) use crate::api::h2_frame_parser_body::H2FrameParser;
-        // js2native thunk (`$rust(h2_frame_parser.rs, …)` in generated_js2native.rs).
-        pub(crate) use crate::api::h2_frame_parser_body::h2_frame_parser_constructor;
     }
 }
 
 pub(crate) use crate::api::bun::h2_frame_parser::H2FrameParser;
 pub(crate) use crate::api::bun::ssl_context_cache as SSLContextCache;
-pub(crate) use crate::api::filesystem_router::FileSystemRouter;
-pub(crate) use crate::api::filesystem_router::MatchedRoute;
 pub(crate) use crate::api::js_bundler::BuildArtifact;
 pub(crate) use crate::api::js_bundler::JSBundler;
 

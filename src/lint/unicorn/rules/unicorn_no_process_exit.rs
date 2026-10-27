@@ -10,7 +10,7 @@ const NO_PROCESS_EXIT: Message = Message::new("", "Don't use `process.exit()`");
 
 pub struct State<'a> {
     exit: Name<'a>,
-    /// What is in a call of `process.on()` or `process.once()`.
+    /// Caches which nodes are in a call of `process.on()` or `process.once()`.
     process_event_handlers: AncestorMemo<'a, ()>,
     is_worker_threads_imported: Option<bool>,
 }
@@ -25,7 +25,7 @@ impl Rule for NoProcessExit {
     }
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<Self::State<'a>> {
-        // Not in what has a hashbang.
+        // Skip files with a hashbang.
         let exit = file.find_name("exit")?;
         (file.find_name("process").is_some() && !file.text().starts_with(b"#!")).then(|| State {
             exit,
@@ -54,7 +54,7 @@ fn is_process_event_handler<'a>(_: Node<'a>, parent: Node<'a>) -> Option<()> {
     is_method_call(call, Some(&["process"]), Some(&["on", "once"]), Some(1), None).then_some(())
 }
 
-/// Something is imported from it, not only the module.
+/// True if something is imported from it. `import "worker_threads"` doesn't count.
 fn is_worker_threads_imported<'a>(file: &'a File<'a>) -> bool {
     file.mentions_any(&["worker_threads", "node:worker_threads"])
         && file.body().iter().any(|it| {

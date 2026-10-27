@@ -960,14 +960,6 @@ impl<'a> Linker<'a> {
         debug_assert!(abs_target.as_bytes()[abs_target.as_bytes().len() - 1] != SEP);
         debug_assert!(abs_dest.as_bytes()[abs_dest.as_bytes().len() - 1] != SEP);
 
-        if let Some(seen) = self.seen.as_deref() {
-            // Skip seen destinations for this tree
-            // https://github.com/npm/cli/blob/22731831e22011e32fa0ca12178e242c2ee2b33d/node_modules/bin-links/lib/link-gently.js#L30
-            if seen.contains_key(abs_dest.as_bytes()) {
-                return;
-            }
-        }
-
         // Skip if the target does not exist. This is important because placing a dangling
         // shim in path might break a postinstall
         #[cfg(not(windows))]
@@ -975,17 +967,29 @@ impl<'a> Linker<'a> {
             self.skipped_due_to_missing_bin = true;
             return;
         };
-        #[cfg(windows)]
-        if !sys::exists(abs_target) {
-            self.skipped_due_to_missing_bin = true;
-            return;
-        }
 
         if target_needs_resolved_containment_check {
             #[cfg(not(windows))]
             if self.resolved_target_parent_escapes_package_dir(abs_target) {
                 return;
             }
+        }
+
+        if let Some(seen) = self.seen.as_deref() {
+            // Skip seen destinations for this tree
+            // https://github.com/npm/cli/blob/22731831e22011e32fa0ca12178e242c2ee2b33d/node_modules/bin-links/lib/link-gently.js#L30
+            if seen.contains_key(abs_dest.as_bytes()) {
+                // The name is taken, and `bunx <this package>` starts the file itself.
+                #[cfg(not(windows))]
+                Self::make_executable(abs_target, &target_stat);
+                return;
+            }
+        }
+
+        #[cfg(windows)]
+        if !sys::exists(abs_target) {
+            self.skipped_due_to_missing_bin = true;
+            return;
         }
 
         if let Some(seen) = self.seen.as_deref_mut() {
@@ -1023,13 +1027,16 @@ impl<'a> Linker<'a> {
         }
 
         #[cfg(not(windows))]
-        {
-            let mode = exec_mode();
-            if (target_stat.st_mode as Mode) & 0o777 != mode {
-                let _ = sys::lchmod(abs_target, mode);
-            }
-            Self::try_normalize_shebang(abs_target, target_stat.st_size as u64);
+        Self::make_executable(abs_target, &target_stat);
+    }
+
+    #[cfg(not(windows))]
+    fn make_executable(abs_target: &ZStr, target_stat: &sys::Stat) {
+        let mode = exec_mode();
+        if (target_stat.st_mode as Mode) & 0o777 != mode {
+            let _ = sys::lchmod(abs_target, mode);
         }
+        Self::try_normalize_shebang(abs_target, target_stat.st_size as u64);
     }
 
     #[cfg(not(windows))]
@@ -1189,17 +1196,7 @@ impl<'a> Linker<'a> {
         abs_dest: &ZStr,
         global: bool,
     ) -> Result<(), Error> {
-        // `encode_into` reinterprets this byte buffer as `[u16]`.
-        // Constructing a `&mut [u16]` from a pointer that is not 2-aligned is
-        // *immediate language UB* — the reference validity invariant requires
-        // alignment even if never dereferenced.
-        // `[u8; N]` has `align_of == 1`, so the compiler is free to place it at
-        // an odd address. Force 2-byte alignment at the declaration site so the
-        // `*mut u16` slice construction in `encode_into` is provably sound.
-        #[repr(align(2))]
-        struct ShimBuf([u8; 65536]);
-        let mut shim_buf = ShimBuf([0u8; 65536]);
-        let shim_buf = &mut shim_buf.0;
+        let mut shim_buf = [0u16; 32768];
         let mut read_in_buf = [0u8; WinShimShebang::MAX_SHEBANG_INPUT_LENGTH];
         let mut dest_buf = bun_paths::w_path_buffer_pool::get();
         let mut target_buf = bun_paths::w_path_buffer_pool::get();
@@ -1282,17 +1279,14 @@ impl<'a> Linker<'a> {
             shebang,
         };
 
-        let len = shim.encoded_length();
-        if len > shim_buf.len() {
+        let Some(metadata) = shim_buf.get_mut(..shim.encoded_length() / 2) else {
             return Err(crate::Error::InvalidBinContent);
-        }
-
-        let metadata = &mut shim_buf[0..len];
+        };
         if shim.encode_into(metadata).is_err() {
             return Err(crate::Error::InvalidBinContent);
         }
 
-        bunx_file.write_all(metadata)?;
+        bunx_file.write_all(bun_core::slice_as_bytes(metadata))?;
 
         dest_buf[abs_dest_w_len..abs_dest_w_len + exe_suffix.len()].copy_from_slice(exe_suffix);
         // SAFETY: dest_buf[abs_dest_w_len + ".exe".len()] == 0 written above
@@ -1922,13 +1916,16 @@ pub(crate) fn link_free_bins(
 ) {
     // Two copies of the same path, because the linker reads `target_node_modules_path` while it
     // holds `node_modules_path` by `&mut`.
-    let abs_node_modules = || -> AbsPath {
+    let abs_node_modules = || -> Option<AbsPath> {
         let mut dir = AbsPath::init_top_level_dir();
-        let _ = dir.append(node_modules);
-        dir
+        dir.try_append(node_modules).ok()?;
+        Some(dir)
     };
-    let (target_node_modules_path, mut node_modules_path) =
-        (abs_node_modules(), abs_node_modules());
+    let (Some(target_node_modules_path), Some(mut node_modules_path)) =
+        (abs_node_modules(), abs_node_modules())
+    else {
+        return;
+    };
 
     let mut seen: StringHashMap<()> = StringHashMap::default();
     match global_bin_path {

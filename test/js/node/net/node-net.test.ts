@@ -3489,6 +3489,147 @@ describe.concurrent("uncaughtException from socket listeners", () => {
     expect(stderr).toContain("fatal-boom");
     expect(exitCode).toBe(1);
   });
+
+  async function runHandleCallbackFixture(args: string[], env?: Record<string, string>) {
+    const path = join(import.meta.dir, "listener-throw-handle-callback-fixture.js");
+    const { stdout, stderr, exitCode } = await bunRun([path, ...args], { ...tlsEnv, ...env });
+    return { stdout, stderr, exitCode };
+  }
+  const thrown = ["throw", "uncaught:boom", "close:false"];
+  const works = { destroyed: false, delivered: true };
+
+  describe.each(["net", "tls"])("%s", transport => {
+    const isTLS = transport === "tls";
+    it.each([
+      // 'ready' and the 'connect' listeners that follow do not run.
+      ["client", "connect", { events: thrown, destroyed: false, delivered: !isTLS }],
+      ["client", "connect-destroyed", { events: thrown, destroyed: true, delivered: false }],
+      ["client", "ready", { events: ["ready", ...thrown], ...works }],
+      [
+        "client",
+        "ready-reading",
+        { events: ["ready", "throw", "uncaught:boom", "data:PONG", "close:false"], destroyed: false, delivered: false },
+      ],
+      // A plain socket writes from a 'connect' listener, a TLS socket once the handshake is done.
+      ["client", "early-write", { events: isTLS ? ["ready", ...thrown] : thrown, ...works }],
+      ["client", "drain", { events: ["ready", ...thrown], ...works }],
+      ["client", "write", { events: ["ready", ...thrown], ...works }],
+      ["server", "drain", { events: thrown, ...works }],
+      ["server", "write", { events: thrown, ...works }],
+      ["server", "readable-eof", { events: ["throw", "uncaught:boom"], destroyed: false, delivered: false }],
+    ])("%s %s", async (side, name, expected) => {
+      expect(await runHandleCallbackFixture([transport, side, name])).toEqual({
+        stdout: JSON.stringify(expected),
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+  });
+
+  it.each([
+    ["net", "client", "connect-idle", { events: ["throw", "uncaught:boom"], destroyed: false, delivered: false }],
+    // destroy(ECONNREFUSED) comes after the event, so it does not run.
+    ["net", "client", "attempt-failed", { events: thrown, destroyed: false, delivered: false }],
+    ["tls", "client", "keylog", { events: ["ready", ...thrown], ...works }],
+    ["tls", "client", "session", { events: ["ready", ...thrown], ...works }],
+    ["tls", "listener", "keylog", { events: thrown, ...works }],
+    ["tls", "listener", "drop", { events: ["throw", "uncaught:boom"], delivered: false }],
+    ["tls", "listener", "tlsClientError", { events: ["throw", "uncaught:boom", "server closed"], delivered: false }],
+    // It has no 'ready' event.
+    ["tls-socket", "client", "connect", { events: thrown, destroyed: false, delivered: false }],
+    ["tls-socket", "client", "write", { events: thrown, ...works }],
+  ])("%s %s %s", async (transport, side, name, expected) => {
+    expect(await runHandleCallbackFixture([transport, side, name])).toEqual({
+      stdout: JSON.stringify(expected),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  const closedByPeer = ["throw", "uncaught:boom", "close:true"];
+  const destroyedByListener = ["uncaught:first", "throw", "uncaught:boom", "close:false"];
+  // Windows takes a loopback write whole, so none is in flight to fail.
+  it.skipIf(isWindows).each([
+    ["client", "write-destroyed", { events: ["ready", ...destroyedByListener], destroyed: true, delivered: false }],
+    ["server", "write-destroyed", { events: destroyedByListener, destroyed: true, delivered: false }],
+  ])("net %s %s", async (side, name, expected) => {
+    expect(await runHandleCallbackFixture(["net", side, name])).toEqual({
+      stdout: JSON.stringify(expected),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // On Windows a path is a named pipe, which has a native socket of its own.
+  it.skipIf(isWindows).each([
+    ["client", "connect", { events: thrown, ...works }],
+    ["client", "write", { events: ["ready", ...thrown], ...works }],
+    ["server", "drain", { events: thrown, ...works }],
+    ["client", "write-reset", { events: ["ready", ...closedByPeer], delivered: false }],
+    ["server", "write-reset", { events: closedByPeer, delivered: false }],
+  ])("unix %s %s", async (side, name, expected) => {
+    using dir = tempDir("listener-throw", {});
+    expect(await runHandleCallbackFixture(["unix", side, name, join(String(dir), "s")])).toEqual({
+      stdout: JSON.stringify(expected),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // On Windows the pipe is a named pipe.
+  it.skipIf(isWindows).each(["drain", "write"])("a socket over a file descriptor: %s", async name => {
+    const { stdout, stderr, exitCode } = await bunRun([join(import.meta.dir, "listener-throw-fd-fixture.js"), name]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({ events: thrown, ...works }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("--tls-keylog gets the line whose 'keylog' listener throws", async () => {
+    using dir = tempDir("listener-throw", {});
+    const file = join(String(dir), "keylog");
+    const path = join(import.meta.dir, "listener-throw-handle-callback-fixture.js");
+    const { stdout, exitCode } = await bunRun([`--tls-keylog=${file}`, path, "tls", "client", "keylog"], tlsEnv);
+    expect({ stdout, exitCode }).toEqual({
+      stdout: JSON.stringify({ events: ["ready", ...thrown], ...works }),
+      exitCode: 0,
+    });
+    // TLS 1.3 logs five secrets on each side.
+    expect(fs.readFileSync(file, "utf8").trim().split("\n")).toHaveLength(10);
+  });
+
+  it.each([
+    ["net", "client", "connect"],
+    ["net", "server", "drain"],
+    ["tls", "client", "keylog"],
+  ])("without an uncaughtException handler: %s %s %s", async (transport, side, name) => {
+    const { stdout, stderr, exitCode } = await runHandleCallbackFixture([transport, side, name], { NO_HANDLER: "1" });
+    expect(stderr).toContain("error: boom");
+    expect({ stdout, exitCode }).toEqual({
+      stdout: JSON.stringify({ events: name === "keylog" ? ["ready", "throw"] : ["throw"], delivered: false }),
+      exitCode: 1,
+    });
+  });
+
+  it("a socket with an 'error' listener does not swallow a throw from its 'connect' listener", async () => {
+    const { stdout, stderr, exitCode } = await bunRun([
+      "-e",
+      `
+      const net = require("node:net");
+      const server = net.createServer(s => s.destroy()).listen(0, "127.0.0.1", () => {
+        const c = net.connect(server.address().port, "127.0.0.1", () => {
+          server.close();
+          throw new TypeError("thrown in the 'connect' listener");
+        });
+        c.on("error", e => console.log("socket 'error' event:", e.message));
+      });
+      process.on("exit", code => console.log("exit code", code));
+      `,
+    ]);
+    expect(stderr).toContain("TypeError: thrown in the 'connect' listener");
+    expect({ stdout, exitCode }).toEqual({ stdout: "exit code 1", exitCode: 1 });
+  });
 });
 
 // There is nothing to half-close yet. shutdown() used to mark the native socket as one that had

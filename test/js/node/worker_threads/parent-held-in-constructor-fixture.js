@@ -19,6 +19,8 @@
 //             line, each 'message' with the Worker's state ("live" or "ended") inside the listener.
 //   argv[4..] "no-early-start", see above.
 //             "terminate": with "messages", the first 'message' listener calls worker.terminate().
+//             "values": with "messages", each 'message' is printed without the Worker's state.
+//             "keeper": workerData.keeper is a port. The parent keeps open what the worker posts on it.
 const { existsSync, writeSync } = require("node:fs");
 
 const workerSource = process.argv[2];
@@ -27,7 +29,7 @@ const flags = process.argv.slice(4);
 
 const nativeStart = MessagePort.prototype.start;
 if (flags.includes("no-early-start")) MessagePort.prototype.start = function () {};
-const { Worker } = require("node:worker_threads");
+const { Worker, MessageChannel } = require("node:worker_threads");
 
 // [0] becomes 1 when the worker ran its 'exit' listeners. [1] is the worker's thread id (Linux).
 const shared = new Int32Array(new SharedArrayBuffer(8));
@@ -78,8 +80,26 @@ EventTarget.prototype.addEventListener = function (...args) {
   return addEventListener.apply(this, args);
 };
 
+const transferList = [];
+const kept = [];
+if (flags.includes("keeper")) {
+  const { port1, port2 } = new MessageChannel();
+  port1.on("message", port => {
+    kept.push(port);
+    port1.close();
+  });
+  workerData.keeper = port2;
+  transferList.push(port2);
+}
+
 const capture = mode === "capture";
-const worker = new Worker(announce + workerSource, { eval: true, workerData, stdout: capture, stderr: capture });
+const worker = new Worker(announce + workerSource, {
+  eval: true,
+  workerData,
+  transferList,
+  stdout: capture,
+  stderr: capture,
+});
 EventTarget.prototype.addEventListener = addEventListener;
 MessagePort.prototype.start = nativeStart;
 if (!held) throw new Error("`new Worker()` added no listener after it started the thread, so the parent was not held");
@@ -95,7 +115,8 @@ if (capture) {
   const events = [];
   let terminated = "not called";
   worker.on("message", value => {
-    events.push(`message ${value} ${worker.threadId === -1 ? "ended" : "live"}`);
+    const state = flags.includes("values") ? "" : worker.threadId === -1 ? " ended" : " live";
+    events.push(`message ${value}${state}`);
     if (flags.includes("terminate") && terminated === "not called") {
       terminated = "pending";
       worker.terminate().then(code => (terminated = `resolved ${code}`));

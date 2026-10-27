@@ -749,6 +749,24 @@ describe("stdio is flushed when the worker exits synchronously", () => {
       });
     });
 
+    // A worker can hand its parentPort to another thread. Its end of the channel then outlives it, so the
+    // parent's port gets no close, and the exit handler has to take what one port drain left.
+    test.concurrent.skipIf(!isLinux)("messages of a worker that transferred its parentPort all arrive", async () => {
+      const workerSource =
+        'const { parentPort, workerData } = require("node:worker_threads");\n' +
+        "for (let i = 0; i < 1100; i++) parentPort.postMessage(i);\n" +
+        "workerData.keeper.postMessage(parentPort, [parentPort]);";
+      expect(await runHeld([fixture, workerSource, "messages", "values", "keeper"])).toEqual({
+        stdout:
+          JSON.stringify({
+            events: [...Array.from({ length: 1100 }, (_, i) => `message ${i}`), "exit 0"],
+            terminated: "not called",
+          }) + "\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    });
+
     test.concurrent.skipIf(!isLinux)(
       "terminate() from a 'message' listener settles after the worker's own exit",
       async () => {

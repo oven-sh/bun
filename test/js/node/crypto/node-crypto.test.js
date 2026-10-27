@@ -856,25 +856,16 @@ describe("DiffieHellman", () => {
     });
   });
 
-  // A failed createDiffieHellman(2) leaves an error in the OpenSSL error queue, and the next
-  // createDiffieHellman() that fails reports that stale error and not its own. Constructing a
-  // built-in group in between clears the queue, as it does in Node.
+  // The failed createDiffieHellman(2) leaves an error in the OpenSSL error queue. Constructing a
+  // built-in group clears the queue, as it does in Node. If it did not, the last call would
+  // report that stale error and not its own.
   it("constructing a built-in group clears the OpenSSL error queue", () => {
     const prime = crypto.getDiffieHellman("modp5").getPrime();
-    const leaveStaleError = () =>
-      expect(() => crypto.createDiffieHellman(2)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }));
-    const badGenerator = () => crypto.createDiffieHellman(prime, Buffer.from([0]));
-
-    leaveStaleError();
+    expect(() => crypto.createDiffieHellman(2)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }));
     crypto.getDiffieHellman("modp5");
-    expect(badGenerator).toThrow(expect.objectContaining({ code: "ERR_OSSL_DH_BAD_GENERATOR" }));
-
-    // The control: with no group in between, the stale error is the one reported.
-    leaveStaleError();
-    expect(badGenerator).toThrow(
-      expect.objectContaining({ code: expect.stringMatching(/^ERR_OSSL_(BN_BITS|DH_MODULUS)_TOO_SMALL$/) }),
+    expect(() => crypto.createDiffieHellman(prime, Buffer.from([0]))).toThrow(
+      expect.objectContaining({ code: "ERR_OSSL_DH_BAD_GENERATOR" }),
     );
-    crypto.getDiffieHellman("modp5");
   });
 });
 

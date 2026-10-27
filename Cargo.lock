@@ -235,17 +235,8 @@ dependencies = [
 name = "bun_brotli"
 version = "0.0.0"
 dependencies = [
- "bun_alloc",
- "bun_brotli_sys",
  "bun_core",
  "thiserror",
-]
-
-[[package]]
-name = "bun_brotli_sys"
-version = "0.0.0"
-dependencies = [
- "bun_opaque",
 ]
 
 [[package]]

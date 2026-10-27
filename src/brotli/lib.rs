@@ -12,6 +12,7 @@
 
 mod common;
 mod dec;
+mod enc;
 mod io;
 mod util;
 

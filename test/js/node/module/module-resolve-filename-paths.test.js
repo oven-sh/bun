@@ -355,9 +355,8 @@ for (const [name, steps, expected] of [
   });
 }
 
-// Not fixed: the path of a file entry comes from a join that reads a backslash as a separator, and the entry keeps
-// its first path. Bun gives `/we/ird/sub/index.js` and `/we/ird/file.js`, which do not exist.
-todoPosix("require.resolve: a directory in we\\ird, its index file and a file have one path each", () => {
+// The path of a file is the path of its directory and its name. The backslash of `we\ird` is a byte of that path.
+testPosix("require.resolve: a directory in we\\ird, its index file and a file have one path each", () => {
   const { path: dir, cleanup } = createTempDir("paths-inner-backslash-files", {
     "we\\ird/sub/index.js": "module.exports = 1;",
     "we\\ird/file.js": "module.exports = 2;",

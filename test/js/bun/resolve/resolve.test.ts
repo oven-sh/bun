@@ -1558,16 +1558,20 @@ test.skipIf(isWindows).concurrent("a file created after a failed lookup through 
   expect(exitCode).toBe(0);
 });
 
-// A directory below a symlink has a real path: the real path of its parent and its own name. On POSIX a backslash
-// is a byte of that name. `real/pro/j` is the directory that a loose reading of `pro\j` names.
-test.skipIf(isWindows).concurrent("a module in pro\\j below a symlinked directory has its real path", async () => {
+// The real path of a file is the real path of its directory and its name. On POSIX a backslash is a byte of a
+// name. Each decoy is at the path that a loose reading of the backslash names.
+test.skipIf(isWindows).concurrent("a module behind a symlink and a backslash has its real path", async () => {
   using dir = tempDir("resolve-backslash-real-path", {
     "real/pro\\j/mod.js": `module.exports = "mod";`,
     "real/pro\\j/sub/deep.js": `module.exports = "deep";`,
     "real/pro/j/mod.js": `module.exports = "decoy";`,
+    "re\\al/inner.js": `module.exports = "inner";`,
+    "re/al/inner.js": `module.exports = "decoy";`,
+    "target/named.js": `module.exports = "named";`,
+    "elsewhere/named.js": `module.exports = "decoy";`,
+    "links/sym/placeholder.txt": ``,
     "load.cjs": `
       const B = String.fromCharCode(92);
-      const dir = __dirname + "/link/pro" + B + "j";
       const attempt = lookup => {
         try {
           return String(lookup()).replace(__dirname, "");
@@ -1575,25 +1579,41 @@ test.skipIf(isWindows).concurrent("a module in pro\\j below a symlinked director
           return e.code ?? e.name;
         }
       };
-      const result = {
-        path: attempt(() => require.resolve(dir + "/mod")),
-        value: attempt(() => require(dir + "/mod")),
-        deep: attempt(() => require(dir + "/sub/deep")),
+      const rows = {
+        "a directory named with a backslash below a link": __dirname + "/link/pro" + B + "j/mod",
+        "a directory below that": __dirname + "/link/pro" + B + "j/sub/deep",
+        "a link to a directory named with a backslash": __dirname + "/to-real/inner",
+        "a link named with a backslash": __dirname + "/links/sym" + B + "dir/named",
       };
+      const result = {};
+      for (const [row, specifier] of Object.entries(rows)) {
+        const path = attempt(() => require.resolve(specifier));
+        // The path that one lookup returns is the specifier of the next one.
+        result[row] = [path, attempt(() => require(__dirname + path)), attempt(() => require(specifier))];
+      }
       console.log(JSON.stringify(result));
     `,
   });
-  symlinkSync("real", join(String(dir), "link"));
+  const root = String(dir);
+  symlinkSync("real", join(root, "link"));
+  symlinkSync("re\\al", join(root, "to-real"));
+  symlinkSync(join("..", "target"), join(root, "links", "sym\\dir"));
+  symlinkSync(join("..", "..", "elsewhere"), join(root, "links", "sym", "dir"));
   await using proc = Bun.spawn({
     cmd: [bunExe(), "--no-install", "load.cjs"],
     env: bunEnv,
-    cwd: String(dir),
+    cwd: root,
     stdout: "pipe",
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stripAsanWarning(stderr)).toBe("");
-  expect(JSON.parse(stdout)).toEqual({ path: "/real/pro\\j/mod.js", value: "mod", deep: "deep" });
+  expect(JSON.parse(stdout)).toEqual({
+    "a directory named with a backslash below a link": ["/real/pro\\j/mod.js", "mod", "mod"],
+    "a directory below that": ["/real/pro\\j/sub/deep.js", "deep", "deep"],
+    "a link to a directory named with a backslash": ["/re\\al/inner.js", "inner", "inner"],
+    "a link named with a backslash": ["/target/named.js", "named", "named"],
+  });
   expect(exitCode).toBe(0);
 });
 

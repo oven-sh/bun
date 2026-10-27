@@ -319,32 +319,40 @@ test.skipIf(!isLinux)(
   30_000,
 );
 
-// On POSIX a backslash is a byte of a directory name. A script runs in the directory of its package.json.
-test.skipIf(isWindows).concurrent.each([
-  ["that directory", ""],
-  ["a directory below it", "sub"],
-])("bun run <script> runs in a directory named pro\\j, from %s", async (_, below) => {
-  using dir = tempDir("run-backslash-cwd", {
-    "pro\\j": {
-      "package.json": JSON.stringify({ scripts: { where: "pwd && echo $npm_package_json" } }),
-      sub: {},
-    },
-  });
-  const root = join(String(dir), "pro\\j");
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "run", "where"],
-    cwd: join(root, below),
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, stderr, exitCode }).toEqual({
-    stdout: `${root}\n${root}/package.json\n`,
-    stderr: "$ pwd && echo $npm_package_json\n",
-    exitCode: 0,
-  });
-});
+// On POSIX a backslash is a byte of a directory name. A script runs in the directory of its package.json, and
+// PATH has the node_modules/.bin of that directory.
+describe.concurrent.skipIf(isWindows).each(["pro\\j", "proj\\", "pro\\j\\"])(
+  "bun run <script> in a package directory named %s",
+  name => {
+    test.each([
+      ["that directory", ""],
+      ["a directory below it", "sub"],
+    ])("started from %s", async (_, below) => {
+      using dir = tempDir("run-backslash-cwd", {
+        [name]: {
+          "package.json": JSON.stringify({ scripts: { where: "pwd && echo $npm_package_json && tool" } }),
+          "node_modules/.bin/tool": "#!/bin/sh\necho tool-ran\n",
+          sub: {},
+        },
+      });
+      const root = join(String(dir), name);
+      chmodSync(join(root, "node_modules", ".bin", "tool"), 0o755);
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "run", "where"],
+        cwd: join(root, below),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: `${root}\n${root}/package.json\ntool-ran\n`,
+        stderr: "$ pwd && echo $npm_package_json && tool\n",
+        exitCode: 0,
+      });
+    });
+  },
+);
 
 describe.concurrent.each([
   ["ESC [ 2 K", "\x1b[2K", "\\x1b[2K"],

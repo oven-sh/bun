@@ -2538,7 +2538,8 @@ impl<'a> Resolver<'a> {
         let a = self.bust_dir_cache(strings::without_trailing_slash_windows_path(dir));
         let b = self.bust_dir_cache(path);
         // On POSIX the lookup of a directory `/a/b\` stores its entry under that key.
-        let c = path.len() != import_path.len() && self.bust_dir_cache(import_path);
+        let native = Self::dir_cache_key(import_path);
+        let c = native != path && self.bust_dir_cache(native);
         a || b || c
     }
 
@@ -5449,10 +5450,9 @@ impl<'a> Resolver<'a> {
                 == Fs::file_system::EntryKind::File
             {
                 let Ok(out_buf) = lookup.entry().abs_path_or_try_fill(|| {
-                    let parts = [dir_info.abs_path, &base[..]];
                     let out_buf_ = self
                         .fs_ref()
-                        .abs_buf_checked(&parts, bufs!(index))
+                        .abs_buf_in_dir_checked(dir_info.abs_path, &base[..], bufs!(index))
                         .ok_or(())?;
                     Ok::<_, ()>(Interned::from_static(
                         self.fs_ref()
@@ -5954,10 +5954,13 @@ impl<'a> Resolver<'a> {
                 }
 
                 let Ok(abs_path) = query.entry().abs_path_or_try_fill(|| {
-                    let abs_path_parts = [query.entry().dir, query.entry().base()];
                     let joined = self
                         .fs_ref()
-                        .abs_buf_checked(&abs_path_parts, bufs!(load_as_file))
+                        .abs_buf_in_dir_checked(
+                            query.entry().dir,
+                            query.entry().base(),
+                            bufs!(load_as_file),
+                        )
                         .ok_or(())?;
                     Ok::<_, ()>(Interned::from_static(
                         self.fs_ref()

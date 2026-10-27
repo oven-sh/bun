@@ -173,6 +173,25 @@ pub mod fs {
     string_store_append_impl!(DirnameStore, dirname_store_backing);
     string_store_append_impl!(FilenameStore, filename_store_backing);
 
+    /// `join_abs_string_buf_checked::<P>` for `name` in a directory that is open as `dir`: on POSIX a backslash there is a byte of a file name.
+    pub(crate) fn join_in_dir_checked<'b, P: bun_paths::resolve_path::PlatformT>(
+        cwd: &'b [u8],
+        dir: &[u8],
+        name: &[u8],
+        buf: &'b mut [u8],
+    ) -> Option<&'b [u8]> {
+        use bun_core::strings::contains_char;
+        use bun_paths::resolve_path::{join_abs_string_buf_checked, join_z_buf_checked, platform};
+        let parts: [&[u8]; 2] = [dir, name];
+        if cfg!(not(windows))
+            && dir.first() == Some(&b'/')
+            && (contains_char(dir, b'\\') || contains_char(name, b'\\'))
+        {
+            return join_z_buf_checked::<platform::Posix>(buf, &parts).map(|path| path.as_bytes());
+        }
+        join_abs_string_buf_checked::<P>(cwd, buf, &parts)
+    }
+
     // ── FileSystem ───────────────────────────────────────────────────────
 
     /// Process-global filesystem facade for the resolver. Wraps the real-FS
@@ -353,23 +372,15 @@ pub mod fs {
             join_abs_string_buf_checked::<platform::Loose>(self.top_level_dir(), buf, parts)
         }
 
-        /// `abs_buf_checked` for `name` in a directory that is open as `dir`: on POSIX a backslash there is a byte of a file name.
+        /// `abs_buf_checked` for `name` in a directory that is open as `dir`: see `join_in_dir_checked`.
         pub(crate) fn abs_buf_in_dir_checked<'b>(
             &self,
             dir: &[u8],
             name: &[u8],
             buf: &'b mut [u8],
         ) -> Option<&'b [u8]> {
-            let parts: [&[u8]; 2] = [dir, name];
-            #[cfg(not(windows))]
-            if bun_core::strings::contains_char(dir, b'\\')
-                || bun_core::strings::contains_char(name, b'\\')
-            {
-                use bun_paths::resolve_path::{join_z_buf_checked, platform};
-                return join_z_buf_checked::<platform::Posix>(buf, &parts)
-                    .map(|path| path.as_bytes());
-            }
-            self.abs_buf_checked(&parts, buf)
+            use bun_paths::resolve_path::platform;
+            join_in_dir_checked::<platform::Loose>(self.top_level_dir(), dir, name, buf)
         }
 
         /// Normalizes `str` (separators, `.`/`..` segments) into `buf`.
@@ -1235,7 +1246,7 @@ pub mod fs {
             existing_fd: Fd,
             store_fd: bool,
         ) -> crate::CrateResult<EntryCache> {
-            use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
+            use bun_paths::resolve_path::platform;
             #[cfg(not(windows))]
             use bun_sys::{FileKind, kind_from_mode};
 
@@ -1245,13 +1256,13 @@ pub mod fs {
                 fd: Fd::INVALID,
             };
 
-            let combo: [&[u8]; 2] = [dir_, base];
             let mut outpath = bun_paths::path_buffer_pool::get();
             let join_capacity = outpath.len() - 2;
-            let Some(entry_path) = join_abs_string_buf_checked::<platform::Auto>(
+            let Some(entry_path) = join_in_dir_checked::<platform::Auto>(
                 self.cwd,
+                dir_,
+                base,
                 &mut outpath[..join_capacity],
-                &combo,
             ) else {
                 return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
             };

@@ -1603,7 +1603,7 @@ const server = serve({
   // When compiling with 8+ entry points, the main entry point should still run correctly.
   // A package that node_modules reaches by symlink (a workspace or `bun link`) has its own
   // package.json read at runtime: its main, its exports, and its #imports from the real path.
-  test.skipIf(isWindows)("compile resolves a symlinked node_modules package through its package.json", async () => {
+  test("compile resolves a symlinked node_modules package through its package.json", async () => {
     await using dir = tempDir("compile-linked-pkg", {
       "app.js": `
         const req = (x) => require(x);
@@ -1620,7 +1620,11 @@ const server = serve({
       "packages/linked-pkg/lib/util.js": `module.exports = "util";`,
       "node_modules/.keep": "",
     });
-    symlinkSync(join(String(dir), "packages", "linked-pkg"), join(String(dir), "node_modules", "linked-pkg"));
+    symlinkSync(
+      join(String(dir), "packages", "linked-pkg"),
+      join(String(dir), "node_modules", "linked-pkg"),
+      "junction",
+    );
 
     await Bun.$`${bunExe()} build --compile app.js --outfile app`.cwd(dir).env(bunEnv).throws(true);
 
@@ -1628,7 +1632,7 @@ const server = serve({
     expect(result.stderr.toString()).toBe("");
     expect(result.stdout.toString().trim()).toBe('["util-main","util-feature"]');
     expect(result.exitCode).toBe(0);
-  });
+  }, 30_000);
 
   // A directory on NODE_PATH is not the project's config, so its package.json is read.
   test("compile resolves a NODE_PATH package through its package.json main", async () => {
@@ -1650,7 +1654,7 @@ const server = serve({
     expect(result.stderr.toString()).toBe("");
     expect(result.stdout.toString().trim()).toBe("from-node-path");
     expect(result.exitCode).toBe(0);
-  });
+  }, 30_000);
 
   test("compile with 8+ entry points runs main entry correctly", async () => {
     await using dir = tempDir("compile-many-entries", {

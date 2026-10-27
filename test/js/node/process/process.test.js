@@ -755,7 +755,6 @@ it("process.versions", async () => {
   const deps = {
     boringssl: "boringssl",
     mimalloc: "mimalloc",
-    picohttpparser: "picohttpparser",
     zlib: "zlib",
     tinycc: "tinycc",
     lolhtml: "lolhtml",

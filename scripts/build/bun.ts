@@ -196,9 +196,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     }
   }
 
-  // Collect all dep lib paths, include dirs, output stamps, and directly-
-  // compiled source files (deps like picohttpparser that provide .c files
-  // instead of a .a — we compile those alongside bun's own sources).
+  // Collect all dep lib paths, include dirs and output stamps.
   const depLibs: string[] = [];
   const depObjects: string[] = [];
   const depIncludes: string[] = [];
@@ -311,9 +309,6 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     noPchSources.add(rescleBinding);
   }
 
-  // Deps with provides.sources compiled in the loop below so each dep's
-  // phony can point at its own .o files.
-
   // Codegen .cpp files — compiled like regular sources.
   cxxSources.push(...codegen.cppSources);
 
@@ -371,16 +366,15 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
 
   // Compile all .c files. No PCH — dep signal applied directly.
   const cObjects: string[] = [];
-  const compileC = (src: string): string => {
-    const obj = cc(n, cfg, src, {
-      flags: cFlagsFull,
-      implicitInputs: depHeaderSignal,
-      orderOnlyInputs: codegenOrderOnly,
-    });
-    cObjects.push(obj);
-    return obj;
-  };
-  for (const src of cSources) compileC(src);
+  for (const src of cSources) {
+    cObjects.push(
+      cc(n, cfg, src, {
+        flags: cFlagsFull,
+        implicitInputs: depHeaderSignal,
+        orderOnlyInputs: codegenOrderOnly,
+      }),
+    );
+  }
 
   // InternalModuleRegistryConstants.S — `.incbin`s the bundled JS module sources
   // so InternalModuleRegistry.cpp sees a tiny {offset, length} table instead of
@@ -394,16 +388,6 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
       implicitInputs: [codegen.internalModulesBin],
     }),
   );
-
-  // Deps that contribute source files for bun to compile directly (via
-  // provides.sources) instead of building a lib. Compile them here with
-  // bun's full flag set and give each a phony so `--target <name>` builds
-  // its .o files. libs.length === 0 guard: deps with a build step already
-  // got a phony in resolveDep — don't emit a duplicate.
-  for (const d of deps) {
-    if (d.sources.length === 0 || d.libs.length > 0) continue;
-    n.phony(d.name, d.sources.map(compileC));
-  }
 
   // Dep objects (when !cfg.archiveDeps) are linked alongside bun's own
   // objects, in the same response file. With cfg.archiveDeps they live in
@@ -1021,12 +1005,12 @@ export function validateBunConfig(cfg: Config): void {
       `--local-deps: ${name} is disabled for ${cfg.os}-${cfg.arch}${cfg.abi ? `-${cfg.abi}` : ""} in this configuration, so the checkout at ${path} would never be built`,
       { hint: `Drop ${name} from --local-deps, or build a target/config where its \`enabled\` predicate holds` },
     );
-    // A dep the graph fetches but never reads (no build step, no sources, no
+    // A dep the graph fetches but never reads (no build step, no
     // includes — lolhtml, which cargo consumes through the workspace
     // Cargo.toml's `path = "vendor/lolhtml"`) can't be redirected from here.
     const provides = dep.provides(cfg);
     assert(
-      dep.build(cfg).kind !== "none" || (provides.sources ?? []).length > 0 || provides.includes.length > 0,
+      dep.build(cfg).kind !== "none" || provides.includes.length > 0,
       `--local-deps: ${name} is only fetched by the build graph, never compiled or included by it, so redirecting it to ${path} would change nothing`,
       {
         hint: `Point ${name}'s real consumer at the checkout instead (for a cargo path dependency: the workspace Cargo.toml)`,

@@ -277,7 +277,6 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
         // keep in sync with src/jsc/bindings/node/http/llhttp/README.md
         { "llhttp", "9.4.2" },
         { "mimalloc", BUN_VERSION_MIMALLOC },
-        { "picohttpparser", BUN_VERSION_PICOHTTPPARSER },
         { "uwebsockets", BUN_VERSION_UWS },
         { "webkit", BUN_VERSION_WEBKIT },
         { "zig", BUN_VERSION_ZIG },

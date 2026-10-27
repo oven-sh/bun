@@ -639,6 +639,9 @@ export function createOnWarning(process, redirectPath, disabledArr) {
   let traceWarningHelperShown = false;
 
   function writeOut(message) {
+    // One per call: `finally` removes it by identity, so a shared one lets the next print take
+    // away the listener this print's callback left for an 'error' that is still on its way.
+    function noop() {}
     if (appendFileSync) {
       try {
         appendFileSync(redirectPath, message + "\n");
@@ -652,7 +655,47 @@ export function createOnWarning(process, redirectPath, disabledArr) {
     // Runtime.consoleAPICalled, and a throwing listener there is surfaced via emitWarning,
     // so console.error would re-enter and loop. Read process.stderr per call (like Node) so
     // a reassigned process.stderr is honored and stderr is not materialized when redirected.
-    process.stderr.write(message + "\n");
+    const stream = process.stderr;
+    // Node's writeOut goes through console.error, whose kWriteToConsole (ported in
+    // ConsoleObject.ts) keeps a failing stderr from taking the process down: a sync throw
+    // (files, TTYs) is swallowed and an async 'error' (EPIPE on a pipe) gets a one-shot noop
+    // listener. Same here, or `bun x.js 2>&1 | head` dies on its first warning. The guard needs
+    // the Writable contract (a failed write calls back with the error, then emits 'error') and
+    // the listener API it arms and disarms; any other stand-in for process.stderr (a test's bare
+    // { write }, an EventEmitter with a write method, a spread copy of the real stream, which
+    // keeps _writableState but not the prototype's methods) gets the plain write it always got.
+    const guarded = stream._writableState !== undefined && typeof stream.removeListener === "function";
+    try {
+      if (guarded) {
+        if (stream.listenerCount("error") === 0) stream.once("error", noop);
+        stream.write(message + "\n", err => {
+          // Leave a listener only if an 'error' is still owed for this failure. errorOrDestroy()
+          // runs before this callback for a write after end(): the stream is then destroyed with
+          // the error, and the event is queued. A stream destroyed earlier emits nothing. When
+          // errorOrDestroy() runs after this callback it always emits with autoDestroy (stdio is
+          // revived after each destroy, so errorEmitted is stale), and else only the first error.
+          const state = stream._writableState;
+          const owed = state.destroyed
+            ? state.errored !== null && !state.errorEmitted
+            : state.autoDestroy || !state.errorEmitted;
+          if (err !== null && owed && stream.listenerCount("error") === 0) {
+            stream.once("error", noop);
+          }
+        });
+      } else {
+        stream.write(message + "\n");
+      }
+    } catch (e) {
+      if (
+        e != null &&
+        typeof e === "object" &&
+        (e as Partial<Error>).name === "RangeError" &&
+        (e as Partial<Error>).message === "Maximum call stack size exceeded."
+      )
+        throw e;
+    } finally {
+      if (guarded) stream.removeListener("error", noop);
+    }
   }
 
   interface ProcessWarning extends Error {

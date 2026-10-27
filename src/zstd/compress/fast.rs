@@ -731,11 +731,13 @@ pub(crate) fn compress_block_fast(
     };
     let mut sink = MatchSink::new(seq_store, &block);
     let hash_table = ms.hash_table.sub_mut(..1 << hlog)?;
-    // First, what levels 1, 2 and those below 0 come with if the input is not known to be small.
+    // First, what levels 1, 2 and those below 0 come with if the input is not known to be small, and level 1 if it is.
     match (ms.c_params.min_match, hlog) {
         (7, 14) => finder.find_matches::<7, 14>(hash_table, &mut sink),
         (6, 16) => finder.find_matches::<6, 16>(hash_table, &mut sink),
         (6, 13) => finder.find_matches::<6, 13>(hash_table, &mut sink),
+        (6, 14) => finder.find_matches::<6, 14>(hash_table, &mut sink),
+        (5, 15) => finder.find_matches::<5, 15>(hash_table, &mut sink),
         (5, _) => finder.find_matches::<5, 0>(hash_table, &mut sink),
         (6, _) => finder.find_matches::<6, 0>(hash_table, &mut sink),
         (7, _) => finder.find_matches::<7, 0>(hash_table, &mut sink),

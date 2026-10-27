@@ -316,10 +316,13 @@ pub(crate) fn compress_block_double_fast(
     let mut sink = MatchSink::new(seq_store, &block);
     let hash_long = ms.hash_table.sub_mut(..1 << h_bits_l)?;
     let hash_small = ms.chain_table.sub_mut(..1 << h_bits_s)?;
-    // First, what levels 3 and 4 come with if the input is not known to be small.
+    // First, what levels 3 and 4 come with if the input is not known to be small, and level 3 if it is.
     match (ms.c_params.min_match, h_bits_l, h_bits_s) {
         (5, 17, 16) => finder.find_matches::<5, 17, 16>(hash_long, hash_small, &mut sink),
         (5, 18, 18) => finder.find_matches::<5, 18, 18>(hash_long, hash_small, &mut sink),
+        (4, 16, 16) => finder.find_matches::<4, 16, 16>(hash_long, hash_small, &mut sink),
+        (5, 16, 15) => finder.find_matches::<5, 16, 15>(hash_long, hash_small, &mut sink),
+        (4, 15, 14) => finder.find_matches::<4, 15, 14>(hash_long, hash_small, &mut sink),
         (5, ..) => finder.find_matches::<5, 0, 0>(hash_long, hash_small, &mut sink),
         (6, ..) => finder.find_matches::<6, 0, 0>(hash_long, hash_small, &mut sink),
         (7, ..) => finder.find_matches::<7, 0, 0>(hash_long, hash_small, &mut sink),

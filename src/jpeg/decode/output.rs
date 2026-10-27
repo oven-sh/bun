@@ -73,7 +73,7 @@ impl Decoder<'_> {
             } else {
                 Entropy::Huff(Box::new(HuffDecoder::new(&mut self)))
             };
-            Source::Lossy(CoefController::new(&self, entropy)?)
+            Source::Lossy(CoefController::new(entropy))
         };
 
         let new_planes = |decoder: &Self| -> Result<Vec<Plane>> {

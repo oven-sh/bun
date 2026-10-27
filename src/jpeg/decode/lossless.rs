@@ -55,15 +55,10 @@ impl DiffController {
     pub(crate) fn new(decoder: &Decoder) -> Result<Self> {
         let mut diff_buf = Vec::new();
         let mut undiff_buf = Vec::new();
-        let mut whole_image = Vec::new();
         for comp in &decoder.components {
             let stride = comp.width_in_blocks.next_multiple_of(comp.h_samp) as usize;
             diff_buf.push(Rows::new(stride, comp.v_samp as usize)?);
             undiff_buf.push(Rows::new(stride, comp.v_samp as usize)?);
-            if decoder.has_multiple_scans {
-                let rows = comp.height_in_blocks.next_multiple_of(comp.v_samp) as usize;
-                whole_image.push((Plane::new(stride, rows)?, false));
-            }
         }
         Ok(DiffController {
             bits: BitReader::default(),
@@ -75,7 +70,7 @@ impl DiffController {
             restart_rows_to_go: 0,
             diff_buf,
             undiff_buf,
-            whole_image,
+            whole_image: Vec::new(),
         })
     }
 
@@ -267,6 +262,14 @@ impl DiffController {
 
     /// Decodes a whole scan into the samples of the whole image.
     pub(crate) fn consume_scan(&mut self, decoder: &mut Decoder) -> Result<()> {
+        // Only now that the first scan has turned out to be valid: a few bytes can ask for gigabytes of zeros.
+        if self.whole_image.is_empty() {
+            for comp in &decoder.components {
+                let stride = comp.width_in_blocks.next_multiple_of(comp.h_samp) as usize;
+                let rows = comp.height_in_blocks.next_multiple_of(comp.v_samp) as usize;
+                self.whole_image.push((Plane::new(stride, rows)?, false));
+            }
+        }
         let mut whole_image = core::mem::take(&mut self.whole_image);
         let result = (|| {
             for i in 0..decoder.components_in_scan {

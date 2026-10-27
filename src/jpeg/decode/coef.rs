@@ -196,27 +196,15 @@ pub(crate) struct CoefController {
 }
 
 impl CoefController {
-    pub(crate) fn new(decoder: &Decoder, entropy: Entropy) -> Result<Self> {
-        let mut whole_image = Vec::new();
-        if decoder.has_multiple_scans {
-            for comp in &decoder.components {
-                let blocks_per_row = comp.width_in_blocks.next_multiple_of(comp.h_samp) as usize;
-                let rows = comp.height_in_blocks.next_multiple_of(comp.v_samp) as usize;
-                let blocks = try_vec([0; 64], blocks_per_row * rows)?;
-                whole_image.push(CoefArray {
-                    blocks,
-                    blocks_per_row,
-                });
-            }
-        }
-        Ok(CoefController {
+    pub(crate) fn new(entropy: Entropy) -> Self {
+        CoefController {
             entropy,
             input_imcu_row: 0,
             mcu_buffer: Box::new([[0; 64]; MAX_BLOCKS_IN_MCU]),
-            whole_image,
+            whole_image: Vec::new(),
             last_good_imcu_row: 0,
             smoothing: None,
-        })
+        }
     }
 
     pub(crate) fn start_input_pass(&mut self) {
@@ -279,6 +267,18 @@ impl CoefController {
 
     /// Decodes a whole scan into the coefficient arrays.
     pub(crate) fn consume_scan(&mut self, decoder: &mut Decoder) -> Result<()> {
+        // Only now that the first scan has turned out to be valid: a few bytes can ask for gigabytes of zeros.
+        if self.whole_image.is_empty() {
+            for comp in &decoder.components {
+                let blocks_per_row = comp.width_in_blocks.next_multiple_of(comp.h_samp) as usize;
+                let rows = comp.height_in_blocks.next_multiple_of(comp.v_samp) as usize;
+                let blocks = try_vec([0; 64], blocks_per_row * rows)?;
+                self.whole_image.push(CoefArray {
+                    blocks,
+                    blocks_per_row,
+                });
+            }
+        }
         while self.input_imcu_row < decoder.total_imcu_rows {
             let mut mcu = McuInImage {
                 arrays: &mut self.whole_image,

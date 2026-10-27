@@ -890,8 +890,8 @@ impl<'a> Near<'a> {
         ) {
             // A comparison of vectors.
             let mut differ = 0u32;
-            for (n, (byte, match_byte)) in bytes.iter().zip(match_bytes).enumerate() {
-                differ |= u32::from(byte != match_byte) << n;
+            for (n, (byte, match_byte)) in (0..16).zip(bytes.iter().zip(match_bytes)) {
+                differ |= u32::from(byte != match_byte).wrapping_shl(n);
             }
             if differ != 0 {
                 let first = differ.trailing_zeros();
@@ -910,8 +910,8 @@ impl<'a> Near<'a> {
     pub(crate) fn compare_head(self, head: &[u8; 16], match_pos: u32, from: u32) -> Option<Common> {
         let match_bytes = self.chunk16(match_pos)?;
         let mut differ = 0u32;
-        for (n, (byte, match_byte)) in head.iter().zip(match_bytes).enumerate() {
-            differ |= u32::from(byte != match_byte) << n;
+        for (n, (byte, match_byte)) in (0..16).zip(head.iter().zip(match_bytes)) {
+            differ |= u32::from(byte != match_byte).wrapping_shl(n);
         }
         let first = differ.trailing_zeros();
         if first >= 16 || first < from {

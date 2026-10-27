@@ -322,6 +322,7 @@ impl RuntimeTranspilerStore {
         path: &Fs::Path<'_>,
         referrer: String,
         loader: Loader,
+        module_type: ModuleType,
         package_json: Option<&PackageJSON>,
         module_loader: JSValue,
     ) -> *mut c_void {
@@ -334,8 +335,8 @@ impl RuntimeTranspilerStore {
         let owned_path = bun_paths::fs::Path::init(unsafe { &*owned_text.cast_const() });
         let promise: *mut JSInternalPromise = JSInternalPromise::create(global_object);
 
-        // NOTE: DirInfo should already be cached since module loading happens
-        // after module resolution, so this should be cheap
+        // The tag feeds the CommonJS loader's `ignoreESModuleAnnotation`; the
+        // parser's hint is `module_type`.
         let mut resolved_source = ResolvedSource::default();
         if let Some(pkg) = package_json {
             match pkg.module_type {
@@ -365,6 +366,7 @@ impl RuntimeTranspilerStore {
                 ticket: None,
                 log: bun_ast::Log::init(),
                 loader,
+                module_type,
                 promise: StrongOptional::create(JSValue::from_cell(promise), global_object),
                 module_loader: if module_loader.is_empty() {
                     StrongOptional::empty()
@@ -416,6 +418,7 @@ pub struct TranspilerJob {
     pub(crate) non_threadsafe_input_specifier: bun_core::String,
     pub(crate) non_threadsafe_referrer: bun_core::String,
     pub(crate) loader: Loader,
+    pub(crate) module_type: ModuleType,
     pub(crate) promise: StrongOptional,
     /// The `JSModuleLoader` that is fetching, when it is not the global object's (a
     /// `Bun.ModuleGraph`'s): handed back with the result. Empty otherwise.
@@ -670,6 +673,7 @@ impl TranspilerJob {
         let path = self.path;
         let specifier = self.path.text;
         let loader = self.loader;
+        let module_type = self.module_type;
         let this_tag = self.resolved_source.tag;
 
         // RuntimeTranspilerCache has no per-allocator fields (Box<[u8]> + global mimalloc).
@@ -803,12 +807,6 @@ impl TranspilerJob {
                 && vm_main_hash == hash
                 && strings::eql_long(vm_main, path.text, false)
         });
-
-        let module_type: ModuleType = match this_tag {
-            ResolvedSourceTag::PackageJsonTypeCommonjs => ModuleType::Cjs,
-            ResolvedSourceTag::PackageJsonTypeModule => ModuleType::Esm,
-            _ => ModuleType::Unknown,
-        };
 
         let mut parse_options = ParseOptions {
             arena: &arena,
@@ -1014,6 +1012,17 @@ impl TranspilerJob {
                 ..Default::default()
             };
             self.resolved_source.source_code.ensure_hash();
+            return;
+        }
+
+        // An empty CommonJS file: synthetic `(function(){})`.
+        if parse_result.empty && module_type == ModuleType::Cjs {
+            self.resolved_source = ResolvedSource {
+                source_code: String::static_("(function(){})"),
+                is_commonjs_module: true,
+                tag: this_tag,
+                ..Default::default()
+            };
             return;
         }
 

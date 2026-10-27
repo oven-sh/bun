@@ -1469,12 +1469,9 @@ mod vm_loader_ctx {
                 // Short-lived `&mut Resolver` (not `&mut VirtualMachine`) for
                 // the call — narrows the borrow re-entrant JS could alias.
                 match (*this).transpiler.resolver.read_dir_info(dir) {
-                    Ok(Some(dir_info)) => {
-                        dir_info
-                            .package_json()
-                            .or(dir_info.enclosing_package_json)
-                            .map(core::ptr::from_ref::<PackageJSON>)
-                    }
+                    Ok(Some(dir_info)) => dir_info
+                        .package_json_for_module_type
+                        .map(core::ptr::from_ref::<PackageJSON>),
                     _ => None,
                 }
             },
@@ -2806,18 +2803,15 @@ fn transpile_source_code_of_any_provenance(
                     });
                 }
 
-                // Empty .cjs/.cts: synthetic `(function(){})`.
-                if parse_result.empty && matches!(loader, L::Js | L::Ts) {
-                    let ext = bun_paths::extension(source.path.text);
-                    if ext == b".cjs" || ext == b".cts" {
-                        return Ok(ResolvedSource {
-                            source_code: bun_core::String::static_("(function(){})"),
-                            source_url: input_specifier.create_if_different(path.text),
-                            is_commonjs_module: true,
-                            tag: ResolvedSourceTag::Javascript,
-                            ..Default::default()
-                        });
-                    }
+                // An empty CommonJS file: synthetic `(function(){})`.
+                if parse_result.empty && module_type_only_for_wrappables == ModuleType::Cjs {
+                    return Ok(ResolvedSource {
+                        source_code: bun_core::String::static_("(function(){})"),
+                        source_url: input_specifier.create_if_different(path.text),
+                        is_commonjs_module: true,
+                        tag: ResolvedSourceTag::Javascript,
+                        ..Default::default()
+                    });
                 }
 
                 // RuntimeTranspilerCache hit: skip print.
@@ -2908,9 +2902,7 @@ fn transpile_source_code_of_any_provenance(
                                         .resolver
                                         .read_dir_info(source.path.name().dir)
                                 } {
-                                    Ok(Some(dir_info)) => {
-                                        dir_info.package_json().or(dir_info.enclosing_package_json)
-                                    }
+                                    Ok(Some(dir_info)) => dir_info.package_json_for_module_type,
                                     _ => None,
                                 }
                             });
@@ -3171,10 +3163,9 @@ fn transpile_source_code_of_any_provenance(
                                 // re-entrant on the JS thread and returns a
                                 // stable cache slot.
                                 match unsafe { (*jsc_vm).transpiler.resolver.read_dir_info(dir) } {
-                                    Ok(Some(dir_info)) => dir_info
-                                        .package_json()
-                                        .or(dir_info.enclosing_package_json)
-                                        .map(|p| p.module_type),
+                                    Ok(Some(dir_info)) => {
+                                        dir_info.package_json_for_module_type.map(|p| p.module_type)
+                                    }
                                     _ => None,
                                 }
                             })
@@ -3906,8 +3897,12 @@ struct LoaderResult<'a> {
     /// The specifier is an object URL.
     is_blob: bool,
     specifier: &'a [u8],
-    /// Always `None` for non-JS-like loaders (not needed there).
+    /// `DirInfo::package_json_for_module_type`. `None` for non-JS-like loaders.
     package_json: Option<&'a bun_resolver::package_json::PackageJSON>,
+    /// The name of the enclosing (named) package. `None` for non-JS-like loaders.
+    package_name: Option<&'a [u8]>,
+    /// `bun_resolver::module_type_for_file` for `path`.
+    module_type: ModuleType,
 }
 
 /// `options.getLoaderAndVirtualSource` — high-tier body.
@@ -3996,18 +3991,27 @@ unsafe fn get_loader_and_virtual_source<'a>(
     // SAFETY: per fn contract.
     let is_main = unsafe { &*jsc_vm }.main() == Some(specifier);
 
-    // package.json sniff for `.js`/`.ts` module-type.
     let dir = path.name().dir;
     let is_js_like = loader.map(|l| l.is_java_script_like()).unwrap_or(true);
-    let package_json = if is_js_like && bun_paths::is_absolute(dir) {
+    let (package_json, package_name) = if is_js_like && bun_paths::is_absolute(dir) {
         // SAFETY: per fn contract — `transpiler.resolver` is a value field of
         // the VM; `read_dir_info` is re-entrant on the JS thread.
         match unsafe { (*jsc_vm).transpiler.resolver.read_dir_info(dir) } {
-            Ok(Some(dir_info)) => dir_info.package_json().or(dir_info.enclosing_package_json),
-            _ => None,
+            Ok(Some(dir_info)) => (
+                dir_info.package_json_for_module_type,
+                dir_info
+                    .enclosing_package_json
+                    .and_then(|pkg| (!pkg.name.is_empty()).then_some(&*pkg.name)),
+            ),
+            _ => (None, None),
         }
     } else {
-        None
+        (None, None)
+    };
+    let module_type = if is_js_like {
+        bun_resolver::module_type_for_file(path.name().ext, package_json)
+    } else {
+        ModuleType::Unknown
     };
 
     Ok(LoaderResult {
@@ -4018,6 +4022,8 @@ unsafe fn get_loader_and_virtual_source<'a>(
         is_blob,
         specifier,
         package_json,
+        package_name,
+        module_type,
     })
 }
 
@@ -4161,38 +4167,8 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
         }
     }
 
-    // ── module_type sniff from extension / package.json ─────────────────────
-    let module_type: ModuleType = 'brk: {
-        let ext = lr.path.name().ext;
-        // regex /\.[cm][jt]s$/
-        if ext.len() == b".cjs".len() {
-            if ext == b".cjs" {
-                break 'brk ModuleType::Cjs;
-            }
-            if ext == b".mjs" {
-                break 'brk ModuleType::Esm;
-            }
-            if ext == b".cts" {
-                break 'brk ModuleType::Cjs;
-            }
-            if ext == b".mts" {
-                break 'brk ModuleType::Esm;
-            }
-        }
-        // regex /\.[jt]s$/
-        if ext.len() == b".ts".len() && (ext == b".js" || ext == b".ts") {
-            // Use the package.json module type if it exists.
-            break 'brk lr
-                .package_json
-                .map(|pkg| pkg.module_type)
-                .unwrap_or(ModuleType::Unknown);
-        }
-        // For JSX/TSX and other extensions, let the file contents decide.
-        ModuleType::Unknown
-    };
-    let pkg_name: Option<&[u8]> = lr
-        .package_json
-        .and_then(|pkg| (!pkg.name.is_empty()).then_some(&*pkg.name));
+    let module_type = lr.module_type;
+    let pkg_name = lr.package_name;
 
     // ── Concurrent-transpiler dispatch (`transpile_async:` block) ───────────
     // We only run the transpiler concurrently when we can — today that's import statements and
@@ -4245,6 +4221,7 @@ pub(crate) unsafe extern "C" fn Bun__transpileFile(
                     &lr.path,
                     referrer.clone(),
                     concurrent_loader,
+                    module_type,
                     lr.package_json,
                     module_loader,
                 )
@@ -4472,6 +4449,8 @@ pub(crate) extern "C" fn Bun__transpileVirtualModule(
     let mut extra = TranspileExtra {
         path,
         loader,
+        // The caller evaluates this source as an ES module whatever the
+        // parser decides, so it must not get the CommonJS wrapper from a hint.
         module_type: ModuleType::Unknown,
         source_code_printer: printer_ptr,
         promise_ptr: ptr::null_mut(), // null forbids async resolution

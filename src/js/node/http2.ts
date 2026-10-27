@@ -1914,7 +1914,7 @@ abstract class Http2Session extends EventEmitter {
   // Session-level frame (Node's Http2Session AsyncWrap): destroy()'s emits
   // run inside it so 'close' doesn't inherit the last stream's frame.
   [bunHTTP2AsyncContextFrame] = $getInternalField($asyncContext, 0);
-  [kDeferWriteCallback]: typeof process.nextTick | typeof setImmediate = setImmediate;
+  [kDeferWriteCallback]: typeof process.nextTick | typeof deferWriteCallbackAsSession = deferWriteCallbackAsSession;
   [kTransportClosed] = false;
   // The GOAWAY this side received (not one it sent), like node's Http2Session getters.
   get goawayCode() {
@@ -2084,7 +2084,12 @@ const kWriteFlushedWithoutCallback = 0x10;
 // event-loop turn so the JS-side delivery has run before 'drain' is observed
 // (test-http2-backpressure). Chosen once per session.
 function deferWriteCallbackForSocket(nativeSocket) {
-  return nativeSocket ? process.nextTick : setImmediate;
+  return nativeSocket ? process.nextTick : deferWriteCallbackAsSession;
+}
+// The session's immediate, and the writer's async context for the callback: dispose() drops an immediate armed as the writer's Bun.ModuleGraph.
+function deferWriteCallbackAsSession(this: Http2Session, callback: () => void) {
+  const frame = $getInternalField($asyncContext, 0);
+  runInFrame(this[bunHTTP2AsyncContextFrame], setImmediate, undefined, runInFrame, frame, callback);
 }
 // Whether this chunk is the writable's last: end() ran, nothing queued behind it (writableLength
 // includes the in-flight chunk, string chunks in code units), no trailers pending (END_STREAM
@@ -2249,7 +2254,8 @@ function sendRstOnReady(this: Http2Stream, session: Http2Session, code: number) 
   const id = this.id;
   // A request rejected by request() emits 'ready' without an id. The peer never saw it, so skip the RST_STREAM.
   if (typeof id !== "number") return;
-  setImmediate(rstNextTick.bind(session, id, code));
+  // The session's immediate: dispose() drops one armed as the request's Bun.ModuleGraph, and the stream keeps its slot.
+  runInFrame(session[bunHTTP2AsyncContextFrame], setImmediate, undefined, rstNextTick.bind(session, id, code));
 }
 function uncorkNT(stream: Http2Stream) {
   stream.uncork();
@@ -2324,7 +2330,7 @@ class Http2Stream extends (Duplex as Http2StreamBase) {
   // Async-context frame captured at construction so native-driven callbacks
   // (response/data/end/…) on client streams observe the AsyncLocalStorage
   // context that request() ran in, matching Node's Http2Stream AsyncWrap.
-  // Read only by withStreamFrame; user-initiated emit() is untouched. The raw
+  // Read by withStreamFrame and the pending queue; user-initiated emit() is untouched. The raw
   // frame is snapshotted directly so session.request() does not flip on
   // async-context tracking when no AsyncLocalStorage is in use.
   [bunHTTP2AsyncContextFrame] = $getInternalField($asyncContext, 0);
@@ -5474,7 +5480,9 @@ class ClientHttp2Session extends Http2Session {
       this.#pendingRequests = null;
       if (pendingRequests !== null) {
         for (let i = 0; i < pendingRequests.length; i++) {
-          streamRejectedByGoawaySession(pendingRequests[i].req);
+          const req = pendingRequests[i].req;
+          // In its request() caller's async context, like node: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L780-L786
+          runInFrame(req[bunHTTP2AsyncContextFrame], streamRejectedByGoawaySession, undefined, req);
         }
       }
       this.#parser?.forEachStream(streamRejectedByGoawaySession);
@@ -6391,36 +6399,49 @@ class ClientHttp2Session extends Http2Session {
       // A pending stream that was close()d (but not destroyed) is still submitted: node sends its
       // HEADERS and follows up with the RST_STREAM once the id is known (see close()).
       if (req.destroyed) continue;
-      const stream_id: number = parser.getNextStream();
-      if (stream_id < 0) {
-        process.nextTick(emitOutofStreamErrorNT, req);
-        continue;
-      }
-      req[kSetStreamId](stream_id);
-      try {
-        if (typeof options === "undefined") {
-          parser.request(stream_id, req, wireHeaders, sensitiveNames);
-        } else {
-          parser.request(stream_id, req, wireHeaders, sensitiveNames, options);
-        }
-      } catch (err) {
-        // Native request() can reject headers the pre-queue validation does not cover (invalid
-        // tokens, bad value bytes); fail this queued request like the immediate path and keep
-        // flushing the rest. The native context was never attached, so the reset dispatch cannot
-        // release the connection slot - do it here, like the immediate path's catch. The HEADERS
-        // never reached the wire either, so the teardown must not write RST_STREAM for an id the
-        // peer considers idle.
-        this.#connections--;
-        req[kNeverAnnounced] = true;
-        if (!req.destroyed) req.destroy(err as Error);
-        continue;
-      }
-      if (onClientStreamStartChannel.hasSubscribers) {
-        onClientStreamStartChannel.publish({ stream: req, headers });
-      }
-      this.#trackActiveRequest(req);
-      process.nextTick(emitEventNT, req, "ready");
+      // node runs the submission bound to the request's AsyncResource, deferred or not: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/http2/core.js#L1912-L1926
+      const frame = req[bunHTTP2AsyncContextFrame];
+      runInFrame(frame, this.#submitPendingRequest, this, parser, req, headers, wireHeaders, sensitiveNames, options);
     }
+  }
+
+  #submitPendingRequest(
+    parser: typeof H2FrameParser,
+    req: ClientHttp2Stream,
+    headers: HeadersObject,
+    wireHeaders: HeadersObject | any[],
+    sensitiveNames: Record<string, boolean>,
+    options: any,
+  ) {
+    const stream_id: number = parser.getNextStream();
+    if (stream_id < 0) {
+      process.nextTick(emitOutofStreamErrorNT, req);
+      return;
+    }
+    req[kSetStreamId](stream_id);
+    try {
+      if (typeof options === "undefined") {
+        parser.request(stream_id, req, wireHeaders, sensitiveNames);
+      } else {
+        parser.request(stream_id, req, wireHeaders, sensitiveNames, options);
+      }
+    } catch (err) {
+      // Native request() can reject headers the pre-queue validation does not cover (invalid
+      // tokens, bad value bytes); fail this queued request like the immediate path and keep
+      // flushing the rest. The native context was never attached, so the reset dispatch cannot
+      // release the connection slot - do it here, like the immediate path's catch. The HEADERS
+      // never reached the wire either, so the teardown must not write RST_STREAM for an id the
+      // peer considers idle.
+      this.#connections--;
+      req[kNeverAnnounced] = true;
+      if (!req.destroyed) req.destroy(err as Error);
+      return;
+    }
+    if (onClientStreamStartChannel.hasSubscribers) {
+      onClientStreamStartChannel.publish({ stream: req, headers });
+    }
+    this.#trackActiveRequest(req);
+    process.nextTick(emitEventNT, req, "ready");
   }
   static connect(url: string | URL, options?: Http2ConnectOptions, listener?: Function) {
     return new ClientHttp2Session(url, options, listener);

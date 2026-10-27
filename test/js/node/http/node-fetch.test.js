@@ -16,11 +16,12 @@ import { afterEach, describe, expect, test } from "bun:test";
 const originalResponse = globalThis.Response;
 const originalRequest = globalThis.Request;
 const originalHeaders = globalThis.Headers;
+const originalFetch = globalThis.fetch;
 afterEach(() => {
   globalThis.Response = originalResponse;
   globalThis.Request = originalRequest;
   globalThis.Headers = originalHeaders;
-  globalThis.fetch = Bun.fetch;
+  globalThis.fetch = originalFetch;
 });
 
 test("node-fetch", () => {

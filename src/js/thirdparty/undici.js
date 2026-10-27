@@ -6,7 +6,6 @@ const { _ReadableFromWeb: ReadableFromWeb } = require("internal/webstreams_adapt
 const ObjectCreate = Object.create;
 const kEmptyObject = ObjectCreate(null);
 
-var fetch = Bun.fetch;
 const bindings = $cpp("Undici.cpp", "createUndiciInternalBinding");
 const Response = bindings[0];
 const Request = bindings[1];
@@ -20,6 +19,7 @@ const BunWebSocket = bindings[8];
 const CloseEvent = bindings[9];
 const ErrorEvent = bindings[10];
 const MessageEvent = bindings[11];
+const fetch = bindings[12];
 
 class FileReader extends EventTarget {
   constructor() {

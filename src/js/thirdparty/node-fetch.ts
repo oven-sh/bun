@@ -30,7 +30,7 @@ const Blob: typeof globalThis.Blob = bindings[2];
 const WebHeaders: typeof globalThis.Headers = bindings[3];
 const FormData: typeof globalThis.FormData = bindings[4];
 const File: typeof globalThis.File = bindings[5];
-const nativeFetch = Bun.fetch;
+const nativeFetch: typeof globalThis.fetch = bindings[6];
 const JSONParse = JSON.parse;
 
 // node-fetch extends from URLSearchParams in their implementation...

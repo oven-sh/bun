@@ -623,6 +623,7 @@ public:
     V(private, LazyPropertyOfGlobalObject<Structure>, m_importMetaBakeObjectStructure)                       \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_asyncBoundFunctionStructure)                         \
     V(public, LazyPropertyOfGlobalObject<JSC::JSObject>, m_JSDOMFileConstructor)                             \
+    V(public, LazyPropertyOfGlobalObject<JSC::JSObject>, m_nativeFetchFunction)                              \
     V(public, LazyPropertyOfGlobalObject<JSC::JSObject>, m_JSMIMEParamsConstructor)                          \
     V(public, LazyPropertyOfGlobalObject<JSC::JSObject>, m_JSMIMETypeConstructor)                            \
                                                                                                              \
@@ -717,6 +718,9 @@ public:
 
     JSObject* cryptoObject() const { return m_cryptoObject.getInitializedOnMainThread(this); }
     JSObject* JSDOMFileConstructor() const { return m_JSDOMFileConstructor.getInitializedOnMainThread(this); }
+    // The native fetch that `Bun.fetch` starts as. Internal modules (node-fetch, undici) read it from here so
+    // a user who replaces `Bun.fetch` or `globalThis.fetch` does not change what they call.
+    JSObject* nativeFetchFunction() const { return m_nativeFetchFunction.getInitializedOnMainThread(this); }
 
     JSMap* nodeWorkerEnvironmentData() { return m_nodeWorkerEnvironmentData.get(); }
     JSObject* nodeWorkerStdioPorts() { return m_nodeWorkerStdioPorts.get(); }

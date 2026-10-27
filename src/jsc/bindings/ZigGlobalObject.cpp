@@ -2487,6 +2487,9 @@ void GlobalObject::finishCreation(VM& vm)
              JSObject* fileConstructor = Bun::createJSDOMFileConstructor(init.vm, init.owner);
              init.set(fileConstructor);
          } },
+        { OBJECT_OFFSETOF(GlobalObject, m_nativeFetchFunction), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
+             init.set(Bun::constructBunFetchObject(init.vm, init.owner).getObject());
+         } },
         { OBJECT_OFFSETOF(GlobalObject, m_cryptoObject), [](const LazyProperty<JSGlobalObject, JSObject>::Initializer& init) {
              JSC::JSGlobalObject* globalObject = init.owner;
              JSObject* crypto = JSValue::decode(CryptoObject__create(globalObject)).getObject();

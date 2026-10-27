@@ -1751,6 +1751,50 @@ it("#3545", () => {
   expect(() => fetch("http://example.com?a=b")).not.toThrow();
 });
 
+it("Bun.fetch and Bun.plugin are writable like Bun.file (#47033)", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `"use strict";
+      const desc = name => Object.getOwnPropertyDescriptor(Bun, name);
+      const original = Bun.fetch;
+      const out = {
+        fetch: desc("fetch"),
+        plugin: desc("plugin"),
+        file: desc("file"),
+        preconnect: typeof original.preconnect,
+        distinctFromGlobal: original !== globalThis.fetch,
+      };
+      Bun.fetch = () => "replaced fetch";
+      Bun.plugin = () => "replaced plugin";
+      out.replacedFetch = Bun.fetch();
+      out.replacedPlugin = Bun.plugin();
+      out.defineProperty = Reflect.defineProperty(Bun, "fetch", { value: original });
+      out.restored = Bun.fetch === original;
+      out.deleted = Reflect.deleteProperty(Bun, "fetch");
+      console.log(JSON.stringify(out, (k, v) => (typeof v === "function" ? "function" : v)));`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual({
+    fetch: { value: "function", writable: true, enumerable: true, configurable: false },
+    plugin: { value: "function", writable: true, enumerable: true, configurable: false },
+    file: { value: "function", writable: true, enumerable: true, configurable: false },
+    preconnect: "function",
+    distinctFromGlobal: true,
+    replacedFetch: "replaced fetch",
+    replacedPlugin: "replaced plugin",
+    defineProperty: true,
+    restored: true,
+    deleted: false,
+  });
+  expect(exitCode).toBe(0);
+});
+
 it("invalid header doesnt crash", () => {
   expect(() =>
     fetch("http://example.com", {

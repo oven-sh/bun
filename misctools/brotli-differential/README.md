@@ -28,8 +28,8 @@ quality `q`: `0xFFF` for all of them.
 | `dec-fuzz <seed> <iterations> <max length>` | streams of the C encoder: intact, then damaged |
 | `dec-garbage <seed> <iterations>` | random bytes |
 | `dec-gen <seed> <iterations> <evil>` | streams written bit by bit from the grammar of RFC 7932 (`grammar.rs`), with a model of the output. `evil`: one chance in this many, at each opportunity, to break a rule; 0 for valid streams only. `STATS=1` prints which rule gave which error |
-| `dec-empty-commands` | 2^24 commands without output, the only way to `_ERROR_FORMAT_BLOCK_SWITCH`: once for the commands, once for the distances |
-| `dec-stream <seed> <iterations> <max length>` | `StreamingDecoder` against the loop around the C decoder that it replaced |
+| `dec-empty-commands` | 2^24 commands without output, which end in `_ERROR_FORMAT_BLOCK_SWITCH`: once for the commands, once for the distances. For the literals, `test/js/node/zlib/brotli-streams.test.ts` has a stream of 19 bytes |
+| `dec-stream <seed> <iterations> <max length>` | `StreamingDecoder` against the loop around the C decoder that it replaced, without large windows |
 | `enc-fuzz <seed> <iterations> <max length> <mask of qualities>` | random data, parameters, dictionaries and schedules |
 | `enc-ring <seed> <iterations> <max length> <mask>` | lengths and pieces that end near the sizes of the ring buffer. Qualities 2 and up, which have one |
 | `enc-hash <seed> <iterations> <max length> <mask>` | more than 65536 positions in one bucket of a hasher. Qualities 2 and up |

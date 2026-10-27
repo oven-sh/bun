@@ -5,6 +5,8 @@ use super::seq_table::{
     Cell, LL_BASE, ML_BASE, OF_BASE, OF_BITS, OffsetTable, SeqTable, SeqTableSources, SeqTables,
     TableSource,
 };
+use core::hint::{Locality, prefetch_read};
+
 use crate::common::bitstream::BitDStream;
 use crate::common::entropy::read_ncount;
 use crate::common::{
@@ -559,9 +561,9 @@ impl BlockDecoder {
         if nb_seq > 0 {
             let mut seq_state = SeqState::new(sequences, tables, rep)?;
             if use_prefetch_decoder {
-                exec.run_long(&mut seq_state, nb_seq)?;
+                exec.run::<true>(&mut seq_state, nb_seq)?;
             } else {
-                exec.run(&mut seq_state, nb_seq)?;
+                exec.run::<false>(&mut seq_state, nb_seq)?;
             }
             *rep = seq_state.prev_offset.map(|offset| offset as u32);
         }
@@ -651,6 +653,36 @@ struct RawSequence {
     match_length: u32,
 }
 
+/// Where matches are, for `ZSTD_prefetchMatch`.
+struct History {
+    prefix_start: *const u8,
+    dict_end: *const u8,
+    /// How long the prefix is.
+    position: usize,
+}
+
+impl History {
+    /// Of the match of the next sequence, if its offset is not one of the last.
+    #[inline(always)]
+    fn prefetch(&mut self, lit_length: u32, match_length: u32, offset_value: u32) {
+        self.position += lit_length as usize;
+        let offset = offset_value.saturating_sub(3) as usize;
+        let base = if offset > self.position {
+            self.dict_end
+        } else {
+            self.prefix_start
+        };
+        let from = if offset == 0 {
+            self.dict_end
+        } else {
+            base.wrapping_add(self.position).wrapping_sub(offset)
+        };
+        prefetch_read(from, Locality::L1);
+        prefetch_read(from.wrapping_add(64), Locality::L1);
+        self.position += (match_length + MINMATCH) as usize;
+    }
+}
+
 /// `seqState_t`
 #[derive(Clone, Copy)]
 struct SeqState<'a> {
@@ -685,8 +717,13 @@ impl<'a> SeqState<'a> {
     }
 
     /// Decodes sequences for as long as the start of the stream is far. Returns how many that is.
+    /// With `PREFETCH`, `history` follows the output, and what matches refer to is on its way to the cache.
     #[inline(never)]
-    fn decode_batch(&mut self, out: &mut [RawSequence]) -> Result<usize> {
+    fn decode_batch<const PREFETCH: bool>(
+        &mut self,
+        out: &mut [RawSequence],
+        history: &mut History,
+    ) -> Result<usize> {
         /// The 64 bits that end at `position`, turned so that the next one to read is the highest. Those that are read
         /// then go to the other end.
         #[inline(always)]
@@ -749,6 +786,9 @@ impl<'a> SeqState<'a> {
                 lit_length,
                 match_length,
             };
+            if PREFETCH {
+                history.prefetch(lit_length, match_length, offset_value);
+            }
 
             let ll_nb_bits = u32::from(ll_cell.nb_bits);
             let ml_nb_bits = u32::from(ml_cell.nb_bits);
@@ -884,6 +924,33 @@ fn copy_match_exact(buf: &mut [u8], src: usize, dst: usize, len: usize) -> Resul
         done += chunk;
     }
     Ok(())
+}
+
+/// Makes the offset value of `sequences[index]`, which refers to one of the last offsets, what it refers to, or 0 if that
+/// is not valid, and returns it. The last offsets are those of the 3 sequences before, which are rewritten so that the
+/// same holds for the next sequence.
+#[inline(always)]
+fn resolve_offset(sequences: &mut [RawSequence], index: usize) -> u32 {
+    let Some([last2, last1, last0, this]) = index
+        .checked_sub(3)
+        .and_then(|first| sequences.get_mut(first..))
+        .and_then(<[RawSequence]>::first_chunk_mut)
+    else {
+        return 0;
+    };
+    let rep0 = last0.offset_value;
+    let rep1 = last1.offset_value;
+    let rep2 = last2.offset_value;
+    let reps = match this.offset_value - 1 + u32::from(this.lit_length == 0) {
+        0 => [rep0, rep1, rep2],
+        1 => [rep1, rep0, rep2],
+        2 => [rep2, rep0, rep1],
+        // An offset of 0 is not valid.
+        _ if rep0 == 1 + 3 => [0, rep0, rep1],
+        _ => [rep0 - 1, rep0, rep1],
+    };
+    [this.offset_value, last0.offset_value, last1.offset_value] = reps;
+    this.offset_value
 }
 
 /// Turns sequences into output.
@@ -1163,26 +1230,7 @@ impl<'a> Executor<'_, 'a> {
             let mut offset_value = raw.offset_value;
             if offset_value < 16 + 3 {
                 if offset_value <= 3 {
-                    let Some([last2, last1, last0, this]) = index
-                        .checked_sub(3)
-                        .and_then(|first| sequences.get_mut(first..))
-                        .and_then(<[RawSequence]>::first_chunk_mut)
-                    else {
-                        break;
-                    };
-                    let rep0 = last0.offset_value;
-                    let rep1 = last1.offset_value;
-                    let rep2 = last2.offset_value;
-                    let reps = match offset_value - 1 + u32::from(lit_length == 0) {
-                        0 => [rep0, rep1, rep2],
-                        1 => [rep1, rep0, rep2],
-                        2 => [rep2, rep0, rep1],
-                        // An offset of 0 is not valid.
-                        _ if rep0 == 1 + 3 => [0, rep0, rep1],
-                        _ => [rep0 - 1, rep0, rep1],
-                    };
-                    [this.offset_value, last0.offset_value, last1.offset_value] = reps;
-                    [offset_value, ..] = reps;
+                    offset_value = resolve_offset(sequences, index);
                 }
                 if offset_value < 16 + 3 {
                     break;
@@ -1229,40 +1277,55 @@ impl<'a> Executor<'_, 'a> {
         index
     }
 
-    /// `ZSTD_decompressSequences_body` and `ZSTD_decompressSequences_bodySplitLitBuffer`
-    fn run(&mut self, seq_state: &mut SeqState<'_>, nb_seq: usize) -> Result<()> {
+    /// Executes `sequences[index]` and those after it that are not for [`Self::exec_batch`]. Returns the index of the
+    /// first that is.
+    #[inline(never)]
+    fn exec_others(&mut self, sequences: &mut [RawSequence], first: usize) -> Result<usize> {
+        let mut exec = self.fork();
+        let mut index = first;
+        while let Some(&raw) = sequences.get(index) {
+            let mut offset_value = raw.offset_value;
+            if (1..=3).contains(&offset_value) {
+                offset_value = resolve_offset(sequences, index);
+            }
+            if index != first
+                && raw.lit_length <= 32
+                && raw.match_length <= 64 - MINMATCH
+                && offset_value >= 16 + 3
+            {
+                break;
+            }
+            exec.exec_sequence::<false>(Sequence {
+                lit_length: raw.lit_length,
+                match_length: raw.match_length + MINMATCH,
+                offset: (offset_value as usize).wrapping_sub(3),
+            })?;
+            index += 1;
+        }
+        let exec = (exec.op, exec.lits, exec.split);
+        self.join(exec);
+        Ok(index)
+    }
+
+    /// `ZSTD_decompressSequences_body`, `ZSTD_decompressSequences_bodySplitLitBuffer` and, with `LONG`,
+    /// `ZSTD_decompressSequencesLong_body`.
+    fn run<const LONG: bool>(&mut self, seq_state: &mut SeqState<'_>, nb_seq: usize) -> Result<()> {
         const BATCH: usize = 128;
         // After 3 that only stand for the last offsets.
         let mut batch = [RawSequence::default(); 3 + BATCH];
+        // The C code then decodes 8 sequences ahead, so it sees whether the stream ends where it should before it
+        // executes the last ones.
+        let mut ahead = [Sequence::default(); 8];
+        let ahead = ahead.sub_mut(..if LONG { nb_seq.min(8) } else { 0 })?;
+
         let mut remaining = nb_seq;
-        while remaining > 0 {
+        while remaining > ahead.len() {
             if !self.split {
-                let room = batch.span_mut(3, BATCH.min(remaining - 1))?;
-                let count = seq_state.decode_batch(room)?;
+                let room = batch.span_mut(3, BATCH.min(remaining - ahead.len().max(1)))?;
+                let count = seq_state.decode_batch::<LONG>(room, &mut self.history())?;
                 if count > 0 {
                     remaining -= count;
-                    let sequences = batch.sub_mut(..3 + count)?;
-                    for (last, offset) in
-                        sequences.iter_mut().zip(seq_state.prev_offset.iter().rev())
-                    {
-                        last.offset_value = *offset as u32 + 3;
-                    }
-                    let mut index = 3;
-                    loop {
-                        index = self.exec_batch(sequences, index);
-                        let Some(raw) = sequences.get(index) else {
-                            break;
-                        };
-                        self.exec_sequence::<false>(Sequence {
-                            lit_length: raw.lit_length,
-                            match_length: raw.match_length + MINMATCH,
-                            offset: (raw.offset_value as usize).wrapping_sub(3),
-                        })?;
-                        index += 1;
-                    }
-                    for (last, offset) in sequences.iter().rev().zip(&mut seq_state.prev_offset) {
-                        *offset = last.offset_value as usize - 3;
-                    }
+                    self.exec_all(batch.sub_mut(..3 + count)?, &mut seq_state.prev_offset)?;
                     continue;
                 }
             }
@@ -1270,32 +1333,50 @@ impl<'a> Executor<'_, 'a> {
             remaining -= 1;
             self.exec_sequence_maybe_split(sequence)?;
         }
+        for sequence in &mut *ahead {
+            *sequence = seq_state.decode_sequence(remaining == 1);
+            remaining -= 1;
+        }
         if !seq_state.bit_d.is_at_end() {
             return Err(ErrorCode::CorruptionDetected);
+        }
+        for &sequence in &*ahead {
+            self.exec_sequence_maybe_split(sequence)?;
         }
         Ok(())
     }
 
-    /// `ZSTD_decompressSequencesLong_body`: sequences are decoded 8 ahead of the one that is executed.
-    fn run_long(&mut self, seq_state: &mut SeqState<'_>, nb_seq: usize) -> Result<()> {
-        const STORED_SEQS: usize = 8;
-        const STORED_SEQS_MASK: usize = STORED_SEQS - 1;
-        let mut sequences = [Sequence::default(); STORED_SEQS];
-        let seq_advance = nb_seq.min(STORED_SEQS);
+    fn history(&mut self) -> History {
+        let buf = self.out.bytes().as_ptr();
+        History {
+            prefix_start: buf.wrapping_add(self.prefix_start),
+            dict_end: match self.ext_dict {
+                ExtDict::Dict(dict) => dict.as_ptr_range().end,
+                ExtDict::Within { end, .. } => buf.wrapping_add(end),
+            },
+            position: self.op - self.prefix_start,
+        }
+    }
 
-        for (seq_nb, stored) in sequences.iter_mut().enumerate().take(seq_advance) {
-            *stored = seq_state.decode_sequence(seq_nb == nb_seq - 1);
+    /// Executes `sequences` but the first 3, which are there to stand for the last offsets.
+    fn exec_all(
+        &mut self,
+        sequences: &mut [RawSequence],
+        prev_offset: &mut [usize; ZSTD_REP_NUM],
+    ) -> Result<()> {
+        for (last, offset) in sequences.iter_mut().zip(prev_offset.iter().rev()) {
+            last.offset_value = *offset as u32 + 3;
         }
-        for seq_nb in seq_advance..nb_seq {
-            let sequence = seq_state.decode_sequence(seq_nb == nb_seq - 1);
-            let stored = sequences.at_mut(seq_nb & STORED_SEQS_MASK)?;
-            self.exec_sequence_maybe_split(core::mem::replace(stored, sequence))?;
+        let mut index = 3;
+        loop {
+            index = self.exec_batch(sequences, index);
+            if index >= sequences.len() {
+                break;
+            }
+            index = self.exec_others(sequences, index)?;
         }
-        if !seq_state.bit_d.is_at_end() {
-            return Err(ErrorCode::CorruptionDetected);
-        }
-        for seq_nb in nb_seq - seq_advance..nb_seq {
-            self.exec_sequence_maybe_split(sequences.at(seq_nb & STORED_SEQS_MASK)?)?;
+        for (last, offset) in sequences.iter().rev().zip(prev_offset) {
+            *offset = last.offset_value as usize - 3;
         }
         Ok(())
     }

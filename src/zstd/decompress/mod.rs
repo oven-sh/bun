@@ -7,7 +7,9 @@ mod seq_table;
 
 use std::borrow::Cow;
 
-use block::{BlockDecoder, BlockOutput, EntropyDTables, ExtDict, Streaming, get_c_block_size};
+use block::{
+    BlockDecoder, BlockOutput, EntropyDTables, ExtDict, OutputBuffer, Streaming, get_c_block_size,
+};
 use seq_table::{LL_BASE, ML_BASE, OF_BASE, OF_BITS, SeqTableSources, TableSource};
 
 use crate::common::entropy::read_ncount;
@@ -22,7 +24,7 @@ use crate::common::{
     ZSTD_WORKSPACETOOLARGE_FACTOR, ZSTD_WORKSPACETOOLARGE_MAXDURATION,
 };
 use crate::error::{ErrorCode, Result};
-use crate::util::{SliceExt, read_le16, read_le32, read_le64, try_copy, try_zeroed};
+use crate::util::{SliceExt, read_le16, read_le32, read_le64, try_copy};
 use crate::{InBuffer, OutBuffer};
 
 /// `ZSTD_FRAMEHEADERSIZE_PREFIX`: what it takes to know the size of a frame header.
@@ -470,6 +472,45 @@ enum ExtKind {
     Within { end: usize, len: usize },
 }
 
+/// A buffer whose size a frame header dictates. It takes up no more memory than has been used of it.
+struct Buffer {
+    /// What has been used so far. There is capacity for `size`.
+    bytes: Vec<u8>,
+    size: usize,
+}
+
+impl Buffer {
+    const fn new() -> Self {
+        Self {
+            bytes: Vec::new(),
+            size: 0,
+        }
+    }
+
+    fn with_size(size: usize) -> Result<Self> {
+        let mut bytes = Vec::new();
+        bytes
+            .try_reserve_exact(size)
+            .map_err(|_| ErrorCode::MemoryAllocation)?;
+        Ok(Self { bytes, size })
+    }
+
+    /// The `len` bytes from `start` on, which are within `size`.
+    fn span_mut(&mut self, start: usize, len: usize) -> Result<&mut [u8]> {
+        let end = start + len;
+        if self.bytes.len() < end && end <= self.size {
+            self.bytes.resize(end, 0);
+        }
+        self.bytes.span_mut(start, len)
+    }
+}
+
+impl Default for Buffer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// All of a `ZSTD_DCtx` but the dictionary it owns.
 struct DState {
     block: BlockDecoder,
@@ -493,10 +534,10 @@ struct DState {
     dict_id: u32,
 
     stream_stage: DStreamStage,
-    in_buff: Vec<u8>,
+    in_buff: Buffer,
     in_pos: usize,
     max_window_size: usize,
-    out_buff: Vec<u8>,
+    out_buff: Buffer,
     out_start: usize,
     out_end: usize,
     /// The last byte of a frame's input is held back until its output is flushed.
@@ -542,10 +583,10 @@ impl DCtx {
                 rle_size: 0,
                 dict_id: 0,
                 stream_stage: DStreamStage::Init,
-                in_buff: Vec::new(),
+                in_buff: Buffer::new(),
                 in_pos: 0,
                 max_window_size: ZSTD_MAXWINDOWSIZE_DEFAULT,
-                out_buff: Vec::new(),
+                out_buff: Buffer::new(),
                 out_start: 0,
                 out_end: 0,
                 hostage_byte: false,
@@ -726,7 +767,7 @@ impl DState {
     /// One compressed block, to `buf` from `start` on.
     fn decompress_block(
         &mut self,
-        buf: &mut [u8],
+        buf: OutputBuffer<'_>,
         start: usize,
         capacity: usize,
         src: &[u8],
@@ -787,7 +828,14 @@ impl DState {
             let decoded_size = match properties.block_type {
                 BlockType::Compressed => {
                     let capacity = dst.len() - op;
-                    self.decompress_block(dst, op, capacity, block, ddict, Streaming::No)?
+                    self.decompress_block(
+                        OutputBuffer::Whole(dst),
+                        op,
+                        capacity,
+                        block,
+                        ddict,
+                        Streaming::No,
+                    )?
                 }
                 BlockType::Raw => copy_raw_block(dst.sub_mut(op..)?, block)?,
                 BlockType::Rle => set_rle_block(
@@ -925,7 +973,7 @@ impl DState {
                     BlockType::Compressed => {
                         self.expected = 0;
                         self.decompress_block(
-                            &mut out_buff,
+                            OutputBuffer::Used(&mut out_buff.bytes),
                             dst,
                             dst_capacity,
                             src,
@@ -934,13 +982,13 @@ impl DState {
                         )
                     }
                     BlockType::Raw => out_buff
-                        .span_mut(dst, dst_capacity)
+                        .span_mut(dst, dst_capacity.min(src.len()))
                         .and_then(|dst| copy_raw_block(dst, src))
                         .inspect(|&r_size| self.expected -= r_size),
                     BlockType::Rle => {
                         self.expected = 0;
                         out_buff
-                            .span_mut(dst, dst_capacity)
+                            .span_mut(dst, dst_capacity.min(self.rle_size))
                             .and_then(|dst| set_rle_block(dst, src.at(0)?, self.rle_size))
                     }
                     BlockType::Reserved => Err(ErrorCode::CorruptionDetected),
@@ -952,7 +1000,8 @@ impl DState {
                 }
                 self.decoded_size += r_size as u64;
                 if self.validate_checksum {
-                    self.xxh_state.update(self.out_buff.span(dst, r_size)?);
+                    self.xxh_state
+                        .update(self.out_buff.bytes.span(dst, r_size)?);
                 }
                 self.previous_dst_end = Some(dst + r_size);
 
@@ -1012,7 +1061,7 @@ impl DState {
         let dst_size = if is_skip_frame {
             0
         } else {
-            self.out_buff.len() - self.out_start
+            self.out_buff.size - self.out_start
         };
         let decoded_size = self.decompress_continue(dst_size, src, ddict)?;
         if decoded_size == 0 && !is_skip_frame {
@@ -1035,7 +1084,7 @@ impl DState {
         );
 
         // `ZSTD_DCtx_updateOversizedDuration`
-        if self.in_buff.len() + self.out_buff.len()
+        if self.in_buff.size + self.out_buff.size
             >= (needed_in_buff_size + needed_out_buff_size) * ZSTD_WORKSPACETOOLARGE_FACTOR
         {
             self.oversized_duration += 1;
@@ -1044,13 +1093,13 @@ impl DState {
         }
 
         let too_small =
-            self.in_buff.len() < needed_in_buff_size || self.out_buff.len() < needed_out_buff_size;
+            self.in_buff.size < needed_in_buff_size || self.out_buff.size < needed_out_buff_size;
         let too_large = self.oversized_duration >= ZSTD_WORKSPACETOOLARGE_MAXDURATION;
         if too_small || too_large {
-            self.in_buff = Vec::new();
-            self.out_buff = Vec::new();
-            self.in_buff = try_zeroed(needed_in_buff_size)?;
-            self.out_buff = try_zeroed(needed_out_buff_size)?;
+            self.in_buff = Buffer::new();
+            self.out_buff = Buffer::new();
+            self.in_buff = Buffer::with_size(needed_in_buff_size)?;
+            self.out_buff = Buffer::with_size(needed_out_buff_size)?;
         }
         Ok(())
     }
@@ -1178,11 +1227,13 @@ impl DState {
                 let to_load = needed_in_size - self.in_pos;
                 let loaded_size = to_load.min(iend - ip);
                 if self.stage != DStage::SkipFrame {
-                    if to_load > self.in_buff.len() - self.in_pos {
+                    if to_load > self.in_buff.size - self.in_pos {
                         return Err(ErrorCode::CorruptionDetected);
                     }
+                    self.in_buff.bytes.truncate(self.in_pos);
                     self.in_buff
-                        .write_at(self.in_pos, src.span(ip, loaded_size)?)?;
+                        .bytes
+                        .extend_from_slice(src.span(ip, loaded_size)?);
                 }
                 ip += loaded_size;
                 self.in_pos += loaded_size;
@@ -1191,7 +1242,7 @@ impl DState {
                 }
 
                 self.in_pos = 0;
-                let in_buff = core::mem::take(&mut self.in_buff);
+                let in_buff = core::mem::take(&mut self.in_buff.bytes);
                 // Nothing of a skippable frame is read, or kept.
                 let loaded = in_buff.get(..needed_in_size).unwrap_or_default();
                 let result = if self.stage == DStage::SkipFrame {
@@ -1199,7 +1250,7 @@ impl DState {
                 } else {
                     self.decompress_continue_stream(loaded, ddict)
                 };
-                self.in_buff = in_buff;
+                self.in_buff.bytes = in_buff;
                 result?;
                 continue 'work;
             }
@@ -1209,13 +1260,13 @@ impl DState {
             let flushed_size = to_flush_size.min(oend - op);
             output
                 .dst
-                .write_at(op, self.out_buff.span(self.out_start, flushed_size)?)?;
+                .write_at(op, self.out_buff.bytes.span(self.out_start, flushed_size)?)?;
             op += flushed_size;
             self.out_start += flushed_size;
             if flushed_size == to_flush_size {
                 self.stream_stage = DStreamStage::Read;
-                if (self.out_buff.len() as u64) < self.f_params.frame_content_size
-                    && self.out_start + self.f_params.block_size_max > self.out_buff.len()
+                if (self.out_buff.size as u64) < self.f_params.frame_content_size
+                    && self.out_start + self.f_params.block_size_max > self.out_buff.size
                 {
                     self.out_start = 0;
                     self.out_end = 0;

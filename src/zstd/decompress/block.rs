@@ -94,10 +94,45 @@ impl ExtDict<'_> {
     }
 }
 
+/// A buffer that output goes to.
+pub(crate) enum OutputBuffer<'a> {
+    Whole(&'a mut [u8]),
+    /// What has been written so far of a buffer. It has the capacity for all that a block is let to write.
+    Used(&'a mut Vec<u8>),
+}
+
+impl OutputBuffer<'_> {
+    #[inline(always)]
+    fn bytes(&mut self) -> &mut [u8] {
+        match self {
+            Self::Whole(bytes) => bytes,
+            Self::Used(bytes) => bytes,
+        }
+    }
+
+    #[inline(always)]
+    fn reborrow(&mut self) -> OutputBuffer<'_> {
+        match self {
+            Self::Whole(bytes) => OutputBuffer::Whole(bytes),
+            Self::Used(bytes) => OutputBuffer::Used(bytes),
+        }
+    }
+
+    /// Makes `bytes` reach `end`, and somewhat further if `limit` allows.
+    fn extend_to(&mut self, end: usize, limit: usize) {
+        if let Self::Used(bytes) = self
+            && bytes.len() < end
+        {
+            let ahead = (bytes.len() / 2).clamp(1 << 12, 1 << 17) + 2 * WILDCOPY_OVERLENGTH;
+            bytes.resize((end + ahead).min(limit), 0);
+        }
+    }
+}
+
 /// Where a block is written.
 pub(crate) struct BlockOutput<'a> {
     /// Holds the contiguous output so far, from `prefix_start` to `start`.
-    pub(crate) buf: &'a mut [u8],
+    pub(crate) buf: OutputBuffer<'a>,
     pub(crate) prefix_start: usize,
     pub(crate) start: usize,
     /// How many bytes from `start` on may be written.
@@ -505,7 +540,11 @@ impl BlockDecoder {
             literals.size
         };
         let mut exec = Executor {
-            buf: buf.sub_mut(..oend)?,
+            out: match buf {
+                OutputBuffer::Whole(bytes) => OutputBuffer::Whole(bytes.sub_mut(..oend)?),
+                used => used,
+            },
+            oend,
             op: start,
             prefix_start,
             ext_dict,
@@ -849,8 +888,10 @@ fn copy_match_exact(buf: &mut [u8], src: usize, dst: usize, len: usize) -> Resul
 
 /// Turns sequences into output.
 struct Executor<'buf, 'a> {
-    /// Ends where the block has to stop writing: `oend`.
-    buf: &'buf mut [u8],
+    /// Ends no further than `oend`.
+    out: OutputBuffer<'buf>,
+    /// Where the block has to stop writing.
+    oend: usize,
     op: usize,
     prefix_start: usize,
     ext_dict: ExtDict<'a>,
@@ -876,7 +917,7 @@ impl<'a> Executor<'_, 'a> {
     #[inline(always)]
     fn fork(&mut self) -> Executor<'_, 'a> {
         Executor {
-            buf: &mut *self.buf,
+            out: self.out.reborrow(),
             ..*self
         }
     }
@@ -905,9 +946,11 @@ impl<'a> Executor<'_, 'a> {
         let offset = sequence.offset;
         let mut op = self.op;
 
-        if lit_length + match_length > self.buf.len() - op {
+        if lit_length + match_length > self.oend - op {
             return Err(ErrorCode::DstSizeTooSmall);
         }
+        self.out
+            .extend_to(op + lit_length + match_length, self.oend);
         if lit_length > self.lits_left() {
             return Err(ErrorCode::CorruptionDetected);
         }
@@ -918,7 +961,9 @@ impl<'a> Executor<'_, 'a> {
             }
         }
 
-        self.buf.write_at(op, self.lits.sub(..lit_length)?)?;
+        self.out
+            .bytes()
+            .write_at(op, self.lits.sub(..lit_length)?)?;
         self.lits = self.lits.sub(lit_length..)?;
         op += lit_length;
         self.op = op + match_length;
@@ -931,15 +976,17 @@ impl<'a> Executor<'_, 'a> {
             }
             let back = offset - in_prefix;
             if back >= match_length {
-                return self.ext_dict.copy_to(self.buf, op, back, match_length);
+                return self
+                    .ext_dict
+                    .copy_to(self.out.bytes(), op, back, match_length);
             }
             // The match spans the two segments.
-            self.ext_dict.copy_to(self.buf, op, back, back)?;
+            self.ext_dict.copy_to(self.out.bytes(), op, back, back)?;
             op += back;
             match_length -= back;
             match_pos = self.prefix_start;
         }
-        copy_match_exact(self.buf, match_pos, op, match_length)
+        copy_match_exact(self.out.bytes(), match_pos, op, match_length)
     }
 
     /// `ZSTD_execSequence` and `ZSTD_execSequenceSplitLitBuffer`, if there is room to copy in chunks and the match is
@@ -953,7 +1000,7 @@ impl<'a> Executor<'_, 'a> {
         let offset = sequence.offset;
         let op = self.op;
 
-        let room = self.buf.get_mut(op..)?;
+        let room = self.out.bytes().get_mut(op..)?;
         if lit_length + match_length + WILDCOPY_OVERLENGTH > room.len()
             || lit_length + WILDCOPY_OVERLENGTH > self.lits.len()
         {
@@ -979,7 +1026,7 @@ impl<'a> Executor<'_, 'a> {
         if offset > o_lit_end - self.prefix_start {
             return None;
         }
-        let (before, room) = self.buf.split_at_mut_checked(o_lit_end)?;
+        let (before, room) = self.out.bytes().split_at_mut_checked(o_lit_end)?;
         let from = before.get(before.len().checked_sub(offset)?..)?;
         if offset >= 16 {
             // `ZSTD_wildcopy(ZSTD_no_overlap)`
@@ -993,7 +1040,7 @@ impl<'a> Executor<'_, 'a> {
                     let mut done = 16;
                     while done < match_length {
                         let to = o_lit_end + done;
-                        copy_within::<16>(self.buf, to - offset, to).ok()?;
+                        copy_within::<16>(self.out.bytes(), to - offset, to).ok()?;
                         done += 16;
                     }
                 }
@@ -1022,21 +1069,21 @@ impl<'a> Executor<'_, 'a> {
             const DEC32_TABLE: [usize; 8] = [0, 1, 2, 1, 4, 4, 4, 4];
             const DEC64_TABLE: [usize; 8] = [8, 8, 8, 7, 8, 9, 10, 11];
             for i in 0..4 {
-                let byte = self.buf.at(match_pos + i)?;
-                self.buf.put(op + i, byte)?;
+                let byte = self.out.bytes().at(match_pos + i)?;
+                self.out.bytes().put(op + i, byte)?;
             }
             match_pos += DEC32_TABLE.at(offset)?;
-            copy_within::<4>(self.buf, match_pos, op + 4)?;
+            copy_within::<4>(self.out.bytes(), match_pos, op + 4)?;
             match_pos += 8;
             match_pos -= DEC64_TABLE.at(offset)?;
         } else {
-            copy_within::<8>(self.buf, match_pos, op)?;
+            copy_within::<8>(self.out.bytes(), match_pos, op)?;
             match_pos += 8;
         }
         op += 8;
         let mut done = 8usize;
         while done < match_length {
-            copy_within::<8>(self.buf, match_pos, op)?;
+            copy_within::<8>(self.out.bytes(), match_pos, op)?;
             match_pos += 8;
             op += 8;
             done += 8;
@@ -1067,10 +1114,13 @@ impl<'a> Executor<'_, 'a> {
     fn exec_sequence_leaving_split_cold(&mut self, mut sequence: Sequence) -> Result<()> {
         let leftover_lit = self.lits_left();
         if leftover_lit > 0 {
-            if leftover_lit > self.buf.len() - self.op {
+            if leftover_lit > self.oend - self.op {
                 return Err(ErrorCode::DstSizeTooSmall);
             }
-            self.buf.write_at(self.op, self.lits.sub(..leftover_lit)?)?;
+            self.out.extend_to(self.op + leftover_lit, self.oend);
+            self.out
+                .bytes()
+                .write_at(self.op, self.lits.sub(..leftover_lit)?)?;
             sequence.lit_length -= leftover_lit as u32;
             self.op += leftover_lit;
         }
@@ -1100,8 +1150,9 @@ impl<'a> Executor<'_, 'a> {
         // Positions fit in 32 bits, so that the compiler sees that nothing added to them overflows.
         const MAX_BACK: usize = 3 << 30;
         let start = self.prefix_start.max(self.op.saturating_sub(MAX_BACK));
-        let end = self.buf.len().min(start + u32::MAX as usize);
-        let buf = self.buf.get_mut(start..end).unwrap_or_default();
+        let buf = self.out.bytes();
+        let end = buf.len().min(start + u32::MAX as usize);
+        let buf = buf.get_mut(start..end).unwrap_or_default();
         let mut op = self.op.wrapping_sub(start) as u32;
         let lits = self.lits.get(..u32::MAX as usize).unwrap_or(self.lits);
         let mut lit_pos = 0u32;
@@ -1255,11 +1306,13 @@ impl<'a> Executor<'_, 'a> {
         let parts = [self.lits, extra]
             .map(|part| part.get(..part.len().saturating_sub(WILDCOPY_OVERLENGTH)));
         let parts = parts.map(Option::unwrap_or_default);
-        if parts.iter().map(|part| part.len()).sum::<usize>() > self.buf.len() - self.op {
+        let size = parts.iter().map(|part| part.len()).sum::<usize>();
+        if size > self.oend - self.op {
             return Err(ErrorCode::DstSizeTooSmall);
         }
+        self.out.extend_to(self.op + size, self.op + size);
         for part in parts {
-            self.buf.write_at(self.op, part)?;
+            self.out.bytes().write_at(self.op, part)?;
             self.op += part.len();
         }
         Ok(())

@@ -134,6 +134,8 @@ pub struct HttpThread {
     /// — the request socket never reaches a terminal state once the JS thread
     /// stops driving the world, so the box would otherwise strand.
     pub(crate) in_flight: Vec<NonNull<crate::ThreadlocalAsyncHttp<'static>>>,
+    /// `timer_read()` at the last `sweep_idle_scratch`. HTTP-thread-only.
+    last_scratch_sweep_ns: u64,
 }
 
 impl HttpThread {
@@ -187,6 +189,7 @@ impl HttpThread {
             timer: Instant::now(),
             lazy_libdeflater: None,
             in_flight: Vec::new(),
+            last_scratch_sweep_ns: 0,
         }
     }
 }
@@ -812,7 +815,27 @@ impl HttpThread {
         self.deferred_tasks.insert(first_that_yields, http);
     }
 
+    /// Once per timeout sweep, a paused body consumer's request drops its per-packet scratch.
+    fn sweep_idle_scratch(&mut self) {
+        /// `LIBUS_TIMEOUT_GRANULARITY` (packages/bun-usockets/src/libusockets.h), in ns.
+        const SWEEP_NS: u64 = 4 * 1_000_000_000;
+        let now = self.timer_read();
+        if now.wrapping_sub(self.last_scratch_sweep_ns) < SWEEP_NS {
+            return;
+        }
+        self.last_scratch_sweep_ns = now;
+        for nn in &self.in_flight {
+            // SAFETY: every entry is a live in-flight request that only this thread touches; see
+            // `in_flight`.
+            let client = unsafe { &mut (*nn.as_ptr()).async_http.client };
+            if client.signals.is_receive_paused() {
+                client.release_idle_scratch();
+            }
+        }
+    }
+
     pub(crate) fn drain_events(&mut self) {
+        self.sweep_idle_scratch();
         // Process any pending writes **before** aborting.
         self.drain_queued_receive_resumes();
         self.drain_queued_writes();

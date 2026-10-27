@@ -385,6 +385,15 @@ const PREALLOCATE_MAX: usize = 1024 * 1024 * 256;
 /// bounded for long-lived streaming responses.
 pub const DECODED_BODY_RETAIN_CAP: usize = 512 * 1024;
 
+/// Clears a delivered per-chunk scratch, keeping up to [`DECODED_BODY_RETAIN_CAP`] for the next packet.
+pub fn recycle_scratch(list: &mut Vec<u8>) {
+    if list.capacity() > DECODED_BODY_RETAIN_CAP {
+        *list = Vec::new();
+    } else {
+        list.clear();
+    }
+}
+
 /// Whether the experimental Alt-Svc-driven HTTP/3 upgrade is enabled at all
 /// (CLI flag or env var). Used on its own to gate `H3.AltSvc.record` — a
 /// response that arrived over a request shape h3 can't serve (proxy, sendfile,
@@ -625,6 +634,8 @@ pub struct HTTPClientResultCallback {
     /// for the ack. `None` ⇒ no-op (the default for callers whose `ctx`
     /// is process-lifetime or whose code path never reaches `global_exit`).
     pub(crate) release_at_shutdown: Option<unsafe fn(*mut ())>,
+    /// Optional, same contract as `release_at_shutdown`; see `HTTPClient::release_idle_scratch`.
+    pub(crate) release_idle_scratch: Option<unsafe fn(*mut ())>,
 }
 
 impl HTTPClientResultCallback {
@@ -648,6 +659,7 @@ impl HTTPClientResultCallback {
                 >(callback)
             },
             release_at_shutdown: None,
+            release_idle_scratch: None,
         }
     }
 
@@ -659,6 +671,11 @@ impl HTTPClientResultCallback {
         let mut cb = Self::new(this, callback);
         cb.release_at_shutdown = Some(release);
         cb
+    }
+
+    pub fn with_idle_scratch_release(mut self, release: unsafe fn(*mut ())) -> Self {
+        self.release_idle_scratch = Some(release);
+        self
     }
 }
 
@@ -4448,10 +4465,8 @@ impl<'a> HTTPClient<'a> {
         if has_more {
             result.body = decoded_body.list.as_slice();
             callback.run(parent, result);
-            if decoded_body.list.capacity() <= DECODED_BODY_RETAIN_CAP {
-                decoded_body.list.clear();
-                self.state.decoded_body = decoded_body;
-            }
+            recycle_scratch(&mut decoded_body.list);
+            self.state.decoded_body = decoded_body;
             self.maybe_pause_receive(socket);
             // Only a paused consumer asks for the rest.
             self.state.has_pending_compressed() && !self.signals.is_receive_paused()
@@ -4491,9 +4506,40 @@ impl<'a> HTTPClient<'a> {
         }
         result.body = decoded_body.list.as_slice();
         callback.run(parent, result);
-        if decoded_body.list.capacity() <= DECODED_BODY_RETAIN_CAP {
-            decoded_body.list.clear();
-            self.state.decoded_body = decoded_body;
+        recycle_scratch(&mut decoded_body.list);
+        self.state.decoded_body = decoded_body;
+    }
+
+    /// The body consumer is paused (`HTTPThread::sweep_idle_scratch`): drops the empty per-packet scratch.
+    pub(crate) fn release_idle_scratch(&mut self) {
+        bun_core::scoped_log!(fetch, "release idle scratch {}", self.async_http_id);
+        if self.state.decoded_body.list.is_empty() {
+            self.state.decoded_body = MutableString::default();
+        }
+        if self.state.compressed_body.list.is_empty() {
+            self.state.compressed_body = MutableString::default();
+        }
+        if let Some(mut stream) = self.h2 {
+            // SAFETY: `h2` points at this client's stream until the session detaches it.
+            let body_buffer = unsafe { &mut stream.as_mut().body_buffer };
+            if body_buffer.is_empty() {
+                *body_buffer = Vec::new();
+            }
+        }
+        if let Some(mut stream) = self.h3 {
+            // SAFETY: `h3` points at this client's stream until the session detaches it.
+            let body_buffer = unsafe { &mut stream.as_mut().body_buffer };
+            if body_buffer.is_empty() {
+                *body_buffer = Vec::new();
+            }
+        }
+        // The consumer's callback is the embedding `AsyncHTTP`'s, not the client's wrapper.
+        let parent = self.parent_async_http();
+        // SAFETY: this client is in `HTTPThread::in_flight`, so its `AsyncHTTP` and consumer are live.
+        let callback = unsafe { (*parent).result_callback };
+        if let Some(release) = callback.release_idle_scratch {
+            // SAFETY: see above.
+            unsafe { release(callback.ctx) };
         }
     }
 

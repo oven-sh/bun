@@ -774,12 +774,7 @@ impl FetchTasklet {
             if buffer_reset.get() {
                 // SAFETY: `self` outlives this defer (it's a local in this fn) and no other
                 // borrow of scheduled_response_buffer is live at scope exit / `?` unwind.
-                let list = unsafe { &mut (*scheduled_buf).list };
-                if list.capacity() > http::DECODED_BODY_RETAIN_CAP {
-                    *list = Vec::new();
-                } else {
-                    list.clear();
-                }
+                http::recycle_scratch(unsafe { &mut (*scheduled_buf).list });
             }
         }
 
@@ -1803,6 +1798,18 @@ impl FetchTasklet {
         self.unpark_body_stream();
     }
 
+    /// HTTP thread, the stream is paused: drops the hop buffer's capacity once the JS side took its bytes.
+    ///
+    /// SAFETY: `this` is the live `result_callback.ctx`; the HTTP thread's ref keeps it alive.
+    unsafe fn release_idle_scratch(this: *mut ()) {
+        let this = Self::from_raw_mut(this.cast::<FetchTasklet>());
+        this.mutex.lock();
+        if this.scheduled_response_buffer.list.is_empty() {
+            this.scheduled_response_buffer = MutableString::default();
+        }
+        this.mutex.unlock();
+    }
+
     /// The other half of this rule is in `callback` (HTTP thread).
     fn after_body_chunk_delivered(&self, bytes: &crate::webcore::ByteStream) {
         use crate::webcore::byte_stream::AfterDelivery;
@@ -2149,7 +2156,8 @@ impl FetchTasklet {
                 // contract `callback` documents.
                 FetchTasklet::callback,
                 FetchTasklet::release_at_shutdown,
-            ),
+            )
+            .with_idle_scratch_release(FetchTasklet::release_idle_scratch),
             fetch_options.redirect_type,
             http::async_http::Options {
                 http_proxy: proxy,

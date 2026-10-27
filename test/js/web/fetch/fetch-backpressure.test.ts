@@ -2,7 +2,7 @@
 // HTTP thread from buffering the entire response in memory.
 import { S3Client } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, forEachLine, isASAN, isDebug, isWindows, tempDir, tls } from "harness";
+import { bunEnv, bunExe, forEachLine, isASAN, isDebug, isWindows, tempDir, tls, withoutAsanQuarantine } from "harness";
 import { once } from "node:events";
 import { statSync } from "node:fs";
 import { stat } from "node:fs/promises";
@@ -511,6 +511,110 @@ import { createServer as createTlsServer } from "node:tls";
     },
     30_000,
   );
+});
+
+// A body that nothing reads costs what it holds: the untaken bytes (the mark plus one recv). The
+// per-packet scratch on both sides of the HTTP-thread hop (`decoded_body`, the tasklet's staging
+// buffer) is reused while the stream flows, and has to go once the stream parks; kept, it pinned one
+// empty recv each (about 1 MiB per held response on top of the bytes, #47009). The HTTP thread
+// drops it at its next sweep (every 4 s), so the client waits for the drop.
+describe.concurrent("fetch() receive backpressure — memory of a held body stream", () => {
+  // A loopback recv is up to 512 KiB and the scratch is sized by it, so the cost is flat from about
+  // 1 MiB of body up; 4 MiB keeps the drain at the end short in a debug build.
+  const N = 24;
+  const BODY = 4 * 1024 * 1024;
+  // MiB per held response after the stream parks and a full collection, on Linux loopback, with
+  // these four running at once. Measured with the scratch kept, then released, [0 reads, 1 read]
+  // (debug is the debug+ASAN build):
+  //   h1       release 2.0-2.2, 1.9      -> 1.1-1.2, 0.95      debug 2.7, 2.5   -> 1.5, 1.3-1.35
+  //   h1-gzip  release 2.1-2.2, 2.4-2.5  -> 1.4-1.45, 1.25-1.4 debug 2.6, 3.0   -> 1.8, 2.0-2.1
+  // What stays is the untaken bytes (a stream nothing read holds what was staged before the reader
+  // attached plus one recv; a gzip one also the decoder's input and its budgeted output), the stream
+  // and the reader. The bounds sit between the two.
+  const LIMIT_MIB = {
+    "h1": isASAN || isDebug ? [2.05, 1.9] : [1.6, 1.4],
+    "h1-gzip": isASAN || isDebug ? [2.25, 2.5] : [1.75, 1.9],
+  };
+
+  for (const kind of ["h1", "h1-gzip"] as const) {
+    for (const reads of [0, 1]) {
+      const limit = LIMIT_MIB[kind][reads];
+      test.skipIf(process.platform !== "linux")(
+        `${N} held ${kind} streams, ${reads} read() each: under ${limit} MiB per response, and the rest still arrives`,
+        async () => {
+          // The server lives here, not in the measured process: its write queue is not the client's.
+          await using server = await serve(kind, BODY / CHUNK);
+          const script = /* js */ `
+            const N = ${N}, READS = ${reads}, TOTAL = ${BODY}, LIMIT = ${limit};
+            const url = ${JSON.stringify(server.url)};
+            const rss = () => process.memoryUsage.rss() / 1048576;
+            // RSS after a full collection, once it held still for three samples in a row (or the
+            // last sample at the deadline, so a drifting RSS still reports a number).
+            async function settled(deadline = Date.now() + 10_000) {
+              Bun.gc(true);
+              for (let last = rss(), stable = 0; ; ) {
+                await Bun.sleep(20);
+                Bun.gc(true);
+                const now = rss();
+                stable = Math.abs(now - last) < 0.5 ? stable + 1 : 0;
+                last = now;
+                if (stable >= 3 || Date.now() > deadline) return now;
+              }
+            }
+            // Every body is "A" repeated; a chunk that is not is foreign (a memcmp per chunk).
+            const A = Buffer.alloc(1 << 20, 65);
+            let foreign = 0;
+            const take = chunk => {
+              const buf = Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+              for (let off = 0; off < buf.length; off += A.length) {
+                const end = Math.min(off + A.length, buf.length);
+                if (buf.compare(A, 0, end - off, off, end) !== 0) foreign++;
+              }
+              return chunk.byteLength;
+            };
+            const base = await settled();
+            const held = await Promise.all(Array.from({ length: N }, async () => {
+              const reader = (await fetch(url)).body.getReader();
+              let got = 0;
+              for (let i = 0; i < READS; i++) got += take((await reader.read()).value);
+              return { reader, got };
+            }));
+            // The scratch goes at the HTTP thread's next sweep: wait for it.
+            let perResponse;
+            for (const deadline = Date.now() + 10_000; ; ) {
+              perResponse = (await settled(deadline) - base) / N;
+              if (perResponse < LIMIT || Date.now() > deadline) break;
+              await Bun.sleep(100);
+            }
+            // Un-park: every held body still arrives whole and intact.
+            const totals = await Promise.all(held.map(async ({ reader, got }) => {
+              for (;;) { const { done, value } = await reader.read(); if (done) return got; got += take(value); }
+            }));
+            process.stdout.write(JSON.stringify({ perResponse, foreign, short: totals.filter(t => t !== TOTAL).length }));
+          `;
+          await using proc = Bun.spawn({
+            cmd: [bunExe(), "-e", script],
+            env: withoutAsanQuarantine(bunEnv),
+            stdout: "pipe",
+            stderr: "pipe",
+          });
+          const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+          if (!stdout) throw new Error(`exited ${exitCode}: ${stderr}`);
+          const { perResponse, foreign, short } = JSON.parse(stdout);
+          expect({ short, foreign, stderr, perResponse }).toEqual({
+            short: 0,
+            foreign: 0,
+            stderr: "",
+            perResponse: expect.any(Number),
+          });
+          expect(perResponse).toBeLessThan(limit);
+          expect(exitCode).toBe(0);
+        },
+        // 24 streams settle, wait for a sweep and drain under ASAN.
+        30_000,
+      );
+    }
+  }
 });
 
 // h2 advertises a 16 MiB initial per-stream window (LOCAL_INITIAL_WINDOW_SIZE),

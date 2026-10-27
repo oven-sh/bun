@@ -17,6 +17,7 @@ var ObjectCreate = Object.create;
 var ObjectAssign = Object.assign;
 var BufferConcat = Buffer.concat;
 var BufferIsEncoding = Buffer.isEncoding;
+const setImmediateGlobal = globalThis.setImmediate;
 
 var kEmptyObject = ObjectCreate(null);
 let signals;
@@ -1659,8 +1660,8 @@ class ChildProcess extends EventEmitter {
     // As in Node, an open stdout or stderr pipe holds the loop after unref(): start its read.
     const stdout = this.#stdout,
       stderr = this.#stderr;
-    if (stdout) process.nextTick(startReading, stdout);
-    if (stderr) process.nextTick(startReading, stderr);
+    if (stdout) setImmediateGlobal(startReading, stdout);
+    if (stderr) setImmediateGlobal(startReading, stderr);
     if (this.#handle) this.#handle.unref();
   }
 

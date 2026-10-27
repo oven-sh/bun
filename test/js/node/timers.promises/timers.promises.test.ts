@@ -165,6 +165,28 @@ describe("setInterval", () => {
 
   // The iterator protocol itself is in timers-promises-interval-iterator.test.ts, which also runs under node.
 
+  // expect(fn) looks for unhandled rejections as soon as fn returns, before a microtask runs. The abort
+  // wakes the pending next() through a rejected promise that gets its handler one microtask later.
+  it("an abort with a pending next() leaves no unhandled rejection", async () => {
+    const events: string[] = [];
+    const onUnhandledRejection = () => events.push("unhandledRejection");
+    const onRejectionHandled = () => events.push("rejectionHandled");
+    process.on("unhandledRejection", onUnhandledRejection);
+    process.on("rejectionHandled", onRejectionHandled);
+    try {
+      const controller = new AbortController();
+      const pending = setInterval(60_000, "tick", { signal: controller.signal })[Symbol.asyncIterator]().next();
+      expect(() => controller.abort()).not.toThrow();
+      await expect(pending).rejects.toThrow(expect.objectContaining({ name: "AbortError" }));
+      // 'rejectionHandled' comes from a task on a later turn of the loop.
+      for (let turn = 0; turn < 4; turn++) await setImmediate();
+      expect(events).toEqual([]);
+    } finally {
+      process.off("unhandledRejection", onUnhandledRejection);
+      process.off("rejectionHandled", onRejectionHandled);
+    }
+  });
+
   // As in node, the first next() starts the interval. Nothing reads this iterator, so nothing keeps the child alive.
   it.concurrent("an iterator that is never read does not keep the process alive", async () => {
     await using proc = Bun.spawn({

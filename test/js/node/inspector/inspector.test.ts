@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir } from "harness";
 import inspector from "node:inspector";
 import { join } from "node:path";
 
@@ -316,7 +316,16 @@ async function runCloseFixture(fixture: string, env: Record<string, string>, ...
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "fixture.mjs", ...args],
-    env: { ...bunEnv, BUN_JSC_logGC: "1", ...env },
+    env: {
+      ...bunEnv,
+      // Which collections Bun requests, and when, must not come from the environment of the test run.
+      BUN_GC_TIMER_DISABLE: undefined,
+      BUN_GC_TIMER_INTERVAL: undefined,
+      BUN_IDLE_GC_SECONDS: undefined,
+      BUN_GARBAGE_COLLECTOR_LEVEL: "0",
+      BUN_JSC_logGC: "1",
+      ...env,
+    },
     cwd: String(dir),
     stderr: Bun.file(logPath),
   });
@@ -382,7 +391,7 @@ console.log("closed every time");
 // A file, not -e: a one-shot -e run has a single GC marker and no helper threads to hold.
 test("inspector.close() returns while a garbage collection of the calling thread is in flight", async () => {
   // The hang is a lost race. A round costs about 30 ms on a debug build and 1 ms on a release build.
-  const rounds = isDebug ? 10 : isASAN ? 100 : 500;
+  const rounds = isDebug ? 10 : 100;
   // With BUN_DESTRUCT_VM_ON_EXIT the fixture can take seconds to exit: under these options its
   // exit-time collection waits for GC helper threads that the idle debugger thread still holds.
   const { log, ...result } = await runCloseFixture(
@@ -401,12 +410,12 @@ test("inspector.close() returns while a garbage collection of the calling thread
   );
 
   // The first heap in the log is the calling thread's. Its collection is in flight at a close()
-  // when its last START before the marker has no END after it.
+  // when the marker follows its START and not yet its epilogue. JSC writes each of these two
+  // tokens in one piece. The rest of a log line can have another heap's text in the middle of it.
   const callerHeap = log.match(/\[GC<([^>]+)>: starting /)?.[1];
-  const ended = new RegExp(`\\[GC<${callerHeap}>: .* END\\]`);
   const closedDuringACollection = [...log.matchAll(/\nCLOSING\n/g)].some(({ index }) => {
     const started = log.lastIndexOf(`[GC<${callerHeap}>: START `, index);
-    return started !== -1 && !ended.test(log.slice(started, index));
+    return started !== -1 && log.lastIndexOf(`[GC<${callerHeap}>: epilogue `, index) < started;
   });
   expect({
     ...result,

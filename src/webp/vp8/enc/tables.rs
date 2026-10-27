@@ -1,28 +1,10 @@
 //! Constant tables from `tree_enc.c`, `cost_enc.c`, `quant_enc.c`, `frame_enc.c`, `dsp/cost.c`, `picture_csp_enc.c`.
 
-pub(super) use crate::vp8::common::{
-    MB_FEATURE_TREE_PROBS, NUM_BANDS, NUM_BMODES, NUM_CTX, NUM_MB_SEGMENTS, NUM_PROBAS, NUM_TYPES,
-    Probas,
-};
-pub(super) use crate::vp8::tables::{
-    AC_TABLE, BANDS as ENC_BANDS, BMODES_PROBA, CAT3, CAT4, CAT5, CAT6, COEFFS_PROBA0,
-    COEFFS_UPDATE_PROBA, DC_TABLE,
-};
+use crate::vp8::common::NUM_BMODES;
 
 /// The last level with a variable cost.
 pub(super) const MAX_VARIABLE_LEVEL: usize = 67;
 pub(super) const MAX_LEVEL: usize = 2047;
-
-pub(super) fn flatten<T>(probas: &Probas<T>) -> &[T] {
-    probas.as_flattened().as_flattened().as_flattened()
-}
-
-pub(super) fn flatten_mut<T>(probas: &mut Probas<T>) -> &mut [T] {
-    probas
-        .as_flattened_mut()
-        .as_flattened_mut()
-        .as_flattened_mut()
-}
 
 /// The cost of a 0 bit of probability `i / 256`, in 1/256 bit.
 pub(super) static ENTROPY_COST: [u16; 256] = [

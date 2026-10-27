@@ -2,7 +2,7 @@
 
 use super::dsp::{Block, Chroma, Luma};
 use super::picture::Picture;
-use super::{DError, Encoder};
+use super::{DError, ERROR_DIFFUSION_QUALITY, Encoder};
 use crate::Result;
 use crate::util::{Bug, Checked, SliceExt, try_vec};
 
@@ -20,8 +20,6 @@ pub(super) struct EncIterator {
     pub(super) uv_out: Chroma,
     /// The 32 + 5 samples around the 4x4 blocks.
     i4_boundary: [u8; 37],
-    /// Where the top samples of the current 4x4 block are in `i4_boundary`.
-    i4_top: usize,
     /// The current 4x4 block.
     pub(super) i4: usize,
     /// Whether the blocks above have coefficients: 4 for Y, 2 for U, 2 for V, and the DC of an i16x16 macroblock.
@@ -71,16 +69,22 @@ pub(super) struct EncIterator {
 /// ```
 const TOP_LEFT_I4: [u8; 16] = [17, 21, 25, 29, 13, 17, 21, 25, 9, 13, 17, 21, 5, 9, 13, 17];
 
-/// Fills the square `dst` with the `w` by `h` samples the picture has from `start` on, repeating the last ones.
-fn import_block(
-    src: &[u8],
+/// What a plane of the picture has of a macroblock.
+#[derive(Clone, Copy)]
+struct Area<'a> {
+    plane: &'a [u8],
     stride: usize,
+    /// Where the top left sample is in `plane`.
     start: usize,
-    (w, h): (usize, usize),
-    dst: &mut [Block],
-    blocks_per_row: usize,
-) -> Checked {
-    let src = src.sub(start..)?;
+    /// The size, which the edges of the picture cut short.
+    w: usize,
+    h: usize,
+}
+
+/// Fills the square `dst` with the samples of `area`, repeating the last ones.
+fn import_block(area: Area<'_>, dst: &mut [Block], blocks_per_row: usize) -> Checked {
+    let Area { stride, w, h, .. } = area;
+    let src = area.plane.sub(area.start..)?;
     for (by, blocks) in dst.chunks_exact_mut(blocks_per_row).enumerate() {
         for y in 0..4 {
             let src = src.sub((4 * by + y).min(h - 1) * stride..)?.sub(..w)?;
@@ -119,15 +123,15 @@ impl EncIterator {
             y_out: Luma::default(),
             uv_out: Chroma::default(),
             i4_boundary: [0; 37],
-            i4_top: 0,
             i4: 0,
             top_nz: [0; 9],
             left_nz: [0; 9],
             nz: try_vec(0, enc.mb_w + 1)?,
             left_derr: DError::default(),
-            top_derr: match enc.use_error_diffusion() {
-                true => Some(try_vec(DError::default(), enc.mb_w)?),
-                false => None,
+            top_derr: if enc.quality <= ERROR_DIFFUSION_QUALITY {
+                Some(try_vec(DError::default(), enc.mb_w)?)
+            } else {
+                None
             },
             y_left: [0; 17],
             u_left: [0; 9],
@@ -185,31 +189,39 @@ impl EncIterator {
         ])
     }
 
+    /// What Y, U and V have of the macroblock.
+    fn areas<'a>(&self, pic: &'a Picture) -> [Area<'a>; 3] {
+        let (x, y) = (self.x, self.y);
+        let luma = Area {
+            plane: &pic.y,
+            stride: pic.width,
+            start: (y * pic.width + x) * 16,
+            w: (pic.width - 16 * x).min(16),
+            h: (pic.height - 16 * y).min(16),
+        };
+        let chroma = |plane| Area {
+            plane,
+            stride: pic.uv_width,
+            start: (y * pic.uv_width + x) * 8,
+            w: luma.w.div_ceil(2),
+            h: luma.h.div_ceil(2),
+        };
+        [luma, chroma(&pic.u), chroma(&pic.v)]
+    }
+
     /// Reads the samples of the macroblock from the picture.
     pub(super) fn import(&mut self, pic: &Picture) -> Checked {
-        let (x, y) = (self.x, self.y);
-        let size = ((pic.width - 16 * x).min(16), (pic.height - 16 * y).min(16));
-        let uv_size = (size.0.div_ceil(2), size.1.div_ceil(2));
-        let y_start = (y * pic.width + x) * 16;
-        let uv_start = (y * pic.uv_width + x) * 8;
+        let [y, u, v] = self.areas(pic);
         let [u_in, v_in] = &mut self.uv_in;
-        import_block(&pic.y, pic.width, y_start, size, &mut self.y_in, 4)?;
-        import_block(&pic.u, pic.uv_width, uv_start, uv_size, u_in, 2)?;
-        import_block(&pic.v, pic.uv_width, uv_start, uv_size, v_in, 2)
+        import_block(y, &mut self.y_in, 4)?;
+        import_block(u, u_in, 2)?;
+        import_block(v, v_in, 2)
     }
 
     /// Reads the samples around the macroblock from the picture too, as if it were compressed without loss.
     pub(super) fn import_boundary(&mut self, pic: &Picture) -> Checked {
         let (x, y) = (self.x, self.y);
-        let (w, h) = ((pic.width - 16 * x).min(16), (pic.height - 16 * y).min(16));
-        let (uv_w, uv_h) = (w.div_ceil(2), h.div_ceil(2));
-        let y_start = (y * pic.width + x) * 16;
-        let uv_start = (y * pic.uv_width + x) * 8;
-        let planes = [
-            (&pic.y, pic.width, y_start, w, h),
-            (&pic.u, pic.uv_width, uv_start, uv_w, uv_h),
-            (&pic.v, pic.uv_width, uv_start, uv_w, uv_h),
-        ];
+        let areas = self.areas(pic);
 
         if x == 0 {
             self.init_left();
@@ -219,14 +231,14 @@ impl EncIterator {
                 &mut self.u_left,
                 &mut self.v_left,
             ];
-            for (left, (src, stride, start, _, h)) in lefts.into_iter().zip(planes) {
+            for (left, area) in lefts.into_iter().zip(areas) {
                 let (top_left, left) = left.split_first_mut().ok_or(Bug)?;
                 *top_left = if y == 0 {
                     127
                 } else {
-                    src.at(start - 1 - stride)?
+                    area.plane.at(area.start - 1 - area.stride)?
                 };
-                import_line(src, start - 1, stride, left, h)?;
+                import_line(area.plane, area.start - 1, area.stride, left, area.h)?;
             }
         }
 
@@ -237,17 +249,14 @@ impl EncIterator {
             uv_top.fill(127);
         } else {
             let (u_top, v_top) = uv_top.split_at_mid(8)?;
-            for (top, (src, stride, start, w, _)) in
-                [y_top.as_mut_slice(), u_top, v_top].into_iter().zip(planes)
-            {
-                import_line(src, start - stride, 1, top, w)?;
+            for (top, area) in [y_top.as_mut_slice(), u_top, v_top].into_iter().zip(areas) {
+                import_line(area.plane, area.start - area.stride, 1, top, area.w)?;
             }
         }
         Ok(())
     }
 
-    //------------------------------------------------------------------------------
-    // Non-zero contexts.
+    // The bits of `nz`:
     //
     //  0  1  2  3  Y
     //  4  5  6  7
@@ -277,8 +286,6 @@ impl EncIterator {
         let left = (l0 << 3) | (l1 << 7) | (l2 << 11) | (l4 << 17) | (l6 << 21);
         self.nz.put(self.x + 1, top | top_uv | (t8 << 24) | left)
     }
-
-    //------------------------------------------------------------------------------
 
     /// Keeps the edges of the reconstructed macroblock for the next ones.
     pub(super) fn save_boundary(&mut self) -> Checked {
@@ -331,11 +338,8 @@ impl EncIterator {
         self.y < self.mb_h
     }
 
-    // Intra4x4 sub-blocks iteration
-
     pub(super) fn start_i4(&mut self) -> Checked {
         self.i4 = 0;
-        self.i4_top = usize::from(TOP_LEFT_I4[0]);
 
         let y_top = *self.y_top()?;
         let top_right = if self.x + 1 < self.mb_w {
@@ -351,15 +355,21 @@ impl EncIterator {
         self.nz_to_bytes()
     }
 
+    /// Where the top samples of the current 4x4 block are in `i4_boundary`.
+    fn i4_top(&self) -> Checked<usize> {
+        Ok(usize::from(TOP_LEFT_I4.at(self.i4)?))
+    }
+
     /// The samples around the current 4x4 block, as `intra4_preds` takes them.
     pub(super) fn i4_edge(&self) -> Checked<&[u8; 13]> {
-        self.i4_boundary.array_at(self.i4_top - 5)
+        self.i4_boundary.array_at(self.i4_top()? - 5)
     }
 
     /// Goes to the next 4x4 block, now that the current one is reconstructed as `block`. Returns false if there is none.
     pub(super) fn rotate_i4(&mut self, block: &Block) -> Checked<bool> {
+        let i4_top = self.i4_top()?;
         let [bottom @ .., top0, top1, top2, top3, r0, r1, r2, r3] =
-            self.i4_boundary.array_at_mut::<12>(self.i4_top - 4)?;
+            self.i4_boundary.array_at_mut::<12>(i4_top - 4)?;
         *bottom = block[3];
         if self.i4 & 3 != 3 {
             [*top0, *top1, *top2] = [block[2][3], block[1][3], block[0][3]];
@@ -368,10 +378,6 @@ impl EncIterator {
             [*top0, *top1, *top2, *top3] = [*r0, *r1, *r2, *r3];
         }
         self.i4 += 1;
-        let Some(&top) = TOP_LEFT_I4.get(self.i4) else {
-            return Ok(false);
-        };
-        self.i4_top = usize::from(top);
-        Ok(true)
+        Ok(self.i4 < TOP_LEFT_I4.len())
     }
 }

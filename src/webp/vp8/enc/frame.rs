@@ -2,23 +2,24 @@
 
 use super::Encoder;
 use super::bit_writer::BitWriter;
-use super::cost::{Proba, TYPE_CHROMA_A, TYPE_I4_AC, TYPE_I16_AC, TYPE_I16_DC, bit_cost};
-use super::filter::adjust_filter_strength;
+use super::cost::{
+    Proba, TYPE_CHROMA, TYPE_I4_AC, TYPE_I16_AC, TYPE_I16_DC, bit_cost, flatten, flatten_mut,
+};
+use super::filter;
 use super::iterator::EncIterator;
 use super::quant::{ModeScore, decimate, set_segment_params};
-use super::tables::{
-    COEFFS_PROBA0, COEFFS_UPDATE_PROBA, MB_FEATURE_TREE_PROBS, NUM_MB_SEGMENTS, flatten,
-    flatten_mut,
-};
+use super::syntax::MAX_PARTITION0_SIZE;
 use super::token::TokenBuffer;
 use crate::Result;
-use crate::util::Checked;
+use crate::util::{Checked, SliceExt};
+use crate::vp8::common::{MB_FEATURE_TREE_PROBS, NUM_MB_SEGMENTS};
+use crate::vp8::tables::{COEFFS_PROBA0, COEFFS_UPDATE_PROBA};
 
 /// The limit on the size of the first partition, with 2 KiB of headroom, in 1/256 bit.
-const PARTITION0_SIZE_LIMIT: u64 = ((1 << 19) - 2048) << 11;
+const PARTITION0_SIZE_LIMIT: u64 = (MAX_PARTITION0_SIZE as u64 - 2048) << 11;
 
-fn calc_token_proba(nb: i32, total: i32) -> i32 {
-    255 - (nb * 255).checked_div(total).unwrap_or(0)
+fn token_proba(nb: i32, total: i32) -> u8 {
+    (255 - (nb * 255).checked_div(total).unwrap_or(0)) as u8
 }
 
 /// The cost of coding `nb` ones and `total - nb` zeros with the probability `proba`.
@@ -38,44 +39,37 @@ fn finalize_token_probas(proba: &mut Proba) -> Checked {
     for ((coeff, &stats), (&old_p, &update_proba)) in coeffs.zip(defaults) {
         let nb = (stats & 0xffff) as i32;
         let total = (stats >> 16) as i32;
-        let new_p = calc_token_proba(nb, total) as u8;
+        let new_p = token_proba(nb, total);
         let old_cost = branch_cost(nb, total, old_p)? + bit_cost(false, update_proba)?;
         let new_cost = branch_cost(nb, total, new_p)? + bit_cost(true, update_proba)? + 8 * 256;
-        if old_cost > new_cost {
-            *coeff = new_p;
-            has_changed |= new_p != old_p;
-        } else {
-            *coeff = old_p;
-        }
+        *coeff = if old_cost > new_cost { new_p } else { old_p };
+        has_changed |= *coeff != old_p;
     }
     proba.dirty = has_changed;
     Ok(())
 }
 
-// The probabilities of the tree of the segments
-
-fn get_proba(a: u64, b: u64) -> u8 {
-    let total = a + b;
-    (255 * a + total / 2).checked_div(total).unwrap_or(255) as u8
+/// `GetProba`: the probability of a 0, from how often each bit occurs.
+fn branch_proba(zeros: u64, ones: u64) -> u8 {
+    let total = zeros + ones;
+    (255 * zeros + total / 2).checked_div(total).unwrap_or(255) as u8
 }
 
 fn set_segment_probas(enc: &mut Encoder<'_>) -> Checked {
     if enc.segment_hdr.num_segments <= 1 {
         enc.segment_hdr.update_map = false;
-        enc.segment_hdr.size = 0;
+        enc.segment_hdr.map_cost = 0;
         return Ok(());
     }
     let mut p = [0u64; NUM_MB_SEGMENTS];
     for mb in &enc.mb_info {
-        if let Some(count) = p.get_mut(usize::from(mb.segment)) {
-            *count += 1;
-        }
+        *p.at_mut(usize::from(mb.segment))? += 1;
     }
     let [p0, p1, p2, p3] = p;
     let probas = [
-        get_proba(p0 + p1, p2 + p3),
-        get_proba(p0, p1),
-        get_proba(p2, p3),
+        branch_proba(p0 + p1, p2 + p3),
+        branch_proba(p0, p1),
+        branch_proba(p2, p3),
     ];
     enc.proba.segments = probas;
     enc.segment_hdr.update_map = probas != [255; MB_FEATURE_TREE_PROBS];
@@ -88,14 +82,12 @@ fn set_segment_probas(enc: &mut Encoder<'_>) -> Checked {
         let proba1 = if bit0 { probas[2] } else { probas[1] };
         Ok((bit_cost(bit0, probas[0])? + bit_cost(bit1, proba1)?) as u64)
     };
-    enc.segment_hdr.size = p0 * cost(false, false)?
+    enc.segment_hdr.map_cost = p0 * cost(false, false)?
         + p1 * cost(false, true)?
         + p2 * cost(true, false)?
         + p3 * cost(true, true)?;
     Ok(())
 }
-
-//------------------------------------------------------------------------------
 
 fn record_tokens(
     it: &mut EncIterator,
@@ -108,7 +100,7 @@ fn record_tokens(
     it.nz_to_bytes()?;
     let (first, coeff_type) = if rd.is_i16 {
         let ctx = it.top_nz[8] + it.left_nz[8];
-        let non_zero = tokens.record_coeff_tokens(ctx, TYPE_I16_DC, 0, &rd.y_dc_levels, stats)?;
+        let non_zero = tokens.record_coeff_tokens(TYPE_I16_DC, 0, ctx, &rd.y_dc_levels, stats)?;
         it.top_nz[8] = u8::from(non_zero);
         it.left_nz[8] = u8::from(non_zero);
         (1, TYPE_I16_AC)
@@ -116,37 +108,32 @@ fn record_tokens(
         (0, TYPE_I4_AC)
     };
 
-    let [top_y @ .., top_u0, top_u1, top_v0, top_v1, _] = &mut it.top_nz;
-    let [left_y @ .., left_u0, left_u1, left_v0, left_v1, _] = &mut it.left_nz;
-    let (top_y, left_y): (&mut [u8; 4], &mut [u8; 4]) = (top_y, left_y);
+    let (top_y, top_uv) = it.top_nz.split_at_mid(4)?;
+    let (left_y, left_uv) = it.left_nz.split_at_mid(4)?;
     for (levels, left_nz) in rd.y_ac_levels.as_chunks::<4>().0.iter().zip(left_y) {
         for (levels, top_nz) in levels.iter().zip(&mut *top_y) {
             let ctx = *top_nz + *left_nz;
-            let non_zero = tokens.record_coeff_tokens(ctx, coeff_type, first, levels, stats)?;
+            let non_zero = tokens.record_coeff_tokens(coeff_type, first, ctx, levels, stats)?;
             *top_nz = u8::from(non_zero);
             *left_nz = *top_nz;
         }
     }
 
-    let planes = [
-        ([top_u0, top_u1], [left_u0, left_u1]),
-        ([top_v0, top_v1], [left_v0, left_v1]),
-    ];
-    for (levels, (mut top, left)) in rd.uv_levels.as_chunks::<4>().0.iter().zip(planes) {
+    let top_uv = top_uv.as_chunks_mut::<2>().0.iter_mut();
+    let planes = top_uv.zip(left_uv.as_chunks_mut::<2>().0);
+    for (levels, (top, left)) in rd.uv_levels.as_chunks::<4>().0.iter().zip(planes) {
         for (levels, left_nz) in levels.as_chunks::<2>().0.iter().zip(left) {
-            for (levels, top_nz) in levels.iter().zip(&mut top) {
-                let ctx = **top_nz + *left_nz;
-                let non_zero = tokens.record_coeff_tokens(ctx, TYPE_CHROMA_A, 0, levels, stats)?;
-                **top_nz = u8::from(non_zero);
-                *left_nz = **top_nz;
+            for (levels, top_nz) in levels.iter().zip(&mut *top) {
+                let ctx = *top_nz + *left_nz;
+                let non_zero = tokens.record_coeff_tokens(TYPE_CHROMA, 0, ctx, levels, stats)?;
+                *top_nz = u8::from(non_zero);
+                *left_nz = *top_nz;
             }
         }
     }
     it.bytes_to_nz()?;
     Ok(())
 }
-
-//------------------------------------------------------------------------------
 
 fn set_loop_params(enc: &mut Encoder<'_>) -> Checked {
     set_segment_params(enc)?;
@@ -180,15 +167,15 @@ pub(super) fn token_loop(enc: &mut Encoder<'_>) -> Result<Vec<u8>> {
             } else {
                 cnt -= 1;
             }
-            let info = decimate(enc, &mut it)?;
-            record_tokens(&mut it, &info, &mut enc.proba, &mut tokens)?;
-            size_p0 += info.score.h as u64;
+            let rd = decimate(enc, &mut it)?;
+            record_tokens(&mut it, &rd, &mut enc.proba, &mut tokens)?;
+            size_p0 += rd.h as u64;
             it.save_boundary()?;
             if !it.next() {
                 break;
             }
         }
-        size_p0 += enc.segment_hdr.size;
+        size_p0 += enc.segment_hdr.map_cost;
         if enc.max_i4_header_bits == 0 || size_p0 <= PARTITION0_SIZE_LIMIT {
             break;
         }
@@ -199,6 +186,6 @@ pub(super) fn token_loop(enc: &mut Encoder<'_>) -> Result<Vec<u8>> {
     finalize_token_probas(&mut enc.proba)?;
     let mut bw = BitWriter::new(tokens.len() / 8)?;
     tokens.emit_tokens(&mut bw, flatten(&enc.proba.coeffs))?;
-    adjust_filter_strength(enc);
+    filter::adjust_strength(enc);
     bw.finish()
 }

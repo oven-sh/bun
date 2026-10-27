@@ -1,5 +1,6 @@
 //! `picture_csp_enc.c`, `picture_tools_enc.c` and `dsp/yuv.h`: from RGBA to the YUV 4:2:0 planes that get encoded.
 
+use super::dsp::transpose;
 use super::tables::{GAMMA_TO_LINEAR, LINEAR_TO_GAMMA};
 use crate::util::{Checked, SliceExt, try_vec};
 use crate::{Input, Result};
@@ -38,8 +39,6 @@ fn linear_to_gamma(v: u32) -> Checked<u16> {
     let y = v1 * x + v0 * (scale as i32 - x);
     Ok(((y + (1 << GAMMA_TAB_FIX >> 1)) >> GAMMA_TAB_FIX) as u16)
 }
-
-// RGB -> YUV conversion
 
 const YUV_FIX: u32 = 16;
 const YUV_HALF: i32 = 1 << (YUV_FIX - 1);
@@ -115,25 +114,9 @@ fn blocks_2x2<'a>(row0: &'a [u8], row1: &'a [u8]) -> impl Iterator<Item = [[u8; 
     pairs.chain(last.map(|(&p0, &p1)| [p0, p0, p1, p1]))
 }
 
-#[inline(always)]
-fn channels(pixels: [[u8; 4]; 4]) -> [[u8; 4]; 4] {
-    let [
-        [r0, g0, b0, a0],
-        [r1, g1, b1, a1],
-        [r2, g2, b2, a2],
-        [r3, g3, b3, a3],
-    ] = pixels;
-    [
-        [r0, r1, r2, r3],
-        [g0, g1, g2, g3],
-        [b0, b1, b2, b3],
-        [a0, a1, a2, a3],
-    ]
-}
-
 fn accumulate_rgb(row0: &[u8], row1: &[u8], dst: &mut [Rgb]) -> Checked {
     for (pixels, dst) in blocks_2x2(row0, row1).zip(dst) {
-        let [r, g, b, _] = channels(pixels);
+        let [r, g, b, _] = transpose(pixels);
         *dst = [sum4(r)?, sum4(g)?, sum4(b)?];
     }
     Ok(())
@@ -141,7 +124,7 @@ fn accumulate_rgb(row0: &[u8], row1: &[u8], dst: &mut [Rgb]) -> Checked {
 
 fn accumulate_rgba(row0: &[u8], row1: &[u8], dst: &mut [Rgb]) -> Checked {
     for (pixels, dst) in blocks_2x2(row0, row1).zip(dst) {
-        let [r, g, b, a] = channels(pixels);
+        let [r, g, b, a] = transpose(pixels);
         let total_a = a.iter().map(|&a| u32::from(a)).sum();
         *dst = if total_a == 4 * 0xff || total_a == 0 {
             [sum4(r)?, sum4(g)?, sum4(b)?]
@@ -247,16 +230,17 @@ impl Picture {
                     ],
                 };
                 values = Some([value_y, value_u, value_v]);
-                flatten(&mut self.y, value_y, self.width, start, SIZE)?;
-                flatten(&mut self.u, value_u, self.uv_width, uv_start, SIZE / 2)?;
-                flatten(&mut self.v, value_v, self.uv_width, uv_start, SIZE / 2)?;
+                fill_square(&mut self.y, value_y, self.width, start, SIZE)?;
+                fill_square(&mut self.u, value_u, self.uv_width, uv_start, SIZE / 2)?;
+                fill_square(&mut self.v, value_v, self.uv_width, uv_start, SIZE / 2)?;
             }
         }
         Ok(())
     }
 }
 
-fn flatten(plane: &mut [u8], value: u8, stride: usize, start: usize, size: usize) -> Checked {
+/// `Flatten`
+fn fill_square(plane: &mut [u8], value: u8, stride: usize, start: usize, size: usize) -> Checked {
     for row in plane.sub_mut(start..)?.chunks_mut(stride).take(size) {
         row.sub_mut(..size)?.fill(value);
     }

@@ -2,15 +2,16 @@
 
 use super::Encoder;
 use super::bit_writer::BitWriter;
+use super::quant::DQ_UV_DC;
 use super::tree::{code_intra_modes, write_probas};
 use crate::vp8::common::{FRAME_HEADER_SIZE, SIGNATURE};
 use crate::{Error, Result};
 
-const VP8_MAX_PARTITION0_SIZE: usize = 1 << 19;
+pub(super) const MAX_PARTITION0_SIZE: usize = 1 << 19;
 
 /// Paragraph 9.1.
 fn frame_header(enc: &Encoder<'_>, size0: usize) -> Result<[u8; FRAME_HEADER_SIZE]> {
-    if size0 >= VP8_MAX_PARTITION0_SIZE {
+    if size0 >= MAX_PARTITION0_SIZE {
         return Err(Error::Partition0Overflow);
     }
     // A key frame (1 bit), of profile 0 (3 bits), to be shown (1 bit), and the size of the first partition (19 bits).
@@ -25,9 +26,9 @@ fn put_segment_header(bw: &mut BitWriter, enc: &Encoder<'_>) {
     let hdr = &enc.segment_hdr;
     if bw.put_bit_uniform(hdr.num_segments > 1) {
         bw.put_bit_uniform(hdr.update_map);
-        // The quantizers and the filter strengths are always there,
+        // The quantizers and the filter strengths of the segments follow.
         bw.put_bit_uniform(true);
-        // as absolute values (paragraph 9.3).
+        // They are absolute values, not deltas (paragraph 9.3).
         bw.put_bit_uniform(true);
         for dqm in &enc.dqm {
             bw.put_signed_bits(dqm.quant, 7);
@@ -56,12 +57,13 @@ fn put_filter_header(bw: &mut BitWriter, level: i32) {
 }
 
 fn put_quant(bw: &mut BitWriter, enc: &Encoder<'_>) {
-    bw.put_bits(enc.base_quant as u32, 7);
+    // The segments override this quantizer.
+    bw.put_bits(enc.dqm[0].quant as u32, 7);
     // What to add for the DC of Y1, the DC of Y2 and the AC of Y2.
     bw.put_signed_bits(0, 4);
     bw.put_signed_bits(0, 4);
     bw.put_signed_bits(0, 4);
-    bw.put_signed_bits(enc.dq_uv_dc, 4);
+    bw.put_signed_bits(DQ_UV_DC, 4);
     bw.put_signed_bits(enc.dq_uv_ac, 4);
 }
 
@@ -80,7 +82,7 @@ fn generate_partition0(enc: &Encoder<'_>) -> Result<Vec<u8>> {
     // The probabilities are for this frame only.
     bw.put_bit_uniform(false);
     write_probas(&mut bw, &enc.proba);
-    code_intra_modes(enc, &mut bw)?;
+    code_intra_modes(&mut bw, enc)?;
     bw.finish()
 }
 

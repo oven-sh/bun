@@ -5,7 +5,7 @@ use core::ops::{Add, Sub};
 
 use super::tables::MAX_LEVEL;
 use crate::util::{Bug, Checked};
-use crate::vp8::common::{IntraMode, KC1, KC2, clip_8b, inverse_wht};
+use crate::vp8::common::{KC1, KC2, clip_8b, inverse_wht};
 
 pub(super) type Matrix4x4<T> = [[T; 4]; 4];
 /// 4x4 samples.
@@ -131,7 +131,7 @@ fn map2<A, B, R>(a: Matrix4x4<A>, b: Matrix4x4<B>, f: impl Fn(A, B) -> R) -> Mat
     ]
 }
 
-/// `f(f(f(a, b), c)...)` of all the values.
+/// Reduces all the values with `f`, two by two: `f` has to be associative.
 #[inline(always)]
 fn fold<T>(m: Matrix4x4<T>, f: impl Fn(T, T) -> T) -> T {
     let [
@@ -155,7 +155,7 @@ fn sum<T: Add<Output = T>>(m: Matrix4x4<T>) -> T {
 }
 
 #[inline(always)]
-fn transpose<T>(m: Matrix4x4<T>) -> Matrix4x4<T> {
+pub(super) fn transpose<T>(m: Matrix4x4<T>) -> Matrix4x4<T> {
     let [
         [a0, a1, a2, a3],
         [b0, b1, b2, b3],
@@ -182,7 +182,7 @@ fn cols<T>(m: Matrix4x4<T>, f: impl Fn([T; 4]) -> [T; 4]) -> Matrix4x4<T> {
     transpose(rows(transpose(m), f))
 }
 
-/// `f` of something for each row and something for each column.
+/// `out[y][x]` is `f(rows[y], cols[x])`.
 #[inline(always)]
 fn outer<A: Copy, B: Copy, R>(rows: [A; 4], cols: [B; 4], f: impl Fn(A, B) -> R) -> Matrix4x4<R> {
     rows.map(|row| cols.map(|col| f(row, col)))
@@ -220,9 +220,10 @@ fn mul2(a: i16) -> i16 {
     mulhi(a, (KC2 - 65536) as i16) + a
 }
 
-/// `pred` plus the inverse transform of `coeffs`. 16 bits do: twice 8 * 255 plus 14.8 * 880 of quantization error.
+/// `pred` plus the inverse transform of `coeffs`.
 #[inline(always)]
 fn itransform_block(pred: Block, coeffs: Coeffs) -> Block {
+    // An `i16` holds it all: at most 2 * 8 * 255 from exact coefficients, plus 14.8 times their error of at most 880.
     let pass = |[in0, in1, in2, in3]: [i16; 4]| {
         let a = in0 + in2;
         let b = in0 - in2;
@@ -315,17 +316,11 @@ pub(super) fn ftransform_wht(dc: &[i16; 16]) -> Coeffs {
 }
 
 /// The inverse of `ftransform_wht`.
-pub(super) fn transform_wht(coeffs: &Coeffs) -> [i16; 16] {
+pub(super) fn itransform_wht(coeffs: &Coeffs) -> [i16; 16] {
     inverse_wht(&values_of(coeffs))
 }
 
-// Intra predictions
-
-/// The order of the 16x16 and of the chroma predictions.
-pub(super) const DC_PRED: usize = IntraMode::Dc as usize;
-pub(super) const TM_PRED: usize = IntraMode::TrueMotion as usize;
-pub(super) const V_PRED: usize = IntraMode::Vertical as usize;
-pub(super) const H_PRED: usize = IntraMode::Horizontal as usize;
+/// The 16x16 and the chroma predictions come in the order of the first four `IntraMode`s.
 pub(super) const NUM_PRED_MODES: usize = 4;
 
 /// The samples around a square. `left` starts with the top left one. A side is absent on the edge of the picture.
@@ -389,13 +384,15 @@ fn intra_preds<const L: usize, const N: usize>(
     let has_left = borders.iter().all(|border| border.left.is_some());
 
     let dc = Lanes([[per_block(|border| border.dc()); 4]; 4]);
-    let ve = match has_top {
-        true => Lanes(outer(left, top, |_, top| top)),
-        false => fill(127),
+    let ve = if has_top {
+        Lanes(outer(left, top, |_, top| top))
+    } else {
+        fill(127)
     };
-    let he = match has_left {
-        true => Lanes(outer(left, top, |left, _| left)),
-        false => fill(129),
+    let he = if has_left {
+        Lanes(outer(left, top, |left, _| left))
+    } else {
+        fill(129)
     };
     let tm = match (has_left, has_top) {
         (true, true) => {
@@ -497,8 +494,6 @@ pub(super) fn intra4_preds(edge: &[u8; 13]) -> Lanes<u8, 16> {
     Lanes::from_blocks(&[dc, tm, ve, he, rd, vr, ld, vl, hd, hu])
 }
 
-// Metrics
-
 /// The sum of the squared differences between each block of `a` and that of `b`.
 pub(super) fn sse<const L: usize>(a: &Lanes<u8, L>, b: &Lanes<u8, L>) -> [i32; L] {
     let mut squares = Lanes::<u16, L>::new();
@@ -542,10 +537,9 @@ pub(super) fn disto4x4(sum1: i32, sum2: i32) -> i32 {
     (sum2 - sum1).abs() >> 5
 }
 
-// Susceptibility, from the histogram of the coefficients
-
 const MAX_COEFF_THRESH: u16 = 31;
 
+/// What the susceptibility takes from the histogram of the coefficients of some blocks.
 pub(super) struct Histogram {
     pub(super) max_value: i32,
     pub(super) last_non_zero: i32,
@@ -591,12 +585,10 @@ pub(super) fn collect_histograms<const L: usize, const N: usize>(
     })
 }
 
-// Quantization
-
 const QFIX: u32 = 17;
 
 #[derive(Clone, Default)]
-pub(super) struct Matrix {
+pub(super) struct QuantMatrix {
     /// The quantizer steps.
     pub(super) q: Matrix4x4<u16>,
     /// Their reciprocals, in fixed point.
@@ -607,7 +599,7 @@ pub(super) struct Matrix {
     pub(super) sharpen: Matrix4x4<u16>,
 }
 
-impl Matrix {
+impl QuantMatrix {
     pub(super) const fn bias(b: u32) -> u32 {
         b << (QFIX - 8)
     }
@@ -656,7 +648,7 @@ fn unzigzag<T>(m: Matrix4x4<T>) -> Matrix4x4<T> {
 
 /// The levels, in zigzag order.
 #[inline(always)]
-fn quantize_block(coeffs: Coeffs, mtx: &Matrix) -> Coeffs {
+fn quantize_block(coeffs: Coeffs, mtx: &QuantMatrix) -> Coeffs {
     let abs = map2(coeffs, mtx.sharpen, |coeff, sharpen| {
         coeff.unsigned_abs() + sharpen
     });
@@ -670,7 +662,7 @@ fn quantize_block(coeffs: Coeffs, mtx: &Matrix) -> Coeffs {
 
 /// What the decoder makes of the levels.
 #[inline(always)]
-fn dequantize_block(levels: Coeffs, mtx: &Matrix) -> Coeffs {
+fn dequantize_block(levels: Coeffs, mtx: &QuantMatrix) -> Coeffs {
     map2(unzigzag(levels), mtx.q, |level, q| {
         level.wrapping_mul(q as i16)
     })
@@ -679,7 +671,7 @@ fn dequantize_block(levels: Coeffs, mtx: &Matrix) -> Coeffs {
 /// Replaces `coeffs` by what the decoder will make of the levels, which go to `levels`.
 pub(super) fn quantize<const L: usize>(
     coeffs: &mut Lanes<i16, L>,
-    mtx: &Matrix,
+    mtx: &QuantMatrix,
     levels: &mut Lanes<i16, L>,
 ) {
     for l in 0..L {
@@ -691,7 +683,7 @@ pub(super) fn quantize<const L: usize>(
 }
 
 /// `quantize` for a single block.
-pub(super) fn quantize_one(coeffs: &mut Coeffs, mtx: &Matrix) -> Coeffs {
+pub(super) fn quantize_one(coeffs: &mut Coeffs, mtx: &QuantMatrix) -> Coeffs {
     let levels = quantize_block(*coeffs, mtx);
     *coeffs = dequantize_block(levels, mtx);
     levels

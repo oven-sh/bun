@@ -2,9 +2,10 @@
 
 use super::bit_writer::BitWriter;
 use super::dsp::{Coeffs, num_levels_block};
-use super::tables::{CAT3, CAT4, CAT5, CAT6, ENC_BANDS, NUM_BANDS, NUM_CTX, NUM_PROBAS};
 use crate::Result;
 use crate::util::{Checked, SliceExt};
+use crate::vp8::common::{NUM_BANDS, NUM_CTX, NUM_PROBAS};
+use crate::vp8::tables::{BANDS, CAT3, CAT4, CAT5, CAT6};
 
 /// Bit 15: the bit to code. Bits 0 to 13: its probability if bit 14 (`FIXED_PROBA_BIT`) is set, else the index of it.
 type Token = u16;
@@ -19,7 +20,8 @@ pub(super) struct TokenBuffer {
     tokens: Vec<Token>,
 }
 
-fn token_id(coeff_type: usize, band: usize, ctx: usize) -> usize {
+/// `TOKEN_ID`: the index of the first probability of a type, band and context.
+fn base_id(coeff_type: usize, band: usize, ctx: usize) -> usize {
     NUM_PROBAS * (ctx + NUM_CTX * (band + NUM_BANDS * coeff_type))
 }
 
@@ -39,7 +41,7 @@ struct BlockTokens<'a> {
     tokens: &'a mut Vec<Token>,
     /// All the statistics, in the order of the probabilities.
     stats: &'a mut [u32],
-    /// The index of the first probability of the current band and context.
+    /// The `base_id` of the current band and context.
     base_id: usize,
 }
 
@@ -78,37 +80,37 @@ impl TokenBuffer {
         Ok(self.tokens.try_reserve(blocks * MAX_TOKENS_PER_BLOCK)?)
     }
 
-    /// Records the coefficients of a block from `first` on, for which `reserve` made room. Returns whether there are any.
+    /// Records the levels of a block from `first` on, for which `reserve` made room. Returns whether there are any.
     pub(super) fn record_coeff_tokens(
         &mut self,
-        ctx: u8,
         coeff_type: usize,
         first: usize,
-        coeffs: &Coeffs,
+        ctx: u8,
+        levels: &Coeffs,
         stats: &mut [u32],
     ) -> Checked<bool> {
         // `first` is 0 or 1, which are their own bands.
         let mut t = BlockTokens {
             tokens: &mut self.tokens,
             stats,
-            base_id: token_id(coeff_type, first, usize::from(ctx)),
+            base_id: base_id(coeff_type, first, usize::from(ctx)),
         };
-        let num_levels = usize::from(num_levels_block(*coeffs));
+        let num_levels = usize::from(num_levels_block(*levels));
         if !t.add_token(num_levels != 0, 0)? {
             return Ok(false);
         }
 
-        let next_bands = ENC_BANDS.sub(first + 1..)?;
-        let coeffs = coeffs.as_flattened().iter().enumerate().skip(first);
-        for ((n, &c), &next_band) in coeffs.zip(next_bands) {
+        let next_bands = BANDS.sub(first + 1..)?;
+        let levels = levels.as_flattened().iter().enumerate().skip(first);
+        for ((n, &level), &next_band) in levels.zip(next_bands) {
             let next_band = usize::from(next_band);
-            let v = u32::from(c.unsigned_abs());
+            let v = u32::from(level.unsigned_abs());
             if !t.add_token(v != 0, 1)? {
-                t.base_id = token_id(coeff_type, next_band, 0);
+                t.base_id = base_id(coeff_type, next_band, 0);
                 continue;
             }
             if !t.add_token(v > 1, 2)? {
-                t.base_id = token_id(coeff_type, next_band, 1);
+                t.base_id = base_id(coeff_type, next_band, 1);
             } else {
                 if !t.add_token(v > 4, 3)? {
                     if t.add_token(v != 2, 4)? {
@@ -145,9 +147,9 @@ impl TokenBuffer {
                         t.add_constant_token((residue >> shift) & 1 != 0, proba);
                     }
                 }
-                t.base_id = token_id(coeff_type, next_band, 2);
+                t.base_id = base_id(coeff_type, next_band, 2);
             }
-            t.add_constant_token(c < 0, 128);
+            t.add_constant_token(level < 0, 128);
             if n == 15 || !t.add_token(n + 1 < num_levels, 0)? {
                 return Ok(true);
             }

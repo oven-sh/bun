@@ -2,49 +2,47 @@
 
 use super::Encoder;
 use super::bit_writer::BitWriter;
-use super::cost::Proba;
-use super::dsp::{DC_PRED, H_PRED, TM_PRED, V_PRED};
-use super::tables::{
-    BMODES_PROBA, COEFFS_PROBA0, COEFFS_UPDATE_PROBA, MB_FEATURE_TREE_PROBS, NUM_BMODES, flatten,
-};
+use super::cost::{Proba, flatten};
 use crate::util::{Checked, SliceExt};
-use crate::vp8::common::IntraMode;
+use crate::vp8::common::{IntraMode, MB_FEATURE_TREE_PROBS, NUM_BMODES};
+use crate::vp8::tables::{BMODES_PROBA, COEFFS_PROBA0, COEFFS_UPDATE_PROBA};
 
-const B_DC_PRED: u8 = IntraMode::Dc as u8;
-const B_TM_PRED: u8 = IntraMode::TrueMotion as u8;
-const B_VE_PRED: u8 = IntraMode::Vertical as u8;
-const B_HE_PRED: u8 = IntraMode::Horizontal as u8;
-const B_RD_PRED: u8 = IntraMode::DownRight as u8;
-const B_LD_PRED: u8 = IntraMode::DownLeft as u8;
-const B_VL_PRED: u8 = IntraMode::VerticalLeft as u8;
-const B_HD_PRED: u8 = IntraMode::HorizontalDown as u8;
+/// libwebp's `B_*_PRED`. The first four are also its `DC_PRED`, `TM_PRED`, `V_PRED` and `H_PRED`, for whole macroblocks.
+const DC_PRED: u8 = IntraMode::Dc as u8;
+const TM_PRED: u8 = IntraMode::TrueMotion as u8;
+const VE_PRED: u8 = IntraMode::Vertical as u8;
+const HE_PRED: u8 = IntraMode::Horizontal as u8;
+const RD_PRED: u8 = IntraMode::DownRight as u8;
+const LD_PRED: u8 = IntraMode::DownLeft as u8;
+const VL_PRED: u8 = IntraMode::VerticalLeft as u8;
+const HD_PRED: u8 = IntraMode::HorizontalDown as u8;
 
 fn put_i4_mode(bw: &mut BitWriter, mode: u8, prob: &[u8; NUM_BMODES - 1]) {
-    if bw.put_bit(mode != B_DC_PRED, prob[0])
-        && bw.put_bit(mode != B_TM_PRED, prob[1])
-        && bw.put_bit(mode != B_VE_PRED, prob[2])
+    if bw.put_bit(mode != DC_PRED, prob[0])
+        && bw.put_bit(mode != TM_PRED, prob[1])
+        && bw.put_bit(mode != VE_PRED, prob[2])
     {
-        if !bw.put_bit(mode >= B_LD_PRED, prob[3]) {
-            if bw.put_bit(mode != B_HE_PRED, prob[4]) {
-                bw.put_bit(mode != B_RD_PRED, prob[5]);
+        if !bw.put_bit(mode >= LD_PRED, prob[3]) {
+            if bw.put_bit(mode != HE_PRED, prob[4]) {
+                bw.put_bit(mode != RD_PRED, prob[5]);
             }
-        } else if bw.put_bit(mode != B_LD_PRED, prob[6]) && bw.put_bit(mode != B_VL_PRED, prob[7]) {
-            bw.put_bit(mode != B_HD_PRED, prob[8]);
+        } else if bw.put_bit(mode != LD_PRED, prob[6]) && bw.put_bit(mode != VL_PRED, prob[7]) {
+            bw.put_bit(mode != HD_PRED, prob[8]);
         }
     }
 }
 
-fn put_i16_mode(bw: &mut BitWriter, mode: usize) {
-    if bw.put_bit(mode == TM_PRED || mode == H_PRED, 156) {
+fn put_i16_mode(bw: &mut BitWriter, mode: u8) {
+    if bw.put_bit(mode == TM_PRED || mode == HE_PRED, 156) {
         bw.put_bit(mode == TM_PRED, 128);
     } else {
-        bw.put_bit(mode == V_PRED, 163);
+        bw.put_bit(mode == VE_PRED, 163);
     }
 }
 
-fn put_uv_mode(bw: &mut BitWriter, uv_mode: usize) {
-    if bw.put_bit(uv_mode != DC_PRED, 142) && bw.put_bit(uv_mode != V_PRED, 114) {
-        bw.put_bit(uv_mode != H_PRED, 183);
+fn put_uv_mode(bw: &mut BitWriter, uv_mode: u8) {
+    if bw.put_bit(uv_mode != DC_PRED, 142) && bw.put_bit(uv_mode != VE_PRED, 114) {
+        bw.put_bit(uv_mode != HE_PRED, 183);
     }
 }
 
@@ -53,7 +51,7 @@ fn put_segment(bw: &mut BitWriter, s: u8, p: [u8; MB_FEATURE_TREE_PROBS]) {
     bw.put_bit(s & 1 != 0, p);
 }
 
-pub(super) fn code_intra_modes(enc: &Encoder<'_>, bw: &mut BitWriter) -> Checked {
+pub(super) fn code_intra_modes(bw: &mut BitWriter, enc: &Encoder<'_>) -> Checked {
     for (y, mbs) in enc.mb_info.chunks_exact(enc.mb_w).enumerate() {
         for (x, mb) in mbs.iter().enumerate() {
             let pos = enc.preds_pos(x, y);
@@ -61,7 +59,7 @@ pub(super) fn code_intra_modes(enc: &Encoder<'_>, bw: &mut BitWriter) -> Checked
                 put_segment(bw, mb.segment, enc.proba.segments);
             }
             if bw.put_bit(mb.is_i16, 145) {
-                put_i16_mode(bw, usize::from(enc.preds.at(pos)?));
+                put_i16_mode(bw, enc.preds.at(pos)?);
             } else {
                 for pos in (pos..).step_by(enc.preds_w).take(4) {
                     let top_preds = enc.preds.array_at::<4>(pos - enc.preds_w)?;
@@ -73,7 +71,7 @@ pub(super) fn code_intra_modes(enc: &Encoder<'_>, bw: &mut BitWriter) -> Checked
                     }
                 }
             }
-            put_uv_mode(bw, usize::from(mb.uv_mode));
+            put_uv_mode(bw, mb.uv_mode);
         }
     }
     Ok(())

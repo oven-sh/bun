@@ -1,22 +1,21 @@
 //! `quant_enc.c`: sets up the quantizers, and picks the prediction modes of a macroblock by rate and distortion.
 
 use super::cost::Proba;
-use super::dsp::{self, Coeffs, Lanes, Luma, Matrix, Matrix4x4, NUM_PRED_MODES};
-use super::filter::filter_strength_from_delta;
+use super::dsp::{self, Coeffs, Lanes, Luma, Matrix4x4, NUM_PRED_MODES, QuantMatrix};
+use super::filter;
 use super::iterator::EncIterator;
-use super::tables::{
-    AC_TABLE, DC_TABLE, FIXED_COSTS_I4, FIXED_COSTS_I16, FIXED_COSTS_UV, NUM_BMODES,
-    NUM_MB_SEGMENTS,
-};
+use super::tables::{FIXED_COSTS_I4, FIXED_COSTS_I16, FIXED_COSTS_UV};
 use super::{DError, Encoder, FILTER_STRENGTH, SNS_STRENGTH, SegmentInfo};
 use crate::util::{Checked, SliceExt};
+use crate::vp8::common::NUM_BMODES;
+use crate::vp8::tables::{AC_TABLE, DC_TABLE};
 
 /// The neutral, lowest and highest useful values of the susceptibility of U and V.
-const MID_ALPHA: i32 = 64;
-const MIN_ALPHA: i32 = 30;
-const MAX_ALPHA: i32 = 100;
+const MID_UV_ALPHA: i32 = 64;
+const MIN_UV_ALPHA: i32 = 30;
+const MAX_UV_ALPHA: i32 = 100;
 
-/// Between `SNS_STRENGTH` and the exponent that modulates the quantizer. Less than 1.
+/// The factor from `SNS_STRENGTH` to the exponent that modulates the quantizer. It has to be less than 1.
 const SNS_TO_DQ: f64 = 0.9;
 
 /// The number of non-zero coefficients up to which a block is very flat, and complex predictions get a penalty.
@@ -30,8 +29,6 @@ const RD_DISTO_MULT: i64 = 256;
 fn mult_8b(a: i32, b: i32) -> i32 {
     (a * b + 128) >> 8
 }
-
-// Quantization matrices
 
 #[derive(Clone, Copy)]
 enum MatrixType {
@@ -50,18 +47,18 @@ const FREQ_SHARPENING: Matrix4x4<u16> = [
 const SHARPEN_BITS: u32 = 11;
 
 /// Returns the matrix for the steps `q_dc` and `q_ac`, and the average step.
-fn expand_matrix(q_dc: u16, q_ac: u16, matrix_type: MatrixType) -> (Matrix, i32) {
+fn expand_matrix(q_dc: u16, q_ac: u16, matrix_type: MatrixType) -> (QuantMatrix, i32) {
     let (bias_dc, bias_ac) = match matrix_type {
         MatrixType::LumaAc => (96, 110),
         MatrixType::LumaDc => (96, 108),
         MatrixType::Chroma => (110, 115),
     };
-    let mut m = Matrix {
+    let mut m = QuantMatrix {
         q: [[q_ac; 4]; 4],
-        iq: [[Matrix::reciprocal(q_ac); 4]; 4],
-        bias: [[Matrix::bias(bias_ac); 4]; 4],
+        iq: [[QuantMatrix::reciprocal(q_ac); 4]; 4],
+        bias: [[QuantMatrix::bias(bias_ac); 4]; 4],
         sharpen: match matrix_type {
-            // The one for the DC is 0.
+            // `q_dc` plays no part: `FREQ_SHARPENING` is 0 for the DC.
             MatrixType::LumaAc => {
                 FREQ_SHARPENING.map(|row| row.map(|f| (f * q_ac) >> SHARPEN_BITS))
             }
@@ -69,8 +66,8 @@ fn expand_matrix(q_dc: u16, q_ac: u16, matrix_type: MatrixType) -> (Matrix, i32)
         },
     };
     m.q[0][0] = q_dc;
-    m.iq[0][0] = Matrix::reciprocal(q_dc);
-    m.bias[0][0] = Matrix::bias(bias_dc);
+    m.iq[0][0] = QuantMatrix::reciprocal(q_dc);
+    m.bias[0][0] = QuantMatrix::bias(bias_dc);
     let sum = i32::from(q_dc) + 15 * i32::from(q_ac);
     (m, (sum + 8) >> 4)
 }
@@ -84,55 +81,52 @@ fn ac_step(q: i32) -> Checked<u16> {
 }
 
 fn setup_matrices(enc: &mut Encoder<'_>) -> Checked {
-    for m in enc.dqm.iter_mut().take(enc.segment_hdr.num_segments) {
-        let q = m.quant;
+    for dqm in enc.dqm.iter_mut().take(enc.segment_hdr.num_segments) {
+        let q = dqm.quant;
         let (q_i4, q_i16, q_uv);
-        (m.y1, q_i4) = expand_matrix(dc_step(q, 127)?, ac_step(q)?, MatrixType::LumaAc);
-        (m.y2, q_i16) = expand_matrix(
+        (dqm.y1, q_i4) = expand_matrix(dc_step(q, 127)?, ac_step(q)?, MatrixType::LumaAc);
+        (dqm.y2, q_i16) = expand_matrix(
             dc_step(q, 127)? * 2,
             (ac_step(q)? * 155 / 100).max(8),
             MatrixType::LumaDc,
         );
-        (m.uv, q_uv) = expand_matrix(
-            dc_step(q + enc.dq_uv_dc, 117)?,
+        (dqm.uv, q_uv) = expand_matrix(
+            dc_step(q + DQ_UV_DC, 117)?,
             ac_step(q + enc.dq_uv_ac)?,
             MatrixType::Chroma,
         );
 
-        m.lambda_i4 = ((3 * q_i4 * q_i4) >> 7).max(1);
-        m.lambda_i16 = (3 * q_i16 * q_i16).max(1);
-        m.lambda_uv = ((3 * q_uv * q_uv) >> 6).max(1);
-        m.lambda_mode = ((q_i4 * q_i4) >> 7).max(1);
-        m.tlambda = ((SNS_STRENGTH * q_i4) >> 5).max(1);
+        dqm.lambda_i4 = ((3 * q_i4 * q_i4) >> 7).max(1);
+        dqm.lambda_i16 = (3 * q_i16 * q_i16).max(1);
+        dqm.lambda_uv = ((3 * q_uv * q_uv) >> 6).max(1);
+        dqm.lambda_mode = ((q_i4 * q_i4) >> 7).max(1);
+        dqm.tlambda = ((SNS_STRENGTH * q_i4) >> 5).max(1);
 
-        m.min_disto = 20 * i64::from(m.y1.q[0][0]);
-        m.max_edge = 0;
+        dqm.min_disto = 20 * i64::from(dqm.y1.q[0][0]);
+        dqm.max_edge = 0;
     }
     Ok(())
 }
-
-// Filtering parameters
 
 /// Below this, filtering has next to no visible effect.
 const FSTRENGTH_CUTOFF: i32 = 2;
 
 fn setup_filter_strength(enc: &mut Encoder<'_>) -> Checked {
     let level0 = 5 * FILTER_STRENGTH;
-    for m in &mut enc.dqm {
-        let qstep = i32::from(ac_step(m.quant)?) >> 2;
-        let base_strength = filter_strength_from_delta(qstep);
+    for dqm in &mut enc.dqm {
+        let qstep = i32::from(ac_step(dqm.quant)?) >> 2;
+        let base_strength = filter::strength_from_delta(qstep);
         // The less complex a segment, the less it is filtered.
-        let f = base_strength * level0 / (256 + m.beta);
-        m.fstrength = if f < FSTRENGTH_CUTOFF { 0 } else { f.min(63) };
+        let f = base_strength * level0 / (256 + dqm.beta);
+        dqm.fstrength = if f < FSTRENGTH_CUTOFF { 0 } else { f.min(63) };
     }
-    enc.filter_level = enc.dqm[0].fstrength;
     Ok(())
 }
 
-//------------------------------------------------------------------------------
-
 const MAX_DQ_UV: i32 = 6;
 const MIN_DQ_UV: i32 = -4;
+/// What all segments add to their quantizer for the DC of U and V, where a high quantizer soon shows as flat blocks.
+pub(super) const DQ_UV_DC: i32 = -4 * SNS_STRENGTH / 100;
 
 /// Moves JPEG's "good" 0.75 to the middle, then takes the cube root, as size goes roughly by the cube of the quantizer.
 fn quality_to_compression(c: f64) -> f64 {
@@ -147,7 +141,7 @@ fn quality_to_compression(c: f64) -> f64 {
 /// Merges the segments with the same parameters.
 fn simplify_segments(enc: &mut Encoder<'_>) -> Checked {
     let mut map = [0u8, 1, 2, 3];
-    let num_segments = enc.segment_hdr.num_segments.min(NUM_MB_SEGMENTS);
+    let num_segments = enc.segment_hdr.num_segments;
     let mut num_final_segments = 1;
     for s1 in 1..num_segments {
         let (quant, fstrength) = (enc.dqm.at_ref(s1)?.quant, enc.dqm.at_ref(s1)?.fstrength);
@@ -181,22 +175,21 @@ pub(super) fn set_segment_params(enc: &mut Encoder<'_>) -> Checked {
     let num_segments = enc.segment_hdr.num_segments;
     let amp = SNS_TO_DQ * f64::from(SNS_STRENGTH) / 100.0 / 128.0;
     let c_base = quality_to_compression(f64::from(enc.quality) / 100.0);
-    for m in enc.dqm.iter_mut().take(num_segments) {
+    for dqm in enc.dqm.iter_mut().take(num_segments) {
         // The more a segment takes quantization, the more it gets.
-        let expn = 1.0 - amp * f64::from(m.alpha);
+        let expn = 1.0 - amp * f64::from(dqm.alpha);
         let c = c_base.powf(expn);
-        m.quant = ((127.0 * (1.0 - c)) as i32).clamp(0, 127);
+        dqm.quant = ((127.0 * (1.0 - c)) as i32).clamp(0, 127);
     }
-    enc.base_quant = enc.dqm[0].quant;
-    for m in enc.dqm.iter_mut().skip(num_segments) {
-        m.quant = enc.base_quant;
+    let base_quant = enc.dqm[0].quant;
+    for dqm in enc.dqm.iter_mut().skip(num_segments) {
+        dqm.quant = base_quant;
     }
 
     // `uv_alpha` is mostly around 60, between 30 (bad) and 100 (U and V can be decimated more).
-    let dq_uv_ac = (enc.uv_alpha - MID_ALPHA) * (MAX_DQ_UV - MIN_DQ_UV) / (MAX_ALPHA - MIN_ALPHA);
+    let dq_uv_ac =
+        (enc.uv_alpha - MID_UV_ALPHA) * (MAX_DQ_UV - MIN_DQ_UV) / (MAX_UV_ALPHA - MIN_UV_ALPHA);
     enc.dq_uv_ac = (dq_uv_ac * SNS_STRENGTH / 100).clamp(MIN_DQ_UV, MAX_DQ_UV);
-    // U and V react more to high quantizers: flat blocks appear.
-    enc.dq_uv_dc = -4 * SNS_STRENGTH / 100;
 
     setup_filter_strength(enc)?;
     if num_segments > 1 {
@@ -205,21 +198,18 @@ pub(super) fn set_segment_params(enc: &mut Encoder<'_>) -> Checked {
     setup_matrices(enc)
 }
 
-// Scores
-
 /// Rate and distortion.
 #[derive(Clone, Copy)]
-pub(super) struct Score {
+struct Score {
     /// The distortion, and the spectral distortion.
     d: i64,
     sd: i64,
     /// The bits of the header, which go to the first partition.
-    pub(super) h: i64,
+    h: i64,
     /// The bits of the coefficients.
     r: i64,
+    /// The distortion plus lambda times the rate. The mode with the lowest one wins.
     score: i64,
-    /// Which blocks have coefficients.
-    nz: u32,
 }
 
 impl Score {
@@ -233,33 +223,24 @@ impl Score {
             h: 0,
             r: 0,
             score: Self::MAX_COST,
-            nz: 0,
         }
     }
 
     fn set_rd_score(&mut self, lambda: i32) {
         self.score = (self.r + self.h) * i64::from(lambda) + RD_DISTO_MULT * (self.d + self.sd);
     }
-
-    fn add(&mut self, other: &Self) {
-        self.d += other.d;
-        self.sd += other.sd;
-        self.r += other.r;
-        self.h += other.h;
-        self.nz |= other.nz;
-        self.score += other.score;
-    }
 }
 
 /// What is decided for a macroblock.
 pub(super) struct ModeScore {
-    pub(super) score: Score,
+    /// The bits of the header, which go to the first partition.
+    pub(super) h: i64,
     /// The quantized levels.
     pub(super) y_dc_levels: Coeffs,
     pub(super) y_ac_levels: [Coeffs; 16],
     pub(super) uv_levels: [Coeffs; 8],
     pub(super) is_i16: bool,
-    mode_uv: u8,
+    uv_mode: u8,
 }
 
 fn is_flat_source16(src: &Luma) -> bool {
@@ -285,11 +266,11 @@ fn non_zero_bits(num_levels: &[u8]) -> u32 {
     })
 }
 
-// Difference, transform, quantize, back-transform, add
-
 struct Intra16 {
     mode: u8,
     score: Score,
+    /// A bit for each block that has AC levels, and bit 24 for the DC levels.
+    nz: u32,
     y_dc_levels: Coeffs,
     y_ac_levels: Lanes<i16, 16>,
     /// How many of them each block has up to the last one that is not zero.
@@ -302,6 +283,7 @@ impl Intra16 {
         Self {
             mode: 0,
             score: Score::new(),
+            nz: 0,
             y_dc_levels: Coeffs::default(),
             y_ac_levels: Lanes::new(),
             num_ac_levels: [0; 16],
@@ -309,23 +291,21 @@ impl Intra16 {
         }
     }
 
-    /// Returns which blocks have levels.
-    fn reconstruct(&mut self, src: &Lanes<u8, 16>, pred: &Lanes<u8, 16>, dqm: &SegmentInfo) -> u32 {
+    /// Difference, transform, quantize, back-transform, add.
+    fn reconstruct(&mut self, src: &Lanes<u8, 16>, pred: &Lanes<u8, 16>, dqm: &SegmentInfo) {
         let mut tmp = Lanes::new();
         dsp::ftransform(src, pred, &mut tmp);
         let mut dc_tmp = dsp::ftransform_wht(tmp.first());
         self.y_dc_levels = dsp::quantize_one(&mut dc_tmp, &dqm.y2);
         *tmp.first_mut() = [0; 16];
         dsp::quantize(&mut tmp, &dqm.y1, &mut self.y_ac_levels);
-        *tmp.first_mut() = dsp::transform_wht(&dc_tmp);
+        *tmp.first_mut() = dsp::itransform_wht(&dc_tmp);
         dsp::itransform(pred, &tmp, &mut self.out);
         self.num_ac_levels = dsp::num_levels(&self.y_ac_levels);
-        non_zero_bits(&self.num_ac_levels)
-            | (u32::from(self.y_dc_levels != Coeffs::default()) << 24)
+        self.nz = non_zero_bits(&self.num_ac_levels)
+            | (u32::from(self.y_dc_levels != Coeffs::default()) << 24);
     }
 }
-
-// DC-error diffusion
 
 /// The errors of the second, third and fourth block of U, and of V.
 type BlockErrors = [[i8; 3]; 2];
@@ -338,7 +318,7 @@ const DSHIFT: u32 = 4;
 const DSCALE: u32 = 1;
 
 /// Quantizes `v` and returns the error.
-fn quantize_single(v: &mut i16, mtx: &Matrix) -> i32 {
+fn quantize_single(v: &mut i16, mtx: &QuantMatrix) -> i32 {
     let abs = i32::from(*v).abs();
     let level = dsp::quantdiv(abs as u32, u32::from(mtx.iq[0][0]), mtx.bias[0][0]);
     let quantized = level * i32::from(mtx.q[0][0]);
@@ -356,7 +336,7 @@ fn quantize_single(v: &mut i16, mtx: &Matrix) -> i32 {
 fn correct_dc_values(
     top_derr: DError,
     left_derr: DError,
-    mtx: &Matrix,
+    mtx: &QuantMatrix,
     dc: &mut [i16; 8],
 ) -> BlockErrors {
     //         | top[0] | top[1]
@@ -394,8 +374,6 @@ fn store_diffusion_errors(it: &mut EncIterator, derr: BlockErrors) -> Checked {
     Ok(())
 }
 
-// Reconstruct with each mode, and pick the one with the lowest rate + lambda * distortion.
-
 /// The step between the 4x4 blocks, from the first three AC coefficients of their DCs.
 fn max_delta(dcs: &Coeffs) -> i32 {
     let [[_, v0, v1, _], [v2, ..], ..] = dcs.map(|row| row.map(|dc| i32::from(dc).abs()));
@@ -417,10 +395,10 @@ fn pick_best_intra16<'a>(
     let mut flat = is_flat_source16(&it.y_in);
     for ((mode, pred), fixed_cost) in preds.iter().enumerate().zip(FIXED_COSTS_I16) {
         cur.mode = mode as u8;
-        let nz = cur.reconstruct(src, pred, dqm);
+        cur.reconstruct(src, pred, dqm);
         let tdisto = src_tt.iter().zip(dsp::ttransform(&cur.out));
         let tdisto = tdisto.map(|(&src, out)| dsp::disto4x4(src, out)).sum();
-        let cost = it.get_cost_luma16(
+        let cost = it.luma16_cost(
             proba,
             &cur.y_dc_levels,
             &cur.y_ac_levels,
@@ -432,11 +410,10 @@ fn pick_best_intra16<'a>(
             h: i64::from(fixed_cost),
             r: i64::from(cost),
             score: 0,
-            nz,
         };
         if flat {
             // Refine the first impression, which was on the samples: are there AC levels?
-            flat = nz & 0xffff == 0;
+            flat = cur.nz & 0xffff == 0;
             if flat {
                 // On a very flat block, what matters is a very low distortion.
                 cur.score.d *= 2;
@@ -453,7 +430,8 @@ fn pick_best_intra16<'a>(
 }
 
 struct Intra4 {
-    score: Score,
+    /// The bits of the header.
+    h: i64,
     modes: [u8; 16],
     y_ac_levels: [Coeffs; 16],
     out: Luma,
@@ -472,15 +450,14 @@ fn pick_best_intra4(
     }
     let preds_pos = enc.preds_pos(it.x, it.y);
     let mut best = Intra4 {
-        score: Score::new(),
+        // The cost of saying that the macroblock is i4x4: `bit_cost(false, 145)`.
+        h: 211,
         modes: [0; 16],
         y_ac_levels: Default::default(),
         out: Luma::default(),
     };
+    let mut score = best.h * i64::from(dqm.lambda_mode);
     let mut total_header_bits = 0;
-    // The cost of saying that the macroblock is i4x4: `bit_cost(false, 145)`.
-    best.score.h = 211;
-    best.score.set_rd_score(dqm.lambda_mode);
     let (mut tmp, mut levels, mut out) = (Lanes::new(), Lanes::new(), Lanes::new());
     it.start_i4()?;
     loop {
@@ -512,6 +489,7 @@ fn pick_best_intra4(
 
         let mut rd_i4 = Score::new();
         let mut best_mode = None;
+        let mut non_zero = false;
         for ((mode, &mode_cost), ((d, out_tt), (num_levels, non_zero_ac))) in
             mode_costs.iter().enumerate().zip(distortions.zip(counts))
         {
@@ -526,24 +504,24 @@ fn pick_best_intra4(
                     0
                 },
                 score: 0,
-                nz: u32::from(num_levels != 0) << i4,
             };
             rd_tmp.set_rd_score(dqm.lambda_i4);
             if best_mode.is_some() && rd_tmp.score >= rd_i4.score {
                 continue;
             }
             let levels = levels.at(mode)?;
-            rd_tmp.r += i64::from(it.get_cost_luma4(&enc.proba, &levels, num_levels)?);
+            rd_tmp.r += i64::from(it.luma4_cost(&enc.proba, &levels, num_levels)?);
             rd_tmp.set_rd_score(dqm.lambda_i4);
             if best_mode.is_none() || rd_tmp.score < rd_i4.score {
                 rd_i4 = rd_tmp;
                 best_mode = Some(mode);
+                non_zero = num_levels != 0;
                 best.y_ac_levels.put(i4, levels)?;
             }
         }
         rd_i4.set_rd_score(dqm.lambda_mode);
-        best.score.add(&rd_i4);
-        if best.score.score >= score_i16 {
+        score += rd_i4.score;
+        if score >= score_i16 {
             return Ok(None);
         }
         total_header_bits += rd_i4.h;
@@ -554,10 +532,10 @@ fn pick_best_intra4(
         let best_block = out.at(best_mode)?;
         best.out.put(i4, best_block)?;
         best.modes.put(i4, best_mode as u8)?;
-        let non_zero = u8::from(rd_i4.nz != 0);
-        it.top_nz.put(x, non_zero)?;
-        it.left_nz.put(y, non_zero)?;
+        it.top_nz.put(x, u8::from(non_zero))?;
+        it.left_nz.put(y, u8::from(non_zero))?;
         if !it.rotate_i4(&best_block)? {
+            best.h += total_header_bits;
             return Ok(Some(best));
         }
     }
@@ -596,18 +574,16 @@ fn pick_best_uv(
 
     let modes = FIXED_COSTS_UV.into_iter().enumerate();
     let modes = modes.zip(distortions.as_chunks::<8>().0);
-    let modes = modes.zip(num_levels.as_chunks::<8>().0);
     let modes = modes.zip(non_zero_ac.as_chunks::<8>().0);
     let mut rd_best = Score::new();
-    for ((((mode, fixed_cost), distortions), mode_num_levels), non_zero_ac) in modes {
+    for (((mode, fixed_cost), distortions), non_zero_ac) in modes {
         let mut rd_uv = Score {
             d: i64::from(distortions.iter().sum::<i32>()),
             // No texture distortion here: it tends to flatten areas.
             sd: 0,
             h: i64::from(fixed_cost),
-            r: i64::from(it.get_cost_uv(proba, &levels, &num_levels, 8 * mode)?),
+            r: i64::from(it.uv_cost(proba, &levels, &num_levels, 8 * mode)?),
             score: 0,
-            nz: non_zero_bits(mode_num_levels) << 16,
         };
         if mode > 0 && is_flat(non_zero_ac, FLATNESS_LIMIT_UV) {
             rd_uv.r += FLATNESS_PENALTY * 8;
@@ -615,17 +591,17 @@ fn pick_best_uv(
         rd_uv.set_rd_score(dqm.lambda_uv);
         if mode == 0 || rd_uv.score < rd_best.score {
             rd_best = rd_uv;
-            rd.mode_uv = mode as u8;
+            rd.uv_mode = mode as u8;
         }
     }
-    rd.score.add(&rd_best);
-    let first_block = 8 * usize::from(rd.mode_uv);
+    rd.h += rd_best.h;
+    let first_block = 8 * usize::from(rd.uv_mode);
     let blocks = rd.uv_levels.iter_mut().zip(it.uv_out.as_flattened_mut());
     for (n, (uv_levels, uv_out)) in (first_block..).zip(blocks) {
         *uv_levels = levels.at(n)?;
         *uv_out = out.at(n)?;
     }
-    store_diffusion_errors(it, derr.at(usize::from(rd.mode_uv))?)
+    store_diffusion_errors(it, derr.at(usize::from(rd.uv_mode))?)
 }
 
 /// Picks the modes of the current macroblock and fills the levels.
@@ -638,20 +614,20 @@ pub(super) fn decimate(enc: &mut Encoder<'_>, it: &mut EncIterator) -> Checked<M
     let mut trials = [Intra16::new(), Intra16::new()];
     let i16 = pick_best_intra16(it, dqm, &enc.proba, (&src, &src_tt), trials.each_mut())?;
     // Nothing but DCs and a fairly high distortion: record the step between blocks, for the filter to smooth it out.
-    let max_edge = ((i16.score.nz & 0x100_ffff) == 0x100_0000 && i16.score.d > dqm.min_disto)
+    let max_edge = ((i16.nz & 0x100_ffff) == 0x100_0000 && i16.score.d > dqm.min_disto)
         .then(|| max_delta(&i16.y_dc_levels));
     let i4 = pick_best_intra4(it, enc, dqm, &src_tt, i16.score.score)?;
     let mut rd = ModeScore {
-        score: i16.score,
+        h: i16.score.h,
         y_dc_levels: i16.y_dc_levels,
         y_ac_levels: Default::default(),
         uv_levels: Default::default(),
         is_i16: i4.is_none(),
-        mode_uv: 0,
+        uv_mode: 0,
     };
     let modes = match i4 {
         Some(i4) => {
-            rd.score = i4.score;
+            rd.h = i4.h;
             rd.y_ac_levels = i4.y_ac_levels;
             it.y_out = i4.out;
             i4.modes
@@ -668,6 +644,6 @@ pub(super) fn decimate(enc: &mut Encoder<'_>, it: &mut EncIterator) -> Checked<M
         let dqm = enc.dqm.at_mut(segment)?;
         dqm.max_edge = dqm.max_edge.max(max_edge);
     }
-    enc.set_intra_modes(it.x, it.y, rd.is_i16, &modes, rd.mode_uv)?;
+    enc.set_intra_modes(it.x, it.y, rd.is_i16, &modes, rd.uv_mode)?;
     Ok(rd)
 }

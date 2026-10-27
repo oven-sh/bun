@@ -1,11 +1,11 @@
 //! `analysis_enc.c`: measures how well each macroblock takes quantization, and groups the macroblocks into segments.
 
 use super::Encoder;
-use super::dsp::{self, DC_PRED, Histogram, Lanes, TM_PRED};
+use super::dsp::{self, Histogram, Lanes};
 use super::iterator::EncIterator;
-use super::tables::NUM_MB_SEGMENTS;
 use crate::Result;
 use crate::util::{Checked, SliceExt};
+use crate::vp8::common::NUM_MB_SEGMENTS;
 
 const MAX_ITERS_K_MEANS: usize = 6;
 
@@ -24,8 +24,8 @@ fn set_segment_alphas(enc: &mut Encoder<'_>, centers: &[i32; NUM_MB_SEGMENTS], m
     }
 }
 
-/// The higher, the easier the macroblock is to compress.
-fn get_alpha(histo: &Histogram) -> i32 {
+/// `GetAlpha`: 0 for flat blocks, and the higher, the harder they are to compress. `mb_analyze` turns the scale around.
+fn raw_alpha(histo: &Histogram) -> i32 {
     if histo.max_value > 1 {
         ALPHA_SCALE * histo.last_non_zero / histo.max_value
     } else {
@@ -89,30 +89,31 @@ fn assign_segments(enc: &mut Encoder<'_>, alphas: &[i32; MAX_ALPHA as usize + 1]
     Ok(())
 }
 
-/// The best susceptibility that the prediction modes give.
+/// The highest `raw_alpha` that the prediction modes give.
 fn best_alpha(histograms: impl Iterator<Item = Histogram>) -> i32 {
-    histograms.fold(0, |best, histo| best.max(get_alpha(&histo)))
+    histograms.fold(0, |best, histo| best.max(raw_alpha(&histo)))
 }
 
-/// Returns the susceptibility of the macroblock and that of its chroma. Only the first two prediction modes are tried.
+/// Returns the susceptibility of the macroblock (the higher, the easier to compress) and the `best_alpha` of its chroma.
 fn mb_analyze(it: &EncIterator) -> Checked<(u8, i32)> {
     let (has_left, has_top) = (it.x > 0, it.y > 0);
-    let preds = dsp::intra16_preds(
+    // Only the first two prediction modes are tried.
+    let [dc, tm, ..] = &dsp::intra16_preds(
         has_left.then_some(&it.y_left),
         has_top.then_some(it.y_top()?),
     );
     let src = Lanes::<u8, 16>::from_blocks(&it.y_in);
     let src = Lanes::<u8, 32>::concat([&src, &src]);
-    let preds = Lanes::concat([&preds[DC_PRED], &preds[TM_PRED]]);
+    let preds = Lanes::concat([dc, tm]);
     let best_alpha_y = best_alpha(dsp::collect_histograms::<32, 16>(&src, &preds));
 
-    let preds = dsp::intra_chroma_preds(
+    let [dc, tm, ..] = &dsp::intra_chroma_preds(
         has_left.then_some([&it.u_left, &it.v_left]),
         has_top.then_some(it.uv_top()?),
     );
     let src = Lanes::<u8, 8>::from_blocks(it.uv_in.as_flattened());
     let src = Lanes::<u8, 16>::concat([&src, &src]);
-    let preds = Lanes::concat([&preds[DC_PRED], &preds[TM_PRED]]);
+    let preds = Lanes::concat([dc, tm]);
     let best_alpha_uv = best_alpha(dsp::collect_histograms::<16, 8>(&src, &preds));
 
     let mixed = (3 * best_alpha_y + best_alpha_uv + 2) >> 2;

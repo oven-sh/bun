@@ -783,6 +783,8 @@ pub(crate) struct FrameCompressor {
     pub(crate) dict_id: u32,
     pub(crate) dict_content_size: usize,
     workspace: Workspace,
+    /// See [`Self::for_worker`].
+    room_for_any_block: bool,
     pub(crate) block_size_max: usize,
     pub(crate) pledged_src_size_plus_one: u64,
     pub(crate) consumed_src_size: u64,
@@ -817,6 +819,7 @@ impl FrameCompressor {
             dict_id: 0,
             dict_content_size: 0,
             workspace: Workspace::new(),
+            room_for_any_block: false,
             block_size_max: 0,
             pledged_src_size_plus_one: 0,
             consumed_src_size: 0,
@@ -831,6 +834,17 @@ impl FrameCompressor {
             prev_c_block: Box::new(CompressedBlockState::new()),
             next_c_block: Box::new(CompressedBlockState::new()),
             match_state: MatchState::new(),
+        }
+    }
+
+    /// For the jobs of one worker. The size of a job is all it is told about the size of the input, and a workspace that
+    /// is too small for a job a little larger than those before would be replaced, which clears the tables. The C code
+    /// hardly gets there, as small jobs all go to the context that had the first job of the frame, which did not know
+    /// the size. Which context a job goes to is a matter of timing there, so it cannot show in the output.
+    pub(crate) fn for_worker() -> Self {
+        Self {
+            room_for_any_block: true,
+            ..Self::new()
         }
     }
 
@@ -882,7 +896,11 @@ impl FrameCompressor {
             use_row_match_finder: params.use_row_match_finder,
             buff_in_size: sizes.buff_in_size,
             buff_out_size: sizes.buff_out_size,
-            block_size,
+            block_size: if self.room_for_any_block {
+                ZSTD_BLOCKSIZE_MAX.min(1 << params.c_params.window_log)
+            } else {
+                block_size
+            },
         }) {
             needs_index_reset = IndexResetPolicy::Reset;
         }

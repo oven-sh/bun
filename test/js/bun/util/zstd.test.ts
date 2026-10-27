@@ -1348,27 +1348,41 @@ describe("the output is that of zstd 1.5.7", () => {
     }
   });
 
+  async function flushed(params: Record<number, number>, sizes: number[]) {
+    const stream = zlib.createZstdCompress({ params });
+    const chunks: Buffer[] = [];
+    stream.on("data", chunk => chunks.push(chunk));
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    stream.on("end", resolve).on("error", reject);
+    let at = 0;
+    for (const size of sizes) {
+      stream.write(corpus.subarray(at, at + size));
+      stream.flush();
+      at += size;
+    }
+    stream.end();
+    await promise;
+    expect(zlib.zstdDecompressSync(Buffer.concat(chunks)).equals(corpus.subarray(0, at))).toBe(true);
+  }
+
   it("in a stream with workers, where a flush does not cost as much as a whole job", async () => {
     // A job makes room for one long distance match for each ldmMinMatch bytes. For a whole job that is 192 MB here.
-    const stream = zlib.createZstdCompress({
-      params: {
+    await flushed(
+      {
         [c.ZSTD_c_nbWorkers]: 1,
         [c.ZSTD_c_jobSize]: 64 << 20,
         [c.ZSTD_c_enableLongDistanceMatching]: 1,
         [c.ZSTD_c_ldmMinMatch]: 4,
       },
-    });
-    const chunks: Buffer[] = [];
-    stream.on("data", chunk => chunks.push(chunk));
-    const { promise, resolve, reject } = Promise.withResolvers<void>();
-    stream.on("end", resolve).on("error", reject);
-    const input = corpus.subarray(0, 200_000);
-    for (let at = 0; at < input.length; at += 1000) {
-      stream.write(input.subarray(at, at + 1000));
-      stream.flush();
-    }
-    stream.end();
-    await promise;
-    expect(zlib.zstdDecompressSync(Buffer.concat(chunks)).equals(input)).toBe(true);
+      Array(200).fill(1000),
+    );
+  });
+
+  it("in a stream with workers, where a larger job than those before does not clear the tables", async () => {
+    // The table is 256 MB.
+    await flushed(
+      { [c.ZSTD_c_nbWorkers]: 4, [c.ZSTD_c_strategy]: c.ZSTD_fast, [c.ZSTD_c_hashLog]: 26 },
+      Array.from({ length: 300 }, (_, i) => i + 1),
+    );
   });
 });

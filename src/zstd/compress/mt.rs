@@ -286,7 +286,7 @@ fn compression_job(state: &mut WorkerState, job: &Job, cancelled: &AtomicBool) -
 
 fn worker_main(jobs: &Receiver<Job>, cancelled: &AtomicBool) {
     let mut state = WorkerState {
-        cctx: FrameCompressor::new(),
+        cctx: FrameCompressor::for_worker(),
         seq: Vec::new(),
         dst: Vec::new(),
     };

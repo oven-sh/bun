@@ -39,8 +39,68 @@ const fixture = {
       },
     };
   `,
+  "stack-words.ts": /* ts */ `
+    // Where on the live native stack (or in a saved register) is this address? Prints each such word with the words around it that
+    // point into the executable's image, as offsets from the image base, so that they can be looked up in the build's symbols.
+    import { dlopen, ptr, toArrayBuffer } from "bun:ffi";
+
+    function threadState(): { sp: bigint; high: bigint; image: [bigint, bigint]; registers: Record<string, bigint> } {
+      if (process.platform === "win32") {
+        const { symbols } = dlopen("kernel32.dll", {
+          GetCurrentThreadStackLimits: { args: ["ptr", "ptr"], returns: "void" },
+          RtlCaptureContext: { args: ["ptr"], returns: "void" },
+          GetModuleHandleW: { args: ["ptr"], returns: "ptr" },
+        });
+        const low = new BigUint64Array(1), high = new BigUint64Array(1);
+        symbols.GetCurrentThreadStackLimits(low, high);
+        // CONTEXT is 1232 bytes and must be 16-byte aligned.
+        const storage = new Uint8Array(1232 + 16);
+        const skip = (16 - (ptr(storage) % 16)) % 16;
+        symbols.RtlCaptureContext((ptr(storage) + skip) as any);
+        const context = new BigUint64Array(storage.slice(skip, skip + 1232).buffer);
+        const names = ["rax", "rcx", "rdx", "rbx", "rsp", "rbp", "rsi", "rdi", "r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15"];
+        const registers = Object.fromEntries(names.map((name, i) => [name, context[0x78 / 8 + i]]));
+        const base = BigInt(symbols.GetModuleHandleW(null)!);
+        const header = new DataView(toArrayBuffer(Number(base) as any, 0, 4096));
+        const size = header.getUint32(header.getUint32(0x3c, true) + 0x18 + 0x38, true);
+        return { sp: registers.rsp, high: high[0], image: [base, base + BigInt(size)], registers };
+      }
+      const { symbols } = dlopen("libc.so.6", { getcontext: { args: ["ptr"], returns: "i32" } });
+      const context = new BigUint64Array(128);
+      symbols.getcontext(context);
+      const names = ["r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15", "rdi", "rsi", "rbp", "rbx", "rdx", "rax", "rcx", "rsp"];
+      const registers = Object.fromEntries(names.map((name, i) => [name, context[40 / 8 + i]]));
+      const maps = require("node:fs").readFileSync("/proc/self/maps", "utf8").split("\\n");
+      const range = (line: string) => line.split(" ")[0].split("-").map((hex: string) => BigInt("0x" + hex));
+      const exe = maps.filter((line: string) => line.endsWith(process.execPath)).map(range);
+      return { sp: registers.rsp, high: range(maps.find((line: string) => line.endsWith("[stack]"))!)[1], image: [exe[0][0], exe.at(-1)![1]], registers };
+    }
+
+    export function stackWords(address: bigint): string {
+      try {
+        const { sp, high, image, registers } = threadState();
+        // A copy, taken at once: this function's own frames are in the lowest part of the range.
+        const words = new BigUint64Array(toArrayBuffer(Number(sp) as any, 0, Number(high - sp))).slice();
+        const hex = (n: bigint | number) => "0x" + n.toString(16);
+        const inImage = (word: bigint) => word >= image[0] && word < image[1];
+        const found: string[] = [];
+        for (const [name, value] of Object.entries(registers)) if (value === address) found.push("register " + name);
+        for (let i = 0; i < words.length; i++) {
+          if (words[i] !== address) continue;
+          const near: string[] = [];
+          for (let j = Math.max(0, i - 96); j < Math.min(words.length, i + 384); j++)
+            if (inImage(words[j])) near.push((j < i ? "-" : "+") + hex(Math.abs(j - i) * 8) + ":" + hex(words[j] - image[0]));
+          found.push("word at sp+" + hex(i * 8) + " of " + hex(words.length * 8) + ", image words near it (distance:offset) " + near.join(" "));
+        }
+        return found.length ? found.join(" | ") : "no word of the live stack (" + hex(words.length * 8) + " bytes) and no saved register";
+      } catch (error) {
+        return "the stack could not be read: " + error;
+      }
+    }
+  `,
   "run.ts": /* ts */ `
     import { generateHeapSnapshotForDebugging, jscDescribe } from "bun:jsc";
+    import { stackWords } from "./stack-words.ts";
     import { heapFromTimer } from ${JSON.stringify(join(import.meta.dir, "..", "module-graph", "module-graph-lifetimes.ts"))};
     import html from "./index.html";
 
@@ -84,6 +144,8 @@ const fixture = {
       return "its cell is in the heap as " + className.get(id) + ", incoming edges [" + incoming + "], root entries [" + reasons + "]";
     }
     async function survivor() {
+      await turn();
+      const stack = stackWords(serverAddress);
       const path = (await heapFromTimer()).pathTo(serverAddress) ?? "nothing that a root reaches";
       const cell = await new Promise<string>(resolve => setTimeout(() => resolve(cellInHeap()), 0));
       const start = performance.now();
@@ -93,7 +155,8 @@ const fixture = {
         await turn();
       }
       const later = (collected ? "collected" : "not collected") + " after " + rounds + " more rounds, " + Math.round(performance.now() - start) + " ms";
-      return "held by " + path + "; " + cell + "; " + later;
+      await turn();
+      return "held by " + path + "; " + cell + "; " + later + "; STACK WHILE IT SURVIVES: " + stack + "; STACK AFTERWARDS: " + stackWords(serverAddress);
     }
 
     // Its own frame, so that nothing on the stack still refers to the server

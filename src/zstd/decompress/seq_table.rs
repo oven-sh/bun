@@ -41,7 +41,6 @@ pub(crate) struct SeqSymbol {
 /// How a table keeps a [`SeqSymbol`].
 pub(crate) trait Cell: Copy + 'static {
     const EMPTY: Self;
-    const EMPTY_REF: &'static Self;
     /// [`NextState::at`] as `to_bits` of a cell where nothing else is set.
     const NEXT_STATES: &'static [u64; 4 * MAX_TABLE_SIZE];
     /// The fields one after the other, from the lowest bits on.
@@ -90,7 +89,6 @@ impl LengthCell {
 
 impl Cell for LengthCell {
     const EMPTY: Self = l(0, 0, 0, 0);
-    const EMPTY_REF: &'static Self = &Self::EMPTY;
 
     const NEXT_STATES: &'static [u64; 4 * MAX_TABLE_SIZE] = &{
         let mut all = [0; 4 * MAX_TABLE_SIZE];
@@ -162,7 +160,6 @@ impl OffsetCell {
 
 impl Cell for OffsetCell {
     const EMPTY: Self = o(0, 0, 0);
-    const EMPTY_REF: &'static Self = &Self::EMPTY;
 
     const NEXT_STATES: &'static [u64; 4 * MAX_TABLE_SIZE] = &{
         let mut all = [0; 4 * MAX_TABLE_SIZE];
@@ -297,11 +294,6 @@ impl<C: Cell, const N: usize> SeqTable<C, N> {
             .unpack()
     }
 
-    #[inline(always)]
-    pub(crate) fn cell(&self, state: usize) -> &C {
-        self.table.get(state & (N - 1)).unwrap_or(C::EMPTY_REF)
-    }
-
     /// The states in use.
     pub(crate) fn symbols(&self) -> &[C] {
         self.table.get(..1 << self.table_log).unwrap_or_default()
@@ -425,12 +417,38 @@ pub(crate) struct SeqTables {
     pub(crate) ll: LengthTable,
     pub(crate) of: OffsetTable,
     pub(crate) ml: LengthTable,
+    /// [`ADDITIONAL`], where it takes no more to refer to it than to the tables.
+    additional: [Additional; 32],
 }
+
+/// What to make of the additional bits of a length.
+#[derive(Clone, Copy)]
+struct Additional {
+    /// As many bits set as there are additional bits.
+    mask: u32,
+    /// The bit that [`LengthCell::base_value`] lacks.
+    bit_16: u32,
+}
+
+/// For each number of additional bits.
+const ADDITIONAL: [Additional; 32] = {
+    let mut all = [Additional { mask: 0, bit_16: 0 }; 32];
+    let mut left: &mut [Additional] = &mut all;
+    let mut nb_bits = 0;
+    while let [additional, others @ ..] = left {
+        additional.mask = (1 << nb_bits) - 1;
+        additional.bit_16 = ((nb_bits == 16) as u32) << 16;
+        nb_bits += 1;
+        left = others;
+    }
+    all
+};
 
 static DEFAULT_TABLES: SeqTables = SeqTables {
     ll: SeqTable::predefined(LL_DEFAULT_NORM_LOG, 32, LL_DEFAULT),
     of: SeqTable::predefined(OF_DEFAULT_NORM_LOG, 31, OF_DEFAULT),
     ml: SeqTable::predefined(ML_DEFAULT_NORM_LOG, 21, ML_DEFAULT),
+    additional: ADDITIONAL,
 };
 
 /// `LLTptr`, `OFTptr` and `MLTptr`
@@ -457,6 +475,18 @@ impl SeqTables {
             ll: SeqTable::new(),
             of: SeqTable::new(),
             ml: SeqTable::new(),
+            additional: ADDITIONAL,
+        }
+    }
+
+    /// What additional bits that are the lowest of `bits` make of the `base_value` of a [`LengthCell`].
+    #[inline(always)]
+    pub(crate) fn length(&self, base_value: u16, nb_additional_bits: u8, bits: u64) -> u32 {
+        match self.additional.get(usize::from(nb_additional_bits) % 32) {
+            Some(additional) => {
+                u32::from(base_value) + additional.bit_16 + (bits as u32 & additional.mask)
+            }
+            None => 0,
         }
     }
 

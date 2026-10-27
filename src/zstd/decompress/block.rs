@@ -915,30 +915,41 @@ impl<'a> SeqState<'a> {
                 unused = 1;
                 break;
             };
-            let ll_cell = tables.ll.cell(state_ll as usize);
-            let ml_cell = tables.ml.cell(state_ml as usize);
-            let of_cell = tables.of.cell(state_off as usize);
+            // Nothing waits for a check, as it would for a mask.
+            let (Some(ll_cell), Some(ml_cell), Some(of_cell)) = (
+                tables.ll.table.get(state_ll as usize),
+                tables.ml.table.get(state_ml as usize),
+                tables.of.table.get(state_off as usize),
+            ) else {
+                unused = 1;
+                break;
+            };
             let of_bits = u32::from(of_cell.nb_additional_bits);
             let ml_bits = u32::from(ml_cell.nb_additional_bits);
             let ll_bits = u32::from(ll_cell.nb_additional_bits);
+            let ll_nb_bits = u32::from(ll_cell.nb_bits);
+            let ml_nb_bits = u32::from(ml_cell.nb_bits);
+            let of_nb_bits = u32::from(of_cell.nb_bits);
+            let nb_all_bits =
+                (ml_bits + ll_bits + ll_nb_bits + ml_nb_bits) + (of_bits + of_nb_bits);
 
             let mut match_length = u32::from(ml_cell.base_value);
             let mut lit_length = u32::from(ll_cell.base_value);
             let first_value = of_cell.first_value;
+            let mut loaded = bits;
             bits = bits.rotate_left(of_bits);
-            position -= of_bits;
             let offset_value = first_value + (bits as u32 & (first_value - 1));
             if MORE_BITS || ml_bits + ll_bits != 0 {
                 bits = bits.rotate_left(ml_bits);
-                position -= ml_bits;
-                match_length = ml_cell.base_value() + (bits as u32 & ((1 << ml_bits) - 1));
+                match_length = tables.length(ml_cell.base_value, ml_cell.nb_additional_bits, bits);
                 // All has to fit in 57 bits with the 26 of the next states.
                 if of_bits + ml_bits + ll_bits >= 31 {
+                    let position = position - of_bits - ml_bits;
                     bits = load(src, position + (FAR as u32 - 8) * 8).unwrap_or(0);
+                    loaded = bits.rotate_right(of_bits + ml_bits);
                 }
                 bits = bits.rotate_left(ll_bits);
-                position -= ll_bits;
-                lit_length = ll_cell.base_value() + (bits as u32 & ((1 << ll_bits) - 1));
+                lit_length = tables.length(ll_cell.base_value, ll_cell.nb_additional_bits, bits);
             }
             *slot = RawSequence {
                 offset_value,
@@ -949,22 +960,17 @@ impl<'a> SeqState<'a> {
                 history.prefetch(lit_length, match_length, offset_value);
             }
 
-            let ll_nb_bits = u32::from(ll_cell.nb_bits);
-            let ml_nb_bits = u32::from(ml_cell.nb_bits);
-            let of_nb_bits = u32::from(of_cell.nb_bits);
-            position -= ll_nb_bits + ml_nb_bits + of_nb_bits;
+            position -= nb_all_bits;
             bits = bits.rotate_left(ll_nb_bits);
-            state_ll = (u32::from(ll_cell.next_state)
-                + (bits as u32 & u32::from(ll_cell.state_mask)))
-                & 511;
+            state_ll =
+                u32::from(ll_cell.next_state) + (bits as u32 & u32::from(ll_cell.state_mask));
             bits = bits.rotate_left(ml_nb_bits);
-            state_ml = (u32::from(ml_cell.next_state)
-                + (bits as u32 & u32::from(ml_cell.state_mask)))
-                & 511;
-            bits = bits.rotate_left(of_nb_bits);
-            state_off = (u32::from(of_cell.next_state)
-                + (bits as u32 & u32::from(of_cell.state_mask)))
-                & 255;
+            state_ml =
+                u32::from(ml_cell.next_state) + (bits as u32 & u32::from(ml_cell.state_mask));
+            // This is read last, and it is what the first bits of the next sequence depend on. So it does not wait
+            // for the rest to be read.
+            state_off = u32::from(of_cell.next_state)
+                + (loaded.rotate_left(nb_all_bits) as u32 & u32::from(of_cell.state_mask));
         }
 
         let count = room - slots.len() - unused;

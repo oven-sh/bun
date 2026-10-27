@@ -316,9 +316,10 @@ pub(crate) fn check_imports(this: &mut BundleV2<'_>) -> Result<(), AnyError> {
         if loaders[file as usize] == Loader::Css {
             conflicts.push(file);
         }
-        if record
-            .flags
-            .contains(ImportRecordFlags::WAS_ORIGINALLY_BARE_IMPORT)
+        if loaders[file as usize] == Loader::CssModuleScript
+            && record
+                .flags
+                .contains(ImportRecordFlags::WAS_ORIGINALLY_BARE_IMPORT)
         {
             log.add_range_warning_fmt(
                 Some(&sources[importer as usize]),

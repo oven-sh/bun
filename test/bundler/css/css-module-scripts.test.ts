@@ -690,6 +690,37 @@ describe("bundler", () => {
     },
   });
 
+  // The module that a plugin loads as JavaScript is an ordinary module: an
+  // import that binds nothing still runs it, and gets no warning.
+  for (const resolvedByBundler of [false, true]) {
+    itBundled(`css-module-script/PluginJavaScriptKeepsItsSideEffects${resolvedByBundler ? "" : "AfterOnResolve"}`, {
+      files: {
+        "/entry.js": /* js */ `
+          import "./script.css" with { type: "css" };
+          import unused from "./widget.css" with { type: "css" };
+          console.log("entry");
+        `,
+        "/script.css": /* css */ `.not-this { color: red }`,
+        "/widget.css": /* css */ `p.w { color: red }`,
+      },
+      entryPoints: ["/entry.js"],
+      outdir: "/out",
+      target: "browser",
+      plugins(builder) {
+        // A plugin that matches and gives no answer: the bundler resolves the import.
+        if (!resolvedByBundler) builder.onResolve({ filter: /\.css$/ }, () => undefined);
+        builder.onLoad({ filter: /script\.css$/ }, () => ({ contents: "console.log('script');", loader: "js" }));
+      },
+      onAfterBundle(api) {
+        expect(outputFiles(api.outdir, ".css")).toEqual([]);
+        api.expectFile("/out/entry.js").not.toContain("CSSStyleSheet");
+      },
+      run: {
+        stdout: "script\nentry",
+      },
+    });
+  }
+
   // An import that stays in the output keeps the attribute, so a browser loads
   // the file as a CSS module script. Without it a browser rejects the import:
   // the file is not JavaScript.

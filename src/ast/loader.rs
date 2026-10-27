@@ -262,8 +262,7 @@ impl Loader {
             | Loader::Json5
             | Loader::Xml
             | Loader::File
-            | Loader::Md
-            | Loader::CssModuleScript => SideEffects::NoSideEffectsPureData,
+            | Loader::Md => SideEffects::NoSideEffectsPureData,
             _ => SideEffects::HasSideEffects,
         }
     }

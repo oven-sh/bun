@@ -116,6 +116,55 @@ devTest("hmr chunk source map follows the source when mappings do not change", {
   },
 });
 
+devTest("hmr chunk source map follows the line count of a part without mappings", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import other from "./App";
+      import text from "./data.txt";
+      console.log("Hello, " + other + "! " + text.length);
+      import.meta.hot.accept();
+    `,
+    "App.tsx": `
+      export default "AAA";
+      import.meta.hot.accept();
+    `,
+    "data.txt": "x",
+  },
+  async test(dev) {
+    await using c = await dev.client("/", { storeHotChunks: true });
+    await c.expectMessage("Hello, AAA! 1");
+    // A text file prints no mappings, so the store keeps only its line
+    // count. The line count offsets every part after it in the chunk. Each
+    // save changes only that count, so each save needs its own map.
+    const mapUrls = new Set<string>();
+    const mappings = new Set<string>();
+    for (const text of ["BBB\n", "BBB\n\n", "BBB\n\n\n"]) {
+      {
+        await using _batch = await dev.batchChanges({ errors: null });
+        await dev.write("data.txt", text, { dedent: false });
+        await dev.writeNoChanges("App.tsx");
+      }
+      const chunk = await c.getMostRecentHmrChunk();
+      const sourceMapUrl = chunk.match(/\n\/\/# sourceMappingURL=(\S+)/)?.[1];
+      expect(sourceMapUrl).toBeString();
+      mapUrls.add(sourceMapUrl!);
+      const sourceMap = await dev.fetch(sourceMapUrl!).json();
+      // The bundler does not order the parts of the chunk.
+      expect(sourceMap.sources.slice(1).map(Bun.fileURLToPath).sort()).toEqual(
+        [dev.join("index.ts"), dev.join("data.txt"), dev.join("App.tsx")].sort(),
+      );
+      mappings.add(sourceMap.mappings);
+      // index.ts re-runs on each update. Its output is not under test.
+      c.messages.length = 0;
+    }
+    expect(mapUrls.size).toBe(3);
+    expect(mappings.size).toBe(3);
+  },
+});
+
 type SourceMap = (BasicSourceMapConsumer | IndexedSourceMapConsumer) & {
   /** Original script generated */
   script: string;

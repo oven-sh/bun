@@ -1018,12 +1018,10 @@ pub(super) fn finalize_bundle(
             // Send the JS chunk
             if dev.client_graph.current_chunk_len > 0 {
                 let script_id = 'h: {
-                    // Matches the bundler's `ContentHasher` hash (XxHash64).
-                    // The key identifies a `SourceMapStore::Entry`, so it must
-                    // cover everything `Entry::render_json` emits: paths,
-                    // mappings, source contents, and the line count of
-                    // map-less parts. A string literal edit changes the
-                    // source contents but not the mappings.
+                    // The key must cover every field `Entry::render_json`
+                    // emits: a literal-only edit changes the contents but not
+                    // the mappings. The tag byte keeps Some/LineCount/None
+                    // parts from colliding.
                     let mut source_map_hash = bun_hash::XxHash64Streaming::new(0x4b12);
                     let keys = dev.client_graph.bundled_files.keys();
                     let values = dev.client_graph.bundled_files.values();

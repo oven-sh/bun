@@ -316,7 +316,7 @@ export function getStdinStream(
   });
 
   // 'close' comes a tick or more after the call, and so does _destroy() while the stream isn't constructed yet.
-  let wasHeldWhenDestroyed = false;
+  let wasHeldWhenDestroyed: boolean | undefined;
   const originalDestroy = stream.destroy;
   stream.destroy = function (err, callback) {
     if (!this.destroyed) wasHeldWhenDestroyed = isHeldByAnotherReader();
@@ -326,9 +326,12 @@ export function getStdinStream(
   stream.on("close", () => {
     if (!stream_destroyed) {
       stream_destroyed = true;
+      // Readable.prototype.destroy.call(process.stdin) doesn't pass through the function above.
+      const wasHeldByAnotherReader = wasHeldWhenDestroyed ?? isHeldByAnotherReader();
+      wasHeldWhenDestroyed = undefined;
       process.nextTick(() => {
         stream.destroy();
-        disown(wasHeldWhenDestroyed);
+        disown(wasHeldByAnotherReader);
       });
     }
   });

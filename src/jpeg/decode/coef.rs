@@ -386,7 +386,11 @@ impl CoefController {
                 q30,
                 ..,
             ] = comp.quant_table?;
-            if [q00, q01, q02, q03, q10, q11, q12, q20, q21, q30].contains(&0) {
+            if [q00, q01, q02, q03, q10, q11, q12, q20, q21, q30]
+                .iter()
+                .min()
+                == Some(&0)
+            {
                 return None;
             }
             let current = *current.first_chunk::<SAVED_COEFS>()?;

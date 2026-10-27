@@ -159,8 +159,6 @@ pub(crate) fn reset_table<T: bun_pod::Zeroable + Copy + Default>(
     Ok(())
 }
 
-pub(crate) use reset_table as reset_struct_table;
-
 /// `ZSTD_cwksp_mark_tables_dirty` and then `ZSTD_cwksp_mark_tables_clean`
 fn forget_unused_indices(ms: &mut MatchState) {
     ms.hash_table.forget_rest();
@@ -875,10 +873,6 @@ impl FrameCompressor {
             next_c_block: None,
             match_state: MatchState::new(),
         }
-    }
-
-    pub(crate) fn for_worker() -> Self {
-        Self::new()
     }
 
     /// `ZSTD_resetCCtx_internal`

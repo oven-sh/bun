@@ -13,8 +13,7 @@ use std::sync::mpmc::{Receiver, Sender, TryRecvError, channel};
 use std::thread::JoinHandle;
 
 use super::cctx::{
-    CDict, DictContentType, FrameCompressor, Input, Span, reset_struct_table, reset_table,
-    write_last_empty_block,
+    CDict, DictContentType, FrameCompressor, Input, Span, reset_table, write_last_empty_block,
 };
 use super::internal::{
     BufId, Buffers, DictTableLoadMethod, LdmParams, LdmState, ParamSwitch, RawSeq, RawSeqStore,
@@ -67,7 +66,7 @@ impl SerialState {
         if ldm_params.enable_ldm == ParamSwitch::Enable {
             let bucket_log = ldm_params.hash_log - ldm_params.bucket_size_log;
             self.ldm_state.window = Window::new();
-            reset_struct_table(
+            reset_table(
                 &mut self.ldm_state.hash_table,
                 1 << ldm_params.hash_log,
                 true,
@@ -301,7 +300,7 @@ fn compression_job(state: &mut WorkerState, job: &Job, cancelled: &AtomicBool) -
 
 fn worker_main(jobs: &Receiver<Job>, cancelled: &AtomicBool) {
     let mut state = WorkerState {
-        cctx: FrameCompressor::for_worker(),
+        cctx: FrameCompressor::new(),
         seq: Vec::new(),
         dst: Vec::new(),
     };

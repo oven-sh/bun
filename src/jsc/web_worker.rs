@@ -137,6 +137,15 @@ enum EntryOutcome {
     Stop,
 }
 
+/// Mirrors `WorkerErrorText` in WorkerMessagingProxy.h: whether the render of the worker's uncaught error threw.
+#[repr(u8)]
+#[derive(Copy, Clone)]
+enum WorkerErrorText {
+    Rendered = 0,
+    /// The text is empty or stops where the render threw.
+    RenderFailed = 1,
+}
+
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
 pub enum Status {
@@ -170,6 +179,7 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         proxy: *mut c_void,
         message: BunString,
+        text: WorkerErrorText,
         err: JSValue,
     );
     safe fn Bun__freeSharedHeaderBufferForThreadExit();
@@ -1141,7 +1151,13 @@ impl WebWorker {
             }
         };
         let dispatch = jsc::host_fn::from_js_host_call_generic(global, || {
-            WebWorker__dispatchError(global, self.messaging_proxy, str, err)
+            WebWorker__dispatchError(
+                global,
+                self.messaging_proxy,
+                str,
+                WorkerErrorText::Rendered,
+                err,
+            )
         });
         if let Err(e) = dispatch {
             let _ = crate::task::report_error_or_terminate(global, e);
@@ -1202,11 +1218,14 @@ fn on_unhandled_rejection(
             ..Default::default()
         },
     );
-    if let Err(err) = format_result {
-        error_instance = global_object.take_exception(err);
-    }
-    // Formatting ran script; if this worker was terminated meanwhile there is no error to dispatch.
-    if error_instance.is_termination_exception() {
+    // What formatting threw costs only the text: the thrown value stays the error.
+    let thrown = match format_result {
+        Err(err) => Some(global_object.take_exception(err)),
+        // format2() swallows JS throws from nested formatting and returns Ok, with the exception pending.
+        Ok(()) => global_object.try_take_exception(),
+    };
+    // Formatting ran script. A stop requested meanwhile ends the report, also when format2() swallowed the termination.
+    if thrown.is_some_and(JSValue::is_termination_exception) || !vm.script_allowed() {
         return;
     }
     jsc::mark_binding();
@@ -1221,11 +1240,16 @@ fn on_unhandled_rejection(
     // `flush_logs` above) and discard any actual exception: we are already the
     // last-resort error handler and about to arm termination.
     let error_message = BunString::clone_utf8(&array);
+    let text = match thrown {
+        None => WorkerErrorText::Rendered,
+        Some(_) => WorkerErrorText::RenderFailed,
+    };
     if jsc::host_fn::from_js_host_call_generic(global_object, || {
         WebWorker__dispatchError(
             global_object,
             worker.messaging_proxy,
             error_message,
+            text,
             error_instance,
         );
     })

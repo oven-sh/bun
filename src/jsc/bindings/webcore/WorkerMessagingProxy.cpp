@@ -464,17 +464,24 @@ void WorkerMessagingProxy::postMessageErrorToWorkerObject(String&& message)
     });
 }
 
-bool WorkerMessagingProxy::postSerializedErrorToWorkerObject(Zig::GlobalObject& workerGlobalObject, JSC::JSValue value)
+auto WorkerMessagingProxy::postSerializedErrorToWorkerObject(Zig::GlobalObject& workerGlobalObject, JSC::JSValue value) -> ErrorCloneResult
 {
     // Top of the worker's error-dispatch stack: neither the structured clone (which can run script
     // through getters even in NonThrowing mode) nor the `code` read may leave an exception behind.
     auto& vm = JSC::getVM(&workerGlobalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
+    // The serializer writes an engine cell (a JSC::Exception) as null, which is what `throw null` sends.
+    ASSERT(!value.isCell() || value.isObject() || value.isString() || value.isHeapBigInt() || value.isSymbol());
+
+    // A getter of the clone or of `code` can call process.exit(). Nothing is posted then, as in node. A stop from before this step does not count.
+    auto stoppedHere = [&vm, couldRunScript = WebCore::clientData(vm)->scriptAllowed()] {
+        return couldRunScript && !WebCore::clientData(vm)->scriptAllowed();
+    };
     auto serialized = SerializedScriptValue::create(workerGlobalObject, value, SerializationForStorage::No, SerializationErrorMode::NonThrowing);
     CLEAR_IF_EXCEPTION(scope);
     if (!serialized)
-        return false;
+        return stoppedHere() ? ErrorCloneResult::Abandoned : ErrorCloneResult::NotCloneable;
 
     // Structured clone keeps only the standard Error fields; Node's worker 'error' event also
     // preserves a string `error.code` (lib/internal/error_serdes.js).
@@ -485,8 +492,10 @@ bool WorkerMessagingProxy::postSerializedErrorToWorkerObject(Zig::GlobalObject& 
             errorCode = codeValue.toWTFString(&workerGlobalObject);
         CLEAR_IF_EXCEPTION(scope);
     }
+    if (stoppedHere())
+        return ErrorCloneResult::Abandoned;
 
-    return ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }, serialized = serialized.releaseNonNull(), errorCode = WTF::move(errorCode).isolatedCopy()](ScriptExecutionContext& context) {
+    bool posted = ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }, serialized = serialized.releaseNonNull(), errorCode = WTF::move(errorCode).isolatedCopy()](ScriptExecutionContext& context) {
         RefPtr workerObject = protectedThis->m_workerObject;
         if (!workerObject)
             return;
@@ -503,19 +512,46 @@ bool WorkerMessagingProxy::postSerializedErrorToWorkerObject(Zig::GlobalObject& 
         init.error = deserialized;
         workerObject->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
     });
+    return posted ? ErrorCloneResult::Posted : ErrorCloneResult::Abandoned;
 }
 
-void WorkerMessagingProxy::postErrorToWorkerObject(Zig::GlobalObject& workerGlobalObject, const String& message, JSC::JSValue error)
+void WorkerMessagingProxy::postUnserializableErrorToWorkerObject()
+{
+    ScriptExecutionContext::postTaskTo(m_loaderContextIdentifier, m_loaderLoopKind, [protectedThis = Ref { *this }](ScriptExecutionContext& context) {
+        RefPtr workerObject = protectedThis->m_workerObject;
+        if (!workerObject)
+            return;
+        // The parent builds it, as node does: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/worker.js#L412-L414
+        ErrorEvent::Init init;
+        init.error = Bun::createError(context.globalObject(), Bun::ErrorCode::ERR_WORKER_UNSERIALIZABLE_ERROR, "Serializing an uncaught exception failed"_s);
+        workerObject->dispatchEvent(ErrorEvent::create(eventNames().errorEvent, init, EventIsTrusted::Yes));
+    });
+}
+
+void WorkerMessagingProxy::postErrorToWorkerObject(Zig::GlobalObject& workerGlobalObject, const String& message, WorkerErrorText text, JSC::JSValue error)
 {
     switch (m_options.kind) {
     case WorkerOptions::Kind::Web:
         postMessageErrorToWorkerObject(String { message });
         return;
     case WorkerOptions::Kind::Node:
-        if (!postSerializedErrorToWorkerObject(workerGlobalObject, error))
-            postMessageErrorToWorkerObject(String { message });
+        break;
+    }
+
+    switch (postSerializedErrorToWorkerObject(workerGlobalObject, error)) {
+    case ErrorCloneResult::Posted:
+    case ErrorCloneResult::Abandoned:
+        return;
+    case ErrorCloneResult::NotCloneable:
+        break;
+    }
+    // node:worker_threads reads an empty message as "emit event.error", so only a render that has text goes out as text.
+    if (text == WorkerErrorText::Rendered && !message.isEmpty()) {
+        postMessageErrorToWorkerObject(String { message });
         return;
     }
+    // node's COULD_NOT_SERIALIZE_ERROR: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/main/worker_thread.js#L270-L284
+    postUnserializableErrorToWorkerObject();
 }
 
 void WorkerMessagingProxy::workerGlobalScopeDestroyed(int32_t exitCode, bool stoppedByParent)

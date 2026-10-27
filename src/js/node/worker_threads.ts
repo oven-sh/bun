@@ -1212,8 +1212,7 @@ class Worker extends EventEmitter {
 
   #onError(event: ErrorEvent) {
     let error = event?.error;
-    // if the thrown value serialized successfully, the message will be empty
-    // if not the message is the actual error
+    // An empty message means "emit event.error": the clone, or ERR_WORKER_UNSERIALIZABLE_ERROR. Otherwise it is the render.
     const message = event.message;
     if (message !== "") {
       error = new Error(message, { cause: event });

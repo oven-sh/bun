@@ -156,6 +156,8 @@ export type EncodeCase = {
   hash: string;
   /** If the image `isLarge`: the hash of what the output is once decoded and encoded again without loss. */
   reencodedHash?: string;
+  /** The results are those of libwebp 1.6.0 with 80bda3fd, and differ from those of 1.6.0. */
+  fixed?: true;
 };
 
 /** The output is too large to be a case of decode.json.gz. */

@@ -8,6 +8,11 @@
 // from the last Bun that used libwebp (1.4.4, libwebp 1.6.0, Linux x64), and this script refuses to run on any other:
 // what a later Bun records is what it does, not what it should do.
 //
+// The exception is the lossy encodes that are `fixed`. libwebp 1.6.0 counted the uses of one probability as those of another,
+// which 80bda3fd, a later commit, corrects, and `bun_webp` has the correction. Their results come from `WebPEncodeRGBA`, and
+// `WebPMuxAssemble` for a profile, of libwebp 1.6.0 with that commit. This script keeps them as they are, and a lossy
+// encode that it adds may need the same.
+//
 // No case is a damaged lossy file whose coefficients overflow 16 bits: libwebp's SSE2 code and its C code decode
 // those to different pixels. `bun_webp` does what the C code does, and webp-golden.test.ts has cases of its own for that.
 import { readdirSync } from "node:fs";
@@ -52,10 +57,14 @@ for (const directory of args.decode) {
   }
 }
 const encodes = new Set<string>();
-const addEncode = ({ image, options, icc }: EncodeCase) => encodes.add(JSON.stringify({ image, options, icc }));
-if (!args.fresh) (await load<EncodeCase>(encodeFixture)).forEach(addEncode);
+const fixed = new Map<string, EncodeCase>();
+const keyOf = ({ image, options, icc }: EncodeCase) => JSON.stringify({ image, options, icc });
+for (const c of await load<EncodeCase>(encodeFixture)) {
+  if (!args.fresh) encodes.add(keyOf(c));
+  if (c.fixed) fixed.set(keyOf(c), c);
+}
 for (const path of args.encode) {
-  for (const line of (await Bun.file(path).text()).trim().split("\n")) addEncode(JSON.parse(line));
+  for (const line of (await Bun.file(path).text()).trim().split("\n")) encodes.add(keyOf(JSON.parse(line)));
 }
 
 const decoded: DecodeCase[] = [];
@@ -70,7 +79,7 @@ await save(decodeFixture, decoded);
 const encoded: EncodeCase[] = [];
 for (const json of encodes) {
   const input: Pick<EncodeCase, "image" | "options" | "icc"> = JSON.parse(json);
-  encoded.push({ ...input, ...(await observeEncode(input)) });
+  encoded.push(fixed.get(json) ?? { ...input, ...(await observeEncode(input)) });
 }
 await save(encodeFixture, encoded);
 

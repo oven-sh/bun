@@ -55,16 +55,11 @@ struct BlockTokens<'a> {
 
 impl BlockTokens<'_> {
     #[inline(always)]
-    fn add_token_with_stats(&mut self, bit: bool, proba: usize, stats: usize) -> Checked<bool> {
-        self.tokens
-            .push((u16::from(bit) << 15) | (self.base_id + proba) as u16);
-        record_stats(bit, self.stats.at_mut(self.base_id + stats)?);
-        Ok(bit)
-    }
-
-    #[inline(always)]
     fn add_token(&mut self, bit: bool, proba: usize) -> Checked<bool> {
-        self.add_token_with_stats(bit, proba, proba)
+        let id = self.base_id + proba;
+        self.tokens.push((u16::from(bit) << 15) | id as u16);
+        record_stats(bit, self.stats.at_mut(id)?);
+        Ok(bit)
     }
 
     #[inline(always)]
@@ -148,7 +143,6 @@ impl TokenBuffer {
                     }
                 } else {
                     let residue = v - 3;
-                    // libwebp counts the use of probability 10 as one of probability 9.
                     let (residue, tab): (u32, &[u8]) = if residue < 8 << 1 {
                         t.add_token(false, 8)?;
                         t.add_token(false, 9)?;
@@ -159,11 +153,11 @@ impl TokenBuffer {
                         (residue - (8 << 1), &CAT4)
                     } else if residue < 8 << 3 {
                         t.add_token(true, 8)?;
-                        t.add_token_with_stats(false, 10, 9)?;
+                        t.add_token(false, 10)?;
                         (residue - (8 << 2), &CAT5)
                     } else {
                         t.add_token(true, 8)?;
-                        t.add_token_with_stats(true, 10, 9)?;
+                        t.add_token(true, 10)?;
                         (residue - (8 << 3), &CAT6)
                     };
                     for (shift, &proba) in (0..tab.len()).rev().zip(tab) {

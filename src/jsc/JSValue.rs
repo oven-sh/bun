@@ -2306,8 +2306,7 @@ impl JSValue {
             _ => Ok(None),
         }
     }
-    /// Own data property lookup that never runs user code: an accessor, a Proxy, a module namespace or `undefined` is `None`.
-    /// `Err` only for an error of the lookup itself (a stack overflow).
+    /// Own data property lookup that runs no user code: an accessor, a Proxy, a module namespace or `undefined` is `None`.
     pub fn get_own_non_observable(
         self,
         global: &JSGlobalObject,
@@ -2551,8 +2550,7 @@ impl JSValue {
         Bun__JSValue__getProxyTarget(self)
     }
 
-    /// What a chain of Proxies stands for: its innermost target, or the first
-    /// revoked Proxy in the chain. No trap runs.
+    /// The innermost target of a chain of Proxies, or the first revoked Proxy in it. No trap runs.
     pub fn through_proxies(self) -> JSValue {
         let mut value = self;
         while value.is_cell() && value.js_type() == JSType::ProxyObject {

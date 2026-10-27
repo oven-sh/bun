@@ -4711,8 +4711,7 @@ extern "C" JSC::EncodedJSValue JSC__JSValue__getOwn(JSC::EncodedJSValue JSValue0
     return JSValue::encode(slotValue);
 }
 
-// Own data property lookup that never runs user code: an accessor, a Proxy trap
-// or a module namespace export yields empty. The lookup can still throw a stack overflow.
+// Own data property lookup that runs no user code: empty for an accessor, a Proxy trap or a module namespace export.
 extern "C" JSC::EncodedJSValue JSC__JSValue__getOwnNonObservable(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* globalObject, BunString* propertyName)
 {
     ASSERT_NO_PENDING_EXCEPTION(globalObject);

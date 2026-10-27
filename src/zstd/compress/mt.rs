@@ -313,11 +313,6 @@ fn worker_main(jobs: &Receiver<Job>, cancelled: &AtomicBool) {
     }
 }
 
-struct Worker {
-    jobs: Sender<Job>,
-    thread: JoinHandle<()>,
-}
-
 /// `ZSTDMT_jobDescription`, as far as flushing is concerned.
 struct PendingJob {
     /// `None` for a job that needs no worker.
@@ -385,7 +380,11 @@ impl PendingJob {
 
 /// `ZSTDMT_CCtx`
 pub(crate) struct MtCtx {
-    workers: Vec<Worker>,
+    workers: Vec<JoinHandle<()>>,
+    /// Whichever worker is free takes the next job, so that a job does not wait for one thread to be scheduled.
+    queue: Sender<Job>,
+    /// The other end, for workers to come.
+    queue_end: Receiver<Job>,
     cancelled: Arc<AtomicBool>,
     /// The jobs from `doneJobID` to `nextJobID`.
     jobs: VecDeque<PendingJob>,
@@ -450,8 +449,11 @@ fn compute_overlap_size(params: &CCtxParams) -> usize {
 impl MtCtx {
     /// `ZSTDMT_createCCtx_advanced`
     pub(crate) fn new(nb_workers: u32) -> Result<Self> {
+        let (queue, queue_end) = channel();
         let mut mtctx = Self {
             workers: Vec::new(),
+            queue,
+            queue_end,
             cancelled: Arc::new(AtomicBool::new(false)),
             jobs: VecDeque::new(),
             params: CCtxParams::new(0),
@@ -475,22 +477,29 @@ impl MtCtx {
 
     /// `ZSTDMT_resize`: no job is under way.
     fn resize(&mut self, nb_workers: usize) -> Result<()> {
-        for worker in self.workers.drain(nb_workers.min(self.workers.len())..) {
-            drop(worker.jobs);
-            let _ = worker.thread.join();
+        if nb_workers < self.workers.len() {
+            self.stop_workers();
         }
         while self.workers.len() < nb_workers {
-            let (jobs, receiver) = channel();
+            let queue_end = self.queue_end.clone();
             let cancelled = Arc::clone(&self.cancelled);
-            let thread = std::thread::Builder::new()
+            let worker = std::thread::Builder::new()
                 .name("zstd".into())
                 .stack_size(2 << 20)
-                .spawn(move || worker_main(&receiver, &cancelled))
+                .spawn(move || worker_main(&queue_end, &cancelled))
                 .map_err(|_| ErrorCode::MemoryAllocation)?;
-            self.workers.push(Worker { jobs, thread });
+            self.workers.push(worker);
         }
         self.params.nb_workers = nb_workers as i32;
         Ok(())
+    }
+
+    fn stop_workers(&mut self) {
+        // They leave when nothing can be sent to the queue they have.
+        (self.queue, self.queue_end) = channel();
+        for worker in self.workers.drain(..) {
+            let _ = worker.join();
+        }
     }
 
     /// `ZSTDMT_waitForAllJobsCompleted` and `ZSTDMT_releaseAllJobResources`, for a frame that is given up.
@@ -658,10 +667,7 @@ impl MtCtx {
             serial_out,
             progress,
         };
-        let worker = (self.workers)
-            .get(self.next_job_id as usize % self.workers.len().max(1))
-            .ok_or(ErrorCode::Generic)?;
-        worker.jobs.send(job).map_err(|_| ErrorCode::Generic)?;
+        self.queue.send(job).map_err(|_| ErrorCode::Generic)?;
         self.jobs.push_back(pending);
         self.next_job_id += 1;
         Ok(())
@@ -816,9 +822,6 @@ impl MtCtx {
 impl Drop for MtCtx {
     fn drop(&mut self) {
         self.cancelled.store(true, Ordering::SeqCst);
-        for worker in self.workers.drain(..) {
-            drop(worker.jobs);
-            let _ = worker.thread.join();
-        }
+        self.stop_workers();
     }
 }

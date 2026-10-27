@@ -18,7 +18,6 @@ public:
     ~DOMClientIsoSubspaces();
 
     /* --- bun --- */
-    GCClient::IsoSubspace* m_clientSubspaceForBunClassConstructor { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForFFIFunction { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForWrappingFunction { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForNapiClass { nullptr };
@@ -30,9 +29,6 @@ public:
     GCClient::IsoSubspace* m_clientSubspaceForNodeSqliteSession { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForNodeSqliteLimits { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForNodeSqliteTagStore { nullptr };
-    GCClient::IsoSubspace* m_clientSubspaceForJSSinkConstructor { nullptr };
-    GCClient::IsoSubspace* m_clientSubspaceForJSSinkController { nullptr };
-    GCClient::IsoSubspace* m_clientSubspaceForJSSink { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForStringDecoder { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForPendingVirtualModuleResult { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForCallSite { nullptr };
@@ -78,7 +74,6 @@ public:
     GCClient::IsoSubspace* m_clientSubspaceForWasmStreamingCompiler { nullptr };
     GCClient::IsoSubspace* m_clientSubspaceForJSWebView { nullptr };
 
-#include "ZigGeneratedClasses+DOMClientIsoSubspaces.h"
     GCClient::IsoSubspace* m_clientSubspaceForBindgenClass[Bun::Bindgen::Counts::numberOfClasses] {};
     /* --- bun --- */
 

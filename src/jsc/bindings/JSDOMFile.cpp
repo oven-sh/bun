@@ -1,13 +1,16 @@
 #include "root.h"
-#include "ZigGeneratedClasses.h"
+#include "ErrorCode.h"
+#include "GeneratedBlob.h"
+#include "ZigGlobalObject.h"
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/InternalFunction.h>
 #include <JavaScriptCore/FunctionPrototype.h>
 #include "JSDOMFile.h"
 
+using Bun::Bindgen::Generated::JSBlob;
 using namespace JSC;
 
-extern "C" SYSV_ABI void* JSDOMFile__construct(JSC::JSGlobalObject*, JSC::CallFrame* callframe);
+extern "C" SYSV_ABI void* JSDOMFile__construct(JSC::JSGlobalObject*, EncodedJSValue bits, EncodedJSValue name, EncodedJSValue options);
 extern "C" SYSV_ABI bool JSDOMFile__hasInstance(EncodedJSValue, JSC::JSGlobalObject*, EncodedJSValue);
 
 // TODO: make this inehrit from JSBlob instead of InternalFunction
@@ -48,7 +51,7 @@ public:
         object->finishCreation(vm);
 
         // This is not quite right. But we'll fix it if someone files an issue about it.
-        object->putDirect(vm, vm.propertyNames->prototype, zigGlobal->JSBlobPrototype(), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
+        object->putDirect(vm, vm.propertyNames->prototype, Bun::Bindgen::prototypeForClass<JSBlob>(zigGlobal), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
 
         return object;
     }
@@ -65,29 +68,22 @@ public:
 
     static JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
     {
-        auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-        auto& vm = JSC::getVM(globalObject);
+        auto& vm = JSC::getVM(lexicalGlobalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
-        JSObject* newTarget = asObject(callFrame->newTarget());
-        auto* constructor = globalObject->JSDOMFileConstructor();
-        Structure* structure = globalObject->JSBlobStructure();
-        if (constructor != newTarget) {
-            // ShadowRealm functions belong to a different global object.
-            auto* functionGlobalObject = defaultGlobalObject(getFunctionRealm(lexicalGlobalObject, newTarget));
-            RETURN_IF_EXCEPTION(scope, {});
-            structure = InternalFunction::createSubclassStructure(lexicalGlobalObject, newTarget, functionGlobalObject->JSBlobStructure());
-            RETURN_IF_EXCEPTION(scope, {});
-        }
-
-        void* ptr = JSDOMFile__construct(lexicalGlobalObject, callFrame);
+        Structure* structure = Bun::Bindgen::structureForNewTarget(lexicalGlobalObject, callFrame, JSBlob::classIndex);
         RETURN_IF_EXCEPTION(scope, {});
 
+        if (callFrame->argumentCount() < 2) [[unlikely]]
+            return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "new File(bits, name) expects at least 2 arguments"_s);
+
+        void* ptr = JSDOMFile__construct(lexicalGlobalObject, JSValue::encode(callFrame->uncheckedArgument(0)), JSValue::encode(callFrame->uncheckedArgument(1)), JSValue::encode(callFrame->argument(2)));
+        // Not RETURN_IF_EXCEPTION: it handles traps, and a termination thrown there would leak `ptr`.
         if (!ptr) [[unlikely]] {
-            return JSValue::encode(JSC::jsUndefined());
+            EXCEPTION_ASSERT(scope.exception());
+            return {};
         }
 
-        return JSValue::encode(
-            WebCore::JSBlob::create(vm, globalObject, structure, ptr));
+        RELEASE_AND_RETURN(scope, JSValue::encode(JSBlob::create(vm, structure, ptr)));
     }
 
     static JSC_HOST_CALL_ATTRIBUTES EncodedJSValue call(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)

@@ -1,12 +1,19 @@
 #include "root.h"
+#include "Bindgen/ExternTraits.h"
 #include "Bindgen/SchemaStrings.h"
 #include "helpers.h"
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSCInlines.h>
+#include <JavaScriptCore/JSFunction.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 
 namespace Bun::Bindgen {
 using namespace JSC;
+
+EncodedJSValue createFunction(JSGlobalObject* globalObject, unsigned length, ASCIILiteral name, NativeFunction function)
+{
+    return JSValue::encode(JSFunction::create(getVM(globalObject), globalObject, length, name, function, ImplementationVisibility::Public));
+}
 
 // The members are named by Tables::memberNames, from `firstMemberNameIndex`. An empty value is a member that is absent.
 static EncodedJSValue putMembers(VM& vm, JSObject* object, unsigned firstMemberNameIndex, const JSValue* values, size_t count)
@@ -50,6 +57,14 @@ extern "C" bool Bun__Bindgen__putRecordEntry(JSGlobalObject* globalObject, Encod
 extern "C" EncodedJSValue Bun__Bindgen__enumerationValueToJS(JSGlobalObject* globalObject, unsigned index)
 {
     return JSValue::encode(schemaStrings(getVM(globalObject)).enumerationValue(index));
+}
+
+// `exceptionForInspection()` is not an exception check: the host function's own scope does that.
+extern "C" bool Bun__Bindgen__exceptionPresenceMatches(JSGlobalObject* globalObject, bool shouldHaveException)
+{
+    VM& vm = getVM(globalObject);
+    auto* exception = vm.exceptionForInspection();
+    return shouldHaveException ? !!exception : !exception || vm.isTerminationException(exception);
 }
 
 extern "C" EncodedJSValue Bun__Bindgen__constructArrayFromValues(JSGlobalObject* globalObject, const JSValue* values, size_t count)

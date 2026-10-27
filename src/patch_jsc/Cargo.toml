@@ -11,6 +11,7 @@ workspace = true
 
 [dependencies]
 bstr.workspace = true
+bun_core.workspace = true
 bun_jsc.workspace = true
 bun_patch.workspace = true
 bun_sys.workspace = true

@@ -469,7 +469,7 @@ for (const secure of [true, false]) {
       expect(map.get(4)).toBeGreaterThanOrEqual(65535); // INITIAL_WINDOW_SIZE
       expect(map.get(5)).toBeGreaterThanOrEqual(16384); // MAX_FRAME_SIZE
       expect(map.get(6)).toBeGreaterThan(0); // MAX_HEADER_LIST_SIZE advertised
-      expect(map.get(8) ?? 0).toBe(0); // no extended CONNECT
+      expect(map.get(8)).toBe(1); // RFC 8441 Extended CONNECT
       await raw.waitFor(f => f.type === T.SETTINGS && (f.flags & F.ACK) !== 0);
       // The connection window is widened right after SETTINGS; a 1 MiB upload
       // in 16 KB frames needs no further connection-level credit.

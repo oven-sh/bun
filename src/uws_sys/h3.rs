@@ -12,6 +12,10 @@ use crate::thunk;
 use crate::{AnyRequest, AnyResponse};
 use bun_ptr::ThisPtr;
 
+#[path = "h3_websocket.rs"]
+mod websocket;
+pub use websocket::{H3Transport, WebSocket, WebSocketBehavior};
+
 // ──────────────────────────────────────────────────────────────────────────
 // ListenSocket
 // ──────────────────────────────────────────────────────────────────────────
@@ -188,6 +192,14 @@ impl Response {
     pub(crate) fn is_connect_request(&self) -> bool {
         false
     }
+    /// The peer's FIN has been read.
+    pub fn request_body_ended(&mut self) -> bool {
+        c::uws_h3_res_request_body_ended(self)
+    }
+    /// RFC 9220 Extended CONNECT for `websocket`.
+    pub fn is_websocket_connect(&mut self) -> bool {
+        c::uws_h3_res_is_websocket_connect(self)
+    }
     pub(crate) fn prepare_for_sendfile(&mut self) {}
     pub(crate) fn mark_needs_more(&mut self) {}
     pub(crate) fn get_remote_socket_info(&mut self) -> Option<SocketAddress> {
@@ -227,7 +239,7 @@ impl Response {
         }
         c::uws_h3_res_on_writable(self, Some(cb::<UD, H>), ud.cast())
     }
-    pub(crate) fn clear_on_writable(&mut self) {
+    pub fn clear_on_writable(&mut self) {
         c::uws_h3_res_clear_on_writable(self)
     }
     pub(crate) fn on_aborted<UD, H>(&mut self, _handler: H, ud: *mut UD)
@@ -250,7 +262,7 @@ impl Response {
         }
         c::uws_h3_res_on_aborted(self, Some(cb::<UD, H>), ud.cast())
     }
-    pub(crate) fn clear_aborted(&mut self) {
+    pub fn clear_aborted(&mut self) {
         c::uws_h3_res_on_aborted(self, None, ptr::null_mut())
     }
     pub fn on_timeout<UD, H>(&mut self, _handler: H, ud: *mut UD)
@@ -273,7 +285,7 @@ impl Response {
         }
         c::uws_h3_res_on_timeout(self, Some(cb::<UD, H>), ud.cast())
     }
-    pub(crate) fn clear_timeout(&mut self) {
+    pub fn clear_timeout(&mut self) {
         c::uws_h3_res_on_timeout(self, None, ptr::null_mut())
     }
     pub(crate) fn on_data<UD, H>(&mut self, _handler: H, ud: *mut UD)
@@ -307,7 +319,7 @@ impl Response {
         }
         c::uws_h3_res_on_data(self, Some(cb::<UD, H>), ud.cast())
     }
-    pub(crate) fn clear_on_data(&mut self) {
+    pub fn clear_on_data(&mut self) {
         c::uws_h3_res_on_data(self, None, ptr::null_mut())
     }
     pub(crate) fn corked(&mut self, handler: impl FnOnce()) {
@@ -420,6 +432,35 @@ impl App {
     }
     pub fn clear_routes(&mut self) {
         c::uws_h3_app_clear_routes(self)
+    }
+    pub fn publish(
+        &mut self,
+        topic: &[u8],
+        message: &[u8],
+        opcode: crate::Opcode,
+        compress: bool,
+    ) -> crate::SendStatus {
+        // SAFETY: live app handle; both slices are valid for the call.
+        match unsafe {
+            c::uws_h3_app_publish(
+                self,
+                topic.as_ptr(),
+                topic.len(),
+                message.as_ptr(),
+                message.len(),
+                opcode.0,
+                compress,
+            )
+        } {
+            0 => crate::SendStatus::Backpressure,
+            1 => crate::SendStatus::Success,
+            _ => crate::SendStatus::Dropped,
+        }
+    }
+
+    pub fn num_subscribers(&mut self, topic: &[u8]) -> u32 {
+        // SAFETY: live app handle; the topic slice is valid for the call.
+        unsafe { c::uws_h3_app_num_subscribers(self, topic.as_ptr(), topic.len()) }
     }
 
     fn route<UD, H>(which: RouteKind, this: &mut App, pattern: &[u8], ud: *mut UD, _handler: H)
@@ -596,6 +637,20 @@ mod c {
         pub(super) fn uws_h3_app_destroy(app: *mut App);
         pub(super) safe fn uws_h3_app_close(app: &mut App);
         pub(super) safe fn uws_h3_app_clear_routes(app: &mut App);
+        pub(super) fn uws_h3_app_publish(
+            app: *mut App,
+            topic: *const u8,
+            topic_length: usize,
+            data: *const u8,
+            data_length: usize,
+            opcode: i32,
+            compress: bool,
+        ) -> u32;
+        pub(super) fn uws_h3_app_num_subscribers(
+            app: *mut App,
+            topic: *const u8,
+            topic_length: usize,
+        ) -> u32;
         pub(super) fn uws_h3_app_add_server_name(
             app: *mut App,
             hostname: *const c_char,
@@ -692,6 +747,19 @@ mod c {
         pub(super) fn uws_h3_res_end(res: *mut Response, p: *const u8, n: usize, close: bool);
         pub(super) safe fn uws_h3_res_end_stream(res: &mut Response, close: bool);
         pub(super) safe fn uws_h3_res_force_close(res: &mut Response);
+        pub(super) safe fn uws_h3_res_cancel(res: &mut Response);
+        pub(super) safe fn uws_h3_res_request_body_ended(res: &mut Response) -> bool;
+        pub(super) safe fn uws_h3_res_is_websocket_connect(res: &mut Response) -> bool;
+        pub(super) safe fn uws_h3_res_websocket_timeout(res: &mut Response, seconds: u16);
+        pub(super) safe fn uws_h3_res_websocket_timeout_config(
+            res: &mut Response,
+            seconds: u16,
+            refresh_on_write: bool,
+        );
+        pub(super) safe fn uws_h3_res_websocket_timeout_refresh_on_write(
+            res: &mut Response,
+            enabled: bool,
+        );
         pub(super) fn uws_h3_res_try_end(
             res: *mut Response,
             p: *const u8,

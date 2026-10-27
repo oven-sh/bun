@@ -1134,7 +1134,7 @@ impl AnyResponse {
 
     /// Returns null if the socket can't be upgraded (see `can_upgrade`). Nothing was written and
     /// the caller still owns `data`.
-    pub fn upgrade<D>(
+    pub fn upgrade_h1_websocket<D>(
         self,
         data: *mut D,
         sec_web_socket_key: &[u8],

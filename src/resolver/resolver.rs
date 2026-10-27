@@ -2497,6 +2497,45 @@ impl<'a> Resolver<'a> {
         result
     }
 
+    /// The real directory where the package path `import_path` has its file, for a package linked from outside `node_modules`.
+    pub fn linked_package_dir<'b>(
+        &mut self,
+        source_dir: &[u8],
+        import_path: &[u8],
+        buf: &'b mut [u8],
+    ) -> Option<&'b [u8]> {
+        if !is_package_path(import_path) {
+            return None;
+        }
+        let package = crate::package_json::Package::parse(import_path, bufs!(esm_subpath))?;
+        let mut dir_info = self.dir_info_cached(source_dir).ok()??;
+        let package_dir = loop {
+            if dir_info.has_node_modules()
+                && let Some(path) = self.fs_ref().abs_buf_checked(
+                    &[dir_info.abs_path, b"node_modules", package.name],
+                    bufs!(esm_absolute_package_path),
+                )
+                && let Ok(Some(found)) = self.dir_info_cached(path)
+            {
+                break found.abs_real_path;
+            }
+            dir_info = dir_info.get_parent()?;
+        };
+        if package_dir.is_empty() || strings::path_contains_node_modules_folder(package_dir) {
+            return None;
+        }
+        let below: &[&[u8]] = if package.subpath == b"." {
+            &[]
+        } else {
+            &[package.subpath, b".."]
+        };
+        ::bun_paths::resolve_path::join_abs_string_buf_checked::<::bun_paths::platform::Auto>(
+            package_dir,
+            buf,
+            below,
+        )
+    }
+
     /// Drops the "not found" that is cached for the directory `key`, so that the walk opens it again.
     fn forget_dir_not_found(&mut self, key: &[u8]) -> crate::CrateResult<allocators::Result> {
         self.dir_cache_mut().remove(key);

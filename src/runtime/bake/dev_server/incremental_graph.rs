@@ -609,12 +609,6 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             self.stale_files.unset(file_index.get() as usize);
         }
 
-        if found_existing {
-            // SAFETY: `directory_watchers` is a sibling field of this graph.
-            unsafe { &mut (*dev).directory_watchers }
-                .remove_deleted_file_watches(&self.bundled_files.keys()[file_index.get() as usize]);
-        }
-
         *ctx.get_cached_index(SIDE, index) =
             CachedFileIndex::from(Some::<FileIndex<SIDE>>(file_index));
 
@@ -1637,9 +1631,6 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             self.free_edge(edge_index);
         }
 
-        // SAFETY: see `owner()`.
-        let dev = unsafe { self.owner() };
-
         // Rebuild all dependencies.
         let mut it = self.edge_lists[index.get() as usize].first_dep;
         while let Some(edge_index) = it {
@@ -1648,9 +1639,6 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             debug_assert_eq!(dep.imported.get(), index.get());
             let key = &self.bundled_files.keys()[dep.dependency.get() as usize];
             let file = &self.bundled_files.values()[dep.dependency.get() as usize];
-            // SAFETY: `directory_watchers` is a sibling field of this graph.
-            unsafe { &mut (*dev).directory_watchers }
-                .watch_for_deleted_file(bun_ptr::RawSlice::new(&key[..]), abs_path)?;
             let loader = file
                 .html_route_bundle_index
                 .is_some()

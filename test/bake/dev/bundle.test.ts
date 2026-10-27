@@ -382,6 +382,7 @@ devTest("deleting imported file shows error then recovers", {
   const byRelativePath = { how: "by its relative path", lib: "./packages/lib", symlinks: undefined };
   const indexHtml = emptyHtmlFile({ scripts: ["index.ts"] });
   const libPackageJson = (fields: object = {}) => JSON.stringify({ name: "lib", version: "1.0.0", ...fields });
+  const libExport = (name: string, value: string) => `export const ${name} = "EXPORT_${value}";`;
   const clientScriptUrl = (html: string) => /src="([^"]+\.js)"/.exec(html)?.[1];
   // Which of the exports of packages/lib the script of "/" holds.
   async function servedLibExports(dev: Dev) {
@@ -391,33 +392,33 @@ devTest("deleting imported file shows error then recovers", {
       if (!url) throw new Error('"/" serves no script');
       const script = await dev.fetch(url).text();
       if (clientScriptUrl(await dev.fetch("/").text()) === url) {
-        return ["EXPORT_A", "EXPORT_C", "EXPORT_D"].filter(name => script.includes(name));
+        return ["EXPORT_A", "EXPORT_C", "EXPORT_D", "EXPORT_E"].filter(name => script.includes(name));
       }
     }
     throw new Error('The script of "/" got a new URL on every attempt');
   }
+  // An import that its module handles does not fail the build.
+  const guardedImport = (specifier: string) => `
+    let c = "none";
+    try {
+      c = require('${specifier}').c;
+    } catch {}
+    console.log(c);
+  `;
 
-  for (const { how, lib, symlinks, dir } of [
-    { ...throughNodeModulesLink, dir: "" },
-    { ...throughNodeModulesLink, dir: "sub/" },
-    { ...throughDirectoryLink, dir: "" },
-    { ...byRelativePath, dir: "" },
-  ]) {
-    devTest(`renaming a file ${dir ? "in a subdirectory " : ""}of a package imported ${how}`, {
-      skip: [
-        "win32", // unlinkSync is having weird behavior
-      ],
+  for (const { how, lib, symlinks } of [throughNodeModulesLink, throughDirectoryLink, byRelativePath]) {
+    devTest(`renaming a file of a package imported ${how}`, {
       symlinks,
       files: {
         "index.html": indexHtml,
         "index.ts": `
           import { a } from '${lib}/a';
-          import { c } from '${lib}/${dir}c';
+          import { c } from '${lib}/c';
           console.log(a, c);
         `,
         "packages/lib/package.json": libPackageJson(),
-        "packages/lib/a.ts": `export const a = "EXPORT_A";`,
-        [`packages/lib/${dir}c.ts`]: `export const c = "EXPORT_C";`,
+        "packages/lib/a.ts": libExport("a", "A"),
+        "packages/lib/c.ts": libExport("c", "C"),
       },
       async test(dev) {
         expect(await servedLibExports(dev)).toEqual(["EXPORT_A", "EXPORT_C"]);
@@ -425,8 +426,8 @@ devTest("deleting imported file shows error then recovers", {
           // Only the rename is in this batch. An importer that is saved in the same batch keeps its import of
           // the removed file, with or without a link.
           await using batch = await dev.batchChanges();
-          await dev.delete(`packages/lib/${dir}c.ts`);
-          await dev.write(`packages/lib/${dir}c.tsx`, `export const c = "EXPORT_D";`);
+          await dev.delete("packages/lib/c.ts");
+          await dev.write("packages/lib/c.tsx", libExport("c", "D"));
         }
         expect(await servedLibExports(dev)).toEqual(["EXPORT_A", "EXPORT_D"]);
         await dev.writeNoChanges("index.ts");
@@ -449,9 +450,6 @@ devTest("deleting imported file shows error then recovers", {
     },
   ]) {
     devTest(`deleting then re-creating ${entry} of a package imported ${how}`, {
-      skip: [
-        "win32", // unlinkSync is having weird behavior
-      ],
       symlinks,
       files: {
         "index.html": indexHtml,
@@ -460,7 +458,7 @@ devTest("deleting imported file shows error then recovers", {
           console.log(c);
         `,
         "packages/lib/package.json": libPackageJson(fields),
-        "packages/lib/c.ts": `export const c = "EXPORT_C";`,
+        "packages/lib/c.ts": libExport("c", "C"),
       },
       async test(dev) {
         await using c = await dev.client("/");
@@ -472,9 +470,191 @@ devTest("deleting imported file shows error then recovers", {
           ],
         });
         await c.expectReload(async () => {
-          await dev.write("packages/lib/c.ts", `export const c = "EXPORT_D";`);
+          await dev.write("packages/lib/c.ts", libExport("c", "D"));
         });
         await c.expectMessage("EXPORT_D");
+      },
+    });
+  }
+
+  devTest("deleting then re-creating a file of a linked package whose import is guarded", {
+    symlinks: throughNodeModulesLink.symlinks,
+    files: {
+      "index.html": indexHtml,
+      "index.ts": guardedImport("lib/c"),
+      "packages/lib/package.json": libPackageJson(),
+      "packages/lib/c.ts": libExport("c", "C"),
+    },
+    async test(dev) {
+      expect(await servedLibExports(dev)).toEqual(["EXPORT_C"]);
+      await dev.delete("packages/lib/c.ts");
+      expect(await servedLibExports(dev)).toEqual([]);
+      await dev.write("packages/lib/c.ts", libExport("c", "D"));
+      expect(await servedLibExports(dev)).toEqual(["EXPORT_D"]);
+    },
+  });
+
+  // `git checkout` of a branch without the file and back: no build has a failed import that could wait for the file.
+  for (const { kind, importOf } of [
+    { kind: "an import", importOf: (specifier: string) => `import { c } from '${specifier}'; console.log(c);` },
+    { kind: "a guarded import", importOf: guardedImport },
+  ]) {
+    devTest(`${kind} of a file of a linked package that was deleted while nothing imported it`, {
+      symlinks: throughNodeModulesLink.symlinks,
+      files: {
+        "index.html": indexHtml,
+        "index.ts": importOf("lib/c"),
+        "packages/lib/package.json": libPackageJson(),
+        "packages/lib/a.ts": libExport("c", "A"),
+        "packages/lib/c.ts": libExport("c", "C"),
+      },
+      async test(dev) {
+        expect(await servedLibExports(dev)).toEqual(["EXPORT_C"]);
+        {
+          await using batch = await dev.batchChanges();
+          await dev.write("index.ts", importOf("lib/a"));
+          await dev.delete("packages/lib/c.ts");
+        }
+        expect(await servedLibExports(dev)).toEqual(["EXPORT_A"]);
+        {
+          await using batch = await dev.batchChanges();
+          await dev.write("packages/lib/c.ts", libExport("c", "D"));
+          await dev.write("index.ts", importOf("lib/c"));
+        }
+        expect(await servedLibExports(dev)).toEqual(["EXPORT_D"]);
+      },
+    });
+  }
+
+  // A build that cleans its output first: `rm -rf dist && tsc`. The importer is bundled while there is no "dist".
+  for (const { how, lib, symlinks } of [throughNodeModulesLink, byRelativePath]) {
+    devTest(`building again the output directory of a package imported ${how}`, {
+      symlinks,
+      files: {
+        "index.html": indexHtml,
+        "index.ts": `
+          import { c } from '${lib}';
+          console.log(c);
+        `,
+        "packages/lib/package.json": libPackageJson({ main: "./dist/c.ts" }),
+        "packages/lib/dist/c.ts": libExport("c", "C"),
+      },
+      async test(dev) {
+        expect(await servedLibExports(dev)).toEqual(["EXPORT_C"]);
+        {
+          await using batch = await dev.batchChanges({ errors: null });
+          fs.rmSync(dev.join("packages/lib/dist"), { recursive: true });
+        }
+        {
+          // The watcher reports nothing for the new "dist". The importer is saved after the build, as one change.
+          await using batch = await dev.batchChanges();
+          fs.mkdirSync(dev.join("packages/lib/dist"));
+          fs.writeFileSync(dev.join("packages/lib/dist/c.ts"), libExport("c", "D"));
+          fs.writeFileSync(dev.join("index.ts"), dev.read("index.ts"));
+        }
+        expect(await servedLibExports(dev)).toEqual(["EXPORT_D"]);
+      },
+    });
+  }
+
+  // `bun run --filter` starts the server in the directory of the app. The package is then outside the working
+  // directory, where the watcher takes files and no directory: it reports a rename of a file and no new file.
+  devTest("renaming a file of a package linked from outside the working directory", {
+    // The Windows watcher does not watch files outside the project directory.
+    skip: ["win32"],
+    cwd: "apps/web",
+    symlinks: { "apps/web/node_modules/lib": "../../../packages/lib" },
+    files: {
+      "apps/web/index.html": indexHtml,
+      "apps/web/index.ts": `
+        import { c } from 'lib/c';
+        console.log(c);
+      `,
+      "packages/lib/package.json": libPackageJson(),
+      "packages/lib/c.ts": libExport("c", "C"),
+    },
+    async test(dev) {
+      expect(await servedLibExports(dev)).toEqual(["EXPORT_C"]);
+      {
+        await using batch = await dev.batchChanges();
+        fs.renameSync(dev.join("packages/lib/c.ts"), dev.join("packages/lib/c.tsx"));
+      }
+      // The server watches the file under its new name only when the importer found it there.
+      await dev.write("packages/lib/c.tsx", libExport("c", "D"));
+      expect(await servedLibExports(dev)).toEqual(["EXPORT_D"]);
+    },
+  });
+
+  // `bun init` scaffolds "dev": "bun --hot src/index.ts". The reloader of the runtime then watches the files too.
+  devTest("renaming, then deleting and re-creating a file of a linked package under bun --hot", {
+    env: { BUN_OPTIONS: "--hot --no-clear-screen" },
+    symlinks: throughNodeModulesLink.symlinks,
+    files: {
+      "index.html": indexHtml,
+      "index.ts": `
+        import { c } from 'lib/c';
+        console.log(c);
+      `,
+      "packages/lib/package.json": libPackageJson(),
+      "packages/lib/c.ts": libExport("c", "C"),
+    },
+    async test(dev) {
+      expect(await servedLibExports(dev)).toEqual(["EXPORT_C"]);
+      {
+        await using batch = await dev.batchChanges();
+        await dev.delete("packages/lib/c.ts");
+        await dev.write("packages/lib/c.tsx", libExport("c", "D"));
+      }
+      expect(await servedLibExports(dev)).toEqual(["EXPORT_D"]);
+
+      await dev.delete("packages/lib/c.tsx", { errors: null });
+      await dev.write("packages/lib/c.tsx", libExport("c", "E"));
+      expect(await servedLibExports(dev)).toEqual(["EXPORT_E"]);
+    },
+  });
+
+  // A route of a framework is bundled for the server. A module that a client component imports too is in the
+  // server graph and in the client graph, and each graph bundles the importers of a removed file again.
+  for (const { importers, component, separateSSRGraph } of [
+    { importers: "a server route imports", component: false, separateSSRGraph: false },
+    { importers: "a server route and a client component import", component: true, separateSSRGraph: false },
+    { importers: "a server route and a client component import", component: true, separateSSRGraph: true },
+  ]) {
+    const graphs = separateSSRGraph ? " with an SSR graph" : "";
+    devTest(`renaming, then deleting and re-creating a file of a linked package that ${importers}${graphs}`, {
+      framework: {
+        fileSystemRouterTypes: minimalFramework.fileSystemRouterTypes,
+        serverComponents: { ...minimalFramework.serverComponents!, separateSSRGraph },
+      },
+      symlinks: throughNodeModulesLink.symlinks,
+      files: {
+        "packages/lib/package.json": libPackageJson(),
+        "packages/lib/c.ts": libExport("c", "C"),
+        "routes/index.ts": `
+          import { c } from 'lib/c';
+          ${component ? `import "../Component";` : ""}
+          export default function (req, meta) {
+            return new Response(c);
+          }
+        `,
+        "Component.ts": `
+          "use client";
+          import { c } from 'lib/c';
+          export const marker = c;
+        `,
+      },
+      async test(dev) {
+        await dev.fetch("/").equals("EXPORT_C");
+        {
+          await using batch = await dev.batchChanges();
+          await dev.delete("packages/lib/c.ts");
+          await dev.write("packages/lib/c.tsx", libExport("c", "D"));
+        }
+        await dev.fetch("/").equals("EXPORT_D");
+
+        await dev.delete("packages/lib/c.tsx", { errors: null });
+        await dev.write("packages/lib/c.tsx", libExport("c", "E"));
+        await dev.fetch("/").equals("EXPORT_E");
       },
     });
   }

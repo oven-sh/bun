@@ -156,33 +156,43 @@ impl DirectoryWatchStore {
             return Ok(());
         }
 
-        match loader {
+        let is_package_path = match loader {
             Loader::Tsx | Loader::Ts | Loader::Jsx | Loader::Js => {
-                if !(specifier.starts_with(b"./") || specifier.starts_with(b"../")) {
-                    return Ok(());
-                }
+                !(specifier.starts_with(b"./") || specifier.starts_with(b"../"))
             }
             // Imports in CSS can resolve to relative files without './'
             // Imports in HTML can resolve to project-relative paths by
             // prefixing with '/', but that is done in HTMLScanner.
-            Loader::Css | Loader::Html => {}
+            Loader::Css | Loader::Html => false,
             // Multiple parts of DevServer rely on the fact that these
             // loaders do not depend on importing other files.
-            _ => debug_assert!(false),
-        }
-
-        let mut buf = bun_paths::path_buffer_pool::get();
-        let Some(joined) =
-            bun_paths::resolve_path::join_abs_string_buf_checked::<bun_paths::platform::Auto>(
-                bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(import_source),
-                &mut buf.0,
-                &[specifier],
-            )
-        else {
-            // There's nothing to watch, like in `insert`'s NameTooLong case.
-            return Ok(());
+            _ => {
+                debug_assert!(false);
+                false
+            }
         };
-        let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(joined);
+
+        let source_dir =
+            bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(import_source);
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let dir = if is_package_path {
+            // SAFETY: the transpiler of the live DevServer is disjoint from `directory_watchers`.
+            let resolver =
+                &mut unsafe { (*self.owner()).server_transpiler.assume_init_mut() }.resolver;
+            let Some(dir) = resolver.linked_package_dir(source_dir, specifier, &mut buf.0) else {
+                // The watcher reports nothing for a package inside node_modules.
+                return Ok(());
+            };
+            dir
+        } else {
+            let Some(joined) = bun_paths::resolve_path::join_abs_string_buf_checked::<
+                bun_paths::platform::Auto,
+            >(source_dir, &mut buf.0, &[specifier]) else {
+                // There's nothing to watch, like in `insert`'s NameTooLong case.
+                return Ok(());
+            };
+            bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(joined)
+        };
 
         // The `import_source` parameter is not a stable string. Since the
         // import source will be added to IncrementalGraph anyways, this is a
@@ -213,28 +223,9 @@ impl DirectoryWatchStore {
             }
         };
 
-        match self.insert(dir, owned_file_path, specifier) {
+        match self.insert(dir, owned_file_path, specifier, is_package_path) {
             Ok(()) => Ok(()),
             Err(DirectoryWatchInsertError::Ignore) => Ok(()), // ignoring watch errors.
-            Err(DirectoryWatchInsertError::OutOfMemory) => Err(bun_alloc::AllocError),
-        }
-    }
-
-    /// Bundles `importer`, a graph key, again once the deleted file `abs_path` exists again.
-    pub(crate) fn watch_for_deleted_file(
-        &mut self,
-        importer: bun_ptr::RawSlice<u8>,
-        abs_path: &[u8],
-    ) -> Result<(), bun_alloc::AllocError> {
-        // The dev server watches nothing in node_modules.
-        if !bun_paths::is_absolute(abs_path)
-            || bun_paths::string_paths::path_contains_node_modules_folder(abs_path)
-        {
-            return Ok(());
-        }
-        let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(abs_path);
-        match self.insert(dir, importer, abs_path) {
-            Ok(()) | Err(DirectoryWatchInsertError::Ignore) => Ok(()),
             Err(DirectoryWatchInsertError::OutOfMemory) => Err(bun_alloc::AllocError),
         }
     }
@@ -246,6 +237,7 @@ impl DirectoryWatchStore {
         dir_name_to_watch: &[u8],
         file_path: bun_ptr::RawSlice<u8>,
         specifier: &[u8],
+        is_package_path: bool,
     ) -> Result<(), DirectoryWatchInsertError> {
         debug_assert!(!specifier.is_empty());
         // TODO: watch the parent dir too.
@@ -274,7 +266,7 @@ impl DirectoryWatchStore {
         let found_existing = gop.found_existing;
 
         let specifier_cloned: Box<[u8]> =
-            if specifier[0] == b'.' || bun_paths::is_absolute(specifier) {
+            if is_package_path || specifier[0] == b'.' || bun_paths::is_absolute(specifier) {
                 Box::<[u8]>::from(specifier)
             } else {
                 let mut v = Vec::with_capacity(2 + specifier.len());
@@ -421,15 +413,6 @@ impl DirectoryWatchStore {
     /// with `IncrementalGraph.bundled_files`. Called before IncrementalGraph
     /// frees a file's key string so no `Dep` is left holding a dangling pointer.
     pub(crate) fn remove_dependencies_for_file(&mut self, file_path: &[u8]) {
-        self.remove_dependencies(file_path, |_| true);
-    }
-
-    /// Removes what `watch_for_deleted_file` registered for `file_path`, once that file bundles.
-    pub(crate) fn remove_deleted_file_watches(&mut self, file_path: &[u8]) {
-        self.remove_dependencies(file_path, |dep| bun_paths::is_absolute(&dep.specifier));
-    }
-
-    fn remove_dependencies(&mut self, file_path: &[u8], matches: impl Fn(&Dep) -> bool) {
         if self.watches.count() == 0 {
             return;
         }
@@ -453,9 +436,7 @@ impl DirectoryWatchStore {
                 let dep_path = self.dependencies[index as usize].source_file_path;
                 it = dep_next;
                 // Pointer-identity comparison.
-                if dep_path.slice().as_ptr() == file_path.as_ptr()
-                    && matches(&self.dependencies[index as usize])
-                {
+                if dep_path.slice().as_ptr() == file_path.as_ptr() {
                     self.free_dependency_index(index);
                 } else {
                     self.dependencies[index as usize].next = new_chain;

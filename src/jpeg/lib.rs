@@ -9,6 +9,7 @@
 //! arithmetic coded, and lossless Huffman streams of up to 8 bits, to RGBA or CMYK, at 1/8 to 8/8 of the size.
 //! Encoding: RGBA to 4:2:0 YCbCr, baseline or progressive.
 
+#![feature(allocator_api)]
 #![forbid(unsafe_code)]
 // Images come from anywhere and a panic aborts the process.
 #![deny(

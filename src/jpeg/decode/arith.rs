@@ -6,7 +6,7 @@ use super::phuff::{update_progression, validate_progression};
 use super::{
     Block, Decoder, MAX_BLOCKS_IN_MCU, MAX_COMPONENTS_IN_SCAN, McuBlock, NUM_ARITH_TABLES, coef_at,
 };
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, try_box};
 
 /// Table D.2 of the standard. For each state of the probability estimation: Qe in the high 16 bits, then the next state
 /// after the more probable symbol, then the next state after the less probable one, with the bit on top of it that says
@@ -185,8 +185,8 @@ pub(crate) struct ArithDecoder {
 }
 
 impl ArithDecoder {
-    pub(crate) fn new(decoder: &Decoder) -> Self {
-        ArithDecoder {
+    pub(crate) fn new(decoder: &Decoder) -> Result<Self> {
+        Ok(ArithDecoder {
             core: Core {
                 c: 0,
                 a: 0,
@@ -196,12 +196,13 @@ impl ArithDecoder {
             dc_context: [0; MAX_COMPONENTS_IN_SCAN],
             restarts_to_go: 0,
             restart_interval: 0,
-            dc_stats: Box::new([[0; DC_STAT_BINS]; NUM_ARITH_TABLES]),
-            ac_stats: Box::new([[0; AC_STAT_BINS]; NUM_ARITH_TABLES]),
+            dc_stats: try_box([[0; DC_STAT_BINS]; NUM_ARITH_TABLES])?,
+            ac_stats: try_box([[0; AC_STAT_BINS]; NUM_ARITH_TABLES])?,
             fixed_bin: 113,
             coef_bits: decoder
                 .progressive
-                .then(|| CoefBits::new(decoder.components.len())),
+                .then(|| CoefBits::new(decoder.components.len()))
+                .transpose()?,
             pass: Pass::Sequential,
             ss: 0,
             se: 0,
@@ -211,7 +212,7 @@ impl ArithDecoder {
             dc_l: [0; NUM_ARITH_TABLES],
             dc_u: [0; NUM_ARITH_TABLES],
             ac_k: [0; NUM_ARITH_TABLES],
-        }
+        })
     }
 
     pub(crate) fn coef_bits(&self) -> Option<&CoefBits> {

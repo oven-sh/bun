@@ -7,7 +7,7 @@ use super::idct::{self, DctTable};
 use super::input::Input;
 use super::phuff::PHuffDecoder;
 use super::{Block, Decoder, MAX_BLOCKS_IN_MCU, coef_at};
-use crate::error::{Error, Result, try_vec, try_vec_with_capacity};
+use crate::error::{Error, Result, try_box, try_vec, try_vec_with_capacity};
 use crate::tables::natural_order;
 
 /// Where an entropy decoder finds the blocks of the MCU it is decoding.
@@ -66,11 +66,11 @@ pub(crate) struct CoefBits {
 }
 
 impl CoefBits {
-    pub(crate) fn new(num_components: usize) -> Self {
-        CoefBits {
-            current: vec![[-1; 64]; num_components],
-            previous: vec![[-1; 64]; num_components],
-        }
+    pub(crate) fn new(num_components: usize) -> Result<Self> {
+        Ok(CoefBits {
+            current: try_vec([-1; 64], num_components)?,
+            previous: try_vec([-1; 64], num_components)?,
+        })
     }
 }
 
@@ -205,15 +205,15 @@ pub(crate) struct CoefController {
 }
 
 impl CoefController {
-    pub(crate) fn new(entropy: Entropy) -> Self {
-        CoefController {
+    pub(crate) fn new(entropy: Entropy) -> Result<Self> {
+        Ok(CoefController {
             entropy,
             input_imcu_row: 0,
-            mcu_buffer: Box::new([[0; 64]; MAX_BLOCKS_IN_MCU]),
+            mcu_buffer: try_box([[0; 64]; MAX_BLOCKS_IN_MCU])?,
             whole_image: Vec::new(),
             last_good_imcu_row: 0,
             smoothing: None,
-        }
+        })
     }
 
     pub(crate) fn start_input_pass(&mut self) {
@@ -278,6 +278,7 @@ impl CoefController {
     pub(crate) fn consume_scan(&mut self, decoder: &mut Decoder) -> Result<()> {
         // Only now that the first scan has turned out to be valid: a few bytes can ask for gigabytes of zeros.
         if self.whole_image.is_empty() {
+            self.whole_image.try_reserve(decoder.components.len())?;
             for comp in &decoder.components {
                 let blocks_per_row = comp.width_in_blocks.next_multiple_of(comp.h_samp) as usize;
                 let rows = comp.height_in_blocks.next_multiple_of(comp.v_samp) as usize;
@@ -330,18 +331,24 @@ impl CoefController {
 
     /// Smoothing estimates the low AC coefficients that a progressive stream has not delivered in full, which only
     /// happens if it breaks off early.
-    pub(crate) fn start_output_pass(&mut self, decoder: &Decoder) {
+    pub(crate) fn start_output_pass(&mut self, decoder: &Decoder) -> Result<()> {
         self.whole_image.iter_mut().for_each(CoefArray::zero);
-        self.smoothing = self.smoothing_latch(decoder);
+        let latch = try_vec_with_capacity(decoder.components.len())?;
+        self.smoothing = self.smoothing_latch(decoder, latch);
+        Ok(())
     }
 
-    fn smoothing_latch(&self, decoder: &Decoder) -> Option<Vec<[[i32; SAVED_COEFS]; 2]>> {
+    /// `latch` is empty and has room for every component.
+    fn smoothing_latch(
+        &self,
+        decoder: &Decoder,
+        mut latch: Vec<[[i32; SAVED_COEFS]; 2]>,
+    ) -> Option<Vec<[[i32; SAVED_COEFS]; 2]>> {
         if self.whole_image.is_empty() || !decoder.progressive {
             return None;
         }
         let coef_bits = self.entropy.coef_bits()?;
         let mut useful = false;
-        let mut latch = Vec::new();
         for ((comp, current), previous) in decoder
             .components
             .iter()

@@ -7,7 +7,7 @@
 
 use super::NUM_HUFF_TABLES;
 use super::input::Input;
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, try_box};
 use crate::tables::HuffSpec;
 
 const LOOKAHEAD: u32 = 8;
@@ -55,14 +55,14 @@ pub(crate) enum TableKind {
 
 impl DerivedTable {
     pub(crate) fn new(spec: &HuffSpec, kind: TableKind) -> Result<Box<Self>> {
-        let mut table = Box::new(DerivedTable {
+        let mut table = try_box(DerivedTable {
             maxcode: [-1; 18],
             valoffset: [0; 18],
             huffval: spec.huffval,
             lookup: [((LOOKAHEAD + 1) << LOOKAHEAD) as u16; 1 << LOOKAHEAD],
             long_limits: [0; 8],
             short: [ShortCoefficient::default(); 1 << SHORT_BITS],
-        });
+        })?;
 
         let mut code: u32 = 0;
         let mut first: usize = 0;

@@ -1,7 +1,7 @@
 //! Marker segments (jdmarker.c) and the ICC profile they carry (jdicc.c).
 
 use super::{Component, Decoder, MAX_COMPONENTS_IN_SCAN, NUM_ARITH_TABLES};
-use crate::error::{Error, Result, try_vec_with_capacity};
+use crate::error::{Error, Result, try_box, try_vec_with_capacity};
 use crate::markers::*;
 use crate::tables::{HuffSpec, natural_order};
 use std::borrow::Cow;
@@ -95,6 +95,7 @@ impl Decoder<'_> {
         }
 
         self.components.clear();
+        self.components.try_reserve(usize::from(num_components))?;
         for _ in 0..num_components {
             let id = self.input.byte();
             let sampling = self.input.byte();
@@ -224,7 +225,7 @@ impl Decoder<'_> {
             let selector = index & !0x10;
             *tables
                 .get_mut(usize::from(selector))
-                .ok_or(Error::DhtIndex(selector))? = Some(Box::new(spec));
+                .ok_or(Error::DhtIndex(selector))? = Some(try_box(spec)?);
         }
         if length != 0 {
             return Err(Error::BadLength);

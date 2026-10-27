@@ -7,7 +7,7 @@ use super::bits::{
 use super::coef::McuBlocks;
 use super::input::Input;
 use super::{Decoder, MAX_BLOCKS_IN_MCU, MAX_COMPONENTS_IN_SCAN, McuBlock, coef_at};
-use crate::error::{Error, Result};
+use crate::error::{Error, Result, try_box};
 use crate::tables;
 
 #[derive(Default)]
@@ -26,14 +26,20 @@ pub(crate) struct HuffDecoder {
 impl HuffDecoder {
     /// Motion JPEG frames usually leave out the tables of the standard, so they stand in for whatever is undefined when
     /// decoding begins.
-    pub(crate) fn new(decoder: &mut Decoder) -> Self {
+    pub(crate) fn new(decoder: &mut Decoder) -> Result<Self> {
         let [dc0, dc1, ..] = &mut decoder.dc_huff;
         let [ac0, ac1, ..] = &mut decoder.ac_huff;
-        dc0.get_or_insert_with(|| Box::new(tables::STD_DC_LUMINANCE));
-        ac0.get_or_insert_with(|| Box::new(tables::STD_AC_LUMINANCE));
-        dc1.get_or_insert_with(|| Box::new(tables::STD_DC_CHROMINANCE));
-        ac1.get_or_insert_with(|| Box::new(tables::STD_AC_CHROMINANCE));
-        Self::default()
+        for (table, standard) in [
+            (dc0, tables::STD_DC_LUMINANCE),
+            (ac0, tables::STD_AC_LUMINANCE),
+            (dc1, tables::STD_DC_CHROMINANCE),
+            (ac1, tables::STD_AC_CHROMINANCE),
+        ] {
+            if table.is_none() {
+                *table = Some(try_box(standard)?);
+            }
+        }
+        Ok(Self::default())
     }
 
     pub(crate) fn start_pass(&mut self, decoder: &mut Decoder) -> Result<()> {

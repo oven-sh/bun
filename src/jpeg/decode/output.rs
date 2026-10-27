@@ -10,7 +10,7 @@ use super::marker::Reached;
 use super::phuff::PHuffDecoder;
 use super::upsample::{self, Method};
 use super::{ColorSpace, DCTSIZE, Decoder, last_group};
-use crate::error::{Error, Result, try_vec_with_capacity};
+use crate::error::{Error, Result, try_box, try_collect, try_vec_with_capacity};
 
 enum Source {
     Lossy(CoefController),
@@ -28,7 +28,7 @@ struct Upsampler {
     last_rows: usize,
     /// Samples in a row, without the ones past the right edge of the image.
     width: usize,
-    /// The last row of the iMCU row above the current one.
+    /// The last row of the iMCU row above the current one. Has the room from the start.
     above: Vec<u8>,
     /// `max_v_samp` upsampled rows. Unused if the component has full size.
     buffer: Plane,
@@ -72,27 +72,28 @@ impl Decoder<'_> {
             if self.arith_code {
                 return Err(Error::ArithNotImpl);
             }
-            Source::Lossless(Box::new(DiffController::new(&self)?))
+            Source::Lossless(try_box(DiffController::new(&self)?)?)
         } else {
             let entropy = if self.arith_code {
-                Entropy::Arith(Box::new(ArithDecoder::new(&self)))
+                Entropy::Arith(try_box(ArithDecoder::new(&self)?)?)
             } else if self.progressive {
-                Entropy::PHuff(Box::new(PHuffDecoder::new(&self)))
+                Entropy::PHuff(try_box(PHuffDecoder::new(&self)?)?)
             } else {
-                Entropy::Huff(Box::new(HuffDecoder::new(&mut self)))
+                Entropy::Huff(try_box(HuffDecoder::new(&mut self)?)?)
             };
-            Source::Lossy(CoefController::new(entropy))
+            Source::Lossy(CoefController::new(entropy)?)
         };
 
         let new_planes = |decoder: &Self| -> Result<Vec<Plane>> {
-            let plane = |comp: &super::Component| {
+            let mut planes = try_vec_with_capacity(decoder.components.len())?;
+            for comp in &decoder.components {
                 let size = comp.dct_scaled_size as usize;
-                Plane::new(
+                planes.push(Plane::new(
                     comp.width_in_blocks as usize * size,
                     comp.v_samp as usize * size,
-                )
-            };
-            decoder.components.iter().map(plane).collect()
+                )?);
+            }
+            Ok(planes)
         };
         let mut current = new_planes(&self)?;
         let need_context = upsamplers
@@ -124,13 +125,12 @@ impl Decoder<'_> {
             }
         }
 
-        let idcts: Vec<Idct> = self
-            .components
-            .iter()
-            .map(|comp| Idct::new(comp.dct_scaled_size, comp.quant_table.as_ref()))
-            .collect();
+        let components = self.components.iter();
+        let idcts = try_collect(
+            components.map(|comp| Idct::new(comp.dct_scaled_size, comp.quant_table.as_ref())),
+        )?;
         if let Source::Lossy(coef) = &mut source {
-            coef.start_output_pass(&self);
+            coef.start_output_pass(&self)?;
         }
 
         let mut emitter = Emitter {
@@ -140,7 +140,13 @@ impl Decoder<'_> {
             output_width: output_width as usize,
             rows_left: output_height as usize,
             pixels: &mut pixels,
-            column_sums: Vec::new(),
+            column_sums: try_vec_with_capacity(
+                upsamplers
+                    .iter()
+                    .map(|upsampler| upsampler.width)
+                    .max()
+                    .unwrap_or(0),
+            )?,
         };
         let total = self.total_imcu_rows;
         for imcu_row in 0..total {
@@ -231,7 +237,7 @@ impl Decoder<'_> {
         // At 1/8 there is no room for the rows of context that interpolation needs.
         let fancy = min_dct_scaled_size > 1;
         let (h_out, v_out) = (self.max_h_samp, self.max_v_samp);
-        let mut upsamplers = Vec::new();
+        let mut upsamplers = try_vec_with_capacity(self.components.len())?;
         for comp in &self.components {
             let h_in = comp.h_samp * comp.dct_scaled_size / min_dct_scaled_size;
             let v_in = comp.v_samp * comp.dct_scaled_size / min_dct_scaled_size;
@@ -268,7 +274,11 @@ impl Decoder<'_> {
                 rows: rows as usize,
                 last_rows: last_group(comp.downsampled_height, rows) as usize,
                 width: comp.downsampled_width as usize,
-                above: Vec::new(),
+                above: if method.needs_context() {
+                    try_vec_with_capacity((comp.width_in_blocks * comp.dct_scaled_size) as usize)?
+                } else {
+                    Vec::new()
+                },
                 buffer: if method == Method::FullSize {
                     Plane::default()
                 } else {

@@ -3,7 +3,7 @@
 use super::bits::{self, BitReader, DerivedTables, TableKind, huff_extend};
 use super::coef::Plane;
 use super::{Decoder, MAX_BLOCKS_IN_MCU};
-use crate::error::{Error, Result, try_vec, try_vec_with_capacity};
+use crate::error::{Error, Result, try_collect, try_vec, try_vec_with_capacity};
 
 /// The rows of one component for one iMCU row, as numbers wider than a sample.
 struct Rows {
@@ -53,8 +53,8 @@ pub(crate) struct DiffController {
 
 impl DiffController {
     pub(crate) fn new(decoder: &Decoder) -> Result<Self> {
-        let mut diff_buf = Vec::new();
-        let mut undiff_buf = Vec::new();
+        let mut diff_buf = try_vec_with_capacity(decoder.components.len())?;
+        let mut undiff_buf = try_vec_with_capacity(decoder.components.len())?;
         for comp in &decoder.components {
             let stride = comp.width_in_blocks.next_multiple_of(comp.h_samp) as usize;
             diff_buf.push(Rows::new(stride, comp.v_samp as usize)?);
@@ -65,7 +65,7 @@ impl DiffController {
             tables: Default::default(),
             runs: [Run::default(); MAX_BLOCKS_IN_MCU],
             num_runs: 0,
-            first_row: vec![true; decoder.components.len()],
+            first_row: try_vec(true, decoder.components.len())?,
             input_imcu_row: 0,
             restart_rows_to_go: 0,
             diff_buf,
@@ -253,10 +253,9 @@ impl DiffController {
         planes: &mut [Plane],
     ) -> Result<()> {
         // One row is handed out at a time, so the planes are taken apart row by row as the rows are asked for.
-        let mut rest: Vec<(usize, usize, &mut [u8])> = planes
-            .iter_mut()
-            .map(|plane| (plane.stride, 0, plane.data.as_mut_slice()))
-            .collect();
+        let planes = planes.iter_mut();
+        let mut rest =
+            try_collect(planes.map(|plane| (plane.stride, 0, plane.data.as_mut_slice())))?;
         self.decompress_row(decoder, |ci, row| take_row(rest.get_mut(ci)?, row))
     }
 
@@ -264,6 +263,7 @@ impl DiffController {
     pub(crate) fn consume_scan(&mut self, decoder: &mut Decoder) -> Result<()> {
         // Only now that the first scan has turned out to be valid: a few bytes can ask for gigabytes of zeros.
         if self.whole_image.is_empty() {
+            self.whole_image.try_reserve(decoder.components.len())?;
             for comp in &decoder.components {
                 let stride = comp.width_in_blocks.next_multiple_of(comp.h_samp) as usize;
                 let rows = comp.height_in_blocks.next_multiple_of(comp.v_samp) as usize;
@@ -282,15 +282,10 @@ impl DiffController {
                 plane.data.resize(plane.stride * rows, 0);
                 *in_a_scan = true;
             }
-            let mut rest: Vec<(usize, usize, &mut [u8])> = whole_image
-                .iter_mut()
-                .map(|(plane, _)| (plane.stride, 0, plane.data.as_mut_slice()))
-                .collect();
-            let v_samp: Vec<usize> = decoder
-                .components
-                .iter()
-                .map(|comp| comp.v_samp as usize)
-                .collect();
+            let planes = whole_image.iter_mut();
+            let mut rest =
+                try_collect(planes.map(|(plane, _)| (plane.stride, 0, plane.data.as_mut_slice())))?;
+            let v_samp = try_collect(decoder.components.iter().map(|comp| comp.v_samp as usize))?;
             while self.input_imcu_row < decoder.total_imcu_rows {
                 let imcu_row = self.input_imcu_row as usize;
                 self.decompress_row(decoder, |ci, row| {

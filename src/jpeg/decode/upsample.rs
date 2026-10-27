@@ -75,7 +75,8 @@ pub(crate) fn h1v2_fancy(near: &[u8], far: &[u8], upper: bool, output: &mut [u8]
     }
 }
 
-/// One of the two rows that `near` turns into: the one on the side of `far`. `column_sums` is scratch space.
+/// One of the two rows that `near` turns into: the one on the side of `far`. `column_sums` is scratch space with room for
+/// a number for every sample of `near`.
 pub(crate) fn h2v2_fancy(near: &[u8], far: &[u8], column_sums: &mut Vec<u16>, output: &mut [u8]) {
     column_sums.clear();
     column_sums.extend(

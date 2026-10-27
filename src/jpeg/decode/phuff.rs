@@ -85,11 +85,11 @@ pub(crate) fn validate_progression(decoder: &Decoder) -> Result<()> {
 }
 
 impl PHuffDecoder {
-    pub(crate) fn new(decoder: &Decoder) -> Self {
-        PHuffDecoder {
-            coef_bits: CoefBits::new(decoder.components.len()),
+    pub(crate) fn new(decoder: &Decoder) -> Result<Self> {
+        Ok(PHuffDecoder {
+            coef_bits: CoefBits::new(decoder.components.len())?,
             ..Self::default()
-        }
+        })
     }
 
     pub(crate) fn coef_bits(&self) -> &CoefBits {

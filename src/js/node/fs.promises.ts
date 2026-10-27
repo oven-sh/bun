@@ -9,6 +9,7 @@ const {
   validateAbortSignal,
   validateEncoding,
 } = require("internal/validators");
+const { resistStopPropagation } = require("internal/shared");
 
 const constants = $processBindingConstants.fs;
 
@@ -40,6 +41,11 @@ let nodeFsForIter; // lazy value for require("node:fs") (sync read/write/close f
 
 let Interface; // lazy value for require("node:readline").Interface.
 
+// Node's fsPromises.watch() delegates with `yield*`: a next() that an abort ends settles one tick later. https://github.com/nodejs/node/blob/v26.12.0/lib/internal/fs/promises.js#L2350
+const kDelegateTick = undefined;
+// Node's JS watcher for `recursive` rejects a next() that waits in its abort listener: https://github.com/nodejs/node/blob/v26.12.0/lib/internal/fs/recursive_watch.js#L362-L365
+const nodeWatchesRecursiveInJS = process.platform !== "darwin" && process.platform !== "win32";
+
 function watch(
   filename: string | Buffer | URL,
   options: {
@@ -70,6 +76,7 @@ function watch(
   const ignoreMatcher = require("internal/fs/watch").createIgnoreMatcher(options?.ignore);
   const signal = options?.signal;
   validateAbortSignal(signal, "options.signal");
+  const rejectsInAbortListener = nodeWatchesRecursiveInJS && options?.recursive;
   function makeAbortError() {
     return $makeAbortError(undefined, { cause: signal!.reason });
   }
@@ -82,11 +89,19 @@ function watch(
     return {
       [Symbol.asyncIterator]() {
         let closed = false;
+        let rejecting = false;
         return {
           async next() {
-            if (closed) return { value: undefined, done: true };
+            if (closed) {
+              if (rejecting) await kDelegateTick;
+              return { value: undefined, done: true };
+            }
             closed = true;
-            throw makeAbortError();
+            const error = makeAbortError();
+            rejecting = true;
+            await kDelegateTick;
+            rejecting = false;
+            throw error;
           },
           return() {
             closed = true;
@@ -98,6 +113,8 @@ function watch(
   }
 
   const watcher = fs.watch(filename, options || {}, (eventType: string, filename: string | Buffer | undefined) => {
+    // The native watcher reports an abort before the abort listeners run. onAbort() wakes next(), in listener order.
+    if ((eventType === "error" || eventType === "close") && signal?.aborted) return;
     if (eventType !== "close" && eventType !== "error" && filename != null && ignoreMatcher?.(filename)) {
       return;
     }
@@ -117,7 +134,7 @@ function watch(
       resolve();
     }
   }
-  signal?.addEventListener("abort", onAbort, { once: true });
+  let listening = false;
   // {once: true} only auto-removes when the event fires; detach explicitly on
   // the other exit paths so a long-lived signal doesn't retain this closure.
   function removeAbortListener() {
@@ -127,12 +144,25 @@ function watch(
   return {
     [Symbol.asyncIterator]() {
       let closed = false;
+      let rejecting = false;
       return {
         async next() {
+          let waited = false;
           while (!closed) {
             if (signal?.aborted) {
               closed = true;
-              throw makeAbortError();
+              const error = makeAbortError();
+              if (!(waited && rejectsInAbortListener)) {
+                rejecting = true;
+                await kDelegateTick;
+                rejecting = false;
+              }
+              throw error;
+            }
+            // Node adds its abort listener at the first next(): https://github.com/nodejs/node/blob/v26.12.0/lib/internal/fs/watchers.js#L421
+            if (signal && !listening) {
+              listening = true;
+              signal.addEventListener("abort", onAbort, resistStopPropagation({ __proto__: null, once: true }));
             }
             let event: Event;
             while ((event = queue.shift() as Event)) {
@@ -151,8 +181,11 @@ function watch(
             }
             const { promise, resolve } = Promise.withResolvers();
             nextEventResolve = resolve;
+            waited = true;
             await promise;
           }
+          // So that this next() does not settle before the one that took the AbortError in the same turn.
+          if (rejecting) await kDelegateTick;
           return { value: undefined, done: true };
         },
 

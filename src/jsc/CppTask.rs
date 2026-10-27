@@ -1,10 +1,8 @@
+use core::ptr::NonNull;
+
+use crate::job::{Completion, Job, JobContext, JsThread};
 use crate::{JSGlobalObject, JsResult};
 use bun_event_loop::{TaskTag, Taskable, task_tag};
-use bun_threading::work_pool::{Task as WorkPoolTask, WorkPool};
-
-unsafe extern "C" {
-    fn Bun__EventLoopTaskNoContext__performTask(task: *mut EventLoopTaskNoContext);
-}
 
 bun_opaque::opaque_ffi! {
     /// A task created from C++ code, usually via ScriptExecutionContext.
@@ -45,54 +43,60 @@ impl CppTask {
     }
 }
 
-bun_opaque::opaque_ffi! { pub struct EventLoopTaskNoContext; }
+bun_opaque::opaque_ffi! {
+    /// WebCrypto's `Bun::WorkQueueTask` (PhonyWorkQueue.h): an operation for the pool and the
+    /// completion that takes its result.
+    pub struct WorkQueueTask;
+}
 
-impl EventLoopTaskNoContext {
-    /// Deallocates `this`
-    pub unsafe fn run(this: *mut EventLoopTaskNoContext) {
-        // SAFETY: caller guarantees `this` is a valid C++ EventLoopTaskNoContext; performTask consumes/frees it.
-        unsafe { Bun__EventLoopTaskNoContext__performTask(this) }
+unsafe extern "C" {
+    fn Bun__WorkQueueTask__run(task: *mut WorkQueueTask);
+    fn Bun__WorkQueueTask__complete(task: *mut WorkQueueTask);
+    fn Bun__WorkQueueTask__destroy(task: *mut WorkQueueTask);
+}
+
+/// The C++ half of a [`WorkQueueJob`]. A pool thread runs its operation; the completion in it,
+/// and its destructor, stay on the JS thread.
+struct OwnedWorkQueueTask(NonNull<WorkQueueTask>);
+// SAFETY: off the JS thread only `Bun__WorkQueueTask__run` touches it (the operation and the slot
+// for its result, which hold no script state), while the job's ticket keeps the VM alive.
+unsafe impl Send for OwnedWorkQueueTask {}
+impl Drop for OwnedWorkQueueTask {
+    fn drop(&mut self) {
+        // SAFETY: owned; a `Job` drops its halves on the JS thread.
+        unsafe { Bun__WorkQueueTask__destroy(self.0.as_ptr()) }
     }
 }
 
-/// A task created from C++ code that runs inside the workpool (WebCrypto's
-/// `PhonyWorkQueue`). Holds the creating VM's ticket: the C++ closure captures
-/// context-affine objects and posts its result back by context id.
-#[repr(C)]
-pub struct ConcurrentCppTask {
-    pub(crate) cpp_task: *mut EventLoopTaskNoContext,
-    pub(crate) ticket: crate::Ticket,
-    pub(crate) workpool_task: WorkPoolTask,
-}
+/// One operation of WebCrypto's work queue (`PhonyWorkQueue::dispatch`).
+struct WorkQueueJob;
 
-bun_threading::owned_task!(ConcurrentCppTask, workpool_task);
+impl JobContext for WorkQueueJob {
+    type OffThread = OwnedWorkQueueTask;
+    type Js = ();
 
-impl ConcurrentCppTask {
-    #[allow(clippy::boxed_local)] // `owned_task!`'s required signature
-    fn run_owned(self: Box<Self>) {
-        let ConcurrentCppTask {
-            cpp_task, ticket, ..
-        } = *self;
-        // SAFETY: `cpp_task` is the valid C++ handle stored by `ConcurrentCppTask__createAndRun`;
-        // `run` consumes it here.
-        unsafe { EventLoopTaskNoContext::run(cpp_task) };
-        ticket.unref_keep_alive();
+    fn run(task: &mut OwnedWorkQueueTask, done: Completion<Self>) -> Option<Completion<Self>> {
+        // Script is the only consumer of the result. A VM that is stopping releases the task unrun.
+        if done.ticket().script_allowed() {
+            // SAFETY: the job is live until its completion is taken on the JS thread.
+            unsafe { Bun__WorkQueueTask__run(task.0.as_ptr()) };
+        }
+        Some(done)
+    }
+
+    fn then(task: OwnedWorkQueueTask, (): (), cx: &JsThread<'_>) -> JsResult<()> {
+        // SAFETY: JS thread; `task` is dropped after the call.
+        crate::from_js_host_call_generic(cx.global(), || unsafe {
+            Bun__WorkQueueTask__complete(task.0.as_ptr())
+        })
     }
 }
 
-/// JS thread (`PhonyWorkQueue::dispatch`).
+/// JS thread (`PhonyWorkQueue::schedule`).
 #[unsafe(no_mangle)]
-extern "C" fn ConcurrentCppTask__createAndRun(
-    global: &JSGlobalObject,
-    cpp_task: *mut EventLoopTaskNoContext,
-) {
+extern "C" fn Bun__WorkQueueTask__schedule(global: &JSGlobalObject, task: NonNull<WorkQueueTask>) {
     crate::mark_binding!();
-    let vm = global.bun_vm();
-    vm.event_loop_shared().ref_keep_alive();
-    let ticket = vm.ticket();
-    WorkPool::schedule_new(ConcurrentCppTask {
-        cpp_task,
-        ticket,
-        workpool_task: WorkPoolTask::default(),
-    });
+    // The job carries no realm: the VM's global, whichever global called.
+    let cx = global.bun_vm().global().js_thread_of_caller();
+    Job::<WorkQueueJob>::schedule(&cx, OwnedWorkQueueTask(task), ());
 }

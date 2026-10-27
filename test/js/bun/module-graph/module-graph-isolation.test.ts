@@ -1192,6 +1192,51 @@ const dir = String(
       }
       console.log(JSON.stringify({ started, kept }), keep.constructor.name);
     `,
+    "subtle-errors-of-a-graph.mjs": `
+      const saw = [];
+      const graph = new Bun.ModuleGraph({ onError: (error, kind) => void saw.push(kind + ": " + (error.message || error.name)) });
+      const iv = new Uint8Array(12);
+      const key = await crypto.subtle.generateKey({ name: "AES-GCM", length: 256 }, true, ["decrypt", "wrapKey", "unwrapKey"]);
+      if (process.argv[2] === "a rejection that nothing handles") {
+        // Not a ciphertext of this key: the decrypt rejects when it comes back from the thread pool.
+        graph.run(() => void crypto.subtle.decrypt({ name: "AES-GCM", iv }, key, new Uint8Array(32)));
+      } else {
+        // To convert the unwrapped JWK reads "crv", which only Object.prototype has.
+        const wrapped = await crypto.subtle.wrapKey("jwk", key, key, { name: "AES-GCM", iv });
+        Object.defineProperty(Object.prototype, "crv", {
+          configurable: true,
+          get() { delete Object.prototype.crv; graph.dispose(); throw new Error("thrown by a getter"); },
+        });
+        graph.run(() => void crypto.subtle.unwrapKey("jwk", wrapped, key, { name: "AES-GCM", iv }, "AES-GCM", true, ["encrypt"]));
+      }
+      // The process ends when the operation has come back.
+      process.on("exit", () => console.log(JSON.stringify(saw)));
+    `,
+    "shadow-realms-of-a-graph.mjs": `
+      import { heapStats } from "bun:jsc";
+      // The host holds the realms, so they live. What they start inside run() is the graph's.
+      const how = process.argv[2];
+      const count = () => heapStats().objectTypeCounts.ModuleGraph;
+      let settled = 0;
+      const realms = [];
+      let graphs = [];
+      for (let g = 0; g < 4; g++) {
+        graphs.push(new Bun.ModuleGraph());
+        graphs[g].run(() => {
+          realms.push(new ShadowRealm());
+          realms[g].evaluate(\`done => { crypto.subtle.digest("SHA-256", new Uint8Array(65536)).then(() => done(), () => done()); }\`)(() => void settled++);
+        });
+      }
+      const made = count();
+      let graphsLeft = 4;
+      if (how === "kept") globalThis.graphs = graphs;
+      if (how === "disposed") graphs.forEach(graph => graph.dispose());
+      graphs = undefined;
+      // In a microtask, so before a digest comes back. One collection is not sure to take all four.
+      if (how === "collected") queueMicrotask(() => { Bun.gc(true); graphsLeft -= made - count(); });
+      // The process ends when every digest has come back.
+      process.on("exit", () => console.log(JSON.stringify({ settled, graphsLeft })));
+    `,
     "loads-at-once.mjs": `export default 1;`,
     "disposes-while-opening.mjs": `
       const [kind, state, args] = [process.argv[2], JSON.parse(process.argv[3]), JSON.parse(process.argv[4])];
@@ -3000,6 +3045,16 @@ describe.concurrent("ModuleGraph isolation: errors go to the graph whose code th
     a.graph.dispose();
     b.graph.dispose();
   });
+  // The completion of a crypto.subtle operation continues the script that started the operation.
+  test.each([
+    ["a rejection that nothing handles", "unhandledRejection: The operation failed for an operation-specific reason"],
+    ["a getter that disposes the graph and throws", "uncaughtException: thrown by a getter"],
+  ])("what a crypto.subtle operation leaves when it comes back from the thread pool: %s", async (how, error) => {
+    expect(await runsFixture("subtle-errors-of-a-graph.mjs", how)).toEqual({
+      stdout: JSON.stringify([error]),
+      exitCode: 0,
+    });
+  });
 });
 
 describe.concurrent("ModuleGraph isolation: a graph cannot reach another graph's timers by number", () => {
@@ -3866,6 +3921,21 @@ describe.concurrent("ModuleGraph isolation: a disposed graph leaves nothing behi
       stdout: `{"started":20,"kept":0} FormData`,
       exitCode: 0,
     });
+  });
+  test.each([
+    ["settle while the graph lives", "kept"],
+    ["do not settle after dispose()", "disposed"],
+    ["do not settle for a graph that was collected", "collected"],
+  ])("crypto.subtle operations that ShadowRealms started in its context %s", async (_, how) => {
+    const { stdout, exitCode } = await runsFixture("shadow-realms-of-a-graph.mjs", how);
+    const { settled, graphsLeft } = JSON.parse(stdout);
+    // One operation in each of four graphs. A later collection can take a graph that the first one left.
+    const expected = {
+      kept: { settled: 4, graphsLeft: 4 },
+      disposed: { settled: 0, graphsLeft: 4 },
+      collected: { settled: Math.min(settled, graphsLeft), graphsLeft: Math.min(graphsLeft, 3) },
+    }[how];
+    expect({ settled, graphsLeft, exitCode }).toEqual({ ...expected, exitCode: 0 });
   });
 });
 

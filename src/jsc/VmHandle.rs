@@ -242,11 +242,6 @@ impl Ticket {
         self.shared.deliver(self.kind, task);
     }
 
-    /// Release a keep-alive taken on the VM's loop (any thread).
-    pub fn unref_keep_alive(&self) {
-        self.shared.add_keep_alive(self.kind, -1);
-    }
-
     /// Whether the VM is still running script (not stopping). What an
     /// off-thread body checks before doing work whose only consumer is
     /// script; either way it posts its completion back.
@@ -654,8 +649,8 @@ mod test_gate {
 // `*const Shared` (`BunVmHandleRef`) is one strong count on the Arc behind a
 // [`VmHandle`] — what a long-lived C++ holder (JSVMClientData, NapiEnv) keeps
 // and posts through. C++ work bound for another thread (WebCrypto's
-// `EventLoopTaskNoContext`) is carried by a Rust task that holds the ticket
-// (`ConcurrentCppTask`), so no ticket crosses the FFI.
+// `WorkQueueTask`) is carried by a `Job` (`cpp_task::WorkQueueJob`), which
+// holds the ticket, so no ticket crosses the FFI.
 
 /// A `VmHandle` view over a reference C++ holds, for the duration of one call.
 pub struct BorrowedRef(core::mem::ManuallyDrop<VmHandle>);

@@ -1,7 +1,7 @@
 #include "PhonyWorkQueue.h"
 
+#include "ScriptExecutionContext.h"
 #include <wtf/text/ASCIILiteral.h>
-#include "EventLoopTaskNoContext.h"
 
 namespace Bun {
 
@@ -11,11 +11,26 @@ Ref<PhonyWorkQueue> PhonyWorkQueue::create(WTF::ASCIILiteral name)
     return adoptRef(*new PhonyWorkQueue);
 }
 
-extern "C" void ConcurrentCppTask__createAndRun(JSC::JSGlobalObject*, EventLoopTaskNoContext* task);
+extern "C" void Bun__WorkQueueTask__schedule(JSC::JSGlobalObject*, WorkQueueTask*);
 
-void PhonyWorkQueue::dispatch(JSC::JSGlobalObject* globalObject, WTF::Function<void()>&& function)
+void PhonyWorkQueue::schedule(WebCore::ScriptExecutionContext& context, WorkQueueTask& task)
 {
-    ConcurrentCppTask__createAndRun(globalObject, new EventLoopTaskNoContext(WTF::move(function)));
+    Bun__WorkQueueTask__schedule(context.globalObject(), &task);
+}
+
+extern "C" void Bun__WorkQueueTask__run(WorkQueueTask* task)
+{
+    task->run();
+}
+
+extern "C" void Bun__WorkQueueTask__complete(WorkQueueTask* task)
+{
+    task->complete();
+}
+
+extern "C" void Bun__WorkQueueTask__destroy(WorkQueueTask* task)
+{
+    delete task;
 }
 
 } // namespace Bun

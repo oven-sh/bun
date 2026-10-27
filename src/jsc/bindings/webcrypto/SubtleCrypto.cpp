@@ -733,13 +733,6 @@ static bool rejectIfMlDsaContextTooLong(const CryptoAlgorithmParameters& params,
     return true;
 }
 
-RefPtr<DeferredPromise> getPromise(DeferredPromise* index, WeakPtr<SubtleCrypto> weakThis)
-{
-    if (weakThis)
-        return weakThis->m_pendingPromises.take(index);
-    return nullptr;
-}
-
 static std::unique_ptr<CryptoAlgorithmParameters> crossThreadCopyImportParams(const CryptoAlgorithmParameters& importParams)
 {
     switch (importParams.parametersClass()) {
@@ -791,16 +784,11 @@ void SubtleCrypto::encrypt(JSC::JSGlobalObject& state, AlgorithmIdentifier&& alg
 
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(key.algorithmIdentifier());
 
-    auto index = promise.ptr();
-    m_pendingPromises.add(index, WTF::move(promise));
-    WeakPtr weakThis { *this };
-    auto callback = [index, weakThis](const Vector<uint8_t>& cipherText) mutable {
-        if (auto promise = getPromise(index, weakThis))
-            fulfillPromiseWithArrayBuffer(promise.releaseNonNull(), cipherText.begin(), cipherText.size());
+    auto callback = [promise = promise.copyRef()](const Vector<uint8_t>& cipherText) mutable {
+        fulfillPromiseWithArrayBuffer(WTF::move(promise), cipherText.begin(), cipherText.size());
     };
-    auto exceptionCallback = [index, weakThis](ExceptionCode ec, const String& msg) mutable {
-        if (auto promise = getPromise(index, weakThis))
-            rejectWithException(promise.releaseNonNull(), ec, msg);
+    auto exceptionCallback = [promise = WTF::move(promise)](ExceptionCode ec, const String& msg) mutable {
+        rejectWithException(WTF::move(promise), ec, msg);
     };
 
     RELEASE_AND_RETURN(scope, algorithm->encrypt(*params, key, WTF::move(*data), WTF::move(callback), WTF::move(exceptionCallback), *scriptExecutionContext(), m_workQueue));
@@ -835,16 +823,11 @@ void SubtleCrypto::decrypt(JSC::JSGlobalObject& state, AlgorithmIdentifier&& alg
 
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(key.algorithmIdentifier());
 
-    auto index = promise.ptr();
-    m_pendingPromises.add(index, WTF::move(promise));
-    WeakPtr weakThis { *this };
-    auto callback = [index, weakThis](const Vector<uint8_t>& plainText) mutable {
-        if (auto promise = getPromise(index, weakThis))
-            fulfillPromiseWithArrayBuffer(promise.releaseNonNull(), plainText.begin(), plainText.size());
+    auto callback = [promise = promise.copyRef()](const Vector<uint8_t>& plainText) mutable {
+        fulfillPromiseWithArrayBuffer(WTF::move(promise), plainText.begin(), plainText.size());
     };
-    auto exceptionCallback = [index, weakThis](ExceptionCode ec, const String& msg) mutable {
-        if (auto promise = getPromise(index, weakThis))
-            rejectWithException(promise.releaseNonNull(), ec, msg);
+    auto exceptionCallback = [promise = WTF::move(promise)](ExceptionCode ec, const String& msg) mutable {
+        rejectWithException(WTF::move(promise), ec, msg);
     };
 
     RELEASE_AND_RETURN(scope, algorithm->decrypt(*params, key, WTF::move(*data), WTF::move(callback), WTF::move(exceptionCallback), *scriptExecutionContext(), m_workQueue));
@@ -882,16 +865,11 @@ void SubtleCrypto::sign(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algori
 
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(key.algorithmIdentifier());
 
-    auto index = promise.ptr();
-    m_pendingPromises.add(index, WTF::move(promise));
-    WeakPtr weakThis { *this };
-    auto callback = [index, weakThis](const Vector<uint8_t>& signature) mutable {
-        if (auto promise = getPromise(index, weakThis))
-            fulfillPromiseWithArrayBuffer(promise.releaseNonNull(), signature.begin(), signature.size());
+    auto callback = [promise = promise.copyRef()](const Vector<uint8_t>& signature) mutable {
+        fulfillPromiseWithArrayBuffer(WTF::move(promise), signature.begin(), signature.size());
     };
-    auto exceptionCallback = [index, weakThis](ExceptionCode ec, const String& msg) mutable {
-        if (auto promise = getPromise(index, weakThis))
-            rejectWithException(promise.releaseNonNull(), ec, msg);
+    auto exceptionCallback = [promise = WTF::move(promise)](ExceptionCode ec, const String& msg) mutable {
+        rejectWithException(WTF::move(promise), ec, msg);
     };
 
     RELEASE_AND_RETURN(scope, algorithm->sign(*params, key, WTF::move(*data), WTF::move(callback), WTF::move(exceptionCallback), *scriptExecutionContext(), m_workQueue));
@@ -932,16 +910,11 @@ void SubtleCrypto::verify(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algo
 
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(key.algorithmIdentifier());
 
-    auto index = promise.ptr();
-    m_pendingPromises.add(index, WTF::move(promise));
-    WeakPtr weakThis { *this };
-    auto callback = [index, weakThis](bool result) mutable {
-        if (auto promise = getPromise(index, weakThis))
-            promise->resolve<IDLBoolean>(result);
+    auto callback = [promise = promise.copyRef()](bool result) mutable {
+        promise->resolve<IDLBoolean>(result);
     };
-    auto exceptionCallback = [index, weakThis](ExceptionCode ec, const String& msg) mutable {
-        if (auto promise = getPromise(index, weakThis))
-            rejectWithException(promise.releaseNonNull(), ec, msg);
+    auto exceptionCallback = [promise = WTF::move(promise)](ExceptionCode ec, const String& msg) mutable {
+        rejectWithException(WTF::move(promise), ec, msg);
     };
 
     RELEASE_AND_RETURN(scope, algorithm->verify(*params, key, WTF::move(*signature), WTF::move(*data), WTF::move(callback), WTF::move(exceptionCallback), *scriptExecutionContext(), m_workQueue));
@@ -965,16 +938,11 @@ void SubtleCrypto::digest(JSC::JSGlobalObject& state, AlgorithmIdentifier&& algo
 
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(params->identifier);
 
-    auto index = promise.ptr();
-    m_pendingPromises.add(index, WTF::move(promise));
-    WeakPtr weakThis { *this };
-    auto callback = [index, weakThis](const Vector<uint8_t>& digest) mutable {
-        if (auto promise = getPromise(index, weakThis))
-            fulfillPromiseWithArrayBuffer(promise.releaseNonNull(), digest.begin(), digest.size());
+    auto callback = [promise = promise.copyRef()](const Vector<uint8_t>& digest) mutable {
+        fulfillPromiseWithArrayBuffer(WTF::move(promise), digest.begin(), digest.size());
     };
-    auto exceptionCallback = [index, weakThis](ExceptionCode ec, const String& msg) mutable {
-        if (auto promise = getPromise(index, weakThis))
-            rejectWithException(promise.releaseNonNull(), ec, msg);
+    auto exceptionCallback = [promise = WTF::move(promise)](ExceptionCode ec, const String& msg) mutable {
+        rejectWithException(WTF::move(promise), ec, msg);
     };
 
     RELEASE_AND_RETURN(scope, algorithm->digest(WTF::move(*data), WTF::move(callback), WTF::move(exceptionCallback), *scriptExecutionContext(), m_workQueue));
@@ -996,33 +964,27 @@ void SubtleCrypto::generateKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&&
 
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(params->identifier);
 
-    auto index = promise.ptr();
-    m_pendingPromises.add(index, WTF::move(promise));
-    WeakPtr weakThis { *this };
-    auto callback = [index, weakThis](KeyOrKeyPair&& keyOrKeyPair) mutable {
-        if (auto promise = getPromise(index, weakThis)) {
-            std::visit(
-                WTF::makeVisitor(
-                    [&promise](RefPtr<CryptoKey>& key) {
-                        if ((key->type() == CryptoKeyType::Private || key->type() == CryptoKeyType::Secret) && !key->usagesBitmap()) {
-                            rejectWithException(promise.releaseNonNull(), SyntaxError, "Usages cannot be empty when creating a key."_s);
-                            return;
-                        }
-                        promise->resolve<IDLInterface<CryptoKey>>(*key);
-                    },
-                    [&promise](CryptoKeyPair& keyPair) {
-                        if (!keyPair.privateKey->usagesBitmap()) {
-                            rejectWithException(promise.releaseNonNull(), SyntaxError, "Usages cannot be empty when creating a key."_s);
-                            return;
-                        }
-                        promise->resolve<IDLDictionary<CryptoKeyPair>>(keyPair);
-                    }),
-                keyOrKeyPair);
-        }
+    auto callback = [promise = promise.copyRef()](KeyOrKeyPair&& keyOrKeyPair) mutable {
+        std::visit(
+            WTF::makeVisitor(
+                [&promise](RefPtr<CryptoKey>& key) {
+                    if ((key->type() == CryptoKeyType::Private || key->type() == CryptoKeyType::Secret) && !key->usagesBitmap()) {
+                        rejectWithException(WTF::move(promise), SyntaxError, "Usages cannot be empty when creating a key."_s);
+                        return;
+                    }
+                    promise->resolve<IDLInterface<CryptoKey>>(*key);
+                },
+                [&promise](CryptoKeyPair& keyPair) {
+                    if (!keyPair.privateKey->usagesBitmap()) {
+                        rejectWithException(WTF::move(promise), SyntaxError, "Usages cannot be empty when creating a key."_s);
+                        return;
+                    }
+                    promise->resolve<IDLDictionary<CryptoKeyPair>>(keyPair);
+                }),
+            keyOrKeyPair);
     };
-    auto exceptionCallback = [index, weakThis](ExceptionCode ec, const String& msg) mutable {
-        if (auto promise = getPromise(index, weakThis))
-            rejectWithException(promise.releaseNonNull(), ec, msg);
+    auto exceptionCallback = [promise = WTF::move(promise)](ExceptionCode ec, const String& msg) mutable {
+        rejectWithException(WTF::move(promise), ec, msg);
     };
 
     // The 26 January 2017 version of the specification suggests we should perform the following task asynchronously
@@ -1083,27 +1045,21 @@ void SubtleCrypto::deriveKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&& a
     auto importAlgorithm = CryptoAlgorithmRegistry::singleton().create(importParams->identifier);
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(params->identifier);
 
-    auto index = promise.ptr();
-    m_pendingPromises.add(index, WTF::move(promise));
-    WeakPtr weakThis { *this };
-    auto callback = [index, weakThis, importAlgorithm = WTF::move(importAlgorithm), importParams = crossThreadCopyImportParams(*importParams), extractable, keyUsagesBitmap](const Vector<uint8_t>& derivedKey) mutable {
+    auto callback = [promise = promise.copyRef(), importAlgorithm = WTF::move(importAlgorithm), importParams = crossThreadCopyImportParams(*importParams), extractable, keyUsagesBitmap](const Vector<uint8_t>& derivedKey) mutable {
         // FIXME: https://bugs.webkit.org/show_bug.cgi?id=169395
         KeyData data = derivedKey;
-        auto callback = [index, weakThis](CryptoKey& key) mutable {
-            if (auto promise = getPromise(index, weakThis)) {
-                if ((key.type() == CryptoKeyType::Private || key.type() == CryptoKeyType::Secret) && !key.usagesBitmap()) {
-                    rejectWithException(promise.releaseNonNull(), SyntaxError,
-                        key.type() == CryptoKeyType::Private
-                            ? "Usages cannot be empty when importing a private key."_s
-                            : "Usages cannot be empty when importing a secret key."_s);
-                    return;
-                }
-                promise->resolve<IDLInterface<CryptoKey>>(key);
+        auto callback = [promise = promise.copyRef()](CryptoKey& key) mutable {
+            if ((key.type() == CryptoKeyType::Private || key.type() == CryptoKeyType::Secret) && !key.usagesBitmap()) {
+                rejectWithException(WTF::move(promise), SyntaxError,
+                    key.type() == CryptoKeyType::Private
+                        ? "Usages cannot be empty when importing a private key."_s
+                        : "Usages cannot be empty when importing a secret key."_s);
+                return;
             }
+            promise->resolve<IDLInterface<CryptoKey>>(key);
         };
-        auto exceptionCallback = [index, weakThis](ExceptionCode ec, const String& msg) mutable {
-            if (auto promise = getPromise(index, weakThis))
-                rejectWithException(promise.releaseNonNull(), ec, msg);
+        auto exceptionCallback = [promise = WTF::move(promise)](ExceptionCode ec, const String& msg) mutable {
+            rejectWithException(WTF::move(promise), ec, msg);
         };
 
         // Legacy secret-key algorithms accept both raw spellings, but the modern
@@ -1114,9 +1070,8 @@ void SubtleCrypto::deriveKey(JSC::JSGlobalObject& state, AlgorithmIdentifier&& a
             : SubtleCrypto::KeyFormat::RawSecret;
         importAlgorithm->importKey(importFormat, WTF::move(data), *importParams, extractable, keyUsagesBitmap, WTF::move(callback), WTF::move(exceptionCallback));
     };
-    auto exceptionCallback = [index, weakThis](ExceptionCode ec, const String& msg) mutable {
-        if (auto promise = getPromise(index, weakThis))
-            rejectWithException(promise.releaseNonNull(), ec, msg);
+    auto exceptionCallback = [promise = WTF::move(promise)](ExceptionCode ec, const String& msg) mutable {
+        rejectWithException(WTF::move(promise), ec, msg);
     };
 
     RELEASE_AND_RETURN(scope, algorithm->deriveBits(*params, baseKey, length, WTF::move(callback), WTF::move(exceptionCallback), *scriptExecutionContext(), m_workQueue));
@@ -1146,16 +1101,11 @@ void SubtleCrypto::deriveBits(JSC::JSGlobalObject& state, AlgorithmIdentifier&& 
 
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(params->identifier);
 
-    auto index = promise.ptr();
-    m_pendingPromises.add(index, WTF::move(promise));
-    WeakPtr weakThis { *this };
-    auto callback = [index, weakThis](const Vector<uint8_t>& derivedKey) mutable {
-        if (auto promise = getPromise(index, weakThis))
-            fulfillPromiseWithArrayBuffer(promise.releaseNonNull(), derivedKey.begin(), derivedKey.size());
+    auto callback = [promise = promise.copyRef()](const Vector<uint8_t>& derivedKey) mutable {
+        fulfillPromiseWithArrayBuffer(WTF::move(promise), derivedKey.begin(), derivedKey.size());
     };
-    auto exceptionCallback = [index, weakThis](ExceptionCode ec, const String& msg) mutable {
-        if (auto promise = getPromise(index, weakThis))
-            rejectWithException(promise.releaseNonNull(), ec, msg);
+    auto exceptionCallback = [promise = WTF::move(promise)](ExceptionCode ec, const String& msg) mutable {
+        rejectWithException(WTF::move(promise), ec, msg);
     };
 
     RELEASE_AND_RETURN(scope, algorithm->deriveBits(*params, baseKey, length, WTF::move(callback), WTF::move(exceptionCallback), *scriptExecutionContext(), m_workQueue));
@@ -1267,24 +1217,18 @@ void SubtleCrypto::importKey(JSC::JSGlobalObject& state, KeyFormat format, KeyDa
 
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(params->identifier);
 
-    auto index = promise.ptr();
-    m_pendingPromises.add(index, WTF::move(promise));
-    WeakPtr weakThis { *this };
-    auto callback = [index, weakThis](CryptoKey& key) mutable {
-        if (auto promise = getPromise(index, weakThis)) {
-            if ((key.type() == CryptoKeyType::Private || key.type() == CryptoKeyType::Secret) && !key.usagesBitmap()) {
-                rejectWithException(promise.releaseNonNull(), SyntaxError,
-                    key.type() == CryptoKeyType::Private
-                        ? "Usages cannot be empty when importing a private key."_s
-                        : "Usages cannot be empty when importing a secret key."_s);
-                return;
-            }
-            promise->resolve<IDLInterface<CryptoKey>>(key);
+    auto callback = [promise = promise.copyRef()](CryptoKey& key) mutable {
+        if ((key.type() == CryptoKeyType::Private || key.type() == CryptoKeyType::Secret) && !key.usagesBitmap()) {
+            rejectWithException(WTF::move(promise), SyntaxError,
+                key.type() == CryptoKeyType::Private
+                    ? "Usages cannot be empty when importing a private key."_s
+                    : "Usages cannot be empty when importing a secret key."_s);
+            return;
         }
+        promise->resolve<IDLInterface<CryptoKey>>(key);
     };
-    auto exceptionCallback = [index, weakThis, identifier = params->identifier](ExceptionCode ec, const String& msg) mutable {
-        if (auto promise = getPromise(index, weakThis))
-            rejectImportKeyException(promise.releaseNonNull(), ec, msg, identifier);
+    auto exceptionCallback = [promise = WTF::move(promise), identifier = params->identifier](ExceptionCode ec, const String& msg) mutable {
+        rejectImportKeyException(WTF::move(promise), ec, msg, identifier);
     };
 
     // The 11 December 2014 version of the specification suggests we should perform the following task asynchronously:
@@ -1310,32 +1254,26 @@ void SubtleCrypto::exportKey(KeyFormat format, CryptoKey& key, Ref<DeferredPromi
 
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(key.algorithmIdentifier());
 
-    auto index = promise.ptr();
-    m_pendingPromises.add(index, WTF::move(promise));
-    WeakPtr weakThis { *this };
-    auto callback = [index, weakThis](SubtleCrypto::KeyFormat format, KeyData&& key) mutable {
-        if (auto promise = getPromise(index, weakThis)) {
-            switch (format) {
-            case SubtleCrypto::KeyFormat::Spki:
-            case SubtleCrypto::KeyFormat::Pkcs8:
-            case SubtleCrypto::KeyFormat::RawSecret:
-            case SubtleCrypto::KeyFormat::RawPublic:
-            case SubtleCrypto::KeyFormat::RawSeed:
-            case SubtleCrypto::KeyFormat::Raw: {
-                Vector<uint8_t>& rawKey = std::get<Vector<uint8_t>>(key);
-                fulfillPromiseWithArrayBuffer(promise.releaseNonNull(), rawKey.begin(), rawKey.size());
-                return;
-            }
-            case SubtleCrypto::KeyFormat::Jwk:
-                promise->resolve<IDLDictionary<JsonWebKey>>(WTF::move(std::get<JsonWebKey>(key)));
-                return;
-            }
-            ASSERT_NOT_REACHED();
+    auto callback = [promise = promise.copyRef()](SubtleCrypto::KeyFormat format, KeyData&& key) mutable {
+        switch (format) {
+        case SubtleCrypto::KeyFormat::Spki:
+        case SubtleCrypto::KeyFormat::Pkcs8:
+        case SubtleCrypto::KeyFormat::RawSecret:
+        case SubtleCrypto::KeyFormat::RawPublic:
+        case SubtleCrypto::KeyFormat::RawSeed:
+        case SubtleCrypto::KeyFormat::Raw: {
+            Vector<uint8_t>& rawKey = std::get<Vector<uint8_t>>(key);
+            fulfillPromiseWithArrayBuffer(WTF::move(promise), rawKey.begin(), rawKey.size());
+            return;
         }
+        case SubtleCrypto::KeyFormat::Jwk:
+            promise->resolve<IDLDictionary<JsonWebKey>>(WTF::move(std::get<JsonWebKey>(key)));
+            return;
+        }
+        ASSERT_NOT_REACHED();
     };
-    auto exceptionCallback = [index, weakThis](ExceptionCode ec, const String& msg) mutable {
-        if (auto promise = getPromise(index, weakThis))
-            rejectWithException(promise.releaseNonNull(), ec, msg);
+    auto exceptionCallback = [promise = WTF::move(promise)](ExceptionCode ec, const String& msg) mutable {
+        rejectWithException(WTF::move(promise), ec, msg);
     };
 
     // The 11 December 2014 version of the specification suggests we should perform the following task asynchronously:
@@ -1399,81 +1337,66 @@ void SubtleCrypto::wrapKey(JSC::JSGlobalObject& state, KeyFormat format, CryptoK
 
     auto context = scriptExecutionContext();
 
-    auto index = promise.ptr();
-    m_pendingPromises.add(index, WTF::move(promise));
-    WeakPtr weakThis { *this };
-    auto callback = [index, weakThis, wrapAlgorithm, wrappingKey = Ref { wrappingKey }, wrapParams = WTF::move(wrapParams), isEncryption, context, workQueue = m_workQueue](SubtleCrypto::KeyFormat format, KeyData&& key) mutable {
-        if (weakThis) {
-            // get() peeks the map's Ref as a raw pointer; the JWK error paths below remove that
-            // Ref before rejecting, so hold our own reference like the unwrapKey callback does.
-            if (RefPtr promise = weakThis->m_pendingPromises.get(index)) {
-                auto& vm = promise->globalObject()->vm();
-                auto scope = DECLARE_THROW_SCOPE(vm);
-                Vector<uint8_t> bytes;
-                switch (format) {
-                case SubtleCrypto::KeyFormat::Spki:
-                case SubtleCrypto::KeyFormat::Pkcs8:
-                case SubtleCrypto::KeyFormat::RawSecret:
-                case SubtleCrypto::KeyFormat::RawPublic:
-                case SubtleCrypto::KeyFormat::RawSeed:
-                case SubtleCrypto::KeyFormat::Raw:
-                    bytes = std::get<Vector<uint8_t>>(key);
-                    break;
-                case SubtleCrypto::KeyFormat::Jwk: {
-                    // FIXME: Converting to JS just to JSON-Stringify seems inefficient. We should find a way to go directly from the struct to JSON.
-                    auto jwk = toJS<IDLDictionary<JsonWebKey>>(*(promise->globalObject()), *(promise->globalObject()), WTF::move(std::get<JsonWebKey>(key)));
-                    if (scope.exception()) [[unlikely]] {
-                        weakThis->m_pendingPromises.remove(index);
-                        promise->reject(Exception { ExistingExceptionError });
-                        return;
-                    }
-                    String jwkString = JSONStringify(promise->globalObject(), jwk, 0);
-                    if (scope.exception()) [[unlikely]] {
-                        weakThis->m_pendingPromises.remove(index);
-                        promise->reject(Exception { ExistingExceptionError });
-                        return;
-                    }
-                    // AES-KW (RFC 3394) can only wrap plaintext whose length is a multiple of
-                    // 8 bytes. A serialized JWK usually isn't, so pad it with trailing spaces,
-                    // which JSON.parse ignores when the key is unwrapped. This matches Node.js.
-                    auto jwkUTF8 = Bun::UTF8View::tryCreate(jwkString);
-                    size_t paddedSize = jwkUTF8 ? jwkUTF8->bytes().size() : 0;
-                    if (wrappingKey->algorithmIdentifier() == CryptoAlgorithmIdentifier::AES_KW)
-                        paddedSize = roundUpToMultipleOf(8, paddedSize);
-                    if (!jwkUTF8 || paddedSize > Bun::maxVectorSize<uint8_t>() || !bytes.tryReserveInitialCapacity(paddedSize)) [[unlikely]] {
-                        weakThis->m_pendingPromises.remove(index);
-                        promise->reject(OperationError, "Input data is too large"_s);
-                        return;
-                    }
-                    bytes.append(jwkUTF8->bytes());
-                    while (bytes.size() < paddedSize)
-                        bytes.append(' ');
-                }
-                }
-
-                auto callback = [index, weakThis](const Vector<uint8_t>& wrappedKey) mutable {
-                    if (auto promise = getPromise(index, weakThis))
-                        fulfillPromiseWithArrayBuffer(promise.releaseNonNull(), wrappedKey.begin(), wrappedKey.size());
-                };
-                auto exceptionCallback = [index, weakThis](ExceptionCode ec, const String& msg) mutable {
-                    if (auto promise = getPromise(index, weakThis))
-                        rejectWithException(promise.releaseNonNull(), ec, msg);
-                };
-
-                if (!isEncryption) {
-                    // The 11 December 2014 version of the specification suggests we should perform the following task asynchronously:
-                    // https://www.w3.org/TR/WebCryptoAPI/#SubtleCrypto-method-wrapKey
-                    // It is not beneficial for less time consuming operations. Therefore, we perform it synchronously.
-                    RELEASE_AND_RETURN(scope, wrapAlgorithm->wrapKey(wrappingKey.get(), WTF::move(bytes), WTF::move(callback), WTF::move(exceptionCallback)));
-                }
-                // The following operation should be performed asynchronously.
-                RELEASE_AND_RETURN(scope, wrapAlgorithm->encrypt(*wrapParams, WTF::move(wrappingKey), WTF::move(bytes), WTF::move(callback), WTF::move(exceptionCallback), *context, workQueue));
+    auto callback = [promise = promise.copyRef(), wrapAlgorithm, wrappingKey = Ref { wrappingKey }, wrapParams = WTF::move(wrapParams), isEncryption, context, workQueue = m_workQueue](SubtleCrypto::KeyFormat format, KeyData&& key) mutable {
+        auto& vm = promise->globalObject()->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        Vector<uint8_t> bytes;
+        switch (format) {
+        case SubtleCrypto::KeyFormat::Spki:
+        case SubtleCrypto::KeyFormat::Pkcs8:
+        case SubtleCrypto::KeyFormat::RawSecret:
+        case SubtleCrypto::KeyFormat::RawPublic:
+        case SubtleCrypto::KeyFormat::RawSeed:
+        case SubtleCrypto::KeyFormat::Raw:
+            bytes = std::get<Vector<uint8_t>>(key);
+            break;
+        case SubtleCrypto::KeyFormat::Jwk: {
+            // FIXME: Converting to JS just to JSON-Stringify seems inefficient. We should find a way to go directly from the struct to JSON.
+            auto jwk = toJS<IDLDictionary<JsonWebKey>>(*(promise->globalObject()), *(promise->globalObject()), WTF::move(std::get<JsonWebKey>(key)));
+            if (scope.exception()) [[unlikely]] {
+                promise->reject(Exception { ExistingExceptionError });
+                return;
             }
+            String jwkString = JSONStringify(promise->globalObject(), jwk, 0);
+            if (scope.exception()) [[unlikely]] {
+                promise->reject(Exception { ExistingExceptionError });
+                return;
+            }
+            // AES-KW (RFC 3394) can only wrap plaintext whose length is a multiple of
+            // 8 bytes. A serialized JWK usually isn't, so pad it with trailing spaces,
+            // which JSON.parse ignores when the key is unwrapped. This matches Node.js.
+            auto jwkUTF8 = Bun::UTF8View::tryCreate(jwkString);
+            size_t paddedSize = jwkUTF8 ? jwkUTF8->bytes().size() : 0;
+            if (wrappingKey->algorithmIdentifier() == CryptoAlgorithmIdentifier::AES_KW)
+                paddedSize = roundUpToMultipleOf(8, paddedSize);
+            if (!jwkUTF8 || paddedSize > Bun::maxVectorSize<uint8_t>() || !bytes.tryReserveInitialCapacity(paddedSize)) [[unlikely]] {
+                promise->reject(OperationError, "Input data is too large"_s);
+                return;
+            }
+            bytes.append(jwkUTF8->bytes());
+            while (bytes.size() < paddedSize)
+                bytes.append(' ');
         }
+        }
+
+        auto callback = [promise = promise.copyRef()](const Vector<uint8_t>& wrappedKey) mutable {
+            fulfillPromiseWithArrayBuffer(WTF::move(promise), wrappedKey.begin(), wrappedKey.size());
+        };
+        auto exceptionCallback = [promise = WTF::move(promise)](ExceptionCode ec, const String& msg) mutable {
+            rejectWithException(WTF::move(promise), ec, msg);
+        };
+
+        if (!isEncryption) {
+            // The 11 December 2014 version of the specification suggests we should perform the following task asynchronously:
+            // https://www.w3.org/TR/WebCryptoAPI/#SubtleCrypto-method-wrapKey
+            // It is not beneficial for less time consuming operations. Therefore, we perform it synchronously.
+            RELEASE_AND_RETURN(scope, wrapAlgorithm->wrapKey(wrappingKey.get(), WTF::move(bytes), WTF::move(callback), WTF::move(exceptionCallback)));
+        }
+        // The following operation should be performed asynchronously.
+        RELEASE_AND_RETURN(scope, wrapAlgorithm->encrypt(*wrapParams, WTF::move(wrappingKey), WTF::move(bytes), WTF::move(callback), WTF::move(exceptionCallback), *context, workQueue));
     };
-    auto exceptionCallback = [index, weakThis](ExceptionCode ec, const String& msg) mutable {
-        if (auto promise = getPromise(index, weakThis))
-            rejectWithException(promise.releaseNonNull(), ec, msg);
+    auto exceptionCallback = [promise = WTF::move(promise)](ExceptionCode ec, const String& msg) mutable {
+        rejectWithException(WTF::move(promise), ec, msg);
     };
 
     // The following operation should be performed synchronously.
@@ -1542,83 +1465,67 @@ void SubtleCrypto::unwrapKey(JSC::JSGlobalObject& state, KeyFormat format, Buffe
         return;
     }
 
-    auto index = promise.ptr();
-    m_pendingPromises.add(index, WTF::move(promise));
-    WeakPtr weakThis { *this };
-    auto callback = [index, weakThis, format, importAlgorithm, unwrappedKeyAlgorithm = crossThreadCopyImportParams(*unwrappedKeyAlgorithm), extractable, keyUsagesBitmap](const Vector<uint8_t>& bytes) mutable {
-        if (weakThis) {
-            if (RefPtr promise = weakThis->m_pendingPromises.get(index)) {
-                // The realm may be gone: collected, retired by `bun test --isolate`, or its Bun.ModuleGraph disposed.
-                if (promise->isSuspended()) {
-                    weakThis->m_pendingPromises.remove(index);
-                    return;
-                }
-                auto& state = *(promise->globalObject());
-                auto& vm = state.vm();
-                JSLockHolder locker(vm);
-                auto scope = DECLARE_THROW_SCOPE(vm);
+    auto callback = [promise = promise.copyRef(), format, importAlgorithm, unwrappedKeyAlgorithm = crossThreadCopyImportParams(*unwrappedKeyAlgorithm), extractable, keyUsagesBitmap](const Vector<uint8_t>& bytes) mutable {
+        // The realm may be gone: collected, retired by `bun test --isolate`, or its Bun.ModuleGraph disposed.
+        if (promise->isSuspended())
+            return;
+        auto& state = *(promise->globalObject());
+        auto& vm = state.vm();
+        JSLockHolder locker(vm);
+        auto scope = DECLARE_THROW_SCOPE(vm);
 
-                KeyData keyData;
-                switch (format) {
-                case SubtleCrypto::KeyFormat::Spki:
-                case SubtleCrypto::KeyFormat::Pkcs8:
-                case SubtleCrypto::KeyFormat::RawSecret:
-                case SubtleCrypto::KeyFormat::RawPublic:
-                case SubtleCrypto::KeyFormat::RawSeed:
-                case SubtleCrypto::KeyFormat::Raw:
-                    keyData = bytes;
-                    break;
-                case SubtleCrypto::KeyFormat::Jwk: {
-                    String jwkString(byteCast<Latin1Character>(bytes.span()));
-                    auto jwkObject = JSONParse(&state, jwkString);
-                    if (scope.exception()) [[unlikely]] {
-                        weakThis->m_pendingPromises.remove(index);
-                        promise->reject(Exception { ExistingExceptionError });
-                        return;
-                    }
-                    if (!jwkObject) {
-                        weakThis->m_pendingPromises.remove(index);
-                        promise->reject(DataError, "WrappedKey cannot be converted to a JSON object"_s);
-                        return;
-                    }
-                    auto jwk = convert<IDLDictionary<JsonWebKey>>(state, jwkObject);
-                    if (scope.exception()) [[unlikely]] {
-                        weakThis->m_pendingPromises.remove(index);
-                        promise->reject(Exception { ExistingExceptionError });
-                        return;
-                    }
-                    normalizeJsonWebKey(jwk);
-
-                    keyData = jwk;
-                    break;
-                }
-                }
-
-                auto callback = [index, weakThis](CryptoKey& key) mutable {
-                    if (auto promise = getPromise(index, weakThis)) {
-                        if ((key.type() == CryptoKeyType::Private || key.type() == CryptoKeyType::Secret) && !key.usagesBitmap()) {
-                            rejectWithException(promise.releaseNonNull(), SyntaxError,
-                                key.type() == CryptoKeyType::Private
-                                    ? "Usages cannot be empty when importing a private key."_s
-                                    : "Usages cannot be empty when importing a secret key."_s);
-                            return;
-                        }
-                        promise->resolve<IDLInterface<CryptoKey>>(key);
-                    }
-                };
-                auto exceptionCallback = [index, weakThis, identifier = importAlgorithm->identifier()](ExceptionCode ec, const String& msg) mutable {
-                    if (auto promise = getPromise(index, weakThis))
-                        rejectImportKeyException(promise.releaseNonNull(), ec, msg, identifier);
-                };
-
-                // The following operation should be performed synchronously.
-                RELEASE_AND_RETURN(scope, importAlgorithm->importKey(format, WTF::move(keyData), *unwrappedKeyAlgorithm, extractable, keyUsagesBitmap, WTF::move(callback), WTF::move(exceptionCallback)));
+        KeyData keyData;
+        switch (format) {
+        case SubtleCrypto::KeyFormat::Spki:
+        case SubtleCrypto::KeyFormat::Pkcs8:
+        case SubtleCrypto::KeyFormat::RawSecret:
+        case SubtleCrypto::KeyFormat::RawPublic:
+        case SubtleCrypto::KeyFormat::RawSeed:
+        case SubtleCrypto::KeyFormat::Raw:
+            keyData = bytes;
+            break;
+        case SubtleCrypto::KeyFormat::Jwk: {
+            String jwkString(byteCast<Latin1Character>(bytes.span()));
+            auto jwkObject = JSONParse(&state, jwkString);
+            if (scope.exception()) [[unlikely]] {
+                promise->reject(Exception { ExistingExceptionError });
+                return;
             }
+            if (!jwkObject) {
+                promise->reject(DataError, "WrappedKey cannot be converted to a JSON object"_s);
+                return;
+            }
+            auto jwk = convert<IDLDictionary<JsonWebKey>>(state, jwkObject);
+            if (scope.exception()) [[unlikely]] {
+                promise->reject(Exception { ExistingExceptionError });
+                return;
+            }
+            normalizeJsonWebKey(jwk);
+
+            keyData = jwk;
+            break;
         }
+        }
+
+        auto callback = [promise = promise.copyRef()](CryptoKey& key) mutable {
+            if ((key.type() == CryptoKeyType::Private || key.type() == CryptoKeyType::Secret) && !key.usagesBitmap()) {
+                rejectWithException(WTF::move(promise), SyntaxError,
+                    key.type() == CryptoKeyType::Private
+                        ? "Usages cannot be empty when importing a private key."_s
+                        : "Usages cannot be empty when importing a secret key."_s);
+                return;
+            }
+            promise->resolve<IDLInterface<CryptoKey>>(key);
+        };
+        auto exceptionCallback = [promise = WTF::move(promise), identifier = importAlgorithm->identifier()](ExceptionCode ec, const String& msg) mutable {
+            rejectImportKeyException(WTF::move(promise), ec, msg, identifier);
+        };
+
+        // The following operation should be performed synchronously.
+        RELEASE_AND_RETURN(scope, importAlgorithm->importKey(format, WTF::move(keyData), *unwrappedKeyAlgorithm, extractable, keyUsagesBitmap, WTF::move(callback), WTF::move(exceptionCallback)));
     };
-    auto exceptionCallback = [index, weakThis](ExceptionCode ec, const String& msg) mutable {
-        if (auto promise = getPromise(index, weakThis))
-            rejectWithException(promise.releaseNonNull(), ec, msg);
+    auto exceptionCallback = [promise = WTF::move(promise)](ExceptionCode ec, const String& msg) mutable {
+        rejectWithException(WTF::move(promise), ec, msg);
     };
 
     if (!isDecryption) {
@@ -1691,16 +1598,11 @@ void SubtleCrypto::getPublicKey(JSC::JSGlobalObject& state, CryptoKey& key, Vect
 
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(identifier);
 
-    auto index = promise.ptr();
-    m_pendingPromises.add(index, WTF::move(promise));
-    WeakPtr weakThis { *this };
-    auto callback = [index, weakThis](CryptoKey& publicKey) mutable {
-        if (auto promise = getPromise(index, weakThis))
-            promise->resolve<IDLInterface<CryptoKey>>(publicKey);
+    auto callback = [promise = promise.copyRef()](CryptoKey& publicKey) mutable {
+        promise->resolve<IDLInterface<CryptoKey>>(publicKey);
     };
-    auto exceptionCallback = [index, weakThis](ExceptionCode ec, const String& msg) mutable {
-        if (auto promise = getPromise(index, weakThis))
-            rejectWithException(promise.releaseNonNull(), ec, msg);
+    auto exceptionCallback = [promise = WTF::move(promise)](ExceptionCode ec, const String& msg) mutable {
+        rejectWithException(WTF::move(promise), ec, msg);
     };
 
     algorithm->importKey(KeyFormat::Spki, KeyData { WTF::move(spki) }, *importParams, true, keyUsagesBitmap, WTF::move(callback), WTF::move(exceptionCallback));
@@ -1730,30 +1632,24 @@ void SubtleCrypto::encapsulateBits(JSC::JSGlobalObject& state, AlgorithmIdentifi
 
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(params->identifier);
 
-    auto index = promise.ptr();
-    m_pendingPromises.add(index, WTF::move(promise));
-    WeakPtr weakThis { *this };
-    auto callback = [index, weakThis](Vector<uint8_t>&& sharedKey, Vector<uint8_t>&& ciphertext) mutable {
-        if (auto promise = getPromise(index, weakThis)) {
-            auto sharedKeyBuffer = ArrayBuffer::tryCreate(sharedKey.span());
-            auto ciphertextBuffer = ArrayBuffer::tryCreate(ciphertext.span());
-            if (!sharedKeyBuffer || !ciphertextBuffer) {
-                rejectWithException(promise.releaseNonNull(), OperationError, ""_s);
-                return;
-            }
-            promise->resolveWithCallback([&](JSDOMGlobalObject& globalObject) -> JSC::JSValue {
-                auto* result = JSC::constructEmptyObject(&globalObject);
-                // Node v26.3.0 enumerates encapsulateBits results sharedKey-first
-                // but encapsulateKey results ciphertext-first; match each path.
-                result->putDirect(globalObject.vm(), JSC::Identifier::fromString(globalObject.vm(), "sharedKey"_s), toJSArrayBuffer(globalObject, WTF::move(sharedKeyBuffer)));
-                result->putDirect(globalObject.vm(), JSC::Identifier::fromString(globalObject.vm(), "ciphertext"_s), toJSArrayBuffer(globalObject, WTF::move(ciphertextBuffer)));
-                return result;
-            });
+    auto callback = [promise = promise.copyRef()](Vector<uint8_t>&& sharedKey, Vector<uint8_t>&& ciphertext) mutable {
+        auto sharedKeyBuffer = ArrayBuffer::tryCreate(sharedKey.span());
+        auto ciphertextBuffer = ArrayBuffer::tryCreate(ciphertext.span());
+        if (!sharedKeyBuffer || !ciphertextBuffer) {
+            rejectWithException(WTF::move(promise), OperationError, ""_s);
+            return;
         }
+        promise->resolveWithCallback([&](JSDOMGlobalObject& globalObject) -> JSC::JSValue {
+            auto* result = JSC::constructEmptyObject(&globalObject);
+            // Node v26.3.0 enumerates encapsulateBits results sharedKey-first
+            // but encapsulateKey results ciphertext-first; match each path.
+            result->putDirect(globalObject.vm(), JSC::Identifier::fromString(globalObject.vm(), "sharedKey"_s), toJSArrayBuffer(globalObject, WTF::move(sharedKeyBuffer)));
+            result->putDirect(globalObject.vm(), JSC::Identifier::fromString(globalObject.vm(), "ciphertext"_s), toJSArrayBuffer(globalObject, WTF::move(ciphertextBuffer)));
+            return result;
+        });
     };
-    auto exceptionCallback = [index, weakThis](ExceptionCode ec, const String& msg) mutable {
-        if (auto promise = getPromise(index, weakThis))
-            rejectWithException(promise.releaseNonNull(), ec, msg);
+    auto exceptionCallback = [promise = WTF::move(promise)](ExceptionCode ec, const String& msg) mutable {
+        rejectWithException(WTF::move(promise), ec, msg);
     };
 
     RELEASE_AND_RETURN(scope, algorithm->encapsulate(encapsulationKey, WTF::move(callback), WTF::move(exceptionCallback)));
@@ -1794,44 +1690,37 @@ void SubtleCrypto::encapsulateKey(JSC::JSGlobalObject& state, AlgorithmIdentifie
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(params->identifier);
     auto importAlgorithm = CryptoAlgorithmRegistry::singleton().create(importParams->identifier);
 
-    auto index = promise.ptr();
-    m_pendingPromises.add(index, WTF::move(promise));
-    WeakPtr weakThis { *this };
-    auto callback = [index, weakThis, importAlgorithm = WTF::move(importAlgorithm), importParams = crossThreadCopyImportParams(*importParams), extractable, keyUsagesBitmap](Vector<uint8_t>&& sharedKeyBytes, Vector<uint8_t>&& ciphertext) mutable {
+    auto callback = [promise = promise.copyRef(), importAlgorithm = WTF::move(importAlgorithm), importParams = crossThreadCopyImportParams(*importParams), extractable, keyUsagesBitmap](Vector<uint8_t>&& sharedKeyBytes, Vector<uint8_t>&& ciphertext) mutable {
         KeyData data = WTF::move(sharedKeyBytes);
-        auto keyCallback = [index, weakThis, ciphertext = WTF::move(ciphertext)](CryptoKey& sharedKey) mutable {
-            if (auto promise = getPromise(index, weakThis)) {
-                if ((sharedKey.type() == CryptoKeyType::Private || sharedKey.type() == CryptoKeyType::Secret) && !sharedKey.usagesBitmap()) {
-                    rejectWithException(promise.releaseNonNull(), SyntaxError, "Usages cannot be empty when importing a secret key."_s);
-                    return;
-                }
-                auto ciphertextBuffer = ArrayBuffer::tryCreate(ciphertext.span());
-                if (!ciphertextBuffer) {
-                    rejectWithException(promise.releaseNonNull(), OperationError, ""_s);
-                    return;
-                }
-                promise->resolveWithCallback([&](JSDOMGlobalObject& globalObject) -> JSC::JSValue {
-                    auto* result = JSC::constructEmptyObject(&globalObject);
-                    // Node v26.3.0 enumerates encapsulateKey results ciphertext-first,
-                    // unlike encapsulateBits; match each path.
-                    result->putDirect(globalObject.vm(), JSC::Identifier::fromString(globalObject.vm(), "ciphertext"_s), toJSArrayBuffer(globalObject, WTF::move(ciphertextBuffer)));
-                    result->putDirect(globalObject.vm(), JSC::Identifier::fromString(globalObject.vm(), "sharedKey"_s), toJS(&globalObject, &globalObject, sharedKey));
-                    return result;
-                });
+        auto keyCallback = [promise = promise.copyRef(), ciphertext = WTF::move(ciphertext)](CryptoKey& sharedKey) mutable {
+            if ((sharedKey.type() == CryptoKeyType::Private || sharedKey.type() == CryptoKeyType::Secret) && !sharedKey.usagesBitmap()) {
+                rejectWithException(WTF::move(promise), SyntaxError, "Usages cannot be empty when importing a secret key."_s);
+                return;
             }
+            auto ciphertextBuffer = ArrayBuffer::tryCreate(ciphertext.span());
+            if (!ciphertextBuffer) {
+                rejectWithException(WTF::move(promise), OperationError, ""_s);
+                return;
+            }
+            promise->resolveWithCallback([&](JSDOMGlobalObject& globalObject) -> JSC::JSValue {
+                auto* result = JSC::constructEmptyObject(&globalObject);
+                // Node v26.3.0 enumerates encapsulateKey results ciphertext-first,
+                // unlike encapsulateBits; match each path.
+                result->putDirect(globalObject.vm(), JSC::Identifier::fromString(globalObject.vm(), "ciphertext"_s), toJSArrayBuffer(globalObject, WTF::move(ciphertextBuffer)));
+                result->putDirect(globalObject.vm(), JSC::Identifier::fromString(globalObject.vm(), "sharedKey"_s), toJS(&globalObject, &globalObject, sharedKey));
+                return result;
+            });
         };
-        auto keyExceptionCallback = [index, weakThis](ExceptionCode ec, const String& msg) mutable {
-            if (auto promise = getPromise(index, weakThis))
-                rejectWithException(promise.releaseNonNull(), ec, msg);
+        auto keyExceptionCallback = [promise = WTF::move(promise)](ExceptionCode ec, const String& msg) mutable {
+            rejectWithException(WTF::move(promise), ec, msg);
         };
         auto format = importParams->identifier == CryptoAlgorithmIdentifier::HKDF || importParams->identifier == CryptoAlgorithmIdentifier::PBKDF2
             ? SubtleCrypto::KeyFormat::Raw
             : SubtleCrypto::KeyFormat::RawSecret;
         importAlgorithm->importKey(format, WTF::move(data), *importParams, extractable, keyUsagesBitmap, WTF::move(keyCallback), WTF::move(keyExceptionCallback));
     };
-    auto exceptionCallback = [index, weakThis](ExceptionCode ec, const String& msg) mutable {
-        if (auto promise = getPromise(index, weakThis))
-            rejectWithException(promise.releaseNonNull(), ec, msg);
+    auto exceptionCallback = [promise = WTF::move(promise)](ExceptionCode ec, const String& msg) mutable {
+        rejectWithException(WTF::move(promise), ec, msg);
     };
 
     RELEASE_AND_RETURN(scope, algorithm->encapsulate(encapsulationKey, WTF::move(callback), WTF::move(exceptionCallback)));
@@ -1865,16 +1754,11 @@ void SubtleCrypto::decapsulateBits(JSC::JSGlobalObject& state, AlgorithmIdentifi
 
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(params->identifier);
 
-    auto index = promise.ptr();
-    m_pendingPromises.add(index, WTF::move(promise));
-    WeakPtr weakThis { *this };
-    auto callback = [index, weakThis](const Vector<uint8_t>& sharedKey) mutable {
-        if (auto promise = getPromise(index, weakThis))
-            fulfillPromiseWithArrayBuffer(promise.releaseNonNull(), sharedKey.begin(), sharedKey.size());
+    auto callback = [promise = promise.copyRef()](const Vector<uint8_t>& sharedKey) mutable {
+        fulfillPromiseWithArrayBuffer(WTF::move(promise), sharedKey.begin(), sharedKey.size());
     };
-    auto exceptionCallback = [index, weakThis](ExceptionCode ec, const String& msg) mutable {
-        if (auto promise = getPromise(index, weakThis))
-            rejectWithException(promise.releaseNonNull(), ec, msg);
+    auto exceptionCallback = [promise = WTF::move(promise)](ExceptionCode ec, const String& msg) mutable {
+        rejectWithException(WTF::move(promise), ec, msg);
     };
 
     RELEASE_AND_RETURN(scope, algorithm->decapsulate(decapsulationKey, WTF::move(*ciphertext), WTF::move(callback), WTF::move(exceptionCallback)));
@@ -1919,32 +1803,25 @@ void SubtleCrypto::decapsulateKey(JSC::JSGlobalObject& state, AlgorithmIdentifie
     auto algorithm = CryptoAlgorithmRegistry::singleton().create(params->identifier);
     auto importAlgorithm = CryptoAlgorithmRegistry::singleton().create(importParams->identifier);
 
-    auto index = promise.ptr();
-    m_pendingPromises.add(index, WTF::move(promise));
-    WeakPtr weakThis { *this };
-    auto callback = [index, weakThis, importAlgorithm = WTF::move(importAlgorithm), importParams = crossThreadCopyImportParams(*importParams), extractable, keyUsagesBitmap](const Vector<uint8_t>& sharedKeyBytes) mutable {
+    auto callback = [promise = promise.copyRef(), importAlgorithm = WTF::move(importAlgorithm), importParams = crossThreadCopyImportParams(*importParams), extractable, keyUsagesBitmap](const Vector<uint8_t>& sharedKeyBytes) mutable {
         KeyData data = sharedKeyBytes;
-        auto keyCallback = [index, weakThis](CryptoKey& sharedKey) mutable {
-            if (auto promise = getPromise(index, weakThis)) {
-                if ((sharedKey.type() == CryptoKeyType::Private || sharedKey.type() == CryptoKeyType::Secret) && !sharedKey.usagesBitmap()) {
-                    rejectWithException(promise.releaseNonNull(), SyntaxError, "Usages cannot be empty when importing a secret key."_s);
-                    return;
-                }
-                promise->resolve<IDLInterface<CryptoKey>>(sharedKey);
+        auto keyCallback = [promise = promise.copyRef()](CryptoKey& sharedKey) mutable {
+            if ((sharedKey.type() == CryptoKeyType::Private || sharedKey.type() == CryptoKeyType::Secret) && !sharedKey.usagesBitmap()) {
+                rejectWithException(WTF::move(promise), SyntaxError, "Usages cannot be empty when importing a secret key."_s);
+                return;
             }
+            promise->resolve<IDLInterface<CryptoKey>>(sharedKey);
         };
-        auto keyExceptionCallback = [index, weakThis](ExceptionCode ec, const String& msg) mutable {
-            if (auto promise = getPromise(index, weakThis))
-                rejectWithException(promise.releaseNonNull(), ec, msg);
+        auto keyExceptionCallback = [promise = WTF::move(promise)](ExceptionCode ec, const String& msg) mutable {
+            rejectWithException(WTF::move(promise), ec, msg);
         };
         auto format = importParams->identifier == CryptoAlgorithmIdentifier::HKDF || importParams->identifier == CryptoAlgorithmIdentifier::PBKDF2
             ? SubtleCrypto::KeyFormat::Raw
             : SubtleCrypto::KeyFormat::RawSecret;
         importAlgorithm->importKey(format, WTF::move(data), *importParams, extractable, keyUsagesBitmap, WTF::move(keyCallback), WTF::move(keyExceptionCallback));
     };
-    auto exceptionCallback = [index, weakThis](ExceptionCode ec, const String& msg) mutable {
-        if (auto promise = getPromise(index, weakThis))
-            rejectWithException(promise.releaseNonNull(), ec, msg);
+    auto exceptionCallback = [promise = WTF::move(promise)](ExceptionCode ec, const String& msg) mutable {
+        rejectWithException(WTF::move(promise), ec, msg);
     };
 
     RELEASE_AND_RETURN(scope, algorithm->decapsulate(decapsulationKey, WTF::move(*ciphertext), WTF::move(callback), WTF::move(exceptionCallback)));

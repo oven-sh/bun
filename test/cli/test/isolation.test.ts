@@ -1801,6 +1801,72 @@ describe.concurrent("--isolate: a finished file's late completions do not run in
     if (exitCode !== 0) expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
+
+  // A ShadowRealm that a finished file made is not retired with the file's realm. What it left
+  // on the thread pool must not continue its script, or the file's through a function the file
+  // passed in, while a later file runs.
+  test.skipIf(isWindows)(
+    "a crypto.subtle operation a finished file left in a ShadowRealm does not continue in the next file",
+    async () => {
+      using dir = tempDir("isolate-late-shadow-realm", {
+        "a-realm.test.ts": `
+        import { test, expect } from "bun:test";
+        import fs, { existsSync, writeFileSync } from "node:fs";
+        import { join } from "node:path";
+
+        const dir = import.meta.dir;
+        const realm = new ShadowRealm();
+        // Both pool threads park in open() of a FIFO that has no writer, so the digest of the chain
+        // waits until b-realm.test.ts opens the write ends. These callbacks keep the realm until then.
+        for (const name of ["fifo1", "fifo2"]) {
+          fs.promises.open(join(dir, name), "r").then(file => (realm, file.close()), () => {});
+        }
+
+        test("leaves a crypto.subtle chain queued inside a ShadowRealm", () => {
+          realm.evaluate(\`(running, act) => {
+            (async () => {
+              do await crypto.subtle.digest("SHA-256", new Uint8Array(65536)); while (!running());
+              act();
+            })();
+          }\`)(
+            () => existsSync(join(dir, "b-running")),
+            () => writeFileSync(join(dir, "a-acted"), ""),
+          );
+          expect(existsSync(join(dir, "b-running"))).toBe(false);
+        });
+      `,
+        "b-realm.test.ts": `
+        import { test, expect } from "bun:test";
+        import fs, { existsSync, writeFileSync } from "node:fs";
+        import { join } from "node:path";
+
+        const dir = import.meta.dir;
+
+        test("sees nothing from the ShadowRealm of a-realm.test.ts", async () => {
+          writeFileSync(join(dir, "b-running"), "");
+          const writers = ["fifo1", "fifo2"].map(name => fs.openSync(join(dir, name), "w"));
+          // Round trips through the pool: the digest queued before them has come back by the last one.
+          for (let i = 0; i < 8 && !existsSync(join(dir, "a-acted")); i++) {
+            await crypto.subtle.digest("SHA-256", new Uint8Array(65536));
+          }
+          writers.forEach(fd => fs.closeSync(fd));
+          expect(existsSync(join(dir, "a-acted"))).toBe(false);
+        });
+      `,
+      });
+      for (const name of ["fifo1", "fifo2"]) mkfifo(join(String(dir), name));
+      const { stderr, exitCode } = await runTests(
+        String(dir),
+        ["--isolate"],
+        ["./a-realm.test.ts", "./b-realm.test.ts"],
+        { ...bunEnv, UV_THREADPOOL_SIZE: "2" },
+      );
+      expect(normalizeBunSnapshot(stderr, dir)).toContain("2 pass");
+      expect(normalizeBunSnapshot(stderr, dir)).toContain("0 fail");
+      if (exitCode !== 0) expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    },
+  );
 });
 
 // Each of these leaked handles used to pin its test file's ENTIRE global

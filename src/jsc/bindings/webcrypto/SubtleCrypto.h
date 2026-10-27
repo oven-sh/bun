@@ -36,7 +36,6 @@
 #include <variant>
 #include <wtf/Ref.h>
 #include <wtf/RefCounted.h>
-#include <wtf/WeakPtr.h>
 #include "PhonyWorkQueue.h"
 
 namespace JSC {
@@ -101,10 +100,8 @@ public:
 private:
     explicit SubtleCrypto(ScriptExecutionContext*);
 
-    inline friend RefPtr<DeferredPromise> getPromise(DeferredPromise*, WeakPtr<SubtleCrypto>);
-
+    // Unlike WebKit's, an operation's callbacks own its promise: the work queue keeps them on this context's thread.
     Ref<WorkQueue> m_workQueue;
-    HashMap<DeferredPromise*, Ref<DeferredPromise>> m_pendingPromises;
 };
 
 }

@@ -477,8 +477,8 @@ describe("event loop routing around macros", () => {
       ].join("\n"),
     ],
     [
-      // 64 bytes or more are hashed on the WebCrypto work queue; its reply and keep-alive release come
-      // back through the pool task's ticket rather than a thread-pool job like the cases above.
+      // 64 bytes or more are hashed on the thread pool as a bun_jsc::Job, like the cases above. Its
+      // completion comes back through the ticket of the job.
       "a crypto.subtle.digest() inside the macro",
       [
         `export function m() {`,

@@ -118,16 +118,17 @@ std::optional<Vector<uint8_t>> CryptoAlgorithm::extractDerivedBits(std::optional
 template<typename ResultCallbackType, typename OperationType>
 static void dispatchAlgorithmOperation(WorkQueue& workQueue, ScriptExecutionContext& context, ResultCallbackType&& callback, CryptoAlgorithm::ExceptionCallback&& exceptionCallback, OperationType&& operation)
 {
-    workQueue.dispatch(context.globalObject(),
-        [operation = WTF::move(operation), callback = WTF::move(callback), exceptionCallback = WTF::move(exceptionCallback), contextIdentifier = context.identifier(), loopKind = context.currentLoopKind()]() mutable {
-            auto result = operation();
-            ScriptExecutionContext::postTaskTo(contextIdentifier, loopKind, [result = crossThreadCopy(WTF::move(result)), callback = WTF::move(callback), exceptionCallback = WTF::move(exceptionCallback)](auto& context) mutable {
-                if (result.hasException()) {
-                    exceptionCallback(result.releaseException().code(), ""_s);
-                    return;
-                }
-                callback(result.releaseReturnValue());
-            });
+    workQueue.dispatch(
+        context,
+        [operation = WTF::move(operation)]() mutable {
+            return crossThreadCopy(operation());
+        },
+        [callback = WTF::move(callback), exceptionCallback = WTF::move(exceptionCallback)](auto&& result) mutable {
+            if (result.hasException()) {
+                exceptionCallback(result.releaseException().code(), ""_s);
+                return;
+            }
+            callback(result.releaseReturnValue());
         });
 }
 
@@ -139,6 +140,34 @@ void CryptoAlgorithm::dispatchOperationInWorkQueue(WorkQueue& workQueue, ScriptE
 void CryptoAlgorithm::dispatchOperationInWorkQueue(WorkQueue& workQueue, ScriptExecutionContext& context, BoolCallback&& callback, ExceptionCallback&& exceptionCallback, Function<ExceptionOr<bool>()>&& operation)
 {
     dispatchAlgorithmOperation(workQueue, context, WTF::move(callback), WTF::move(exceptionCallback), WTF::move(operation));
+}
+
+void CryptoAlgorithm::dispatchDigest(WorkQueue& workQueue, ScriptExecutionContext& context, VectorCallback&& callback, ExceptionCallback&& exceptionCallback, Vector<uint8_t>&& message, PAL::CryptoDigest::Algorithm algorithm)
+{
+    auto digest = PAL::CryptoDigest::create(algorithm);
+    if (!digest) {
+        exceptionCallback(OperationError, ""_s);
+        return;
+    }
+
+    // A short input is hashed in the call and only its settlement waits for the event loop.
+    if (message.size() < 64) {
+        digest->addBytes(message.begin(), message.size());
+        ScriptExecutionContext::postTaskTo(context.identifier(), context.currentLoopKind(), [callback = WTF::move(callback), result = digest->computeHash()](auto&) {
+            callback(result);
+        });
+        return;
+    }
+
+    workQueue.dispatch(
+        context,
+        [digest = WTF::move(digest), message = WTF::move(message)]() mutable {
+            digest->addBytes(message.begin(), message.size());
+            return digest->computeHash();
+        },
+        [callback = WTF::move(callback)](Vector<uint8_t>&& result) {
+            callback(result);
+        });
 }
 
 }

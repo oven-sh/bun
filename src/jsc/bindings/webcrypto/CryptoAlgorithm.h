@@ -26,6 +26,7 @@
 #pragma once
 
 #include "CryptoAlgorithmIdentifier.h"
+#include "CryptoDigest.h"
 #include "CryptoKeyFormat.h"
 #include "CryptoKeyPair.h"
 #include "CryptoKeyUsage.h"
@@ -83,6 +84,7 @@ public:
 
     static void dispatchOperationInWorkQueue(WorkQueue&, ScriptExecutionContext&, VectorCallback&&, ExceptionCallback&&, Function<ExceptionOr<Vector<uint8_t>>()>&&);
     static void dispatchOperationInWorkQueue(WorkQueue&, ScriptExecutionContext&, BoolCallback&&, ExceptionCallback&&, Function<ExceptionOr<bool>()>&&);
+    static void dispatchDigest(WorkQueue&, ScriptExecutionContext&, VectorCallback&&, ExceptionCallback&&, Vector<uint8_t>&& message, PAL::CryptoDigest::Algorithm);
 
     // Truncates `secret` to the first `length` bits, zeroing the unused trailing bits of the
     // final byte, per https://w3c.github.io/webcrypto/#SubtleCrypto-method-deriveBits. A null

@@ -24,7 +24,6 @@
 
 #include "CryptoAlgorithmX25519Params.h"
 #include "CryptoKeyOKP.h"
-#include "ScriptExecutionContext.h"
 #include <openssl/curve25519.h>
 #include <wtf/CryptographicUtilities.h>
 
@@ -116,12 +115,12 @@ void CryptoAlgorithmX25519::deriveBits(const CryptoAlgorithmParameters& paramete
     // This is a special case that can't use dispatchOperation() because it bundles
     // the result validation and callback dispatch into unifiedCallback.
     workQueue.dispatch(
-        context.globalObject(),
-        [baseKey = WTF::move(baseKey), publicKey = ecParameters.publicKey, unifiedCallback = WTF::move(unifiedCallback), contextIdentifier = context.identifier(), loopKind = context.currentLoopKind()]() mutable {
-            auto derivedKey = platformDeriveBits(downcast<CryptoKeyOKP>(baseKey.get()), downcast<CryptoKeyOKP>(*publicKey));
-            ScriptExecutionContext::postTaskTo(contextIdentifier, loopKind, [derivedKey = WTF::move(derivedKey), unifiedCallback = WTF::move(unifiedCallback)](auto&) mutable {
-                unifiedCallback(WTF::move(derivedKey));
-            });
+        context,
+        [baseKey = WTF::move(baseKey), publicKey = ecParameters.publicKey]() mutable {
+            return platformDeriveBits(downcast<CryptoKeyOKP>(baseKey.get()), downcast<CryptoKeyOKP>(*publicKey));
+        },
+        [unifiedCallback = WTF::move(unifiedCallback)](std::optional<Vector<uint8_t>>&& derivedKey) mutable {
+            unifiedCallback(WTF::move(derivedKey));
         });
 }
 

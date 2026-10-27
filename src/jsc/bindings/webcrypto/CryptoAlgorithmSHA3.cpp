@@ -29,44 +29,8 @@
 #if ENABLE(WEB_CRYPTO)
 
 #include "CryptoDigest.h"
-#include "ScriptExecutionContext.h"
 
 namespace WebCore {
-
-static void dispatchDigest(PAL::CryptoDigest::Algorithm algorithm,
-    Vector<uint8_t>&& message, CryptoAlgorithm::VectorCallback&& callback,
-    CryptoAlgorithm::ExceptionCallback&& exceptionCallback,
-    ScriptExecutionContext& context, WorkQueue& workQueue)
-{
-    auto digest = PAL::CryptoDigest::create(algorithm);
-    if (!digest) {
-        exceptionCallback(OperationError, ""_s);
-        return;
-    }
-
-    if (message.size() < 64) {
-        auto moved = WTF::move(message);
-        digest->addBytes(moved.begin(), moved.size());
-        auto result = digest->computeHash();
-        ScriptExecutionContext::postTaskTo(context.identifier(), context.currentLoopKind(),
-            [callback = WTF::move(callback), result = WTF::move(result)](auto&) {
-                callback(result);
-            });
-        return;
-    }
-
-    workQueue.dispatch(context.globalObject(),
-        [digest = WTF::move(digest), message = WTF::move(message),
-            callback = WTF::move(callback),
-            contextIdentifier = context.identifier(), loopKind = context.currentLoopKind()]() mutable {
-            digest->addBytes(message.begin(), message.size());
-            auto result = digest->computeHash();
-            ScriptExecutionContext::postTaskTo(contextIdentifier, loopKind,
-                [callback = WTF::move(callback), result = WTF::move(result)](auto&) {
-                    callback(result);
-                });
-        });
-}
 
 #define DEFINE_SHA3(ClassName, DigestAlgo)                                           \
     Ref<CryptoAlgorithm> ClassName::create() { return adoptRef(*new ClassName); }    \
@@ -75,8 +39,8 @@ static void dispatchDigest(PAL::CryptoDigest::Algorithm algorithm,
         ExceptionCallback&& exceptionCallback, ScriptExecutionContext& context,      \
         WorkQueue& workQueue)                                                        \
     {                                                                                \
-        dispatchDigest(DigestAlgo, WTF::move(message), WTF::move(callback),          \
-            WTF::move(exceptionCallback), context, workQueue);                       \
+        dispatchDigest(workQueue, context, WTF::move(callback),                      \
+            WTF::move(exceptionCallback), WTF::move(message), DigestAlgo);           \
     }
 
 DEFINE_SHA3(CryptoAlgorithmSHA3_256, PAL::CryptoDigest::Algorithm::SHA3_256)

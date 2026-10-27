@@ -260,9 +260,9 @@ describe("Web Crypto", () => {
 
     // Previously this promise never settled: the error thrown during
     // JsonWebKey dictionary conversion (here an invalid key_ops enum entry)
-    // escaped as an uncaught exception and the DeferredPromise was left in
-    // m_pendingPromises forever. kty is optional now, so an invalid enum is
-    // what still reaches the conversion-exception branch.
+    // escaped as an uncaught exception and the DeferredPromise was never
+    // released. kty is optional now, so an invalid enum is what still reaches
+    // the conversion-exception branch.
     it("settles when JsonWebKey dictionary conversion itself throws", async () => {
       const { key, iv, wrapped } = await setup(new TextEncoder().encode(JSON.stringify({ key_ops: ["bogus"] })));
       const err = await crypto.subtle
@@ -275,9 +275,8 @@ describe("Web Crypto", () => {
       expect(err.message).toBe("value must be enumeration (string)");
     });
 
-    it("does not leak DeferredPromise in m_pendingPromises on JWK parse errors", async () => {
-      // Each leaked entry in m_pendingPromises holds a Ref<DeferredPromise>. On
-      // the dictionary-conversion error path the promise was never rejected, so
+    it("does not leak the DeferredPromise on JWK parse errors", async () => {
+      // On the dictionary-conversion error path the promise was never rejected, so
       // DeferredPromise never removed itself from JSDOMGlobalObject's
       // guardedObjects set and the JSPromise stayed alive. Count live Promise
       // cells in the JSC heap to detect the leak.

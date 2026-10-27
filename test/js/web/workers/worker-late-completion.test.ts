@@ -90,14 +90,11 @@ const ROWS: Row[] = [
     ticket: "node_crypto_binding.rs",
   },
   {
-    // WebCrypto's work queue: a C++ closure on the pool, carried (with a
-    // ticket) by ConcurrentCppTask; its *result* comes back by context id —
-    // WebCore's postTaskTo(), a weak post — and because the ticket kept the
-    // worker draining rather than closed, that post is delivered and its
-    // promise/callback refs are released on the worker's thread.
+    // WebCrypto's work queue: a C++ operation on the pool. Its completion,
+    // which owns the promise, is released on the worker's thread.
     name: "crypto.subtle.digest",
     worker: `crypto.subtle.digest("SHA-256", Buffer.alloc(65536));`,
-    weak: "CppTask",
+    ticket: "CppTask.rs",
   },
   {
     name: "Bun.password.hash",
@@ -454,6 +451,143 @@ describe.skipIf(isWindows)("terminate() waits for work that cannot be cancelled"
     ]);
     expect(stdout).toBe("terminating\nexit code: 1\n");
     expect(await proc.exited).toBe(0);
+  });
+});
+
+// crypto.subtle work waits in the pool's queue behind both pool threads, which
+// are parked in open() on FIFOs that have no writer yet. The worker is then
+// terminated and the pool released. Work that had not started is not run for a
+// stopping VM, so the CPU spent stays far below the K queued operations. (Node
+// runs that work before the Worker exits.) One operation is measured first, so
+// nothing here is a wall-clock threshold.
+describe.skipIf(isWindows)("terminate() does not run queued crypto.subtle work", () => {
+  const derive = (iterations: number) =>
+    `crypto.subtle.deriveBits({ name: "PBKDF2", salt: new Uint8Array(16), iterations: ${iterations}, hash: "SHA-256" }, key, 256)`;
+  const importKey = `crypto.subtle.importKey("raw", new Uint8Array(16), "PBKDF2", false, ["deriveBits"])`;
+  // On a worker error: lets a parked pool thread go, then exits, so that the failure is not a timeout.
+  const bail = `error => {
+    console.error("worker error:", error);
+    for (const fifo of fifos) {
+      try { fs.closeSync(fs.openSync(fifo, fs.constants.O_WRONLY | fs.constants.O_NONBLOCK)); } catch {}
+    }
+    process.exit(1);
+  }`;
+
+  async function expectFewerOperations(limit: number, fifoCount: number, script: (fifos: string[]) => string) {
+    using dir = tempDir("worker-terminate-skips", {});
+    const fifos = Array.from({ length: fifoCount }, (_, i) => path.join(String(dir), "fifo" + i));
+    for (const fifo of fifos) mkfifo(fifo);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script(fifos)],
+      env: { ...bunEnv, UV_THREADPOOL_SIZE: "2" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const operations = stdout ? JSON.parse(stdout).operations : null;
+    const ranFewer = typeof operations === "number" && operations < limit;
+    expect({
+      ranFewer,
+      exitCode,
+      // On a failure, the measured count and everything the child printed.
+      detail: ranFewer && exitCode === 0 ? "" : { operations, stdout, stderr },
+    }).toEqual({ ranFewer: true, exitCode: 0, detail: "" });
+  }
+
+  test("PBKDF2 deriveBits queued behind a parked pool", async () => {
+    const K = 32;
+    await expectFewerOperations(
+      K / 4,
+      2,
+      fifos => `
+        const { Worker } = require("node:worker_threads");
+        const fs = require("node:fs");
+        const fifos = ${JSON.stringify(fifos)};
+        const w = new Worker(
+          'const { parentPort } = require("node:worker_threads");' +
+          'parentPort.once("message", async () => {' +
+          '  const key = await ${importKey};' +
+          '  for (let i = 0; i < ${K}; i++) ${derive(400000)};' +
+          '  parentPort.postMessage("queued");' +
+          '});' +
+          'parentPort.postMessage("ready");',
+          { eval: true },
+        );
+        w.on("error", ${bail});
+        w.once("message", async () => {
+          const key = await ${importKey};
+          // A quarter of one queued operation, measured while the pool is free.
+          let cpu = process.cpuUsage();
+          await ${derive(100000)};
+          cpu = process.cpuUsage(cpu);
+          const one = 4 * (cpu.user + cpu.system);
+          for (const fifo of fifos) fs.readFile(fifo, () => {});
+          w.once("message", () => {
+            const before = process.cpuUsage();
+            w.terminate();
+            for (const fifo of fifos) fs.closeSync(fs.openSync(fifo, "w"));
+            w.once("exit", () => {
+              const after = process.cpuUsage(before);
+              console.log(JSON.stringify({ operations: (after.user + after.system) / one }));
+            });
+          });
+          w.postMessage("go");
+        });
+      `,
+    );
+  });
+
+  // The worker's thread is inside a host call at terminate(), so it cannot reach its final wait.
+  // The VM is stopping from the moment of the call, and that is what the pool looks at.
+  test("also while the worker's thread is blocked in a host call", async () => {
+    const K = 8;
+    const iterations = 200000;
+    await expectFewerOperations(
+      K / 2,
+      3,
+      fifos => `
+        const { Worker } = require("node:worker_threads");
+        const nodeCrypto = require("node:crypto");
+        const fs = require("node:fs");
+        const fifos = ${JSON.stringify(fifos)};
+        const [a, b, c] = fifos;
+        const us = usage => usage.user + usage.system;
+        const pbkdf2Sync = count => nodeCrypto.pbkdf2Sync(new Uint8Array(16), new Uint8Array(16), count, 32, "sha256");
+        const w = new Worker(
+          'const { parentPort } = require("node:worker_threads");' +
+          'parentPort.once("message", async () => {' +
+          '  const key = await ${importKey};' +
+          '  for (let i = 0; i < ${K}; i++) ${derive(iterations)};' +
+          '  parentPort.postMessage("queued");' +
+          '  require("node:fs").readFileSync(' + JSON.stringify(c) + ');' +
+          '});' +
+          'parentPort.postMessage("ready");',
+          { eval: true },
+        );
+        w.on("error", ${bail});
+        w.once("message", () => {
+          // One queued operation, measured on this thread.
+          let own = process.threadCpuUsage();
+          pbkdf2Sync(${iterations});
+          const one = us(process.threadCpuUsage(own));
+          for (const fifo of [a, b]) fs.readFile(fifo, () => {});
+          w.once("message", () => {
+            // Returns when the worker has the FIFO open: from here on it is inside readFileSync.
+            const hold = fs.openSync(c, "w");
+            const before = process.cpuUsage();
+            own = process.threadCpuUsage();
+            w.terminate();
+            for (const fifo of [a, b]) fs.closeSync(fs.openSync(fifo, "w"));
+            // This thread works 1.5 times as long as the two pool threads need for the K operations.
+            pbkdf2Sync(${iterations} * (${K} / 2) * 1.5);
+            const operations = (us(process.cpuUsage(before)) - us(process.threadCpuUsage(own))) / one;
+            w.once("exit", () => console.log(JSON.stringify({ operations })));
+            fs.closeSync(hold);
+          });
+          w.postMessage("go");
+        });
+      `,
+    );
   });
 });
 

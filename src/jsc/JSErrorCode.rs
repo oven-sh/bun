@@ -10,6 +10,8 @@ pub struct JSErrorCode(pub u8);
 #[allow(non_upper_case_globals)]
 impl JSErrorCode {
     pub const Error: Self = Self(0);
+    /// `JSErrorCodeAggregateError` in headers-handwritten.h.
+    pub const AggregateError: Self = Self(7);
 
     // StackOverflow & OutOfMemoryError is not an ErrorType in "JavaScriptCore/ErrorType.h" within JSC, so the number here is just totally made up
 }

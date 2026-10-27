@@ -1315,18 +1315,20 @@ describe("depth cap applies to Map/Set/Array and Error cause chains", () => {
   });
 
   it("nested AggregateError recursion truncates at max_depth", () => {
+    // An inspected Error shows a preview of this file's source. Drop those lines.
+    const inspect = (value, options) => Bun.inspect(value, options).replace(/^ *\d+ \|.*\n/gm, "");
     let e = new Error("leaf");
     for (let i = 0; i < 10; i++) e = new AggregateError([e], "L" + i);
-    const out = Bun.inspect(e, { depth: 2 });
+    const out = inspect(e, { depth: 2 });
     expect(out).toContain("AggregateError: L7");
     expect(out).toContain("[Error ...]");
     expect(out).not.toContain("error: leaf");
 
-    const full = Bun.inspect(e, { depth: Infinity });
+    const full = inspect(e, { depth: Infinity });
     expect(full).toContain("error: leaf");
 
-    // Common flat case is unchanged.
-    const flat = Bun.inspect(new AggregateError([new Error("a"), new Error("b")], "agg"));
+    // The common flat case has no marker.
+    const flat = inspect(new AggregateError([new Error("a"), new Error("b")], "agg"));
     expect(flat).toContain("error: a");
     expect(flat).toContain("error: b");
     expect(flat).not.toContain("[Error ...]");

@@ -96,6 +96,13 @@ class NodeAggregateError extends AggregateError {
     return AggregateError;
   }
 }
+// JSC names an error after the `name` of the error or of its prototype, and
+// no further: without this the stack and the error printer say `Error`.
+Object.defineProperty(NodeAggregateError.prototype, "name", {
+  value: "AggregateError",
+  writable: true,
+  configurable: true,
+});
 
 class ConnResetException extends Error {
   constructor(msg) {

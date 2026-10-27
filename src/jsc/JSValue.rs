@@ -1030,6 +1030,19 @@ impl JSValue {
         }
     }
 
+    /// The own property `builtin_name`, read from the object's own storage:
+    /// no getter runs and the prototype chain is not walked. An accessor gives
+    /// its `GetterSetter` cell. `self` must be known to be an object.
+    pub(crate) fn fast_get_direct(
+        self,
+        global: &JSGlobalObject,
+        builtin_name: BuiltinName,
+    ) -> Option<JSValue> {
+        debug_assert!(self.is_object());
+        let v = JSC__JSValue__fastGetDirect_(self, global, builtin_name as u8);
+        if v.is_empty() { None } else { Some(v) }
+    }
+
     /// `get` for a key that is one of `BunCommonStrings.h`'s, without the
     /// per-call `StringImpl` and atom-table probe.
     pub fn get_common_string(
@@ -1960,6 +1973,11 @@ unsafe extern "C" {
     safe fn JSC__JSValue__coerceToInt32(this: JSValue, global: &JSGlobalObject) -> i32;
     safe fn JSC__JSValue__coerceToInt64(this: JSValue, global: &JSGlobalObject) -> i64;
     safe fn JSC__JSValue__fastGet(this: JSValue, global: &JSGlobalObject, builtin: u8) -> JSValue;
+    safe fn JSC__JSValue__fastGetDirect_(
+        this: JSValue,
+        global: &JSGlobalObject,
+        builtin: u8,
+    ) -> JSValue;
     safe fn JSC__JSValue__jsonStringify(
         this: JSValue,
         global: &JSGlobalObject,
@@ -2498,6 +2516,26 @@ impl JSValue {
             u64::MAX => None,
             index => Some(index as u32),
         }
+    }
+    /// Asserts `self` is a `JSArray` (`Array` or `DerivedArray`).
+    pub(crate) fn array_length(self) -> u32 {
+        debug_assert!(self.is_cell() && self.js_type().is_array());
+        unsafe extern "C" {
+            safe fn Bun__JSArray__length(this: JSValue) -> u32;
+        }
+        Bun__JSArray__length(self)
+    }
+    /// The element at `index` that a `JSArray` holds in its own storage, or
+    /// `None` for a hole, an index past the end, or an entry of the sparse
+    /// map. Runs no user code and does not look at the prototype chain.
+    /// Asserts `self` is a `JSArray` (`Array` or `DerivedArray`).
+    pub(crate) fn try_get_index_quickly(self, index: u32) -> Option<JSValue> {
+        debug_assert!(self.is_cell() && self.js_type().is_array());
+        unsafe extern "C" {
+            safe fn Bun__JSArray__tryGetIndexQuickly(this: JSValue, index: u32) -> JSValue;
+        }
+        let value = Bun__JSArray__tryGetIndexQuickly(self, index);
+        if value.is_empty() { None } else { Some(value) }
     }
     /// `JSValue.getNameProperty` — the value's `.name` (function/class
     /// name). Empty for empty/`undefined`/`null`.

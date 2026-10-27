@@ -462,11 +462,11 @@ describe("source map remapping of the printed stack", () => {
   });
 });
 
-// The printer replaces an AggregateError with the members of its `errors`
-// property. When there is nothing to walk it has to print the AggregateError
-// itself. A deleted `errors` used to crash the process (the empty value was
-// passed to the iteration, which read it as a cell at address 0), an accessor
-// was passed to it as well, the other shapes printed nothing, and a
+// The printer walks the `errors` property of an AggregateError after it prints
+// the AggregateError. When there is nothing to walk, the AggregateError is all
+// that prints. A deleted `errors` used to crash the process (the empty value
+// was passed to the iteration, which read it as a cell at address 0), an
+// accessor was passed to it as well, the other shapes printed nothing, and a
 // non-iterable `errors` made console.error throw.
 describe.concurrent("AggregateError whose errors cannot be walked", () => {
   async function run(cmd, files) {
@@ -483,6 +483,8 @@ describe.concurrent("AggregateError whose errors cannot be walked", () => {
   }
 
   const header = "AggregateError: outer message";
+  // The line that names each printed error, with its indentation.
+  const names = text => text.split("\n").filter(line => /^ *\w*[Ee]rror: /.test(line));
   const make = 'const e = new AggregateError([new Error("inner")], "outer message");';
   const shapes = {
     "errors was deleted": "delete e.errors;",
@@ -529,20 +531,17 @@ describe.concurrent("AggregateError whose errors cannot be walked", () => {
        console.error(e);
        console.log("after");`,
     ]);
-    expect(stderr).toContain("error: from the getter");
-    expect(stderr).not.toContain(header);
+    expect(names(stderr)).toEqual([header, "  error: from the getter"]);
     expect(stdout).toBe("after\n");
     expect(exitCode).toBe(0);
   });
 
-  test("members are still printed in place of the AggregateError", async () => {
+  test("members are printed after the AggregateError", async () => {
     const { stderr, exitCode } = await run([
       "-e",
       'throw new AggregateError([new Error("first member"), new TypeError("second member")], "outer message");',
     ]);
-    expect(stderr).toContain("error: first member");
-    expect(stderr).toContain("TypeError: second member");
-    expect(stderr).not.toContain(header);
+    expect(names(stderr)).toEqual([header, "  error: first member", "  TypeError: second member"]);
     expect(exitCode).toBe(1);
   });
 
@@ -588,6 +587,719 @@ describe.concurrent("AggregateError whose errors cannot be walked", () => {
     expect(stderr).toContain("b.test.ts:");
     expect(stderr).toContain("across 2 files");
     expect(exitCode).toBe(1);
+  });
+});
+
+// An AggregateError prints as any other error does. Its members follow its
+// stack trace, a blank line before each, indented under it. Its `cause`
+// follows the last member, at the column of the AggregateError.
+describe.concurrent("AggregateError with members", () => {
+  // Runs `bun ...args` in a directory that holds `files`. The output has no
+  // directory in its paths and no version line.
+  async function run(files, ...args) {
+    using dir = tempDir("inspect-aggregate-members", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const prefix = String(dir).replaceAll("\\", "/") + "/";
+    const clean = text =>
+      text
+        .replaceAll("\\", "/")
+        .replaceAll(prefix, "")
+        .replace(/\nBun v.*\n$/, "");
+    return { stdout: clean(stdout), stderr: clean(stderr), exitCode };
+  }
+
+  // Drops the source previews. Keeps the indentation, the blank lines and the
+  // stack frames.
+  const withoutPreviews = text =>
+    text
+      .split("\n")
+      .filter(line => !/^ *\d+ \| /.test(line) && !/^ *\^$/.test(line))
+      .join("\n")
+      .trimEnd();
+
+  // One line for each name and message, property and marker, with its
+  // indentation.
+  const outline = text =>
+    withoutPreviews(text)
+      .split("\n")
+      .filter(line => line !== "" && !/^ +at /.test(line));
+
+  const fixture = `function member(message) {
+  const error = new Error(message);
+  return error;
+}
+function aggregate() {
+  const error = new AggregateError([member("first member"), member("second member")], "outer message");
+  error.code = "E_AGG";
+  return error;
+}
+const error = aggregate();
+switch (process.argv[2]) {
+  case "throw":
+    throw error;
+  case "reject":
+    Promise.reject(error);
+    break;
+  case "reportError":
+    reportError(error);
+    break;
+  case "console.error":
+    console.error(error);
+    break;
+  case "console.log":
+    console.log(error);
+    break;
+  case "Bun.inspect":
+    process.stdout.write(Bun.inspect(error));
+    break;
+  case "setTimeout":
+    setTimeout(() => {
+      throw error;
+    }, 1);
+    break;
+  case "setImmediate":
+    setImmediate(() => {
+      throw error;
+    });
+    break;
+  case "process.nextTick":
+    process.nextTick(() => {
+      throw error;
+    });
+    break;
+  case "queueMicrotask":
+    queueMicrotask(() => {
+      throw error;
+    });
+    break;
+}
+`;
+
+  test("an uncaught AggregateError prints itself, then each member under it", async () => {
+    const { stderr, exitCode } = await run({ "index.cjs": fixture }, "index.cjs", "throw");
+    expect(stderr.split("\n")).toEqual([
+      "1 | function member(message) {",
+      "2 |   const error = new Error(message);",
+      "3 |   return error;",
+      "4 | }",
+      "5 | function aggregate() {",
+      '6 |   const error = new AggregateError([member("first member"), member("second member")], "outer message");',
+      "                        ^",
+      "AggregateError: outer message",
+      ' code: "E_AGG"',
+      "",
+      "      at aggregate (index.cjs:6:21)",
+      "      at <anonymous> (index.cjs:10:15)",
+      "",
+      "  1 | function member(message) {",
+      "  2 |   const error = new Error(message);",
+      "                          ^",
+      "  error: first member",
+      "        at member (index.cjs:2:21)",
+      "        at aggregate (index.cjs:6:37)",
+      "        at <anonymous> (index.cjs:10:15)",
+      "",
+      "  1 | function member(message) {",
+      "  2 |   const error = new Error(message);",
+      "                          ^",
+      "  error: second member",
+      "        at member (index.cjs:2:21)",
+      "        at aggregate (index.cjs:6:61)",
+      "        at <anonymous> (index.cjs:10:15)",
+      "",
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  test.each([
+    ["reject", "stderr", 1],
+    ["reportError", "stderr", 1],
+    ["console.error", "stderr", 0],
+    ["console.log", "stdout", 0],
+    ["Bun.inspect", "stdout", 0],
+  ])("%s prints the same lines", async (sink, stream, expectedExitCode) => {
+    const result = await run({ "index.cjs": fixture }, "index.cjs", sink);
+    expect(withoutPreviews(result[stream]).split("\n")).toEqual([
+      "AggregateError: outer message",
+      ' code: "E_AGG"',
+      "",
+      "      at aggregate (index.cjs:6:21)",
+      "      at <anonymous> (index.cjs:10:15)",
+      "",
+      "  error: first member",
+      "        at member (index.cjs:2:21)",
+      "        at aggregate (index.cjs:6:37)",
+      "        at <anonymous> (index.cjs:10:15)",
+      "",
+      "  error: second member",
+      "        at member (index.cjs:2:21)",
+      "        at aggregate (index.cjs:6:61)",
+      "        at <anonymous> (index.cjs:10:15)",
+    ]);
+    expect(result.exitCode).toBe(expectedExitCode);
+  });
+
+  // An error that these callbacks throw reaches the printer inside a
+  // `JSC::Exception`. The printer shows no own property (`code`) and no
+  // `cause` of such an error, whatever its type.
+  test.each(["setTimeout", "setImmediate", "process.nextTick", "queueMicrotask"])(
+    "thrown from a %s callback, it prints itself, then its members",
+    async sink => {
+      const { stderr, exitCode } = await run({ "index.cjs": fixture }, "index.cjs", sink);
+      expect(outline(stderr)).toEqual([
+        "AggregateError: outer message",
+        "  error: first member",
+        "  error: second member",
+      ]);
+      expect(exitCode).toBe(1);
+    },
+  );
+
+  test("an object that is only named AggregateError has no members", async () => {
+    const { stderr, exitCode } = await run(
+      {
+        "index.cjs": `const thrown = { name: "AggregateError", message: "not an error", errors: [new Error("not a member")] };
+setTimeout(() => {
+  throw thrown;
+}, 1);
+`,
+      },
+      "index.cjs",
+    );
+    expect(outline(stderr)).toEqual(["AggregateError: not an error"]);
+    expect(exitCode).toBe(1);
+  });
+
+  // `Bun.inspect(value)`, one line for each name and message, property and
+  // marker.
+  const inspected = value => outline(Bun.inspect(value));
+
+  test("its cause follows its last member", () => {
+    const error = new AggregateError([new Error("member")], "outer", { cause: new Error("the cause") });
+    expect(inspected(error)).toEqual(["AggregateError: outer", "  error: member", "error: the cause"]);
+  });
+
+  test("a nested AggregateError indents its members once more", () => {
+    const inner = new AggregateError([new Error("leaf")], "inner");
+    expect(inspected(new AggregateError([inner, new Error("sibling")], "outer"))).toEqual([
+      "AggregateError: outer",
+      "  AggregateError: inner",
+      "    error: leaf",
+      "  error: sibling",
+    ]);
+  });
+
+  test("reached as a cause or as a property, it prints its members too", () => {
+    const wrapper = new Error("wrapper", { cause: new AggregateError([new Error("member")], "outer") });
+    expect(inspected(wrapper)).toEqual(["error: wrapper", "AggregateError: outer", "  error: member"]);
+
+    const holder = new Error("holder");
+    holder.related = new AggregateError([new Error("member")], "outer");
+    expect(inspected(holder)).toEqual(["error: holder", "AggregateError: outer", "  error: member"]);
+  });
+
+  test("members that are not errors print under it as they print on their own", () => {
+    expect(inspected(new AggregateError(["a string", { plain: 1 }, 42], "outer"))).toEqual([
+      "AggregateError: outer",
+      "  error: a string",
+      '  "a string"',
+      "  error",
+      "  {",
+      "    plain: 1,",
+      "  }",
+      "  error: 42",
+      "  42",
+    ]);
+  });
+
+  test("a member keeps its cause and its Error-valued properties", () => {
+    const member = new Error("member");
+    member.cause = new Error("assigned cause");
+    member.related = new Error("related");
+    expect(inspected(new AggregateError([member], "outer"))).toEqual([
+      "AggregateError: outer",
+      "  error: member",
+      "  error: assigned cause",
+      "  error: related",
+    ]);
+  });
+
+  test("a cycle prints [Circular], and the AggregateError once", () => {
+    const holdsItself = new AggregateError([], "outer");
+    holdsItself.errors.push(holdsItself, new Error("member"));
+    expect(inspected(holdsItself)).toEqual(["AggregateError: outer", "  [Circular]", "  error: member"]);
+
+    const a = new AggregateError([], "a");
+    const b = new AggregateError([a], "b");
+    a.errors.push(b);
+    expect(inspected(a)).toEqual(["AggregateError: a", "  AggregateError: b", "    [Circular]"]);
+
+    const causeOfMember = new AggregateError([], "outer");
+    causeOfMember.errors.push(new Error("member", { cause: causeOfMember }));
+    expect(inspected(causeOfMember)).toEqual(["AggregateError: outer", "  error: member", "   cause: [Circular],"]);
+  });
+
+  test("`errors` is read once, and an array is walked by index", () => {
+    let reads = 0;
+    const accessor = new AggregateError([], "outer");
+    Object.defineProperty(accessor, "errors", {
+      get() {
+        reads++;
+        return [new Error("from the getter")];
+      },
+    });
+    expect(inspected(accessor)).toEqual(["AggregateError: outer", "  error: from the getter"]);
+    expect(reads).toBe(1);
+
+    const error = new AggregateError([new Error("member")], "outer");
+    const iterator = Array.prototype[Symbol.iterator];
+    let iterations = 0;
+    Array.prototype[Symbol.iterator] = function () {
+      iterations++;
+      return iterator.call(this);
+    };
+    try {
+      expect(inspected(error)).toEqual(["AggregateError: outer", "  error: member"]);
+    } finally {
+      Array.prototype[Symbol.iterator] = iterator;
+    }
+    expect(iterations).toBe(0);
+  });
+
+  // Only an array has a length that bounds the walk.
+  test("an `errors` that is not an array is not walked", () => {
+    let steps = 0;
+    const iterable = new AggregateError([], "outer");
+    iterable.errors = (function* () {
+      for (const message of ["one", "two", "three"]) {
+        steps++;
+        yield new Error(message);
+      }
+    })();
+    expect(inspected(new Error("wrapper", { cause: iterable }))).toEqual(["error: wrapper", "AggregateError: outer"]);
+    expect(inspected(iterable)).toEqual(["AggregateError: outer"]);
+    expect(steps).toBe(0);
+
+    const inSet = new AggregateError([], "outer");
+    inSet.errors = new Set([new Error("in a set")]);
+    expect(inspected(inSet)).toEqual(["AggregateError: outer"]);
+  });
+
+  test("an own enumerable `errors` prints once", () => {
+    class Listed extends AggregateError {
+      name = "Listed";
+      errors = [new Error("from the field")];
+    }
+    expect(inspected(new Listed([], "outer"))).toEqual(["Listed: outer", "  error: from the field"]);
+
+    // What is not walked stays a property line.
+    class Fields extends AggregateError {
+      name = "Fields";
+      errors = { email: "not an address" };
+    }
+    expect(inspected(new Fields([], "outer"))).toEqual([
+      "Fields: outer",
+      " errors: {",
+      '  email: "not an address",',
+      "},",
+    ]);
+  });
+
+  test("an assigned cause that is an AggregateError prints once at every level", () => {
+    const mid = new Error("mid");
+    mid.cause = new AggregateError([new Error("member")], "assigned");
+    expect(inspected(new Error("top", { cause: mid }))).toEqual([
+      "error: top",
+      "error: mid",
+      "AggregateError: assigned",
+      "  error: member",
+    ]);
+
+    const third = new AggregateError([new Error("third member")], "third");
+    const second = new AggregateError([new Error("second member")], "second");
+    second.cause = third;
+    const first = new AggregateError([new Error("first member")], "first");
+    first.cause = second;
+    expect(inspected(new Error("top", { cause: first }))).toEqual([
+      "error: top",
+      "AggregateError: first",
+      "  error: first member",
+      "AggregateError: second",
+      "  error: second member",
+      "AggregateError: third",
+      "  error: third member",
+    ]);
+  });
+
+  test("one blank line separates the blocks, whatever the block before ends in", () => {
+    // Without frames, a block that has properties ends in a blank line.
+    const { stackTraceLimit } = Error;
+    Error.stackTraceLimit = 0;
+    let error;
+    try {
+      const first = Object.assign(new Error("first"), { code: "E_FIRST" });
+      const second = Object.assign(new Error("second"), { code: "E_SECOND" });
+      error = Object.assign(new AggregateError([first, second], "outer", { cause: new Error("the cause") }), {
+        code: "E_OUTER",
+      });
+    } finally {
+      Error.stackTraceLimit = stackTraceLimit;
+    }
+    expect(Bun.inspect(error).split("\n")).toEqual([
+      "AggregateError: outer",
+      ' code: "E_OUTER"',
+      "",
+      "  error: first",
+      '   code: "E_FIRST"',
+      "",
+      "  error: second",
+      '   code: "E_SECOND"',
+      "",
+      "error: the cause",
+      "",
+    ]);
+
+    // A cause chain that the depth cuts ends in a marker with no line end.
+    const chained = new Error("chained", { cause: new Error("cause", { cause: new Error("cut") }) });
+    const cut = Bun.inspect(new AggregateError([chained, new Error("next")], "outer"), { depth: 1 });
+    expect(
+      withoutPreviews(cut)
+        .split("\n")
+        .filter(line => !/^ +at /.test(line)),
+    ).toEqual(["AggregateError: outer", "", "  error: chained", "", "  [Error ...]", "", "  error: next"]);
+  });
+
+  test("the indentation stops at 32 levels", () => {
+    let error = new Error("leaf");
+    for (let i = 0; i < 40; i++) error = new AggregateError([error], "level");
+    const columns = Bun.inspect(error, { depth: Infinity })
+      .split("\n")
+      .filter(line => /^ *(AggregateError: level|error: leaf)$/.test(line))
+      .map(line => line.search(/\S/));
+    expect(columns).toEqual([...Array.from({ length: 32 }, (_, level) => level * 2), ...Array(9).fill(64)]);
+  });
+
+  test("Promise.any: the AggregateError has no message and no stack, and its members follow", async () => {
+    const { stderr, exitCode } = await run(
+      {
+        "index.cjs": `function reject(message) {
+  const error = new Error(message);
+  return Promise.reject(error);
+}
+Promise.any([reject("first rejection"), reject("second rejection")]);
+`,
+      },
+      "index.cjs",
+    );
+    expect(withoutPreviews(stderr).split("\n")).toEqual([
+      "AggregateError: ",
+      "",
+      "  error: first rejection",
+      "        at reject (index.cjs:2:21)",
+      "        at <anonymous> (index.cjs:5:14)",
+      "",
+      "  error: second rejection",
+      "        at reject (index.cjs:2:21)",
+      "        at <anonymous> (index.cjs:5:41)",
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  // Bun wraps the build errors of a module in an AggregateError when there are
+  // two or more. That list is all there is to say, so it stands in for the
+  // AggregateError, whose message only counts it.
+  describe("whose members are all build errors", () => {
+    const broken = { "broken.ts": "export function f() {\n  const v = {b: {},),r,};\n}\n" };
+    const buildErrors = [
+      'error: Expected identifier but found ")"',
+      "    at broken.ts:2:20",
+      "",
+      'error: Expected "}" but found "r"',
+      "    at broken.ts:2:22",
+      "",
+      'error: Expected identifier but found "}"',
+      "    at broken.ts:2:24",
+      "",
+      "error: This constant must be initialized",
+      "    at broken.ts:2:24",
+    ];
+    const indented = lines => lines.map(line => (line === "" ? "" : "  " + line));
+    const printed = text => withoutPreviews(text).split("\n");
+
+    test.each([
+      ["a module that does not build", 'import "./broken.ts";\n'],
+      ["a build that Bun.build rejects", 'await Bun.build({ entrypoints: ["./broken.ts"] });\n'],
+      [
+        "an AggregateError that user code made",
+        `const { logs } = await Bun.build({ entrypoints: ["./broken.ts"], throw: false });
+throw new AggregateError(logs, "the build failed");
+`,
+      ],
+      // The list is read from the storage of the array.
+      ["after Array.prototype is frozen", 'Object.freeze(Array.prototype);\nawait import("./broken.ts");\n'],
+    ])("%s prints the list only", async (_, source) => {
+      const { stderr, exitCode } = await run({ ...broken, "index.mjs": source }, "index.mjs");
+      expect(printed(stderr)).toEqual(buildErrors);
+      expect(exitCode).toBe(1);
+    });
+
+    test("a list of resolve errors prints the list only", async () => {
+      const { stderr, exitCode } = await run(
+        {
+          "unresolved.ts": 'import "./missing-a";\nimport "./missing-b";\n',
+          "index.mjs": 'await Bun.build({ entrypoints: ["./unresolved.ts"] });\n',
+        },
+        "index.mjs",
+      );
+      expect(printed(stderr)).toEqual([
+        'error: Could not resolve: "./missing-a"',
+        "    at unresolved.ts:1:8",
+        "",
+        'error: Could not resolve: "./missing-b"',
+        "    at unresolved.ts:2:8",
+      ]);
+      expect(exitCode).toBe(1);
+    });
+
+    test("with another member, the AggregateError prints and the build errors are members", async () => {
+      const { stderr, exitCode } = await run(
+        {
+          ...broken,
+          "index.mjs": `const { logs } = await Bun.build({ entrypoints: ["./broken.ts"], throw: false });
+throw new AggregateError([new Error("plain"), logs[0], logs[1]], "mixed");
+`,
+        },
+        "index.mjs",
+      );
+      expect(printed(stderr)).toEqual([
+        "AggregateError: mixed",
+        "      at index.mjs:2:11",
+        "",
+        "  error: plain",
+        "        at index.mjs:2:31",
+        "",
+        ...indented(buildErrors.slice(0, 5)),
+      ]);
+      expect(exitCode).toBe(1);
+    });
+
+    test("an index getter on `errors` runs once, and the AggregateError prints", async () => {
+      const { stdout, stderr, exitCode } = await run(
+        {
+          ...broken,
+          "index.mjs": `const { logs } = await Bun.build({ entrypoints: ["./broken.ts"], throw: false });
+let reads = 0;
+const errors = Object.defineProperty([logs[0]], 1, {
+  get() {
+    reads++;
+    return logs[1];
+  },
+});
+console.error(Object.assign(new AggregateError([], "listed"), { errors }));
+console.log(reads);
+`,
+        },
+        "index.mjs",
+      );
+      expect(printed(stderr)).toEqual([
+        "AggregateError: listed",
+        "      at index.mjs:9:33",
+        "",
+        ...indented(buildErrors.slice(0, 5)),
+      ]);
+      expect(stdout).toBe("1\n");
+      expect(exitCode).toBe(0);
+    });
+
+    // As a member, a list is at the column of the members, and a build error
+    // that stands alone is a member like any other.
+    test("as members of the AggregateError of Promise.any", async () => {
+      const { stderr, exitCode } = await run(
+        {
+          ...broken,
+          "one.ts": "export const oops = ;\n",
+          "index.mjs": 'await Promise.any([import("./broken.ts"), import("./one.ts")]);\n',
+        },
+        "index.mjs",
+      );
+      expect(printed(stderr)).toEqual([
+        "AggregateError: ",
+        "",
+        ...indented(buildErrors),
+        "",
+        "  error: Unexpected ;",
+        "      at one.ts:1:21",
+      ]);
+      expect(exitCode).toBe(1);
+    });
+
+    // The queue and a callback hand the AggregateError to the printer of one
+    // error, which prints it with its members.
+    test("reached as a cause, it prints itself with the list under it", async () => {
+      const { stderr, exitCode } = await run(
+        {
+          ...broken,
+          "index.mjs": `try {
+  await import("./broken.ts");
+} catch (error) {
+  throw new Error("wrapper", { cause: error });
+}
+`,
+        },
+        "index.mjs",
+      );
+      expect(printed(stderr)).toEqual([
+        "error: wrapper",
+        "      at index.mjs:4:13",
+        "",
+        'AggregateError: 4 errors building "broken.ts"',
+        "",
+        ...indented(buildErrors),
+      ]);
+      expect(exitCode).toBe(1);
+    });
+
+    test("thrown from a timer callback, it prints itself with the list under it", async () => {
+      const { stderr, exitCode } = await run(
+        { ...broken, "index.cjs": 'setTimeout(() => {\n  require("./broken.ts");\n}, 1);\n' },
+        "index.cjs",
+      );
+      expect(outline(stderr)).toEqual([
+        'AggregateError: 4 errors building "broken.ts"',
+        ...indented(buildErrors.filter(line => line.startsWith("error: "))),
+      ]);
+      expect(exitCode).toBe(1);
+    });
+  });
+
+  test("bun test and its JUnit report name the AggregateError first", async () => {
+    using dir = tempDir("inspect-aggregate-junit", {
+      "a.test.js": `import { test } from "bun:test";
+test("rejects", async () => {
+  await Promise.reject(new AggregateError([new Error("first member"), new TypeError("second member")], "outer message"));
+});
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "./a.test.js", "--reporter=junit", "--reporter-outfile=junit.xml"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const junit = await Bun.file(`${dir}/junit.xml`).text();
+    expect({
+      printed: outline(stderr).filter(line => /^ *\w*[Ee]rror: /.test(line)),
+      failure: /<failure type="[^"]*" message="[^"]*">/.exec(junit)?.[0],
+      reported: [...junit.matchAll(/(\w*Error): (\w+ \w+)&#10;/g)].map(match => match[1] + ": " + match[2]),
+    }).toEqual({
+      printed: ["AggregateError: outer message", "  error: first member", "  TypeError: second member"],
+      failure: '<failure type="AggregateError" message="outer message">',
+      reported: ["AggregateError: outer message", "Error: first member", "TypeError: second member"],
+    });
+    expect(exitCode).toBe(1);
+  });
+
+  // It has no message and no stack, so its members carry the report.
+  test("the AggregateError of Promise.any adds no annotation and no JUnit failure of its own", async () => {
+    using dir = tempDir("inspect-aggregate-any", {
+      "a.test.js": `import { test } from "bun:test";
+test("rejects", async () => {
+  await Promise.any([Promise.reject(new Error("first rejection")), Promise.reject(new TypeError("second rejection"))]);
+});
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "./a.test.js", "--reporter=junit", "--reporter-outfile=junit.xml"],
+      cwd: String(dir),
+      env: { ...bunEnv, GITHUB_ACTIONS: "true" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const junit = await Bun.file(`${dir}/junit.xml`).text();
+    expect({
+      printed: outline(stderr).filter(line => /^ *\w*[Ee]rror: /.test(line)),
+      annotations: stderr.split("\n").filter(line => line.startsWith("::error ")).length,
+      failure: /<failure type="[^"]*" message="[^"]*">/.exec(junit)?.[0],
+    }).toEqual({
+      printed: ["AggregateError: ", "  error: first rejection", "  TypeError: second rejection"],
+      annotations: 2,
+      failure: '<failure type="Error" message="first rejection">',
+    });
+    expect(exitCode).toBe(1);
+  });
+
+  test("node:net: a connect that fails at two addresses prints its AggregateError by name", async () => {
+    const { stderr, exitCode } = await run(
+      {
+        "index.cjs": `const net = require("node:net");
+const listener = net.createServer().listen(0, "127.0.0.1", () => {
+  const { port } = listener.address();
+  listener.close(() => {
+    const socket = net.connect({
+      port,
+      host: "two-addresses.invalid",
+      autoSelectFamily: true,
+      lookup: (hostname, options, callback) =>
+        callback(null, [
+          { address: "127.0.0.1", family: 4 },
+          { address: "127.0.0.2", family: 4 },
+        ]),
+    });
+    socket.on("error", error => console.error(error));
+  });
+});
+`,
+      },
+      "index.cjs",
+    );
+    const names = outline(stderr).filter(line => /^ *\w*[Ee]rror: /.test(line));
+    expect(names.map(line => line.replace(/connect \w+ (\S+):\d+$/, "connect $1"))).toEqual([
+      "AggregateError: ",
+      "  error: connect 127.0.0.1",
+      "  error: connect 127.0.0.2",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("the development error page of Bun.serve lists the AggregateError, then its members", async () => {
+    const { stdout, exitCode } = await run(
+      {
+        "index.cjs": `const server = Bun.serve({
+  port: 0,
+  hostname: "127.0.0.1",
+  development: true,
+  fetch() {
+    throw new AggregateError([new Error("first member"), new TypeError("second member")], "outer message");
+  },
+});
+fetch(server.url)
+  .then(response => response.text())
+  .then(html => {
+    const json = /<script id="__bunfallback" type="application\\/json">([^<]*)<\\/script>/.exec(html)[1];
+    console.log(JSON.stringify(JSON.parse(json).problems.exceptions.map(({ name, message }) => name + ": " + message)));
+    // The error that the server reported set the exit code.
+    process.exit(0);
+  });
+`,
+      },
+      "index.cjs",
+    );
+    expect(JSON.parse(stdout)).toEqual([
+      "AggregateError: outer message",
+      "Error: first member",
+      "TypeError: second member",
+    ]);
+    expect(exitCode).toBe(0);
   });
 });
 

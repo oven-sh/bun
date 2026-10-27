@@ -50,6 +50,30 @@ test.concurrent("--max-old-space-size does not abort workloads that fit under th
   expect(exitCode).toBe(0);
 });
 
+test.concurrent("--max-old-space-size does not count ArrayBuffer storage, like V8", async () => {
+  // V8's old-space cap excludes external memory, so Node completes this under
+  // a cap far below the retained backing stores. A forced full GC runs the
+  // observer while 192 MB of Uint8Array storage is live.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "--max-old-space-size=64",
+      "-e",
+      `const bufs = [];
+       for (let i = 0; i < 192; i++) bufs.push(new Uint8Array(1024 * 1024));
+       Bun.gc(true);
+       console.log("kept " + bufs.length + "MB");`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).not.toContain("JavaScript heap out of memory");
+  expect(stdout).toContain("kept 192MB");
+  expect(exitCode).toBe(0);
+});
+
 // Worker bootstrap alone takes ~5s under debug+ASAN (with or without the
 // flag), so this test needs more than the 5s default timeout.
 test.concurrent(

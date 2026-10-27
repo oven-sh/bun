@@ -59,13 +59,19 @@ public:
     {
         if (scope != JSC::CollectionScope::Full)
             return;
+        // sizeAfterLastFullCollection() is marked cells plus extraMemorySize()
+        // (ArrayBuffer backing stores and other reported external bytes). V8's
+        // old-space cap excludes external memory, so a Node-tuned value must
+        // not abort a Buffer-heavy script here; count the managed cells only.
         size_t sizeAfterGC = m_heap.sizeAfterLastFullCollection();
-        if (sizeAfterGC <= m_limit) [[likely]]
+        size_t extra = m_heap.extraMemorySize();
+        size_t heapSize = sizeAfterGC > extra ? sizeAfterGC - extra : 0;
+        if (heapSize <= m_limit) [[likely]]
             return;
         fprintf(stderr,
             "FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory\n"
             "(heap size %zu MB exceeded the limit of %zu MB set by --max-old-space-size)\n",
-            sizeAfterGC / (1024 * 1024), m_limit / (1024 * 1024));
+            heapSize / (1024 * 1024), m_limit / (1024 * 1024));
         fflush(stderr);
         // Node exits with 134 (128 + SIGABRT) here; _exit keeps it
         // deterministic and safe from any thread.

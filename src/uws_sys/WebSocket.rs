@@ -138,6 +138,9 @@ impl AnyWebSocket {
 
     /// Closes the connection with 1011 after failing to allocate a copy of an incoming message.
     pub fn fail_out_of_memory(self) {
+        if let Some(result) = with_stream!(self, |ws| StreamWebSocket::fail_out_of_memory(ws)) {
+            return result;
+        }
         let (ssl, ws) = self.h1_parts();
         c::uws_ws_fail_out_of_memory(ssl, ws)
     }
@@ -294,16 +297,25 @@ impl AnyWebSocket {
 
     /// Stops reading from the socket and suspends its idle timeout.
     pub fn pause(self) {
+        if let Some(result) = with_stream!(self, |ws| StreamWebSocket::pause(ws)) {
+            return result;
+        }
         let (ssl, ws) = self.h1_parts();
         c::uws_ws_pause(ssl, ws)
     }
 
     pub fn resume(self) {
+        if let Some(result) = with_stream!(self, |ws| StreamWebSocket::resume(ws)) {
+            return result;
+        }
         let (ssl, ws) = self.h1_parts();
         c::uws_ws_resume(ssl, ws)
     }
 
     pub fn is_paused(self) -> bool {
+        if let Some(result) = with_stream!(self, |ws| StreamWebSocket::is_paused(ws)) {
+            return result;
+        }
         let (ssl, ws) = self.h1_parts();
         c::uws_ws_is_paused(ssl, ws)
     }

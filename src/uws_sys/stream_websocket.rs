@@ -115,6 +115,8 @@ pub trait Transport {
         response: *mut Self::Response,
     ) -> Option<crate::SocketAddress>;
     unsafe fn response_end_stream(response: *mut Self::Response, close_connection: bool);
+    /// Stops granting the peer flow-control window, so it stops sending.
+    unsafe fn response_pause(response: *mut Self::Response);
     unsafe fn response_resume(response: *mut Self::Response);
     unsafe fn response_cancel(response: *mut Self::Response);
     unsafe fn response_cork(
@@ -161,6 +163,8 @@ pub struct WebSocket<T: Transport> {
     closing: bool,
     awaiting_pong: bool,
     close_emitted: bool,
+    /// `pause()` was called. The idle timeout is suspended until `resume()`.
+    paused: bool,
     dead: bool,
     active_calls: usize,
     free_pending: bool,
@@ -215,6 +219,7 @@ impl<T: Transport> WebSocket<T> {
             closing: false,
             awaiting_pong: false,
             close_emitted: false,
+            paused: false,
             dead: false,
             active_calls: 0,
             free_pending: false,
@@ -285,7 +290,11 @@ impl<T: Transport> WebSocket<T> {
     ///
     /// # Safety
     /// Same as [`activate`](Self::activate).
-    pub unsafe fn activate_with_pending(this: *mut Self, user_data: *mut c_void, pending: &[u8]) -> bool {
+    pub unsafe fn activate_with_pending(
+        this: *mut Self,
+        user_data: *mut c_void,
+        pending: &[u8],
+    ) -> bool {
         let Some(_guard) = Self::pin(this) else {
             return false;
         };
@@ -293,12 +302,77 @@ impl<T: Transport> WebSocket<T> {
             return false;
         }
         if let Some(response) = Self::response(this) {
-            unsafe { T::response_resume(response) };
+            // `open` may have paused the socket. The bytes that already arrived are still delivered.
+            if !unsafe { (*this).paused } {
+                unsafe { T::response_resume(response) };
+            }
             if !pending.is_empty() {
                 unsafe { Self::consume(this, pending) };
             }
         }
         true
+    }
+
+    /// Stops reading: the peer runs out of flow-control window and sees backpressure. Data it
+    /// already sent within the window is still delivered. The idle timeout is suspended.
+    pub fn pause(this: *mut Self) {
+        let Some(_guard) = Self::pin(this) else {
+            return;
+        };
+        if unsafe { (*this).dead || (*this).closing || (*this).paused } {
+            return;
+        }
+        unsafe { (*this).paused = true };
+        if let Some(response) = Self::response(this) {
+            unsafe {
+                T::response_pause(response);
+                T::response_websocket_timeout_config(response, 0, false);
+            }
+        }
+    }
+
+    pub fn resume(this: *mut Self) {
+        let Some(_guard) = Self::pin(this) else {
+            return;
+        };
+        if !unsafe { (*this).paused } {
+            return;
+        }
+        unsafe { (*this).paused = false };
+        Self::resume_reading(this);
+    }
+
+    pub fn is_paused(this: *mut Self) -> bool {
+        !this.is_null() && unsafe { (*this).paused && !(*this).dead }
+    }
+
+    fn resume_reading(this: *mut Self) {
+        let Some(response) = Self::response(this) else {
+            return;
+        };
+        unsafe {
+            T::response_resume(response);
+            if !(*this).closing {
+                if (*this).awaiting_pong {
+                    T::response_websocket_timeout_config(
+                        response,
+                        (*this).behavior.ping_timeout,
+                        false,
+                    );
+                } else {
+                    T::response_websocket_timeout_config(
+                        response,
+                        (*this).behavior.idle_timeout,
+                        true,
+                    );
+                }
+            }
+        }
+    }
+
+    /// Closes with 1011 after a received message couldn't be copied for its handler.
+    pub fn fail_out_of_memory(this: *mut Self) {
+        Self::fail(this, 1011);
     }
 
     #[inline]
@@ -558,6 +632,10 @@ impl<T: Transport> WebSocket<T> {
             return;
         }
         if let Some(response) = Self::response(this) {
+            // The peer's Close frame has to be read to finish the handshake.
+            if core::mem::take(unsafe { &mut (*this).paused }) {
+                unsafe { T::response_resume(response) };
+            }
             unsafe { T::response_websocket_timeout_refresh_on_write(response, false) };
         }
         let wire_message = &message[..message.len().min(123)];
@@ -672,7 +750,7 @@ impl<T: Transport> WebSocket<T> {
         };
         if length != 0 || fin {
             unsafe { (*this).awaiting_pong = false };
-            if !unsafe { (*this).closing } {
+            if !unsafe { (*this).closing || (*this).paused } {
                 if let Some(response) = Self::response(this) {
                     unsafe {
                         T::response_websocket_timeout_config(

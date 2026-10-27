@@ -4050,10 +4050,16 @@ impl AnyServer {
         any_server_dispatch!(self, |s| match tree {
             // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` via
             // `bun_opaque::opaque_deref_mut` (const-asserted ZST/align-1).
-            WebSocketTree::H1 => s.app.get().map_or(0, |app| bun_opaque::opaque_deref_mut(app)
-                .num_subscribers(topic)),
-            WebSocketTree::H2 => s.h2_app.get().map_or(0, |app| bun_opaque::opaque_deref_mut(app)
-                .num_subscribers(topic)),
+            WebSocketTree::H1 => s
+                .app
+                .get()
+                .map_or(0, |app| bun_opaque::opaque_deref_mut(app)
+                    .num_subscribers(topic)),
+            WebSocketTree::H2 => s
+                .h2_app
+                .get()
+                .map_or(0, |app| bun_opaque::opaque_deref_mut(app)
+                    .num_subscribers(topic)),
         })
     }
 

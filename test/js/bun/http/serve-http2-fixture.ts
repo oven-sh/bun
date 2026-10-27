@@ -91,6 +91,16 @@ const server = serve({
           }
         },
         message(ws, message) {
+          if ((ws.data as any)?.action === "pause-control") {
+            if (message === "pause") {
+              ws.pause();
+              ws.send(`paused:${ws.isPaused}`);
+            } else if (message === "resume") {
+              ws.resume();
+              ws.send(`resumed:${ws.isPaused}`);
+            }
+            return;
+          }
           if (typeof message === "string" && message.startsWith("subscribe:")) {
             const topic = message.slice("subscribe:".length);
             ws.subscribe(topic);
@@ -480,6 +490,9 @@ async function handler(req: Request, server: Bun.Server<undefined>): Promise<Res
       return new Response("upgrade failed", { status: 400 });
     case "/ws-control":
       if (server.upgrade(req, { data: { action: "report-control" } as any })) return;
+      return new Response("upgrade failed", { status: 400 });
+    case "/ws-pause":
+      if (server.upgrade(req, { data: { action: "pause-control" } as any })) return;
       return new Response("upgrade failed", { status: 400 });
     case "/late-read": {
       // Reads the body only once GET /release-late-read arrives.

@@ -142,7 +142,7 @@ impl Flags {
     #[inline]
     fn websocket(self) -> AnyWebSocket {
         // Ensure those other bits are zeroed out
-        let ptr = self.packed_websocket_ptr() as usize as *mut c_void;
+        let ptr = self.packed_websocket_ptr() as usize as *mut core::ffi::c_void;
         match self.transport() {
             TransportKind::H2 => AnyWebSocket::H2(ptr.cast::<bun_uws_sys::h2::WebSocket>()),
             TransportKind::H1Tls => {
@@ -364,7 +364,9 @@ impl ServerWebSocket {
 
     /// `None` once closed.
     pub(crate) fn us_socket(&self) -> Option<*mut bun_uws::us_socket_t> {
-        (!self.is_closed()).then(|| self.websocket().us_socket()).flatten()
+        (!self.is_closed())
+            .then(|| self.websocket().us_socket())
+            .flatten()
     }
 
     /// R-2 helper: read-modify-write the packed `Cell<Flags>` through `&self`.
@@ -1408,7 +1410,7 @@ impl WsPackageSocket {
         skip_utf8_validation: bool,
         compression: bool,
     ) -> WebSocketBehavior {
-        Wrap::<(), Self, SSL>::ws_package(
+        H1Wrap::<(), Self, SSL>::ws_package(
             max_payload_length,
             auto_pong,
             skip_utf8_validation,

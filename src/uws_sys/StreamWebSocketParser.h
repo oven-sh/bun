@@ -180,7 +180,7 @@ struct StreamWebSocketParser : PaddedWebSocketProtocol<true, StreamWebSocketPars
         if (!ld->zlibContext) {
             ld->zlibContext = new uWS::ZlibContext;
             ld->inflationStream = new uWS::InflationStream(uWS::CompressOptions::DEDICATED_DECOMPRESSOR);
-            ld->deflationStream = new uWS::DeflationStream(uWS::CompressOptions::DEDICATED_COMPRESSOR);
+            ld->deflationStream = new uWS::DeflationStream(uWS::CompressOptions(uWS::CompressOptions::DEDICATED_COMPRESSOR | uWS::CompressOptions::COMPRESSOR_NO_CONTEXT_TAKEOVER));
         }
     }
 
@@ -198,21 +198,16 @@ struct StreamWebSocketParser : PaddedWebSocketProtocol<true, StreamWebSocketPars
         auto [negotiated, compressionWindow, inflationWindow, responseHeader] = uWS::negotiateCompression(true, wantedCompressionWindow, wantedInflationWindow, offer);
         if (!negotiated) return;
 
-        if (compressionWindow == 0) {
-            compressionOptions = uWS::CompressOptions::SHARED_COMPRESSOR;
-        } else {
-            compressionOptions = (uWS::CompressOptions)((uint32_t)(compressionWindow << 4)
-                | (uint32_t)(compressionWindow - 7));
-            /* Preserve the 3 KB memLevel selection, whose windowBits value is
-             * otherwise indistinguishable from the 4 KB option. */
-            if ((wanted & uWS::CompressOptions::_COMPRESSOR_MASK) == uWS::CompressOptions::DEDICATED_COMPRESSOR_3KB) {
-                compressionOptions = uWS::CompressOptions::DEDICATED_COMPRESSOR_3KB;
-            }
-        }
-        if (inflationWindow == 0) {
-            compressionOptions = (uWS::CompressOptions)(compressionOptions | uWS::CompressOptions::SHARED_DECOMPRESSOR);
-        } else {
-            compressionOptions = (uWS::CompressOptions)(compressionOptions | (inflationWindow << 8));
+        /* Same mapping as HttpResponse::upgrade(). A negotiated window of 0 means no context takeover. */
+        compressionOptions = uWS::compressOptionsFor({
+            .serverMaxWindowBits = compressionWindow ? compressionWindow : 15,
+            .clientMaxWindowBits = inflationWindow ? inflationWindow : 15,
+            .serverNoContextTakeover = !compressionWindow,
+            .clientNoContextTakeover = !inflationWindow,
+        });
+        /* The 3KB and 4KB compressors share windowBits = 9 and differ only in memLevel */
+        if (compressionWindow && (wanted & uWS::CompressOptions::_COMPRESSOR_MASK) == uWS::CompressOptions::DEDICATED_COMPRESSOR_3KB) {
+            compressionOptions = uWS::CompressOptions((compressionOptions & ~uWS::CompressOptions::_COMPRESSOR_MASK) | uWS::CompressOptions::DEDICATED_COMPRESSOR_3KB);
         }
 
         ensureCompressionResources();
@@ -239,13 +234,12 @@ struct StreamWebSocketParser : PaddedWebSocketProtocol<true, StreamWebSocketPars
         return length > ((StreamWebSocketParser*)opaque)->maxPayloadLength;
     }
 
-    static void forceClose(uWS::WebSocketState<true>*, void* opaque, std::string_view reason = {})
+    static void failConnection(uWS::WebSocketState<true>*, void* opaque, const uWS::WebSocketFailure& failure, unsigned int /*detail*/ = 0)
     {
         StreamWebSocketParser* parser = (StreamWebSocketParser*)opaque;
         if (parser->failed) return;
         parser->failed = true;
-        int code = (reason == uWS::ERR_TOO_BIG_MESSAGE || reason == uWS::ERR_TOO_BIG_MESSAGE_INFLATION) ? 1009 : 1002;
-        parser->failHandler(parser->user, code);
+        parser->failHandler(parser->user, failure.closeCode);
     }
 
     static bool handleFragment(char* data, size_t length, unsigned int remainingBytes, int opCode, bool fin,
@@ -255,7 +249,7 @@ struct StreamWebSocketParser : PaddedWebSocketProtocol<true, StreamWebSocketPars
         if (opCode < 3 && parser->compressionStatus == COMPRESSED_FRAME) {
             size_t aggregate = parser->compressedFragments.size() + length;
             if (aggregate > parser->maxPayloadLength) {
-                forceClose(parser, opaque, uWS::ERR_TOO_BIG_MESSAGE);
+                failConnection(parser, opaque, uWS::FAIL_TOO_BIG_MESSAGE);
                 return true;
             }
             if (remainingBytes || !fin || !parser->compressedFragments.empty()) {
@@ -269,15 +263,14 @@ struct StreamWebSocketParser : PaddedWebSocketProtocol<true, StreamWebSocketPars
             }
 
             uWS::LoopData* ld = parser->loopData();
-            uWS::InflationResult inflated = parser->inflationStream
-                ? parser->inflationStream->inflateWithStatus(ld->zlibContext, { data, length }, parser->maxPayloadLength, false)
-                : ld->inflationStream->inflateWithStatus(ld->zlibContext, { data, length }, parser->maxPayloadLength, true);
+            uWS::InflateResult inflated = parser->inflationStream
+                ? parser->inflationStream->inflate(ld->zlibContext, { data, length }, parser->maxPayloadLength, false)
+                : ld->inflationStream->inflate(ld->zlibContext, { data, length }, parser->maxPayloadLength, true);
             parser->compressionStatus = ENABLED;
             parser->compressedFragments.clear();
-            if (inflated.status != uWS::InflationStatus::SUCCESS) {
+            if (inflated.closeCode) {
                 parser->failed = true;
-                parser->failHandler(parser->user,
-                    inflated.status == uWS::InflationStatus::TOO_LARGE ? 1009 : 1007);
+                parser->failHandler(parser->user, inflated.closeCode);
                 return true;
             }
             return parser->fragmentHandler(parser->user, inflated.data.data(), inflated.data.size(), 0, opCode, true);
@@ -326,7 +319,7 @@ struct StreamWebSocketParser : PaddedWebSocketProtocol<true, StreamWebSocketPars
                     *limitExceeded = true;
                     return 2;
                 }
-                std::string_view staged = candidate->deflate(ld->zlibContext, message, false);
+                std::string_view staged = candidate->deflate(ld->zlibContext, message);
                 size_t stagedFrameLength = uWS::protocol::messageFrameSize(staged.size());
                 size_t stagedBudgetLength = Transport::frameBudget(stagedFrameLength, staged.size());
                 if (stagedFrameLength < staged.size() || stagedBudgetLength < stagedFrameLength
@@ -347,8 +340,8 @@ struct StreamWebSocketParser : PaddedWebSocketProtocol<true, StreamWebSocketPars
         if (compress && !compressedTransactionally) {
             uWS::LoopData* ld = loopData();
             message = deflationStream
-                ? deflationStream->deflate(ld->zlibContext, message, false)
-                : ld->deflationStream->deflate(ld->zlibContext, message, true);
+                ? deflationStream->deflate(ld->zlibContext, message)
+                : ld->deflationStream->deflate(ld->zlibContext, message);
         }
 
         size_t frameLength = uWS::protocol::messageFrameSize(message.size());

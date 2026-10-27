@@ -1585,9 +1585,7 @@ where
             return Ok(0);
         }
 
-        Ok(JSValue::js_number(f64::from(
-            self.as_any_server().num_subscribers(topic.slice()),
-        )))
+        Ok(self.as_any_server().num_subscribers(topic.slice()))
     }
 
     pub(crate) fn publish(
@@ -1625,12 +1623,9 @@ where
             return Ok(JSValue::js_number(0.0));
         }
         // Mixed H1/H2 listeners deliver once to each topic tree and merge their send status.
-        let status = self.as_any_server().publish(
-            topic.slice(),
-            bytes.slice(),
-            payload.opcode(),
-            compress,
-        );
+        let status =
+            self.as_any_server()
+                .publish(topic.slice(), bytes.slice(), payload.opcode(), compress);
         Ok(send_status_to_js(status, bytes.len(), "publish"))
     }
 
@@ -1729,13 +1724,12 @@ where
         {
             // SAFETY: AnyRequestContext's tag matched this exact mux monomorphization.
             return match unsafe { (*upgrader_ptr).resp.get() } {
-                Some(uws::AnyResponse::H2(_)) => self
-                    .upgrade_stream::<uws_sys::h2::Response>(
-                        global,
-                        request_ptr,
-                        upgrader_ptr,
-                        options.to_js(),
-                    ),
+                Some(uws::AnyResponse::H2(_)) => self.upgrade_stream::<uws_sys::h2::Response>(
+                    global,
+                    request_ptr,
+                    upgrader_ptr,
+                    options.to_js(),
+                ),
                 _ => Ok(false),
             };
         }
@@ -1829,8 +1823,10 @@ where
             if options.headers.is_some() || cookies_to_write.is_some() {
                 resp.write_status(b"101 Switching Protocols");
                 if let Some(headers) = options.headers() {
-                    headers
-                        .to_uws_response_for_websocket_upgrade(ResponseKind::of(resp), resp.as_ptr());
+                    headers.to_uws_response_for_websocket_upgrade(
+                        ResponseKind::of(resp),
+                        resp.as_ptr(),
+                    );
                 }
                 if let Some(c) = cookies_to_write.as_mut()
                     && let Err(err) = c.write(
@@ -1997,7 +1993,8 @@ where
             headers.to_uws_response_for_websocket_upgrade(R::KIND, resp_ptr.cast::<c_void>());
         }
         if let Some(protocol) = selected_protocol {
-            bun_opaque::opaque_deref_mut(resp_ptr).write_header(b"sec-websocket-protocol", protocol);
+            bun_opaque::opaque_deref_mut(resp_ptr)
+                .write_header(b"sec-websocket-protocol", protocol);
         }
         if let Some(mut cookies) = upgrader.cookies.replace(None) {
             cookies.write(global, R::KIND, resp_ptr.cast::<c_void>())?;

@@ -2464,7 +2464,7 @@ test("RFC 8441 automatic ping uses the uWebSockets idle/grace timeout split", as
   raw.close();
 }, 22_000);
 
-test("RFC 8441 close callback keeps the full reason while the wire reason is bounded", async () => {
+test("RFC 8441 close reason is cut to 123 bytes on the wire and in the close callback, as on HTTP/1", async () => {
   await using closeFixture = await startFixture({ tls: secure });
   const raw = await RawH2.connect(closeFixture.port, secure);
   raw.headers(1, websocketHeaders("/ws-close-report"), F.END_HEADERS);
@@ -2480,10 +2480,10 @@ test("RFC 8441 close callback keeps the full reason while the wire reason is bou
 
   await Promise.race([
     (async () => {
-      while (!closeFixture.stderr().includes("WS-CLOSE-REASON:200:" + "x".repeat(200))) await Bun.sleep(10);
+      while (!closeFixture.stderr().includes("WS-CLOSE-REASON:123:" + "x".repeat(123))) await Bun.sleep(10);
     })(),
     Bun.sleep(2_000).then(() => {
-      throw new Error("close callback did not receive the complete application reason: " + closeFixture.stderr());
+      throw new Error("close callback did not receive the bounded reason: " + closeFixture.stderr());
     }),
   ]);
   raw.write(frame(T.DATA, F.END_STREAM, 1, wsClientFrame(8, Buffer.from([0x03, 0xe8]))));
@@ -2622,6 +2622,44 @@ test("RFC 8441 keeps WebSocket fragmentation and control frames stream-local", a
 
   raw.write(frame(T.DATA, F.END_STREAM, 1, wsClientFrame(8, Buffer.from([0x03, 0xe8]))));
   await raw.waitFor(f => f.type === T.DATA && f.streamId === 1 && (f.flags & F.END_STREAM) !== 0);
+  raw.close();
+});
+
+test("RFC 8441 pause() withholds stream flow-control credit until resume()", async () => {
+  const raw = await RawH2.connect(fx.port, secure);
+  raw.headers(1, websocketHeaders("/ws-pause"), F.END_HEADERS);
+  expect(decodeStatus((await raw.waitFor(f => f.type === T.HEADERS && f.streamId === 1)).payload)).toBe(200);
+  const waitForText = (expected: string) =>
+    raw.waitFor(
+      f =>
+        f.type === T.DATA &&
+        f.streamId === 1 &&
+        f.payload[0] === 0x81 &&
+        wsServerFrame(f.payload).payload.toString() === expected,
+    );
+
+  const pause = wsClientFrame(1, "pause");
+  raw.write(frame(T.DATA, 0, 1, pause));
+  await waitForText("paused:true");
+  const pausedAt = raw.frames.length;
+
+  // More than half of the 1 MiB stream window, which would normally be credited back while it arrives.
+  let sent = pause.length;
+  const chunk = wsClientFrame(2, Buffer.alloc(16_000, 0x61));
+  for (let i = 0; i < 40; i++) {
+    raw.write(frame(T.DATA, 0, 1, chunk));
+    sent += chunk.length;
+  }
+  const resume = wsClientFrame(1, "resume");
+  raw.write(frame(T.DATA, 0, 1, resume));
+  sent += resume.length;
+  await waitForText("resumed:false");
+
+  const credits = raw.frames
+    .slice(pausedAt)
+    .filter(f => f.type === T.WINDOW_UPDATE && f.streamId === 1)
+    .map(f => f.payload.readUInt32BE(0));
+  expect(credits).toEqual([sent]);
   raw.close();
 });
 

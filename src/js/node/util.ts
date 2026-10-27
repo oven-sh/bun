@@ -629,10 +629,11 @@ function convertProcessSignalToExitCode(signalCode) {
   return 128 + signals[signalCode];
 }
 
-let lazyAbortedRegistry: FinalizationRegistry<{
+type AbortedRegistration = {
   ref: WeakRef<AbortSignal>;
   listener: (...args: any[]) => void;
-}>;
+};
+let lazyAbortedRegistry: FinalizationRegistry<AbortedRegistration>;
 function onAbortedCallback(promise: Promise<void>) {
   lazyAbortedRegistry.unregister(promise);
 
@@ -645,7 +646,14 @@ function createAbortedListener(promise: Promise<void>) {
   return () => onAbortedCallback(promise);
 }
 
-function aborted(signal: AbortSignal, resource: object) {
+// Its own function too: the registry keeps this callback until exit, so it must not close over a call of aborted().
+function onAbortedResourceCollected({ ref, listener }: AbortedRegistration) {
+  const signal = ref.deref();
+  if (signal) signal.removeEventListener("abort", listener);
+}
+
+// `async` as in Node's lib/internal/abort_controller.js: every error rejects, and the promise settles on Node's tick.
+async function aborted(signal: AbortSignal, resource: object) {
   if (!$isObject(signal) || !(signal instanceof AbortSignal)) {
     throw $ERR_INVALID_ARG_TYPE("signal", "AbortSignal", signal);
   }
@@ -655,6 +663,7 @@ function aborted(signal: AbortSignal, resource: object) {
   }
 
   if (signal.aborted) {
+    // Not a bare `return`: Node returns PromiseResolve() here, which settles two ticks later.
     return Promise.$resolve();
   }
 
@@ -662,12 +671,7 @@ function aborted(signal: AbortSignal, resource: object) {
   const listener = createAbortedListener(promise);
   signal.addEventListener("abort", listener, resistStopPropagation({ __proto__: null, once: true }));
 
-  if (!lazyAbortedRegistry) {
-    lazyAbortedRegistry = new FinalizationRegistry(({ ref, listener }) => {
-      const signal = ref.deref();
-      if (signal) signal.removeEventListener("abort", listener);
-    });
-  }
+  lazyAbortedRegistry ??= new FinalizationRegistry(onAbortedResourceCollected);
 
   // When the resource is garbage collected, clear the listener from the
   // AbortSignal so we do not cause the AbortSignal itself to leak (AbortSignal

@@ -1180,7 +1180,7 @@ impl<'a> Executor<'_, 'a> {
 
     /// `ZSTD_decompressSequences_body` and `ZSTD_decompressSequences_bodySplitLitBuffer`
     fn run(&mut self, seq_state: &mut SeqState<'_>, nb_seq: usize) -> Result<()> {
-        const BATCH: usize = 32;
+        const BATCH: usize = 128;
         // After 3 that only stand for the last offsets.
         let mut batch = [RawSequence::default(); 3 + BATCH];
         let mut remaining = nb_seq;

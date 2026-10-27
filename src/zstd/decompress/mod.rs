@@ -2,6 +2,7 @@
 
 mod block;
 mod huf;
+mod huf_exact;
 mod seq_table;
 
 use std::borrow::Cow;

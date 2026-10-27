@@ -747,9 +747,10 @@ is collected, make the class [`refCounted`](#refcounted).
 | Key              | What it declares                                                                               |
 | ---------------- | ---------------------------------------------------------------------------------------------- |
 | `rustPath`       | the struct                                                                                     |
+| `extends`        | the class [inherits from another](#extends), whose struct it has instead of a `rustPath`       |
 | `refCounted`     | the struct is a separate allocation that [can outlive the object](#refcounted)                 |
 | `finalize`       | with `refCounted`: call `fn finalize(&self)` when the object is collected                      |
-| `final`          | with `refCounted`: `false` lets hand-written C++ subclass `JSName`                             |
+| `final`          | `false` lets a class with `extends`, or hand-written C++, subclass `JSName`                    |
 | `overridesToJS`  | with `refCounted`: `impl JsClass` is not generated; write it by hand with `js_Name::to_js`     |
 | `forBind`        | the receiver of every member is [a function bound to an instance](#forbind)                    |
 | `rustTraits`     | traits to bring into scope, for members that are trait methods                                 |
@@ -797,7 +798,7 @@ A property of `proto` is one of these.
 | `{ getter: T, capability, throws, passThis }` | an accessor; with `setter` it can be assigned                                              |
 | `{ getter: T, cache: true \| "field", .. }`   | an accessor that returns an [internal field](#internalfields)                              |
 | `{ internalField: "field", setter }`          | an accessor that reads the field, and with `setter` stores any value, without calling Rust |
-| `{ builtin: true, length }`                   | the export of that name in `src/js/builtins/<class name>.ts`                               |
+| `{ builtin: true, length }`                   | the export of that name in `src/js/builtins/<class name>.ts`, without the `@@` of a symbol |
 | `{ constant: 3 }`                             | a read-only integer, like a WebIDL `const`                                                 |
 | `[{ rustName, args, .. }, ..]`                | a native function with [overloads](#overloads)                                             |
 
@@ -814,7 +815,8 @@ or a constant override the class's.
 A key that starts with `@@` is a well-known symbol: `"@@dispose"` defines `prototype[Symbol.dispose]`. The function is
 writable, configurable and not enumerable, like the built-in ones, whatever the class says. Its `name` is
 `[Symbol.dispose]` and its Rust function is `dispose`. `name` overrides the function's `name`: Node's
-`Timeout.prototype[Symbol.dispose].name` is `""`. Only a function can have an `@@` key.
+`Timeout.prototype[Symbol.dispose].name` is `""`. Only a function can have an `@@` key: a native one or a builtin, which
+names itself with `$overriddenName`. `"@@inspectCustom"` is `Symbol.for("nodejs.util.inspect.custom")`.
 
 A native function throws `ERR_INVALID_THIS` when `this` is not an instance. With `invalidThis: "undefined"` it returns
 `undefined` instead, as some of Node's methods do.
@@ -832,6 +834,42 @@ table of the object that has the class:
 Rust gets it with `js_Glob::get_constructor(global)`. In C++, the generated header gives the structure,
 prototype and constructor: `Bun::Bindgen::structureForClass<JSGlob>(globalObject)`, `prototypeForClass<JSGlob>` and
 `constructorForClass<JSGlob>`. `createWrapper<JSBlob>(globalObject, wrapped)` is a new instance of a `refCounted` class.
+
+### `extends`
+
+```ts
+export const Histogram = b.class({
+  rustPath: "crate::node::histogram::Histogram",
+  final: false,
+  construct: "illegal",
+  proto: { count: { getter: b.u64 } },
+});
+export const RecordableHistogram = b.class({
+  extends: Histogram,
+  construct: "illegal",
+  proto: { record: { args: { val: b.u64 } } },
+});
+```
+
+One class inherits from another as one WebIDL interface does:
+
+- `JSRecordableHistogram` is a C++ subclass of `JSHistogram`. A `RecordableHistogram` is therefore a `Histogram` wherever
+  one is taken: as `this`, as an argument, for `from_js` and for `dynamicDowncast`. A `Histogram` is not a
+  `RecordableHistogram`, and `record` throws `ERR_INVALID_THIS` for one.
+- `RecordableHistogram.prototype` inherits from `Histogram.prototype`, and `RecordableHistogram` from `Histogram`.
+- The subclass adds no fields. Its struct is the base's, so `record` is a method of `Histogram` in Rust, and no two
+  members of a class and its subclasses have the same Rust function unless a `rustName` says so.
+  `js_RecordableHistogram::from_js(value)` is the struct if `value` is an instance of the subclass.
+
+`js_RecordableHistogram::create(heap, payload)` makes an instance, and `create_wrapper(global, payload)` does for code
+that has no capability. `payload.into_js(heap)` makes an instance of the base.
+
+The base has `final: false` and is not `refCounted`. The subclass declares `proto`, `construct: "illegal"`, `final`,
+`rustTraits` and the three attributes, which it does not inherit. The rest is the base's: how it is created and
+collected, its internal fields, which no member of the subclass names, and the memory it reports.
+
+An instance of the subclass is of both [kinds](#unions-and-kinds), so a union or the overloads of a function take the
+base and not both.
 
 ### The receiver
 
@@ -1002,6 +1040,9 @@ The GC counts the object. Two keys report the extra memory the struct owns. With
 A marking thread calls `estimated_size` while JavaScript runs. It reads only fields that do not
 change once the object is created, or atomics: if the size changes, keep it in an atomic field, like
 `Blob::m_memoryCost` in WebKit. `memory_cost` runs on the JS thread and can read anything.
+
+When the size grows, the member that grew it calls `heap.report_extra_memory(this, grown)`, like
+`JSWebAssemblyMemory::growSuccessCallback` in WebKit. Objects that grow without saying so pile up once they are dropped.
 
 ### `forBind`
 

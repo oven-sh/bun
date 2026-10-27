@@ -12,8 +12,9 @@ import {
   isWindows,
   tempDir,
   tempDirWithFiles,
+  unprivilegedSpawnOptions,
 } from "harness";
-import { EventEmitter } from "node:events";
+import { EventEmitter, getEventListeners } from "node:events";
 import fs, { FSWatcher } from "node:fs";
 import path from "path";
 
@@ -787,48 +788,6 @@ describe("fs.watch", () => {
         expect(result.closed).toBe(false);
         expect(result.openDelivered).toBe(true);
         expect(exitCode).toBe(0);
-
-        // fs.promises.watch wraps the native watcher in an async iterator with
-        // no user-accessible handle. A subtree-registration error that keeps
-        // the native watcher open must not leave it refing the event loop
-        // after the iterator throws, or the process hangs at exit.
-        const promisesFixture = `
-          const fs = require("fs");
-          const root = process.env.WATCH_ROOT;
-          (async () => {
-            let caught = null;
-            try {
-              for await (const e of fs.promises.watch(root, { recursive: true })) break;
-            } catch (e) {
-              caught = { code: e.code, syscall: e.syscall, path: e.path };
-            }
-            console.log(JSON.stringify({ caught }));
-          })();
-          setTimeout(() => { console.log(JSON.stringify({ hung: true })); process.exit(1); }, 4000).unref();
-        `;
-        await using proc2 = Bun.spawn({
-          cmd: [bunExe(), "-e", promisesFixture],
-          env: { ...bunEnv, WATCH_ROOT: root },
-          cwd: "/",
-          uid: NOBODY,
-          gid: NOBODY,
-          stdout: "pipe",
-          stderr: "pipe",
-        });
-        const [stdout2, stderr2, exitCode2] = await Promise.all([
-          proc2.stdout.text(),
-          proc2.stderr.text(),
-          proc2.exited,
-        ]);
-        expect(stderr2).toBe("");
-        const result2 = JSON.parse(stdout2.trim());
-        expect(result2.hung).toBeUndefined();
-        expect(result2.caught).toEqual({
-          code: "EACCES",
-          syscall: "watch",
-          path: path.join(root, "locked"),
-        });
-        expect(exitCode2).toBe(0);
       } finally {
         fs.chmodSync(path.join(root, "locked"), 0o755);
         for (const [p, mode] of ancestors) fs.chmodSync(p, mode);
@@ -1289,6 +1248,316 @@ describe("fs.promises.watch", () => {
       }
     })();
     expect(promise).resolves.toBe("change");
+  });
+
+  test("async iterator has return() and throw() that return Promises", async () => {
+    const root = path.join(testDir, "iter-shape-dir");
+    fs.mkdirSync(root, { recursive: true });
+    const it = fs.promises.watch(root)[Symbol.asyncIterator]();
+    expect(typeof it.return).toBe("function");
+    expect(typeof it.throw).toBe("function");
+    const ret = it.return();
+    expect(ret).toBeInstanceOf(Promise);
+    expect(await ret).toEqual({ value: undefined, done: true });
+    expect(await it.next()).toEqual({ value: undefined, done: true });
+
+    const it2 = fs.promises.watch(root)[Symbol.asyncIterator]();
+    const err = new Error("boom");
+    const thrown = it2.throw(err);
+    expect(thrown).toBeInstanceOf(Promise);
+    await expect(thrown).rejects.toBe(err);
+    expect(await it2.next()).toEqual({ value: undefined, done: true });
+  });
+
+  test("concurrent next() calls both resolve", async () => {
+    const root = path.join(testDir, "concurrent-next-dir");
+    fs.mkdirSync(root, { recursive: true });
+    const ac = new AbortController();
+    const it = fs.promises.watch(root, { signal: ac.signal })[Symbol.asyncIterator]();
+    try {
+      // Two pending next() calls issued before any event fires. The previous
+      // hand-rolled iterator had a single resolver slot, so p2 overwrote p1's
+      // resolver and p1 would never settle (hangs until the test timeout).
+      const p1 = it.next();
+      const p2 = it.next();
+      const interval = repeat(() => {
+        fs.writeFileSync(path.join(root, "a.txt"), "1");
+        fs.writeFileSync(path.join(root, "b.txt"), "2");
+      });
+      const [r1, r2] = await Promise.all([p1, p2]).finally(() => clearInterval(interval));
+      expect(r1.done).toBe(false);
+      expect(["rename", "change"]).toContain(r1.value.eventType);
+      expect(r2.done).toBe(false);
+      expect(["rename", "change"]).toContain(r2.value.eventType);
+    } finally {
+      ac.abort();
+      await it.return();
+    }
+  });
+
+  // The first next() starts the watcher, and a watcher can start late: write until an event arrives.
+  async function firstEvent(it: AsyncIterator<any>, root: string) {
+    let n = 0;
+    const interval = repeat(() => fs.writeFileSync(path.join(root, "first.txt"), String(n++)));
+    try {
+      return await it.next();
+    } finally {
+      clearInterval(interval);
+    }
+  }
+
+  // Released bun passes this too. A watcher can hold more events than the one its
+  // consumer has, and an abort must not give them to the body.
+  test("for await: a body that aborts on an event is not run again", async () => {
+    const rounds = 20;
+    const bodyRuns = await Promise.all(
+      Array.from({ length: rounds }, async () => {
+        using dir = tempDir("fsp-watch-abort-in-body", { a: "" });
+        const root = String(dir);
+        const ac = new AbortController();
+        let runs = 0;
+        let renames = 0;
+        // One rename is two events from one system call.
+        const interval = repeat(() => {
+          const [from, to] = renames++ % 2 ? ["b", "a"] : ["a", "b"];
+          fs.renameSync(path.join(root, from), path.join(root, to));
+        });
+        try {
+          await expect(
+            (async () => {
+              for await (const _ of fs.promises.watch(root, { signal: ac.signal })) {
+                runs++;
+                clearInterval(interval);
+                ac.abort();
+              }
+            })(),
+          ).rejects.toMatchObject({ name: "AbortError", code: "ABORT_ERR" });
+        } finally {
+          clearInterval(interval);
+        }
+        return runs;
+      }),
+    );
+    expect(bodyRuns).toEqual(Array(rounds).fill(1));
+  });
+
+  test.each([
+    ["return()", (it: AsyncGenerator<any>) => it.return(undefined)],
+    [
+      "throw()",
+      async (it: AsyncGenerator<any>) => {
+        const error = new Error("stop");
+        await expect(it.throw(error)).rejects.toBe(error);
+      },
+    ],
+    ["Symbol.asyncDispose", (it: AsyncGenerator<any>) => it[Symbol.asyncDispose]()],
+    [
+      "break",
+      async (it: AsyncGenerator<any>, root: string) => {
+        let n = 0;
+        const interval = repeat(() => fs.writeFileSync(path.join(root, "second.txt"), String(n++)));
+        try {
+          for await (const _ of it) break;
+        } finally {
+          clearInterval(interval);
+        }
+      },
+    ],
+  ])("%s ends the iterator and removes its abort listener", async (_name, exit) => {
+    using dir = tempDir("fsp-watch-exit", {});
+    const root = String(dir);
+    const ac = new AbortController();
+    const listeners = () => getEventListeners(ac.signal, "abort").length;
+    const it = fs.promises.watch(root, { signal: ac.signal })[Symbol.asyncIterator]() as AsyncGenerator<any>;
+    try {
+      // Nothing is set up before the first next().
+      expect(listeners()).toBe(0);
+      expect((await firstEvent(it, root)).done).toBe(false);
+      expect(listeners()).toBe(1);
+      await exit(it, root);
+      expect(listeners()).toBe(0);
+      expect(await it.next()).toEqual({ value: undefined, done: true });
+    } finally {
+      ac.abort();
+    }
+  });
+
+  test("break, return(), throw() and await using each close the watcher", async () => {
+    using dir = tempDir("fsp-watch-exits", {
+      "exits.mjs": `
+        import { watch } from "node:fs/promises";
+        import { mkdirSync, writeFileSync } from "node:fs";
+        import { join } from "node:path";
+
+        // Writes into the watched directory until the exit is done, so that
+        // every next() gets an event on every platform.
+        async function withWatcher(name, exit) {
+          const dir = join(import.meta.dirname, name);
+          mkdirSync(dir);
+          let n = 0;
+          const interval = setInterval(() => writeFileSync(join(dir, "f.txt"), String(n++)), 20);
+          try {
+            await exit(watch(dir));
+          } finally {
+            clearInterval(interval);
+          }
+        }
+
+        await withWatcher("break", async watcher => {
+          for await (const event of watcher) break;
+        });
+        await withWatcher("return", async watcher => {
+          await watcher.next();
+          await watcher.return();
+        });
+        const error = new Error("stop");
+        await withWatcher("throw", async watcher => {
+          await watcher.next();
+          await watcher.throw(error).then(
+            () => { throw new Error("throw() did not reject"); },
+            e => { if (e !== error) throw e; },
+          );
+        });
+        await withWatcher("using", async watcher => {
+          await watcher.next();
+          await using disposed = watcher;
+        });
+        // An open watcher keeps the process alive: the test then times out.
+        console.log("closed");
+      `,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "exits.mjs"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr }).toEqual({ stdout: "closed\n", stderr: "" });
+    expect(exitCode).toBe(0);
+  });
+
+  test("return() waits behind the pending next() calls, and one event settles one call", async () => {
+    using dir = tempDir("fsp-watch-return-queued", {});
+    const root = String(dir);
+    const it = fs.promises.watch(root)[Symbol.asyncIterator]();
+    const settled: string[] = [];
+    const calls = [
+      it.next().then(result => settled.push(`next: done ${result.done}`)),
+      it.next().then(result => settled.push(`next: done ${result.done}`)),
+      it.return!().then(result => settled.push(`return: done ${result.done}`)),
+    ];
+    // A watcher can start late and miss the first directories, so the names are not compared.
+    let n = 0;
+    const interval = repeat(() => fs.mkdirSync(path.join(root, `d${n++}`)));
+    try {
+      await Promise.all(calls);
+    } finally {
+      clearInterval(interval);
+    }
+    expect(settled).toEqual(["next: done false", "next: done false", "return: done true"]);
+  });
+
+  test.each([
+    ["a filename that is not a string", () => fs.promises.watch(12 as any)],
+    ["a signal that is not an AbortSignal", () => fs.promises.watch(testDir, { signal: "no" as any })],
+    ["an ignore option of the wrong type", () => fs.promises.watch(testDir, { ignore: 5 as any })],
+  ])("%s rejects the first next(), not the call", async (_name, call) => {
+    const it = call()[Symbol.asyncIterator]();
+    await expect(it.next()).rejects.toMatchObject({ code: "ERR_INVALID_ARG_TYPE" });
+    expect(await it.next()).toEqual({ value: undefined, done: true });
+  });
+
+  test.skipIf(!isLinux)("a watcher error rejects next(), and then the process can exit", async () => {
+    using dir = tempDir("fsp-watch-subtree-error", {
+      "open/.keep": "",
+      "locked/.keep": "",
+    });
+    const root = fs.realpathSync(String(dir));
+    // inotify cannot watch a directory that denies read, so the recursive
+    // watcher reports EACCES for it and stays open.
+    fs.chmodSync(path.join(root, "locked"), 0o000);
+    try {
+      using unprivileged = unprivilegedSpawnOptions(root);
+      // fs.promises.watch wraps the native watcher in an async iterator with
+      // no user-accessible handle. A subtree-registration error that keeps
+      // the native watcher open must not leave it refing the event loop
+      // after the iterator throws, or the process hangs at exit.
+      const promisesFixture = `
+        const fs = require("fs");
+        const root = process.env.WATCH_ROOT;
+        (async () => {
+          let caught = null;
+          try {
+            for await (const e of fs.promises.watch(root, { recursive: true })) break;
+          } catch (e) {
+            caught = { code: e.code, syscall: e.syscall, path: e.path };
+          }
+          console.log(JSON.stringify({ caught }));
+        })();
+        setTimeout(() => { console.log(JSON.stringify({ hung: true })); process.exit(1); }, 4000).unref();
+      `;
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", promisesFixture],
+        env: { ...bunEnv, WATCH_ROOT: root },
+        cwd: "/",
+        ...unprivileged,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      const result = JSON.parse(stdout.trim());
+      expect(result.hung).toBeUndefined();
+      expect(result.caught).toEqual({
+        code: "EACCES",
+        syscall: "watch",
+        path: path.join(root, "locked"),
+      });
+      expect(exitCode).toBe(0);
+    } finally {
+      fs.chmodSync(path.join(root, "locked"), 0o755);
+    }
+  });
+
+  test("never-iterated watch() does not keep the process alive", async () => {
+    const root = path.join(testDir, "never-iterated-dir");
+    fs.mkdirSync(root, { recursive: true });
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const it = require("node:fs").promises.watch(${JSON.stringify(root)});` +
+          `console.log(typeof it[Symbol.asyncIterator]);`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("function\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("ENOENT on a missing path surfaces on first iteration, not synchronously", async () => {
+    const missing = path.join(testDir, "does-not-exist-" + Date.now());
+    // The generator body (and the underlying fs.watch call) runs on the first
+    // next(), so the ENOENT must reject the first iteration rather than throw
+    // out of watch() itself. This is the shape node documents: a try wrapping
+    // the for-await catches it.
+    let watcher;
+    expect(() => {
+      watcher = fs.promises.watch(missing);
+    }).not.toThrow();
+    let caught: any;
+    try {
+      for await (const _ of watcher!) {
+      }
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toMatchObject({ code: "ENOENT" });
   });
 
   test("yields events with a null prototype", async () => {

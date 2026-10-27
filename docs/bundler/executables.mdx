@@ -678,7 +678,7 @@ When you add multiple entrypoints to a standalone executable, Bun bundles each o
 
 We may eventually detect statically-known paths in `new Worker(path)` and bundle them automatically. For now, you need to list the worker file as an entrypoint, as in the earlier example.
 
-If you use a relative path to a file not included in the standalone executable, Bun loads that path from disk relative to the process's current working directory, and errors if it doesn't exist.
+If you use a relative path to a file not included in the standalone executable, Bun loads that path from disk relative to the process's current working directory, and errors if it doesn't exist. With [`--disallow-code-generation-from-strings=strict`](/runtime/code-generation-from-strings#files-on-disk-are-not-part-of-the-program), Bun refuses it.
 
 ---
 

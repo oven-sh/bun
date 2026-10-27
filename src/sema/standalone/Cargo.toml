@@ -18,7 +18,7 @@ bun_js_parser.workspace = true
 bun_threading.workspace = true
 bun_alloc.workspace = true
 bun_core.workspace = true
-bun_paths.workspace = true
+bun_sys.workspace = true
 libc.workspace = true
 bstr.workspace = true
 

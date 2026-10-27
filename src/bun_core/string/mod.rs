@@ -47,8 +47,8 @@ pub use wtf::{WTFStringImpl, WTFStringImplExt, WTFStringImplStruct};
 // `String` — 6-variant tagged WTFString-or-EncodedSlice, 24 bytes on 64-bit.
 //
 // - `String`: OWNS one ref when WTF-backed. Not `Copy`. `Drop` = `deref()`,
-//   `Clone` = `ref()`; for the `EncodedSlice`/`Static`/`Empty`/`Dead`/
-//   `OutOfMemory` tags both are a tag compare and nothing else. Every +1
+//   `Clone` = `ref()`; for the `Static`/`Empty`/`Dead`/`OutOfMemory` tags
+//   both are a tag compare and nothing else. Every +1
 //   producer returns this —
 //   including `extern "C"` declarations: a by-value `String` in an FFI
 //   signature means ownership crosses (C++ `Bun::toStringRef` return, or a
@@ -170,8 +170,7 @@ impl String {
         self.tag
     }
 
-    /// Wrap `slice` under `tag`, erasing its lifetime: the caller keeps the
-    /// bytes alive for the `String`'s lifetime.
+    /// Wrap `slice` under `tag`, erasing its lifetime. Only for [`Self::static_`] and for [`StringView`] and [`StringOrView`], which keep the lifetime.
     #[inline(always)]
     fn wrap(tag: Tag, slice: EncodedSlice<'_>) -> Self {
         Self {
@@ -206,21 +205,6 @@ impl String {
         unsafe { &*self.value.wtf_string_impl }
     }
 
-    /// Borrow `s` (no copy, no refcount). Caller must keep `s` alive for the
-    /// String's lifetime.
-    #[inline]
-    pub fn borrow_utf8(s: &[u8]) -> Self {
-        Self::wrap(Tag::EncodedSlice, EncodedSlice::utf8(s))
-    }
-    #[inline]
-    pub fn borrow_utf16(s: &[u16]) -> Self {
-        Self::wrap(Tag::EncodedSlice, EncodedSlice::utf16(s))
-    }
-    #[inline]
-    pub fn ascii(s: &[u8]) -> Self {
-        Self::wrap(Tag::EncodedSlice, EncodedSlice::latin1(s))
-    }
-
     /// `'static` ASCII slice (no encoding tag, no scan); `to_utf8`/`into_utf8`
     /// borrow the bytes directly. Generic over `str`/`[u8]` so call sites may
     /// pass either `"lit"` or `b"lit"`.
@@ -228,6 +212,13 @@ impl String {
     pub fn static_<S: ?Sized + AsRef<[u8]>>(s: &'static S) -> Self {
         debug_assert!(s.as_ref().is_ascii());
         Self::wrap(Tag::StaticEncodedSlice, EncodedSlice::latin1(s.as_ref()))
+    }
+    /// `'static` UTF-8 of any content: ASCII is wrapped without copying, anything else is [`Self::clone_utf8`].
+    pub fn from_static_bytes(bytes: &'static [u8]) -> Self {
+        if !bytes.is_empty() && strings::is_all_ascii(bytes) {
+            return Self::create_static_external(bytes);
+        }
+        Self::clone_utf8(bytes)
     }
     /// `clone_utf8(other)`, unless `other` is byte-equal to `self`, in which
     /// case another ref to `self`.
@@ -296,7 +287,7 @@ impl String {
         }
         Self::clone_utf8(bytes)
     }
-    /// Wraps `bytes` in a `WTF::ExternalStringImpl` that calls
+    /// Wraps Latin-1 `bytes` in a `WTF::ExternalStringImpl` that calls
     /// `callback(ctx, buffer, len)` when the impl is destroyed.
     ///
     /// External strings are WTF strings whose bytes live elsewhere; `bytes` is
@@ -305,9 +296,10 @@ impl String {
     ///
     /// `Ctx` must be a pointer-sized type (raw pointer or `&T`); enforced by
     /// the const-assert below to keep the C-ABI cast sound.
-    pub fn create_external<Ctx>(
+    ///
+    /// SAFETY: the caller keeps `bytes` valid and unchanged until `callback` runs.
+    pub unsafe fn create_external<Ctx>(
         bytes: &[u8],
-        is_latin1: bool,
         ctx: Ctx,
         callback: ExternalStringImplFreeFunction<Ctx>,
     ) -> Self {
@@ -350,13 +342,7 @@ impl String {
             >(callback) });
         // SAFETY: bytes describes a valid slice; len <= max_length checked.
         let s = unsafe {
-            BunString__createExternal(
-                bytes.as_ptr(),
-                bytes.len(),
-                is_latin1,
-                ctx_erased,
-                cb_erased,
-            )
+            BunString__createExternal(bytes.as_ptr(), bytes.len(), true, ctx_erased, cb_erased)
         };
         debug_assert!(s.tag != Tag::WTFStringImpl || s.as_wtf().ref_count() == 1);
         s
@@ -371,31 +357,30 @@ impl String {
             .min(WTF_STRING_MAX_LENGTH)
     }
 
-    /// Wraps `bytes` in a `WTF::ExternalStringImpl` that will **never** be
-    /// freed. Only use for dynamically-allocated data with process lifetime.
-    pub fn create_static_external(bytes: &[u8], is_latin1: bool) -> Self {
+    /// Wraps Latin-1 `bytes` in a `WTF::ExternalStringImpl` that will **never** be
+    /// freed.
+    pub fn create_static_external(bytes: &'static [u8]) -> Self {
         debug_assert!(!bytes.is_empty());
         // SAFETY: bytes describes a valid slice; C++ side stores ptr/len
         // without copying and never frees it.
-        unsafe { BunString__createStaticExternal(bytes.as_ptr(), bytes.len(), is_latin1) }
+        unsafe { BunString__createStaticExternal(bytes.as_ptr(), bytes.len(), true) }
     }
     /// [`Self::create_static_external`] for Latin-1 bytes whose `WTF::StringImpl::hash()` is already known, so the
     /// result is thread-shareable without reading the bytes.
-    pub fn create_static_external_latin1_with_hash(bytes: &[u8], hash: u32) -> Self {
+    pub fn create_static_external_latin1_with_hash(bytes: &'static [u8], hash: u32) -> Self {
         debug_assert!(!bytes.is_empty());
         // SAFETY: as above; `hash` is StringImpl::hash() of `bytes`.
         unsafe { BunString__createStaticExternalLatin1WithHash(bytes.as_ptr(), bytes.len(), hash) }
     }
-    /// UTF-16 form of [`Self::create_static_external`]: `units` must be
-    /// 2-byte aligned and live for the rest of the process.
-    pub fn create_static_external_utf16(units: &[u16]) -> Self {
+    /// UTF-16 form of [`Self::create_static_external`].
+    pub fn create_static_external_utf16(units: &'static [u16]) -> Self {
         debug_assert!(!units.is_empty());
         // SAFETY: the C++ side takes the length in code units and stores
         // ptr/len without copying or freeing.
         unsafe { BunString__createStaticExternal(units.as_ptr().cast::<u8>(), units.len(), false) }
     }
     /// [`Self::create_static_external_utf16`] for units whose `WTF::StringImpl::hash()` is already known.
-    pub fn create_static_external_utf16_with_hash(units: &[u16], hash: u32) -> Self {
+    pub fn create_static_external_utf16_with_hash(units: &'static [u16], hash: u32) -> Self {
         debug_assert!(!units.is_empty());
         // SAFETY: as above; `hash` is StringImpl::hash() of `units`.
         unsafe { BunString__createStaticExternalUTF16WithHash(units.as_ptr(), units.len(), hash) }
@@ -847,13 +832,6 @@ impl String {
         matches!(self.tag, Tag::Dead | Tag::OutOfMemory)
     }
 
-    /// Borrow `value` without copying or refcounting; tags UTF-8 if `value`
-    /// contains any non-ASCII byte.
-    #[inline]
-    pub fn from_bytes(value: &[u8]) -> Self {
-        Self::wrap(Tag::EncodedSlice, EncodedSlice::from_bytes(value))
-    }
-
     /// Borrow as an `EncodedSlice` (any tag; no ref taken).
     pub fn to_encoded_slice(&self) -> EncodedSlice<'_> {
         match self.tag {
@@ -1056,9 +1034,12 @@ impl Drop for String {
     }
 }
 impl Clone for String {
-    /// +1 on the same `WTF::StringImpl` (bitwise for the non-WTF tags).
+    /// +1 on the same `WTF::StringImpl`; a copy of the bytes a [`StringView`] or [`StringOrView`] borrows.
     #[inline]
     fn clone(&self) -> Self {
+        if self.tag == Tag::EncodedSlice {
+            return self.encoded().to_owned_string();
+        }
         self.ref_();
         Self {
             tag: self.tag,
@@ -1108,6 +1089,11 @@ impl<'a> StringView<'a> {
     pub fn borrow_utf8(bytes: &'a [u8]) -> Self {
         Self::from_encoded(EncodedSlice::utf8(bytes))
     }
+    /// Borrow `bytes` as ASCII/Latin-1 (no copy, no scan).
+    #[inline]
+    pub fn ascii(bytes: &'a [u8]) -> Self {
+        Self::from_encoded(EncodedSlice::latin1(bytes))
+    }
     /// `'static` ASCII/Latin-1 literal (no scan).
     #[inline]
     pub fn static_<S: ?Sized + AsRef<[u8]>>(s: &'static S) -> StringView<'static> {
@@ -1122,6 +1108,12 @@ impl<'a> StringView<'a> {
             core::mem::ManuallyDrop::new(String::wrap(Tag::EncodedSlice, encoded)),
             core::marker::PhantomData,
         )
+    }
+    /// Lend `views` where an array of `String` is read, such as an FFI call.
+    #[inline]
+    pub fn as_strings<'s>(views: &'s [StringView<'a>]) -> &'s [String] {
+        // SAFETY: `StringView` is `repr(transparent)` over `ManuallyDrop<String>`, itself transparent over `String`, and `'s` cannot outlive `'a`.
+        unsafe { &*(core::ptr::from_ref(views) as *const [String]) }
     }
     /// UTF-8 bytes of the viewed storage; borrows for ASCII/UTF-8, allocates
     /// otherwise. Tied to `'a` (the owner), not to this view.
@@ -1147,12 +1139,47 @@ impl core::fmt::Display for StringView<'_> {
     }
 }
 
+/// An owned [`String`], or `'a` bytes borrowed like a [`StringView`]. No `DerefMut`: taking the `String` out would lose `'a`.
+#[repr(transparent)]
+pub struct StringOrView<'a>(String, core::marker::PhantomData<&'a [u8]>);
+
+impl<'a> StringOrView<'a> {
+    pub const EMPTY: StringOrView<'static> = StringOrView(String::EMPTY, core::marker::PhantomData);
+
+    /// Borrow `bytes` (no copy); scans and tags UTF-8 if any byte is non-ASCII.
+    #[inline]
+    pub fn from_bytes(bytes: &'a [u8]) -> Self {
+        Self(
+            String::wrap(Tag::EncodedSlice, EncodedSlice::from_bytes(bytes)),
+            core::marker::PhantomData,
+        )
+    }
+}
+impl From<String> for StringOrView<'_> {
+    #[inline]
+    fn from(owned: String) -> Self {
+        Self(owned, core::marker::PhantomData)
+    }
+}
+impl core::ops::Deref for StringOrView<'_> {
+    type Target = String;
+    #[inline]
+    fn deref(&self) -> &String {
+        &self.0
+    }
+}
+impl core::fmt::Display for StringOrView<'_> {
+    #[inline]
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::Display::fmt(&**self, f)
+    }
+}
+
 impl core::fmt::Display for String {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let s = self.to_utf8();
-        // SAFETY: `to_utf8` always yields valid UTF-8 — it transcodes
-        // Latin-1/UTF-16 and borrows already-UTF-8 inputs.
-        f.write_str(unsafe { core::str::from_utf8_unchecked(s.slice()) })
+        // The bytes may be invalid UTF-8: `borrow_utf8` accepts any bytes, such as a file name, and
+        // `to_utf8` returns them unchanged.
+        write!(f, "{}", bstr::BStr::new(self.to_utf8().slice()))
     }
 }
 
@@ -1169,14 +1196,14 @@ impl core::fmt::Display for EncodedSlice<'_> {
 }
 
 // `EncodedSlice` pointer-tag scheme. Flag bits live in the pointer's high
-// byte; untagging truncates to 53 bits.
+// byte; untagging truncates to 53 bits. Never set bit 62: C++ would take
+// ownership of the buffer and free it (`Zig::isTaggedExternalPtr`).
 const TAG_UTF8_BIT: usize = 1usize << 61;
-const TAG_GLOBAL_BIT: usize = 1usize << 62;
 const TAG_UTF16_BIT: usize = 1usize << 63;
 const UNTAG_MASK: usize = (1usize << 53) - 1;
 
-/// `{tagged ptr, len}` with encoding bits (Latin-1 / UTF-8 / UTF-16 / global)
-/// in the pointer's high byte; borrows `'a`. Also the [`String`] union arm.
+/// `{tagged ptr, len}` with encoding bits (Latin-1 / UTF-8 / UTF-16) in the
+/// pointer's high byte; borrows `'a`. Also the [`String`] union arm.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct EncodedSlice<'a> {
@@ -1223,10 +1250,6 @@ impl<'a> EncodedSlice<'a> {
         (self._unsafe_ptr_do_not_use as usize) & TAG_UTF8_BIT != 0
     }
     #[inline]
-    pub fn is_globally_allocated(self) -> bool {
-        (self._unsafe_ptr_do_not_use as usize) & TAG_GLOBAL_BIT != 0
-    }
-    #[inline]
     fn mark(&mut self, bit: usize) {
         self._unsafe_ptr_do_not_use = ((self._unsafe_ptr_do_not_use as usize) | bit) as *const u8;
     }
@@ -1253,15 +1276,6 @@ impl<'a> EncodedSlice<'a> {
     pub fn utf16(s: &'a [u16]) -> Self {
         let mut slice = Self::from_tagged_ptr(s.as_ptr().cast(), s.len());
         slice.mark(TAG_UTF16_BIT);
-        slice
-    }
-
-    /// Wrap a globally-allocated UTF-16 buffer whose ownership is being
-    /// handed to C++: sets the 16-bit and global ptr-tags.
-    #[inline]
-    pub fn utf16_global(s: &'a [u16]) -> Self {
-        let mut slice = Self::utf16(s);
-        slice.mark(TAG_GLOBAL_BIT);
         slice
     }
 
@@ -1447,21 +1461,14 @@ impl<'a> EncodedSlice<'a> {
     }
 
     /// Re-wrap a sub-range of the underlying storage, preserving the
-    /// UTF-8/16-bit/global tag bits.
+    /// UTF-8/16-bit tag bits.
     pub fn substring_with_len(self, start_index: usize, end_index: usize) -> Self {
         if self.is_16bit() {
-            let mut out = Self::utf16(&self.utf16_slice()[start_index..end_index]);
-            if self.is_globally_allocated() {
-                out.mark(TAG_GLOBAL_BIT);
-            }
-            return out;
+            return Self::utf16(&self.utf16_slice()[start_index..end_index]);
         }
         let mut out = Self::latin1(&self.slice()[start_index..end_index]);
         if self.is_utf8() {
             out.mark(TAG_UTF8_BIT);
-        }
-        if self.is_globally_allocated() {
-            out.mark(TAG_GLOBAL_BIT);
         }
         out
     }
@@ -1497,6 +1504,17 @@ impl<'a> EncodedSlice<'a> {
     /// Allocate a fresh UTF-8 `Vec<u8>` regardless of the source encoding.
     pub fn to_owned_slice(self) -> Vec<u8> {
         self.to_utf8().into_vec()
+    }
+
+    /// Copies the bytes into a fresh `WTF::StringImpl`.
+    fn to_owned_string(self) -> String {
+        if self.is_16bit() {
+            String::clone_utf16(self.utf16_slice())
+        } else if self.is_utf8() {
+            String::clone_utf8(self.slice())
+        } else {
+            String::clone_latin1(self.slice())
+        }
     }
 }
 
@@ -1750,6 +1768,11 @@ pub mod lexer {
         is_whitespace(codepoint) || matches!(codepoint, 0x85 | 0x200B)
     }
 
+    /// `IsWhiteSpaceLike`: that, or a line break.
+    pub fn is_white_space_like(codepoint: CodePoint) -> bool {
+        is_white_space_single_line(codepoint) || matches!(codepoint, 0x0A | 0x0D | 0x2028 | 0x2029)
+    }
+
     /// `charAndSize`: the character at `at` and its length in bytes, 0 at the end. As in
     /// `utf8.DecodeRuneInString`, a byte that starts no valid UTF-8 sequence is U+FFFD
     /// (`utf8.RuneError`) with the length 1.
@@ -1803,15 +1826,149 @@ pub mod lexer {
         is_identifier_part(c as u32) || matches!(c, 0x30FB | 0xFF65)
     }
 
-    /// `scanIdentifierParts`: the end of the identifier that continues at `at`.
+    /// What is ID_Start for acorn 8.19 (Unicode 17) and not yet for `is_identifier_start` (Unicode
+    /// 15.1), in ranges that include their ends.
+    static RECENT_ID_START: &[(u32, u32)] = &[
+        (0x558, 0x558),
+        (0x58B, 0x58C),
+        (0x88F, 0x88F),
+        (0xC5C, 0xC5C),
+        (0xCDC, 0xCDC),
+        (0x1C89, 0x1C8A),
+        (0x208F, 0x208F),
+        (0x209D, 0x209F),
+        (0xA7CB, 0xA7CF),
+        (0xA7D2, 0xA7D2),
+        (0xA7D4, 0xA7D4),
+        (0xA7DA, 0xA7DD),
+        (0xA7E2, 0xA7E2),
+        (0xA7F1, 0xA7F1),
+        (0xAB6C, 0xAB6D),
+        (0x105C0, 0x105F3),
+        (0x107BB, 0x107BF),
+        (0x10940, 0x10959),
+        (0x10D4A, 0x10D65),
+        (0x10D6F, 0x10D85),
+        (0x10EC2, 0x10EC7),
+        (0x10ED9, 0x10EEE),
+        (0x11380, 0x11389),
+        (0x1138B, 0x1138B),
+        (0x1138E, 0x1138E),
+        (0x11390, 0x113B5),
+        (0x113B7, 0x113B7),
+        (0x113D1, 0x113D1),
+        (0x113D3, 0x113D3),
+        (0x11B0A, 0x11B0A),
+        (0x11BC0, 0x11BE0),
+        (0x11DB0, 0x11DDB),
+        (0x11DF1, 0x11DF1),
+        (0x1246F, 0x1246F),
+        (0x12475, 0x1247F),
+        (0x12550, 0x12686),
+        (0x13460, 0x143FA),
+        (0x16100, 0x1611D),
+        (0x16D40, 0x16D6C),
+        (0x16EA0, 0x16EB8),
+        (0x16EBB, 0x16ED3),
+        (0x16FF2, 0x16FF6),
+        (0x187F8, 0x187FF),
+        (0x18CD6, 0x18CDA),
+        (0x18CFF, 0x18CFF),
+        (0x18D09, 0x18D20),
+        (0x18D80, 0x18DF2),
+        (0x18E00, 0x19191),
+        (0x191A0, 0x191D2),
+        (0x1B123, 0x1B128),
+        (0x1B168, 0x1B168),
+        (0x1D6A6, 0x1D6A6),
+        (0x1DF1F, 0x1DF24),
+        (0x1DF2B, 0x1DF81),
+        (0x1DF90, 0x1DF96),
+        (0x1DFCD, 0x1DFFF),
+        (0x1E5D0, 0x1E5ED),
+        (0x1E5F0, 0x1E5F0),
+        (0x1E6C0, 0x1E6DE),
+        (0x1E6E0, 0x1E6E2),
+        (0x1E6E4, 0x1E6E5),
+        (0x1E6E7, 0x1E6ED),
+        (0x1E6F0, 0x1E6F4),
+        (0x1E6FE, 0x1E6FF),
+        (0x2B73A, 0x2B73F),
+        (0x2B81E, 0x2B81E),
+        (0x2CEA2, 0x2CEAD),
+        (0x323B0, 0x33479),
+        (0x3D000, 0x3FC3F),
+    ];
+
+    /// The same for ID_Continue, without `RECENT_ID_START`.
+    static RECENT_ID_CONTINUE: &[(u32, u32)] = &[
+        (0x5C8, 0x5C9),
+        (0x897, 0x897),
+        (0xB53, 0xB54),
+        (0x1ACF, 0x1AF0),
+        (0x10D40, 0x10D49),
+        (0x10D69, 0x10D6D),
+        (0x10ECB, 0x10ECF),
+        (0x10EF0, 0x10EFC),
+        (0x113B8, 0x113C0),
+        (0x113C2, 0x113C2),
+        (0x113C5, 0x113C5),
+        (0x113C7, 0x113CA),
+        (0x113CC, 0x113D0),
+        (0x113D2, 0x113D2),
+        (0x113E1, 0x113E2),
+        (0x116D0, 0x116E3),
+        (0x11B60, 0x11B67),
+        (0x11BF0, 0x11BF9),
+        (0x11DE0, 0x11DE9),
+        (0x11DF0, 0x11DF0),
+        (0x11F5A, 0x11F5A),
+        (0x1611E, 0x16139),
+        (0x16D70, 0x16D79),
+        (0x1CCF0, 0x1CCF9),
+        (0x1D127, 0x1D128),
+        (0x1D250, 0x1D252),
+        (0x1D25B, 0x1D25C),
+        (0x1D25F, 0x1D25F),
+        (0x1D280, 0x1D281),
+        (0x1E5EE, 0x1E5EF),
+        (0x1E5F1, 0x1E5FA),
+        (0x1E6E3, 0x1E6E3),
+        (0x1E6E6, 0x1E6E6),
+        (0x1E6EE, 0x1E6EF),
+        (0x1E6F5, 0x1E6F5),
+    ];
+
+    fn is_in_ranges(ranges: &[(u32, u32)], c: u32) -> bool {
+        let after = ranges.partition_point(|range| range.0 <= c);
+        after > 0 && c <= ranges[after - 1].1
+    }
+
+    /// Whether only a parser that knows a Unicode version after 15.1 lets `c` start an identifier.
+    #[cold]
+    pub fn is_recent_identifier_start(c: CodePoint) -> bool {
+        c >= 0x558 && is_in_ranges(RECENT_ID_START, c as u32)
+    }
+
+    /// The same for a character that continues an identifier.
+    #[cold]
+    pub fn is_recent_identifier_part(c: CodePoint) -> bool {
+        c >= 0x558
+            && (is_in_ranges(RECENT_ID_START, c as u32)
+                || is_in_ranges(RECENT_ID_CONTINUE, c as u32))
+    }
+
+    /// `scanIdentifierParts`: the end of the identifier that continues at `at`. Of any identifier
+    /// that some parser has accepted.
     pub fn scan_identifier_parts(text: &[u8], mut at: usize) -> usize {
+        let is_part = |c| is_type_script_identifier_part(c) || is_recent_identifier_part(c);
         loop {
-            at = end_of_run(text, at, is_type_script_identifier_part);
+            at = end_of_run(text, at, is_part);
             if text.get(at) != Some(&b'\\') {
                 return at;
             }
             match peek_unicode_escape(text, at) {
-                Some((c, len)) if is_type_script_identifier_part(c) => at += len,
+                Some((c, len)) if is_part(c) => at += len,
                 _ => return at,
             }
         }
@@ -1892,7 +2049,7 @@ pub mod printer {
     use crate::string::immutable::{self as strings, Encoding as StrEncoding};
     use crate::string::mutable_string::MutableString;
 
-    use crate::fmt::{hex2_upper, hex4_upper};
+    use crate::fmt::{hex_byte_lower, hex2_upper, hex4_upper};
 
     pub const FIRST_ASCII: u32 = 0x20;
     pub const LAST_ASCII: u32 = 0x7E;
@@ -2108,6 +2265,66 @@ pub mod printer {
             }
         }
         Ok(())
+    }
+
+    /// `JSON.stringify(text)`, appended to `out`, byte for byte as JavaScript writes it. Unlike
+    /// [`quote_for_json`]: `\u001f` has lower case, and U+2028, U+2029 and U+FEFF stay as they are.
+    /// `text` is WTF-8: half a surrogate pair becomes `\udXXX`, malformed UTF-8 becomes U+FFFD.
+    pub fn json_stringify(text: &[u8], out: &mut Vec<u8>) {
+        out.reserve(text.len() + 2);
+        out.push(b'"');
+        let mut rest = text;
+        while let Some(at) = strings::index_of_needs_escape_for_java_script_string(rest, b'"') {
+            let (plain, from) = rest.split_at(at as usize);
+            out.extend_from_slice(plain);
+            let byte = from[0];
+            let mut taken = 1;
+            match byte {
+                b'"' | b'\\' => out.extend_from_slice(&[b'\\', byte]),
+                0x08 => out.extend_from_slice(b"\\b"),
+                0x0C => out.extend_from_slice(b"\\f"),
+                b'\n' => out.extend_from_slice(b"\\n"),
+                b'\r' => out.extend_from_slice(b"\\r"),
+                b'\t' => out.extend_from_slice(b"\\t"),
+                0..0x20 => {
+                    let [high, low] = hex_byte_lower(byte);
+                    out.extend_from_slice(&[b'\\', b'u', b'0', b'0', high, low]);
+                }
+                0x20..0x80 => out.push(byte),
+                _ => {
+                    let width = strings::wtf8_byte_sequence_length_with_invalid(byte);
+                    let len = (width as usize).min(from.len());
+                    let mut sequence = [0u8; 4];
+                    sequence[..len].copy_from_slice(&from[..len]);
+                    let c = match width {
+                        1 => MALFORMED,
+                        _ => strings::decode_wtf8_rune_t::<i32>(sequence, width, MALFORMED),
+                    };
+                    match c {
+                        MALFORMED => out.extend_from_slice("\u{FFFD}".as_bytes()),
+                        0xD800..=0xDFFF => {
+                            let [high, low] = (c as u16).to_be_bytes().map(hex_byte_lower);
+                            out.extend_from_slice(&[b'\\', b'u', high[0], high[1], low[0], low[1]]);
+                            taken = len;
+                        }
+                        _ => {
+                            out.extend_from_slice(&from[..len]);
+                            taken = len;
+                        }
+                    }
+                }
+            }
+            rest = &from[taken..];
+        }
+        out.extend_from_slice(rest);
+        out.push(b'"');
+    }
+
+    /// [`json_stringify`] into a new `Vec`.
+    pub fn json_stringify_alloc(text: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        json_stringify(text, &mut out);
+        out
     }
 
     /// Port of `js_printer.quoteForJSON`. MOVE_DOWN so `bun_sourcemap` /

@@ -1,8 +1,7 @@
-//! Type-independent errors of a file: uses of syntax that the options or strict mode do not allow.
+//! A file's type-independent errors: uses of syntax that the options or strict mode don't allow.
 //!
-//! From TypeScript 7.0.2's grammarchecks.go, the `checkStrictMode*` functions of its binder.go, and
-//! the checks of this kind in checker.go. As there, none of this is reported for a file with parse
-//! errors.
+//! From TypeScript 7.0.2's grammarchecks.go, the `checkStrictMode*` functions in its binder.go, and the checks of this
+//! kind in checker.go. As in tsgo, none of this is reported for a file with parse errors.
 
 use super::sink::held;
 use super::*;
@@ -37,11 +36,11 @@ impl Checker<'_, '_> {
 
     pub(super) fn check_grammar(&mut self, file: FileId) {
         self.check_strict_mode(file, !has_parse_diagnostics(self.hir(file)));
+        self.check_grammar_augments_tags(file);
     }
 
-    /// `getSourceFileFromReference`, `processingDiagnostic.toDiagnostic`: the error for the `///
-    /// <reference>` whose value is at `start`: 2727 replaces 2726 where a library has a similar
-    /// name.
+    /// `getSourceFileFromReference`, `processingDiagnostic.toDiagnostic`: the error for the `/// <reference>` whose
+    /// value is at `start`. 2727 replaces 2726 if a library has a similar name.
     fn report_missing_reference(&mut self, file: FileId, start: u32, mut code: u32) {
         let references = &self.hir(file).references;
         let Some(&(_, value, ..)) = references.iter().find(|r| r.2 == start) else {
@@ -201,8 +200,9 @@ impl Checker<'_, '_> {
                 || hir.kind(right) == Kind::Identifier && hir.text(right) == known::eval)
     }
 
-    /// `isInDiag2657` of `checkBinaryLikeExpression`: whether `start`, where the left operand of `comma` starts, is in the span of a
-    /// 2657. The span covers the adjacent elements, which the parser joins into a comma expression that starts where the error does.
+    /// `isInDiag2657` of `checkBinaryLikeExpression`: true if `start`, where the left operand of `comma` starts, is in
+    /// the span of a 2657. The span covers the adjacent elements, which the parser joins into a comma expression that
+    /// starts where the error does.
     fn is_in_adjacent_jsx_elements(&self, file: FileId, comma: ExprId, start: u32) -> bool {
         let hir = self.hir(file);
         if !hir.diagnostics.iter().any(|d| d.code == 2657) {
@@ -247,19 +247,42 @@ impl Checker<'_, '_> {
             } => true,
             // An element, not a fragment.
             ExprKind::Jsx(j) => hir[j].tag.is_some(),
-            ExprKind::Cond { yes, no, .. } => {
+            ExprKind::Cond { branches, .. } => {
+                let Branches { yes, no } = hir.branches(branches);
                 self.is_side_effect_free(file, yes) && self.is_side_effect_free(file, no)
             }
-            // Iterates over the left spine, so that a long chain does not recurse.
+            // Iterates over the left spine, so that a long chain doesn't recurse. Each `,` of a chain asks about
+            // everything to its left, so for a long chain the result is cached for each part of it.
             ExprKind::Binary { .. } => {
-                let mut leftmost = e;
-                while let ExprKind::Binary { left, right, .. } = hir[leftmost].kind {
-                    if !self.is_side_effect_free(file, right) {
-                        return false;
+                const LONG: usize = 32;
+                let mut spine: Vec<ExprId> = Vec::new();
+                let (mut leftmost, mut known) = (e, None);
+                while let ExprKind::Binary { left, .. } = hir[leftmost].kind {
+                    if spine.len() >= LONG {
+                        known = self
+                            .side_effect_free
+                            .borrow()
+                            .get(&(file, leftmost))
+                            .copied();
+                        if known.is_some() {
+                            break;
+                        }
                     }
+                    spine.push(leftmost);
                     leftmost = left;
                 }
-                self.is_side_effect_free(file, leftmost)
+                let mut is_free = known.unwrap_or_else(|| self.is_side_effect_free(file, leftmost));
+                for &part in spine.iter().rev() {
+                    if let ExprKind::Binary { right, .. } = hir[part].kind {
+                        is_free = is_free && self.is_side_effect_free(file, right);
+                    }
+                    if spine.len() > LONG {
+                        self.side_effect_free
+                            .borrow_mut()
+                            .insert((file, part), is_free);
+                    }
+                }
+                is_free
             }
             _ => false,
         }
@@ -267,9 +290,8 @@ impl Checker<'_, '_> {
 
     // ───────────────────────────── strict mode ─────────────────────────────
 
-    /// The errors binder.go reports for an `Identifier` based on its text, and for the operand of
-    /// `delete`: all code is strict mode code.
-    /// `checkContextualIdentifier` reports nothing for a file unless it `parses`.
+    /// The errors binder.go reports for an `Identifier` based on its text, and for the operand of `delete`. All code is
+    /// strict mode code. `checkContextualIdentifier` only reports for a file that `parses`.
     fn check_strict_mode(&mut self, file: FileId, parses: bool) {
         let hir = self.hir(file);
         for &node in hir.keyword_identifiers() {
@@ -284,8 +306,8 @@ impl Checker<'_, '_> {
         self.check_strict_mode_delete_expression(file);
     }
 
-    /// `getStrictModeIdentifierMessage`, `getStrictModeEvalOrArgumentsMessage`: the message depends
-    /// on why the code is strict: `[in a class, in a module, otherwise]`.
+    /// `getStrictModeIdentifierMessage`, `getStrictModeEvalOrArgumentsMessage`: the message depends on why the code is
+    /// strict: `[in a class, in a module, otherwise]`.
     fn strict_mode_message(&self, file: FileId, node: Node, codes: [u32; 3]) -> u32 {
         let hir = self.hir(file);
         if hir.get_containing_class(node).is_some() {
@@ -315,12 +337,11 @@ impl Checker<'_, '_> {
         };
         // `DeclarationNameToString`: the source text, including escapes.
         let start = hir.start(node);
-        let written = &hir.text[start as usize..self.end_of_name_at(file, start) as usize];
-        self.error(file, node, code, &[Arg::Bytes(written)]);
+        let raw_name = &hir.text[start as usize..self.end_of_name_at(file, start) as usize];
+        self.error(file, node, code, &[Arg::Bytes(raw_name)]);
     }
 
-    /// `checkStrictModeEvalOrArguments` for `name`, which is `eval` or `arguments`, where binder.go
-    /// calls it.
+    /// `checkStrictModeEvalOrArguments` for `name`, which is `eval` or `arguments`, wherever binder.go calls it.
     fn check_strict_mode_eval_or_arguments(&mut self, file: FileId, name: Node) {
         let hir = self.hir(file);
         let context = hir.parent(name);
@@ -369,11 +390,11 @@ impl Checker<'_, '_> {
                 continue;
             };
             // The binder visits every node of the tree, whether or not the checker does.
-            if matches!(bound.expr_parent[id.idx()], Parent::None) {
+            if matches!(bound.parent_of_expr(id), Parent::None) {
                 continue;
             }
             match hir[operand].kind {
-                // A parenthesized expression is not an identifier, whatever it contains.
+                // A parenthesized expression isn't an identifier, whatever it contains.
                 ExprKind::Ident(_) if !is_parenthesized(hir, operand) => {
                     self.error_at((file, hir[operand].pos, 0), 1102, &[]);
                 }

@@ -4,8 +4,8 @@ use core::ffi::c_void;
 use core::ptr::NonNull;
 
 use crate::webcore::jsc::{
-    self as jsc, CallFrame, CommonAbortReason, CommonAbortReasonExt as _, DOMFormData,
-    JSGlobalObject, JSPromise, JSValue, JsResult, SystemError, URLSearchParams, VirtualMachine,
+    self as jsc, CommonAbortReason, CommonAbortReasonExt as _, DOMFormData, JSGlobalObject,
+    JSPromise, JSValue, JsResult, SystemError, URLSearchParams, VirtualMachine,
 };
 use crate::webcore::{
     self, AnyBlob, Blob, BlobExt as _, ByteStream, DrainResult, FetchHeaders, Lifetime,
@@ -18,14 +18,13 @@ use crate::jsc::HTTPHeaderName;
 pub(crate) use crate::webcore::InternalBlob;
 use crate::webcore::form_data::AsyncFormDataExt as _;
 use bun_core::String as BunString;
-use bun_core::{Utf8Bytes, WTFStringImpl, WTFStringImplExt as _, WTFStringImplStruct};
+use bun_core::{Utf8Bytes, WTFString, WTFStringImpl, WTFStringImplExt as _, WTFStringImplStruct};
 use bun_jsc::JsCell;
 use bun_jsc::StringJsc as _;
+use bun_jsc::bindgen::{JsScope, JsWrapper};
 use bun_jsc::bun_string_jsc;
 
-/// Deref the `Value::WTFStringImpl` / `AnyBlob::WTFStringImpl` payload.
-/// Centralises the per-site `(**s)` raw deref at the dozen `match` arms below
-/// (and in `Blob::Any`, `Response::construct_json`).
+/// Deref the `Value::WTFStringImpl` payload.
 ///
 /// # Safety (encapsulated)
 /// `Value::WTFStringImpl` always stores a non-null `*mut WTF::StringImpl`
@@ -35,34 +34,13 @@ use bun_jsc::bun_string_jsc;
 /// `&self` (refcount lives in a `Cell`), so a shared borrow suffices even for
 /// `r#ref()` / `deref()`.
 #[inline(always)]
-pub(super) fn wtf_impl(s: &WTFStringImpl) -> &WTFStringImplStruct {
+fn wtf_impl(s: &WTFStringImpl) -> &WTFStringImplStruct {
     // SAFETY: see fn doc — non-null, intrusive-refcounted, live while held.
     unsafe { &**s }
 }
 
-/// Mutable view of a [`Blob`]'s backing `Store` through its
-/// `JsCell<Option<RefPtr<Store>>>` field. Centralises the per-site raw
-/// `(*blob.store.get()…as_ptr()).mime_type = …` deref under the same
-/// invariant `Store::data_mut` already documents:
-/// shared-mutable interior, single-threaded JS event-loop, no concurrent
-/// `&Store` outstanding for the borrow's duration.
-#[inline]
-#[allow(clippy::mut_from_ref)]
-fn blob_store_mut(blob: &Blob) -> Option<&mut blob::Store> {
-    blob.store
-        .get()
-        .as_ref()
-        // SAFETY: `RefPtr<Store>` invariant — pointee is a live heap `Store` while
-        // any `RefPtr<Store>` exists; single-threaded JS event-loop discipline
-        // guarantees no other `&`/`&mut Store` is live for this borrow.
-        .map(|s| unsafe { &mut *s.as_ptr() })
-}
-
 fn set_blob_content_type(blob: &Blob, mime_type: MimeType) {
     blob.content_type_was_set.set(true);
-    if let Some(store) = blob_store_mut(blob) {
-        store.mime_type = mime_type.clone();
-    }
     blob.content_type
         .set(blob::BlobContentType::from(mime_type));
 }
@@ -74,7 +52,7 @@ fn set_blob_content_type(blob: &Blob, mime_type: MimeType) {
 
 #[inline]
 fn as_dom_form_data(value: JSValue) -> Option<*mut DOMFormData> {
-    // `DOMFormData` is an opaque C++ type without a `#[bun_jsc::JsClass]` derive;
+    // `DOMFormData` is an opaque C++ type that does not implement `JsClass`;
     // route through the hand-written `from_js` (`DOMFormData.rs`) instead of
     // `value.as_::<DOMFormData>()`.
     DOMFormData::from_js(value).map(std::ptr::from_mut::<DOMFormData>)
@@ -216,10 +194,7 @@ pub struct PendingValue {
     pub(crate) readable: webcore::readable_stream::Strong,
     // writable: webcore::Sink
 
-    // LIFETIMES.tsv JSC_BORROW → `&JSGlobalObject`, but `Value::Locked`
-    // is stored on heap (Body in Request/Response m_ctx). Dropped the `<'a>`
-    // lifetime per PORTING.md §Type map (no lifetime params on structs);
-    // raw ptr until we pick `&'static` vs a JSC handle.
+    // A raw pointer: `Value::Locked` lives in the heap payload of a Request/Response.
     pub global: *const JSGlobalObject,
     pub task: Option<NonNull<c_void>>,
 
@@ -493,7 +468,7 @@ impl PartialEq for Action {
 
 /// Per-class codegen'd cached-slot accessors for the `body` and `stream`
 /// JS-side properties, plus the weak `JsRef` back-pointer. Both `Request` and
-/// `Response` forward these 1:1 to `bun_jsc::generated::JS{Request,Response}`.
+/// `Response` forward these 1:1 to `js_Request` / `js_Response`.
 pub(crate) trait BodyOwnerJs {
     /// `self.js_ref.get().try_get()` — the live JS wrapper, if any.
     fn js_ref(&self) -> Option<JSValue>;
@@ -676,13 +651,12 @@ impl ValueError {
 }
 
 impl From<AnyBlob> for Value {
-    /// Each arm moves its payload as is: a `WTFStringImpl`'s `+1` travels with
-    /// the pointer and is released by `Value::drop`, so nothing is ref'd here.
+    /// `Value::drop` releases the string's ref that `into_raw` hands over.
     fn from(blob: AnyBlob) -> Value {
         match blob {
             AnyBlob::Blob(b) => Value::Blob(b),
             AnyBlob::InternalBlob(b) => Value::InternalBlob(b),
-            AnyBlob::WTFStringImpl(s) => Value::WTFStringImpl(s),
+            AnyBlob::WTFStringImpl(s) => Value::WTFStringImpl(s.into_raw()),
         }
     }
 }
@@ -912,13 +886,13 @@ impl Value {
         }
 
         // `new_mut` centralises the post-allocation deref; ownership of the
-        // heap `NewSource` transfers to the JS wrapper's `m_ctx` in
+        // heap `NewSource` transfers to the JS wrapper in
         // `to_readable_stream()` below (freed by the GC finalizer).
         let reader = webcore::readable_stream::NewSource::<ByteStream>::new_mut(
             webcore::readable_stream::NewSource {
                 // `ByteStream::default()` is the post-setup state.
                 context: ByteStream::default(),
-                global_this: Some(bun_ptr::BackRef::new(cx.global())),
+                global_this: core::cell::Cell::new(Some(bun_ptr::BackRef::new(cx.global()))),
                 ..Default::default()
             },
         );
@@ -1247,17 +1221,28 @@ impl Value {
         }
     }
 
+    /// Moves the string out of the `WTFStringImpl` arm and leaves `Used`.
+    fn take_wtf_string(&mut self) -> WTFString {
+        let Value::WTFStringImpl(ptr) = *self else {
+            unreachable!("Value::take_wtf_string on a body that is not a string")
+        };
+        // `Value::drop` must not release the ref that the handle takes over.
+        let _ = core::mem::ManuallyDrop::new(core::mem::replace(self, Value::Used));
+        // SAFETY: the arm holds a non-null, live `WTF::StringImpl` and owns one
+        // ref on it (see `wtf_impl`). The arm was forgotten above, so that ref
+        // has exactly one owner: the handle. The forget and this adopt stand in
+        // for a by-value move, which `Value`'s raw arm and `impl Drop` rule out
+        // (E0509).
+        unsafe { WTFString::adopt(ptr) }
+    }
+
     pub(crate) fn try_use_as_any_blob(&mut self) -> Option<AnyBlob> {
         let any_blob: AnyBlob = match self {
             Value::Blob(b) => AnyBlob::Blob(core::mem::take(b)),
             Value::InternalBlob(b) => AnyBlob::InternalBlob(core::mem::take(b)),
             Value::WTFStringImpl(str) => {
                 if wtf_impl(str).can_use_as_utf8() {
-                    // Transfer the body's +1 to AnyBlob; suppress `Value::drop` so the
-                    // assignment below does not deref the StringImpl we just handed out.
-                    let s = *str;
-                    let _ = core::mem::ManuallyDrop::new(core::mem::replace(self, Value::Used));
-                    return Some(AnyBlob::WTFStringImpl(s));
+                    return Some(AnyBlob::WTFStringImpl(self.take_wtf_string()));
                 } else {
                     return None;
                 }
@@ -1294,9 +1279,7 @@ impl Value {
                         was_string: true,
                     });
                 } else {
-                    // Transfer the body's +1 into AnyBlob; suppress `Value::drop`.
-                    let _ = core::mem::ManuallyDrop::new(core::mem::replace(self, Value::Used));
-                    break 'brk AnyBlob::WTFStringImpl(str);
+                    break 'brk AnyBlob::WTFStringImpl(self.take_wtf_string());
                 }
             }
             Value::Locked(l) => l
@@ -1315,12 +1298,7 @@ impl Value {
         let any_blob: AnyBlob = match self {
             Value::Blob(b) => AnyBlob::Blob(core::mem::take(b)),
             Value::InternalBlob(b) => AnyBlob::InternalBlob(core::mem::take(b)),
-            Value::WTFStringImpl(s) => {
-                let s = *s;
-                // Transfer the body's +1 into AnyBlob; suppress `Value::drop`.
-                let _ = core::mem::ManuallyDrop::new(core::mem::replace(self, Value::Used));
-                AnyBlob::WTFStringImpl(s)
-            }
+            Value::WTFStringImpl(_) => AnyBlob::WTFStringImpl(self.take_wtf_string()),
             Value::Locked(l) => l
                 .to_any_blob_allow_promise()
                 .unwrap_or(AnyBlob::Blob(Blob::default())),
@@ -1501,12 +1479,12 @@ impl Value {
         }
 
         // `new_mut` centralises the post-allocation deref; ownership of the
-        // heap `NewSource` transfers to the JS wrapper's `m_ctx` in
+        // heap `NewSource` transfers to the JS wrapper in
         // `to_readable_stream()` below (freed by the GC finalizer).
         let reader = webcore::readable_stream::NewSource::<ByteStream>::new_mut(
             webcore::readable_stream::NewSource {
                 context: ByteStream::default(),
-                global_this: Some(bun_ptr::BackRef::new(cx.global())),
+                global_this: core::cell::Cell::new(Some(bun_ptr::BackRef::new(cx.global()))),
                 ..Default::default()
             },
         );
@@ -1628,10 +1606,6 @@ pub(crate) fn extract(global_this: &JSGlobalObject, value: JSValue) -> JsResult<
 /// Mixin trait with provided methods.
 /// Implementers supply `get_body_value`, `get_fetch_headers`, `get_form_data_encoding`,
 /// and optionally override `get_body_readable_stream`.
-///
-/// R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`. The
-/// codegen shim still emits `this: &mut T` — `&mut T`
-/// auto-derefs to `&T` so the impls below compile against either.
 pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     /// R-2 interior-mutability boundary: implementors project `&mut Value`
     /// from `&self` via `JsCell` (Response) or a raw `NonNull` deref (Request);
@@ -1647,10 +1621,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     fn get_form_data_encoding(&self) -> JsResult<Option<Box<bun_core::form_data::AsyncFormData>>>;
 
     // ────────────────────────────────────────────────────────────────────
-    // Twin methods (identical for Request/Response). These were previously
-    // open-coded in both files against `js_gen::*` / `js::*` directly; the
-    // [`BodyOwnerJs`] forwarders erase the per-class codegen module so the
-    // bodies can live here once.
+    // Twin methods (identical for Request/Response); [`BodyOwnerJs`] reaches each class's generated module.
     // ────────────────────────────────────────────────────────────────────
 
     /// JS-side `js.gc.stream` cache is the
@@ -1758,8 +1729,9 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         Ok(cloned)
     }
 
-    fn get_text(&self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let context = global_object.bun_vm().context_of_caller(callframe);
+    fn text(&self, this_value: JsWrapper<'_, Self>, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        let cx = cx.js_thread();
+        let global_object = cx.global();
         let value = self.get_body_value();
         if matches!(value, Value::Used) {
             return Ok(handle_body_already_used(global_object));
@@ -1781,7 +1753,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
             let value = self.get_body_value();
             if let Value::Locked(locked) = value {
                 if !locked.action.is_none()
-                    || locked.is_disturbed::<Self>(global_object, callframe.this())
+                    || locked.is_disturbed::<Self>(global_object, this_value.to_js())
                 {
                     return Ok(handle_body_already_used(global_object));
                 }
@@ -1791,16 +1763,15 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
 
         let value = self.get_body_value();
         let mut blob = value.use_as_any_blob_allow_non_utf8_string();
-        let result = JSPromise::wrap(global_object, |g| {
-            blob.to_string(&g.js_thread(context), Lifetime::Transfer)
-        });
+        let result = JSPromise::wrap(global_object, |_| blob.to_string(&cx, Lifetime::Transfer));
         blob.detach();
         result
     }
 
-    fn get_body(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
+    fn get_body(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
         // The stream the getter makes is the reading script's.
-        let context = global_this.bun_vm().context_of_caller_no_frame();
+        let cx = cx.js_thread();
+        let global_this = cx.global();
         let body = self.get_body_value();
 
         if matches!(body, Value::Used) {
@@ -1811,9 +1782,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 return Ok(readable.value);
             }
         }
-        let stream = self
-            .get_body_value()
-            .to_readable_stream(&global_this.js_thread(context))?;
+        let stream = self.get_body_value().to_readable_stream(&cx)?;
         // The wrapper's traced `m_stream` slot owns the stream from here;
         // release the `Strong` `to_readable_stream` parked in `Locked.readable`.
         self.check_body_stream_ref(global_this);
@@ -1821,12 +1790,9 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
     }
 
     /// <https://fetch.spec.whatwg.org/#dom-body-textstream>
-    fn get_text_stream(
-        &self,
-        global_this: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let cx = global_this.js_thread_of_caller(callframe);
+    fn text_stream(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        let cx = cx.js_thread();
+        let global_this = cx.global();
         // Step 1: If this is unusable, throw a TypeError.
         self.throw_if_body_unusable(global_this)?;
 
@@ -1879,8 +1845,8 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         }
     }
 
-    fn get_body_used(&self, global_object: &JSGlobalObject) -> JSValue {
-        JSValue::from(self.body_stream_check(global_object, ReadableStream::is_disturbed))
+    fn get_body_used(&self, cx: &mut JsScope<'_>) -> bool {
+        self.body_stream_check(cx.global(), ReadableStream::is_disturbed)
     }
 
     /// Fetch spec step 1 of both `clone()` algorithms: throw a `TypeError`
@@ -1900,8 +1866,9 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         Ok(())
     }
 
-    fn get_json(&self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let context = global_object.bun_vm().context_of_caller(callframe);
+    fn json(&self, this_value: JsWrapper<'_, Self>, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        let cx = cx.js_thread();
+        let global_object = cx.global();
         let value = self.get_body_value();
         if matches!(value, Value::Used) {
             return Ok(handle_body_already_used(global_object));
@@ -1924,7 +1891,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
             let value = self.get_body_value();
             if let Value::Locked(locked) = value {
                 if !locked.action.is_none()
-                    || locked.is_disturbed::<Self>(global_object, callframe.this())
+                    || locked.is_disturbed::<Self>(global_object, this_value.to_js())
                 {
                     return Ok(handle_body_already_used(global_object));
                 }
@@ -1939,19 +1906,18 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
 
         let value = self.get_body_value();
         let mut blob = value.use_as_any_blob_allow_non_utf8_string();
-        let result = JSPromise::wrap(global_object, |g| {
-            blob.to_json(&g.js_thread(context), Lifetime::Share)
-        });
+        let result = JSPromise::wrap(global_object, |_| blob.to_json(&cx, Lifetime::Share));
         blob.detach();
         result
     }
 
-    fn get_array_buffer(
+    fn array_buffer(
         &self,
-        global_object: &JSGlobalObject,
-        callframe: &CallFrame,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
     ) -> JsResult<JSValue> {
-        let context = global_object.bun_vm().context_of_caller(callframe);
+        let cx = cx.js_thread();
+        let global_object = cx.global();
         bun_core::scoped_log!(BodyMixin, "getArrayBuffer");
         let value = self.get_body_value();
 
@@ -1980,7 +1946,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
             let value = self.get_body_value();
             if let Value::Locked(locked) = value {
                 if !locked.action.is_none()
-                    || locked.is_disturbed::<Self>(global_object, callframe.this())
+                    || locked.is_disturbed::<Self>(global_object, this_value.to_js())
                 {
                     return Ok(handle_body_already_used(global_object));
                 }
@@ -1995,19 +1961,16 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         // toArrayBuffer in AnyBlob checks for non-UTF8 strings
         let value = self.get_body_value();
         let mut blob: AnyBlob = value.use_as_any_blob_allow_non_utf8_string();
-        let result = JSPromise::wrap(global_object, |g| {
-            blob.to_array_buffer(&g.js_thread(context), Lifetime::Transfer)
+        let result = JSPromise::wrap(global_object, |_| {
+            blob.to_array_buffer(&cx, Lifetime::Transfer)
         });
         blob.detach();
         result
     }
 
-    fn get_bytes(
-        &self,
-        global_object: &JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let context = global_object.bun_vm().context_of_caller(callframe);
+    fn bytes(&self, this_value: JsWrapper<'_, Self>, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        let cx = cx.js_thread();
+        let global_object = cx.global();
         let value = self.get_body_value();
 
         if matches!(value, Value::Used) {
@@ -2031,7 +1994,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
             let value = self.get_body_value();
             if let Value::Locked(locked) = value {
                 if !locked.action.is_none()
-                    || locked.is_disturbed::<Self>(global_object, callframe.this())
+                    || locked.is_disturbed::<Self>(global_object, this_value.to_js())
                 {
                     return Ok(handle_body_already_used(global_object));
                 }
@@ -2046,18 +2009,19 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         // toArrayBuffer in AnyBlob checks for non-UTF8 strings
         let value = self.get_body_value();
         let mut blob: AnyBlob = value.use_as_any_blob_allow_non_utf8_string();
-        let result = JSPromise::wrap(global_object, |g| {
-            blob.to_uint8_array(&g.js_thread(context), Lifetime::Transfer)
+        let result = JSPromise::wrap(global_object, |_| {
+            blob.to_uint8_array(&cx, Lifetime::Transfer)
         });
         blob.detach();
         result
     }
 
-    fn get_form_data(
+    fn form_data(
         &self,
-        global_object: &JSGlobalObject,
-        callframe: &CallFrame,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
     ) -> JsResult<JSValue> {
+        let global_object = cx.global();
         let value = self.get_body_value();
 
         if matches!(value, Value::Used) {
@@ -2078,7 +2042,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
             let value = self.get_body_value();
             if let Value::Locked(locked) = value {
                 if !locked.action.is_none()
-                    || locked.is_disturbed::<Self>(global_object, callframe.this())
+                    || locked.is_disturbed::<Self>(global_object, this_value.to_js())
                 {
                     return Ok(handle_body_already_used(global_object));
                 }
@@ -2128,6 +2092,11 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         let js_value =
             match webcore::form_data::FormData::to_js(global_object, blob.slice(), &encoding) {
                 Ok(v) => v,
+                Err(crate::Error::JSError) => {
+                    blob.detach();
+                    let error = global_object.take_error(jsc::JsError::Thrown);
+                    return Ok(JSPromise::rejected_promise(global_object, error).to_js());
+                }
                 Err(err) => {
                     blob.detach();
                     return Ok(global_object
@@ -2143,8 +2112,8 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         Ok(JSPromise::wrap_value(global_object, js_value))
     }
 
-    fn get_blob(&self, global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        self.get_blob_with_this_value(global_object, callframe.this())
+    fn blob(&self, this_value: JsWrapper<'_, Self>, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
+        self.get_blob_with_this_value(cx.global(), this_value.to_js())
     }
 
     fn get_blob_with_this_value(

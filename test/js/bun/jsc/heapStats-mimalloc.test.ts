@@ -4,7 +4,7 @@ import { bunEnv, bunExe, isASAN, isLinux, isMacOS, tempDir } from "harness";
 
 describe("heapStats() mimalloc integration", () => {
   test("mimalloc aggregate stats are present", () => {
-    const s = heapStats();
+    const s: any = heapStats();
     expect(s.mimalloc).toBeDefined();
     expect(s.mimalloc.mimalloc_version).toBeGreaterThan(3000);
     expect(s.mimalloc.pages.current).toBeGreaterThan(0);
@@ -13,7 +13,7 @@ describe("heapStats() mimalloc integration", () => {
   });
 
   test("heapStats({dump: true}) returns per-heap pages", () => {
-    const s = heapStats({ dump: true });
+    const s = (heapStats as any)({ dump: true });
     expect(s.mimallocDump).toBeDefined();
     expect(Array.isArray(s.mimallocDump.heaps)).toBe(true);
     expect(s.mimallocDump.heaps.length).toBeGreaterThan(0);
@@ -32,7 +32,7 @@ describe("heapStats() mimalloc integration", () => {
   });
 
   test("heapStats({dump: 'blocks'}) includes per-block ids", () => {
-    const s = heapStats({ dump: "blocks" });
+    const s = (heapStats as any)({ dump: "blocks" });
     const main = s.mimallocDump.heaps.find((h: any) => h.seq === 0);
     expect(Array.isArray(main.blocks)).toBe(true);
     expect(main.blocks.length).toBeGreaterThan(0);
@@ -47,13 +47,13 @@ describe("heapStats() mimalloc integration", () => {
   });
 
   test("dump reflects new heaps and allocations", () => {
-    const before = heapStats({ dump: true }).mimallocDump.heaps.length;
+    const before = (heapStats as any)({ dump: true }).mimallocDump.heaps.length;
     // MimallocArena is internal; trigger via something that creates a heap.
     // Transpiler creates a per-call arena.
     const t = new Bun.Transpiler();
     const out = t.transformSync("export const x = 1");
     expect(out.length).toBeGreaterThan(0);
-    const after = heapStats({ dump: true }).mimallocDump.heaps;
+    const after = (heapStats as any)({ dump: true }).mimallocDump.heaps;
     // Either a new heap was created (and may already be destroyed), or main grew.
     // We assert the dump is still well-formed and >= before.
     expect(after.length).toBeGreaterThanOrEqual(1);

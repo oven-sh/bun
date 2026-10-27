@@ -1,10 +1,15 @@
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
+use bun_jsc::bindgen::{JsLocal, JsScope, JsWrapper};
+use bun_jsc::{JSValue, JsResult};
 use super::{Expect, ExpectedArray, ContainMsgs, ContainOutcome};
 
 impl Expect {
-    #[bun_jsc::host_fn(method)]
-    pub(crate) fn to_contain_all_keys(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        self.contain_matcher(global, frame, "toContainAllKeys", ExpectedArray::AfterValue,
+    pub(crate) fn to_contain_all_keys(
+        &self,
+        this_value: JsWrapper<'_, Self>,
+        cx: &mut JsScope<'_>,
+        expected: JsLocal<'_>,
+    ) -> JsResult<JSValue> {
+        self.contain_matcher(cx.global(), this_value.to_js(), expected.to_js(), "toContainAllKeys", ExpectedArray::AfterValue,
             ContainMsgs { verb: "contain all keys", not_verb: "contain all keys" },
             |g, value, expected| {
                 let count = expected.get_length(g)?;

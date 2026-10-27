@@ -835,7 +835,16 @@ JSC_DEFINE_HOST_FUNCTION(functionGenerateHeapSnapshotForDebugging,
     }
     scope.releaseAssertNoException();
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(JSONParse(globalObject, WTF::move(jsonString))));
+    // json() returns a null string when the snapshot is too large to hold or to print.
+    if (jsonString.isNull()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+
+    // JSONParse() returns an empty value for a text that is not JSON, with no exception.
+    JSValue snapshot = JSONParseWithException(globalObject, jsonString);
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(snapshot);
 }
 
 JSC_DEFINE_HOST_FUNCTION(functionSerialize,

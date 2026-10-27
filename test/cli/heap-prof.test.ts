@@ -157,6 +157,33 @@ test("--heap-prof-md generates markdown heap profile on exit", async () => {
   expect(content).toContain("| Type | Count | Self Size | Retained Size | Largest ID |");
 });
 
+test("--heap-prof-md counts what a Map holds in the retained size of the Map", async () => {
+  using dir = tempDir("heap-prof-md-map-test", {});
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--heap-prof-md", "-e", `globalThis.cache = new Map([["key", new ArrayBuffer(1024 * 1024)]]);`],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("Heap profile written to:");
+  expect(exitCode).toBe(0);
+
+  const files = Array.from(new Bun.Glob("Heap.*.md").scanSync({ cwd: String(dir) }));
+  expect(files.length).toBe(1);
+  const content = await Bun.file(join(String(dir), files[0])).text();
+
+  // Rows of "All Objects": | ID | Type | Size | Retained | Flags | Label |
+  const retainedByEachMap = Array.from(content.matchAll(/^\| \d+ \| `Map` \| \d+ \| (\d+) \|/gm), row =>
+    Number(row[1]),
+  );
+  expect(Math.max(...retainedByEachMap)).toBeGreaterThanOrEqual(1024 * 1024);
+});
+
 test("--heap-prof-dir specifies the output directory", async () => {
   using dir = tempDir("heap-prof-dir-test", {
     "profiles": {},

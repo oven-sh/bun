@@ -511,6 +511,52 @@ it("getProtectedObjects returns only objects", async () => {
   expect({ stdout, exitCode }).toEqual({ stdout: "ok true\n", exitCode: 0 });
 });
 
+it("generateHeapSnapshotForDebugging throws when the snapshot cannot be printed", async () => {
+  const script = `
+    import { generateHeapSnapshotForDebugging } from "bun:jsc";
+    // The snapshot prints the name of a property that holds an object as a JSON string, with room
+    // for 6 bytes a character. For this name that is one byte more than a string can have.
+    globalThis.holder = { [Buffer.alloc(357913941, "a").toString()]: {} };
+    try {
+      console.log("returned", typeof generateHeapSnapshotForDebugging());
+    } catch (e) {
+      console.log("threw", e.name, e.message);
+    }
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, exitCode }).toEqual({ stdout: "threw RangeError Out of memory\n", exitCode: 0 });
+});
+
+it("generateHeapSnapshotForDebugging returns a snapshot or throws for a property name of 5,000,001 characters", async () => {
+  const script = `
+    import { generateHeapSnapshotForDebugging } from "bun:jsc";
+    // The engine cuts a string of more than 5,000,000 characters when it prints the snapshot, and
+    // leaves out the closing quote: the text is not JSON.
+    globalThis.holder = { [Buffer.alloc(5_000_001, "a").toString()]: {} };
+    try {
+      console.log("returned", typeof generateHeapSnapshotForDebugging());
+    } catch (e) {
+      console.log("threw", e.name);
+    }
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // An engine that prints the name in full returns the snapshot.
+  expect(["threw SyntaxError\n", "returned object\n"]).toContain(stdout);
+  expect(exitCode).toBe(0);
+});
+
 it("serialize rejects a CryptoKey created with extractable set to false", async () => {
   // bun:jsc serialize() (and node:v8 serialize(), which wraps it) hands the raw
   // structured-clone buffer to the caller, so a key imported with

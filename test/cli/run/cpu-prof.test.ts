@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readdirSync, readFileSync } from "fs";
+import { chmodSync, readdirSync, readFileSync, statSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 
@@ -187,6 +187,52 @@ describe.concurrent("--cpu-prof", () => {
 
     expect(profileFiles.length).toBeGreaterThan(0);
     expect(exitCode).toBe(0);
+  });
+
+  // Node creates a --cpu-prof file with mode 0600 (WriteFileSync in src/node_file_utils.cc).
+  // Node has no --cpu-prof-md. That file gets the same mode.
+  test.skipIf(isWindows)("--cpu-prof and --cpu-prof-md create the profile with mode 0600", async () => {
+    using dir = tempDir("cpu-prof-mode", {
+      // Longer than a profile, and not JSON: the run must replace all of it.
+      "existing.cpuprofile": Buffer.alloc(1024 * 1024, "x").toString(),
+    });
+    chmodSync(join(String(dir), "existing.cpuprofile"), 0o644);
+
+    const results = await Promise.all(
+      [
+        // With both formats, each file gets its extension: new.cpuprofile and new.md.
+        ["--cpu-prof", "--cpu-prof-md", "--cpu-prof-name", "new"],
+        // The first open fails because the directory is missing. The open after the mkdir creates the file.
+        ["--cpu-prof", "--cpu-prof-dir", "missing/dir", "--cpu-prof-name", "retry.cpuprofile"],
+        ["--cpu-prof", "--cpu-prof-name", "existing.cpuprofile"],
+      ].map(async flags => {
+        await using proc = Bun.spawn({
+          // The profile is written at exit, so the umask that the script sets applies to it.
+          cmd: [bunExe(), ...flags, "-e", "process.umask(0o022);"],
+          cwd: String(dir),
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { stdout, stderr, exitCode };
+      }),
+    );
+    const silentSuccess = { stdout: "", stderr: "", exitCode: 0 };
+    expect(results).toEqual([silentSuccess, silentSuccess, silentSuccess]);
+
+    const entries = [...new Bun.Glob("**").scanSync({ cwd: String(dir), onlyFiles: false })];
+    const permissions = entries.map(entry => [entry, (statSync(join(String(dir), entry)).mode & 0o777).toString(8)]);
+    expect(Object.fromEntries(permissions)).toEqual({
+      "new.cpuprofile": "600",
+      "new.md": "600",
+      "missing": "755",
+      "missing/dir": "755",
+      "missing/dir/retry.cpuprofile": "600",
+      // The mode only applies when the file is created, as in node.
+      "existing.cpuprofile": "644",
+    });
+    expect(JSON.parse(readFileSync(join(String(dir), "existing.cpuprofile"), "utf-8"))).toHaveProperty("nodes");
   });
 
   test("profile captures function names", async () => {

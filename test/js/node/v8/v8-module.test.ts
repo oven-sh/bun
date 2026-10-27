@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { chmodSync, readFileSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { GCProfiler, isStringOneByteRepresentation } from "node:v8";
 
 describe("v8.isStringOneByteRepresentation", () => {
@@ -129,5 +131,48 @@ describe("v8.GCProfiler", () => {
       stderr: "",
       exitCode: 0,
     });
+  });
+});
+
+// Node creates the snapshot file with mode 0600 (WriteSnapshot in src/heap_utils.cc), and only when
+// the call creates the file. Windows has no permission bits to check.
+describe.concurrent.skipIf(isWindows)("v8.writeHeapSnapshot", () => {
+  // Writes one snapshot into `cwd`, to `path` or to the default name, and returns where it is.
+  async function writeHeapSnapshot(cwd: string, path?: string) {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        // The umask is pinned so that the mode of the file depends on the call alone.
+        `process.umask(0o022); console.log(require("node:v8").writeHeapSnapshot(process.argv[1]));`,
+        ...(path === undefined ? [] : [path]),
+      ],
+      cwd,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    return join(cwd, stdout.trim());
+  }
+
+  const permissions = (path: string) => (statSync(path).mode & 0o777).toString(8);
+
+  test.each([
+    ["a path", "new.heapsnapshot"],
+    ["the default name", undefined],
+  ])("creates the file with mode 0600 for %s", async (_label, path) => {
+    using dir = tempDir("v8-write-heap-snapshot", {});
+    expect(permissions(await writeHeapSnapshot(String(dir), path))).toBe("600");
+  });
+
+  test("keeps the mode of an existing file", async () => {
+    using dir = tempDir("v8-write-heap-snapshot", { "existing.heapsnapshot": "not a snapshot" });
+    const existing = join(String(dir), "existing.heapsnapshot");
+    chmodSync(existing, 0o644);
+    expect(await writeHeapSnapshot(String(dir), "existing.heapsnapshot")).toBe(existing);
+    expect(JSON.parse(readFileSync(existing, "utf8"))).toHaveProperty("snapshot");
+    expect(permissions(existing)).toBe("644");
   });
 });

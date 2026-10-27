@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { statSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
 
@@ -226,6 +227,49 @@ test("--heap-prof-name specifies output filename", async () => {
 
   const profile = await readProfile(String(dir), "my-profile.heapprofile");
   expectV8HeapSnapshotShape(profile);
+});
+
+// Node creates a --heap-prof file with mode 0600 (WriteFileSync in src/node_file_utils.cc).
+// Node has no --heap-prof-md. That file gets the same mode.
+test.skipIf(isWindows).concurrent.each([
+  {
+    name: "--heap-prof",
+    flags: ["--heap-prof", "--heap-prof-name", "out.heapprofile"],
+    stderr: /^$/,
+    modes: { "out.heapprofile": "600" },
+  },
+  {
+    name: "--heap-prof-md",
+    flags: ["--heap-prof-md", "--heap-prof-name", "out.md"],
+    stderr: /^Heap profile written to: .*out\.md\n$/,
+    modes: { "out.md": "600" },
+  },
+  {
+    // The first open fails because the directory is missing. The open after the mkdir creates the file.
+    name: "--heap-prof with a missing --heap-prof-dir",
+    flags: ["--heap-prof", "--heap-prof-dir", "missing/dir", "--heap-prof-name", "out.heapprofile"],
+    stderr: /^$/,
+    modes: { "missing": "755", "missing/dir": "755", "missing/dir/out.heapprofile": "600" },
+  },
+])("$name creates the profile with mode 0600", async ({ flags, stderr: expectedStderr, modes }) => {
+  using dir = tempDir("heap-prof-mode-test", {});
+
+  await using proc = Bun.spawn({
+    // The profile is written at exit, so the umask that the script sets applies to it.
+    cmd: [bunExe(), ...flags, "-e", "process.umask(0o022);"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toMatch(expectedStderr);
+  expect({ stdout, exitCode }).toEqual({ stdout: "", exitCode: 0 });
+
+  const entries = [...new Bun.Glob("**").scanSync({ cwd: String(dir), onlyFiles: false })];
+  const permissions = entries.map(entry => [entry, (statSync(join(String(dir), entry)).mode & 0o777).toString(8)]);
+  expect(Object.fromEntries(permissions)).toEqual(modes);
 });
 
 test("--heap-prof-name and --heap-prof-dir work together", async () => {

@@ -80,7 +80,13 @@ pub(crate) fn write_sampling_profiler_report(
         .join(&[directory, filename])
         .map_err(|_| ProfilerError::FilenameTooLong)?;
 
-    write_file_creating_dir(&mut path_buf, directory, report.slice())
+    // Not a Node output: it keeps the default mode of `write_file_os_path`.
+    write_file_creating_dir(
+        &mut path_buf,
+        directory,
+        report.slice(),
+        |path, contents| bun_sys::File::write_file_os_path(Fd::cwd(), path, contents),
+    )
 }
 
 pub(crate) fn stop_and_write_profile(
@@ -109,6 +115,12 @@ pub(crate) fn stop_and_write_profile(
     Ok(())
 }
 
+/// 0600 on create, like Node's WriteFileSync: https://github.com/nodejs/node/blob/v26.3.0/src/node_file_utils.cc#L29-L36
+pub(crate) fn write_owner_only(path: &bun_paths::OSPathSliceZ, data: &[u8]) -> bun_sys::Maybe<()> {
+    const FLAGS: i32 = bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC;
+    bun_sys::File::openat_os_path(Fd::cwd(), path, FLAGS, 0o600)?.write_all(data)
+}
+
 fn write_profile_to_file(
     profile_string: &BunString,
     config: &CPUProfilerConfig,
@@ -122,14 +134,20 @@ fn write_profile_to_file(
 
     build_output_path(&mut path_buf, config, is_md_format)?;
 
-    write_file_creating_dir(&mut path_buf, config.dir, profile_slice.slice())
+    write_file_creating_dir(
+        &mut path_buf,
+        config.dir,
+        profile_slice.slice(),
+        write_owner_only,
+    )
 }
 
-/// Writes `contents` to `path`. On ENOENT, EPERM or EACCES it creates `dir` and retries once.
+/// Writes `contents` to `path` with `write`. On ENOENT, EPERM or EACCES it creates `dir` and retries once.
 fn write_file_creating_dir(
     path: &mut AutoAbsPathChecked,
     dir: &[u8],
     contents: &[u8],
+    write: fn(&bun_paths::OSPathSliceZ, &[u8]) -> bun_sys::Maybe<()>,
 ) -> Result<(), ProfilerError> {
     // Convert to OS-specific path (UTF-16 on Windows, UTF-8 elsewhere)
     #[cfg(windows)]
@@ -140,8 +158,7 @@ fn write_file_creating_dir(
     #[cfg(not(windows))]
     let output_path_os = path.slice_z();
 
-    // Write the profile to disk using bun.sys.File.writeFile
-    let result = bun_sys::File::write_file_os_path(Fd::cwd(), output_path_os, contents);
+    let result = write(output_path_os, contents);
     if let Err(err) = result {
         // If we got ENOENT, PERM, or ACCES, try creating the directory and retry
         let errno = err.get_errno();
@@ -149,8 +166,7 @@ fn write_file_creating_dir(
             if !dir.is_empty() {
                 let _ = Fd::cwd().make_path(dir);
                 // Retry write
-                let retry_result =
-                    bun_sys::File::write_file_os_path(Fd::cwd(), output_path_os, contents);
+                let retry_result = write(output_path_os, contents);
                 if retry_result.is_err() {
                     return Err(ProfilerError::WriteFailed);
                 }

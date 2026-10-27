@@ -999,7 +999,7 @@ use bun_boringssl as boringssl;
 use bun_collections::VecExt;
 use bun_core::fmt::{EscapeControlChars, escape_control_chars};
 use bun_core::{FeatureFlags, Global, Output};
-use bun_core::{String as BunString, strings};
+use bun_core::{StringView, strings};
 use bun_http_types::ETag::StringPointer;
 use bun_uws as uws;
 // the std Wyhash algorithm, not Wyhash11.
@@ -5151,8 +5151,8 @@ impl<'a> HTTPClient<'a> {
                 // https://fetch.spec.whatwg.org/#concept-response-location-url: the URL parser decides, with the current URL as its base.
                 let original_url = self.url.clone();
                 let new_url = bun_url::join_without_fragment(
-                    &BunString::borrow_utf8(original_url.href),
-                    &BunString::borrow_utf8(location),
+                    &StringView::borrow_utf8(original_url.href),
+                    &StringView::borrow_utf8(location),
                 );
                 if new_url.is_empty() {
                     return Err(crate::Error::RedirectURLInvalid);

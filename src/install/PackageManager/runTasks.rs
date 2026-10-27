@@ -1190,8 +1190,7 @@ fn run_tasks_erased(
                 if task.status == Task::Status::Fail {
                     let log_mark = manager.log_mut().msgs.len();
                     if holds_log {
-                        task.log.append_to_with_recycled(manager.log_mut(), false);
-                        task.log.reset();
+                        task.log.append_to(manager.log_mut());
                     }
                     let req = task.request_package_manifest();
                     let name = req.name.slice();

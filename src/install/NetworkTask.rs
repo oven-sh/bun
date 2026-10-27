@@ -590,8 +590,8 @@ impl NetworkTask {
             // The join would read bytes that are not UTF-8 as U+FFFD, which is another name.
             let tmp = if strings::is_valid_utf8(encoded_name) {
                 bun_url::join(
-                    &bun_core::String::borrow_utf8(base),
-                    &bun_core::String::borrow_utf8(encoded_name),
+                    &bun_core::StringView::borrow_utf8(base),
+                    &bun_core::StringView::borrow_utf8(encoded_name),
                 )
             } else {
                 bun_core::String::DEAD

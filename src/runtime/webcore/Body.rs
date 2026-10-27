@@ -17,7 +17,7 @@ use bun_http_types::MimeType::MimeType;
 // Re-export so callers can write `body::InternalBlob`.
 use crate::jsc::HTTPHeaderName;
 pub(crate) use crate::webcore::InternalBlob;
-use bun_core::String as BunString;
+use bun_core::{String as BunString, StringView};
 use bun_core::{Utf8Bytes, WTFString, WTFStringImpl, WTFStringImplExt as _, WTFStringImplStruct};
 use bun_jsc::JsCell;
 use bun_jsc::StringJsc as _;
@@ -741,7 +741,7 @@ impl Value {
         }
         headers.put_default(
             HTTPHeaderName::ContentType,
-            &BunString::ascii(content_type.as_slice()),
+            &StringView::ascii(content_type.as_slice()),
             global_this,
         )
     }

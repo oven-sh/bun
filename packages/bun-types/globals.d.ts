@@ -1240,11 +1240,15 @@ interface Console {
    * @param data something to display
    */
   error(...data: any[]): void;
-  /** Does nothing currently */
+  /**
+   * Start a group. Logs `data` as the label of the group, if there is any,
+   * then indents later `log`, `info`, `debug`, `warn`, `error`, `dir` and
+   * `trace` output by two more spaces.
+   */
   group(...data: any[]): void;
-  /** Does nothing currently */
+  /** An alias for {@link group}. */
   groupCollapsed(...data: any[]): void;
-  /** Does nothing currently */
+  /** End the most recent group that is still open, and remove its indent. */
   groupEnd(): void;
   info(...data: any[]): void;
   log(...data: any[]): void;

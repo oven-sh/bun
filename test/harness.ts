@@ -72,16 +72,6 @@ function detectASAN(): boolean {
   return basename(process.execPath).includes("bun-asan");
 }
 
-// A release build is not one. `--revision` can't tell for a debug build, which prints "-debug" either way.
-export const isCanary = detectCanary();
-
-function detectCanary(): boolean {
-  try {
-    return require("bun:internal-for-testing").crash_handler.getFeatureData().is_canary;
-  } catch {}
-  return Bun.spawnSync({ cmd: [process.execPath, "--revision"] }).stdout.includes("canary");
-}
-
 export const bunEnv: NodeJS.Dict<string> = {
   ...process.env,
   // Windows spells PATH `Path`. `{ ...bunEnv, PATH }` would then hold both, and which one a child

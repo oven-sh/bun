@@ -65,7 +65,7 @@ pub(crate) fn log_unhandled_exception(exception: JSValue) {
 // HOST_EXPORT(Bun__remapStackFramePositions, c)
 pub(crate) fn remap_stack_frame_positions(
     vm: &mut VirtualMachine,
-    frames: *mut ZigStackFrame,
+    frames: *mut ZigStackFrame<'_>,
     frames_count: usize,
 ) {
     // The collector thread is not otherwise a Bun thread: give it the per-thread output source a source-map warning writes

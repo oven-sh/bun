@@ -377,10 +377,13 @@ fn message_with_type_and_level_(
     len: usize,
 ) -> JsResult<()> {
     let console: *mut ConsoleObject = vm_console(global);
-    // `defer console.default_indent +|= (message_type == StartGroup) as u16;`
+    // `defer console.default_indent +|= is_start_group as u16;`
     // Capture the raw pointer (Copy) by `move` so no borrow of the local is
     // held across the body; dereference only at scope-exit.
-    let is_start_group = message_type == MessageType::StartGroup;
+    let is_start_group = matches!(
+        message_type,
+        MessageType::StartGroup | MessageType::StartGroupCollapsed
+    );
     let _indent_guard = scopeguard::guard(console, move |console| {
         // SAFETY: see `vm_console` — points at the live boxed
         // `ConsoleObject` for this VM; JS-thread-only.
@@ -391,8 +394,9 @@ fn message_with_type_and_level_(
         }
     });
 
-    if message_type == MessageType::StartGroup && len == 0 {
-        // undefined is printed if passed explicitly.
+    if is_start_group && len == 0 {
+        // No label prints nothing, so return before the before-print hook of
+        // `bun test` runs. An explicit `undefined` is a label and is printed.
         return Ok(());
     }
 
@@ -550,8 +554,6 @@ fn message_with_type_and_level_(
         let w = unsafe { (*console).writer() };
         let _ = w.write_all(b"\n");
         let _ = w.flush();
-    } else if message_type != MessageType::Trace {
-        let _ = writer.write_all(b"undefined\n");
     }
 
     if message_type == MessageType::Trace {
@@ -1129,11 +1131,10 @@ impl<'a> DynWriteAdapter<'a> {
 }
 
 pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
+    let mut source_code = bun_core::Utf8Bytes::EMPTY;
     let mut holder = crate::zig_exception::Holder::init();
     // SAFETY: per-thread VM; `console.trace()` only runs on the JS thread.
     let vm = VirtualMachine::get().as_mut();
-
-    let mut source_code_slice: Option<bun_core::Utf8Bytes> = None;
 
     let err = global.create_error_instance(format_args!("trace output"));
     // `remap_zig_exception` populates `holder.zig_exception()` from `err`.
@@ -1146,7 +1147,7 @@ pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
         err,
         None,
         &mut need_to_clear,
-        &mut source_code_slice,
+        &mut source_code,
         false,
     );
     holder.need_to_clear_parser_arena_on_deinit = need_to_clear;
@@ -1158,7 +1159,6 @@ pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
         Output::enable_ansi_colors_stderr(),
     );
 
-    drop(source_code_slice);
     holder.deinit(vm);
 }
 

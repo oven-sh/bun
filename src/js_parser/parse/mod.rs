@@ -518,7 +518,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Not in esbuild: a cast, "!", type arguments or more parentheses cannot be parameters, so a ":" behind them is not a return type.
         if is_arrow_fn
             || opts.force_arrow_fn
-            || (Self::IS_TYPESCRIPT_ENABLED && p.lexer.token == T::TColon && !errors.is_not_binding)
+            || (Self::IS_TYPESCRIPT_ENABLED
+                && p.lexer.token == T::TColon
+                && !errors.has_erased_syntax)
         {
             // Arrow functions are not allowed inside certain expressions
             if level.gt(Level::Assign) {
@@ -576,7 +578,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if Self::IS_TYPESCRIPT_ENABLED
                 && p.lexer.token == T::TColon
                 && invalid_log.is_empty()
-                && !errors.is_not_binding
+                && !errors.has_erased_syntax
             {
                 if opts.is_after_question_and_before_colon {
                     // Only do this very expensive check if we must

@@ -31,7 +31,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             && (p.lexer.is_contextual_keyword(b"as") || p.lexer.is_contextual_keyword(b"satisfies"))
         {
             if let Some(errors) = errors {
-                errors.is_not_binding = true;
+                errors.has_erased_syntax = true;
             }
             p.lexer.next()?;
             p.skip_type_script_type(Level::Lowest)?;
@@ -506,7 +506,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         if let Some(errors) = errors {
-            errors.is_not_binding = true;
+            errors.has_erased_syntax = true;
         }
         p.lexer.next()?;
         *optional_chain = old_optional_chain;
@@ -890,7 +890,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Ok(false);
         }
         if let Some(errors) = errors {
-            errors.is_not_binding = true;
+            errors.has_erased_syntax = true;
         }
         Ok(true)
     }

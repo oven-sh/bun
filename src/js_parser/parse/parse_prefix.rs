@@ -69,7 +69,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if Self::IS_TYPESCRIPT_ENABLED
             && let Some(errors) = errors
         {
-            errors.is_not_binding = true;
+            errors.has_erased_syntax = true;
         }
         p.parse_paren_expr(
             loc,
@@ -793,7 +793,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if Self::IS_TYPESCRIPT_ENABLED
                 && let Some(errors) = errors
             {
-                errors.is_not_binding |= self_errors.is_not_binding;
+                errors.has_erased_syntax |= self_errors.has_erased_syntax;
             }
         } else if errors.is_none() {
             // Is this an expression?
@@ -884,7 +884,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if Self::IS_TYPESCRIPT_ENABLED
                 && let Some(errors) = errors
             {
-                errors.is_not_binding |= self_errors.is_not_binding;
+                errors.has_erased_syntax |= self_errors.has_erased_syntax;
             }
         } else if errors.is_none() {
             // Is this an expression?
@@ -979,7 +979,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if Self::IS_TYPESCRIPT_ENABLED {
             // This is either an old-style type cast or a generic lambda function
             if let Some(errors) = errors.as_deref_mut() {
-                errors.is_not_binding = true;
+                errors.has_erased_syntax = true;
             }
 
             // "<T>(x)"

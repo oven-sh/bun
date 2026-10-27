@@ -665,7 +665,15 @@ describe.concurrent("macro entry module escapes the path and the export name", (
     const result = await run(path.join(String(dir), "it's"));
     expect(result.stderr).toContain("Macro 'a'b' not found in '");
     expect(result.stderr).toContain(path.join("it's", "macro.ts"));
-    expect(result.exitCode).not.toBe(0);
+    expect(result.exitCode).toBe(1);
+  });
+
+  test("a user macro file named bun.ts is not the bun builtin", async () => {
+    using dir = tempDir("macro-named-bun", {
+      "bun.ts": `export function answer() { return 42; }\n`,
+      "main.ts": `import { answer } from "./bun.ts" with { type: "macro" };\nconsole.log(answer());\n`,
+    });
+    expect(await run(String(dir))).toEqual({ lastLine: "42", stderr: "", exitCode: 0 });
   });
 });
 

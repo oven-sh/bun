@@ -9,12 +9,21 @@ use crate::common::constants::{
 pub(crate) struct CmdLutElement {
     pub(crate) insert_len_extra_bits: u8,
     pub(crate) copy_len_extra_bits: u8,
-    /// 0 if the command implies distance code 0, -1 if it is followed by a distance code.
-    pub(crate) distance_code: i8,
+    /// 0 if the command implies that distance code, -1 if a distance code follows it. With a `bool` here decoding takes
+    /// 1.8 % more instructions.
+    distance_code: i8,
     /// 7.2. Context ID for distances.
     pub(crate) context: u8,
     pub(crate) insert_len_offset: u16,
     pub(crate) copy_len_offset: u16,
+}
+
+impl CmdLutElement {
+    /// The distance is the last one, and no distance code follows the command.
+    #[inline(always)]
+    pub(crate) const fn implicit_distance(self) -> bool {
+        self.distance_code >= 0
+    }
 }
 
 pub(crate) static CMD_LUT: [CmdLutElement; NUM_COMMAND_SYMBOLS] = build();

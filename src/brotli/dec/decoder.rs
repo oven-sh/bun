@@ -47,6 +47,12 @@ const MAX_DISTANCE_SYMBOLS: usize = calculate_distance_code_limit(
 
 const MAX_COMPOUND_DICTIONARY_CHUNKS: usize = 15;
 
+/// 2. The block categories, as indices.
+const LITERAL: usize = 0;
+const COMMAND: usize = 1;
+const DISTANCE: usize = 2;
+const NUM_BLOCK_CATEGORIES: usize = 3;
+
 /// The fixed prefix code that the code lengths of the code length code are written in, indexed by the next 4 bits.
 static CODE_LENGTH_PREFIX_LENGTH: [u8; 16] = [2, 2, 2, 3, 2, 2, 2, 4, 2, 2, 2, 3, 2, 2, 2, 4];
 static CODE_LENGTH_PREFIX_VALUE: [u8; 16] = [0, 4, 3, 2, 0, 4, 3, 1, 0, 4, 3, 2, 0, 4, 3, 5];
@@ -347,12 +353,12 @@ pub struct Decoder {
     trivial_literal_context: bool,
     /// Valid from when a command is decoded until its distance is. A temporary after that.
     distance_context: i32,
-    block_length: [u32; 3],
+    block_length: [u32; NUM_BLOCK_CATEGORIES],
     /// The symbol of a block count of which the extra bits were not read yet.
     pending_block_length_symbol: Option<u32>,
-    num_block_types: [u32; 3],
-    /// The last two block types of each category.
-    block_type_rb: [u32; 6],
+    num_block_types: [u32; NUM_BLOCK_CATEGORIES],
+    /// The block type before the current one, and the current one.
+    last_block_types: [[u32; 2]; NUM_BLOCK_CATEGORIES],
     distance_postfix_bits: u32,
     num_direct_distance_codes: u32,
     num_dist_htrees: u32,
@@ -366,7 +372,9 @@ pub struct Decoder {
     partial_pos_out: usize,
 
     copy_length: i32,
-    distance_code: i32,
+    /// The distance of the current command is the last one.
+    implicit_distance: bool,
+    distance: i32,
 
     /// Where in `distance_hgroup.codes` the tree for each distance context of the current block type starts.
     dist_htrees: [u32; 1 << DISTANCE_CONTEXT_BITS],
@@ -1194,10 +1202,10 @@ impl Decoder {
             block_len_trees: Vec::new(),
             trivial_literal_context: false,
             distance_context: 0,
-            block_length: [0; 3],
+            block_length: [0; NUM_BLOCK_CATEGORIES],
             pending_block_length_symbol: None,
-            num_block_types: [0; 3],
-            block_type_rb: [0; 6],
+            num_block_types: [0; NUM_BLOCK_CATEGORIES],
+            last_block_types: [[0; 2]; NUM_BLOCK_CATEGORIES],
             distance_postfix_bits: 0,
             num_direct_distance_codes: 0,
             num_dist_htrees: 0,
@@ -1206,7 +1214,8 @@ impl Decoder {
             rb_roundtrips: 0,
             partial_pos_out: 0,
             copy_length: 0,
-            distance_code: 0,
+            implicit_distance: false,
+            distance: 0,
             dist_htrees: [0; 1 << DISTANCE_CONTEXT_BITS],
             dist_htree: 0,
             substate_meta_block_header: MetaBlockHeaderState::None,
@@ -1408,16 +1417,16 @@ impl Decoder {
         }
     }
 
-    /// 6. Reads a block switch command, which takes 3 to 54 bits, for literals (0), commands (1) or distances (2).
+    /// 6. Reads a block switch command, which takes 3 to 54 bits.
     #[inline(always)]
     fn decode_block_type_and_length<const SAFE: bool>(
         &mut self,
         input: &[u8],
-        tree_type: usize,
+        category: usize,
     ) -> Step {
-        let max_block_type = self.num_block_types.at(tree_type)?;
-        let type_tree = Tree::new(&self.block_type_trees, tree_type * HUFFMAN_MAX_SIZE_258);
-        let len_tree = Tree::new(&self.block_len_trees, tree_type * HUFFMAN_MAX_SIZE_26);
+        let max_block_type = self.num_block_types.at(category)?;
+        let type_tree = Tree::new(&self.block_type_trees, category * HUFFMAN_MAX_SIZE_258);
+        let len_tree = Tree::new(&self.block_len_trees, category * HUFFMAN_MAX_SIZE_26);
         let br = &mut self.br;
         if max_block_type <= 1 {
             return Err(E::FormatBlockSwitch);
@@ -1427,7 +1436,7 @@ impl Decoder {
         if !SAFE {
             block_type = read_symbol(type_tree, br, input)?;
             self.block_length
-                .put(tree_type, read_block_length(len_tree, br, input)?)?;
+                .put(category, read_block_length(len_tree, br, input)?)?;
         } else {
             let memento = *br;
             block_type = safe_read_symbol(type_tree, br, input)?.ok_or(E::NeedsMoreInput)?;
@@ -1438,22 +1447,21 @@ impl Decoder {
                 *br = memento;
                 return Err(E::NeedsMoreInput);
             };
-            self.block_length.put(tree_type, block_length)?;
+            self.block_length.put(category, block_length)?;
         }
 
-        let ringbuffer: &mut [u32; 2] = self.block_type_rb.array_at_mut(tree_type * 2)?;
+        let last_types = self.last_block_types.at_mut(category)?;
         if block_type == 1 {
-            block_type = ringbuffer[1] + 1;
+            block_type = last_types[1] + 1;
         } else if block_type == 0 {
-            block_type = ringbuffer[0];
+            block_type = last_types[0];
         } else {
             block_type -= 2;
         }
         if block_type >= max_block_type {
             block_type -= max_block_type;
         }
-        ringbuffer[0] = ringbuffer[1];
-        ringbuffer[1] = block_type;
+        *last_types = [last_types[1], block_type];
         Ok(())
     }
 
@@ -1464,7 +1472,7 @@ impl Decoder {
             .as_chunks::<{ 1 << LITERAL_CONTEXT_BITS }>();
         for (i, contexts) in contexts
             .iter()
-            .take(self.num_block_types[0] as usize)
+            .take(self.num_block_types[LITERAL] as usize)
             .enumerate()
         {
             let sample = contexts[0];
@@ -1477,7 +1485,7 @@ impl Decoder {
 
     #[inline(always)]
     fn prepare_literal_decoding(&mut self) -> Checked {
-        let block_type = self.block_type_rb[1] as usize;
+        let block_type = self.last_block_types[LITERAL][1] as usize;
         self.context_map_slice = block_type << LITERAL_CONTEXT_BITS;
         let trivial = self.trivial_literal_contexts.at(block_type >> 5)?;
         self.trivial_literal_context = (trivial >> (block_type & 31)) & 1 != 0;
@@ -1489,7 +1497,7 @@ impl Decoder {
     }
 
     fn prepare_distance_decoding(&mut self) -> Checked {
-        let block_type = self.block_type_rb[5] as usize;
+        let block_type = self.last_block_types[DISTANCE][1] as usize;
         let trees: &[u8; 1 << DISTANCE_CONTEXT_BITS] = self
             .dist_context_map
             .array_at(block_type << DISTANCE_CONTEXT_BITS)?;
@@ -1501,24 +1509,24 @@ impl Decoder {
 
     #[inline(never)]
     fn decode_literal_block_switch<const SAFE: bool>(&mut self, input: &[u8]) -> Step {
-        self.decode_block_type_and_length::<SAFE>(input, 0)?;
+        self.decode_block_type_and_length::<SAFE>(input, LITERAL)?;
         self.prepare_literal_decoding()?;
         Ok(())
     }
 
     #[inline(never)]
     fn decode_command_block_switch<const SAFE: bool>(&mut self, input: &[u8]) -> Step {
-        self.decode_block_type_and_length::<SAFE>(input, 1)?;
+        self.decode_block_type_and_length::<SAFE>(input, COMMAND)?;
         self.htree_command = self
             .insert_copy_hgroup
             .htrees
-            .at(self.block_type_rb[3] as usize)? as usize;
+            .at(self.last_block_types[COMMAND][1] as usize)? as usize;
         Ok(())
     }
 
     #[inline(never)]
     fn decode_distance_block_switch<const SAFE: bool>(&mut self, input: &[u8]) -> Step {
-        self.decode_block_type_and_length::<SAFE>(input, 2)?;
+        self.decode_block_type_and_length::<SAFE>(input, DISTANCE)?;
         self.prepare_distance_decoding()?;
         self.dist_htree = self.dist_htrees.at(self.distance_context as usize)?;
         Ok(())
@@ -1687,7 +1695,7 @@ impl Decoder {
 
     /// Reads the context mode of each literal block type.
     fn read_context_modes(&mut self, input: &[u8]) -> Step {
-        while self.loop_counter < self.num_block_types[0] as i32 {
+        while self.loop_counter < self.num_block_types[LITERAL] as i32 {
             let bits = self.br.safe_read_bits(input, 2).ok_or(E::NeedsMoreInput)?;
             self.context_modes
                 .put(self.loop_counter as usize, bits as u8)?;
@@ -1696,32 +1704,32 @@ impl Decoder {
         Ok(())
     }
 
-    /// 4. Turns one of the 16 distance codes that refer to the last distances into a distance.
+    /// 4. Turns `code`, one of the 16 distance codes that refer to the last distances, into a distance.
     #[inline(always)]
-    fn take_distance_from_ring_buffer(&mut self) -> Checked {
-        let offset = self.distance_code - 3;
-        if self.distance_code <= 3 {
+    fn take_distance_from_ring_buffer(&mut self, code: i32) -> Checked {
+        let offset = code - 3;
+        if code <= 3 {
             // A dictionary reference does not go into the ring buffer, and this makes up for that.
-            self.distance_context = 1 >> self.distance_code;
-            self.distance_code = self
+            self.distance_context = 1 >> code;
+            self.distance = self
                 .dist_rb
                 .at((self.dist_rb_idx.wrapping_sub(offset) & 3) as usize)?;
             self.dist_rb_idx = self.dist_rb_idx.wrapping_sub(self.distance_context);
         } else {
-            let (base, index_delta) = if self.distance_code < 10 {
-                (self.distance_code - 4, 3)
+            let (base, index_delta) = if code < 10 {
+                (code - 4, 3)
             } else {
-                (self.distance_code - 10, 2)
+                (code - 10, 2)
             };
             // One of six 4-bit values.
             let delta = ((0x605142 >> (4 * base)) & 0xF) - 3;
-            self.distance_code = self
+            self.distance = self
                 .dist_rb
                 .at((self.dist_rb_idx.wrapping_add(index_delta) & 3) as usize)?
                 + delta;
-            if self.distance_code <= 0 {
+            if self.distance <= 0 {
                 // Too large to be valid, which is noticed later.
-                self.distance_code = 0x7FFF_FFFF;
+                self.distance = 0x7FFF_FFFF;
             }
         }
         Ok(())
@@ -1768,17 +1776,16 @@ impl Decoder {
         Ok(())
     }
 
-    /// Reads a distance code and its extra bits into `distance_code`.
+    /// Reads a distance code and its extra bits, and sets `distance`.
     #[inline(always)]
     fn read_distance<const SAFE: bool>(&mut self, br: &mut BitReader, input: &[u8]) -> Step {
         let distance_tree = Tree::new(&self.distance_hgroup.codes, self.dist_htree as usize);
         let memento = *br;
         let code = read_symbol_maybe_safe::<SAFE>(distance_tree, br, input)?;
-        self.block_length[2] = self.block_length[2].wrapping_sub(1);
+        self.block_length[DISTANCE] = self.block_length[DISTANCE].wrapping_sub(1);
         self.distance_context = 0;
         if code & !0xF == 0 {
-            self.distance_code = code as i32;
-            self.take_distance_from_ring_buffer()?;
+            self.take_distance_from_ring_buffer(code as i32)?;
             return Ok(());
         }
         let symbol = self.dist_symbols.at(code as usize)?;
@@ -1787,14 +1794,14 @@ impl Decoder {
             br.read_bits(input, nbits)?
         } else {
             let Some(bits) = br.safe_read_bits(input, nbits) else {
-                self.block_length[2] = self.block_length[2].wrapping_add(1);
+                self.block_length[DISTANCE] = self.block_length[DISTANCE].wrapping_add(1);
                 *br = memento;
                 return Err(E::NeedsMoreInput);
             };
             bits
         };
         let offset = u64::from(symbol.offset);
-        self.distance_code = (offset + (bits << self.distance_postfix_bits)) as i32;
+        self.distance = (offset + (bits << self.distance_postfix_bits)) as i32;
         Ok(())
     }
 
@@ -1805,7 +1812,7 @@ impl Decoder {
         let memento = *br;
         let cmd_code = read_symbol_maybe_safe::<SAFE>(htree_command, br, input)?;
         let v = CMD_LUT.at(cmd_code as usize)?;
-        self.distance_code = i32::from(v.distance_code);
+        self.implicit_distance = v.implicit_distance();
         self.distance_context = i32::from(v.context);
         self.dist_htree = self.dist_htrees.at(usize::from(v.context))?;
         let insert_len_extra;
@@ -1833,26 +1840,25 @@ impl Decoder {
             (insert_len_extra, copy_length) = extra;
         }
         self.copy_length = copy_length as i32 + i32::from(v.copy_len_offset);
-        self.block_length[1] = self.block_length[1].wrapping_sub(1);
+        self.block_length[COMMAND] = self.block_length[COMMAND].wrapping_sub(1);
         Ok(i32::from(v.insert_len_offset) + insert_len_extra as i32)
     }
 
-    /// Writes what `distance_code`, which is past the data seen so far, refers to in one of the dictionaries: `length`
+    /// Writes what `distance`, which is past the data seen so far, refers to in one of the dictionaries: `length`
     /// bytes of the compound dictionary, as far as there is room, or a word of `length` bytes of the static one,
     /// transformed. Returns the position after it.
     #[inline(never)]
     fn copy_from_dictionary(&mut self, ringbuffer: &mut [u8], pos: i32, length: i32) -> Step<i32> {
         let s = self;
-        if s.distance_code > MAX_ALLOWED_DISTANCE as i32 {
+        if s.distance > MAX_ALLOWED_DISTANCE as i32 {
             return Err(E::FormatDistance);
         }
         let compound_dictionary_size = s.compound_dictionary_size();
-        if s.distance_code - s.max_distance - 1 < compound_dictionary_size {
-            let address = compound_dictionary_size - (s.distance_code - s.max_distance);
+        if s.distance - s.max_distance - 1 < compound_dictionary_size {
+            let address = compound_dictionary_size - (s.distance - s.max_distance);
             let compound = s.compound_dictionary.as_deref_mut().ok_or(Bug)?;
             compound.start_copy(address, length)?;
-            s.dist_rb
-                .put((s.dist_rb_idx & 3) as usize, s.distance_code)?;
+            s.dist_rb.put((s.dist_rb_idx & 3) as usize, s.distance)?;
             s.dist_rb_idx = s.dist_rb_idx.wrapping_add(1);
             s.meta_block_remaining_len -= length;
             return Ok(pos + compound.copy_to(ringbuffer, s.ringbuffer_size, pos)?);
@@ -1863,7 +1869,7 @@ impl Decoder {
         }
         let word_length = length as usize;
         let shift = u32::from(dictionary::SIZE_BITS_BY_LENGTH.at(word_length)?);
-        let address = s.distance_code - s.max_distance - 1 - compound_dictionary_size;
+        let address = s.distance - s.max_distance - 1 - compound_dictionary_size;
         let word_idx = (address & bit_mask(shift) as i32) as usize;
         let transform_idx = (address >> shift) as usize;
         let offset =
@@ -1880,7 +1886,7 @@ impl Decoder {
         } else {
             let dst = ringbuffer.sub_mut(pos as usize..)?;
             let len = transform_dictionary_word(dst, word, transform_idx)? as i32;
-            if len == 0 && s.distance_code <= 120 {
+            if len == 0 && s.distance <= 120 {
                 return Err(E::FormatTransform);
             }
             len
@@ -1936,7 +1942,7 @@ impl Decoder {
                         s.state = State::CommandBegin;
                         return Err(E::NeedsMoreInput);
                     }
-                    if s.block_length[1] == 0 {
+                    if s.block_length[COMMAND] == 0 {
                         block_switch!(decode_command_block_switch)?;
                         continue;
                     }
@@ -1960,8 +1966,8 @@ impl Decoder {
                             // The hottest part of the decoder. For this many literals neither the ring buffer nor the
                             // block can end, so only the input has to be watched.
                             let mut num_steps = *i - 1;
-                            if num_steps > 0 && num_steps as u32 > s.block_length[0] {
-                                num_steps = s.block_length[0] as i32;
+                            if num_steps > 0 && num_steps as u32 > s.block_length[LITERAL] {
+                                num_steps = s.block_length[LITERAL] as i32;
                             }
                             if s.ringbuffer_size >= *pos && (s.ringbuffer_size - *pos) <= num_steps
                             {
@@ -1977,14 +1983,14 @@ impl Decoder {
                                 num_steps.max(0) as usize,
                             )? as i32;
                             *pos += num_steps;
-                            s.block_length[0] -= num_steps as u32;
+                            s.block_length[LITERAL] -= num_steps as u32;
                             *i -= num_steps;
                             loop {
                                 if !br.has_fast_input() {
                                     s.state = State::CommandInner;
                                     return Err(E::NeedsMoreInput);
                                 }
-                                if s.block_length[0] == 0 {
+                                if s.block_length[LITERAL] == 0 {
                                     label = Label::NextLiteralBlock;
                                     break;
                                 }
@@ -1995,7 +2001,7 @@ impl Decoder {
                                     &mut preloaded,
                                 )?;
                                 ringbuffer.put(*pos as usize, literal as u8)?;
-                                s.block_length[0] -= 1;
+                                s.block_length[LITERAL] -= 1;
                                 *pos += 1;
                                 if *pos == s.ringbuffer_size {
                                     s.state = State::WriteDuringInsert;
@@ -2009,7 +2015,7 @@ impl Decoder {
                             }
                         } else {
                             loop {
-                                if s.block_length[0] == 0 {
+                                if s.block_length[LITERAL] == 0 {
                                     label = Label::NextLiteralBlock;
                                     break;
                                 }
@@ -2017,7 +2023,7 @@ impl Decoder {
                                     safe_read_symbol(Tree::new(literal_htree, 0), br, input)?
                                         .ok_or(E::NeedsMoreInput)?;
                                 ringbuffer.put(*pos as usize, literal as u8)?;
-                                s.block_length[0] -= 1;
+                                s.block_length[LITERAL] -= 1;
                                 *pos += 1;
                                 if *pos == s.ringbuffer_size {
                                     s.state = State::WriteDuringInsert;
@@ -2040,7 +2046,7 @@ impl Decoder {
                                 s.state = State::CommandInner;
                                 return Err(E::NeedsMoreInput);
                             }
-                            if s.block_length[0] == 0 {
+                            if s.block_length[LITERAL] == 0 {
                                 label = Label::NextLiteralBlock;
                                 break;
                             }
@@ -2053,7 +2059,7 @@ impl Decoder {
                             p2 = p1;
                             p1 = read_symbol_maybe_safe::<SAFE>(hc, br, input)? as u8;
                             ringbuffer.put(*pos as usize, p1)?;
-                            s.block_length[0] -= 1;
+                            s.block_length[LITERAL] -= 1;
                             *pos += 1;
                             if *pos == s.ringbuffer_size {
                                 s.state = State::WriteDuringInsert;
@@ -2080,13 +2086,12 @@ impl Decoder {
                     if SAFE {
                         s.state = State::CommandPostDecodeLiterals;
                     }
-                    if s.distance_code >= 0 {
-                        // The command implies the last distance.
-                        s.distance_context = if s.distance_code != 0 { 0 } else { 1 };
+                    if s.implicit_distance {
+                        s.distance_context = 1;
                         s.dist_rb_idx = s.dist_rb_idx.wrapping_sub(1);
-                        s.distance_code = s.dist_rb.at((s.dist_rb_idx & 3) as usize)?;
+                        s.distance = s.dist_rb.at((s.dist_rb_idx & 3) as usize)?;
                     } else {
-                        if s.block_length[2] == 0 {
+                        if s.block_length[DISTANCE] == 0 {
                             block_switch!(decode_distance_block_switch)?;
                         }
                         s.read_distance::<SAFE>(br, input)?;
@@ -2096,18 +2101,17 @@ impl Decoder {
                     }
                     *i = s.copy_length;
                     // A distance past the data seen so far refers to one of the dictionaries.
-                    if s.distance_code > s.max_distance {
+                    if s.distance > s.max_distance {
                         *pos = s.copy_from_dictionary(ringbuffer, *pos, *i)?;
                         if *pos >= s.ringbuffer_size {
                             s.state = State::WriteAfterDictionaryCopy;
                             return Ok(());
                         }
                     } else {
-                        let src_start = (*pos - s.distance_code) & s.ringbuffer_mask;
+                        let src_start = (*pos - s.distance) & s.ringbuffer_mask;
                         let dst_end = *pos + *i;
                         let src_end = src_start + *i;
-                        s.dist_rb
-                            .put((s.dist_rb_idx & 3) as usize, s.distance_code)?;
+                        s.dist_rb.put((s.dist_rb_idx & 3) as usize, s.distance)?;
                         s.dist_rb_idx = s.dist_rb_idx.wrapping_add(1);
                         s.meta_block_remaining_len -= *i;
                         let (src, dst) = (src_start as usize, *pos as usize);
@@ -2146,8 +2150,8 @@ impl Decoder {
                         if *i < 0 {
                             break;
                         }
-                        let byte = ringbuffer
-                            .at(((*pos - s.distance_code) & s.ringbuffer_mask) as usize)?;
+                        let byte =
+                            ringbuffer.at(((*pos - s.distance) & s.ringbuffer_mask) as usize)?;
                         ringbuffer.put(*pos as usize, byte)?;
                         *pos += 1;
                         wrap_guard -= 1;
@@ -2193,9 +2197,9 @@ impl Decoder {
     }
 
     fn begin_meta_block(&mut self) {
-        self.block_length = [BLOCK_SIZE_CAP; 3];
-        self.num_block_types = [1; 3];
-        self.block_type_rb = [1, 0, 1, 0, 1, 0];
+        self.block_length = [BLOCK_SIZE_CAP; NUM_BLOCK_CATEGORIES];
+        self.num_block_types = [1; NUM_BLOCK_CATEGORIES];
+        self.last_block_types = [[1, 0]; NUM_BLOCK_CATEGORIES];
         self.state = State::MetaBlockHeader;
     }
 
@@ -2387,7 +2391,7 @@ impl Decoder {
             }
 
             State::BlockTypeCount => {
-                if s.loop_counter >= 3 {
+                if s.loop_counter as usize >= NUM_BLOCK_CATEGORIES {
                     s.state = State::DistanceParameters;
                     return Ok(Flow::Continue);
                 }
@@ -2404,10 +2408,16 @@ impl Decoder {
                     return Ok(Flow::Continue);
                 }
                 if s.block_type_trees.is_empty() {
-                    s.block_len_trees = try_vec(HuffmanCode::default(), 3 * HUFFMAN_MAX_SIZE_26)
-                        .map_err(|_| E::AllocBlockTypeTrees)?;
-                    s.block_type_trees = try_vec(HuffmanCode::default(), 3 * HUFFMAN_MAX_SIZE_258)
-                        .map_err(|_| E::AllocBlockTypeTrees)?;
+                    s.block_len_trees = try_vec(
+                        HuffmanCode::default(),
+                        NUM_BLOCK_CATEGORIES * HUFFMAN_MAX_SIZE_26,
+                    )
+                    .map_err(|_| E::AllocBlockTypeTrees)?;
+                    s.block_type_trees = try_vec(
+                        HuffmanCode::default(),
+                        NUM_BLOCK_CATEGORIES * HUFFMAN_MAX_SIZE_258,
+                    )
+                    .map_err(|_| E::AllocBlockTypeTrees)?;
                 }
                 s.state = State::BlockTypeCode;
             }
@@ -2458,8 +2468,8 @@ impl Decoder {
                 let bits = s.br.safe_read_bits(input, 6).ok_or(E::NeedsMoreInput)? as u32;
                 s.distance_postfix_bits = bits & 3;
                 s.num_direct_distance_codes = (bits >> 2) << s.distance_postfix_bits;
-                s.context_modes =
-                    try_zeroed(s.num_block_types[0] as usize).map_err(|_| E::AllocContextModes)?;
+                s.context_modes = try_zeroed(s.num_block_types[LITERAL] as usize)
+                    .map_err(|_| E::AllocContextModes)?;
                 s.loop_counter = 0;
                 s.state = State::ContextModes;
             }
@@ -2474,7 +2484,7 @@ impl Decoder {
                     &mut s.br,
                     input,
                     &mut s.context_map_table,
-                    s.num_block_types[0] << LITERAL_CONTEXT_BITS,
+                    s.num_block_types[LITERAL] << LITERAL_CONTEXT_BITS,
                     &mut s.num_literal_htrees,
                     &mut s.context_map,
                 )?;
@@ -2499,7 +2509,7 @@ impl Decoder {
                     &mut s.br,
                     input,
                     &mut s.context_map_table,
-                    s.num_block_types[2] << DISTANCE_CONTEXT_BITS,
+                    s.num_block_types[DISTANCE] << DISTANCE_CONTEXT_BITS,
                     &mut s.num_dist_htrees,
                     &mut s.dist_context_map,
                 )?;
@@ -2511,7 +2521,7 @@ impl Decoder {
                 s.insert_copy_hgroup = huffman_tree_group(
                     NUM_COMMAND_SYMBOLS as u32,
                     NUM_COMMAND_SYMBOLS as u32,
-                    s.num_block_types[1],
+                    s.num_block_types[COMMAND],
                 )?;
                 s.distance_hgroup = huffman_tree_group(
                     distance_alphabet_size_max,
@@ -2523,16 +2533,16 @@ impl Decoder {
             }
 
             State::TreeGroup => {
-                let hgroup = match s.loop_counter {
-                    0 => &mut s.literal_hgroup,
-                    1 => &mut s.insert_copy_hgroup,
-                    2 => &mut s.distance_hgroup,
+                let hgroup = match s.loop_counter as usize {
+                    LITERAL => &mut s.literal_hgroup,
+                    COMMAND => &mut s.insert_copy_hgroup,
+                    DISTANCE => &mut s.distance_hgroup,
                     _ => return Err(E::Unreachable),
                 };
                 s.header
                     .huffman_tree_group_decode(&mut s.br, input, hgroup)?;
                 s.loop_counter += 1;
-                if s.loop_counter >= 3 {
+                if s.loop_counter as usize >= NUM_BLOCK_CATEGORIES {
                     s.begin_commands()?;
                 }
             }

@@ -228,6 +228,27 @@ describe.concurrent(`bun lint: the React Compiler rules match oxlint ${expected.
     expect(exit).toBe(1);
   });
 
+  // The type of each local is a cycle. Two other ways to work the cycle out were tried. One reports nothing for
+  // `cycles.jsx` and `typed-cycle.ts`, and the other reports nothing at all.
+  test("locals that a loop assigns from each other have the types of what they held before it", async () => {
+    const { diagnostics, exit } = await report(small.loops);
+    expect(diagnostics).toEqual(expected.reports.loops.diagnostics);
+    expect(locationsOf(diagnostics["cycles.jsx"])).toEqual([
+      ["react(immutability)", 64, 3],
+      ["react(immutability)", 75, 3],
+      ["react(set-state-in-render)", 11, 3],
+      ["react(set-state-in-render)", 24, 3],
+      ["react(set-state-in-render)", 37, 3],
+      ["react(set-state-in-render)", 49, 3],
+    ]);
+    expect(locationsOf(diagnostics["one-local.jsx"])).toEqual([
+      ["react(immutability)", 8, 3],
+      ["react(set-state-in-render)", 19, 3],
+    ]);
+    expect(locationsOf(diagnostics["typed-cycle.ts"])).toEqual([["react(set-state-in-render)", 11, 3]]);
+    expect(exit).toBe(1);
+  });
+
   test("a module's own useMemo isn't React's, and an expression that contains JSX can't be evaluated earlier", async () => {
     const { diagnostics, exit } = await report(small.names);
     expect(diagnostics).toEqual(expected.reports.names.diagnostics);
@@ -612,6 +633,19 @@ describe.concurrent(
         // All three are reported at the first write.
         "writes.jsx": Array(3).fill("react-hooks/immutability 5:3-5:4 Error: This value cannot be modified"),
         "flow-other.jsx": ["react-hooks/refs 4:17-4:28 Error: Cannot access refs during render"],
+        // Locals that a loop assigns from each other have the types of what they held before it.
+        "cycles.jsx": [
+          ...[11, 24, 37, 49].map(
+            line => `react-hooks/set-state-in-render ${line}:3-${line}:5 Error: Cannot call setState during render`,
+          ),
+          "react-hooks/immutability 64:3-64:5 Error: This value cannot be modified",
+          "react-hooks/immutability 75:3-75:5 Error: This value cannot be modified",
+        ],
+        "one-local.jsx": [
+          "react-hooks/immutability 8:3-8:7 Error: This value cannot be modified",
+          "react-hooks/set-state-in-render 19:3-19:6 Error: Cannot call setState during render",
+        ],
+        "typed-cycle.ts": ["react-hooks/set-state-in-render 11:3-11:5 Error: Cannot call setState during render"],
         "javascript.jsx": ["react-hooks/memo-dependencies 2:40-2:41 Error: Found extra memoization dependencies"],
         "long.jsx": [
           "react-hooks/todo 3:3-15:4 Todo: (BuildHIR::lowerStatement) Handle TryStatement without a catch clause",

@@ -4279,6 +4279,91 @@ test("react-compiler ends on a component whose types are made of each other", as
   expect(exitCode).toBe(0);
 });
 
+// A loop assigns the locals from each other, so the type of each is a cycle, and InferTypes works out what each holds
+// after the loop. This holds the result for three components. With other types the first one is compiled, although
+// `v0` can be the prop. The second keeps `arr` in the cache apart from the loop that can change it. The third is not
+// compiled.
+test("react-compiler keeps what it works out for locals that a loop assigns from each other", async () => {
+  using dir = tempDir("react-compiler-cycles-of-types", {
+    "entry.jsx": `
+      export function ALocalArrayOrAProp(props) {
+        let v0 = [];
+        let v1 = props.list;
+        do {
+          if (props.e) v1 = v0;
+          for (let i = 0; i < props.n; i++) v0 = v1;
+        } while (props.again);
+        v0.push(1);
+        return <div>{v0}</div>;
+      }
+      export function FourFunctions(props) {
+        "use memo";
+        const arr = [props.x];
+        let v0 = props.mutate;
+        let v1 = props.other;
+        let v2 = Math.max;
+        let v3 = props.fn2;
+        let out = null;
+        for (let i = 0; i < props.n; i++) {
+          const a = v1;
+          v1 = v0;
+          v0 = a;
+          const b = v0;
+          v0 = v1;
+          v1 = v2;
+          v2 = v3;
+          v3 = b;
+          const c = v1;
+          v1 = v2;
+          v2 = c;
+          while (props.c) {
+            if (props.d) v3 = v2;
+          }
+          const d = v0;
+          v0 = v1;
+          v1 = v2;
+          v2 = v3;
+          v3 = d;
+          out = v1(arr);
+        }
+        return [arr, out];
+      }
+      export function AFunctionThatReturnsTheOneBefore(props) {
+        let back = props.first ? <Intro /> : null;
+        const rows = [];
+        for (const step of props.steps) {
+          const before = back;
+          back = () => {
+            stats.renders++;
+            return before;
+          };
+          rows.push(<Step key={step.id} step={step} back={back} onPick={() => props.onPick(step)} />);
+        }
+        return <ol>{rows}</ol>;
+      }
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "--react-compiler", "--target=browser", "--external=*", "entry.jsx"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const caches = stdout
+    .split(/^function /m)
+    .slice(1)
+    .map(text => [text.slice(0, text.indexOf("(")), text.match(/\b_c\(\d+\)/)?.[0] ?? "not compiled"]);
+  expect(caches).toEqual([
+    ["ALocalArrayOrAProp", "not compiled"],
+    ["FourFunctions", "_c(8)"],
+    ["AFunctionThatReturnsTheOneBefore", "_c(5)"],
+  ]);
+  expect(exitCode).toBe(0);
+});
+
 // ValidateNoRefAccessInRender gives a function the type of what it returns. The port
 // copied all that is nested in a type at each level of each join, so n functions that
 // return each other took the cube of n: 400 of them 10 seconds, 1,000 more than a minute.

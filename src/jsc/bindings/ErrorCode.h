@@ -94,6 +94,9 @@ JSC::JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode co
 void throwInvalidThisError(JSGlobalObject* globalObject, JSC::ThrowScope&, JSValue thisValue, const ASCIILiteral typeName);
 // throwInvalidThisError(callFrame->thisValue()) and returns the empty value; one call at each generated host-function's invalid-this branch.
 JSC::EncodedJSValue throwInvalidThisCallError(JSGlobalObject* globalObject, JSC::CallFrame* callFrame, const ASCIILiteral typeName);
+// ERR::MISSING_ARGS in a ThrowScope of its own; one call at each generated host-function's missing-arguments branch.
+// Out of line, and it takes no scope: a host function that lends its own scope keeps it in memory on every path.
+NEVER_INLINE JSC::EncodedJSValue throwMissingArgsError(JSGlobalObject* globalObject, const ASCIILiteral message);
 JSObject* createInvalidThisError(JSGlobalObject* globalObject, const String& message);
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionMakeErrorWithCode);

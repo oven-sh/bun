@@ -1375,7 +1375,7 @@ function cppThrowIfArgumentsMissing(signature: Signature): string {
   if (names.length === 0) return "";
   const message = `The ${new Intl.ListFormat("en").format(names)} argument${names.length > 1 ? "s" : ""} must be specified`;
   return `    if (callFrame->argumentCount() < ${names.length}) [[unlikely]]
-        return Bun::ERR::MISSING_ARGS(scope, globalObject, ${asciiLiteral(message)});
+        RELEASE_AND_RETURN(scope, Bun::throwMissingArgsError(globalObject, ${asciiLiteral(message)}));
 `;
 }
 

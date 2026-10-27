@@ -1845,6 +1845,13 @@ JSC::EncodedJSValue Bun::throwInvalidThisCallError(JSC::JSGlobalObject* globalOb
     return {};
 }
 
+JSC::EncodedJSValue Bun::throwMissingArgsError(JSC::JSGlobalObject* globalObject, const ASCIILiteral message)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    return ERR::MISSING_ARGS(scope, globalObject, message);
+}
+
 void Bun::throwInvalidThisError(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue thisValue, const ASCIILiteral typeName)
 {
     auto& vm = JSC::getVM(globalObject);

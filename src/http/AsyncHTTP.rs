@@ -9,7 +9,6 @@ use bun_threading::thread_pool::{self, Batch, Task};
 use bun_url::{PercentEncoding, URL};
 
 use bun_dotenv::Loader as DotEnvLoader;
-use bun_picohttp as picohttp;
 
 use crate::headers::{self, Headers};
 use crate::{
@@ -28,7 +27,6 @@ bun_core::declare_scope!(AsyncHTTP, visible);
 // Intrusive fields (`real`, `next`) are raw pointers and thus lifetime-erased;
 // the HTTP-thread copy uses the same `'a` as the JS-thread original it mirrors.
 pub struct AsyncHTTP<'a> {
-    pub response: Option<picohttp::Response<'static>>,
     pub request_headers: headers::EntryList,
     pub request_body: HTTPRequestBody<'a>,
     pub(crate) method: Method,
@@ -306,7 +304,7 @@ impl<'a> AsyncHTTP<'a> {
     /// Copy HTTP-thread progress state into the JS-thread "real" instance.
     ///
     /// Copy exactly the fields the JS side observes between progress
-    /// callbacks: the post-redirect `url`, response/timing fields written by
+    /// callbacks: the post-redirect `url`, the error and timing fields written by
     /// `on_async_http_callback`, and the `client` flags/counters used for
     /// shutdown decisions and error formatting. Owned allocations stay with
     /// `src` (the HTTP-thread copy keeps running while `has_more`).
@@ -314,14 +312,9 @@ impl<'a> AsyncHTTP<'a> {
         self.url = src.url.clone();
         self.elapsed = src.elapsed;
         self.err = src.err;
-        self.response = src.response;
         self.client.url = src.client.url.clone();
         self.client.flags = src.client.flags;
         self.client.remaining_redirect_count = src.client.remaining_redirect_count;
-    }
-
-    pub fn clear_data(&mut self) {
-        self.response = None;
     }
 }
 
@@ -342,11 +335,6 @@ impl Preconnect {
         // SAFETY: `this` was produced by `heap::alloc` in `preconnect()` and is
         // uniquely owned here; `async_http` was fully written before scheduling.
         unsafe {
-            (*this)
-                .async_http
-                .as_mut()
-                .expect("Preconnect.async_http set in preconnect()")
-                .clear_data();
             if (*this).is_url_owned {
                 // SAFETY: `is_url_owned` is the caller's promise that `url.href`
                 // is a global-allocator `Box<[u8]>` we now own.
@@ -447,7 +435,6 @@ impl<'a> AsyncHTTP<'a> {
         );
 
         let mut this = AsyncHTTP {
-            response: None,
             request_headers: headers,
             request_body: HTTPRequestBody::Bytes(request_body),
             method,
@@ -602,9 +589,6 @@ fn send_sync_callback(
     if let Some(mut real) = async_http.real {
         // SAFETY: `real` outlives the HTTP-thread copy by construction.
         let real = unsafe { real.as_mut() };
-        // `response` aliases the metadata `send_sync` hands to the caller; a
-        // stored copy would dangle once that metadata is dropped.
-        real.response = None;
         real.err = async_http.err;
         real.elapsed = async_http.elapsed;
     }
@@ -684,15 +668,7 @@ impl<'a> AsyncHTTP<'a> {
             let callback = (*this).result_callback;
             (*this).elapsed = http_thread_timer_read().saturating_sub((*this).elapsed);
 
-            if result.is_success() {
-                (*this).err = None;
-                if let Some(metadata) = &result.metadata {
-                    (*this).response = Some(metadata.response);
-                }
-            } else {
-                (*this).err = result.fail;
-                (*this).response = None;
-            }
+            (*this).err = result.fail;
 
             // Log the tracker count, then shrink
             // the abort tracker back down once it has drained from a

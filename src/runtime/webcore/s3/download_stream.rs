@@ -223,7 +223,7 @@ impl S3HttpDownloadStreamingTask {
                 // `certificate_info` / `metadata` free their owned buffers via `Drop`
                 // when `HTTPClientResult` is dropped by the caller after this returns.
                 if let Some(m) = &result.metadata {
-                    state.set_status_code(m.response.status_code);
+                    state.set_status_code(m.status_code());
                 }
             }
             match state.status_code() {
@@ -387,7 +387,6 @@ impl S3HttpDownloadStreamingTask {
     fn release_portable(&mut self) {
         // SAFETY: `http` is always initialised before the task is scheduled / dropped.
         let http = unsafe { self.http.assume_init_mut() };
-        http.clear_data();
         http.request_headers = Default::default();
         http.client.header_entries = Default::default();
     }

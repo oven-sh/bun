@@ -109,9 +109,9 @@ pub(crate) struct S3HttpSimpleTask {
     // `http` is `MaybeUninit` because (a) it is initialised late —
     // `AsyncHTTP` contains `&'static [u8]` and `fn(...)` fields, so a
     // zeroed/default value would be instant UB; and (b) `Drop` only calls
-    // `http.clear_data()`, never a full destructor, and `http_callback` does a no-drop bitwise
+    // `release_portable()`, never a full destructor, and `http_callback` does a no-drop bitwise
     // overwrite. Wrapping in `MaybeUninit` makes both possible: write-without-
-    // drop on assignment, and `clear_data()`-only in `Drop`. Invariant: `http` is initialised by
+    // drop on assignment, and `release_portable()`-only in `Drop`. Invariant: `http` is initialised by
     // `execute_simple_s3_request` before the task pointer escapes, so every later access (in
     // `http_callback` / `Drop`) may `assume_init`.
     pub(crate) http: core::mem::MaybeUninit<AsyncHTTP<'static>>,
@@ -319,7 +319,7 @@ impl S3HttpSimpleTask {
         }
         debug_assert!(this.result.metadata.is_some());
         // reshaped for borrowck — borrow response once, dispatch on a copy of `callback`.
-        let response = &this.result.metadata.as_ref().unwrap().response;
+        let response = &this.result.metadata.as_ref().unwrap().response();
         match this.callback {
             Callback::Stat(callback) => match response.status_code {
                 200 => {
@@ -391,7 +391,7 @@ impl S3HttpSimpleTask {
             Callback::Part(callback) => {
                 let status = response.status_code;
                 if !this.fail_if_contains_error(status)? {
-                    let response = &this.result.metadata.as_ref().unwrap().response;
+                    let response = &this.result.metadata.as_ref().unwrap().response();
                     if let Some(etag) = response.headers.get(b"etag") {
                         callback(S3PartResult::Etag(etag), this.callback_context)?;
                     } else {
@@ -486,7 +486,6 @@ impl S3HttpSimpleTask {
         // SAFETY: `http` is always initialised before the task pointer escapes (see
         // `execute_simple_s3_request`).
         let http = unsafe { self.http.assume_init_mut() };
-        http.clear_data();
         http.request_headers = Default::default();
         http.client.header_entries = Default::default();
     }
@@ -496,7 +495,7 @@ impl Drop for S3HttpSimpleTask {
     fn drop(&mut self) {
         // Side effects beyond freeing owned fields (which Rust drops automatically):
         // - poll_ref.unref(vm)
-        // - http.clearData()
+        // - release_portable()
         // Owned-field frees (response_buffer, headers, sign_result, range,
         // proxy_url, result.certificate_info, result.metadata) are handled by their own Drop impls.
         // KeepAlive::unref takes an aio EventLoopCtx; the JS-loop ctx is fetched via
@@ -505,7 +504,7 @@ impl Drop for S3HttpSimpleTask {
         self.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
             bun_io::AllocatorType::Js,
         ));
-        // Only `http.clear_data()` runs — never a full AsyncHTTP destructor —
+        // Only `release_portable()` runs — never a full AsyncHTTP destructor —
         // so we intentionally do NOT `assume_init_drop`.
         self.release_portable();
     }

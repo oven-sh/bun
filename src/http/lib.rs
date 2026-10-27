@@ -142,89 +142,74 @@ pub use init_error::InitError;
 /// Cloned response metadata (headers + url + status). Ownership transfers to
 /// the user once the headers phase completes.
 // hoisted so `InternalState` can name it.
-// The `picohttp::Response<'static>` borrows into `owned_buf`.
 pub struct HTTPResponseMetadata {
-    // Borrows `owned_buf` (sibling field) — `RawSlice` carries the
-    // outlives-holder invariant for the self-referential borrow.
-    pub url: bun_ptr::RawSlice<u8>,
-    pub owned_buf: Box<[u8]>,
-    pub response: bun_picohttp::Response<'static>,
+    url: bun_ptr::RawSlice<u8>,
+    status: bun_ptr::RawSlice<u8>,
+    status_code: u32,
+    minor_version: usize,
+    headers: Box<[bun_picohttp::Header]>,
+    /// Owns the text that `url`, `status` and the headers point into. Not a `Box<[u8]>`: a `Box` moved into a call by value must be the only way that call reaches the bytes.
+    _text: bun_picohttp::StringBuilder,
 }
 
 impl HTTPResponseMetadata {
     /// Deep-copy `response` (status and headers) and `href` into storage this metadata owns.
     pub(crate) fn new(response: &bun_picohttp::Response<'_>, href: &[u8]) -> Self {
-        let mut builder = bun_picohttp::StringBuilder::default();
-        response.count(&mut builder);
-        builder.count(href);
-        let _ = builder.allocate();
-        // headers_buf is owned by the cloned_response (aka cloned_response.headers)
-        // `Response::clone` ties its return lifetime to
-        // `headers: &'a mut [Header]`; leak the box to obtain `'static` so
-        // the cloned response can be stored in `HTTPResponseMetadata`.
-        // Reclaimed by `Drop for HTTPResponseMetadata`.
-        let headers_buf = bun_core::heap::release(
-            vec![bun_picohttp::Header::ZERO; response.headers.list.len()].into_boxed_slice(),
-        );
-        let cloned_response = response.clone(headers_buf, &mut builder);
-        // SAFETY: `href` aliases `builder`'s heap buffer; ownership of that
-        // buffer is transferred to `owned_buf` immediately below and stored
-        // alongside `href` in `HTTPResponseMetadata`.
-        let href = bun_ptr::RawSlice::new(unsafe { builder.append_raw(href) });
-        // Transfer the single backing allocation out of the builder
-        // (`builder.ptr.?[0..builder.cap]`) so its Drop becomes a no-op.
-        let owned_buf = builder.move_to_slice();
-        HTTPResponseMetadata {
-            owned_buf,
-            response: cloned_response,
-            url: href,
+        let mut text = bun_picohttp::StringBuilder::default();
+        response.count(&mut text);
+        text.count(href);
+        let _ = text.allocate();
+        let mut headers =
+            vec![bun_picohttp::Header::ZERO; response.headers.list.len()].into_boxed_slice();
+        let cloned = response.clone(&mut headers, &mut text);
+        let status = bun_ptr::RawSlice::new(cloned.status);
+        let (status_code, minor_version) = (cloned.status_code, cloned.minor_version);
+        // SAFETY: the copy is in `text`'s buffer, which `_text` keeps for as
+        // long as `url` can be read.
+        let url = bun_ptr::RawSlice::new(unsafe { text.append_raw(href) });
+        Self {
+            url,
+            status,
+            status_code,
+            minor_version,
+            headers,
+            _text: text,
         }
     }
 
     /// The response head, borrowing this metadata.
     #[inline]
     pub fn response(&self) -> bun_picohttp::Response<'_> {
-        self.response
+        bun_picohttp::Response {
+            minor_version: self.minor_version,
+            status_code: self.status_code,
+            status: self.status.slice(),
+            headers: bun_picohttp::HeaderList {
+                list: &self.headers,
+            },
+            bytes_read: 0,
+        }
     }
     /// The URL the response came from, after redirects.
     #[inline]
     pub fn url(&self) -> &[u8] {
         self.url.slice()
     }
-    /// Accessors tied to `&self`: `response` is typed `'static` but its slices
-    /// borrow the sibling `owned_buf` / header slice that `Drop` frees, so
-    /// hand out reborrows that cannot outlive this metadata.
     #[inline]
     pub fn status_code(&self) -> u32 {
-        self.response.status_code
+        self.status_code
     }
     #[inline]
     pub fn status_text(&self) -> &[u8] {
-        self.response.status
+        self.status.slice()
     }
     #[inline]
     pub fn header(&self, name: &[u8]) -> Option<&[u8]> {
-        self.response.headers.get(name)
+        self.response().headers.get(name)
     }
     #[inline]
     pub fn header_if_other_is_absent(&self, name: &[u8], other: &[u8]) -> Option<&[u8]> {
-        self.response.headers.get_if_other_is_absent(name, other)
-    }
-}
-
-impl Drop for HTTPResponseMetadata {
-    // `response.headers.list` is `Box::leak`'d by `clone_metadata`; reclaim it here.
-    fn drop(&mut self) {
-        let list = self.response.headers.list;
-        if !list.is_empty() {
-            // SAFETY: the only non-empty producer is `clone_metadata`, which
-            // `Box::leak`s exactly this slice; we are its sole owner. The fat
-            // `*mut [Header]` is obtained directly from the borrowed slice — no
-            // need to round-trip through `(ptr, len)` + `from_raw_parts`.
-            unsafe { bun_core::heap::destroy(core::ptr::from_ref(list).cast_mut()) };
-        }
-        self.response.headers = bun_picohttp::HeaderList::default();
-        self.response.status = b"";
+        self.response().headers.get_if_other_is_absent(name, other)
     }
 }
 pub use bun_http_types::{ETag, MimeType};

@@ -748,7 +748,7 @@ fn run_tasks_erased(
                     return_network_task(task_ptr);
                     continue;
                 };
-                let response = &metadata.response;
+                let response = &metadata.response();
 
                 if response.status_code > 399 {
                     if response.status_code == 404
@@ -807,7 +807,7 @@ fn run_tasks_erased(
                             bun_ast::Loc::EMPTY,
                             "<r><red><b>GET<r><red> {}<d> - {}<r>",
                             bun_core::fmt::EscapeControlChars(bun_core::fmt::redacted_npm_url(
-                                metadata.url.slice()
+                                metadata.url()
                             )),
                             response.status_code,
                         );
@@ -818,7 +818,7 @@ fn run_tasks_erased(
                             bun_ast::Loc::EMPTY,
                             "<r><yellow><b>GET<r><yellow> {}<d> - {}<r>",
                             bun_core::fmt::EscapeControlChars(bun_core::fmt::redacted_npm_url(
-                                metadata.url.slice()
+                                metadata.url()
                             )),
                             response.status_code,
                         );
@@ -1051,7 +1051,7 @@ fn run_tasks_erased(
                     continue;
                 };
 
-                let response = &metadata.response;
+                let response = &metadata.response();
 
                 if response.status_code > 399 {
                     let Some(is_required) = cb.dispatch_tarball_error(
@@ -1082,7 +1082,7 @@ fn run_tasks_erased(
                             bun_ast::Loc::EMPTY,
                             "<r><red><b>GET<r><red> {}<d> - {}<r>",
                             bun_core::fmt::EscapeControlChars(bun_core::fmt::redacted_npm_url(
-                                metadata.url.slice()
+                                metadata.url()
                             )),
                             response.status_code,
                         );
@@ -1093,7 +1093,7 @@ fn run_tasks_erased(
                             bun_ast::Loc::EMPTY,
                             "<r><yellow><b>GET<r><yellow> {}<d> - {}<r>",
                             bun_core::fmt::EscapeControlChars(bun_core::fmt::redacted_npm_url(
-                                metadata.url.slice()
+                                metadata.url()
                             )),
                             response.status_code,
                         );
@@ -1710,15 +1710,15 @@ pub(crate) fn download_outcome(
     let proxy_status = response
         .proxy_connect_response
         .as_ref()
-        .map(|reply| reply.response.status_code);
+        .map(|reply| reply.status_code());
     let failed = match &response.metadata {
         None => proxy_status.is_none(),
-        Some(m) => response.fail.is_some() && m.response.status_code < 400,
+        Some(m) => response.fail.is_some() && m.status_code() < 400,
     };
     let status = response
         .metadata
         .as_ref()
-        .map(|m| m.response.status_code)
+        .map(|m| m.status_code())
         .or(proxy_status);
     // Another attempt would fail in the same way.
     let is_final = matches!(
@@ -1750,7 +1750,7 @@ impl core::fmt::Display for DownloadFailure<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.write_str(self.0)?;
         match &self.1.proxy_connect_response {
-            Some(reply) => write!(f, " ({})", reply.response.status_code),
+            Some(reply) => write!(f, " ({})", reply.status_code()),
             None => Ok(()),
         }
     }

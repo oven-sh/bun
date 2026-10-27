@@ -818,8 +818,9 @@ fn map_of<'a>(
 pub(crate) fn percentiles_at<'a>(
     cx: &mut JsScope<'a>,
     histogram: &Histogram,
-    percentiles: Vec<f64>,
+    mut percentiles: Vec<f64>,
 ) -> bindgen::Result<'a, JSValue> {
+    percentiles.sort_unstable_by(f64::total_cmp);
     let values = histogram.read(|histogram| histogram.values_at_percentiles(&percentiles));
     map_of(cx, percentiles.into_iter().zip(values), number)
 }

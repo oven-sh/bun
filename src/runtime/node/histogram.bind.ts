@@ -207,7 +207,7 @@ export const importHistogram = b.fn({
   throws: true,
 });
 export const isHistogram = b.fn({ args: { value: b.any }, returns: b.bool });
-/** A `Map` of `percentiles`, which are in ascending order. */
+/** A `Map` of `percentiles`, in ascending order. */
 export const percentilesAt = b.fn({
   args: { histogram: Histogram, percentiles: b.array(b.f64) },
   returns: b.any,

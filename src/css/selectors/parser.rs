@@ -1597,31 +1597,6 @@ impl<Impl: SelectorImpl> GenericSelectorList<Impl> {
 }
 
 impl<Impl: BunSelectorImpl> GenericSelectorList<Impl> {
-    pub(crate) fn any_has_pseudo_element(&self) -> bool {
-        for sel in self.v.slice() {
-            if sel.has_pseudo_element() {
-                return true;
-            }
-        }
-        false
-    }
-
-    pub(crate) fn specifities_all_equal(&self) -> bool {
-        if self.v.len() == 0 {
-            return true;
-        }
-        if self.v.len() == 1 {
-            return true;
-        }
-        let value = self.v.at(0).specificity();
-        for sel in &self.v.slice()[1..] {
-            if sel.specificity() != value {
-                return false;
-            }
-        }
-        true
-    }
-
     pub fn parse(
         parser: &mut SelectorParser,
         input: &mut CssParser,
@@ -1843,10 +1818,6 @@ impl<Impl: BunSelectorImpl> GenericSelector<Impl> {
             }
         }
         false
-    }
-
-    pub(crate) fn has_pseudo_element(&self) -> bool {
-        self.specificity_and_flags.has_pseudo_element()
     }
 
     /// Returns count of simple selectors and combinators in the Selector.
@@ -2692,9 +2663,6 @@ pub struct SpecificityAndFlags {
 }
 
 impl SpecificityAndFlags {
-    pub(crate) fn has_pseudo_element(self) -> bool {
-        self.flags.contains(SelectorFlags::HAS_PSEUDO)
-    }
     pub(crate) fn hash(self, hasher: &mut Wyhash) {
         hasher.update(&self.specificity.to_ne_bytes());
         hasher.update(&[self.flags.bits()]);

@@ -592,7 +592,13 @@ impl<R> CssRuleList<R> {
                         // untouched preserves them verbatim, matching the
                         // pre-port behavior.
                         nst.style.charge_selector_expansion(context)?;
-                        nst.style.minify_nested_rules(context, parent_is_unused)?;
+                        // The wrapped rule prints its selector list as written, so only compiled nesting multiplies it.
+                        let split_rule_count = 1;
+                        nst.style.minify_nested_rules(
+                            context,
+                            parent_is_unused,
+                            split_rule_count,
+                        )?;
                     }
                     CssRule::StartingStyle(rl) => {
                         // See `Container` above: recurse so nested style rules
@@ -653,56 +659,37 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
     parent_is_unused: bool,
 ) -> Result<(), MinifyErr> {
     use css::SmallList;
-    use css::selector::{self, Component, Selector, SelectorList};
+    use css::selector::{self, Selector, SelectorList};
     let CssRule::Style(sty) = rule else {
         unreachable!()
     };
 
-    if parent_is_unused || sty.minify(context, parent_is_unused)? {
+    if parent_is_unused {
+        return Ok(());
+    }
+
+    let split_rule_count = sty.split_rule_count(context.targets);
+    if sty.minify(context, parent_is_unused, split_rule_count)? {
         return Ok(());
     }
 
     // If some of the selectors in this rule are not compatible with the targets,
-    // we need to either wrap in :is() or split them into multiple rules.
-    let mut incompatible: SmallList<Selector, 1> = if sty.selectors.v.len() > 1
-        && context.targets.should_compile_selectors()
-        && !sty.is_compatible(context.targets)
-    {
-        // The :is() selector accepts a forgiving selector list, so use that if possible.
-        // Note that :is() does not allow pseudo elements, so we need to check for that.
-        // In addition, :is() takes the highest specificity of its arguments, so if the selectors
-        // have different weights, we need to split them into separate rules as well.
-        if context
-            .targets
-            .is_compatible(css::compat::Feature::IsSelector)
-            && !sty.selectors.any_has_pseudo_element()
-            && sty.selectors.specifities_all_equal()
-        {
-            let component = Component::Is(core::mem::take(&mut sty.selectors.v).to_owned_slice());
-            let mut list = SmallList::<Selector, 1>::default();
-            list.append(Selector::from_component(component));
-            sty.selectors = SelectorList { v: list };
-            SmallList::default()
-        } else {
-            // Otherwise, partition the selectors and keep the compatible ones in this rule.
-            // We will generate additional rules for incompatible selectors later.
-            let mut incompatible = SmallList::<Selector, 1>::default();
-            let mut i: u32 = 0;
-            while i < sty.selectors.v.len() {
-                if selector::is_compatible(
-                    &sty.selectors.v.slice()[i as usize..i as usize + 1],
-                    context.targets,
-                ) {
-                    i += 1;
-                } else {
-                    incompatible.append(sty.selectors.v.ordered_remove(i));
-                }
+    // we need to split them into multiple rules.
+    let mut incompatible = SmallList::<Selector, 1>::default();
+    if split_rule_count > 1 {
+        // The compatible selectors stay in this rule. The rules for the incompatible ones are generated later.
+        let mut i: u32 = 0;
+        while i < sty.selectors.v.len() {
+            if selector::is_compatible(
+                &sty.selectors.v.slice()[i as usize..i as usize + 1],
+                context.targets,
+            ) {
+                i += 1;
+            } else {
+                incompatible.append(sty.selectors.v.ordered_remove(i));
             }
-            incompatible
         }
-    } else {
-        SmallList::default()
-    };
+    }
 
     sty.update_prefix(context);
 

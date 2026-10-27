@@ -68,6 +68,22 @@ impl<R> StyleRule<R> {
     pub(crate) fn is_compatible(&self, targets: &css::targets::Targets) -> bool {
         selector::is_compatible(self.selectors.v.slice(), targets)
     }
+
+    /// How many rules this rule prints as. Each selector that a target cannot parse moves to its own copy of the rule, because one `:is(list)` would change what the selectors match and weigh.
+    pub(crate) fn split_rule_count(&self, targets: &css::targets::Targets) -> u32 {
+        let selectors = self.selectors.v.slice();
+        if selectors.len() <= 1
+            || !targets.should_compile_selectors()
+            || self.is_compatible(targets)
+        {
+            return 1;
+        }
+        let moved = selectors
+            .iter()
+            .filter(|one| !selector::is_compatible(core::slice::from_ref(*one), targets))
+            .count();
+        (moved + usize::from(moved < selectors.len())) as u32
+    }
 }
 
 // ─── to_css ───────────────────────────────────────────────────────────────
@@ -314,6 +330,7 @@ impl<R> StyleRule<R> {
         &mut self,
         context: &mut MinifyContext<'_, '_>,
         parent_is_unused: bool,
+        split_rule_count: u32,
     ) -> Result<bool, MinifyErr>
     where
         R: for<'b> css::generics::DeepClone<'b>,
@@ -368,7 +385,7 @@ impl<R> StyleRule<R> {
         context.handler_context.context = DeclarationContext::None;
 
         if self.rules.v.len() > 0 {
-            self.minify_nested_rules(context, unused)?;
+            self.minify_nested_rules(context, unused, split_rule_count)?;
             if unused && self.rules.v.len() == 0 {
                 return Ok(true);
             }
@@ -413,37 +430,22 @@ impl<R> StyleRule<R> {
         &mut self,
         context: &mut MinifyContext<'_, '_>,
         parent_is_unused: bool,
+        split_rule_count: u32,
     ) -> Result<(), MinifyErr>
     where
         R: for<'b> css::generics::DeepClone<'b>,
     {
         use css::context::{DeclarationContext, PropertyHandlerContext};
 
-        // When the targets require compiling nesting away (or splitting this
-        // rule's selectors for compatibility), each of this rule's selectors
-        // multiplies the expansion of every nested rule.
-        //
-        // Mirrors the selector-compatibility branch in `minify_style_arm`
-        // (rules/mod.rs): an incompatible selector list is either collapsed
-        // into a single `:is()` selector (nothing cloned) or partitioned
-        // into one cloned rule per selector (fan-out = selector count).
-        // Only the partition case multiplies on its own — but the `:is()`
-        // wrap keeps one `&` reference per original selector, so when
-        // nesting is compiled away the printed output still fans out per
-        // selector, which is why the nesting branch bumps unconditionally.
+        // Compiled nesting repeats every nested rule for each selector of this rule. Native nesting repeats it for each rule that the selector list is split into.
         let saved_expansion_multiplier = context.selector_expansion_multiplier;
-        let selectors_incompatible = self.selectors.v.len() > 1
-            && context.targets.should_compile_selectors()
-            && !self.is_compatible(context.targets);
-        let splits_selectors = selectors_incompatible
-            && !(context.targets.is_compatible(css::Feature::IsSelector)
-                && !self.selectors.any_has_pseudo_element()
-                && self.selectors.specifities_all_equal());
-        if context.targets.should_compile_same(css::Feature::Nesting) || splits_selectors {
-            context.selector_expansion_multiplier = context
-                .selector_expansion_multiplier
-                .saturating_mul(self.selectors.v.len().max(1));
-        }
+        let copies = if context.targets.should_compile_same(css::Feature::Nesting) {
+            self.selectors.v.len().max(1)
+        } else {
+            split_rule_count
+        };
+        context.selector_expansion_multiplier =
+            context.selector_expansion_multiplier.saturating_mul(copies);
 
         let mut handler_context = context.handler_context.child(DeclarationContext::StyleRule);
         core::mem::swap::<PropertyHandlerContext<'_>>(

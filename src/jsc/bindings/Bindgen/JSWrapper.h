@@ -49,7 +49,7 @@ inline JSC::GCClient::IsoSubspace* subspaceForClass(JSC::VM& vm, unsigned classI
 }
 
 // Reports a field that holds a cell to a heap snapshot, as a property of that name.
-void analyzeInternalField(JSC::JSCell*, JSC::HeapAnalyzer&, const JSC::WriteBarrier<JSC::Unknown>&, WTF::ASCIILiteral name);
+void analyzeInternalField(JSC::JSCell*, JSC::HeapAnalyzer&, JSC::JSValue field, WTF::ASCIILiteral name);
 
 // The constructor object of every generated class that has one.
 class JSClassConstructor final : public JSC::InternalFunction {

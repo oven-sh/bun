@@ -72,19 +72,21 @@ bit.
 
 | value                                    | before | scalar | kernel |
 | ---------------------------------------- | ------ | ------ | ------ |
-| 4 characters with codes of up to 8 bits  | 44     | 38     | 38     |
-| 8                                        | 56     | 50     | 36     |
-| 16                                       | 85     | 65     | 41     |
-| 32                                       | 139    | 111    | 58     |
-| 100                                      | 382    | 298    | 127    |
-| 1000                                     | 3749   | 2750   | 1034   |
-| 65, 1 in 40 with a code of 10 to 19 bits | 264    | 201    | 147    |
-| 65, 1 in 10                              | 302    | 219    | 220    |
-| 65, 1 in 2                               | 464    | 409    | 436    |
-| 30 bytes from 0x80 up                    | 1177   | 604    | 615    |
-| `gzip, deflate, br`                      | 62     | 49     | 39     |
-| `{"a":1,"b":[true,null],"c":"x"}`        | 131    | 130    | 146    |
-| the values in http2jp/hpack-test-case    | 108    | 96     | 68     |
+| 4 characters with codes of up to 8 bits  | 44     | 40     | 40     |
+| 8                                        | 54     | 50     | 36     |
+| 16                                       | 76     | 68     | 41     |
+| 32                                       | 130    | 114    | 58     |
+| 100                                      | 369    | 307    | 127    |
+| 1000                                     | 3789   | 2852   | 1034   |
+| 65, 1 in 40 with a code of 10 to 19 bits | 250    | 205    | 144    |
+| 65, 1 in 10                              | 287    | 214    | 212    |
+| 65, 1 in 2                               | 492    | 370    | 385    |
+| 200, all with codes of 14 bits           | 826    | 820    | 826    |
+| 200, all with codes of 28 bits           | 4452   | 1879   | 1955   |
+| 30 bytes from 0x80 up                    | 1202   | 509    | 516    |
+| `gzip, deflate, br`                      | 64     | 52     | 40     |
+| `{"a":1,"b":[true,null],"c":"x"}`        | 131    | 122    | 131    |
+| the values in http2jp/hpack-test-case    | 108    | 92     | 65     |
 
 With cold caches the kernel is further ahead. Prototypes of both, 8 strings at a time with 1 MB
 touched in between: 299 cycles a string against 155. With 8 MB: 842 against 317. The scalar decoder's

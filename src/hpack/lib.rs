@@ -407,6 +407,17 @@ mod tests {
     }
 
     #[test]
+    fn huffman_codes_that_end_where_8_bytes_end() {
+        // Codes of 13 and 15 bits that end in a one, from every bit of a byte on.
+        for (fives, sixes) in (0..8).flat_map(|fives| (0..8).map(move |sixes| (fives, sixes))) {
+            for codes in ["{{{$", "{{$$", "${{$", "$$${", "$$$$$"] {
+                let string = ["a".repeat(fives), "-".repeat(sixes), codes.repeat(3)].concat();
+                check_huffman(string.as_bytes());
+            }
+        }
+    }
+
+    #[test]
     fn a_huffman_string_that_is_too_long_and_malformed_is_too_long() {
         for (coded, symbols) in [
             ("18c6318c63 fe", 8),   // "aaaaaaaa", then the start of a longer code

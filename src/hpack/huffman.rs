@@ -250,11 +250,8 @@ const fn build_prefixes() -> [Prefix; 1 << PREFIX_BITS] {
     prefixes
 }
 
-/// How many lookups the 57 bits of a window are good for.
-const STEPS: u32 = 57 / PREFIX_BITS;
-
-/// After how many of them the window still has the 30 bits of the longest code.
-const STEPS_BEFORE_LONG_SYMBOL: u32 = (57 - 30) / PREFIX_BITS;
+/// How many bits 8 bytes hold from any bit of the first byte on.
+const WINDOW_BITS: u32 = 57;
 
 /// What [`Decoder::out`] has beyond what may come out, so that symbols can be written in groups.
 const SPARE_OUT: usize = bun_highway::HPACK_HUFFMAN_SPARE_OUT;
@@ -317,13 +314,21 @@ impl Decoder<'_> {
             if self.run_kernel(window) {
                 continue;
             }
-            for step in 0..STEPS {
-                let prefix = Self::prefix(window);
+            let start = self.pos;
+            for steps_left in (0..WINDOW_BITS / PREFIX_BITS).rev() {
+                let mut prefix = Self::prefix(window);
                 if prefix.count == 0 {
-                    if step <= STEPS_BEFORE_LONG_SYMBOL {
-                        self.write(long_symbol(window)?)?;
+                    prefix = long_symbol(window)?;
+                    let left = WINDOW_BITS - (self.pos - start) as u32;
+                    // The window ends inside the code, and the zeros after it made it look like this one.
+                    if u32::from(prefix.bits) > left {
+                        break;
                     }
-                    break;
+                    // It took the bits of a lookup that is still to come.
+                    if left - u32::from(prefix.bits) < steps_left * PREFIX_BITS {
+                        self.write(prefix)?;
+                        break;
+                    }
                 }
                 self.write(prefix)?;
                 window <<= prefix.bits;
@@ -431,24 +436,33 @@ const fn build_long_codes() -> LongCodes {
 }
 
 /// A symbol whose code is longer than [`PREFIX_BITS`].
-#[cold]
+#[inline(always)]
 fn long_symbol(window: u64) -> Result<Prefix> {
+    let (bits, symbol) = find_long_code(window);
+    if bits == 0 {
+        return Err(Error::Invalid);
+    }
+    Ok(Prefix {
+        symbols: [symbol, 0],
+        count: 1,
+        bits,
+    })
+}
+
+/// The length of the code and its symbol, apart, so that the next code does not wait for the symbol. No length: EOS.
+#[inline(never)]
+fn find_long_code(window: u64) -> (u8, u8) {
     let code = (window >> 32) as u32;
     for (length, bits) in LONG_CODES.lengths.iter().zip(PREFIX_BITS as u8 + 1..) {
         if code < length.end {
-            let nth = code.checked_sub(length.first).ok_or(Error::Invalid)? >> (32 - bits);
+            let nth = code.wrapping_sub(length.first) >> (32 - bits);
             let symbol = LONG_CODES
                 .symbols
                 .get(usize::from(length.symbols) + nth as usize);
-            return Ok(Prefix {
-                symbols: [*symbol.ok_or(Error::Invalid)?, 0],
-                count: 1,
-                bits,
-            });
+            return (bits, symbol.copied().unwrap_or_default());
         }
     }
-    // It is a decoding error to find EOS in the input.
-    Err(Error::Invalid)
+    (0, 0)
 }
 
 /// Appends what `src` decodes to, at most `max_len` bytes.

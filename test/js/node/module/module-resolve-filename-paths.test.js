@@ -1,9 +1,11 @@
 // Use bun:test in Bun, or node:test in Node.js
-import { spawnSync } from "child_process";
+import { spawn } from "child_process";
+import { once } from "events";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "fs";
 import Module from "module";
 import { tmpdir } from "os";
 import { dirname, join, resolve } from "path";
+import { text } from "stream/consumers";
 
 // Detect runtime and import appropriate test framework
 const isBun = typeof Bun !== "undefined";
@@ -37,6 +39,9 @@ if (isBun) {
     },
   });
 }
+
+// The tests that start a child process do not share state. node:test has no `test.concurrent`.
+const concurrentTest = isBun ? test.concurrent : test;
 
 // Helper to create temp directory - works in both Bun and Node
 function createTempDir(prefix, files) {
@@ -307,7 +312,7 @@ for (const i of order) {
 console.log(JSON.stringify(results));
 `;
 
-function resolveRowsInChild(order) {
+async function resolveRowsInChild(order) {
   const isWindows = process.platform === "win32";
   const files = {
     "sub/probe.cjs": probeSource,
@@ -329,6 +334,7 @@ function resolveRowsInChild(order) {
   };
   if (!isWindows) {
     files["C:/plugins/node_modules/plugd/index.js"] = "";
+    files["back\\slash/file.js"] = "";
   }
   const { path: dir, cleanup } = createTempDir("resolve-paths-entries", files);
 
@@ -391,6 +397,9 @@ function resolveRowsInChild(order) {
       // Longer than PATH_MAX as written, short once resolved.
       ["plug", [Buffer.alloc(4200, "./").toString() + "plugins"], plug],
       ["plug", [Buffer.alloc(5000, "a").toString()], missing],
+      // The cwd has a backslash in its name. Bun's directory cache cannot read it, so the search starts above it.
+      ["plugroot", ["."], plugroot, "back\\slash"],
+      ["plugroot", ["./nowhere"], plugroot, "back\\slash"],
     );
   }
 
@@ -399,11 +408,16 @@ function resolveRowsInChild(order) {
       join(dir, "rows.json"),
       JSON.stringify(rows.map(([request, paths, , chdir]) => [request, paths, chdir])),
     );
-    const { stdout, stderr, status } = spawnSync(
-      childExe,
-      isBun ? ["--no-install", "sub/probe.cjs", order] : ["sub/probe.cjs", order],
-      { cwd: dir, env: childEnv, encoding: "utf8" },
-    );
+    const child = spawn(childExe, isBun ? ["--no-install", "sub/probe.cjs", order] : ["sub/probe.cjs", order], {
+      cwd: dir,
+      env: childEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr, [status]] = await Promise.all([
+      text(child.stdout),
+      text(child.stderr),
+      once(child, "close"),
+    ]);
     let results;
     try {
       results = JSON.parse(stdout);
@@ -430,12 +444,12 @@ function resolveRowsInChild(order) {
   }
 }
 
-test("options.paths entries are resolved like path.resolve() does", () => {
-  resolveRowsInChild("forward");
+concurrentTest("options.paths entries are resolved like path.resolve() does", async () => {
+  await resolveRowsInChild("forward");
 });
 
-test("options.paths entries resolve the same in the reverse call order", () => {
-  resolveRowsInChild("reverse");
+concurrentTest("options.paths entries resolve the same in the reverse call order", async () => {
+  await resolveRowsInChild("reverse");
 });
 
 if (isBun) {
@@ -509,7 +523,7 @@ if (isBun) {
     "a/b/modules/node_modules/local-dep/index.js": "",
   };
 
-  test("options.paths: a relative entry installs nothing, and a miss at one in the cwd installs from the cwd", async () => {
+  test.concurrent("options.paths: a relative entry installs nothing, the cwd installs after a miss", async () => {
     const result = await runInProject({
       cwd: "a/b/project",
       files: projects,
@@ -550,7 +564,7 @@ if (isBun) {
     });
   });
 
-  test("options.paths: a package on disk under any entry wins over the registry", async () => {
+  test.concurrent("options.paths: a package on disk under any entry wins over the registry", async () => {
     const result = await runInProject({
       cwd: "a/b/project",
       files: {
@@ -583,7 +597,7 @@ if (isBun) {
     expect({ first: first.startsWith("<cache>/no-deps@2.0.0"), second }).toEqual({ first: true, second: first });
   });
 
-  test("options.paths: the project of the cwd decides whether a miss installs", async () => {
+  test.concurrent("options.paths: the project of the cwd decides whether a miss installs", async () => {
     const result = await runInProject({
       cwd: "root/app",
       files: {
@@ -608,7 +622,7 @@ if (isBun) {
     });
   });
 
-  test("options.paths: --install=force does not read the node_modules of an entry", async () => {
+  test.concurrent("options.paths: --install=force does not read the node_modules of an entry", async () => {
     const result = await runInProject({
       args: ["--install=force"],
       cwd: "a/b/project",

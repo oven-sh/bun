@@ -240,6 +240,8 @@ impl Spread {
 #[derive(Clone)]
 pub(crate) struct SeqTable<C, const N: usize> {
     pub(crate) table_log: u32,
+    /// How many of 512 symbols are expected to come with additional bits.
+    pub(crate) with_more_bits: u32,
     pub(crate) table: [C; N],
 }
 
@@ -250,15 +252,25 @@ impl<C: Cell, const N: usize> SeqTable<C, N> {
     pub(crate) const fn new() -> Self {
         Self {
             table_log: 0,
+            with_more_bits: 0,
             table: [C::EMPTY; N],
         }
     }
 
-    const fn predefined<const M: usize>(table_log: u32, symbols: [C; M]) -> Self {
+    /// `with_more_bits` of the `symbols` have additional bits.
+    const fn predefined<const M: usize>(
+        table_log: u32,
+        with_more_bits: u32,
+        symbols: [C; M],
+    ) -> Self {
         let mut table = [C::EMPTY; N];
         let (head, _) = table.split_at_mut(M);
         head.copy_from_slice(&symbols);
-        Self { table_log, table }
+        Self {
+            table_log,
+            with_more_bits: with_more_bits << (9 - table_log),
+            table,
+        }
     }
 
     #[inline(always)]
@@ -282,6 +294,7 @@ impl<C: Cell, const N: usize> SeqTable<C, N> {
 
     fn copy_from(&mut self, other: &Self) {
         self.table_log = other.table_log;
+        self.with_more_bits = other.with_more_bits;
         let symbols = other.symbols();
         if let Some(to) = self.table.get_mut(..symbols.len()) {
             to.copy_from_slice(symbols);
@@ -291,6 +304,7 @@ impl<C: Cell, const N: usize> SeqTable<C, N> {
     /// `ZSTD_buildSeqTable_rle`
     pub(crate) fn build_rle(&mut self, base_value: u32, nb_additional_bits: u8) {
         self.table_log = 0;
+        self.with_more_bits = u32::from(nb_additional_bits != 0) << 9;
         if let Some(cell) = self.table.first_mut() {
             *cell = C::pack(SeqSymbol {
                 next_state: 0,
@@ -312,6 +326,13 @@ impl<C: Cell, const N: usize> SeqTable<C, N> {
         let table_size = 1usize << table_log;
         let table_decode = self.table.sub_mut(..table_size)?;
         self.table_log = table_log;
+        self.with_more_bits = normalized_counter
+            .iter()
+            .zip(nb_additional_bits)
+            .filter(|&(_, &nb_bits)| nb_bits != 0)
+            .map(|(&count, _)| u32::from(count.unsigned_abs()))
+            .sum::<u32>()
+            << (9 - table_log.min(9));
         let Spread {
             symbols,
             mut symbol_next,
@@ -407,9 +428,9 @@ pub(crate) struct SeqTables {
 }
 
 static DEFAULT_TABLES: SeqTables = SeqTables {
-    ll: SeqTable::predefined(LL_DEFAULT_NORM_LOG, LL_DEFAULT),
-    of: SeqTable::predefined(OF_DEFAULT_NORM_LOG, OF_DEFAULT),
-    ml: SeqTable::predefined(ML_DEFAULT_NORM_LOG, ML_DEFAULT),
+    ll: SeqTable::predefined(LL_DEFAULT_NORM_LOG, 32, LL_DEFAULT),
+    of: SeqTable::predefined(OF_DEFAULT_NORM_LOG, 31, OF_DEFAULT),
+    ml: SeqTable::predefined(ML_DEFAULT_NORM_LOG, 21, ML_DEFAULT),
 };
 
 /// `LLTptr`, `OFTptr` and `MLTptr`

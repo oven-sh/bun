@@ -292,7 +292,10 @@ impl BlockDecoder {
                 let huf_result = if lit_enc_type == SymbolEncodingType::Repeat {
                     let table = match (huf_source, dict_entropy) {
                         (TableSource::Dict, Some(dict)) => &dict.huf_table,
-                        _ => &entropy.huf_table,
+                        _ => {
+                            entropy.huf_table.prepare(lit_size)?;
+                            &entropy.huf_table
+                        }
                     };
                     if single_stream {
                         huf::decompress_1x_using_dtable(dst, compressed, table)
@@ -718,8 +721,10 @@ impl<'a> SeqState<'a> {
 
     /// Decodes sequences for as long as the start of the stream is far. Returns how many that is.
     /// With `PREFETCH`, `history` follows the output, and what matches refer to is on its way to the cache.
+    ///
+    /// `MORE_BITS` is for when it cannot be predicted which lengths come with additional bits.
     #[inline(never)]
-    fn decode_batch<const PREFETCH: bool>(
+    fn decode_batch<const PREFETCH: bool, const MORE_BITS: bool>(
         &mut self,
         out: &mut [RawSequence],
         history: &mut History,
@@ -771,12 +776,14 @@ impl<'a> SeqState<'a> {
             bits = bits.rotate_left(of_bits);
             position -= of_bits;
             let offset_value = first_value + (bits as u32 & (first_value - 1));
-            if ml_bits + ll_bits != 0 {
+            if MORE_BITS || ml_bits + ll_bits != 0 {
                 bits = bits.rotate_left(ml_bits);
                 position -= ml_bits;
                 match_length = ml_cell.base_value() + (bits as u32 & ((1 << ml_bits) - 1));
-                // What follows has to fit in 57 bits with the 26 of the next states.
-                bits = load(src, position + (FAR as u32 - 8) * 8).unwrap_or(0);
+                // All has to fit in 57 bits with the 26 of the next states.
+                if of_bits + ml_bits + ll_bits >= 31 {
+                    bits = load(src, position + (FAR as u32 - 8) * 8).unwrap_or(0);
+                }
                 bits = bits.rotate_left(ll_bits);
                 position -= ll_bits;
                 lit_length = ll_cell.base_value() + (bits as u32 & ((1 << ll_bits) - 1));
@@ -1104,12 +1111,8 @@ impl<'a> Executor<'_, 'a> {
                     room.get_mut(16..rounded)?
                         .copy_from_slice(from.get(16..rounded)?);
                 } else {
-                    let mut done = 16;
-                    while done < match_length {
-                        let to = o_lit_end + done;
-                        copy_within::<16>(self.out.bytes(), to - offset, to).ok()?;
-                        done += 16;
-                    }
+                    let buf = self.out.bytes();
+                    copy_match_exact(buf, o_lit_end - offset, o_lit_end, match_length).ok()?;
                 }
             }
         } else {
@@ -1122,38 +1125,30 @@ impl<'a> Executor<'_, 'a> {
         Some(())
     }
 
-    /// `ZSTD_overlapCopy8` and `ZSTD_wildcopy(ZSTD_overlap_src_before_dst)`: a match less than 16 bytes back.
+    /// `ZSTD_overlapCopy8` and `ZSTD_wildcopy(ZSTD_overlap_src_before_dst)`: a match less than 16 bytes back, which is
+    /// not 0. Up to 16 bytes are written past its end.
     #[inline(always)]
-    fn copy_close_match(
-        &mut self,
-        mut op: usize,
-        offset: usize,
-        match_length: usize,
-    ) -> Result<()> {
-        let mut match_pos = op - offset;
-        // After 8 bytes, the source is at least 8 bytes behind.
-        if offset < 8 {
-            const DEC32_TABLE: [usize; 8] = [0, 1, 2, 1, 4, 4, 4, 4];
-            const DEC64_TABLE: [usize; 8] = [8, 8, 8, 7, 8, 9, 10, 11];
-            for i in 0..4 {
-                let byte = self.out.bytes().at(match_pos + i)?;
-                self.out.bytes().put(op + i, byte)?;
-            }
-            match_pos += DEC32_TABLE.at(offset)?;
-            copy_within::<4>(self.out.bytes(), match_pos, op + 4)?;
-            match_pos += 8;
-            match_pos -= DEC64_TABLE.at(offset)?;
-        } else {
-            copy_within::<8>(self.out.bytes(), match_pos, op)?;
-            match_pos += 8;
+    fn copy_close_match(&mut self, op: usize, offset: usize, match_length: usize) -> Result<()> {
+        /// The largest multiple of an offset that is at most 16.
+        const STEPS: [u8; 16] = [16, 16, 16, 15, 16, 15, 12, 14, 16, 9, 10, 11, 12, 13, 14, 15];
+        let buf = self.out.bytes();
+        // The `offset` bytes before the match, again and again.
+        let mut pattern = u128::from_le_bytes(*buf.array_at(op - offset)?);
+        let mut filled = offset as u32 * 8;
+        pattern &= !(u128::MAX << filled);
+        while filled < 128 {
+            pattern |= pattern << filled;
+            filled *= 2;
         }
-        op += 8;
-        let mut done = 8usize;
-        while done < match_length {
-            copy_within::<8>(self.out.bytes(), match_pos, op)?;
-            match_pos += 8;
-            op += 8;
-            done += 8;
+        let pattern = pattern.to_le_bytes();
+        let step = usize::from(STEPS.at(offset)?);
+        let room = buf.span_mut(op, match_length + 16)?;
+        let mut done = 0;
+        while let Some(to) = room.get_mut(done..done + 16)
+            && done < match_length
+        {
+            to.copy_from_slice(&pattern);
+            done += step;
         }
         Ok(())
     }
@@ -1318,11 +1313,33 @@ impl<'a> Executor<'_, 'a> {
         let mut ahead = [Sequence::default(); 8];
         let ahead = ahead.sub_mut(..if LONG { nb_seq.min(8) } else { 0 })?;
 
+        // A branch that goes wrong costs about 10 times what it saves.
+        let tables = seq_state.tables;
+        let more_bits = tables.ll.with_more_bits + tables.ml.with_more_bits > 512 / 10;
+
         let mut remaining = nb_seq;
+        // Long copies go on while the next sequences are decoded, if that is what comes next.
+        if tables.ml.with_more_bits > 512 / 2 && !self.split {
+            let mut exec = self.fork();
+            let mut state = *seq_state;
+            while remaining > ahead.len() {
+                let sequence = state.decode_sequence(remaining == 1);
+                remaining -= 1;
+                exec.exec_sequence::<false>(sequence)?;
+            }
+            let exec = (exec.op, exec.lits, exec.split);
+            self.join(exec);
+            *seq_state = state;
+        }
         while remaining > ahead.len() {
             if !self.split {
                 let room = batch.span_mut(3, BATCH.min(remaining - ahead.len().max(1)))?;
-                let count = seq_state.decode_batch::<LONG>(room, &mut self.history())?;
+                let history = &mut self.history();
+                let count = if more_bits {
+                    seq_state.decode_batch::<LONG, true>(room, history)?
+                } else {
+                    seq_state.decode_batch::<LONG, false>(room, history)?
+                };
                 if count > 0 {
                     remaining -= count;
                     self.exec_all(batch.sub_mut(..3 + count)?, &mut seq_state.prev_offset)?;

@@ -25,6 +25,65 @@ pub(super) struct Code {
     pub(super) table_log: u32,
 }
 
+/// The loop that decodes four streams at once takes a table of this log, or one more.
+const FAST_LOG: u32 = 11;
+/// From how many literals on that loop makes up for the time that it takes to fill such a table.
+const FAST_MIN_LITERALS: usize = 768;
+/// From how many literals on the larger table is considered.
+const LARGE_MIN_LITERALS: usize = 1 << 14;
+
+impl Code {
+    /// How many symbols a lookup of `log` bits yields, in 65536ths, if symbols are as frequent as their codes are short.
+    fn symbols_per_lookup(&self, log: u32) -> u64 {
+        let table_log = self.table_log as usize;
+        // For each number of bits, out of `1 << table_log`, how many symbols have a code no longer than that.
+        let mut one = [0u64; NB_RANKS + 1];
+        let mut share = [0u64; NB_RANKS + 1];
+        let mut total = 0;
+        for nb_bits in 1..=log as usize {
+            let weight = (table_log + 1).wrapping_sub(nb_bits);
+            let count = self.rank_stats.get(weight).copied().unwrap_or(0);
+            let of_these = if weight == 0 { 0 } else { u64::from(count) << (weight - 1) };
+            total += of_these;
+            if let (Some(share), Some(one)) = (share.get_mut(nb_bits), one.get_mut(nb_bits)) {
+                *share = of_these;
+                *one = total;
+            }
+        }
+        // The same for two symbols and for three, out of that squared and cubed.
+        let after = |fits: &[u64; NB_RANKS + 1], room: usize| -> u64 {
+            (1..room)
+                .map(|nb_bits| {
+                    share.get(nb_bits).copied().unwrap_or(0)
+                        * fits.get(room - nb_bits).copied().unwrap_or(0)
+                })
+                .sum()
+        };
+        let mut two = [0u64; NB_RANKS + 1];
+        for (room, two) in two.iter_mut().enumerate() {
+            *two = after(&one, room);
+        }
+        let three = after(&two, log as usize);
+        let two = two.get(log as usize).copied().unwrap_or(0);
+        (1 << 16) + ((two << 16) >> (2 * table_log)) + ((three << 16) >> (3 * table_log))
+    }
+
+    /// How many bits to look up at once to decode `nb_literals`.
+    fn best_log(&self, nb_literals: usize) -> u32 {
+        if nb_literals < FAST_MIN_LITERALS {
+            return self.table_log;
+        }
+        // The larger table takes twice the time to fill, half of the cache, and a refill for 4 lookups and not 5.
+        if self.table_log > FAST_LOG
+            || nb_literals >= LARGE_MIN_LITERALS
+                && self.symbols_per_lookup(FAST_LOG + 1) * 4 > self.symbols_per_lookup(FAST_LOG) * 5
+        {
+            return FAST_LOG + 1;
+        }
+        FAST_LOG
+    }
+}
+
 /// What a lookup yields: up to 3 symbols, then a byte with how many bits they take in its low 6 bits and how many they
 /// are above.
 type Entry = [u8; 4];
@@ -62,14 +121,23 @@ impl HufDTable {
         }
     }
 
-    /// Reads the description of a table at the start of `src`, and returns its size.
-    fn read(&mut self, src: &[u8], table_type: TableType) -> Result<usize> {
+    /// Reads the description of a table at the start of `src`, and returns its size. The table is to decode
+    /// `nb_literals` with.
+    fn read(&mut self, src: &[u8], table_type: TableType, nb_literals: usize) -> Result<usize> {
         let stats = huf_read_stats(&mut self.code.weights, &mut self.code.rank_stats, src)?;
         self.code.nb_symbols = stats.nb_symbols;
         self.code.table_log = stats.table_log;
         self.table_type = table_type;
-        self.build(stats.table_log.max(11))?;
+        self.build(self.code.best_log(nb_literals))?;
         Ok(stats.size)
+    }
+
+    /// Makes the table fit to decode `nb_literals` with.
+    pub(crate) fn prepare(&mut self, nb_literals: usize) -> Result<()> {
+        if self.log < FAST_LOG && nb_literals >= FAST_MIN_LITERALS {
+            self.build(self.code.table_log.max(FAST_LOG))?;
+        }
+        Ok(())
     }
 
     /// Fills `table` for lookups of `log` bits, which is at least as many as the longest code has.
@@ -222,7 +290,10 @@ impl HufDTable {
 
     /// Four streams after their sizes. Whether each is exactly its share of `dst.len()` symbols.
     fn decode_4x(&self, dst: &mut [u8], src: &[u8]) -> bool {
-        let Some(mut streams) = Streams::new(dst, src) else {
+        let Some(parts) = Part::split(dst, src) else {
+            return false;
+        };
+        let Some(mut streams) = Streams::new(parts) else {
             return false;
         };
         match self.log {
@@ -232,9 +303,7 @@ impl HufDTable {
         }
         let mut exact = true;
         for stream in streams.0 {
-            let Ok(mut bit_d) =
-                BitDStream::resume(stream.src, stream.ip as usize, stream.bits.trailing_zeros())
-            else {
+            let Ok(mut bit_d) = stream.bit_d() else {
                 return false;
             };
             let out = stream.out.get_mut(stream.op as usize..).unwrap_or_default();
@@ -244,40 +313,15 @@ impl HufDTable {
     }
 }
 
-/// A stream of at least 8 bytes, and where its symbols go.
-struct Stream<'a> {
+/// A stream, and where its symbols go.
+struct Part<'a> {
     src: &'a [u8],
-    /// Where in `src` `bits` was read.
-    ip: u32,
-    /// What is left to read of 64 bits, from the highest bit on, then a bit set.
-    bits: u64,
     out: &'a mut [u8],
-    /// How much of `out` is written.
-    op: u32,
 }
 
-impl<'a> Stream<'a> {
-    fn new(src: &'a [u8], out: &'a mut [u8]) -> Option<Self> {
-        let container = u64::from_le_bytes(*src.last_chunk()?);
-        // The highest bit set marks the end of the stream.
-        if container >> 56 == 0 {
-            return None;
-        }
-        Some(Self {
-            src,
-            ip: src.len() as u32 - 8,
-            bits: (container | 1) << (container.leading_zeros() + 1),
-            out,
-            op: 0,
-        })
-    }
-}
-
-struct Streams<'a>([Stream<'a>; 4]);
-
-impl<'a> Streams<'a> {
-    /// `None` if there are no four streams of 8 bytes or more.
-    fn new(dst: &'a mut [u8], src: &'a [u8]) -> Option<Self> {
+impl<'a> Part<'a> {
+    /// `None` if the sizes at the start of `src` are not those of four streams.
+    fn split(dst: &'a mut [u8], src: &'a [u8]) -> Option<[Self; 4]> {
         let (sizes, src) = src.split_first_chunk::<6>()?;
         let (src0, src) = src.split_at_checked(usize::from(read_le16(sizes, 0).ok()?))?;
         let (src1, src) = src.split_at_checked(usize::from(read_le16(sizes, 2).ok()?))?;
@@ -286,11 +330,61 @@ impl<'a> Streams<'a> {
         let (dst0, dst) = dst.split_at_mut_checked(segment)?;
         let (dst1, dst) = dst.split_at_mut_checked(segment)?;
         let (dst2, dst3) = dst.split_at_mut_checked(segment)?;
+        Some([(src0, dst0), (src1, dst1), (src2, dst2), (src3, dst3)].map(|(src, out)| Self { src, out }))
+    }
+}
+
+/// A stream that is being decoded.
+struct Stream<'a> {
+    src: &'a [u8],
+    /// Where in `src` `bits` was read.
+    ip: u32,
+    /// What is left to read of 64 bits, from the highest bit on, then a bit set. 0 if the stream is shorter than that:
+    /// nothing is read of it yet.
+    bits: u64,
+    out: &'a mut [u8],
+    /// How much of `out` is written.
+    op: u32,
+}
+
+impl<'a> Stream<'a> {
+    fn new(Part { src, out }: Part<'a>) -> Option<Self> {
+        let mut stream = Self {
+            src,
+            ip: 0,
+            bits: 0,
+            out,
+            op: 0,
+        };
+        if let Some(container) = src.last_chunk() {
+            let container = u64::from_le_bytes(*container);
+            // The highest bit set marks the end of the stream.
+            if container >> 56 == 0 {
+                return None;
+            }
+            stream.ip = src.len() as u32 - 8;
+            stream.bits = (container | 1) << (container.leading_zeros() + 1);
+        }
+        Some(stream)
+    }
+
+    fn bit_d(&self) -> Result<BitDStream<'a>> {
+        if self.bits == 0 {
+            return BitDStream::new(self.src);
+        }
+        BitDStream::resume(self.src, self.ip as usize, self.bits.trailing_zeros())
+    }
+}
+
+struct Streams<'a>([Stream<'a>; 4]);
+
+impl<'a> Streams<'a> {
+    fn new([part0, part1, part2, part3]: [Part<'a>; 4]) -> Option<Self> {
         Some(Self([
-            Stream::new(src0, dst0)?,
-            Stream::new(src1, dst1)?,
-            Stream::new(src2, dst2)?,
-            Stream::new(src3, dst3)?,
+            Stream::new(part0)?,
+            Stream::new(part1)?,
+            Stream::new(part2)?,
+            Stream::new(part3)?,
         ]))
     }
 
@@ -340,6 +434,9 @@ impl<'a> Streams<'a> {
             true
         }
 
+        if self.0.iter().any(|stream| stream.bits == 0) {
+            return;
+        }
         let [s0, s1, s2, s3] = &mut self.0;
         let (mut bits0, mut bits1, mut bits2, mut bits3) = (s0.bits, s1.bits, s2.bits, s3.bits);
         let (mut ip0, mut ip1, mut ip2, mut ip3) = (s0.ip, s1.ip, s2.ip, s3.ip);
@@ -392,7 +489,7 @@ impl<'a> Streams<'a> {
 
 /// `HUF_readDTableX2_wksp`. Returns the size of the table's description in `src`.
 pub(crate) fn read_dtable_x2(dtable: &mut HufDTable, src: &[u8]) -> Result<usize> {
-    dtable.read(src, TableType::X2)
+    dtable.read(src, TableType::X2, usize::MAX)
 }
 
 /// `HUF_decompress1X_usingDTable`
@@ -409,7 +506,7 @@ pub(crate) fn decompress_1x_using_dtable(
 
 /// `HUF_decompress1X1_DCtx_wksp`
 pub(crate) fn decompress_1x1(dtable: &mut HufDTable, dst: &mut [u8], src: &[u8]) -> Result<usize> {
-    let h_size = dtable.read(src, TableType::X1)?;
+    let h_size = dtable.read(src, TableType::X1, dst.len())?;
     if h_size >= src.len() {
         return Err(ErrorCode::SrcSizeWrong);
     }
@@ -445,7 +542,7 @@ pub(crate) fn decompress_4x_huf_only(
     } else {
         TableType::X1
     };
-    let h_size = dtable.read(src, table_type)?;
+    let h_size = dtable.read(src, table_type, dst.len())?;
     if h_size >= src.len() {
         return Err(ErrorCode::SrcSizeWrong);
     }

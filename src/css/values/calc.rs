@@ -932,7 +932,7 @@ impl<V: CalcValue> Calc<V> {
                     let div = 1.0 / num;
                     calc.to_css(dest)?;
                     dest.delim(b'/', true)?;
-                    CSSNumberFns::to_css(div, dest)?;
+                    CSSNumberFns::to_css_rounded(div, dest)?;
                 } else {
                     CSSNumberFns::to_css(num, dest)?;
                     dest.delim(b'*', true)?;

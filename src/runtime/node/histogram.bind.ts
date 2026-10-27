@@ -24,10 +24,7 @@ export const HistogramJSON = b.dictionary({
   percentiles: b.any,
 });
 
-/**
- * https://github.com/nodejs/node/blob/v26.3.0/lib/internal/histogram.js
- * An instance that is of neither subclass is the structured clone of an `ELDHistogram`.
- */
+/** https://github.com/nodejs/node/blob/v26.3.0/lib/internal/histogram.js */
 export const Histogram = b.class({
   ...nodeClass,
   rustPath: "crate::node::histogram::Histogram",
@@ -74,7 +71,7 @@ export const ELDHistogram = b.class({
     enable: { returns: b.bool },
     /** Whether it was enabled. */
     disable: { returns: b.bool },
-    "@@dispose": {},
+    "@@dispose": { builtin: true, length: 0 },
   },
 });
 

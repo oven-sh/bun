@@ -609,6 +609,14 @@ describe("Histogram", () => {
     assert.strictEqual(inspect(monitorEventLoopDelay(), { depth: -1 }), "[ELDHistogram]");
   });
 
+  test("what inherits from a histogram can be inspected", () => {
+    const h = createHistogram();
+    // Node.js prints the histogram. Here the counts are in the object itself, which these are not.
+    for (const object of [Object.create(h), new Proxy(h, {})]) {
+      assert.match(inspect(object), isNative ? /Histogram/ : /^Histogram \{\n  min: /);
+    }
+  });
+
   const summary = (h: any) => ({
     count: h.count,
     exceeds: h.exceeds,
@@ -1515,6 +1523,14 @@ describe("Histogram", () => {
         disposed = h;
       }
       assert.strictEqual(disposed.disable(), false);
+    });
+
+    test("Symbol.dispose calls disable()", () => {
+      const h = monitorEventLoopDelay();
+      let calls = 0;
+      h.disable = () => ++calls > 0;
+      assert.strictEqual(h[Symbol.dispose](), undefined);
+      assert.strictEqual(calls, 1);
     });
 
     test("does not keep the process alive", () => {

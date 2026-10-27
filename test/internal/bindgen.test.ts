@@ -365,6 +365,28 @@ itAlways("mistakes in a schema are errors when it loads", () => {
   expect(() => b.class({ rustPath: "T", final: false, proto: { x: { mutates: true } } })).toThrow(
     "a class that is or has a subclass has no mutates",
   );
+  expect(() => b.class({ extends: base, proto: { x: { calledFromCpp: true } } })).toThrow(
+    "calledFromCpp: a class with extends declares no C++ member function",
+  );
+  const shape = b.class({ rustPath: "T", final: false, proto: { reset: {}, size: { getter: b.u32 } } });
+  const square = b.class({ extends: shape, proto: { close: {} } });
+  for (const [proto, rustFunction] of [
+    [{ reset: {} }, "reset"],
+    [{ size: { getter: b.u32 } }, "get_size"],
+    [{ close: {} }, "close"],
+  ] as const)
+    expect(() => b.class({ extends: shape, proto })).toThrow(`two members' Rust functions are both ${rustFunction}`);
+  b.class({ extends: shape, proto: { close: { rustName: "close" } } });
+  for (const [first, second] of [
+    [shape, square],
+    [square, shape],
+  ]) {
+    const both = "a class and one it extends are told apart here, but an instance is both: take the base";
+    expect(() => b.union({ first, second })).toThrow(both);
+    expect(() => b.overloads({ args: { x: first }, rustPath: "a" }, { args: { x: second }, rustPath: "b" })).toThrow(
+      both,
+    );
+  }
   expect(() => b.class({ rustPath: "T", forBind: true, prototypeBase: "Error" })).toThrow(
     "forBind has no prototypeBase: the prototype inherits from Function.prototype",
   );

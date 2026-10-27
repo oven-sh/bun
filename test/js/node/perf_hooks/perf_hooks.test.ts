@@ -54,6 +54,23 @@ test("the garbage collector knows the size of a histogram", () => {
   expect(estimateShallowMemoryUsageOf(histogram)).toBeWithin(88 * (chunk + 8), 88 * (chunk + 8) + 1024);
 });
 
+// The tests below count them, and a count that is `undefined` would end their loops at once.
+test("heapStats() counts the histograms of each class", () => {
+  const recordable = perf.createHistogram();
+  const held = [recordable, structuredClone(recordable), perf.monitorEventLoopDelay()];
+  held.push(structuredClone(held[2]));
+  const { RecordableHistogram, ELDHistogram, Histogram } = heapStats().objectTypeCounts;
+  expect(RecordableHistogram).toBeGreaterThanOrEqual(2);
+  expect(ELDHistogram).toBeGreaterThanOrEqual(1);
+  expect(Histogram).toBeGreaterThanOrEqual(1);
+  expect(held.map(histogram => histogram.constructor.name)).toEqual([
+    "RecordableHistogram",
+    "RecordableHistogram",
+    "ELDHistogram",
+    "Histogram",
+  ]);
+});
+
 test("histograms that grew are collected without an explicit GC", () => {
   // How many it takes depends on the size of the heap, but 720 MB is far more than enough.
   let created = 0;
@@ -142,14 +159,15 @@ test("the prototypes of a histogram can be printed", () => {
   const printed: string[] = [];
   for (const histogram of [perf.createHistogram(), perf.monitorEventLoopDelay()]) {
     for (let p = Object.getPrototypeOf(histogram); p !== Object.prototype; p = Object.getPrototypeOf(p)) {
-      printed.push(Bun.inspect({ p }).split("\n", 2).join(" "));
+      printed.push(Bun.inspect({ p }).split("\n", 3).join(" "));
     }
   }
   expect(printed).toEqual([
-    "{   p: RecordableHistogram {",
-    "{   p: Histogram {",
-    "{   p: ELDHistogram {",
-    "{   p: Histogram {",
+    "{   p: RecordableHistogram {     record: [Function: record],",
+    // As for every native class: the getter throws for a prototype.
+    "{   p: Histogram {     count: undefined,",
+    "{   p: ELDHistogram {     enable: [Function: enable],",
+    "{   p: Histogram {     count: undefined,",
   ]);
 });
 

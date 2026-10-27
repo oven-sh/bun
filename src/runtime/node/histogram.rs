@@ -300,7 +300,12 @@ impl Histogram {
         val: JsLocal<'a>,
     ) -> bindgen::Result<'a, ()> {
         let val = val.to_js();
-        let value = if let Some(big_int) = JSBigInt::from_js(val) {
+        let big_int = if val.is_number() {
+            None
+        } else {
+            JSBigInt::from_js(val)
+        };
+        let value = if let Some(big_int) = big_int {
             if !val.is_big_int_in_int64_range(1, i64::MAX) {
                 // https://github.com/nodejs/node/blob/v26.3.0/src/histogram.cc#L181
                 return Err(cx.heap.error_with_code(
@@ -393,10 +398,6 @@ impl Histogram {
     pub(crate) fn disable(&self) -> bool {
         self.set_enabled(false)
     }
-
-    pub(crate) fn dispose(&self) {
-        self.set_enabled(false);
-    }
 }
 
 /// The histograms in the structured clone messages that exist, on any thread, by what the message has in their place.
@@ -449,6 +450,7 @@ pub(crate) extern "C" fn Histogram__fromStructuredClone(
     if recordable {
         js_RecordableHistogram::create_wrapper(global, histogram).to_js()
     } else {
+        // The clone of an `ELDHistogram` is of neither subclass.
         histogram.into_js_wrapper(global).to_js()
     }
 }

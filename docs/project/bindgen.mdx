@@ -708,15 +708,19 @@ One class inherits from another as one WebIDL interface does:
   one is taken: as `this`, as an argument, for `from_js` and for `dynamicDowncast`. A `Histogram` is not a
   `RecordableHistogram`, and `record` throws `ERR_INVALID_THIS` for one.
 - `RecordableHistogram.prototype` inherits from `Histogram.prototype`, and `RecordableHistogram` from `Histogram`.
-- The subclass adds no fields. Its struct is the base's, so `record` is a method of `Histogram` in Rust, and what tells
-  the two apart there is a field of that struct.
+- The subclass adds no fields. Its struct is the base's, so `record` is a method of `Histogram` in Rust, and no two
+  members of a class and its subclasses have the same Rust function unless a `rustName` says so.
+  `js_RecordableHistogram::from_js(value)` is the struct if `value` is an instance of the subclass.
 
 `js_RecordableHistogram::create(heap, payload)` makes an instance, and `create_wrapper(global, payload)` does for code
 that has no capability. `payload.into_js(heap)` makes an instance of the base.
 
 The base has `final: false` and is not `refCounted`. The subclass declares `proto`, `construct: "illegal"`, `final`,
 `rustTraits` and the three attributes, which it does not inherit. The rest is the base's: how it is created and
-collected, its internal fields and the memory it reports.
+collected, its internal fields, which no member of the subclass names, and the memory it reports.
+
+An instance of the subclass is of both [kinds](#unions-and-kinds), so a union or the overloads of a function take the
+base and not both.
 
 ### The receiver
 

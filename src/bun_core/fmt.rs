@@ -3700,11 +3700,11 @@ impl OutOfRangeValue for f64 {
 }
 /// A number as Node's `ERR_OUT_OF_RANGE` prints it: `-0`, and an integer beyond 2 ** 32 with `addNumericalSeparator`.
 pub struct NodeNumber(pub f64);
-impl OutOfRangeValue for NodeNumber {
-    fn write_received(&self, f: &mut Formatter<'_>) -> fmt::Result {
+impl Display for NodeNumber {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         let Self(number) = *self;
         if number == 0.0 && number.is_sign_negative() {
-            return f.write_str(" Received -0");
+            return f.write_str("-0");
         }
         let digits = double(number).to_string();
         let sign = usize::from(number < 0.0);
@@ -3714,12 +3714,17 @@ impl OutOfRangeValue for NodeNumber {
         } else {
             digits.len()
         };
-        write!(f, " Received {}", &digits[..ungrouped])?;
+        f.write_str(&digits[..ungrouped])?;
         for group in digits.as_bytes()[ungrouped..].chunks(3) {
             f.write_char('_')?;
             write_bytes(f, group)?;
         }
         Ok(())
+    }
+}
+impl OutOfRangeValue for NodeNumber {
+    fn write_received(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, " Received {self}")
     }
     fn type_name() -> &'static str {
         "f64"

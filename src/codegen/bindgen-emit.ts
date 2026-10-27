@@ -796,52 +796,21 @@ function cppMemberFunctionDeclarations(type: ClassType): string {
 }
 
 /** The cell: JSDestructibleObject | the internal fields | the pointer to the struct of a refCounted class, or the struct itself. */
-/** It adds no fields, so it has the subspace, the destructor and the visitor of its base. */
-function cppHeaderForSubclass(type: ClassType): string {
-  const { name } = type;
-  return `
-namespace Bun::Bindgen::Generated {
-class JS${name}${type.final ? " final" : ""} : public JS${type.base!.name} {
-public:
-    using Base = JS${type.base!.name};
-    static constexpr unsigned classIndex = ${type.classIndex};
-
-    DECLARE_INFO;
-
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
-    {
-        return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(WebCore::JSDOMWrapperType), StructureFlags), info());
-    }
-
-    // The payload is uninitialized: the caller writes it before anything else can run.
-    static JS${name}* create(JSC::VM&, JSC::Structure*);
-
-${type.final ? "private" : "protected"}:
-    JS${name}(JSC::VM& vm, JSC::Structure* structure)
-        : Base(vm, structure)
-    {
-    }
-};
-void setup${name}ClassStructure(JSC::LazyClassStructure::Initializer&);
-}
-${type.final ? `template<> struct JSC::JSCastingHelpers::InheritsTraits<${type.cpp}> : Bun::Bindgen::InheritsTraits<${type.cpp}> {};\n` : ""}template<> struct Bun::Bindgen::ExternTraits<${type.cpp}*> : Bun::Bindgen::TrivialExtern<${type.cpp}*> {};
-template<> struct Bun::IDLHumanReadableName<${type.idlType}> : Bun::BaseIDLHumanReadableName {
-    static constexpr auto humanReadableName = std::to_array("${name}");
-};
-`;
-}
-
 function cppHeaderForClass(type: ClassType): string {
-  if (type.base) return cppHeaderForSubclass(type);
   const { name, refCounted } = type;
   const hasFields = type.internalFields.length > 0;
+  const base = type.base ? `JS${type.base.name}` : "JSC::JSDestructibleObject";
   return `
-extern "C" const size_t ${symbolName(type, "structSize")};
+${
+  type.base
+    ? ""
+    : `extern "C" const size_t ${symbolName(type, "structSize")};
 extern "C" void ${classSymbolName(type, "finalize")}(void*);
-${(["memoryCost", "estimatedSize"] as const)
-  .filter(key => type[key])
-  .map(key => `extern "C" size_t ${symbolName(type, key)}(void*);\n`)
-  .join("")}${[
+`
+}${(["memoryCost", "estimatedSize"] as const)
+    .filter(key => type[key])
+    .map(key => `extern "C" size_t ${symbolName(type, key)}(void*);\n`)
+    .join("")}${[
     ...Map.groupBy(new Set(type.internalFieldClasses.values().map(cell => cell.cpp)), cpp =>
       cpp.slice(0, cpp.lastIndexOf("::")),
     ),
@@ -851,13 +820,17 @@ ${(["memoryCost", "estimatedSize"] as const)
         `namespace ${namespace} {\n${classes.map(cpp => `class ${cpp.slice(namespace.length + 2)};\n`).join("")}}\n`,
     )
     .join("")}namespace Bun::Bindgen::Generated {
-class JS${name}${type.final ? " final" : ""} : public JSC::JSDestructibleObject {
+class JS${name}${type.final ? " final" : ""} : public ${base} {
 public:
-    using Base = JSC::JSDestructibleObject;
+    using Base = ${base};
     static constexpr unsigned classIndex = ${type.classIndex};
 
     DECLARE_INFO;
-${hasFields || type.estimatedSize ? "    DECLARE_VISIT_CHILDREN;\n" : ""}    static void analyzeHeap(JSC::JSCell*, JSC::HeapAnalyzer&);
+${
+  // A subclass adds no fields, so what visits, destroys and allocates its base does for it.
+  type.base
+    ? ""
+    : `${hasFields || type.estimatedSize ? "    DECLARE_VISIT_CHILDREN;\n" : ""}    static void analyzeHeap(JSC::JSCell*, JSC::HeapAnalyzer&);
 ${cppExtraMemorySize(type, "heapSnapshot") ? "    static size_t estimatedSize(JSC::JSCell*, JSC::VM&);\n" : ""}    static void destroy(JSC::JSCell*);
 
     template<typename${type.final ? "" : " CellType"}, JSC::SubspaceAccess mode>
@@ -867,7 +840,8 @@ ${type.final ? "" : `        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(CellType, JS${n
             return nullptr;
         return Bun::Bindgen::subspaceForClass(vm, ${type.classIndex}, allocationSize());
     }
-
+`
+}
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
         return Bun::createClassStructure(vm, globalObject, prototype, JSC::TypeInfo(static_cast<JSC::JSType>(WebCore::JSDOMWrapperType), StructureFlags), info());
@@ -886,9 +860,13 @@ ${
         : ""
     }`
     : `    // The payload is uninitialized: the caller writes it before anything else can run.
-    static JS${name}* create(JSC::VM&, JSC::Structure*);
+    static JS${name}* create(JSC::VM&, JSC::Structure*);${
+      type.base
+        ? ""
+        : `
     static size_t allocationSize() { return sizeof(JS${name}) + ${symbolName(type, "structSize")}; }
     void* payload() { return this + 1; }`
+    }`
 }
 
 ${cppMemberFunctionDeclarations(type)}${type.internalFields.map(field => `    JSC::WriteBarrier<${type.internalFieldClasses.get(field)?.cpp ?? "JSC::Unknown"}> m_${field};\n`).join("")}
@@ -897,9 +875,7 @@ ${type.final ? "private" : "protected"}:
         : Base(vm, structure)${refCounted ? "\n        , m_wrapped(wrapped)" : ""}
     {
     }
-
-    ${refCounted && type.estimatedSize ? "void finishCreation(JSC::VM&);" : "DECLARE_DEFAULT_FINISH_CREATION;"}
-${refCounted ? `\n${type.final ? "" : "private:\n"}    void* const m_wrapped;\n` : ""}};
+${type.base ? "" : `\n    ${refCounted && type.estimatedSize ? "void finishCreation(JSC::VM&);" : "DECLARE_DEFAULT_FINISH_CREATION;"}\n`}${refCounted ? `\n${type.final ? "" : "private:\n"}    void* const m_wrapped;\n` : ""}};
 void setup${name}ClassStructure(JSC::LazyClassStructure::Initializer&);
 }
 ${type.final ? `template<> struct JSC::JSCastingHelpers::InheritsTraits<${type.cpp}> : Bun::Bindgen::InheritsTraits<${type.cpp}> {};\n` : ""}template<> struct Bun::Bindgen::ExternTraits<${type.cpp}*> : Bun::Bindgen::TrivialExtern<${type.cpp}*> {};
@@ -916,19 +892,8 @@ ${
 /** What the cell's ClassInfo points at, and \`create\`. */
 function cppSourceForCell(type: ClassType): string {
   const { name, refCounted, cpp } = type;
-  if (type.base)
-    return `
-const JSC::ClassInfo ${cpp}::s_info = { ${asciiLiteral(name)}, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(${cpp}) };
-
-${cpp}* ${cpp}::create(JSC::VM& vm, JSC::Structure* structure)
-{
-    auto* object = new (NotNull, JSC::allocateCell<${cpp}>(vm, allocationSize())) ${cpp}(vm, structure);
-    object->finishCreation(vm);
-    return object;
-}
-`;
   const payload = refCounted ? "m_wrapped" : "payload()";
-  return `
+  const create = `
 const JSC::ClassInfo ${cpp}::s_info = { ${asciiLiteral(name)}, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(${cpp}) };
 static_assert(sizeof(${cpp}) == ${offsetOfPayload(type) + (refCounted ? 8 : 0)});
 ${type.internalFields.map((field, i) => `static_assert(OBJECT_OFFSETOF(${cpp}, m_${field}) == ${offsetOfInternalField(i)});\n`).join("")}
@@ -938,17 +903,19 @@ ${refCounted ? `    static_assert(OBJECT_OFFSETOF(${cpp}, m_wrapped) == ${offset
     object->finishCreation(vm);
     return object;
 }
-${
-  refCounted && type.estimatedSize
-    ? `
+`;
+  if (type.base) return create;
+  return `${create}${
+    refCounted && type.estimatedSize
+      ? `
 void ${cpp}::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
     vm.heap.reportExtraMemoryAllocated(this, extraMemorySize(m_wrapped));
 }
 `
-    : ""
-}
+      : ""
+  }
 void ${cpp}::destroy(JSC::JSCell* cell)
 {
     STATIC_ASSERT_IS_TRIVIALLY_DESTRUCTIBLE(${cpp});
@@ -1946,11 +1913,7 @@ bindgen::host_fn_return(cx, result, |heap, value| ${getter.type.rustToJS("value"
 
   return `${
     type.base
-      ? `
-unsafe extern "C" {
-    fn ${symbolName(type, "create")}(global: *mut JSGlobalObject, structure: *mut core::ffi::c_void) -> core::ptr::NonNull<core::ffi::c_void>;
-}
-`
+      ? rustDeclareCreateCell(type)
       : `${refCounted ? rustForRefCounted(type) : rustForPayload(type)}
 #[unsafe(no_mangle)]
 pub static ${symbolName(type, "structSize")}: usize = size_of::<${rustPath}>();
@@ -1984,13 +1947,15 @@ unsafe impl bindgen::JsCreateWithStructure for ${rustPath} {
   }${rustForModule(type, scope)}${thunks}`;
 }
 
-function rustForPayload(type: ClassType): string {
-  const { rustPath } = type;
-  return `
+const rustDeclareCreateCell = (type: ClassType) => `
 unsafe extern "C" {
     fn ${symbolName(type, "create")}(global: *mut JSGlobalObject, structure: *mut core::ffi::c_void) -> core::ptr::NonNull<core::ffi::c_void>;
 }
-// SAFETY: the offset is \`static_assert\`ed against the C++ cell.
+`;
+
+function rustForPayload(type: ClassType): string {
+  const { rustPath } = type;
+  return `${rustDeclareCreateCell(type)}// SAFETY: the offset is \`static_assert\`ed against the C++ cell.
 unsafe impl bindgen::JsPayload for ${rustPath} {
     const PAYLOAD_OFFSET: usize = ${offsetOfPayload(type)};
     #[inline(always)]

@@ -103,6 +103,8 @@ export type ValueKind =
 /** The instances of a C++ `JSCell` class. */
 export interface JSClass {
   readonly cpp: string;
+  /** Its instances are instances of this one too. */
+  readonly base?: JSClass;
 }
 
 type ValueKinds = readonly ValueKind[] | "any";
@@ -135,12 +137,18 @@ export const refusesNonObjects = (type: Type) => type.refuses === nonObjects;
 const takes = (type: Type, kind: ValueKind | "other") =>
   type.valueKinds === "any" || (kind !== "other" && type.valueKinds.includes(kind));
 
-const distinguishingKinds = (types: readonly Type[]): (ValueKind | "other")[] => [
-  ...types
+function distinguishingKinds(types: readonly Type[]): (ValueKind | "other")[] {
+  const kinds = types
     .flatMap(type => (type.valueKinds === "any" ? [] : type.valueKinds))
-    .filter((kind, index, kinds) => kinds.indexOf(kind) === index),
-  "other",
-];
+    .filter((kind, index, kinds) => kinds.indexOf(kind) === index);
+  for (const kind of kinds)
+    for (let base = typeof kind === "object" ? kind.base : undefined; base; base = base.base)
+      assert(
+        !kinds.includes(base),
+        "a class and one it extends are told apart here, but an instance is both: take the base",
+      );
+  return [...kinds, "other"];
+}
 
 /** Which of `alternatives` get a value of each kind, in order: all but the last refuse some. Equal lists are one array. */
 function alternativesByKind(alternatives: readonly Type[]): Map<ValueKind | "other", readonly number[]> {
@@ -2575,11 +2583,7 @@ export interface ConstructOptions extends Omit<SignatureOptions, "rustPath" | "r
 export interface ClassOptions {
   /** Path of the Rust struct. The members are its own methods. A class with `extends` has its base's. */
   rustPath?: string;
-  /**
-   * The class inherits from this one, which has `final: false`, as one WebIDL interface does from another. `JSName` is a subclass of the base's
-   * C++ class, so an instance is also an instance of the base. The prototype and the constructor inherit from the base's. The struct is the
-   * base's, and `js_Name::create` makes an instance from one.
-   */
+  /** The class inherits from this one, which has `final: false`, as one WebIDL interface does from another. See "extends" in the docs. */
   extends?: ClassType;
   /** The struct is intrusively refcounted and the JS object holds one ref, so it can outlive the object. Every member takes `&self`. */
   refCounted?: boolean;
@@ -2852,6 +2856,8 @@ export const selfType = new SelfType();
 export class ClassType extends NamedType {
   /** What it `extends`. */
   readonly base: ClassType | undefined;
+  /** Of the class that has no base: its own and those of every subclass. */
+  #rustFunctions: readonly string[] = [];
   readonly rustPath: string;
   readonly refCounted: boolean;
   /** No member has `mutates`, so every member takes `&self`. */
@@ -3046,17 +3052,20 @@ export class ClassType extends NamedType {
     for (const field of this.internalFields)
       assert(/^[a-z][A-Za-z0-9]*$/.test(field), `${field}: an internal field is named in camelCase`);
     assert(!this.base || this.internalFields.length === 0, "cache: a class with extends adds no internal field");
-    // A `rustName` may be another member's function.
-    assertDistinct(
-      [
-        "constructor",
-        ...this.methods.filter(method => method.hasDefaultRustName).map(method => method.rustName),
-        ...[...getters, ...this.staticGetters]
-          .filter(getter => getter.hasDefaultRustName)
-          .flatMap(getter => [getter.rustName, ...(getter.hasSetter ? [getter.setterRustName] : [])]),
-      ],
-      "members' Rust functions",
+    assert(
+      !this.base || !this.methods.some(method => method.calledFromCpp),
+      "calledFromCpp: a class with extends declares no C++ member function",
     );
+    // A `rustName` may be another member's function. A class and its subclasses have one struct.
+    const rustFunctions = [
+      ...(this.base ? this.root.#rustFunctions : ["constructor"]),
+      ...this.methods.filter(method => method.hasDefaultRustName).map(method => method.rustName),
+      ...[...getters, ...this.staticGetters]
+        .filter(getter => getter.hasDefaultRustName)
+        .flatMap(getter => [getter.rustName, ...(getter.hasSetter ? [getter.setterRustName] : [])]),
+    ];
+    assertDistinct(rustFunctions, "members' Rust functions");
+    this.root.#rustFunctions = rustFunctions;
     assertDistinct(this.internalFields.map(snakeCase), "internal fields");
     assertDistinct(
       [...this.methods.filter(method => method.calledFromCpp), ...this.calledFromRust].map(member => member.name),

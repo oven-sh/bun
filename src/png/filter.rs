@@ -125,8 +125,8 @@ impl<const SIZE: usize> Undo<SIZE> {
         fn next(x: &[u8], a: Wide, b: Wide, c: Wide, known: Wide) -> Wide {
             let threshold = known.zip(a, |known, a| known - a);
             let (min, max) = (a.zip(b, i16::min), a.zip(b, i16::max));
-            let otherwise = max.gt(threshold).select(c, min);
-            let nearest = threshold.gt(min).select(otherwise, max);
+            let min_or_c = max.gt(threshold).select(c, min);
+            let nearest = threshold.gt(min).select(min_or_c, max);
             Wide::load(x).zip(nearest, |x, nearest| x + nearest)
         }
         let Some((last, pixels)) = row.as_chunks_mut::<SIZE>().0.split_last_mut() else {

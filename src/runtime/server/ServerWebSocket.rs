@@ -185,7 +185,7 @@ pub(super) enum Accept {
     Control,
 }
 
-/// A converted message or topic argument.
+/// A converted message argument.
 pub(super) enum Payload<'a> {
     Buffer(ArrayBuffer),
     Bytes(&'a [u8]),
@@ -220,6 +220,7 @@ pub(super) fn payload_from_js<'a, 'call: 'a>(
     value: WebSocketMessage<'call>,
     accept: Accept,
 ) -> JsResult<Payload<'a>> {
+    let expects = |expected| Err(global_this.throw(format_args!("{fn_name} expects {expected}")));
     let text = match (value, accept) {
         (WebSocketMessage::Undefined | WebSocketMessage::Null, Accept::Control) => {
             return Ok(Payload::Bytes(&[]));
@@ -252,14 +253,9 @@ pub(super) fn payload_from_js<'a, 'call: 'a>(
             Accept::Any | Accept::AnyOrNullish | Accept::Text | Accept::Control,
         ) => value.to_js(),
         (WebSocketMessage::Other(value), Accept::Any | Accept::AnyOrNullish) => value.to_js(),
-        (_, Accept::Text | Accept::Binary | Accept::Control) => {
-            let expected = match accept {
-                Accept::Text => "a string",
-                Accept::Binary => "a Blob or BufferSource",
-                _ => "a string, Blob, or BufferSource",
-            };
-            return Err(global_this.throw(format_args!("{fn_name} expects {expected}")));
-        }
+        (_, Accept::Text) => return expects("a string"),
+        (_, Accept::Binary) => return expects("a Blob or BufferSource"),
+        (_, Accept::Control) => return expects("a string, Blob, or BufferSource"),
     };
     Ok(Payload::Text(text.to_js_string_view(global_this)?))
 }
@@ -274,7 +270,7 @@ fn topic_from_js<'a>(
     empty: EmptyTopic,
 ) -> JsResult<jsc::JSStringView<'a>> {
     let topic = match topic {
-        WebSocketTopic::String(topic) => topic.to_js().to_js_string_view(global_this)?,
+        WebSocketTopic::String(topic) => topic.to_js_string_view(global_this)?,
         WebSocketTopic::Other(value) => {
             return Err(global_this.throw_invalid_argument_type_value(
                 b"topic",

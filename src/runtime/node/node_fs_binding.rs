@@ -114,7 +114,7 @@ fn parse_async_args<A: FsArgument>(
     Ok(finish_parsing_async_args(global, args, parsing))
 }
 
-/// Whether the operation is scheduled with `args`, which were parsed with `parsing` under [`Flavor::Async`].
+/// `args`, parsed with `parsing` under [`Flavor::Async`], or the error that rejects the operation before it is scheduled.
 fn finish_parsing_async_args<A: FsArgument>(
     global: &JSGlobalObject,
     args: A,
@@ -429,7 +429,7 @@ node_fs_bindings! {
         (fd: i32, buffer: JsLocal<'_, BufferSource>, offset: schema::WriteOffset<'_>, length: schema::WriteLength, position: Option<f64>),
         |global, parsing| args::Write::from_buffer(global, parsing, fd, buffer, offset, length, position);
     write_string_sync / write_string / write_string_cb => Write, args::Write<'static>, ret::Write,
-        (fd: i32, buffer: (schema::WriteString, JsLocal<'_>), position: Option<f64>, encoding: Option<JsLocal<'_, StringLike>>),
+        (fd: i32, buffer: bun_core::String, position: Option<f64>, encoding: Option<JsLocal<'_, StringLike>>),
         |global, parsing| args::Write::from_string(global, parsing, fd, buffer, position, encoding);
     read_file_sync / read_file / read_file_cb => ReadFile, args::ReadFile<'static>, ret::ReadFile,
         (path: schema::PathOrFileDescriptor<'_>, options: schema::EncodingOrReadFileOptions<'_>),

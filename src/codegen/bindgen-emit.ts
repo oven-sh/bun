@@ -336,22 +336,21 @@ function cppConvertToAlternative(type: UnionType, candidates: readonly number[])
           : alternative.returnsValueUnchanged
             ? `${target} = value;`
             : `${target} = Bun::uncheckedConvertIDL<${alternative.idlType}>(*globalObject, value, ctx);`;
-      const isStoredAsBits = type.isStoredAsBits(alternative);
-      const take = isStoredAsBits
-        ? `result.tag = ${i};
-${implementationType(alternative)} converted;
+      const take = `result.tag = ${i};
+${
+  type.cppStoresAsBits(alternative)
+    ? `${implementationType(alternative)} converted;
 ${convert("converted")}
-result.bits = Bun::Bindgen::toBits(converted);
-${returnSuccess}`
-        : `result.tag = ${i};
-std::construct_at(&${member});
-${alternative.convertsInPlace ? cppEmplace(member, convert) : convert(member)}
+result.bits = Bun::Bindgen::toBits(converted);`
+    : `std::construct_at(&${member});
+${alternative.convertsInPlace ? cppEmplace(member, convert) : convert(member)}`
+}
 ${returnSuccess}`;
       if (refusesNonObjects(alternative))
         return reportsNonObjects ? take : `if (value.isObject()) {\n${indent(take, 4)}\n}`;
       if (alternative.refuses)
         return `if (auto converted = Bun::tryConvertIDL<${alternative.idlType}>(*globalObject, value, ctx)) {
-    ${isStoredAsBits ? "result.bits = Bun::Bindgen::toBits(*converted);" : `std::construct_at(&${member}, WTF::move(*converted));`}
+    std::construct_at(&${member}, WTF::move(*converted));
     result.tag = ${i};
     ${returnSuccess}
 }${alternative.tryConvertThrows ? "\nRETURN_IF_EXCEPTION(scope, false);" : ""}`;
@@ -451,14 +450,14 @@ ${
   held.length === 0
     ? ""
     : `    union {
-${held.some(a => type.isStoredAsBits(a.type)) ? "        uint64_t bits;\n" : ""}${held.map(a => `        ${a.type.convertsInPlace ? `std::optional<${implementationType(a.type)}>` : implementationType(a.type)} ${a.name};`).join("\n")}
+${held.some(a => type.cppStoresAsBits(a.type)) ? "        uint64_t bits;\n" : ""}${held.map(a => `        ${a.type.convertsInPlace ? `std::optional<${implementationType(a.type)}>` : implementationType(a.type)} ${a.name};`).join("\n")}
     };
 `
 }};
 struct Extern${name} {
     uint8_t tag;
     union {
-${type.externFields ? `        ${externUnionBits}\n        uint64_t bits;\n` : ""}${alternatives.map(a => `        ${externType(a.type)} ${a.name};`).join("\n")}
+${type.externFields ? "        uint64_t bits;\n" : ""}${alternatives.map(a => `        ${externType(a.type)} ${a.name};`).join("\n")}
     } data;
 };
 ${layoutAssert(`Extern${name}`, type)}
@@ -861,21 +860,28 @@ function passedByPointer(args: readonly { type: Type }[], leading: number): bool
   });
 }
 
-/** Above the member `bits` of the `data` of a union that has `externFields`. Nothing reads the member. */
-const externUnionBits =
-  "// As a parameter, a union whose first member is a pointer is a pointer to clang and an integer to rustc.";
-
 /** The types of the parameters that take an extern value of `type`. */
 const cppExternParameters = (type: Type, byPointer: boolean): string[] =>
   byPointer
     ? [`${externType(type)}*`]
     : (type.externFields?.map(field => `decltype(${externType(type)}::${field.name})`) ?? [externType(type)]);
 
-/** The arguments that pass `extern`, an extern value of `type`, in registers. `lines` gets a declaration of `variable` if they read it. */
-function cppExternArguments(type: Type, extern: string, variable: string, lines: string[]): string[] {
-  if (!type.externFields) return [extern];
+/**
+ * The arguments for `cppExternParameters`. `converted`: the C++ value. `extern`: the expression that makes its extern value.
+ * `lines` gets a declaration of `variable` if the arguments read it.
+ */
+function cppExternArguments(
+  type: Type,
+  byPointer: boolean,
+  converted: string,
+  extern: string,
+  variable: string,
+  lines: string[],
+): string[] {
+  if (byPointer && type.cppCanBitCastToExtern) return [`Bun::Bindgen::asExtern(${converted})`];
+  if (!byPointer && !type.externFields) return [extern];
   lines.push(`auto ${variable} = ${extern};`);
-  return type.externFields.map(field => `${variable}.${field.name}`);
+  return byPointer ? [`&${variable}`] : type.externFields!.map(field => `${variable}.${field.name}`);
 }
 
 /**
@@ -914,12 +920,9 @@ function cppCallBody(
   const byPointer = passedByPointer(signature.args, leading.length);
   const args = signature.args.flatMap(({ type }, i) => {
     const extern = type.passesValue
-      ? `${externType(type)} { ${toExtern(`converted${i}`)}, JSC::JSValue::encode(argument${i}.value()) }`
+      ? `${externType(type)} { ${toExtern(`converted${i}`)}, JSC::JSValue::encode(${cppHeldValue(type, `argument${i}`).value}) }`
       : toExtern(`converted${i}`);
-    if (!byPointer[i]) return cppExternArguments(type, extern, `extern${i}`, lines);
-    if (type.cppCanBitCastToExtern) return `Bun::Bindgen::asExtern(converted${i})`;
-    lines.push(`auto extern${i} = ${extern};`);
-    return `&extern${i}`;
+    return cppExternArguments(type, byPointer[i], `converted${i}`, extern, `extern${i}`, lines);
   });
   lines.push(...finish(`${symbol}(${["globalObject", ...leading, ...args].join(", ")})`));
   return lines.map(line => `    ${line}`).join("\n");
@@ -996,7 +999,7 @@ ${indent(lines.join("\n"), 4)}
 
 const cppExtern = (
   symbol: string,
-  signature: Pick<Signature, "args">,
+  signature: { args: readonly { type: Type }[] },
   leading: readonly string[] = [],
   returns = "JSC::EncodedJSValue",
 ) => {
@@ -1320,7 +1323,9 @@ ${cppCallBody(
   const call = `${symbol}(${[
     signature.takesGlobalObject ? "globalObject" : "globalObject()",
     "this",
-    ...method.args.flatMap((arg, i) => cppExternArguments(arg.type, toExtern(`parameter${i}`), `extern${i}`, lines)),
+    ...method.args.flatMap((arg, i) =>
+      cppExternArguments(arg.type, false, `parameter${i}`, toExtern(`parameter${i}`), `extern${i}`, lines),
+    ),
   ].join(", ")})`;
   return `
 ${cppExtern(symbol, method, ["JSC::JSCell*"], isPrimitive ? signature.returns : undefined)}
@@ -1409,9 +1414,9 @@ function cppSetter(type: ClassType, getter: Getter): string {
   const setSymbol = setterSymbolName(type, getter);
   const { holder, value } = cppHeldValue(getter.setterType, "assigned");
   const lines = cppDeclareConverted(getter.setterType, "value", value, "ctx", getter.name, "false");
-  const args = cppExternArguments(getter.setterType, toExtern("value"), "externValue", lines);
+  const args = cppExternArguments(getter.setterType, false, "value", toExtern("value"), "externValue", lines);
   return `
-${cppExtern(setSymbol, { args: [{ name: getter.name, type: getter.setterType }] }, getter.isStatic ? [] : ["JSC::JSCell*"], "bool")}
+${cppExtern(setSymbol, { args: [{ type: getter.setterType }] }, getter.isStatic ? [] : ["JSC::JSCell*"], "bool")}
 static JSC_DECLARE_CUSTOM_SETTER(${set});
 JSC_DEFINE_CUSTOM_SETTER(${set}, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue${getter.isStatic ? "" : " thisValue"}, JSC::EncodedJSValue encodedValue, JSC::PropertyName${getter.isStatic ? "" : " attributeName"}))
 {
@@ -1928,18 +1933,18 @@ function rustThunkArguments(
     .flatMap(({ arg, byPointer }) => {
       const name = rustArgumentName(arg);
       const fields = byPointer ? null : arg.type.externFields;
-      const whole = fields
+      const rebuilt = fields
         ? [
-            `let ${name} = ${arg.type.rustExternType(scope).replace(/<.*$/, "")} { ${fields.map(field => `${field.name}: ${fieldName(arg, field)}`).join(", ")} };\n`,
+            `let ${name} = ${arg.type.rustExternType(scope).replace("<", "::<")} { ${fields.map(field => `${field.name}: ${fieldName(arg, field)}`).join(", ")} };\n`,
           ]
         : [];
       const converted = arg.type.rustFromExtern(byPointer ? `${name}.read()` : name, scope);
       if (arg.type.rustFromExternThrows)
         return [
-          ...whole,
+          ...rebuilt,
           `let ${name} = match ${converted} {\n    Ok(value) => value,\n    Err(error) => return error.into_host_fn_return(cx),\n};\n`,
         ];
-      return converted === name ? whole : [...whole, `let ${name} = ${converted};\n`];
+      return converted === name ? rebuilt : [...rebuilt, `let ${name} = ${converted};\n`];
     });
   if (taken.some(line => /\bheap\b/.test(line))) taken.unshift("let heap = &cx.heap;\n");
   return { parameters: [...leading, ...parameters], take: taken.join("") };
@@ -2043,7 +2048,7 @@ pub struct Extern${type.name} {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub union Extern${type.name}Data {
-${type.externFields ? `    ${externUnionBits}\n    bits: u64,\n` : ""}${type.alternatives.map(a => `    ${rustIdent(snakeCase(a.name))}: ${a.type.rustExternType(scope)},`).join("\n")}
+${type.externFields ? "    bits: u64,\n" : ""}${type.alternatives.map(a => `    ${rustIdent(snakeCase(a.name))}: ${a.type.rustExternType(scope)},`).join("\n")}
 }
 ${rustLayoutAssert(`Extern${type.name}`, type)}
 impl${lifetime} ${type.name}${lifetime} {

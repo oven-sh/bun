@@ -1,6 +1,6 @@
 use core::ffi::c_void;
 
-use bun_jsc::bindgen::{JsLocal, JsScope};
+use bun_jsc::bindgen::{JsLocal, JsScope, Number};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::host_fn::DomCall;
 use bun_jsc::{self as jsc, ArrayBuffer, JSFunction, JSGlobalObject, JSObject, JSValue, JsResult};
@@ -99,7 +99,7 @@ pub(crate) unsafe extern "C" fn Bun__FFI__CString__transcode(
     let number = |value: JSValue| {
         if value.is_undefined_or_null() {
             FFINumber::Missing
-        } else if let Some(number) = value.get_number() {
+        } else if let Some(number) = JsLocal::<Number>::from_js(global, value) {
             FFINumber::Number(number)
         } else {
             JsLocal::<jsc::JSBigInt>::from_js(global, value)
@@ -542,8 +542,12 @@ fn get_ptr_slice(
             }
             value.to_uint64_no_truncate() as usize
         }
-        // NaN is 0, which is refused below.
-        FFINumber::Number(value) if !(value < 0.0 || value > usize::MAX as f64) => value as usize,
+        FFINumber::Number(value)
+            if !(value.to_js().as_number() < 0.0
+                || value.to_js().as_number() > usize::MAX as f64) =>
+        {
+            value.to_js().as_ptr_address()
+        }
         _ => {
             return Err(global_this.throw_invalid_arguments(format_args!("ptr must be a number.")));
         }
@@ -558,7 +562,8 @@ fn get_ptr_slice(
 
     match byte_offset {
         FFINumber::Number(byte_off) => {
-            let off = byte_off as i64;
+            let byte_off = byte_off.to_js();
+            let off = byte_off.to_int64();
             if off < 0 {
                 addr =
                     addr.saturating_sub(usize::try_from(off.unsigned_abs()).unwrap_or(usize::MAX));
@@ -572,7 +577,7 @@ fn get_ptr_slice(
                 )));
             }
 
-            if !byte_off.is_finite() {
+            if !byte_off.as_number().is_finite() {
                 return Err(global_this
                     .throw_invalid_arguments(format_args!("ptr must be a finite number.")));
             }
@@ -595,7 +600,7 @@ fn get_ptr_slice(
         FFINumber::Missing => {}
         FFINumber::Number(value_length) => {
             // NaN and every value in (-1, 1) truncate to 0 and fail this check too.
-            let length_i = value_length as i64;
+            let length_i = value_length.to_js().to_int64();
             if length_i <= 0 {
                 return Err(global_this.throw_invalid_arguments(format_args!(
                     "length must be > 0. This usually means a bug in your code."
@@ -630,7 +635,7 @@ fn get_cptr(value: FFINumber<'_>) -> Option<usize> {
     // pointer to C function
     match value {
         FFINumber::Number(value) => {
-            let addr = value as usize;
+            let addr = value.to_js().as_ptr_address();
             if addr > 0 {
                 return Some(addr);
             }

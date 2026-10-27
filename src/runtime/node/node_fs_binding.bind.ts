@@ -41,7 +41,7 @@ const deferred = { deferred: true, reportedAs: "options" } as const;
 const boolean = (value: boolean) => ({ type: b.bool.default(value), expected: ["boolean"] });
 const optionalBoolean = { type: b.bool.optional, expected: ["boolean"] };
 
-export const EncodingName = b.union({ name: b.stringLike, other: b.opaque });
+export const EncodingName = b.union({ string: b.stringLike, other: b.opaque });
 const encoding = EncodingName.falsyAsNull;
 const flag = FileFlags.emptyStringAsNull;
 const mode = { type: FileMode.emptyStringAsNull, expected: ["number"] };
@@ -125,8 +125,6 @@ export const WriteOffset = b.union({
   internalFunction: cell("InternalFunction"),
   number: b.u64.validateInteger(),
 });
-/** A `String` object is converted, and then refused by the body. */
-export const WriteString = b.union({ text: b.string, stringObject: b.string.allowStringObject });
 /** `number` is truncated by the body. */
 export const WriteLength = b.union({ number: b.f64, bigInt: b.i64.asIntN, other: b.ignored });
 /** A whole number that is not negative. Anything else is the current position. */
@@ -245,12 +243,7 @@ const operations: Record<string, Operation> = {
       },
       {
         rustName: "write_string",
-        args: {
-          ...fd,
-          buffer: WriteString.withValue,
-          position,
-          encoding: b.stringLike.otherAsNull,
-        },
+        args: { ...fd, buffer: b.string.owned, position, encoding: b.stringLike.otherAsNull },
         expected: { buffer: writeBuffer },
       },
     ],

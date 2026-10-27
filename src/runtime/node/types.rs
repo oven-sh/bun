@@ -602,7 +602,7 @@ impl Encoding {
     ) -> JsResult<Encoding> {
         match value {
             None => Ok(default),
-            Some(generated::EncodingName::Name(name)) => {
+            Some(generated::EncodingName::String(name)) => {
                 Self::from_name_with_default_on_empty(name, global_object, default)
             }
             Some(generated::EncodingName::Other(value)) => {
@@ -766,12 +766,14 @@ pub(crate) trait PathLikeExt {
         Self: Sized;
 }
 
-/// The value to name in an error, after [`PathLikeExt::from_js`] returned `None` for `path`.
-pub(crate) fn refused_path(path: generated::PathLike<'_>) -> JSValue {
+/// What the error shows, after [`PathLikeExt::from_js`] returned `None` for `path`.
+pub(crate) fn refused_value(path: generated::PathLike<'_>) -> JSValue {
     match path {
         generated::PathLike::Buffer(buffer) => buffer.to_js(),
         generated::PathLike::Other(value) => value.to_js(),
-        generated::PathLike::String(_) | generated::PathLike::Url(_) => unreachable!(),
+        generated::PathLike::String(_) | generated::PathLike::Url(_) => {
+            unreachable!("a string or a URL is a path")
+        }
     }
 }
 
@@ -1697,12 +1699,12 @@ impl PathOrBlob {
             .map(PathOrBlob::Path)
             .ok_or_else(|| {
                 let generated::PathOrFileDescriptor::Path(path) = path else {
-                    unreachable!()
+                    unreachable!("a number is a file descriptor")
                 };
                 ctx.throw_invalid_argument_type_value(
                     b"destination",
                     b"path, file descriptor, or Blob",
-                    refused_path(path),
+                    refused_value(path),
                 )
             })
     }

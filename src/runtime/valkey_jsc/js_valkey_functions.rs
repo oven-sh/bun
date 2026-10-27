@@ -73,8 +73,8 @@ fn from_argument(
             };
             JSArgument::StringOrBuffer(StringOrBuffer::owned(copy))
         }
-        RedisArgument::String(text) => {
-            return JSArgument::from_js_maybe_file(global, text.to_js(), FileBlobs::Allow);
+        RedisArgument::String(string) => {
+            return JSArgument::from_js_maybe_file(global, string.to_js(), FileBlobs::Allow);
         }
         RedisArgument::Blob(blob) | RedisArgument::BuildArtifact(BuildArtifact { blob, .. }) => {
             JSArgument::Blob(Box::new(blob.dupe()))

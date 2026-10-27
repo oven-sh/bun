@@ -5472,6 +5472,21 @@ it("createReadStream on a large file emits readable event correctly", () => {
 });
 
 describe("fs.write", () => {
+  it("promises.write refuses a String object without converting it", async () => {
+    using dir = tempDir("fs-promises-write-string-object", { "a.txt": "" });
+    const fd = fs.openSync(join(String(dir), "a.txt"), "w");
+    try {
+      const data = new String("bun");
+      let conversions = 0;
+      data.toString = () => (conversions++, "bun");
+      // @ts-expect-error
+      await expect(_promises.write(fd, data)).rejects.toMatchObject({ code: "ERR_INVALID_ARG_TYPE" });
+      expect(conversions).toBe(0);
+    } finally {
+      closeSync(fd);
+    }
+  });
+
   it("should work with (fd, buffer, offset, length, position, callback)", done => {
     const path = `${tmpdir()}/bun-fs-write-1-${Date.now()}.txt`;
     const fd = fs.openSync(path, "w");

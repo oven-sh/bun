@@ -1803,7 +1803,7 @@ pub(super) fn generate_symbol_for_function(
 
     match value.ptr(global)? {
         FFINumber::Number(ptr) => {
-            let num = ptr as usize;
+            let num = ptr.to_js().as_ptr_address();
             if num > 0 {
                 function.symbol_from_dynamic_library = Some(num as *mut c_void);
             }

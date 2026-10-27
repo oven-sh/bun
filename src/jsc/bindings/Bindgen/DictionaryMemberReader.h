@@ -18,10 +18,10 @@ public:
     {
     }
 
-    // Empty if it threw.
-    JSC::JSValue get(unsigned index) { return get(m_memberNames[index]); }
-    // Inlined, it is most of the size of every generated dictionary converter.
-    NEVER_INLINE JSC::JSValue get(const JSC::Identifier&);
+    // Empty if it threw. Out of line: inlined, it is most of the size of every generated dictionary converter.
+    NEVER_INLINE JSC::JSValue get(unsigned index);
+    // As `get`, of a member that is not in Tables::memberNames.
+    JSC::JSValue get(const JSC::Identifier&);
     // As `get`, of the object's own properties.
     JSC::JSValue getOwn(unsigned index);
     // Empty also if the object has no such own property.

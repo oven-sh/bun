@@ -406,7 +406,7 @@ impl Stdio {
                 return Ok(());
             }
             StdioValue::String(str) => {
-                let str = str.to_js().to_js_string_view(cx.global())?;
+                let str = str.to_js_string_view(cx.global())?;
                 if str.eq_ascii(b"inherit") {
                     *out_stdio = Stdio::Inherit;
                 } else if str.eq_ascii(b"ignore") {

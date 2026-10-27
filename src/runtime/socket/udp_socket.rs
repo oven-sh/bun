@@ -1336,7 +1336,7 @@ impl UDPSocket {
                 // `toPrimitive` cannot invalidate an earlier captured pointer,
                 // and `this.socket orelse throw` below handles a
                 // close-during-`toPrimitive`.
-                payload_view = text.to_js().to_js_string_view(global_this)?;
+                payload_view = text.to_js_string_view(global_this)?;
                 payload_str = payload_view.to_utf8();
                 payload_str.slice()
             }

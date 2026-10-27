@@ -595,8 +595,24 @@ pub enum Symbol {}
 /// Marks a [`JsLocal`] that is a string or a `String` object.
 pub enum StringLike {}
 
+impl JsLocal<'_, StringLike> {
+    /// As [`JSValue::to_js_string_view`].
+    #[inline]
+    pub fn to_js_string_view(self, global: &JSGlobalObject) -> JsResult<crate::JSStringView<'_>> {
+        self.0.to_js_string_view(global)
+    }
+}
+
 /// Marks a [`JsLocal`] that is a number.
 pub enum Number {}
+
+impl<'a> JsLocal<'a, Number> {
+    /// For a [`JSValue`] that hand-written C++ passed.
+    #[inline]
+    pub fn from_js(_: &'a JSGlobalObject, value: JSValue) -> Option<Self> {
+        value.is_number().then(|| JsLocal::from_raw(value))
+    }
+}
 
 /// Marks a [`JsLocal`] that can be called: a function, or a proxy of one.
 pub enum Callable {}

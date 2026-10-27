@@ -363,7 +363,7 @@ function server(name: string) {
         returns: b.u32,
       },
       timeout: {
-        args: { request: TimeoutTarget, seconds: b.f64.otherAsNull },
+        args: { request: TimeoutTarget, seconds: b.jsNumber.otherAsNull },
         returns: b.opaque,
         capability: "heap",
         throws: true,

@@ -59,10 +59,7 @@ export const BlobParts = b.union({
 });
 
 /** Read after `parts` is converted. */
-export const BlobPropertyBag = b.dictionary(
-  { type: b.string.utf8.owned.otherAsNull },
-  { allowArray: true, fromJS: true },
-);
+export const BlobPropertyBag = b.dictionary({ type: b.string.utf8.owned.otherAsNull }, { deferred: true });
 export const BlobName = b.union(
   { missing: b.null, name: b.string.allowStringObject, other: b.ignored },
   { fromJS: true },
@@ -76,7 +73,7 @@ export const Blob = b.class({
   rustTraits: ["crate::webcore::blob::BlobExt"],
   estimatedSize: true,
   construct: {
-    args: { parts: BlobParts, options: b.object.otherAsNull },
+    args: { parts: BlobParts, options: BlobPropertyBag.otherAsNull },
     expected: { parts: "new Blob() expects an Array" },
     ...js,
     length: 0,

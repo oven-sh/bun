@@ -257,7 +257,7 @@ pub(crate) trait BlobExt {
     fn constructor(
         cx: &mut JsScope<'_>,
         parts: BlobParts<'_>,
-        options: Option<JsLocal<'_, jsc::JSObject>>,
+        options: Option<BlobPropertyBag<'_>>,
     ) -> JsResult<*mut Blob>
     where
         Self: Sized;
@@ -1765,7 +1765,7 @@ impl BlobExt for Blob {
         };
 
         if let BlobSliceBound::Offset(start) = start {
-            let start = start as i64;
+            let start = start.to_js().to_int64();
             if start < 0 {
                 relative_start = start.saturating_add(size_i64).max(0);
             } else {
@@ -1774,7 +1774,7 @@ impl BlobExt for Blob {
         }
 
         if let BlobSliceBound::Offset(end) = end {
-            let end = end as i64;
+            let end = end.to_js().to_int64();
             if end < 0 {
                 relative_end = end.saturating_add(size_i64).max(0);
             } else {
@@ -1784,7 +1784,7 @@ impl BlobExt for Blob {
 
         let mut blob_content_type = BlobContentType::default();
         if let BlobSliceBound::ContentType(content_type) = content_type {
-            let content_type_view = content_type.to_js().to_js_string_view(global_this)?;
+            let content_type_view = content_type.to_js_string_view(global_this)?;
             let slicer = content_type_view.to_utf8();
             let slice = slicer.slice();
             if is_valid_blob_type(slice) {
@@ -2100,7 +2100,7 @@ impl BlobExt for Blob {
     fn constructor(
         cx: &mut JsScope<'_>,
         parts: BlobParts<'_>,
-        options: Option<JsLocal<'_, jsc::JSObject>>,
+        options: Option<BlobPropertyBag<'_>>,
     ) -> JsResult<*mut Blob> {
         let global_this = cx.global();
         let blob = match parts {
@@ -2110,8 +2110,7 @@ impl BlobExt for Blob {
         };
 
         if let Some(options) = options
-            && let Some(content_type_str) =
-                BlobPropertyBag::from_js(global_this, options.to_js())?.r#type
+            && let Some(content_type_str) = options.r#type(global_this)?
         {
             let slice = content_type_str.slice();
             if is_valid_blob_type(slice) {

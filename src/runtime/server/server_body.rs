@@ -30,7 +30,7 @@ use bun_core::{Output, fmt as bun_fmt};
 use bun_http::header_has_token;
 use bun_http::{self as http, Method, MimeType};
 use bun_jsc::Debugger::DebuggerId;
-use bun_jsc::bindgen::{self, Deferred, JsHeap, JsLocal, JsScope, JsWrapper};
+use bun_jsc::bindgen::{self, Deferred, JsHeap, JsLocal, JsScope, JsWrapper, Number};
 use bun_jsc::uuid::UUID;
 use bun_jsc::{
     self as jsc, ArrayBuffer, GlobalRef, JSGlobalObject, JSObject, JSPromise, JSValue, JsError,
@@ -1409,7 +1409,7 @@ fn set_request_timeout<'a>(
     address: &server_config::Address,
     heap: &JsHeap<'a>,
     request: TimeoutTarget<'_>,
-    seconds: Option<f64>,
+    seconds: Option<JsLocal<'_, Number>>,
 ) -> bindgen::Result<'a, JSValue> {
     if matches!(request, TimeoutTarget::Missing) {
         return Err(heap.error_with_code(
@@ -1425,7 +1425,7 @@ fn set_request_timeout<'a>(
     let Some(seconds) = seconds else {
         return Err(heap.error(format_args!("timeout() requires a number")));
     };
-    let value = (seconds as i64).clamp(0, i64::from(u32::MAX)) as u32;
+    let value = seconds.to_js().to_u32();
 
     match request {
         TimeoutTarget::Request(request) => {
@@ -1552,7 +1552,7 @@ where
         &self,
         heap: &JsHeap<'a>,
         request: TimeoutTarget<'_>,
-        seconds: Option<f64>,
+        seconds: Option<JsLocal<'_, Number>>,
     ) -> bindgen::Result<'a, JSValue> {
         set_request_timeout(&self.config.get().address, heap, request, seconds)
     }

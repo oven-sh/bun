@@ -2312,7 +2312,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return Ok(());
         }
         let t = match seconds {
-            TimeoutSeconds::Number(seconds) => seconds as i32,
+            TimeoutSeconds::Number(seconds) => seconds.to_js().coerce::<i32>(global)?,
             TimeoutSeconds::Other(seconds) => timeout_seconds(global, seconds)?,
         };
         if t < 0 {

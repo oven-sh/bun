@@ -1,4 +1,5 @@
 //! Rust side of `src/jsc/bindings/Bindgen/Extern*.h`. The generated conversion that reads a value takes ownership.
+//! `ExternTraits.h` says what the member `bits` of a generated `Extern<Name>Data` is for.
 
 use core::ffi::{c_uint, c_void};
 
@@ -45,12 +46,14 @@ pub union ExternOptionalData<T: Copy> {
     some: T,
 }
 impl<T: Copy> ExternOptional<T> {
+    /// # Safety
+    /// C++ initialized the alternative `tag` names.
     #[inline(always)]
-    pub fn get(self) -> Option<T> {
+    pub unsafe fn get(self) -> Option<T> {
         if self.tag == 0 {
             return None;
         }
-        // SAFETY: C++ initialized the alternative `tag` names.
+        // SAFETY: forwarded.
         Some(unsafe { self.data.some })
     }
 }

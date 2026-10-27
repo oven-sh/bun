@@ -61,7 +61,7 @@ export const OptionalBool = b.union({ missing: b.undefined, flag: b.bool, other:
 export const coercedInt32 = b.i32.allowBigInt.wrap;
 export const timeoutSeconds = b.conversion(coercedInt32);
 /** A number saturates. `other` is converted once the socket is known to be open. */
-export const TimeoutSeconds = b.union({ number: b.f64, other: b.opaque });
+export const TimeoutSeconds = b.union({ number: b.jsNumber, other: b.opaque });
 
 const secureContext = { type: SecureContext.withValue.emptyStringAsNull, expected: ["SecureContext"] } as const;
 /** `secureContext` can also be in `tls`. */

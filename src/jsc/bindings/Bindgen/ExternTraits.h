@@ -13,6 +13,7 @@
 #include <JavaScriptCore/NativeFunction.h>
 #include <wtf/text/WTFString.h>
 #include <wtf/RefPtr.h>
+#include <wtf/StdLibExtras.h>
 #include "Bindgen/JSBytesView.h"
 #include "Bindgen/JSStringUTF8View.h"
 #include "helpers.h"
@@ -57,13 +58,18 @@ ALWAYS_INLINE auto* asExtern(T& value)
     return reinterpret_cast<ExternType*>(&value);
 }
 
-// `value` as a union of it and a `uint64_t` holds it, with the other bytes zero.
+// A generated union whose alternatives fit a register has a first member `uint64_t bits`.
+// In `Extern<Name>::data` nothing reads it: clang then gives a parameter of that type the LLVM type `i64`, as rustc
+// does. It gives a union whose first member is a pointer `ptr`.
+// In `<Name>` a converter stores a narrow alternative through it, in one store as wide as the load that follows.
+
+// The bytes of `value`, then zeros.
 template<typename T>
     requires(canBitCastToExtern<T> && sizeof(T) < sizeof(uint64_t))
 ALWAYS_INLINE uint64_t toBits(T value)
 {
     uint64_t bits = 0;
-    memcpy(&bits, &value, sizeof(T));
+    memcpySpan(asMutableByteSpan(bits), asByteSpan(value));
     return bits;
 }
 

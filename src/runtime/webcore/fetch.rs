@@ -644,7 +644,7 @@ fn fetch_impl<'a, const ALLOW_GET_BODY: bool>(
         let objects_to_try = [options_object, request_init_object];
         for obj in objects_to_try.into_iter().flatten() {
             if let Some(str) = obj.protocol(global_this)? {
-                let str = str.to_js().to_js_string_view(global_this)?;
+                let str = str.to_js_string_view(global_this)?;
                 if str.eq_ascii(b"http2") || str.eq_ascii(b"h2") {
                     forced_protocol = Some(http::Protocol::Http2);
                 } else if str.eq_ascii(b"http3") || str.eq_ascii(b"h3") {
@@ -741,11 +741,7 @@ fn fetch_impl<'a, const ALLOW_GET_BODY: bool>(
         for obj in objects_to_try.into_iter().flatten() {
             match obj.verbose(global_this)? {
                 FetchVerbose::String(verb) => {
-                    if verb
-                        .to_js()
-                        .to_js_string_view(global_this)?
-                        .eq_ascii(b"curl")
-                    {
+                    if verb.to_js_string_view(global_this)?.eq_ascii(b"curl") {
                         break 'extract_verbose http::HTTPVerboseLevel::Curl;
                     }
                 }

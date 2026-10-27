@@ -11,15 +11,17 @@ export interface Layout {
 /** A field of an extern struct. It has the same name in C++ and in Rust. */
 export interface ExternField {
   name: string;
+  layout: Layout;
   rustType(scope: RustScope): string;
 }
-const externBytesFields: readonly ExternField[] = [
-  { name: "data", rustType: () => "*const u8" },
-  { name: "length", rustType: () => "usize" },
+const pointerLayout: Layout = { size: 8, align: 8 };
+const externSliceFields = (element: string): readonly ExternField[] => [
+  { name: "data", layout: pointerLayout, rustType: () => `*const ${element}` },
+  { name: "length", layout: pointerLayout, rustType: () => "usize" },
 ];
-const externWithValueFields = (converted: ExternField["rustType"]): readonly ExternField[] => [
-  { name: "converted", rustType: converted },
-  { name: "value", rustType: () => "JSValue" },
+const externWithValueFields = (converted: Omit<ExternField, "name">): readonly ExternField[] => [
+  { name: "converted", ...converted },
+  { name: "value", layout: pointerLayout, rustType: () => "JSValue" },
 ];
 
 /** Where a named type or function was declared. */
@@ -364,7 +366,7 @@ export abstract class Type {
   get returnsValueUnchanged(): boolean {
     return false;
   }
-  /** Rust gets the value itself, a pointer that the conversion took out of it, or a value read from it. */
+  /** Rust gets a pointer that the conversion took out of the value. */
   get pointsIntoValue(): boolean {
     return !this.returnsValueUnchanged && (this.needsLifetime || this.borrowsCell || this.passesValue);
   }
@@ -440,13 +442,21 @@ export abstract class Type {
   rustFromExtern(expr: string, scope: RustScope): string {
     return expr;
   }
+  /** The fields of an extern type that is a struct. */
+  get externStruct(): readonly ExternField[] | null {
+    return null;
+  }
   /**
-   * The two fields of an extern type that is a struct of two, one register each. `null` for any other type.
-   * An argument that goes in registers is passed as one parameter for each field. On x86-64 SysV clang and rustc give a
-   * struct parameter of that size different LLVM types, and LLVM does not inline a call whose type is not the callee's.
+   * The fields of an extern type that is a struct of two fields of one register each, `null` for any other type.
+   * An argument that goes in registers is passed as one parameter for each field. On x86-64 SysV clang and rustc give
+   * such a struct parameter different LLVM types, and LLVM does not inline a call whose type is not the callee's.
+   * A struct that wraps one, as a dictionary of one member does, is passed whole.
    */
   get externFields(): readonly ExternField[] | null {
-    return null;
+    const fields = this.externStruct;
+    return fields?.length === 2 && this.layout().size === 16 && fields.every(field => field.layout.size <= 8)
+      ? fields
+      : null;
   }
   /** `Bun::Bindgen::toExtern` is a `std::bit_cast`: the C++ value is trivially copyable and is represented as its extern type. */
   get cppCanBitCastToExtern(): boolean {
@@ -988,8 +998,8 @@ export class ByteSpanType extends Type {
   rustExternType(): string {
     return "bindgen::extern_types::ExternBytes";
   }
-  get externFields(): readonly ExternField[] {
-    return externBytesFields;
+  get externStruct(): readonly ExternField[] {
+    return externSliceFields("u8");
   }
   rustType(): string {
     return "&'a [u8]";
@@ -1127,8 +1137,8 @@ export class Utf8Type extends Type {
   rustExternType(): string {
     return "bindgen::extern_types::ExternBytes";
   }
-  get externFields(): readonly ExternField[] {
-    return externBytesFields;
+  get externStruct(): readonly ExternField[] {
+    return externSliceFields("u8");
   }
   rustType(): string {
     return "&'a [u8]";
@@ -1256,17 +1266,22 @@ export class BytesType extends Type {
       ];
     return this.#options.held === "borrowed" ? [`${target}.read(${value});`] : [];
   }
-  layout(): Layout {
-    const converted = this.#isView ? { size: 16, align: 8 } : { size: 8, align: 8 };
-    return this.passesValue ? structLayout([converted, { size: 8, align: 8 }]) : converted;
+  get #converted(): Omit<ExternField, "name"> {
+    return this.#isView
+      ? { layout: { size: 16, align: 8 }, rustType: () => "bindgen::extern_types::ExternBytes" }
+      : { layout: pointerLayout, rustType: () => "bindgen::extern_types::ExternString" };
   }
-  rustExternType(): string {
-    const converted = `bindgen::extern_types::Extern${this.#isView ? "Bytes" : "String"}`;
+  layout(): Layout {
+    const { layout } = this.#converted;
+    return this.passesValue ? structLayout([layout, pointerLayout]) : layout;
+  }
+  rustExternType(scope: RustScope): string {
+    const converted = this.#converted.rustType(scope);
     return this.passesValue ? `bindgen::extern_types::ExternWithValue<${converted}>` : converted;
   }
-  get externFields(): readonly ExternField[] | null {
-    if (this.#isView) return this.passesValue ? null : externBytesFields;
-    return this.passesValue ? externWithValueFields(() => "bindgen::extern_types::ExternString") : null;
+  get externStruct(): readonly ExternField[] | null {
+    if (this.passesValue) return externWithValueFields(this.#converted);
+    return this.#isView ? externSliceFields("u8") : null;
   }
   /** What the body gets, and the expression that makes it of `argument`. */
   #rust(argument: string): readonly [type: string, fromExtern: string] {
@@ -1663,11 +1678,8 @@ export class RestType extends ConvertedByBodyType {
   rustExternType(): string {
     return "bindgen::extern_types::ExternVariadicArguments";
   }
-  get externFields(): readonly ExternField[] {
-    return [
-      { name: "data", rustType: () => "*const JSValue" },
-      { name: "length", rustType: () => "usize" },
-    ];
+  get externStruct(): readonly ExternField[] {
+    return externSliceFields("JSValue");
   }
   rustType(scope: RustScope): string {
     if (this.inner instanceof OpaqueType) return "&'a [bindgen::JsLocal<'a>]";
@@ -2000,15 +2012,15 @@ export class OptionalType extends Type {
       ? `bindgen::extern_types::ExternOptional<${this.inner.rustExternType(scope)}>`
       : this.inner.rustExternType(scope);
   }
-  get externFields(): readonly ExternField[] | null {
-    if (this.inner.nullRepresentation !== "optional") return this.inner.externFields;
-    if (this.layout().size !== 16) return null;
+  get externStruct(): readonly ExternField[] | null {
+    if (this.inner.nullRepresentation !== "optional") return this.inner.externStruct;
     return [
       {
         name: "data",
+        layout: this.inner.layout(),
         rustType: scope => `bindgen::extern_types::ExternOptionalData<${this.inner.rustExternType(scope)}>`,
       },
-      { name: "tag", rustType: () => "u8" },
+      { name: "tag", layout: { size: 1, align: 1 }, rustType: () => "u8" },
     ];
   }
   rustType(scope: RustScope): string {
@@ -2061,6 +2073,9 @@ export class WithValueType extends Type {
   }
   get passesValue(): boolean {
     return !this.#isInstance;
+  }
+  get pointsIntoValue(): boolean {
+    return this.inner.pointsIntoValue;
   }
   get borrowsCell(): boolean {
     return !this.#isInstance && this.inner.borrowsCell;
@@ -2115,8 +2130,8 @@ export class WithValueType extends Type {
   rustExternType(scope: RustScope): string {
     return `bindgen::extern_types::ExternWithValue<${this.inner.rustExternType(scope)}>`;
   }
-  get externFields(): readonly ExternField[] | null {
-    return this.layout().size === 16 ? externWithValueFields(scope => this.inner.rustExternType(scope)) : null;
+  get externStruct(): readonly ExternField[] {
+    return externWithValueFields({ layout: this.inner.layout(), rustType: scope => this.inner.rustExternType(scope) });
   }
   get #valueType(): Type {
     return this.#isInstance ? objectType : opaqueType;
@@ -2217,8 +2232,8 @@ ${indent(this.inner.cppConvertInto(target, value, ctx, name, failure), 4)}
   rustExternType(scope: RustScope): string {
     return this.inner.rustExternType(scope);
   }
-  get externFields(): readonly ExternField[] | null {
-    return this.inner.externFields;
+  get externStruct(): readonly ExternField[] | null {
+    return this.inner.externStruct;
   }
   rustType(scope: RustScope): string {
     return this.inner.rustType(scope);
@@ -2882,12 +2897,14 @@ export class UnionType extends NamedType {
   rustExternType(scope: RustScope): string {
     return this.path(scope, `Extern${this.name}`);
   }
-  get externFields(): readonly ExternField[] | null {
+  get #dataLayout(): Layout {
     const { size, align } = this.layout();
-    if (size !== 16 || align !== 8) return null;
+    return { size: size - align, align };
+  }
+  get externStruct(): readonly ExternField[] {
     return [
-      { name: "tag", rustType: () => "u8" },
-      { name: "data", rustType: scope => this.path(scope, `Extern${this.name}Data`) },
+      { name: "tag", layout: { size: 1, align: 1 }, rustType: () => "u8" },
+      { name: "data", layout: this.#dataLayout, rustType: scope => this.path(scope, `Extern${this.name}Data`) },
     ];
   }
   rustFromExtern(expr: string, scope: RustScope): string {
@@ -2925,9 +2942,13 @@ export class UnionType extends NamedType {
   get cppCanBitCastToExtern(): boolean {
     return this.#held.length > 0 && this.#held.every(type => type.cppCanBitCastToExtern);
   }
-  /** Whether C++ stores `alternative` as `bits`. The caller of the converter loads `bits`, and a CPU forwards no store to a load that is wider. */
-  isStoredAsBits(alternative: Type): boolean {
-    return this.externFields !== null && this.cppCanBitCastToExtern && alternative.layout().size < 8;
+  /**
+   * Whether C++ stores `alternative` as `bits`, a member as wide as `data`. The caller of the converter loads all of
+   * `data`, and a CPU forwards no store to a load that is wider. C++ reads no member of a union that it bit-casts.
+   */
+  cppStoresAsBits(alternative: Type): boolean {
+    const { size, align } = this.#dataLayout;
+    return size === 8 && align === 8 && this.cppCanBitCastToExtern && alternative.layout().size < 8;
   }
   /** The enum is then `#[repr(C, u8)]`. */
   get rustFromExternIsTransmute(): boolean {

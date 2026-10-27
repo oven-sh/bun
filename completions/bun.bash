@@ -2,12 +2,17 @@
 
 _file_arguments() {
     local extensions="${1}"
+    # bun resolves the files against --cwd when it is given
+    local working_dir="${PWD}" line=0;
+    for ((; line < COMP_CWORD - 1; line+=1)); do
+        [[ "${COMP_WORDS[${line}]}" == "--cwd" ]] && working_dir="${COMP_WORDS[$((line + 1))]}";
+    done
     # quote a name with a space and put a / after a directory
     compopt -o filenames 2>/dev/null;
     # the filter patterns use extglob, which is off unless bash-completion turned it on.
     # bun test picks test files by their lowercased name, so the filter ignores case too.
-    # both options are set in the subshell only, so an interrupted listing leaks nothing
-    readarray -t COMPREPLY < <(shopt -s extglob nocasematch; compgen -f -X "${extensions}" -- "${cur_word}");
+    # the options and the cd are in the subshell only, so an interrupted listing leaks nothing
+    readarray -t COMPREPLY < <(cd "${working_dir}" 2>/dev/null && shopt -s extglob nocasematch && compgen -f -X "${extensions}" -- "${cur_word}");
 }
 
 _long_short_completion() {

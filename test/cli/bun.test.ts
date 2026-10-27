@@ -536,6 +536,9 @@ describe("bun", () => {
         expect(await complete(cwd, "test", "--coverage-dir", "")).toEqual(["sub"]);
         expect(await complete(cwd, "test", "--timeout", "")).toEqual([]);
         expect(await complete(cwd, "test", "--tsconfig-override", "t")).toEqual(["tsconfig.build.json"]);
+        // `bun test --cwd sub <TAB>`: the test files under sub
+        const underCwd = await complete(cwd, "test", "--cwd", "sub", "");
+        expect(underCwd.filter(word => !word.startsWith("-"))).toEqual(["nested.test.js"]);
         expect((await complete(cwd, "test", "--preload", "")).sort()).toEqual([
           "Button.Spec.tsx",
           "bar_spec.js",

@@ -5157,9 +5157,7 @@ impl<'a> HTTPClient<'a> {
             return Err(crate::Error::ProxyConnectFailed);
         }
 
-        // RFC 9112 §6.3 item 3: both framing fields is an error, whatever the
-        // values (the state above is overwritten for HEAD and 1xx/204/304).
-        // Below the CONNECT return so a refused CONNECT keeps the proxy's head.
+        // RFC 9112 §6.3 item 3. Presence, not state: HEAD and 1xx/204/304 overwrite content_length.
         if saw_content_length && saw_transfer_encoding {
             return Err(crate::Error::ConflictingFraming);
         }

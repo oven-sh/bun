@@ -543,9 +543,9 @@ pub(crate) struct SeqTableRefs<'a> {
 }
 
 impl SeqTableRefs<'_> {
-    /// Often enough for a branch on that to cost more than it saves: one that goes wrong costs about 10 times that.
+    /// Often enough for a branch on that to cost more than it saves: one that goes wrong costs many times that.
     pub(crate) fn lengths_often_have_more_bits(&self) -> bool {
-        self.ll.with_more_bits + self.ml.with_more_bits > 512 / 10
+        self.ll.with_more_bits + self.ml.with_more_bits > 512 / 7
     }
 
     pub(crate) fn matches_are_long(&self) -> bool {

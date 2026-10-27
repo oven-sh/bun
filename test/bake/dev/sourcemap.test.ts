@@ -92,6 +92,7 @@ devTest("hmr chunk source map follows the source when mappings do not change", {
     // Each edit changes only a string literal. The VLQ mappings stay the
     // same, so the source map must be keyed by the source content too.
     const mapUrls = new Set<string>();
+    let lastSourceMapUrl: string | undefined;
     for (const word of ["BBB", "CCC", "DDD"]) {
       const source = `export default "${word}";\nimport.meta.hot.accept();`;
       await dev.write("App.tsx", source);
@@ -100,6 +101,7 @@ devTest("hmr chunk source map follows the source when mappings do not change", {
       const sourceMapUrl = chunk.match(/\n\/\/# sourceMappingURL=(\S+)/)?.[1];
       expect(sourceMapUrl).toBeString();
       mapUrls.add(sourceMapUrl!);
+      lastSourceMapUrl = sourceMapUrl;
       const sourceMap = await dev.fetch(sourceMapUrl!).json();
       expect(sourceMap.sources.slice(1).map(Bun.fileURLToPath)).toEqual([dev.join("App.tsx")]);
       expect(sourceMap.sourcesContent[1]).toBe(source);
@@ -112,7 +114,7 @@ devTest("hmr chunk source map follows the source when mappings do not change", {
     const chunk = await c.getMostRecentHmrChunk();
     expect(chunk).toContain(`"DDD"`);
     const sourceMapUrl = chunk.match(/\n\/\/# sourceMappingURL=(\S+)/)?.[1];
-    expect(mapUrls.has(sourceMapUrl!)).toBe(true);
+    expect(sourceMapUrl).toBe(lastSourceMapUrl);
   },
 });
 

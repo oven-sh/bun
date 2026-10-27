@@ -12,6 +12,7 @@ import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isASAN, isLinux, libcPathForDlopen, rss } from "harness";
 import { readFileSync } from "node:fs";
 import zlib from "node:zlib";
+import frames from "./zstd-frames-fixture.json";
 import path from "path";
 
 // A hand-written empty frame: magic, a descriptor without a content size (so it goes through the
@@ -1348,6 +1349,16 @@ describe("the output is that of zstd 1.5.7", () => {
     }
   });
 
+  it("in a stream with workers, after others were given up in the middle of a frame", async () => {
+    const params = { [c.ZSTD_c_nbWorkers]: 2, [c.ZSTD_c_jobSize]: 1 };
+    for (let i = 0; i < 4; i++) {
+      const abandoned = zlib.createZstdCompress({ params });
+      abandoned.write(corpus);
+      abandoned.destroy();
+    }
+    expect(zlib.zstdDecompressSync(await stream(params, false)).equals(corpus)).toBe(true);
+  });
+
   async function flushed(params: Record<number, number>, sizes: number[]) {
     const stream = zlib.createZstdCompress({ params });
     const chunks: Buffer[] = [];
@@ -1384,5 +1395,39 @@ describe("the output is that of zstd 1.5.7", () => {
       { [c.ZSTD_c_nbWorkers]: 4, [c.ZSTD_c_strategy]: c.ZSTD_fast, [c.ZSTD_c_hashLog]: 26 },
       Array.from({ length: 300 }, (_, i) => i + 1),
     );
+  });
+});
+
+// Frames from `decodecorpus`, zstd's own generator of anything the format allows, most of which no encoder makes, and
+// what zstd 1.5.7 makes of each of them, whole and damaged in nine ways, through `node:zlib` and through `Bun`.
+describe("frames that no encoder makes decode as with zstd 1.5.7", () => {
+  const digest = (output: Uint8Array) => `${output.length} ${Bun.hash.xxHash32(output).toString(16)}`;
+  const attempt = (decompress: (input: Buffer) => Uint8Array, input: Buffer) => {
+    try {
+      return digest(decompress(input));
+    } catch (error: any) {
+      return error.code.replace("ZSTD_error_", "");
+    }
+  };
+  function* damaged(frame: Buffer) {
+    for (let k = 1; k <= 6; k++) {
+      const copy = Buffer.from(frame);
+      copy[Math.floor((frame.length * k) / 7)] ^= 1 << ((k * 3) % 8);
+      yield copy;
+    }
+    yield frame.subarray(0, Math.floor((frame.length * 3) / 4));
+    yield frame.subarray(0, frame.length - 1);
+    yield Buffer.concat([frame, Buffer.from([0x28])]);
+  }
+
+  it("whole and damaged", () => {
+    for (const { frame: base64, results } of frames) {
+      const frame = Buffer.from(base64, "base64");
+      const actual: string[] = [];
+      for (const input of [frame, ...damaged(frame)]) {
+        actual.push(attempt(zlib.zstdDecompressSync, input), attempt(Bun.zstdDecompressSync, input));
+      }
+      expect({ frame: base64, results: actual.join(",") }).toEqual({ frame: base64, results });
+    }
   });
 });

@@ -22,7 +22,6 @@ import { generateDepVersionsHeader } from "./depVersionsHeader.ts";
 import { allDeps } from "./deps/index.ts";
 import { lolhtml } from "./deps/lolhtml.ts";
 import { rustArgon2 } from "./deps/rust-argon2.ts";
-import { emitBuiltinTable } from "./deps/webkit.ts";
 import { assert } from "./error.ts";
 import {
   bunIncludes,
@@ -248,9 +247,6 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // The codegen outputs compiles wait for, behind one phony so each compile
   // edge names one order-only input instead of repeating the list (the ninja
   // idiom: order-only inputs never dirty an edge; depfiles track the reads).
-  const builtinTable = emitBuiltinTable(n, cfg, depsByName.get("WebKit")?.outputs ?? []);
-  codegen.cppSources.push(...builtinTable);
-  codegen.cppAll.push(...builtinTable);
   const codegenReady = resolve(cfg.buildDir, "obj", ".codegen-ready");
   n.phony(codegenReady, codegen.cppAll);
 

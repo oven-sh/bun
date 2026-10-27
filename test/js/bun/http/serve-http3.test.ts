@@ -2270,6 +2270,61 @@ describe.concurrent("Bun.serve HTTP/3 sends the automatic 100 Continue ahead of 
   });
 });
 
+// lsquic takes the connection credit for a response's bytes when the stream buffers them, and the stream sends them
+// on its next write event. A stream gets no write event while the connection has no credit. So when the responses
+// of one turn use up the client's connection window, lsquic has to send what streams buffered before the credit ran
+// out. The client gives new credit only for bytes that it got.
+test("Bun.serve HTTP/3 responses that use up the client's connection window in one turn all arrive", async () => {
+  const count = 100;
+  // Bytes that Huffman coding doesn't shorten.
+  const filler = Buffer.alloc(1000, "~").toString();
+  const body = Buffer.alloc(3000, "b");
+  const everyRequest = Promise.withResolvers<void>();
+  let requests = 0;
+  await using server = Bun.serve({
+    port: 0,
+    tls,
+    http3: true,
+    http1: false,
+    async fetch() {
+      // Every handler goes on in the same turn.
+      if (++requests === count) everyRequest.resolve();
+      await everyRequest.promise;
+      return new Response(body, { headers: { "x-filler": filler } });
+    },
+  });
+  await using endpoint = new QuicEndpoint();
+  const client = await connect(`127.0.0.1:${server.port}`, {
+    endpoint,
+    servername: "localhost",
+    verifyPeer: "manual",
+    // A connection that stalls ends at the idle timeout, and the streams that wait end with it.
+    transportParams: { maxIdleTimeout: 2, initialMaxData: 120_000 },
+    onerror() {},
+  } as SessionOptions);
+  client.closed.catch(() => {});
+  await client.opened;
+  const whole = await Promise.all(
+    Array.from({ length: count }, async (_, i) => {
+      let field = 0;
+      let bytes = 0;
+      try {
+        const stream = await client.createBidirectionalStream({
+          headers: requestHeaders(`/${i}`),
+          onheaders: received => void (field = String(received["x-filler"] ?? "").length),
+        });
+        stream.closed.catch(() => {});
+        for await (const batch of stream as AsyncIterable<Uint8Array[]>) {
+          for (const chunk of batch) bytes += chunk.byteLength;
+        }
+      } catch {}
+      return field === filler.length && bytes === body.byteLength;
+    }),
+  );
+  if (!client.destroyed) client.close().catch(() => {});
+  expect(whole.filter(Boolean).length).toBe(count);
+});
+
 // The HTTP/3 twin of the HTTP/1 cases in websocket-server.test.ts: ws.close()
 // runs close() before it returns, and a request handler that calls it must still
 // run to completion before the nextTick and promise callbacks it queued. The

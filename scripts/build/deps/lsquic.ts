@@ -159,6 +159,13 @@ export const lsquic: Dependency = {
     // frame unpaid, and a flush of the bytes in front of it wrote that frame
     // header. The connection then sent more than the peer's MAX_DATA allows.
     "patches/lsquic/frame-header-credit.patch",
+    // A stream that buffers bytes takes their connection credit at once.
+    // lsquic's own flush for that case (Scenario 1 above maybe_flush_stream())
+    // runs only for the stream whose write uses up the credit. Streams that
+    // buffered earlier got no write event after that, nothing sent their
+    // bytes, and the peer never sent MAX_DATA. Applies on top of
+    // frame-header-credit.
+    "patches/lsquic/flush-blocked-buffered-stream.patch",
   ],
 
   fetchDeps: ["zlib", "lshpack", "lsqpack", "boringssl"],

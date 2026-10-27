@@ -434,6 +434,146 @@ test("a HEADERS frame that has no connection credit waits for it", async () => {
   expect(exitCode).toBe(0);
 }, 30_000);
 
+// lsquic takes the connection credit for bytes when a stream buffers them, and bun sends a buffered header block on
+// the stream's next write event. A stream gets no write event while the connection has no credit. So when the
+// header blocks of one turn use up the peer's connection window, lsquic has to send the blocks that streams buffered
+// before the credit ran out. The peer gives new credit only for bytes that it got.
+describe("header blocks that use up the peer's connection window", () => {
+  // Bytes that Huffman coding doesn't shorten.
+  const filler = Buffer.alloc(1000, "~").toString();
+  const body = Buffer.alloc(10, "b");
+  // The header blocks of this many messages are more than three times the connection window.
+  const count = 40;
+  const window = 12_000;
+  // A connection that stalls ends here, and the streams that wait end with it.
+  const maxIdleTimeout = 2;
+  const sni = { "*": { keys: [key], certs: [cert] } };
+  const request = (i: number) => ({
+    ":method": "POST",
+    ":path": `/${i}`,
+    ":scheme": "https",
+    ":authority": "localhost",
+  });
+  const quiet = (session: any) => {
+    session.onerror = () => {};
+    session.closed.catch(() => {});
+    return session;
+  };
+
+  // The number of responses that arrive whole when the server writes them all in one turn.
+  async function responsesOfOneTurn(respond: (stream: any) => void) {
+    const waiting: any[] = [];
+    await using server = await listen(
+      session => {
+        quiet(session).onstream = (stream: any) => void stream.closed.catch(() => {});
+      },
+      {
+        sni,
+        transportParams: { maxIdleTimeout, initialMaxStreamsBidi: count },
+        onheaders(this: any) {
+          if (waiting.push(this) === count) waiting.forEach(respond);
+        },
+      },
+    );
+    const client = quiet(
+      await connect(server.address!, {
+        servername: "localhost",
+        verifyPeer: "manual",
+        transportParams: { maxIdleTimeout, initialMaxData: window },
+      } as SessionOptions),
+    );
+    await client.opened;
+    const whole = await Promise.all(
+      Array.from({ length: count }, async (_, i) => {
+        let field = 0;
+        let bytes = 0;
+        const add = (headers: Record<string, string>) => void (field += headers["x-filler"]?.length ?? 0);
+        try {
+          const stream: any = await client.createBidirectionalStream({ oninfo: add, onheaders: add });
+          stream.closed.catch(() => {});
+          stream.sendHeaders(request(i), { terminal: true });
+          for await (const batch of stream) for (const chunk of batch) bytes += chunk.byteLength;
+        } catch {}
+        return field === filler.length && bytes === body.byteLength;
+      }),
+    );
+    client.close().catch(() => {});
+    return whole.filter(Boolean).length;
+  }
+
+  test("a server's response headers and bodies all arrive", async () => {
+    const responses = await responsesOfOneTurn(stream => {
+      stream.sendHeaders({ ":status": "200", "x-filler": filler });
+      stream.writer.writeSync(body);
+      stream.writer.endSync();
+    });
+    expect(responses).toBe(count);
+  });
+
+  test("a server's interim responses, response headers and bodies all arrive", async () => {
+    const responses = await responsesOfOneTurn(stream => {
+      stream.sendInformationalHeaders({ ":status": "103", "x-filler": filler });
+      stream.sendHeaders({ ":status": "200" });
+      stream.writer.writeSync(body);
+      stream.writer.endSync();
+    });
+    expect(responses).toBe(count);
+  });
+
+  // The number of requests that the server gets whole. It answers each of them.
+  async function requestsOfOneTurn(beforeTheHandshakeEnds: boolean) {
+    await using server = await listen(
+      session => {
+        quiet(session).onstream = async (stream: any) => {
+          stream.closed.catch(() => {});
+          let bytes = 0;
+          try {
+            for await (const batch of stream) for (const chunk of batch) bytes += chunk.byteLength;
+          } catch {}
+          if (bytes === body.byteLength) stream.sendHeaders({ ":status": "204" }, { terminal: true });
+        };
+      },
+      {
+        sni,
+        transportParams: { maxIdleTimeout, initialMaxStreamsBidi: count, initialMaxData: window },
+      },
+    );
+    const client = quiet(
+      await connect(server.address!, {
+        servername: "localhost",
+        verifyPeer: "manual",
+        transportParams: { maxIdleTimeout },
+      } as SessionOptions),
+    );
+    if (!beforeTheHandshakeEnds) await client.opened;
+    const answered = await Promise.all(
+      Array.from({ length: count }, async (_, i) => {
+        let status = "";
+        try {
+          const stream: any = await client.createBidirectionalStream({
+            headers: { ...request(i), "x-filler": filler },
+            body,
+            onheaders: (headers: Record<string, string>) => void (status = headers[":status"]),
+          });
+          stream.closed.catch(() => {});
+          for await (const _ of stream);
+        } catch {}
+        return status === "204";
+      }),
+    );
+    client.close().catch(() => {});
+    return answered.filter(Boolean).length;
+  }
+
+  test("a client's request headers and bodies all arrive", async () => {
+    expect(await requestsOfOneTurn(false)).toBe(count);
+  });
+
+  test("a client's request headers and bodies all arrive when it queues them before the handshake ends", async () => {
+    expect(await requestsOfOneTurn(true)).toBe(count);
+  });
+});
+
 describe("verifyClient", () => {
   test("a server requiring a client certificate never surfaces streams from a client that presented none", async () => {
     let announcedStreams = 0;

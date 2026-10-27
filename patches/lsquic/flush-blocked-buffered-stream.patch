@@ -1,0 +1,60 @@
+--- a/src/liblsquic/lsquic_stream.c
++++ b/src/liblsquic/lsquic_stream.c
+@@ -101,6 +101,9 @@
+ stream_flush_nocheck (lsquic_stream_t *stream);
+ 
+ static void
++flush_buffered_if_blocked (struct lsquic_stream *stream);
++
++static void
+ maybe_remove_from_write_q (lsquic_stream_t *stream, enum stream_q_flags flag);
+ 
+ enum swtp_status { SWTP_OK, SWTP_STOP, SWTP_ERROR };
+@@ -2494,6 +2497,8 @@
+             TAILQ_INSERT_TAIL(&stream->conn_pub->write_streams, stream,
+                                                             next_write_stream);
+         }
++        else if (!(stream->sm_qflags & SMQF_WANT_FLUSH))
++            flush_buffered_if_blocked(stream);
+     }
+ }
+ 
+@@ -3607,6 +3612,38 @@
+ }
+ 
+ 
++/* bun: the flush above runs only for the stream whose own write uses up the
++ * credit.  A stream that buffered its bytes before that took their connection
++ * credit too.  It is not writeable now, so it gets no write event, nothing
++ * sends its bytes, and the peer never sends the MAX_DATA that they stand in
++ * front of.  Flush what is in the buffer.  The flush ends where the buffer
++ * ends: the frame of a header block that waits outside of the buffer is not
++ * a part of it.
++ */
++static void
++flush_buffered_if_blocked (struct lsquic_stream *stream)
++{
++    const struct stream_hq_frame *shf;
++    uint64_t end;
++
++    if (0 == stream->sm_n_buffered || 0 != stream->sm_write_avail(stream))
++        return;
++
++    end = stream->sm_payload + stream->sm_n_buffered;
++    stream->sm_flush_to = stream->tosend_off + stream->sm_n_buffered;
++    if ((stream->sm_bflags & (SMBF_IETF|SMBF_USE_HEADERS))
++                                        == (SMBF_IETF|SMBF_USE_HEADERS))
++        STAILQ_FOREACH(shf, &stream->sm_hq_frames, shf_next)
++            if (!(shf->shf_flags & SHF_WRITTEN) && shf->shf_off < end)
++                stream->sm_flush_to += stream_hq_frame_size(shf);
++    stream->sm_flush_to_payload = end;
++    maybe_put_onto_write_q(stream, SMQF_WANT_FLUSH);
++    LSQ_DEBUG("no credit and no write event: flush %hu buffered bytes up to "
++        "offset %"PRIu64, stream->sm_n_buffered, stream->sm_flush_to);
++    (void) stream_flush(stream);
++}
++
++
+ static int
+ stream_hq_frame_extendable (const struct stream_hq_frame *shf, uint64_t cur_off,
+                                                                     unsigned len)

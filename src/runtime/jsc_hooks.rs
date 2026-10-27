@@ -72,7 +72,7 @@ pub(crate) struct RuntimeState {
     /// `RareData.ssl_ctx_cache` — concrete digest-keyed weak `SSL_CTX*` cache.
     /// Same cycle-break story as `sql_rare`.
     pub(crate) ssl_ctx_cache: crate::api::SSLContextCache::SSLContextCache,
-    /// `RareData.global_dns_data` — per-VM resolver + c-ares channel.
+    /// `RareData.global_dns_data` — per-VM resolver + its channel.
     /// Lazy-init by [`crate::dns_jsc::global_resolver`]; freed when this box
     /// drops in [`deinit_runtime_state`].
     pub(crate) global_dns_data: core::cell::OnceCell<Box<crate::dns_jsc::GlobalData>>,
@@ -180,8 +180,8 @@ pub(crate) fn cron_jobs_mut() -> Option<&'static mut Vec<bun_ptr::RefPtr<crate::
     Some(unsafe { &mut (*state).cron_jobs })
 }
 
-/// Per-VM lazy DNS resolver storage. Shared borrow only — c-ares callbacks
-/// re-enter [`crate::dns_jsc::global_resolver`] while a `&Resolver` derived
+/// Per-VM lazy DNS resolver storage. Shared borrow only — script run by a settled
+/// lookup re-enters [`crate::dns_jsc::global_resolver`] while a `&Resolver` derived
 /// from this cell is live, so a `&mut` accessor would alias.
 #[inline]
 pub(crate) fn global_dns_data() -> &'static core::cell::OnceCell<Box<crate::dns_jsc::GlobalData>> {
@@ -1752,8 +1752,8 @@ unsafe fn disarm_all_timers_for_vm_teardown(_vm: *mut VirtualMachine) {
 }
 
 /// `RuntimeHooks::stop_dns_for_vm_teardown` — destroy the per-VM global DNS
-/// resolver's c-ares channel now so its `ARES_EDESTRUCTION` and socket-state
-/// callbacks run while the JSC VM, `RareData.file_polls`, and `runtime_state`
+/// resolver's channel now so its requests fail with `EDESTRUCTION` and its
+/// polls are freed while the JSC VM, `RareData.file_polls`, and `runtime_state`
 /// are all still live. See `Resolver::close_channel_for_terminate`.
 fn stop_dns_for_vm_teardown() -> SweepResult {
     let state = runtime_state();

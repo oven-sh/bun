@@ -499,7 +499,7 @@ impl<T, const CAPACITY: usize> Drop for HiveSlot<'_, T, CAPACITY> {
 /// extracts the value. Single-owner (no `Clone`), so [`DerefMut`] is sound.
 ///
 /// For pools whose tokens cross an opaque round-trip as a slot *index* (e.g.
-/// the c-ares callback context in `dns_jsc`), store
+/// the pending getaddrinfo requests in `dns_jsc`), store
 /// [`HiveArray::index_of`] and recover via [`HiveArray::box_at`].
 pub struct HiveBox<'a, T, const CAPACITY: usize> {
     slot: NonNull<T>,

@@ -265,8 +265,7 @@ impl Backend {
         Backend::System
     }
 
-    // Android: c-ares can't discover nameservers (no /etc/resolv.conf,
-    // no JNI for ares_library_init_android). bionic getaddrinfo proxies
+    // Android: there is no /etc/resolv.conf to find the nameservers in. bionic getaddrinfo proxies
     // through netd which knows the real resolvers.
     #[cfg(all(not(any(target_os = "macos", windows)), target_os = "android"))]
     pub const fn default() -> Backend {

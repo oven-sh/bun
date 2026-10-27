@@ -901,7 +901,7 @@ pub(crate) unsafe fn __bun_run_file_poll(poll: *mut FilePoll, size_or_offset: i6
         }),
         poll_tag::DNS_RESOLVER => {
             // R-2: deref as shared (`&*const`) — `on_dns_poll` takes `&self` and
-            // `Channel::process` re-enters the resolver via c-ares callbacks.
+            // settling what finished can run script that re-enters the resolver.
             // SAFETY: tag set with this pointee type at `FilePoll::init`.
             let resolver = unsafe { &*owner.ptr.cast_const().cast::<DNSResolver>() };
             // SAFETY: `poll` outlives this call (caller contract).
@@ -1193,7 +1193,7 @@ pub(crate) unsafe fn __bun_fire_timer(
                 Ok(())
             }
         }
-        // R-2: shared deref — `check_timeouts` re-enters via `ares_process_fd`.
+        // R-2: shared deref, as for `on_dns_poll`.
         EventLoopTimerTag::DNSResolver => {
             timer_arm!(DNSResolver, event_loop_timer, |c, now, vm| {
                 (&*c.cast_const()).check_timeouts(&*now, &*vm)

@@ -3013,11 +3013,11 @@ pub struct RuntimeHooks {
     /// # Safety
     /// `vm` is the live per-thread VM, on the JS thread; `runtime_state` is installed.
     pub end_hot_run_timers: unsafe fn(vm: *mut VirtualMachine, cancel: CancelHotRunTimers),
-    /// Destroy the per-VM global DNS resolver's c-ares channel now, while JSC,
+    /// Destroy the per-VM global DNS resolver's channel now, while JSC,
     /// the event loop, `RareData.file_polls`, and `runtime_state` are all
-    /// live. `ares_destroy()` re-enters the resolver's socket-state and query
-    /// callbacks; deferring it to `deinit_runtime_state`'s `RuntimeState` drop
-    /// runs those callbacks against freed state. No-op when the resolver was
+    /// live. Closing it rejects the pending lookups and frees its polls;
+    /// deferring it to `deinit_runtime_state`'s `RuntimeState` drop
+    /// does that against freed state. No-op when the resolver was
     /// never lazily created. Called from `WebWorker::shutdown` / `global_exit`
     /// right after `close_all_socket_groups`.
     pub stop_dns_for_vm_teardown: fn() -> SweepResult,

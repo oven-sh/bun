@@ -763,7 +763,7 @@ impl SharedConnection {
         true
     }
 
-    /// VM teardown: fail in-flight requests (like c-ares' EDESTRUCTION) and release the fd/FilePoll.
+    /// VM teardown: fail in-flight requests (like a closed channel's EDESTRUCTION) and release the fd/FilePoll.
     pub(crate) fn close_for_terminate() {
         let this = SHARED.replace(ptr::null_mut());
         // SAFETY: SHARED held null or the live heap connection.

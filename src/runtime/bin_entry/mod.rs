@@ -232,9 +232,7 @@ fn pregrow_fd_table() {
 /// immediate NULL). Runs first thing in `main()`: these hooks only swap
 /// function pointers, so nothing may have allocated through the library yet.
 ///
-/// The two dependencies not switched here:
-/// - c-ares: `ares_library_init_mem(.., mi_malloc, mi_free, mi_realloc)` in
-///   `bun_cares_sys`, because it is part of the (lazy) library init.
+/// The one dependency not switched here:
 /// - BoringSSL: link-time `OPENSSL_memory_alloc/free/get_size` and
 ///   `OPENSSL_system_malloc/realloc/free` definitions in `bun_boringssl`
 ///   (`BORINGSSL_REQUIRE_MEMORY_HOOKS`, off under ASAN).

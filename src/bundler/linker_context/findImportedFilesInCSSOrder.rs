@@ -480,8 +480,6 @@ pub(crate) fn find_imported_files_in_css_order<'a>(
                         *gop.value_ptr = Vec::<u32>::default();
                     }
                     let stylesheet = css_asts[idx.get() as usize].as_deref().unwrap();
-                    // A CSS module with "composes" fails to print inside a wrapper, so its copy under a layer stays a list.
-                    let layers_matter = layers_matter && stylesheet.composes.count() == 0;
                     for &j in gop.value_ptr.slice() {
                         // SAFETY: j < order.len; see note above.
                         let later = unsafe { &(*order_ptr.add(j as usize)).conditions };

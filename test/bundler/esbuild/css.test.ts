@@ -2352,7 +2352,7 @@ c {
           @layer utilities { .u { c: d } }
         `,
       },
-      out: "@layer theme,base,components,utilities;@layer theme{:root{--x:1}}@layer base{html{c:d}}@layer utilities{.u{c:d}}",
+      out: "@layer theme,base,components,utilities;@layer theme{:root{--x:1}}@layer base{html{c:d}}@layer components{}@layer utilities{.u{c:d}}",
     },
     AfterARuleThatMinifyRemoves: {
       files: {
@@ -2515,7 +2515,8 @@ c {
       },
       out: "@layer a;@layer{.t{color:#00f}}@layer a{.t{color:red}}",
     },
-    NameDeclaredInABlockThatMinifyRemoves: {
+    // The block of g.css is empty after minify and stays. The statement stays too.
+    NameDeclaredInABlockThatMinifyEmpties: {
       files: {
         "/entry.css": /* css */ `
           @layer a;
@@ -2526,7 +2527,7 @@ c {
         "/g.css": `@layer a { .unused {} }`,
         "/y.css": `.t { color: blue }`,
       },
-      out: "@layer a;@layer b{.t{color:#00f}}@layer a{.t{color:red}}",
+      out: "@layer a;@layer a{}@layer b{.t{color:#00f}}@layer a{.t{color:red}}",
     },
     // The parser accepts an "@import" behind an unknown at-rule statement and the body prints it again, as on main.
     // The statements stay in that body, so the printed "@import" stays behind a statement, where it is not valid.
@@ -2589,8 +2590,8 @@ c {
       },
       out: "@layer w;@layer b{.t{color:#00f}}@layer w{.t{color:red}}",
     },
+    // The empty block of g.css declares "a" ahead of "u".
     EmptyLayerBlock: {
-      todo: "the minifier removes the empty block of g.css and its layer with it (#38480 keeps it)",
       files: {
         "/entry.css": /* css */ `
           @import "./g.css";
@@ -2604,7 +2605,7 @@ c {
         `,
         "/x.css": `@layer a { .t { color: red } }`,
       },
-      out: "@layer a;@layer u;@layer a{.t{color:red}}@layer u{.t{color:#00f}}",
+      out: "@layer a{}@layer u;@layer a{.t{color:red}}@layer u{.t{color:#00f}}",
     },
     // g.css declares "a" only when the page is printed. It does not stand for the list of the first copy of x.css.
     NameDeclaredOnlyUnderMedia: {
@@ -2803,8 +2804,7 @@ c {
     });
   }
 
-  // A CSS module with "composes" cannot print inside a layer wrapper, so its copy under "layer(components)"
-  // stays a list of layers, as on main.
+  // The copy of a CSS module under "layer(components)" stays, like the copy of any other file. "composes" does not print.
   itBundled("css/CSSAtLayerOrderComposesModuleUnderLayerAndBare", {
     files: {
       "/entry.css": /* css */ `
@@ -2822,7 +2822,10 @@ c {
     outfile: "/out.css",
     minifyWhitespace: true,
     onAfterBundle(api) {
-      expect(api.readFile("/out.css")).toStartWith("@layer x;.d{color:green}@layer components;.base_");
+      const module = String.raw`\.base_\w+\{color:red\}\.btn_\w+\{color:#00f;?\}`;
+      expect(api.readFile("/out.css")).toMatch(
+        new RegExp(String.raw`^@layer x;\.d\{color:green\}@layer components\{${module}\}${module}\n$`),
+      );
     },
   });
 

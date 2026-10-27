@@ -402,8 +402,8 @@ unsafe extern "C" fn Bun__runVirtualModule(
     };
 
     match global.run_on_load_plugins(
-        &bun_core::String::from_bytes(namespace),
-        &bun_core::String::from_bytes(after_namespace),
+        &bun_core::StringView::from_bytes(namespace),
+        &bun_core::StringView::from_bytes(after_namespace),
     ) {
         Ok(Some(v)) => v,
         Ok(None) | Err(_) => JSValue::ZERO,

@@ -1171,7 +1171,7 @@ mod draft {
 
     impl RegistryKey {
         pub fn from_url(url_bytes: &[u8]) -> RegistryKey {
-            let owned = URL::from_string(&bun_core::String::borrow_utf8(url_bytes)).ok();
+            let owned = URL::from_string(&bun_core::StringView::borrow_utf8(url_bytes)).ok();
             let url = match &owned {
                 Some(owned) => owned.url(),
                 None => URL::parse(url_bytes),

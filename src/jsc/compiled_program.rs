@@ -175,7 +175,8 @@ fn entry_module_key_in<'a>(graph: &'static dyn StandaloneModuleGraph, path: &'a 
 }
 
 pub fn is_compiled_module(path: &[u8]) -> bool {
-    compiled_program().is_some() && Bun__isCompiledProgramFile(&bun_core::String::from_bytes(path))
+    compiled_program().is_some()
+        && Bun__isCompiledProgramFile(&bun_core::StringView::from_bytes(path))
 }
 
 /// The resolver keeps what it answers for as long as the process lives, so each path is copied once.
@@ -191,7 +192,7 @@ fn find_module_path(path: &[u8]) -> Option<&'static [u8]> {
     } else {
         path
     };
-    if !Bun__isCompiledProgramFile(&bun_core::String::from_bytes(path)) {
+    if !Bun__isCompiledProgramFile(&bun_core::StringView::from_bytes(path)) {
         return None;
     }
     let mut paths = PATHS.lock();

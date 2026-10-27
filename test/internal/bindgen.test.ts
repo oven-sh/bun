@@ -692,6 +692,7 @@ describe("strings", () => {
     expect(bindgen.utf8Owned(text)).toBe(text);
     expect(bindgen.stringEcho(text)).toBe(text);
     expect(bindgen.stringViewEcho(text)).toBe(text);
+    expect(bindgen.stringViewCloneOutlivesBytes(text)).toBe(text);
     expect(bindgen.stringOrObjectViewEcho(text)).toBe(text);
   });
 

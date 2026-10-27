@@ -13,10 +13,9 @@ use crate::{
     MAX_SAFE_INTEGER, MIN_SAFE_INTEGER, VM,
 };
 use bun_core::EncodedSlice;
-use bun_core::StringView;
 
-use bun_core::String as BunString;
 use bun_core::{Output, fmt as bun_fmt};
+use bun_core::{String as BunString, StringView};
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Opaque FFI handle (Nomicon pattern; !Send + !Sync + !Unpin).
@@ -718,10 +717,10 @@ impl JSGlobalObject {
         let Some((namespace_, path)) = crate::module_loader::plugin_namespace_and_path(key) else {
             return Ok(false);
         };
-        let namespace_ = BunString::from_bytes(namespace_);
-        let ns = (namespace_.length() > 0).then_some(&namespace_);
+        let namespace_ = StringView::from_bytes(namespace_);
+        let ns = (namespace_.length() > 0).then_some(&*namespace_);
         crate::from_js_host_call_generic(self, || {
-            Bun__hasOnLoad(self, ns, &BunString::from_bytes(path))
+            Bun__hasOnLoad(self, ns, &StringView::from_bytes(path))
         })
     }
 

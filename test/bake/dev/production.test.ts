@@ -1069,4 +1069,49 @@ export default function Client() {
     const css = await Bun.file(path.join(dir, "dist", cssFiles[0])).text();
     expect(css).toContain(":-webkit-full-screen");
   });
+
+  test("css imported by a client entry point and a route is bundled once without server components", async () => {
+    // Without server components there is no SSR graph, but the client entry
+    // point and the route still import the stylesheet from two graphs. One
+    // copy must serve both.
+    using dir = tempDir("bake-production-custom-framework-css", {
+      "client.ts": `import "./styles.css";`,
+      "server.ts": `
+        export function render(req, meta) {
+          return new Response(String(meta.pageModule.default()));
+        }
+        export async function prerender(meta) {
+          const styles = meta.styles.map(href => '<link rel="stylesheet" href="' + href + '">').join("");
+          return { files: { "index.html": "<head>" + styles + "</head><body>" + meta.pageModule.default() + "</body>" } };
+        }
+      `,
+      "routes/index.ts": `
+        import "../styles.css";
+        export default () => "homepage";
+      `,
+      "styles.css": `
+.box:fullscreen {
+  color: red;
+}`,
+      "app.ts": `
+        const fsr = { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts", clientEntryPoint: "./client.ts" };
+        export default { app: { framework: { fileSystemRouterTypes: [fsr] } } };
+      `,
+    });
+
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./app.ts`
+      .cwd(String(dir))
+      .env(bunEnv)
+      .throws(false);
+    expect(stderr.toString()).not.toContain("DuplicateOutputPath");
+    expect(exitCode).toBe(0);
+
+    const cssFiles = await Array.fromAsync(new Bun.Glob("**/*.css").scan(path.join(String(dir), "dist")));
+    expect(cssFiles).toHaveLength(1);
+    const css = await Bun.file(path.join(String(dir), "dist", cssFiles[0])).text();
+    expect(css).toContain(":-webkit-full-screen");
+    // The page links that one stylesheet.
+    const html = await Bun.file(path.join(String(dir), "dist", "index.html")).text();
+    expect(html).toContain(`<link rel="stylesheet" href="/${normalizePath(cssFiles[0])}">`);
+  });
 });

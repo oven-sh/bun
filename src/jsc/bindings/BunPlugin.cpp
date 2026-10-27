@@ -2714,7 +2714,7 @@ __attribute__((minsize)) static bool resolveModuleMockSpecifier(Zig::GlobalObjec
             scope.throwException(globalObject, JSC::createTypeError(globalObject, "Invalid \"file:\" URL"_s));
             return false;
         }
-        specifier = path;
+        specifier = Bun::moduleKeyFromFileURL(fileURL);
         specifierString = jsString(vm, specifier);
         return true;
     }
@@ -2746,7 +2746,7 @@ __attribute__((minsize)) static bool resolveModuleMockSpecifier(Zig::GlobalObjec
     auto relativeURL = URL(url, specifier);
     if (!relativeURL.isValid())
         return false;
-    specifier = relativeURL.protocolIsFile() ? relativeSpecifierToFileSystemPath(url, specifier) : relativeURL.string();
+    specifier = relativeURL.protocolIsFile() ? Bun::moduleKeyFromFileURL(relativeURL) : relativeURL.string();
     specifierString = jsString(vm, specifier);
     return true;
 }
@@ -4104,7 +4104,7 @@ std::optional<String> BunPlugin::OnLoad::resolveVirtualModule(const String& path
         if (path.startsWith("./"_s) || path.startsWith(".."_s)) {
             auto url = WTF::URL::fileURLWithFileSystemPath(from);
             ASSERT(url.isValid());
-            joinedPath = relativeSpecifierToFileSystemPath(url, path);
+            joinedPath = Bun::moduleKeyFromFileURL(URL(url, path));
         }
 
         return virtualModules->contains(joinedPath) ? std::optional<String> { joinedPath } : std::nullopt;

@@ -97,7 +97,8 @@ JSValue fetchESMSourceCodeSync(
     ErrorableResolvedSource* res,
     BunString* specifier,
     BunString* referrer,
-    BunString* typeAttribute);
+    BunString* typeAttribute,
+    bool preservePathDelimiters = false);
 
 JSValue fetchESMSourceCodeAsync(
     Zig::GlobalObject* globalObject,
@@ -106,7 +107,8 @@ JSValue fetchESMSourceCodeAsync(
     ErrorableResolvedSource* res,
     BunString* specifier,
     BunString* referrer,
-    BunString* typeAttribute);
+    BunString* typeAttribute,
+    bool preservePathDelimiters = false);
 
 // Appends { ...object, default: object }. Returns object if any export was deferred (its value is empty), null otherwise or on exception.
 JSC::JSObject* appendInternalModuleExports(Zig::GlobalObject*, JSC::JSObject* object, WTF::Vector<JSC::Identifier, 4>& exportNames, JSC::MarkedArgumentBuffer& exportValues);
@@ -136,6 +138,7 @@ JSValue fetchCommonJSModuleNonBuiltin(
     JSCommonJSModule* target,
     String specifierWtfString,
     BunLoaderType forceLoaderType,
+    bool preservePathDelimiters,
     JSC::ThrowScope& scope,
     const CodeString* pluginContents = nullptr);
 

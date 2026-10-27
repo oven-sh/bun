@@ -234,6 +234,7 @@ static JSValue fetchESMSourceCode(
     BunString* specifier,
     BunString* referrer,
     BunString* typeAttribute,
+    bool preservePathDelimiters = false,
     bool onLoadDeclined = false,
     const CodeString* pluginContents = nullptr);
 
@@ -509,8 +510,8 @@ static JSValue handleVirtualModuleResult(
             return rejectOrResolve({});
         }
         if (commonJSModule)
-            RELEASE_AND_RETURN(scope, fetchCommonJSModuleNonBuiltin<false>(globalObject->bunVM(), vm, globalObject, specifier, fetch.specifierJS, referrer, fetch.typeAttribute, res, commonJSModule, specifier->toWTFString(BunString::ZeroCopy), BunLoaderTypeNone, scope, &onLoadResult.value.sourceText));
-        RELEASE_AND_RETURN(scope, fetchESMSourceCode<allowPromise>(globalObject, fetch.graph, fetch.specifierJS, res, specifier, referrer, fetch.typeAttribute, false, &onLoadResult.value.sourceText));
+            RELEASE_AND_RETURN(scope, fetchCommonJSModuleNonBuiltin<false>(globalObject->bunVM(), vm, globalObject, specifier, fetch.specifierJS, referrer, fetch.typeAttribute, res, commonJSModule, specifier->toWTFString(BunString::ZeroCopy), BunLoaderTypeNone, false, scope, &onLoadResult.value.sourceText));
+        RELEASE_AND_RETURN(scope, fetchESMSourceCode<allowPromise>(globalObject, fetch.graph, fetch.specifierJS, res, specifier, referrer, fetch.typeAttribute, false, false, &onLoadResult.value.sourceText));
     }
     case OnLoadResultTypeError: {
         RELEASE_AND_RETURN(scope, reject(onLoadResult.value.error));
@@ -841,7 +842,7 @@ static JSValue requireVirtualModule(
     bool wasModuleMock)
 {
     auto& vm = JSC::getVM(globalObject);
-    JSValue promiseOrCommonJSModule = handleVirtualModuleResult<true>(globalObject, virtualModuleResult, res, specifier, referrer, fetch, wasModuleMock, target);
+    JSValue promiseOrCommonJSModule = handleVirtualModuleResult<true>(globalObject, virtualModuleResult, res, virtualSpecifier, referrer, fetch, wasModuleMock, target);
     RETURN_IF_EXCEPTION(scope, {});
 
     // If we assigned module.exports to the virtual module, or gave the loader its source, we're done here.
@@ -907,7 +908,19 @@ JSValue fetchCommonJSModule(
         }
     }
 
-    BunString specifier = Bun::toString(specifierWtfString);
+    String fileURLPath = specifierWtfString;
+    bool preservePathDelimiters = false;
+    if (specifierWtfString.startsWith("file://"_s)) {
+        auto url = WTF::URL(specifierWtfString);
+        if (url.isValid() && !url.isEmpty()) {
+            auto path = url.fileSystemPath();
+            if (path.find('?') != WTF::notFound) {
+                fileURLPath = path;
+                preservePathDelimiters = true;
+            }
+        }
+    }
+    BunString specifier = Bun::toString(fileURLPath);
 
     bool wasModuleMock = false;
     BunPlugin::OnLoad::Matches onLoad;
@@ -964,7 +977,7 @@ JSValue fetchCommonJSModule(
     if (cached)
         return cached;
 
-    return fetchCommonJSModuleNonBuiltin<false>(bunVM, vm, globalObject, &specifier, specifierValue, referrer, typeAttribute, res, target, specifierWtfString, BunLoaderTypeNone, scope);
+    return fetchCommonJSModuleNonBuiltin<false>(bunVM, vm, globalObject, &specifier, specifierValue, referrer, typeAttribute, res, target, specifierWtfString, BunLoaderTypeNone, preservePathDelimiters, scope);
 }
 
 template<bool isExtension>
@@ -980,6 +993,7 @@ JSValue fetchCommonJSModuleNonBuiltin(
     JSCommonJSModule* target,
     String specifierWtfString,
     BunLoaderType forceLoaderType,
+    bool preservePathDelimiters,
     JSC::ThrowScope& scope,
     const CodeString* pluginContents)
 {
@@ -996,7 +1010,7 @@ JSValue fetchCommonJSModuleNonBuiltin(
             return cached;
         JSC::callRemovable<Bun::Feature::RuntimeTranspiler, JSC::RemovedFeatureStub::Abort, Bun__transpileVirtualModule>(globalObject, specifier, referrer, &pluginContents->string, pluginContents->loader, res);
     } else {
-        Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, false, !isExtension, forceLoaderType);
+        Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, false, !isExtension, forceLoaderType, preservePathDelimiters);
     }
     if (res->success && res->result.value.isCommonJSModule) {
         if constexpr (isExtension) {
@@ -1132,6 +1146,7 @@ template JSValue fetchCommonJSModuleNonBuiltin<true>(
     JSCommonJSModule* target,
     String specifierWtfString,
     BunLoaderType forceLoaderType,
+    bool preservePathDelimiters,
     JSC::ThrowScope& scope,
     const CodeString* pluginContents);
 template JSValue fetchCommonJSModuleNonBuiltin<false>(
@@ -1146,6 +1161,7 @@ template JSValue fetchCommonJSModuleNonBuiltin<false>(
     JSCommonJSModule* target,
     String specifierWtfString,
     BunLoaderType forceLoaderType,
+    bool preservePathDelimiters,
     JSC::ThrowScope& scope,
     const CodeString* pluginContents);
 
@@ -1216,12 +1232,17 @@ static JSValue fetchESMSourceCode(
     BunString* specifier,
     BunString* referrer,
     BunString* typeAttribute,
+    bool preservePathDelimiters,
     bool onLoadDeclined,
     const CodeString* pluginContents)
 {
     void* bunVM = globalObject->bunVM();
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    WTF::String specifierKey = specifierJS->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    auto specifierKeyBun = Bun::toString(specifierKey);
+    auto* virtualSpecifier = preservePathDelimiters ? &specifierKeyBun : specifier;
 
     const auto reject = [&](JSC::JSValue exception) -> JSValue {
         if constexpr (allowPromise) {
@@ -1260,10 +1281,10 @@ static JSValue fetchESMSourceCode(
     // When "bun test" is enabled, allow users to override builtin modules
     // This is important for being able to trivially mock things like the filesystem.
     if (isBunTest && asksPlugins) {
-        JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, specifier, wasModuleMock, onLoad);
+        JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, virtualSpecifier, wasModuleMock, onLoad);
         RETURN_IF_EXCEPTION(scope, {});
         if (virtualModuleResult) {
-            RELEASE_AND_RETURN(scope, handleVirtualModuleResult<allowPromise>(globalObject, virtualModuleResult, res, specifier, referrer, fetch, wasModuleMock));
+            RELEASE_AND_RETURN(scope, handleVirtualModuleResult<allowPromise>(globalObject, virtualModuleResult, res, virtualSpecifier, referrer, fetch, wasModuleMock));
         }
     }
 
@@ -1357,17 +1378,17 @@ static JSValue fetchESMSourceCode(
 
     // When "bun test" is NOT enabled, disable users from overriding builtin modules
     if (!isBunTest && asksPlugins) {
-        JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, specifier, wasModuleMock, onLoad);
+        JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, virtualSpecifier, wasModuleMock, onLoad);
         RETURN_IF_EXCEPTION(scope, {});
         if (virtualModuleResult) {
-            RELEASE_AND_RETURN(scope, handleVirtualModuleResult<allowPromise>(globalObject, virtualModuleResult, res, specifier, referrer, fetch, wasModuleMock));
+            RELEASE_AND_RETURN(scope, handleVirtualModuleResult<allowPromise>(globalObject, virtualModuleResult, res, virtualSpecifier, referrer, fetch, wasModuleMock));
         }
     }
 
     const bool useIsolationCache = Bun::IsolatedModuleCache::canUse(vm, bunVM, typeAttribute);
     // The VM only learns that the entry point has loaded from transpiling it.
     if (useIsolationCache && !Bun__VM__isMainModule(bunVM, specifier)) {
-        if (auto* cached = Bun::IsolatedModuleCache::lookup(vm, specifier->toWTFString(BunString::ZeroCopy), pluginContents)) {
+        if (auto* cached = Bun::IsolatedModuleCache::lookup(vm, specifierKey, pluginContents)) {
             // didFulfillPendingVirtualModule checks this to tell a source from an error, so set it on a cache hit too.
             res->success = true;
             if (cached->sourceType() != JSC::SourceProviderSourceType::Program) {
@@ -1400,12 +1421,12 @@ static JSValue fetchESMSourceCode(
             RELEASE_AND_RETURN(scope, reject(Bun::createCodeGenerationFromStringsError(globalObject)));
         JSC::callRemovable<Bun::Feature::RuntimeTranspiler, JSC::RemovedFeatureStub::Abort, Bun__transpileVirtualModule>(globalObject, specifier, referrer, &pluginContents->string, pluginContents->loader, res);
     } else if constexpr (allowPromise) {
-        auto* pendingCtx = Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, true, false, BunLoaderTypeNone, graph ? JSValue::encode(graph->loader()) : JSC::EncodedJSValue {});
+        auto* pendingCtx = Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, true, false, BunLoaderTypeNone, preservePathDelimiters, graph ? JSValue::encode(graph->loader()) : JSC::EncodedJSValue {});
         if (pendingCtx) {
             return pendingCtx;
         }
     } else {
-        Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, false, false, BunLoaderTypeNone);
+        Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, false, false, BunLoaderTypeNone, preservePathDelimiters);
     }
 
     if (res->success && res->result.value.isCommonJSModule) {
@@ -1456,7 +1477,7 @@ static JSValue fetchESMSourceCode(
         }
 
         // JSON can become strings, null, numbers, booleans so we must handle "export default 123"
-        RELEASE_AND_RETURN(scope, rejectOrResolve(createJSValueModuleSourceCode(vm, value, specifier->toWTFString(BunString::ZeroCopy))));
+        RELEASE_AND_RETURN(scope, rejectOrResolve(createJSValueModuleSourceCode(vm, value, String(specifierKey))));
     }
     // TOML and JSONC may go through here
     else if (res->result.value.tag == SyntheticModuleType::ExportsObject) {
@@ -1466,7 +1487,7 @@ static JSValue fetchESMSourceCode(
         }
 
         // JSON can become strings, null, numbers, booleans so we must handle "export default 123"
-        RELEASE_AND_RETURN(scope, rejectOrResolve(createJSValueModuleSourceCode(vm, value, specifier->toWTFString(BunString::ZeroCopy))));
+        RELEASE_AND_RETURN(scope, rejectOrResolve(createJSValueModuleSourceCode(vm, value, String(specifierKey))));
     } else if (res->result.value.tag == SyntheticModuleType::ExportDefaultObject) {
         JSC::JSValue value = JSC::JSValue::decode(res->result.value.jsvalue_for_export);
         if (!value) {
@@ -1474,7 +1495,7 @@ static JSValue fetchESMSourceCode(
         }
 
         // JSON can become strings, null, numbers, booleans so we must handle "export default 123"
-        RELEASE_AND_RETURN(scope, rejectOrResolve(createJSValueExportDefaultObjectSourceCode(vm, value, specifier->toWTFString(BunString::ZeroCopy))));
+        RELEASE_AND_RETURN(scope, rejectOrResolve(createJSValueExportDefaultObjectSourceCode(vm, value, String(specifierKey))));
     }
 
     if (res->result.value.tag == SyntheticModuleType::ExportDefaultOnly) {
@@ -1484,7 +1505,7 @@ static JSValue fetchESMSourceCode(
 
     auto provider = Zig::SourceProvider::create(globalObject, res->result.value);
     if (useIsolationCache) {
-        Bun::IsolatedModuleCache::insert(vm, specifier->toWTFString(BunString::ZeroCopy), provider.get(), pluginContents);
+        Bun::IsolatedModuleCache::insert(vm, specifierKey, provider.get(), pluginContents);
     }
     RELEASE_AND_RETURN(scope, rejectOrResolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(WTF::move(provider)))));
 }
@@ -1496,9 +1517,10 @@ JSValue fetchESMSourceCodeSync(
     ErrorableResolvedSource* res,
     BunString* specifier,
     BunString* referrer,
-    BunString* typeAttribute)
+    BunString* typeAttribute,
+    bool preservePathDelimiters)
 {
-    return fetchESMSourceCode<false>(globalObject, graph, specifierJS, res, specifier, referrer, typeAttribute);
+    return fetchESMSourceCode<false>(globalObject, graph, specifierJS, res, specifier, referrer, typeAttribute, preservePathDelimiters);
 }
 
 JSValue fetchESMSourceCodeAsync(
@@ -1508,9 +1530,10 @@ JSValue fetchESMSourceCodeAsync(
     ErrorableResolvedSource* res,
     BunString* specifier,
     BunString* referrer,
-    BunString* typeAttribute)
+    BunString* typeAttribute,
+    bool preservePathDelimiters)
 {
-    return fetchESMSourceCode<true>(globalObject, graph, specifierJS, res, specifier, referrer, typeAttribute);
+    return fetchESMSourceCode<true>(globalObject, graph, specifierJS, res, specifier, referrer, typeAttribute, preservePathDelimiters);
 }
 
 // Returns the JSSourceCode or a promise for it. Empty without an exception means it's waiting on the next onLoad callback's promise.
@@ -1566,7 +1589,7 @@ static JSValue didFulfillPendingVirtualModule(Zig::GlobalObject* globalObject, P
     ErrorableResolvedSource res;
 
     if (!value)
-        RELEASE_AND_RETURN(scope, fetchESMSourceCode<true>(globalObject, fetch.graph, specifierJS, &res, &specifier, &referrer, fetch.typeAttribute, !fetchesAgain));
+        RELEASE_AND_RETURN(scope, fetchESMSourceCode<true>(globalObject, fetch.graph, specifierJS, &res, &specifier, &referrer, fetch.typeAttribute, false, !fetchesAgain));
 
     JSValue result = handleVirtualModuleResult<false>(globalObject, value, &res, &specifier, &referrer, fetch, !!moduleMock);
     RETURN_IF_EXCEPTION(scope, {});

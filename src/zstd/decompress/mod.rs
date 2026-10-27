@@ -2,28 +2,29 @@
 
 mod block;
 mod huf;
+mod huf_exact;
 mod seq_table;
 
 use std::borrow::Cow;
 
 use block::{
-    BlockDecoder, BlockOutput, EntropyDTables, ExtDict, Streaming, TableSource, get_c_block_size,
+    BlockDecoder, BlockOutput, EntropyDTables, ExtDict, OutputBuffer, Streaming, get_c_block_size,
 };
-use seq_table::{LL_BASE, ML_BASE, OF_BASE, OF_BITS};
+use seq_table::{LL_CODES, ML_CODES, OF_CODES, SeqTableSources, TableSource};
 
 use crate::common::entropy::read_ncount;
 use crate::common::xxhash::Xxh64;
 use crate::common::{
-    BlockType, LL_BITS, LL_FSE_LOG, MAX_LL, MAX_ML, MAX_OFF, ML_BITS, ML_FSE_LOG, OFF_FSE_LOG,
-    REP_START_VALUE, WILDCOPY_OVERLENGTH, ZSTD_BLOCKHEADERSIZE, ZSTD_BLOCKSIZE_MAX,
-    ZSTD_CONTENTSIZE_ERROR, ZSTD_CONTENTSIZE_UNKNOWN, ZSTD_DID_FIELD_SIZE, ZSTD_FCS_FIELD_SIZE,
-    ZSTD_FRAMEHEADERSIZE_MAX, ZSTD_FRAMEIDSIZE, ZSTD_MAGIC_DICTIONARY, ZSTD_MAGIC_SKIPPABLE_MASK,
-    ZSTD_MAGIC_SKIPPABLE_START, ZSTD_MAGICNUMBER, ZSTD_SKIPPABLEHEADERSIZE,
-    ZSTD_WINDOWLOG_ABSOLUTEMIN, ZSTD_WINDOWLOG_LIMIT_DEFAULT, ZSTD_WINDOWLOG_MAX,
-    ZSTD_WORKSPACETOOLARGE_FACTOR, ZSTD_WORKSPACETOOLARGE_MAXDURATION,
+    BlockType, LL_FSE_LOG, MAX_LL, MAX_ML, MAX_OFF, ML_FSE_LOG, OFF_FSE_LOG, REP_START_VALUE,
+    WILDCOPY_OVERLENGTH, ZSTD_BLOCKHEADERSIZE, ZSTD_BLOCKSIZE_MAX, ZSTD_CONTENTSIZE_ERROR,
+    ZSTD_CONTENTSIZE_UNKNOWN, ZSTD_DID_FIELD_SIZE, ZSTD_FCS_FIELD_SIZE, ZSTD_FRAMEHEADERSIZE_MAX,
+    ZSTD_FRAMEIDSIZE, ZSTD_MAGIC_DICTIONARY, ZSTD_MAGIC_SKIPPABLE_MASK, ZSTD_MAGIC_SKIPPABLE_START,
+    ZSTD_MAGICNUMBER, ZSTD_REP_NUM, ZSTD_SKIPPABLEHEADERSIZE, ZSTD_WINDOWLOG_ABSOLUTEMIN,
+    ZSTD_WINDOWLOG_LIMIT_DEFAULT, ZSTD_WINDOWLOG_MAX, ZSTD_WORKSPACETOOLARGE_FACTOR,
+    ZSTD_WORKSPACETOOLARGE_MAXDURATION,
 };
 use crate::error::{ErrorCode, Result};
-use crate::util::{SliceExt, read_le16, read_le32, read_le64, try_copy, try_zeroed};
+use crate::util::{SliceExt, read_le16, read_le32, read_le64, try_copy};
 use crate::{InBuffer, OutBuffer};
 
 /// `ZSTD_FRAMEHEADERSIZE_PREFIX`: what it takes to know the size of a frame header.
@@ -70,7 +71,7 @@ impl FrameHeader {
 }
 
 enum HeaderStatus {
-    Complete(FrameHeader),
+    Complete,
     /// The header cannot be read from fewer bytes than this.
     Needs(usize),
 }
@@ -96,8 +97,8 @@ fn frame_header_size(src: &[u8]) -> Result<usize> {
         + usize::from(single_segment && fcs_id == 0))
 }
 
-/// `ZSTD_getFrameHeader`
-fn get_frame_header(src: &[u8]) -> Result<HeaderStatus> {
+/// `ZSTD_getFrameHeader`: sets `header` if the one at the start of `src` is complete.
+fn get_frame_header(header: &mut FrameHeader, src: &[u8]) -> Result<HeaderStatus> {
     const MIN_INPUT_SIZE: usize = FRAMEHEADERSIZE_PREFIX;
 
     if src.len() < MIN_INPUT_SIZE {
@@ -123,13 +124,14 @@ fn get_frame_header(src: &[u8]) -> Result<HeaderStatus> {
             if src.len() < ZSTD_SKIPPABLEHEADERSIZE {
                 return Ok(HeaderStatus::Needs(ZSTD_SKIPPABLEHEADERSIZE));
             }
-            return Ok(HeaderStatus::Complete(FrameHeader {
+            *header = FrameHeader {
                 frame_type: FrameType::Skippable,
                 dict_id: magic - ZSTD_MAGIC_SKIPPABLE_START,
                 header_size: ZSTD_SKIPPABLEHEADERSIZE,
                 frame_content_size: u64::from(read_le32(src, ZSTD_FRAMEIDSIZE)?),
                 ..FrameHeader::EMPTY
-            }));
+            };
+            return Ok(HeaderStatus::Complete);
         }
         return Err(ErrorCode::PrefixUnknown);
     }
@@ -191,7 +193,7 @@ fn get_frame_header(src: &[u8]) -> Result<HeaderStatus> {
         window_size = frame_content_size;
     }
 
-    Ok(HeaderStatus::Complete(FrameHeader {
+    *header = FrameHeader {
         frame_type: FrameType::Frame,
         frame_content_size,
         window_size,
@@ -199,14 +201,16 @@ fn get_frame_header(src: &[u8]) -> Result<HeaderStatus> {
         header_size: fhsize,
         dict_id,
         checksum_flag,
-    }))
+    };
+    Ok(HeaderStatus::Complete)
 }
 
 /// `ZSTD_getFrameContentSize`: [`ZSTD_CONTENTSIZE_UNKNOWN`] if the frame at the start of `src` does not say, and
 /// [`ZSTD_CONTENTSIZE_ERROR`] if there is no whole frame header.
 pub fn get_frame_content_size(src: &[u8]) -> u64 {
-    match get_frame_header(src) {
-        Ok(HeaderStatus::Complete(header)) => match header.frame_type {
+    let mut header = FrameHeader::EMPTY;
+    match get_frame_header(&mut header, src) {
+        Ok(HeaderStatus::Complete) => match header.frame_type {
             FrameType::Skippable => 0,
             FrameType::Frame => header.frame_content_size,
         },
@@ -214,8 +218,8 @@ pub fn get_frame_content_size(src: &[u8]) -> u64 {
     }
 }
 
-/// `readSkippableFrameSize`
-fn read_skippable_frame_size(src: &[u8]) -> Result<usize> {
+/// The size of the skippable frame whose header is at the start of `src`.
+fn skippable_frame_size(src: &[u8]) -> Result<usize> {
     if src.len() < ZSTD_SKIPPABLEHEADERSIZE {
         return Err(ErrorCode::SrcSizeWrong);
     }
@@ -226,7 +230,12 @@ fn read_skippable_frame_size(src: &[u8]) -> Result<usize> {
     {
         return Err(ErrorCode::FrameParameterUnsupported);
     }
-    let skippable_size = ZSTD_SKIPPABLEHEADERSIZE + size_u32 as usize;
+    Ok(ZSTD_SKIPPABLEHEADERSIZE + size_u32 as usize)
+}
+
+/// `readSkippableFrameSize`
+fn read_skippable_frame_size(src: &[u8]) -> Result<usize> {
+    let skippable_size = skippable_frame_size(src)?;
     if skippable_size > src.len() {
         return Err(ErrorCode::SrcSizeWrong);
     }
@@ -244,12 +253,17 @@ pub enum FrameExtent {
 /// How far the frame at the start of `src` goes, for when where it ends is not known in advance.
 pub fn frame_extent(src: &[u8]) -> Result<FrameExtent> {
     if src.len() >= ZSTD_SKIPPABLEHEADERSIZE && is_skippable_magic(read_le32(src, 0)?) {
-        return read_skippable_frame_size(src).map(FrameExtent::Whole);
+        let size = skippable_frame_size(src)?;
+        return Ok(if size <= src.len() {
+            FrameExtent::Whole(size)
+        } else {
+            FrameExtent::AtLeast(size)
+        });
     }
-    let header = match get_frame_header(src)? {
-        HeaderStatus::Complete(header) => header,
-        HeaderStatus::Needs(size) => return Ok(FrameExtent::AtLeast(size)),
-    };
+    let mut header = FrameHeader::EMPTY;
+    if let HeaderStatus::Needs(size) = get_frame_header(&mut header, src)? {
+        return Ok(FrameExtent::AtLeast(size));
+    }
     let mut ip = header.header_size;
     loop {
         let Some(remaining) = src
@@ -313,8 +327,8 @@ pub(crate) fn find_decompressed_size(mut src: &[u8]) -> u64 {
 
 // ── dictionaries ──────────────────────────────────────────────────────────
 
-/// `ZSTD_loadDEntropy`: reads the tables at the start of a dictionary, and returns where its content starts.
-fn load_d_entropy(entropy: &mut EntropyDTables, dict: &[u8]) -> Result<usize> {
+/// `ZSTD_loadDEntropy`: reads the tables at the start of a dictionary, and returns the last offsets that it sets.
+fn load_d_entropy(entropy: &mut EntropyDTables, dict: &[u8]) -> Result<[u32; ZSTD_REP_NUM]> {
     const CORRUPTED: ErrorCode = ErrorCode::DictionaryCorrupted;
     if dict.len() <= 8 {
         return Err(CORRUPTED);
@@ -322,47 +336,52 @@ fn load_d_entropy(entropy: &mut EntropyDTables, dict: &[u8]) -> Result<usize> {
     // The magic number and the ID.
     let mut pos = 8usize;
 
-    pos += huf::read_dtable_x2(&mut entropy.huf_table, dict.sub(pos..)?).map_err(|_| CORRUPTED)?;
+    pos += huf::read_dtable_x2(
+        &mut entropy.huf_table,
+        dict.sub(pos..)?,
+        &mut entropy.workspace,
+    )
+    .map_err(|_| CORRUPTED)?;
 
     {
-        let mut ncount = [0i16; MAX_OFF as usize + 1];
-        let header = read_ncount(&mut ncount, MAX_OFF, dict.sub(pos..)?).map_err(|_| CORRUPTED)?;
+        let header = read_ncount(&mut entropy.workspace.counts, MAX_OFF, dict.sub(pos..)?)
+            .map_err(|_| CORRUPTED)?;
         if header.max_symbol_value > MAX_OFF || header.table_log > OFF_FSE_LOG {
             return Err(CORRUPTED);
         }
-        entropy.of_table.build(
-            ncount.sub(..header.max_symbol_value as usize + 1)?,
-            &OF_BASE,
-            &OF_BITS,
+        entropy.seq.of.build(
+            header.max_symbol_value as usize + 1,
+            &OF_CODES,
             header.table_log,
+            &mut entropy.workspace,
         )?;
         pos += header.size;
     }
     {
-        let mut ncount = [0i16; MAX_ML as usize + 1];
-        let header = read_ncount(&mut ncount, MAX_ML, dict.sub(pos..)?).map_err(|_| CORRUPTED)?;
+        let header = read_ncount(&mut entropy.workspace.counts, MAX_ML, dict.sub(pos..)?)
+            .map_err(|_| CORRUPTED)?;
         if header.max_symbol_value > MAX_ML || header.table_log > ML_FSE_LOG {
             return Err(CORRUPTED);
         }
-        entropy.ml_table.build(
-            ncount.sub(..header.max_symbol_value as usize + 1)?,
-            &ML_BASE,
-            &ML_BITS,
+        entropy.seq.ml.build(
+            header.max_symbol_value as usize + 1,
+            &ML_CODES,
             header.table_log,
+            &mut entropy.workspace,
         )?;
         pos += header.size;
     }
     {
-        let mut ncount = [0i16; MAX_LL as usize + 1];
-        let header = read_ncount(&mut ncount, MAX_LL, dict.sub(pos..)?).map_err(|_| CORRUPTED)?;
+        let header = read_ncount(&mut entropy.workspace.counts, MAX_LL, dict.sub(pos..)?)
+            .map_err(|_| CORRUPTED)?;
         if header.max_symbol_value > MAX_LL || header.table_log > LL_FSE_LOG {
             return Err(CORRUPTED);
         }
-        entropy.ll_table.build(
-            ncount.sub(..header.max_symbol_value as usize + 1)?,
-            &LL_BASE,
-            &LL_BITS,
+        entropy.seq.ll.build(
+            header.max_symbol_value as usize + 1,
+            &LL_CODES,
             header.table_log,
+            &mut entropy.workspace,
         )?;
         pos += header.size;
     }
@@ -371,14 +390,15 @@ fn load_d_entropy(entropy: &mut EntropyDTables, dict: &[u8]) -> Result<usize> {
         return Err(CORRUPTED);
     }
     let dict_content_size = dict.len() - (pos + 12);
-    for rep in &mut entropy.rep {
+    let mut reps = [0; ZSTD_REP_NUM];
+    for rep in &mut reps {
         *rep = read_le32(dict, pos)?;
         pos += 4;
         if *rep == 0 || *rep as usize > dict_content_size {
             return Err(CORRUPTED);
         }
     }
-    Ok(pos)
+    Ok(reps)
 }
 
 /// `ZSTD_dictContentType_e`
@@ -395,6 +415,8 @@ pub struct DDict<'a> {
     content: Cow<'a, [u8]>,
     /// The tables, if the dictionary has some.
     entropy: Option<Box<EntropyDTables>>,
+    /// The last offsets that a frame starts with.
+    rep: [u32; ZSTD_REP_NUM],
     dict_id: u32,
 }
 
@@ -404,6 +426,7 @@ impl<'a> DDict<'a> {
         let mut ddict = Self {
             content,
             entropy: None,
+            rep: REP_START_VALUE,
             dict_id: 0,
         };
         let dict = &*ddict.content;
@@ -415,7 +438,8 @@ impl<'a> DDict<'a> {
         }
         ddict.dict_id = read_le32(dict, ZSTD_FRAMEIDSIZE)?;
         let mut entropy = Box::new(EntropyDTables::new());
-        load_d_entropy(&mut entropy, dict).map_err(|_| ErrorCode::DictionaryCorrupted)?;
+        ddict.rep =
+            load_d_entropy(&mut entropy, dict).map_err(|_| ErrorCode::DictionaryCorrupted)?;
         ddict.entropy = Some(entropy);
         Ok(ddict)
     }
@@ -471,6 +495,45 @@ enum ExtKind {
     Within { end: usize, len: usize },
 }
 
+/// A buffer whose size a frame header dictates. It takes up no more memory than has been used of it.
+struct Buffer {
+    /// What has been used so far. There is capacity for `size`.
+    bytes: Vec<u8>,
+    size: usize,
+}
+
+impl Buffer {
+    const fn new() -> Self {
+        Self {
+            bytes: Vec::new(),
+            size: 0,
+        }
+    }
+
+    fn with_size(size: usize) -> Result<Self> {
+        let mut bytes = Vec::new();
+        bytes
+            .try_reserve_exact(size)
+            .map_err(|_| ErrorCode::MemoryAllocation)?;
+        Ok(Self { bytes, size })
+    }
+
+    /// The `len` bytes from `start` on, which are within `size`.
+    fn span_mut(&mut self, start: usize, len: usize) -> Result<&mut [u8]> {
+        let end = start + len;
+        if self.bytes.len() < end && end <= self.size {
+            self.bytes.resize(end, 0);
+        }
+        self.bytes.span_mut(start, len)
+    }
+}
+
+impl Default for Buffer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// All of a `ZSTD_DCtx` but the dictionary it owns.
 struct DState {
     block: BlockDecoder,
@@ -494,10 +557,10 @@ struct DState {
     dict_id: u32,
 
     stream_stage: DStreamStage,
-    in_buff: Vec<u8>,
+    in_buff: Buffer,
     in_pos: usize,
     max_window_size: usize,
-    out_buff: Vec<u8>,
+    out_buff: Buffer,
     out_start: usize,
     out_end: usize,
     /// The last byte of a frame's input is held back until its output is flushed.
@@ -521,8 +584,8 @@ impl Default for DCtx {
 }
 
 impl DCtx {
-    /// How much memory a new one takes.
-    pub const SIZE: usize = size_of::<Self>() + size_of::<EntropyDTables>();
+    /// How much memory one takes, apart from buffers whose size depends on the frames.
+    pub const SIZE: usize = size_of::<Self>() + BlockDecoder::SCRATCH_SIZE;
 
     /// `ZSTD_createDCtx`
     pub fn new() -> Self {
@@ -543,10 +606,10 @@ impl DCtx {
                 rle_size: 0,
                 dict_id: 0,
                 stream_stage: DStreamStage::Init,
-                in_buff: Vec::new(),
+                in_buff: Buffer::new(),
                 in_pos: 0,
                 max_window_size: ZSTD_MAXWINDOWSIZE_DEFAULT,
-                out_buff: Vec::new(),
+                out_buff: Buffer::new(),
                 out_start: 0,
                 out_end: 0,
                 hostage_byte: false,
@@ -675,24 +738,20 @@ impl DState {
         self.block.fse_entropy = false;
         self.dict_id = 0;
         self.b_type = BlockType::Reserved;
-        self.block.entropy.rep = REP_START_VALUE;
-        self.block.ll_source = TableSource::Local;
-        self.block.ml_source = TableSource::Local;
-        self.block.of_source = TableSource::Local;
+        self.block.rep = REP_START_VALUE;
+        self.block.seq_sources = SeqTableSources::all(TableSource::Local);
         self.block.huf_source = TableSource::Local;
 
         // `ZSTD_copyDDictParameters`
         if let Some(ddict) = ddict {
             self.dict_id = ddict.dict_id;
             self.dict_end_address = ddict.end_address();
-            if let Some(entropy) = &ddict.entropy {
+            self.block.rep = ddict.rep;
+            if ddict.entropy.is_some() {
                 self.block.lit_entropy = true;
                 self.block.fse_entropy = true;
-                self.block.ll_source = TableSource::Dict;
-                self.block.ml_source = TableSource::Dict;
-                self.block.of_source = TableSource::Dict;
+                self.block.seq_sources = SeqTableSources::all(TableSource::Dict);
                 self.block.huf_source = TableSource::Dict;
-                self.block.entropy.rep = entropy.rep;
             }
         }
     }
@@ -714,9 +773,8 @@ impl DState {
 
     /// `ZSTD_decodeFrameHeader`: `src` is all of a frame header.
     fn decode_frame_header(&mut self, src: &[u8]) -> Result<()> {
-        match get_frame_header(src)? {
-            HeaderStatus::Complete(header) => self.f_params = header,
-            HeaderStatus::Needs(_) => return Err(ErrorCode::SrcSizeWrong),
+        if let HeaderStatus::Needs(_) = get_frame_header(&mut self.f_params, src)? {
+            return Err(ErrorCode::SrcSizeWrong);
         }
         if self.f_params.dict_id != 0 && self.dict_id != self.f_params.dict_id {
             return Err(ErrorCode::DictionaryWrong);
@@ -731,7 +789,7 @@ impl DState {
     /// One compressed block, to `buf` from `start` on.
     fn decompress_block(
         &mut self,
-        buf: &mut [u8],
+        buf: OutputBuffer<'_>,
         start: usize,
         capacity: usize,
         src: &[u8],
@@ -792,7 +850,14 @@ impl DState {
             let decoded_size = match properties.block_type {
                 BlockType::Compressed => {
                     let capacity = dst.len() - op;
-                    self.decompress_block(dst, op, capacity, block, ddict, Streaming::No)?
+                    self.decompress_block(
+                        OutputBuffer::Whole(dst),
+                        op,
+                        capacity,
+                        block,
+                        ddict,
+                        Streaming::No,
+                    )?
                 }
                 BlockType::Raw => copy_raw_block(dst.sub_mut(op..)?, block)?,
                 BlockType::Rle => set_rle_block(
@@ -930,7 +995,7 @@ impl DState {
                     BlockType::Compressed => {
                         self.expected = 0;
                         self.decompress_block(
-                            &mut out_buff,
+                            OutputBuffer::Used(&mut out_buff.bytes),
                             dst,
                             dst_capacity,
                             src,
@@ -939,13 +1004,13 @@ impl DState {
                         )
                     }
                     BlockType::Raw => out_buff
-                        .span_mut(dst, dst_capacity)
+                        .span_mut(dst, dst_capacity.min(src.len()))
                         .and_then(|dst| copy_raw_block(dst, src))
                         .inspect(|&r_size| self.expected -= r_size),
                     BlockType::Rle => {
                         self.expected = 0;
                         out_buff
-                            .span_mut(dst, dst_capacity)
+                            .span_mut(dst, dst_capacity.min(self.rle_size))
                             .and_then(|dst| set_rle_block(dst, src.at(0)?, self.rle_size))
                     }
                     BlockType::Reserved => Err(ErrorCode::CorruptionDetected),
@@ -957,7 +1022,8 @@ impl DState {
                 }
                 self.decoded_size += r_size as u64;
                 if self.validate_checksum {
-                    self.xxh_state.update(self.out_buff.span(dst, r_size)?);
+                    self.xxh_state
+                        .update(self.out_buff.bytes.span(dst, r_size)?);
                 }
                 self.previous_dst_end = Some(dst + r_size);
 
@@ -1017,7 +1083,7 @@ impl DState {
         let dst_size = if is_skip_frame {
             0
         } else {
-            self.out_buff.len() - self.out_start
+            self.out_buff.size - self.out_start
         };
         let decoded_size = self.decompress_continue(dst_size, src, ddict)?;
         if decoded_size == 0 && !is_skip_frame {
@@ -1040,7 +1106,7 @@ impl DState {
         );
 
         // `ZSTD_DCtx_updateOversizedDuration`
-        if self.in_buff.len() + self.out_buff.len()
+        if self.in_buff.size + self.out_buff.size
             >= (needed_in_buff_size + needed_out_buff_size) * ZSTD_WORKSPACETOOLARGE_FACTOR
         {
             self.oversized_duration += 1;
@@ -1049,13 +1115,13 @@ impl DState {
         }
 
         let too_small =
-            self.in_buff.len() < needed_in_buff_size || self.out_buff.len() < needed_out_buff_size;
+            self.in_buff.size < needed_in_buff_size || self.out_buff.size < needed_out_buff_size;
         let too_large = self.oversized_duration >= ZSTD_WORKSPACETOOLARGE_MAXDURATION;
         if too_small || too_large {
-            self.in_buff = Vec::new();
-            self.out_buff = Vec::new();
-            self.in_buff = try_zeroed(needed_in_buff_size)?;
-            self.out_buff = try_zeroed(needed_out_buff_size)?;
+            self.in_buff = Buffer::new();
+            self.out_buff = Buffer::new();
+            self.in_buff = Buffer::with_size(needed_in_buff_size)?;
+            self.out_buff = Buffer::with_size(needed_out_buff_size)?;
         }
         Ok(())
     }
@@ -1091,8 +1157,8 @@ impl DState {
             }
 
             if let DStreamStage::LoadHeader { lh_size } = self.stream_stage {
-                match get_frame_header(self.header_buffer.sub(..lh_size)?)? {
-                    HeaderStatus::Complete(header) => self.f_params = header,
+                match get_frame_header(&mut self.f_params, self.header_buffer.sub(..lh_size)?)? {
+                    HeaderStatus::Complete => {}
                     HeaderStatus::Needs(h_size) => {
                         let to_load = h_size - lh_size;
                         let remaining_input = iend - ip;
@@ -1102,7 +1168,10 @@ impl DState {
                             self.stream_stage = DStreamStage::LoadHeader { lh_size };
                             input.pos = iend;
                             // Refuse what cannot become a frame header.
-                            get_frame_header(self.header_buffer.sub(..lh_size)?)?;
+                            get_frame_header(
+                                &mut self.f_params,
+                                self.header_buffer.sub(..lh_size)?,
+                            )?;
                             return Ok(
                                 FRAMEHEADERSIZE_MIN.max(h_size) - lh_size + ZSTD_BLOCKHEADERSIZE
                             );
@@ -1183,11 +1252,13 @@ impl DState {
                 let to_load = needed_in_size - self.in_pos;
                 let loaded_size = to_load.min(iend - ip);
                 if self.stage != DStage::SkipFrame {
-                    if to_load > self.in_buff.len() - self.in_pos {
+                    if to_load > self.in_buff.size - self.in_pos {
                         return Err(ErrorCode::CorruptionDetected);
                     }
+                    self.in_buff.bytes.truncate(self.in_pos);
                     self.in_buff
-                        .write_at(self.in_pos, src.span(ip, loaded_size)?)?;
+                        .bytes
+                        .extend_from_slice(src.span(ip, loaded_size)?);
                 }
                 ip += loaded_size;
                 self.in_pos += loaded_size;
@@ -1196,7 +1267,7 @@ impl DState {
                 }
 
                 self.in_pos = 0;
-                let in_buff = core::mem::take(&mut self.in_buff);
+                let in_buff = core::mem::take(&mut self.in_buff.bytes);
                 // Nothing of a skippable frame is read, or kept.
                 let loaded = in_buff.get(..needed_in_size).unwrap_or_default();
                 let result = if self.stage == DStage::SkipFrame {
@@ -1204,7 +1275,7 @@ impl DState {
                 } else {
                     self.decompress_continue_stream(loaded, ddict)
                 };
-                self.in_buff = in_buff;
+                self.in_buff.bytes = in_buff;
                 result?;
                 continue 'work;
             }
@@ -1214,13 +1285,13 @@ impl DState {
             let flushed_size = to_flush_size.min(oend - op);
             output
                 .dst
-                .write_at(op, self.out_buff.span(self.out_start, flushed_size)?)?;
+                .write_at(op, self.out_buff.bytes.span(self.out_start, flushed_size)?)?;
             op += flushed_size;
             self.out_start += flushed_size;
             if flushed_size == to_flush_size {
                 self.stream_stage = DStreamStage::Read;
-                if (self.out_buff.len() as u64) < self.f_params.frame_content_size
-                    && self.out_start + self.f_params.block_size_max > self.out_buff.len()
+                if (self.out_buff.size as u64) < self.f_params.frame_content_size
+                    && self.out_start + self.f_params.block_size_max > self.out_buff.size
                 {
                     self.out_start = 0;
                     self.out_end = 0;

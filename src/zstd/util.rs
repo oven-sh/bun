@@ -161,7 +161,7 @@ pub(crate) const fn highbit32(value: u32) -> u32 {
     31 - (value | 1).leading_zeros()
 }
 
-/// `len` zeros, or [`ErrorCode::MemoryAllocation`]. A large one costs nothing until it is written to.
+/// `len` zeros, or [`ErrorCode::MemoryAllocation`]. An allocator that reuses memory has to clear all of it.
 pub(crate) fn try_zeroed<T: bun_pod::Zeroable>(len: usize) -> Result<Vec<T>> {
     bun_pod::try_zeroed_vec(len).ok_or(ErrorCode::MemoryAllocation)
 }

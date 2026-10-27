@@ -9,6 +9,8 @@ use crate::common::{
 };
 use crate::error::{ErrorCode, Result};
 use crate::util::{BUG, SliceExt, highbit32, read_le32, read_le64, try_zeroed, write_le24};
+use core::hint::{Locality, prefetch_read};
+use core::sync::atomic::{Ordering, compiler_fence};
 
 pub(crate) const K_SEARCH_STRENGTH: u32 = 8;
 pub(crate) const HASH_READ_SIZE: usize = 8;
@@ -489,9 +491,10 @@ impl<'a> SeqSink<'a> {
         }
     }
 
-    /// `ZSTD_storeSeq`: the literals are the `lit_length` bytes of `src` from `literals` on.
+    /// `ZSTD_storeSeq`: the literals are the `lit_length` bytes of `src` from `literals` on. Up to `SHORT` of them, which
+    /// is at most [`WILDCOPY_OVERLENGTH`], that many bytes are copied whatever their number.
     #[inline(always)]
-    pub(crate) fn store_seq(
+    pub(crate) fn store_seq<const SHORT: usize>(
         &mut self,
         lit_length: u32,
         src: Near<'_>,
@@ -500,19 +503,29 @@ impl<'a> SeqSink<'a> {
         match_length: u32,
     ) -> Result<()> {
         let lit_len = self.lit_len as usize;
-        let room = self.lit_buffer.get_mut(lit_len..lit_len + 16);
+        let room = self.lit_buffer.get_mut(lit_len..lit_len + SHORT);
         match (
-            src.chunk16(literals),
-            room.and_then(<[u8]>::first_chunk_mut::<16>),
+            src.window::<SHORT>(literals),
+            room.and_then(<[u8]>::first_chunk_mut::<SHORT>),
         ) {
-            (Some(from), Some(to)) if lit_length <= 16 => *to = *from,
+            (Some(from), Some(to)) if lit_length as usize <= SHORT => *to = *from,
             _ => self.lit_buffer.write_at(
                 lit_len,
                 src.bytes().span(literals as usize, lit_length as usize)?,
             )?,
         }
         self.lit_len += lit_length;
+        self.store_seq_only(lit_length, off_base, match_length)
+    }
 
+    /// `ZSTD_storeSeqOnly`
+    #[inline(always)]
+    pub(crate) fn store_seq_only(
+        &mut self,
+        lit_length: u32,
+        off_base: u32,
+        match_length: u32,
+    ) -> Result<()> {
         let ml_base = match_length.wrapping_sub(MINMATCH);
         if lit_length > 0xFFFF || ml_base > 0xFFFF {
             self.store.long_length_type = if ml_base > 0xFFFF {
@@ -749,10 +762,36 @@ impl<'a> Near<'a> {
         Some(u64::from_le_bytes(*bytes))
     }
 
+    /// Whether the bits of `MASK` are the same in `bytes` and in the 8 bytes at `pos`. If `pos` is too far to read them,
+    /// that is only found out once other bytes turned out to be the same.
+    #[inline(always)]
+    pub(crate) fn has<const MASK: u64>(self, pos: u32, bytes: u64) -> bool {
+        let Some(last) = self.0.len().checked_sub(8) else {
+            return false;
+        };
+        let pos = pos as usize;
+        let at = pos.min(last);
+        let Some(there) = self.0.get(at..at + 8).and_then(<[u8]>::first_chunk) else {
+            return false;
+        };
+        if (u64::from_le_bytes(*there) ^ bytes) & MASK != 0 {
+            return false;
+        }
+        // Costs nothing, and keeps the compiler from asking the second question first.
+        compiler_fence(Ordering::SeqCst);
+        pos <= last
+    }
+
     #[inline(always)]
     fn chunk16(self, pos: u32) -> Option<&'a [u8; 16]> {
+        self.window(pos)
+    }
+
+    /// The `N` bytes at `pos`, which can then be read with no further check.
+    #[inline(always)]
+    pub(crate) fn window<const N: usize>(self, pos: u32) -> Option<&'a [u8; N]> {
         let pos = pos as usize;
-        self.0.get(pos..pos + 16)?.first_chunk()
+        self.0.get(pos..pos + N)?.first_chunk()
     }
 
     #[inline(always)]
@@ -776,6 +815,27 @@ impl<'a> Near<'a> {
         }
         while let Some(byte) = self.read8(pos + len)
             && self.read8(match_pos + len) == Some(byte)
+        {
+            len += 1;
+        }
+        len
+    }
+
+    /// How long what is at `pos` is the same as what is at `other_pos` in `other`, up to the end of either.
+    #[inline(always)]
+    pub(crate) fn count_in(self, pos: u32, other: Near<'_>, other_pos: u32) -> u32 {
+        let mut len = 0;
+        while let (Some(bytes), Some(other_bytes)) =
+            (self.chunk16(pos + len), other.chunk16(other_pos + len))
+        {
+            let diff = u128::from_le_bytes(*bytes) ^ u128::from_le_bytes(*other_bytes);
+            if diff != 0 {
+                return len + (diff.trailing_zeros() >> 3);
+            }
+            len += 16;
+        }
+        while let Some(byte) = self.read8(pos + len)
+            && other.read8(other_pos + len) == Some(byte)
         {
             len += 1;
         }
@@ -821,30 +881,59 @@ impl<'a> Near<'a> {
         match_low: u32,
     ) -> u32 {
         let most = (pos - anchor).min(match_pos - match_low);
+        self.count_backwards_in(pos, self, match_pos, most)
+    }
+
+    /// How many bytes before `pos` are the same as those before `other_pos` in `other`, up to `most`.
+    #[inline(always)]
+    pub(crate) fn count_backwards_in(
+        self,
+        pos: u32,
+        other: Near<'_>,
+        other_pos: u32,
+        most: u32,
+    ) -> u32 {
+        // Whether there is anything to compare is as good as random: it takes no branch to find out.
+        if let (Some(bytes), Some(other_bytes)) = (
+            self.read64(pos.wrapping_sub(8)),
+            other.read64(other_pos.wrapping_sub(8)),
+        ) {
+            let same = (bytes ^ other_bytes).leading_zeros() >> 3;
+            if same < 8 || most <= 8 {
+                return same.min(most);
+            }
+        }
+        self.count_backwards_bytewise(pos, other, other_pos, most)
+    }
+
+    #[cold]
+    fn count_backwards_bytewise(self, pos: u32, other: Near<'_>, other_pos: u32, most: u32) -> u32 {
         let mut len = 0;
         while len < most
-            && let (Some(bytes), Some(match_bytes)) = (
-                self.read64((pos - len).wrapping_sub(8)),
-                self.read64((match_pos - len).wrapping_sub(8)),
-            )
-        {
-            let diff = bytes ^ match_bytes;
-            if diff != 0 {
-                return (len + (diff.leading_zeros() >> 3)).min(most);
-            }
-            len += 8;
-        }
-        if len >= most {
-            return most;
-        }
-        while len < most
             && let Some(byte) = self.read8(pos - len - 1)
-            && self.read8(match_pos - len - 1) == Some(byte)
+            && other.read8(other_pos - len - 1) == Some(byte)
         {
             len += 1;
         }
         len
     }
+}
+
+/// `table`, of `1 << BITS` cells, with that known to the compiler, which then neither has to keep the size around nor
+/// to check a hash of `BITS` bits against it. With 0, `table` as it is.
+#[inline(always)]
+pub(crate) fn table_of_size<const BITS: u32>(table: &mut [u32]) -> Option<&mut [u32]> {
+    if BITS > 0 {
+        table.get_mut(..1 << BITS)
+    } else {
+        Some(table)
+    }
+}
+
+/// Has `table[hash]` on its way.
+#[inline(always)]
+pub(crate) fn table_prefetch(table: &[u32], hash: usize) {
+    prefetch_read(table.as_ptr().wrapping_add(hash), Locality::L1);
 }
 
 /// `table[hash]`. The size of `table` is a power of 2 that `hash` is less than, which the mask tells the compiler.
@@ -854,13 +943,41 @@ pub(crate) fn table_get(table: &[u32], hash: usize) -> u32 {
     cell.copied().unwrap_or(0)
 }
 
+/// `table[hash]`. `hash` is less than the size of `table`: to check that delays nothing, which a mask would.
+#[inline(always)]
+pub(crate) fn hashed_get(table: &[u32], hash: usize) -> u32 {
+    table.get(hash).copied().unwrap_or(0)
+}
+
 /// `table[hash] = index`, likewise.
 #[inline(always)]
-pub(crate) fn table_put(table: &mut [u32], hash: usize, index: u32) {
-    let mask = table.len().wrapping_sub(1);
-    if let Some(cell) = table.get_mut(hash & mask) {
+pub(crate) fn hashed_put(table: &mut [u32], hash: usize, index: u32) {
+    if let Some(cell) = table.get_mut(hash) {
         *cell = index;
     }
+}
+
+/// `table[hash] = index`, likewise. Returns what was there.
+#[inline(always)]
+pub(crate) fn hashed_swap(table: &mut [u32], hash: usize, index: u32) -> u32 {
+    match table.get_mut(hash) {
+        Some(cell) => core::mem::replace(cell, index),
+        None => 0,
+    }
+}
+
+/// The 4 bytes of `window` from `AT` on.
+#[inline(always)]
+pub(crate) fn le32_at<const AT: usize, const N: usize>(window: &[u8; N]) -> u32 {
+    let bytes = window.get(AT..).and_then(<[u8]>::first_chunk);
+    bytes.map_or(0, |bytes| u32::from_le_bytes(*bytes))
+}
+
+/// The 8 bytes of `window` from `AT` on.
+#[inline(always)]
+pub(crate) fn le64_at<const AT: usize, const N: usize>(window: &[u8; N]) -> u64 {
+    let bytes = window.get(AT..).and_then(<[u8]>::first_chunk);
+    bytes.map_or(0, |bytes| u64::from_le_bytes(*bytes))
 }
 
 /// `ZSTD_count`: how long `buf` from `p_in` on, up to `p_in_limit`, is the same as `match_buf` from `p_match` on.

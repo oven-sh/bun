@@ -1,964 +1,856 @@
-//! `huf_decompress.c`: Huffman decoding of literals, one symbol (X1) or up to two symbols (X2) per table lookup.
+//! Huffman decoding of literals.
+//!
+//! Streams that end exactly where they should decode to the same thing whichever way it is done, so that is done in
+//! the way that is fastest here. The others are left to [`huf_exact`](super::huf_exact).
 
-use crate::common::bitstream::{BitDStream, DStreamStatus};
-use crate::common::entropy::huf_read_stats;
+use super::huf_exact::{self, TableType, select_decoder_x2};
+use crate::common::entropy::huf_read_stats_wksp;
+use crate::common::fse_decompress::Spread;
 use crate::common::{HUF_SYMBOLVALUE_MAX, HUF_TABLELOG_MAX};
 use crate::error::{ErrorCode, Result};
-use crate::util::{BUG, SliceExt, highbit32, read_le16, read_le64};
+use crate::util::{BUG, SliceExt, read_le16};
 
-/// Tables of this log are decoded by the loops that keep four streams in registers.
-const HUF_DECODER_FAST_TABLELOG: u32 = 11;
-
-const TABLE_SIZE: usize = 1 << HUF_TABLELOG_MAX;
-const TABLE_MASK: usize = TABLE_SIZE - 1;
 const NB_SYMBOLS: usize = HUF_SYMBOLVALUE_MAX as usize + 1;
 const NB_RANKS: usize = HUF_TABLELOG_MAX as usize + 1;
+const TABLE_SIZE: usize = 1 << HUF_TABLELOG_MAX;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum TableType {
-    X1,
-    X2,
+/// The description of a Huffman code.
+#[derive(Clone)]
+pub(super) struct Code {
+    /// A symbol of weight `w` has a code of `table_log + 1 - w` bits, or none if that is 0.
+    pub(super) weights: [u8; NB_SYMBOLS],
+    /// How many symbols have each weight.
+    pub(super) rank_stats: [u32; NB_RANKS],
+    pub(super) nb_symbols: u32,
+    pub(super) table_log: u32,
 }
 
-/// `HUF_DTable`, of capacity `ZSTD_HUFFDTABLE_CAPACITY_LOG`.
+/// The loop that decodes four streams at once takes a table of this log, or one more.
+const FAST_LOG: u32 = 11;
+/// From how many literals on that loop makes up for the time that it takes to fill such a table.
+const FAST_MIN_LITERALS: usize = 2048;
+/// From how many literals on the larger table is considered.
+const LARGE_MIN_LITERALS: usize = 1 << 14;
+
+impl Code {
+    /// How many symbols a lookup of `log` bits yields, in 65536ths, if symbols are as frequent as their codes are short.
+    fn symbols_per_lookup(&self, log: u32) -> u64 {
+        let table_log = self.table_log as usize;
+        // For each number of bits, out of `1 << table_log`, how many symbols have a code no longer than that.
+        let mut one = [0u64; NB_RANKS + 1];
+        let mut share = [0u64; NB_RANKS + 1];
+        let mut total = 0;
+        for nb_bits in 1..=log as usize {
+            let of_these = match (table_log + 1).saturating_sub(nb_bits) {
+                0 => 0,
+                weight => {
+                    u64::from(self.rank_stats.get(weight).copied().unwrap_or(0)) << (weight - 1)
+                }
+            };
+            total += of_these;
+            if let (Some(share), Some(one)) = (share.get_mut(nb_bits), one.get_mut(nb_bits)) {
+                *share = of_these;
+                *one = total;
+            }
+        }
+        // The same for two symbols and for three, out of that squared and cubed.
+        let after = |fits: &[u64; NB_RANKS + 1], room: usize| -> u64 {
+            (1..room)
+                .map(|nb_bits| {
+                    share.get(nb_bits).copied().unwrap_or(0)
+                        * fits.get(room - nb_bits).copied().unwrap_or(0)
+                })
+                .sum()
+        };
+        let mut two = [0u64; NB_RANKS + 1];
+        for (room, two) in two.iter_mut().enumerate() {
+            *two = after(&one, room);
+        }
+        let three = after(&two, log as usize);
+        let two = two.get(log as usize).copied().unwrap_or(0);
+        (1 << 16) + ((two << 16) >> (2 * table_log)) + ((three << 16) >> (3 * table_log))
+    }
+
+    /// How many bits to look up at once to decode `nb_literals`.
+    fn best_log(&self, nb_literals: usize) -> u32 {
+        if nb_literals < FAST_MIN_LITERALS {
+            return self.table_log;
+        }
+        // The larger table takes twice the time to fill, half of the cache, and a refill for 4 lookups and not 5.
+        if self.table_log > FAST_LOG
+            || nb_literals >= LARGE_MIN_LITERALS
+                && self.symbols_per_lookup(FAST_LOG + 1) * 4 > self.symbols_per_lookup(FAST_LOG) * 5
+        {
+            return FAST_LOG + 1;
+        }
+        FAST_LOG
+    }
+}
+
+/// What a lookup yields. From the lowest byte on: up to 3 symbols, then how many bits they take in 6 bits and how many
+/// they are above.
+type Entry = u32;
+
+const COUNT_SHIFT: u32 = 6;
+
+/// What a symbol adds to an entry that has `index` symbols.
+const fn entry(symbol: u8, index: u32, nb_bits: u32) -> Entry {
+    ((symbol as u32) << (8 * index)) | ((nb_bits + (1 << COUNT_SHIFT)) << 24)
+}
+
+/// For each of `symbols`, `1 << run_log` entries that are `base` and the symbol at `index`.
+fn fill_runs(out: &mut [Entry], symbols: &[u8], run_log: u32, base: Entry, index: u32) {
+    #[inline(always)]
+    fn runs<const RUN: usize>(out: &mut [Entry], symbols: &[u8], base: Entry, index: u32) {
+        let (out, _) = out.as_chunks_mut::<RUN>();
+        for (run, &symbol) in out.iter_mut().zip(symbols) {
+            *run = [base + (u32::from(symbol) << (8 * index)); RUN];
+        }
+    }
+    match run_log {
+        0 => runs::<1>(out, symbols, base, index),
+        1 => runs::<2>(out, symbols, base, index),
+        2 => runs::<4>(out, symbols, base, index),
+        3 => runs::<8>(out, symbols, base, index),
+        _ => {
+            for (run, &symbol) in out.chunks_exact_mut(1 << run_log).zip(symbols) {
+                run.fill(base + (u32::from(symbol) << (8 * index)));
+            }
+        }
+    }
+}
+
+/// The symbols of a code in the order of their codes, which is by increasing weight.
+struct Sorted {
+    symbols: [u8; NB_SYMBOLS],
+    /// Where the symbols of each weight start in `symbols`.
+    class_start: [usize; NB_CLASSES],
+    /// Where their entries start in a table.
+    position: [usize; NB_CLASSES],
+    /// How many bits index that table.
+    log: u32,
+    table_log: u32,
+    /// The weight of the shortest code.
+    max_weight: usize,
+}
+
+/// More than there are weights, and a power of 2.
+const NB_CLASSES: usize = 16;
+
+impl Sorted {
+    fn new(code: &Code, log: u32) -> Result<Self> {
+        let mut class_start = [0usize; NB_CLASSES];
+        let mut position = [0usize; NB_CLASSES];
+        let mut nb_sorted = 0usize;
+        let mut filled = 0usize;
+        let mut max_weight = 1;
+        for (weight, &count) in code.rank_stats.iter().enumerate().skip(1) {
+            class_start.put(weight, nb_sorted)?;
+            position.put(weight, filled)?;
+            if count != 0 {
+                max_weight = weight;
+            }
+            nb_sorted += count as usize;
+            filled += ((count as usize) << (weight - 1)) << (log - code.table_log);
+        }
+        class_start.sub_mut(NB_RANKS..)?.fill(nb_sorted);
+        position.sub_mut(NB_RANKS..)?.fill(filled);
+
+        // The symbols that have no code go after the others.
+        let mut symbols = [0u8; NB_SYMBOLS];
+        let mut cursor = class_start;
+        cursor.put(0, nb_sorted)?;
+        let mut place = |symbol: usize, weight: u8| {
+            if let Some(at) = cursor.get_mut(usize::from(weight) % NB_CLASSES) {
+                if let Some(slot) = symbols.get_mut(*at) {
+                    *slot = symbol as u8;
+                }
+                *at += 1;
+            }
+        };
+        let (eights, others) = code
+            .weights
+            .sub(..code.nb_symbols as usize)?
+            .as_chunks::<8>();
+        for (index, eight) in eights.iter().enumerate() {
+            if *eight != [0; 8] {
+                for (offset, &weight) in eight.iter().enumerate() {
+                    place(8 * index + offset, weight);
+                }
+            }
+        }
+        for (offset, &weight) in others.iter().enumerate() {
+            place(8 * eights.len() + offset, weight);
+        }
+        Ok(Self {
+            symbols,
+            class_start,
+            position,
+            log,
+            table_log: code.table_log,
+            max_weight,
+        })
+    }
+
+    fn class(&self, weight: usize) -> Result<&[u8]> {
+        self.symbols
+            .sub(self.class_start.at(weight)?..self.class_start.at(weight + 1)?)
+    }
+
+    fn nb_bits(&self, weight: usize) -> u32 {
+        self.table_log + 1 - weight as u32
+    }
+
+    fn shortest(&self) -> u32 {
+        self.nb_bits(self.max_weight)
+    }
+
+    /// The lowest weight of a code of at most `room` bits.
+    fn min_weight(&self, room: u32) -> usize {
+        (self.table_log as usize + 1)
+            .saturating_sub(room as usize)
+            .max(1)
+    }
+
+    /// Where the entries of the symbols of a weight start in a table that `room` bits index.
+    fn position(&self, weight: usize, room: u32) -> Result<usize> {
+        Ok(self.position.at(weight)? >> (self.log - room))
+    }
+
+    /// Fills a table that `room` bits index: each entry is `base`, which has `index` symbols, and the symbol that the
+    /// bits start with if they hold all of its code. `next` is what the bits after that add: the table for `n` bits is
+    /// there from `1 << n` on.
+    fn fill(
+        &self,
+        out: &mut [Entry],
+        room: u32,
+        base: Entry,
+        index: u32,
+        next: Option<&[Entry]>,
+    ) -> Result<()> {
+        let min_weight = self.min_weight(room);
+        out.sub_mut(..self.position(min_weight, room)?)?.fill(base);
+        for weight in min_weight..=self.max_weight {
+            let symbols = self.class(weight)?;
+            let room_after = room - self.nb_bits(weight);
+            let out = out.span_mut(self.position(weight, room)?, symbols.len() << room_after)?;
+            let base = base + entry(0, index, self.nb_bits(weight));
+            match next {
+                Some(next) if room_after >= self.shortest() => {
+                    let size = 1usize << room_after;
+                    let next = next.span(size, size)?;
+                    for (out, &symbol) in out.chunks_exact_mut(size).zip(symbols) {
+                        let base = base + (u32::from(symbol) << (8 * index));
+                        for (entry, next) in out.iter_mut().zip(next) {
+                            *entry = base + next;
+                        }
+                    }
+                }
+                _ => fill_runs(out, symbols, room_after, base, index),
+            }
+        }
+        Ok(())
+    }
+}
+
+/// `HUF_DTable`
 #[derive(Clone)]
 pub(crate) struct HufDTable {
+    code: Code,
+    /// The kind of table that the C code has.
     table_type: TableType,
-    table_log: u32,
-    /// `HUF_DEltX1`: the number of bits in the low byte, and the symbol above it.
-    x1: [u16; TABLE_SIZE],
-    /// `HUF_DEltX2`: two symbols, then the number of bits, then how many of the symbols count.
-    x2: [u32; TABLE_SIZE],
+    /// How many bits `table` is indexed with.
+    log: u32,
+    table: [Entry; TABLE_SIZE],
 }
 
 impl HufDTable {
     pub(crate) const fn new() -> Self {
         Self {
+            code: Code {
+                weights: [0; NB_SYMBOLS],
+                rank_stats: [0; NB_RANKS],
+                nb_symbols: 0,
+                table_log: 0,
+            },
             table_type: TableType::X1,
-            table_log: 0,
-            x1: [0; TABLE_SIZE],
-            x2: [0; TABLE_SIZE],
-        }
-    }
-}
-
-#[inline(always)]
-fn entry_x1(dt: &[u16; TABLE_SIZE], index: u64) -> u16 {
-    dt.get(index as usize & TABLE_MASK).copied().unwrap_or(0)
-}
-
-#[inline(always)]
-fn entry_x2(dt: &[u32; TABLE_SIZE], index: u64) -> u32 {
-    dt.get(index as usize & TABLE_MASK).copied().unwrap_or(0)
-}
-
-// ── the four streams ──────────────────────────────────────────────────────
-
-/// Where the four streams of `src` start, after the jump table, and where the last one ends.
-struct Streams {
-    start: [usize; 4],
-    length: [usize; 4],
-}
-
-impl Streams {
-    /// `src` has at least 10 bytes.
-    fn new(src: &[u8]) -> Result<Self> {
-        let length1 = usize::from(read_le16(src, 0)?);
-        let length2 = usize::from(read_le16(src, 2)?);
-        let length3 = usize::from(read_le16(src, 4)?);
-        let length4 = src.len().wrapping_sub(length1 + length2 + length3 + 6);
-        let start1 = 6;
-        let start2 = start1 + length1;
-        let start3 = start2 + length2;
-        let start4 = start3 + length3;
-        Ok(Self {
-            start: [start1, start2, start3, start4],
-            length: [length1, length2, length3, length4],
-        })
-    }
-
-    fn open<'a>(&self, src: &'a [u8]) -> Result<[BitDStream<'a>; 4]> {
-        let [s1, s2, s3, s4] = self.start;
-        let [l1, l2, l3, l4] = self.length;
-        Ok([
-            BitDStream::new(src.span(s1, l1)?)?,
-            BitDStream::new(src.span(s2, l2)?)?,
-            BitDStream::new(src.span(s3, l3)?)?,
-            BitDStream::new(src.span(s4, l4)?)?,
-        ])
-    }
-}
-
-/// `HUF_DecompressFastArgs`, with positions in the input and the output for pointers.
-struct FastArgs {
-    ip: [usize; 4],
-    op: [usize; 4],
-    bits: [u64; 4],
-    /// Where each stream starts.
-    iend: [usize; 4],
-}
-
-/// `HUF_initFastDStream`: the lowest set bit marks how much of the 64 bits is consumed.
-#[inline]
-fn init_fast_dstream(src: &[u8], ip: usize) -> Result<u64> {
-    let value = read_le64(src, ip)?;
-    let last_byte = (value >> 56) as u32;
-    let bits_consumed = if last_byte != 0 {
-        8 - highbit32(last_byte)
-    } else {
-        0
-    };
-    Ok((value | 1) << bits_consumed)
-}
-
-impl FastArgs {
-    /// `HUF_DecompressFastArgs_init`. `None` if the input has to be decoded by the other loops.
-    fn new(dst_size: usize, src: &[u8], table_log: u32) -> Result<Option<Self>> {
-        if dst_size == 0 {
-            return Ok(None);
-        }
-        if src.len() < 10 {
-            return Err(ErrorCode::CorruptionDetected);
-        }
-        if table_log != HUF_DECODER_FAST_TABLELOG {
-            return Ok(None);
-        }
-        let streams = Streams::new(src)?;
-        if streams.length.iter().any(|&length| length < 8) {
-            return Ok(None);
-        }
-        let [_, _, _, length4] = streams.length;
-        if length4 > src.len() {
-            return Err(ErrorCode::CorruptionDetected);
-        }
-        let [_, start2, start3, start4] = streams.start;
-        let ip = [start2 - 8, start3 - 8, start4 - 8, src.len() - 8];
-        let segment = dst_size.div_ceil(4);
-        let op = [0, segment, 2 * segment, 3 * segment];
-        if 3 * segment >= dst_size {
-            return Ok(None);
-        }
-        let [ip0, ip1, ip2, ip3] = ip;
-        Ok(Some(Self {
-            ip,
-            op,
-            bits: [
-                init_fast_dstream(src, ip0)?,
-                init_fast_dstream(src, ip1)?,
-                init_fast_dstream(src, ip2)?,
-                init_fast_dstream(src, ip3)?,
-            ],
-            iend: streams.start,
-        }))
-    }
-
-    /// `HUF_initRemainingDStream`
-    fn remaining_dstream<'a>(
-        &self,
-        src: &'a [u8],
-        stream: usize,
-        segment_end: usize,
-    ) -> Result<BitDStream<'a>> {
-        if self.op.at(stream)? > segment_end {
-            return Err(ErrorCode::CorruptionDetected);
-        }
-        let ip = self.ip.at(stream)?;
-        if ip + 8 < self.iend.at(stream)? {
-            return Err(ErrorCode::CorruptionDetected);
-        }
-        BitDStream::resume(src, ip, self.bits.at(stream)?.trailing_zeros())
-    }
-
-    /// How many rounds of at most 7 bytes the first stream has input for. The others start above it.
-    #[inline]
-    fn input_rounds(&self) -> usize {
-        let [ip0, ..] = self.ip;
-        ip0 / 7
-    }
-
-    #[inline]
-    fn streams_are_ordered(&self) -> bool {
-        self.ip.is_sorted()
-    }
-}
-
-/// What both fast loops do to a stream after a round.
-#[inline(always)]
-fn reload_fast(src: &[u8], ip: &mut usize, bits: &mut u64) -> Result<()> {
-    let ctz = bits.trailing_zeros();
-    let nb_bits = ctz & 7;
-    let nb_bytes = (ctz >> 3) as usize;
-    *ip = ip.wrapping_sub(nb_bytes);
-    *bits = (read_le64(src, *ip)? | 1) << nb_bits;
-    Ok(())
-}
-
-/// Three parts of `segment_size` bytes, and the rest.
-fn split_in_4(dst: &mut [u8], segment_size: usize) -> Result<[&mut [u8]; 4]> {
-    let (part0, rest) = dst.split_at_mut_checked(segment_size).ok_or(BUG)?;
-    let (part1, rest) = rest.split_at_mut_checked(segment_size).ok_or(BUG)?;
-    let (part2, part3) = rest.split_at_mut_checked(segment_size).ok_or(BUG)?;
-    Ok([part0, part1, part2, part3])
-}
-
-/// The end of each of the four parts of an output of `dst_size` bytes.
-fn segment_ends(dst_size: usize) -> [usize; 4] {
-    let segment = dst_size.div_ceil(4);
-    [1, 2, 3, 4].map(|n| (n * segment).min(dst_size))
-}
-
-// ── X1 ────────────────────────────────────────────────────────────────────
-
-/// `HUF_rescaleStats`
-fn rescale_stats(
-    huff_weight: &mut [u8],
-    rank_val: &mut [u32; NB_RANKS],
-    table_log: u32,
-    target_table_log: u32,
-) -> Result<u32> {
-    if table_log > target_table_log {
-        return Ok(table_log);
-    }
-    if table_log < target_table_log {
-        let scale = (target_table_log - table_log) as usize;
-        for weight in huff_weight {
-            if *weight != 0 {
-                *weight += scale as u8;
-            }
-        }
-        let target = target_table_log as usize;
-        rank_val.move_within(1, scale + 1, target - scale)?;
-        rank_val.span_mut(1, scale)?.fill(0);
-    }
-    Ok(target_table_log)
-}
-
-/// `HUF_readDTableX1_wksp`. Returns the size of the table's description in `src`.
-fn read_dtable_x1(dtable: &mut HufDTable, src: &[u8]) -> Result<usize> {
-    let mut rank_val = [0u32; NB_RANKS];
-    let mut rank_start = [0u32; NB_RANKS];
-    let mut symbols = [0u8; NB_SYMBOLS];
-    let mut huff_weight = [0u8; NB_SYMBOLS];
-
-    let stats = huf_read_stats(&mut huff_weight, &mut rank_val, src)?;
-    let weights = huff_weight.sub_mut(..stats.nb_symbols as usize)?;
-
-    // An X1 table takes half the room of an X2 table, so its log may be one more than the capacity.
-    let max_table_log = HUF_TABLELOG_MAX + 1;
-    let target_table_log = max_table_log.min(HUF_DECODER_FAST_TABLELOG);
-    let table_log = rescale_stats(weights, &mut rank_val, stats.table_log, target_table_log)?;
-    if table_log > max_table_log {
-        return Err(ErrorCode::TableLogTooLarge);
-    }
-    dtable.table_type = TableType::X1;
-    dtable.table_log = table_log;
-
-    // Sort the symbols by weight.
-    let mut next_rank_start = 0u32;
-    for (start, &count) in rank_start
-        .iter_mut()
-        .zip(&rank_val)
-        .take(table_log as usize + 1)
-    {
-        *start = next_rank_start;
-        next_rank_start += count;
-    }
-    for (symbol, &weight) in weights.iter().enumerate() {
-        let start = rank_start.at_mut(usize::from(weight))?;
-        symbols.put(*start as usize, symbol as u8)?;
-        *start += 1;
-    }
-
-    let [rank0, ..] = rank_val;
-    let mut symbol = rank0 as usize;
-    let mut u_start = 0usize;
-    for w in 1..=table_log {
-        let symbol_count = rank_val.at(w as usize)? as usize;
-        let length = (1usize << w) >> 1;
-        let nb_bits = (table_log + 1 - w) as u16;
-        for &byte in symbols.span(symbol, symbol_count)? {
-            dtable
-                .x1
-                .span_mut(u_start, length)?
-                .fill((u16::from(byte) << 8) | nb_bits);
-            u_start += length;
-        }
-        symbol += symbol_count;
-    }
-    Ok(stats.size)
-}
-
-/// `HUF_decodeSymbolX1`
-#[inline(always)]
-fn decode_symbol_x1(bit_d: &mut BitDStream<'_>, dt: &[u16; TABLE_SIZE], dt_log: u32) -> u8 {
-    let entry = entry_x1(dt, bit_d.look_bits_fast(dt_log));
-    bit_d.skip_bits(u32::from(entry & 0xFF));
-    (entry >> 8) as u8
-}
-
-/// `HUF_decodeStreamX1`: fills `out`.
-#[inline]
-fn decode_stream_x1(
-    out: &mut [u8],
-    bit_d: &mut BitDStream<'_>,
-    dt: &[u16; TABLE_SIZE],
-    dt_log: u32,
-) {
-    let end = out.len();
-    let mut p = 0usize;
-    if end > 3 {
-        while (bit_d.reload() == DStreamStatus::Unfinished) & (p + 3 < end) {
-            if let Ok(four) = out.array_at_mut::<4>(p) {
-                for byte in four {
-                    *byte = decode_symbol_x1(bit_d, dt, dt_log);
-                }
-            }
-            p += 4;
-        }
-    } else {
-        bit_d.reload();
-    }
-    for byte in out.get_mut(p..).unwrap_or_default() {
-        *byte = decode_symbol_x1(bit_d, dt, dt_log);
-    }
-}
-
-/// `HUF_decompress1X1_usingDTable_internal_body`
-fn decompress_1x1_using_dtable(dst: &mut [u8], src: &[u8], dtable: &HufDTable) -> Result<usize> {
-    let mut bit_d = BitDStream::new(src)?;
-    decode_stream_x1(dst, &mut bit_d, &dtable.x1, dtable.table_log);
-    if !bit_d.is_at_end() {
-        return Err(ErrorCode::CorruptionDetected);
-    }
-    Ok(dst.len())
-}
-
-/// `HUF_decompress4X1_usingDTable_internal_body`
-fn decompress_4x1_body(dst: &mut [u8], src: &[u8], dtable: &HufDTable) -> Result<usize> {
-    if src.len() < 10 {
-        return Err(ErrorCode::CorruptionDetected);
-    }
-    if dst.len() < 6 {
-        return Err(ErrorCode::CorruptionDetected);
-    }
-    let dst_size = dst.len();
-    let dt = &dtable.x1;
-    let dt_log = dtable.table_log;
-    let streams = Streams::new(src)?;
-    let [_, _, _, length4] = streams.length;
-    if length4 > src.len() {
-        return Err(ErrorCode::CorruptionDetected);
-    }
-    let segment_size = dst_size.div_ceil(4);
-    if 3 * segment_size > dst_size {
-        return Err(ErrorCode::CorruptionDetected);
-    }
-    let [mut bit_d1, mut bit_d2, mut bit_d3, mut bit_d4] = streams.open(src)?;
-
-    let [out1, out2, out3, out4] = split_in_4(dst, segment_size)?;
-    // The four streams advance together, by `done`, and the last part is the shortest.
-    let mut done = 0usize;
-    if out4.len() >= 8 {
-        let mut end_signal = true;
-        while end_signal & (done + 3 < out4.len()) {
-            let four1 = out1.array_at_mut::<4>(done)?;
-            let four2 = out2.array_at_mut::<4>(done)?;
-            let four3 = out3.array_at_mut::<4>(done)?;
-            let four4 = out4.array_at_mut::<4>(done)?;
-            for (((byte1, byte2), byte3), byte4) in
-                four1.iter_mut().zip(four2).zip(four3).zip(four4)
-            {
-                *byte1 = decode_symbol_x1(&mut bit_d1, dt, dt_log);
-                *byte2 = decode_symbol_x1(&mut bit_d2, dt, dt_log);
-                *byte3 = decode_symbol_x1(&mut bit_d3, dt, dt_log);
-                *byte4 = decode_symbol_x1(&mut bit_d4, dt, dt_log);
-            }
-            done += 4;
-            end_signal &= bit_d1.reload_fast() == DStreamStatus::Unfinished;
-            end_signal &= bit_d2.reload_fast() == DStreamStatus::Unfinished;
-            end_signal &= bit_d3.reload_fast() == DStreamStatus::Unfinished;
-            end_signal &= bit_d4.reload_fast() == DStreamStatus::Unfinished;
+            log: 0,
+            table: [0; TABLE_SIZE],
         }
     }
 
-    decode_stream_x1(out1.sub_mut(done..)?, &mut bit_d1, dt, dt_log);
-    decode_stream_x1(out2.sub_mut(done..)?, &mut bit_d2, dt, dt_log);
-    decode_stream_x1(out3.sub_mut(done..)?, &mut bit_d3, dt, dt_log);
-    decode_stream_x1(out4.sub_mut(done..)?, &mut bit_d4, dt, dt_log);
-
-    if !(bit_d1.is_at_end() & bit_d2.is_at_end() & bit_d3.is_at_end() & bit_d4.is_at_end()) {
-        return Err(ErrorCode::CorruptionDetected);
-    }
-    Ok(dst_size)
-}
-
-/// `HUF_decompress4X1_usingDTable_internal_fast_c_loop`
-fn fast_loop_4x1(
-    args: &mut FastArgs,
-    dst: &mut [u8],
-    src: &[u8],
-    dt: &[u16; TABLE_SIZE],
-) -> Result<()> {
-    let [_, segment_size, ..] = args.op;
-    let [part0, part1, part2, part3] = split_in_4(dst, segment_size)?;
-    // How much of each part is written. It is the same for all of them.
-    let mut done = 0usize;
-
-    let [mut ip0, mut ip1, mut ip2, mut ip3] = args.ip;
-    let [mut bits0, mut bits1, mut bits2, mut bits3] = args.bits;
-
-    #[inline(always)]
-    fn decode(bits: &mut u64, dt: &[u16; TABLE_SIZE]) -> u8 {
-        let entry = entry_x1(dt, *bits >> 53);
-        *bits <<= entry & 0x3F;
-        (entry >> 8) as u8
+    /// Reads the description of a table at the start of `src`, and returns its size. The table is to decode
+    /// `nb_literals` with.
+    fn read(
+        &mut self,
+        src: &[u8],
+        table_type: TableType,
+        nb_literals: usize,
+        spread: &mut Spread,
+    ) -> Result<usize> {
+        let Code {
+            weights,
+            rank_stats,
+            ..
+        } = &mut self.code;
+        let stats = huf_read_stats_wksp(weights, rank_stats, src, spread)?;
+        self.code.nb_symbols = stats.nb_symbols;
+        self.code.table_log = stats.table_log;
+        self.table_type = table_type;
+        self.build(self.code.best_log(nb_literals))?;
+        Ok(stats.size)
     }
 
-    loop {
-        // Each round writes 5 bytes to each part, of which the last is the shortest, and reads at most 7 of each stream.
-        let rounds = ((part3.len() - done) / 5).min(ip0 / 7);
-        if rounds == 0 {
-            break;
+    /// Makes the table fit to decode `nb_literals` with.
+    pub(crate) fn prepare(&mut self, nb_literals: usize) -> Result<()> {
+        if self.log < FAST_LOG && nb_literals >= FAST_MIN_LITERALS {
+            self.build(self.code.table_log.max(FAST_LOG))?;
         }
-        if !(ip0 <= ip1 && ip1 <= ip2 && ip2 <= ip3) {
-            break;
-        }
-        let (out0, _) = part0.span_mut(done, rounds * 5)?.as_chunks_mut::<5>();
-        let (out1, _) = part1.span_mut(done, rounds * 5)?.as_chunks_mut::<5>();
-        let (out2, _) = part2.span_mut(done, rounds * 5)?.as_chunks_mut::<5>();
-        let (out3, _) = part3.span_mut(done, rounds * 5)?.as_chunks_mut::<5>();
-        for (((out0, out1), out2), out3) in out0.iter_mut().zip(out1).zip(out2).zip(out3) {
-            for (((byte0, byte1), byte2), byte3) in out0.iter_mut().zip(out1).zip(out2).zip(out3) {
-                *byte0 = decode(&mut bits0, dt);
-                *byte1 = decode(&mut bits1, dt);
-                *byte2 = decode(&mut bits2, dt);
-                *byte3 = decode(&mut bits3, dt);
-            }
-            reload_fast(src, &mut ip0, &mut bits0)?;
-            reload_fast(src, &mut ip1, &mut bits1)?;
-            reload_fast(src, &mut ip2, &mut bits2)?;
-            reload_fast(src, &mut ip3, &mut bits3)?;
-        }
-        done += rounds * 5;
-    }
-
-    args.ip = [ip0, ip1, ip2, ip3];
-    args.bits = [bits0, bits1, bits2, bits3];
-    args.op = args.op.map(|start| start + done);
-    Ok(())
-}
-
-/// `HUF_decompress4X1_usingDTable_internal_fast`. `None` if the input has to be decoded by the other loop.
-fn decompress_4x1_fast(dst: &mut [u8], src: &[u8], dtable: &HufDTable) -> Result<Option<usize>> {
-    let Some(mut args) = FastArgs::new(dst.len(), src, dtable.table_log)? else {
-        return Ok(None);
-    };
-    fast_loop_4x1(&mut args, dst, src, &dtable.x1)?;
-
-    for (stream, segment_end) in segment_ends(dst.len()).into_iter().enumerate() {
-        let mut bit_d = args.remaining_dstream(src, stream, segment_end)?;
-        let out = dst.sub_mut(args.op.at(stream)?..segment_end)?;
-        decode_stream_x1(out, &mut bit_d, &dtable.x1, HUF_DECODER_FAST_TABLELOG);
-    }
-    Ok(Some(dst.len()))
-}
-
-/// `HUF_decompress4X1_usingDTable_internal`
-fn decompress_4x1_using_dtable(dst: &mut [u8], src: &[u8], dtable: &HufDTable) -> Result<usize> {
-    if let Some(size) = decompress_4x1_fast(dst, src, dtable)? {
-        return Ok(size);
-    }
-    decompress_4x1_body(dst, src, dtable)
-}
-
-// ── X2 ────────────────────────────────────────────────────────────────────
-
-type RankValCol = [u32; NB_RANKS];
-
-/// `HUF_buildDEltX2U32`
-#[inline(always)]
-fn build_delt_x2(symbol: u32, nb_bits: u32, base_seq: u32, level: u32) -> u32 {
-    let seq = if level == 1 {
-        symbol
-    } else {
-        base_seq + (symbol << 8)
-    };
-    seq + (nb_bits << 16) + (level << 24)
-}
-
-/// `HUF_fillDTableX2ForWeight`
-fn fill_dtable_x2_for_weight(
-    dtable_rank: &mut [u32],
-    symbols: &[u8],
-    nb_bits: u32,
-    table_log: u32,
-    base_seq: u32,
-    level: u32,
-) -> Result<()> {
-    let length = 1usize << (table_log.wrapping_sub(nb_bits) & 0x1F);
-    let entries = dtable_rank.sub_mut(..length * symbols.len())?;
-    for (entries, &symbol) in entries.chunks_exact_mut(length).zip(symbols) {
-        entries.fill(build_delt_x2(u32::from(symbol), nb_bits, base_seq, level));
-    }
-    Ok(())
-}
-
-/// `HUF_fillDTableX2Level2`
-fn fill_dtable_x2_level2(
-    dtable: &mut [u32],
-    target_log: u32,
-    consumed_bits: u32,
-    rank_val: &RankValCol,
-    min_weight: usize,
-    max_weight1: usize,
-    sorted_symbols: &[u8; NB_SYMBOLS],
-    rank_start: &[u32; NB_RANKS + 2],
-    nb_bits_baseline: u32,
-    base_seq: u32,
-) -> Result<()> {
-    // The codes that are too long for a second symbol to fit hold the first symbol alone.
-    if min_weight > 1 {
-        let length = 1usize << (target_log.wrapping_sub(consumed_bits) & 0x1F);
-        let skip_size = rank_val.at(min_weight)? as usize;
-        let filled = match length {
-            2 | 4 => length,
-            _ => skip_size.next_multiple_of(8),
-        };
-        let first_symbol = base_seq;
-        dtable
-            .sub_mut(..filled)?
-            .fill(build_delt_x2(first_symbol, consumed_bits, 0, 1));
-    }
-
-    for w in min_weight..max_weight1 {
-        let begin = rank_start.at(w)? as usize;
-        let end = rank_start.at(w + 1)? as usize;
-        let nb_bits = nb_bits_baseline - w as u32;
-        let total_bits = nb_bits + consumed_bits;
-        fill_dtable_x2_for_weight(
-            dtable.sub_mut(rank_val.at(w)? as usize..)?,
-            sorted_symbols.sub(begin..end)?,
-            total_bits,
-            target_log,
-            base_seq,
-            2,
-        )?;
-    }
-    Ok(())
-}
-
-/// `HUF_fillDTableX2`
-fn fill_dtable_x2(
-    dtable: &mut [u32; TABLE_SIZE],
-    target_log: u32,
-    sorted_list: &[u8; NB_SYMBOLS],
-    rank_start: &[u32; NB_RANKS + 2],
-    rank_val_origin: &[RankValCol; HUF_TABLELOG_MAX as usize],
-    max_weight: u32,
-    nb_bits_baseline: u32,
-) -> Result<()> {
-    let [rank_val, ..] = rank_val_origin;
-    let scale_log = nb_bits_baseline as i32 - target_log as i32;
-    let min_bits = nb_bits_baseline - max_weight;
-    let w_end = max_weight as usize + 1;
-
-    for w in 1..w_end {
-        let begin = rank_start.at(w)? as usize;
-        let end = rank_start.at(w + 1)? as usize;
-        let nb_bits = nb_bits_baseline - w as u32;
-
-        if target_log.wrapping_sub(nb_bits) >= min_bits {
-            // Enough room for a second symbol.
-            let mut start = rank_val.at(w)? as usize;
-            let length = 1usize << (target_log.wrapping_sub(nb_bits) & 0x1F);
-            let min_weight = (nb_bits as i32 + scale_log).max(1) as usize;
-            for &symbol in sorted_list.sub(begin..end)? {
-                fill_dtable_x2_level2(
-                    dtable.sub_mut(start..)?,
-                    target_log,
-                    nb_bits,
-                    rank_val_origin.get(nb_bits as usize).ok_or(BUG)?,
-                    min_weight,
-                    w_end,
-                    sorted_list,
-                    rank_start,
-                    nb_bits_baseline,
-                    u32::from(symbol),
-                )?;
-                start += length;
-            }
-        } else {
-            fill_dtable_x2_for_weight(
-                dtable.sub_mut(rank_val.at(w)? as usize..)?,
-                sorted_list.sub(begin..end)?,
-                nb_bits,
-                target_log,
-                0,
-                1,
-            )?;
-        }
-    }
-    Ok(())
-}
-
-/// `HUF_readDTableX2_wksp`. Returns the size of the table's description in `src`.
-pub(crate) fn read_dtable_x2(dtable: &mut HufDTable, src: &[u8]) -> Result<usize> {
-    let mut rank_val = [[0u32; NB_RANKS]; HUF_TABLELOG_MAX as usize];
-    let mut rank_stats = [0u32; NB_RANKS];
-    // `rank_start0[w + 1]` is where the symbols of weight `w` start, until sorting moves it to where they end.
-    let mut rank_start0 = [0u32; NB_RANKS + 2];
-    let mut sorted_symbol = [0u8; NB_SYMBOLS];
-    let mut weight_list = [0u8; NB_SYMBOLS];
-    let mut max_table_log = HUF_TABLELOG_MAX;
-
-    let stats = huf_read_stats(&mut weight_list, &mut rank_stats, src)?;
-    let table_log = stats.table_log;
-
-    if table_log > max_table_log {
-        return Err(ErrorCode::TableLogTooLarge);
-    }
-    if table_log <= HUF_DECODER_FAST_TABLELOG && max_table_log > HUF_DECODER_FAST_TABLELOG {
-        max_table_log = HUF_DECODER_FAST_TABLELOG;
-    }
-
-    let mut max_w = table_log as usize;
-    while rank_stats.at(max_w)? == 0 {
-        max_w = max_w.checked_sub(1).ok_or(BUG)?;
-    }
-
-    let mut next_rank_start = 0u32;
-    for w in 1..=max_w {
-        rank_start0.put(w + 1, next_rank_start)?;
-        next_rank_start += rank_stats.at(w)?;
-    }
-    // The symbols of weight 0 go to the end.
-    rank_start0.put(1, next_rank_start)?;
-    rank_start0.put(max_w + 2, next_rank_start)?;
-
-    for (symbol, &weight) in weight_list
-        .iter()
-        .enumerate()
-        .take(stats.nb_symbols as usize)
-    {
-        let start = rank_start0.at_mut(usize::from(weight) + 1)?;
-        sorted_symbol.put(*start as usize, symbol as u8)?;
-        *start += 1;
-    }
-    rank_start0.put(1, 0)?;
-
-    {
-        let rescale = (max_table_log - table_log) as i32 - 1;
-        let mut next_rank_val = 0u32;
-        let [rank_val0, ..] = &mut rank_val;
-        for w in 1..=max_w {
-            rank_val0.put(w, next_rank_val)?;
-            next_rank_val += rank_stats.at(w)? << (w as i32 + rescale);
-        }
-        let rank_val0 = *rank_val0;
-        let min_bits = table_log + 1 - max_w as u32;
-        for consumed in min_bits..(max_table_log - min_bits + 1) {
-            let rank_val_col = rank_val.get_mut(consumed as usize).ok_or(BUG)?;
-            for (shifted, &val) in rank_val_col.iter_mut().zip(&rank_val0).skip(1).take(max_w) {
-                *shifted = val >> consumed;
-            }
-        }
-    }
-
-    fill_dtable_x2(
-        &mut dtable.x2,
-        max_table_log,
-        &sorted_symbol,
-        &rank_start0,
-        &rank_val,
-        max_w as u32,
-        table_log + 1,
-    )?;
-
-    dtable.table_log = max_table_log;
-    dtable.table_type = TableType::X2;
-    Ok(stats.size)
-}
-
-/// `HUF_decodeSymbolX2`: writes two bytes at `pos` and returns how many of them count.
-#[inline(always)]
-fn decode_symbol_x2(
-    out: &mut [u8],
-    pos: usize,
-    bit_d: &mut BitDStream<'_>,
-    dt: &[u32; TABLE_SIZE],
-    dt_log: u32,
-) -> Result<usize> {
-    let entry = entry_x2(dt, bit_d.look_bits_fast(dt_log));
-    *out.array_at_mut(pos)? = (entry as u16).to_le_bytes();
-    bit_d.skip_bits((entry >> 16) & 0xFF);
-    Ok((entry >> 24) as usize)
-}
-
-/// `HUF_decodeLastSymbolX2`
-#[inline(always)]
-fn decode_last_symbol_x2(
-    out: &mut [u8],
-    pos: usize,
-    bit_d: &mut BitDStream<'_>,
-    dt: &[u32; TABLE_SIZE],
-    dt_log: u32,
-) -> Result<()> {
-    let entry = entry_x2(dt, bit_d.look_bits_fast(dt_log));
-    out.put(pos, entry as u8)?;
-    let nb_bits = (entry >> 16) & 0xFF;
-    if entry >> 24 == 1 {
-        bit_d.skip_bits(nb_bits);
-    } else if bit_d.bits_consumed < u64::BITS {
-        bit_d.skip_bits(nb_bits);
-        // The code of the second symbol, which is not wanted, may be cut off.
-        if bit_d.bits_consumed > u64::BITS {
-            bit_d.bits_consumed = u64::BITS;
-        }
-    }
-    Ok(())
-}
-
-/// `HUF_decodeStreamX2`: fills `out` and returns its length.
-#[inline]
-fn decode_stream_x2(
-    out: &mut [u8],
-    bit_d: &mut BitDStream<'_>,
-    dt: &[u32; TABLE_SIZE],
-    dt_log: u32,
-) -> Result<usize> {
-    let end = out.len();
-    let mut p = 0usize;
-
-    if end >= 8 {
-        if dt_log <= 11 {
-            while (bit_d.reload() == DStreamStatus::Unfinished) & (p + 9 < end) {
-                for _ in 0..5 {
-                    p += decode_symbol_x2(out, p, bit_d, dt, dt_log)?;
-                }
-            }
-        } else {
-            while (bit_d.reload() == DStreamStatus::Unfinished) & (p + 7 < end) {
-                for _ in 0..4 {
-                    p += decode_symbol_x2(out, p, bit_d, dt, dt_log)?;
-                }
-            }
-        }
-    } else {
-        bit_d.reload();
-    }
-
-    if end - p >= 2 {
-        while (bit_d.reload() == DStreamStatus::Unfinished) & (p + 2 <= end) {
-            p += decode_symbol_x2(out, p, bit_d, dt, dt_log)?;
-        }
-        while p + 2 <= end {
-            p += decode_symbol_x2(out, p, bit_d, dt, dt_log)?;
-        }
-    }
-
-    if p < end {
-        decode_last_symbol_x2(out, p, bit_d, dt, dt_log)?;
-        p += 1;
-    }
-    Ok(p)
-}
-
-/// `HUF_decompress1X2_usingDTable_internal_body`
-fn decompress_1x2_using_dtable(dst: &mut [u8], src: &[u8], dtable: &HufDTable) -> Result<usize> {
-    let mut bit_d = BitDStream::new(src)?;
-    decode_stream_x2(dst, &mut bit_d, &dtable.x2, dtable.table_log)?;
-    if !bit_d.is_at_end() {
-        return Err(ErrorCode::CorruptionDetected);
-    }
-    Ok(dst.len())
-}
-
-/// `HUF_decompress4X2_usingDTable_internal_body`
-fn decompress_4x2_body(dst: &mut [u8], src: &[u8], dtable: &HufDTable) -> Result<usize> {
-    if src.len() < 10 {
-        return Err(ErrorCode::CorruptionDetected);
-    }
-    if dst.len() < 6 {
-        return Err(ErrorCode::CorruptionDetected);
-    }
-    let oend = dst.len();
-    let dt = &dtable.x2;
-    let dt_log = dtable.table_log;
-    let streams = Streams::new(src)?;
-    let [_, _, _, length4] = streams.length;
-    if length4 > src.len() {
-        return Err(ErrorCode::CorruptionDetected);
-    }
-    let segment_size = oend.div_ceil(4);
-    let op_start2 = segment_size;
-    let op_start3 = 2 * segment_size;
-    let op_start4 = 3 * segment_size;
-    if op_start4 > oend {
-        return Err(ErrorCode::CorruptionDetected);
-    }
-    let [mut bit_d1, mut bit_d2, mut bit_d3, mut bit_d4] = streams.open(src)?;
-    let (mut op1, mut op2, mut op3, mut op4) = (0, op_start2, op_start3, op_start4);
-
-    // A damaged stream can run over the start of the next part, so the parts are not split here.
-    if oend - op4 >= 8 {
-        let mut end_signal = true;
-        while end_signal & (op4 + 7 < oend) {
-            for _ in 0..4 {
-                op1 += decode_symbol_x2(dst, op1, &mut bit_d1, dt, dt_log)?;
-            }
-            for _ in 0..4 {
-                op2 += decode_symbol_x2(dst, op2, &mut bit_d2, dt, dt_log)?;
-            }
-            end_signal &= bit_d1.reload_fast() == DStreamStatus::Unfinished;
-            end_signal &= bit_d2.reload_fast() == DStreamStatus::Unfinished;
-            for _ in 0..4 {
-                op3 += decode_symbol_x2(dst, op3, &mut bit_d3, dt, dt_log)?;
-            }
-            for _ in 0..4 {
-                op4 += decode_symbol_x2(dst, op4, &mut bit_d4, dt, dt_log)?;
-            }
-            end_signal &= bit_d3.reload_fast() == DStreamStatus::Unfinished;
-            end_signal &= bit_d4.reload_fast() == DStreamStatus::Unfinished;
-        }
-    }
-
-    if op1 > op_start2 || op2 > op_start3 || op3 > op_start4 {
-        return Err(ErrorCode::CorruptionDetected);
-    }
-
-    decode_stream_x2(dst.sub_mut(op1..op_start2)?, &mut bit_d1, dt, dt_log)?;
-    decode_stream_x2(dst.sub_mut(op2..op_start3)?, &mut bit_d2, dt, dt_log)?;
-    decode_stream_x2(dst.sub_mut(op3..op_start4)?, &mut bit_d3, dt, dt_log)?;
-    decode_stream_x2(dst.sub_mut(op4..oend)?, &mut bit_d4, dt, dt_log)?;
-
-    if !(bit_d1.is_at_end() & bit_d2.is_at_end() & bit_d3.is_at_end() & bit_d4.is_at_end()) {
-        return Err(ErrorCode::CorruptionDetected);
-    }
-    Ok(oend)
-}
-
-/// `HUF_decompress4X2_usingDTable_internal_fast_c_loop`
-fn fast_loop_4x2(
-    args: &mut FastArgs,
-    dst: &mut [u8],
-    src: &[u8],
-    dt: &[u32; TABLE_SIZE],
-) -> Result<()> {
-    let [_, end0, end1, end2] = args.op;
-    let oend = [end0, end1, end2, dst.len()];
-
-    #[inline(always)]
-    fn decode(
-        dst: &mut [u8],
-        op: &mut usize,
-        bits: &mut u64,
-        dt: &[u32; TABLE_SIZE],
-    ) -> Result<()> {
-        let entry = entry_x2(dt, *bits >> 53);
-        *dst.array_at_mut(*op)? = (entry as u16).to_le_bytes();
-        *bits <<= (entry >> 16) & 0x3F;
-        *op += (entry >> 24) as usize;
         Ok(())
     }
 
-    loop {
-        // Each round writes at most 10 bytes to each part and reads at most 7 of each stream.
-        let mut rounds = args.input_rounds();
-        for (&end, &op) in oend.iter().zip(&args.op) {
-            rounds = rounds.min((end - op) / 10);
+    /// Fills `table` for lookups of `log` bits, which is at least as many as the longest code has.
+    fn build(&mut self, log: u32) -> Result<()> {
+        self.log = log;
+        let sorted = Sorted::new(&self.code, log)?;
+        // The tables of what a third symbol adds end with the one for this many bits.
+        let room = log.saturating_sub(2 * sorted.shortest());
+        if room < 7 {
+            self.fill(&sorted, &mut [0; 1 << 7])
+        } else {
+            self.fill(&sorted, &mut [0; TABLE_SIZE / 2])
         }
-        if rounds == 0 {
-            break;
+    }
+
+    fn fill(&mut self, sorted: &Sorted, thirds: &mut [Entry]) -> Result<()> {
+        let log = sorted.log;
+        let shortest = sorted.shortest();
+        for room in shortest..=log.saturating_sub(2 * shortest) {
+            sorted.fill(thirds.span_mut(1 << room, 1 << room)?, room, 0, 2, None)?;
         }
-        if !args.streams_are_ordered() {
-            break;
-        }
-        let [mut op0, mut op1, mut op2, mut op3] = args.op;
-        let [mut ip0, mut ip1, mut ip2, mut ip3] = args.ip;
-        let [mut bits0, mut bits1, mut bits2, mut bits3] = args.bits;
-        let olimit = op3 + rounds * 5;
-        loop {
-            for _ in 0..5 {
-                decode(dst, &mut op0, &mut bits0, dt)?;
-                decode(dst, &mut op1, &mut bits1, dt)?;
-                decode(dst, &mut op2, &mut bits2, dt)?;
-                decode(dst, &mut op3, &mut bits3, dt)?;
+        for weight in 1..=sorted.max_weight {
+            let symbols = sorted.class(weight)?;
+            let nb_bits = sorted.nb_bits(weight);
+            let room = log - nb_bits;
+            let entries = self
+                .table
+                .span_mut(sorted.position(weight, log)?, symbols.len() << room)?;
+            if room < shortest {
+                fill_runs(entries, symbols, room, entry(0, 0, nb_bits), 0);
+                continue;
             }
-            reload_fast(src, &mut ip0, &mut bits0)?;
-            reload_fast(src, &mut ip1, &mut bits1)?;
-            reload_fast(src, &mut ip2, &mut bits2)?;
-            reload_fast(src, &mut ip3, &mut bits3)?;
-            if op3 >= olimit {
+            let Some((&first_symbol, other_symbols)) = symbols.split_first() else {
+                continue;
+            };
+            let size = 1usize << room;
+            let (entries, other_entries) = entries.split_at_mut_checked(size).ok_or(BUG)?;
+            sorted.fill(
+                entries,
+                room,
+                entry(first_symbol, 0, nb_bits),
+                1,
+                Some(thirds),
+            )?;
+            for (copy, &symbol) in other_entries.chunks_exact_mut(size).zip(other_symbols) {
+                let change = u32::from(symbol).wrapping_sub(u32::from(first_symbol));
+                for (to, from) in copy.iter_mut().zip(&*entries) {
+                    *to = from.wrapping_add(change);
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// One stream. Whether it is exactly `dst.len()` symbols.
+    fn decode_1x(&self, dst: &mut [u8], src: &[u8]) -> bool {
+        let Some(mut stream) = Stream::new(Part { src, out: dst }) else {
+            return false;
+        };
+        stream.decode_most(&self.table, self.log);
+        self.decode_tails([stream])
+    }
+
+    /// Four streams after their sizes. Whether each is exactly its share of `dst.len()` symbols.
+    fn decode_4x(&self, dst: &mut [u8], src: &[u8]) -> bool {
+        let Some(parts) = Part::split(dst, src) else {
+            return false;
+        };
+        let Some(mut streams) = Streams::new(parts) else {
+            return false;
+        };
+        if streams.0.iter().all(|stream| stream.bits != 0) {
+            self.decode_most(&mut streams);
+        }
+        if !streams.0.iter().all(Stream::fits_tail) {
+            return self.decode_stragglers(streams);
+        }
+        self.decode_4_tails(streams)
+    }
+
+    #[inline(never)]
+    fn decode_most(&self, streams: &mut Streams<'_>) {
+        match self.log {
+            11 => streams.decode_most::<11, 5>(&self.table, 0),
+            12 => streams.decode_most::<12, 4>(&self.table, 0),
+            log => streams.decode_most::<0, 5>(&self.table, 64 - log),
+        }
+    }
+
+    /// The same for streams of which some have much left.
+    #[inline(never)]
+    fn decode_stragglers(&self, streams: Streams<'_>) -> bool {
+        // Some streams get there before others, which go on four at a time all the same: with these.
+        static NO_STREAM: [u8; 256] = [0x55; 256];
+        let mut no_output = [[0u8; 512]; 4];
+        let mut streams: Streams<'_> = streams;
+        let mut decoding = Streams(no_output.each_mut().map(|out| Stream {
+            src: &NO_STREAM,
+            ip: 0,
+            bits: 0,
+            out,
+            op: 0,
+        }));
+        for (slot, stream) in decoding.0.iter_mut().zip(&mut streams.0) {
+            core::mem::swap(slot, stream);
+        }
+        // `streams[i]` is in `decoding`.
+        let mut left = [true; 4];
+        loop {
+            for ((stream, done), left) in decoding.0.iter_mut().zip(&mut streams.0).zip(&mut left) {
+                if stream.has_most_left() {
+                    continue;
+                }
+                if *left {
+                    *left = false;
+                    core::mem::swap(stream, done);
+                }
+                stream.ip = NO_STREAM.len() as u32 - 8;
+                stream.bits = 1;
+                stream.op = 0;
+                stream.has_most_left();
+            }
+            if left == [false; 4] {
+                break;
+            }
+            self.decode_most(&mut decoding);
+        }
+        self.decode_4_tails(streams)
+    }
+
+    #[inline(never)]
+    fn decode_4_tails(&self, streams: Streams<'_>) -> bool {
+        self.decode_tails(streams.0)
+    }
+
+    /// Decodes what is left of streams. Whether each turns out to be exactly as many symbols as its output takes.
+    #[inline(always)]
+    fn decode_tails<const N: usize>(&self, mut streams: [Stream<'_>; N]) -> bool {
+        let mut tails = [const { Tail::new() }; N];
+        for (tail, stream) in tails.iter_mut().zip(&streams) {
+            if !tail.set(stream) {
+                return false;
+            }
+        }
+        let shift = 64 - self.log;
+        loop {
+            let mut rounds = tails.each_ref().map(Tail::start_round);
+            for _ in 0..Tail::LOOKUPS {
+                for (tail, round) in tails.iter_mut().zip(&mut rounds) {
+                    let index = (round.bits >> shift) as usize;
+                    let entry = self.table.get(index % TABLE_SIZE).copied().unwrap_or(0);
+                    round.bits <<= (entry >> 24) & 63;
+                    if let Some(to) = tail.out.get_mut(round.op..round.op + 4) {
+                        to.copy_from_slice(&entry.to_le_bytes());
+                    }
+                    round.op += (entry >> (24 + COUNT_SHIFT)) as usize;
+                }
+            }
+            let mut more = false;
+            for (tail, round) in tails.iter_mut().zip(&rounds) {
+                more |= tail.end_round(round);
+            }
+            if !more {
                 break;
             }
         }
-        args.op = [op0, op1, op2, op3];
-        args.ip = [ip0, ip1, ip2, ip3];
-        args.bits = [bits0, bits1, bits2, bits3];
+        let mut exact = true;
+        for (tail, stream) in tails.iter().zip(&mut streams) {
+            exact &= tail.get(stream, self.code.table_log);
+        }
+        exact
     }
-    Ok(())
 }
 
-/// `HUF_decompress4X2_usingDTable_internal_fast`. `None` if the input has to be decoded by the other loop.
-fn decompress_4x2_fast(dst: &mut [u8], src: &[u8], dtable: &HufDTable) -> Result<Option<usize>> {
-    let Some(mut args) = FastArgs::new(dst.len(), src, dtable.table_log)? else {
-        return Ok(None);
+/// What is left of a stream that is close to its start or whose output is close to its end, where decoding can go too
+/// far: that is made up for afterwards.
+struct Tail {
+    /// Zeroes, then the start of the stream.
+    src: [u8; Self::PADDING + Self::MAX_SRC],
+    /// How many bits are left to read of `src`.
+    position: u32,
+    out: [u8; Self::MAX_SYMBOLS + Self::ROUND_SYMBOLS],
+    /// How much of `out` is written.
+    op: u32,
+}
+
+/// A few lookups between two reads of a stream.
+struct Round {
+    /// What is left of 64 bits, from the highest bit on, then a bit set.
+    bits: u64,
+    /// How many of the 64 bits were read before.
+    skipped: u32,
+    /// How much of the output is written.
+    op: usize,
+}
+
+impl Tail {
+    const LOOKUPS: usize = 4;
+    /// How many bytes a round can write.
+    const ROUND_SYMBOLS: usize = 3 * Self::LOOKUPS + 1;
+    /// No less than a round can read, and 8 bytes.
+    const PADDING: usize = 16;
+    const MAX_SRC: usize = 64;
+    const MAX_SYMBOLS: usize = 128;
+
+    const fn new() -> Self {
+        Self {
+            src: [0; _],
+            position: 0,
+            out: [0; _],
+            op: 0,
+        }
+    }
+
+    /// Takes what is left of a stream, if it is not too much and the stream has an end mark.
+    fn set(&mut self, stream: &Stream<'_>) -> bool {
+        let Some(&last) = stream.src.last() else {
+            return false;
+        };
+        if last == 0 || !stream.fits_tail() {
+            return false;
+        }
+        let end = stream.end();
+        let src = self.src.get_mut(Self::PADDING..).unwrap_or_default();
+        if let (Some(to), Some(from)) = (
+            src.first_chunk_mut::<{ Self::MAX_SRC }>(),
+            stream.src.first_chunk::<{ Self::MAX_SRC }>(),
+        ) {
+            *to = *from;
+        } else if let (Some(to), Some(from)) = (src.get_mut(..end), stream.src.get(..end)) {
+            to.copy_from_slice(from);
+        }
+        let consumed = if stream.bits == 0 {
+            last.leading_zeros() + 1
+        } else {
+            stream.bits.trailing_zeros()
+        };
+        self.position = 8 * (Self::PADDING + end) as u32 - consumed;
+        true
+    }
+
+    /// Whether neither the start of the stream nor the end of `out` is reached.
+    fn has_more(&self) -> bool {
+        self.position > 8 * Self::PADDING as u32 && self.op as usize <= Self::MAX_SYMBOLS
+    }
+
+    #[inline(always)]
+    fn start_round(&self) -> Round {
+        let end = (self.position as usize).div_ceil(8);
+        let container = self
+            .src
+            .get(end.wrapping_sub(8)..end)
+            .and_then(|bytes| bytes.try_into().ok())
+            .map_or(0, u64::from_le_bytes);
+        let skipped = self.position.wrapping_neg() & 7;
+        Round {
+            bits: (container | 1) << skipped,
+            skipped,
+            op: self.op as usize,
+        }
+    }
+
+    /// Returns whether there is to be another round.
+    #[inline(always)]
+    fn end_round(&mut self, round: &Round) -> bool {
+        if !self.has_more() {
+            return false;
+        }
+        self.op = round.op as u32;
+        self.position -= round.bits.trailing_zeros() - round.skipped;
+        self.has_more()
+    }
+
+    /// Completes the output of the stream. Whether the stream is exactly as many symbols as its output takes.
+    fn get(&self, stream: &mut Stream<'_>, table_log: u32) -> bool {
+        let out = stream.out.get_mut(stream.op as usize..).unwrap_or_default();
+        let Some(symbols) = self.out.get(..out.len()) else {
+            return false;
+        };
+        out.copy_from_slice(symbols);
+        // Zeroes are the longest code.
+        let nb_bits = (8 * Self::PADDING as u32).wrapping_sub(self.position);
+        let nb_symbols = self.op.wrapping_sub(out.len() as u32);
+        !self.has_more() && u64::from(nb_bits) == u64::from(nb_symbols) * u64::from(table_log)
+    }
+}
+
+/// A stream, and where its symbols go.
+struct Part<'a> {
+    src: &'a [u8],
+    out: &'a mut [u8],
+}
+
+impl<'a> Part<'a> {
+    /// `None` if the sizes at the start of `src` are not those of four streams.
+    fn split(dst: &'a mut [u8], src: &'a [u8]) -> Option<[Self; 4]> {
+        let (sizes, src) = src.split_first_chunk::<6>()?;
+        let (src0, src) = src.split_at_checked(usize::from(read_le16(sizes, 0).ok()?))?;
+        let (src1, src) = src.split_at_checked(usize::from(read_le16(sizes, 2).ok()?))?;
+        let (src2, src3) = src.split_at_checked(usize::from(read_le16(sizes, 4).ok()?))?;
+        let segment = dst.len().div_ceil(4);
+        let (dst0, dst) = dst.split_at_mut_checked(segment)?;
+        let (dst1, dst) = dst.split_at_mut_checked(segment)?;
+        let (dst2, dst3) = dst.split_at_mut_checked(segment)?;
+        Some(
+            [(src0, dst0), (src1, dst1), (src2, dst2), (src3, dst3)]
+                .map(|(src, out)| Self { src, out }),
+        )
+    }
+}
+
+/// What two rounds of lookups between reloads can write, as far as the compiler can tell.
+const WINDOW: usize = 32;
+
+/// Reads the 64 bits from where a stream is. Whether there are as many.
+#[inline(always)]
+fn reload(src: &[u8], ip: &mut u32, bits: &mut u64) -> bool {
+    let consumed = bits.trailing_zeros();
+    // Wraps around before the start.
+    let from = ip.wrapping_sub(consumed >> 3);
+    let Some(Ok(container)) = src
+        .get(from as usize..from as usize + 8)
+        .map(<[u8; 8]>::try_from)
+    else {
+        return false;
     };
-    fast_loop_4x2(&mut args, dst, src, &dtable.x2)?;
-
-    for (stream, segment_end) in segment_ends(dst.len()).into_iter().enumerate() {
-        let mut bit_d = args.remaining_dstream(src, stream, segment_end)?;
-        let out = dst.sub_mut(args.op.at(stream)?..segment_end)?;
-        decode_stream_x2(out, &mut bit_d, &dtable.x2, HUF_DECODER_FAST_TABLELOG)?;
-    }
-    Ok(Some(dst.len()))
+    *ip = from;
+    *bits = (u64::from_le_bytes(container) | 1) << (consumed & 7);
+    true
 }
 
-/// `HUF_decompress4X2_usingDTable_internal`
-fn decompress_4x2_using_dtable(dst: &mut [u8], src: &[u8], dtable: &HufDTable) -> Result<usize> {
-    if let Some(size) = decompress_4x2_fast(dst, src, dtable)? {
-        return Ok(size);
-    }
-    decompress_4x2_body(dst, src, dtable)
+/// A stream that is being decoded.
+struct Stream<'a> {
+    src: &'a [u8],
+    /// Where in `src` `bits` was read.
+    ip: u32,
+    /// What is left to read of 64 bits, from the highest bit on, then a bit set. 0 if the stream is shorter than that:
+    /// nothing is read of it yet.
+    bits: u64,
+    out: &'a mut [u8],
+    /// How much of `out` is written.
+    op: u32,
 }
 
-// ── choosing between X1 and X2 ────────────────────────────────────────────
+impl<'a> Stream<'a> {
+    fn new(Part { src, out }: Part<'a>) -> Option<Self> {
+        let mut stream = Self {
+            src,
+            ip: 0,
+            bits: 0,
+            out,
+            op: 0,
+        };
+        if let Some(container) = src.last_chunk() {
+            let container = u64::from_le_bytes(*container);
+            // The highest bit set marks the end of the stream.
+            if container >> 56 == 0 {
+                return None;
+            }
+            stream.ip = src.len() as u32 - 8;
+            stream.bits = (container | 1) << (container.leading_zeros() + 1);
+        }
+        Some(stream)
+    }
 
-/// `algoTime`: for each sixteenth of compression ratio, the time to build a table and to decode 256 bytes, for X1 and X2.
-#[rustfmt::skip]
-const ALGO_TIME: [[(u32, u32); 2]; 16] = [
-    [(   0,   0), (   1,   1)],
-    [(   0,   0), (   1,   1)],
-    [( 150, 216), ( 381, 119)],
-    [( 170, 205), ( 514, 112)],
-    [( 177, 199), ( 539, 110)],
-    [( 197, 194), ( 644, 107)],
-    [( 221, 192), ( 735, 107)],
-    [( 256, 189), ( 881, 106)],
-    [( 359, 188), (1167, 109)],
-    [( 582, 187), (1570, 114)],
-    [( 688, 187), (1712, 122)],
-    [( 825, 186), (1965, 136)],
-    [( 976, 185), (2131, 150)],
-    [(1180, 186), (2070, 175)],
-    [(1377, 185), (1731, 202)],
-    [(1412, 185), (1695, 202)],
-];
+    /// Whether the stream is far enough from its start and its output from its end for `Streams::decode_most`, for
+    /// which it then is ready.
+    fn has_most_left(&mut self) -> bool {
+        self.bits != 0
+            && self.op as usize + WINDOW <= self.out.len()
+            && reload(self.src, &mut self.ip, &mut self.bits)
+    }
 
-/// `HUF_selectDecoder`: whether X2 is expected to be the faster one. `dst_size` is not 0.
-fn select_decoder_x2(dst_size: usize, src_size: usize) -> Result<bool> {
-    let q = if src_size >= dst_size {
-        15
-    } else {
-        src_size * 16 / dst_size
-    };
-    let d256 = (dst_size >> 8) as u32;
-    let [(table0, decode0), (table1, decode1)] = ALGO_TIME.at(q)?;
-    let dtime0 = table0 + decode0 * d256;
-    let mut dtime1 = table1 + decode1 * d256;
-    // A small advantage to the algorithm that uses less memory.
-    dtime1 += dtime1 >> 5;
-    Ok(dtime1 < dtime0)
+    /// Where what is left of `src` ends.
+    fn end(&self) -> usize {
+        if self.bits == 0 {
+            self.src.len()
+        } else {
+            self.ip as usize + 8
+        }
+    }
+
+    fn fits_tail(&self) -> bool {
+        self.end() <= Tail::MAX_SRC && self.out.len() - self.op as usize <= Tail::MAX_SYMBOLS
+    }
+
+    /// Decodes until the stream is close to its start, or its output to its end.
+    fn decode_most(&mut self, table: &[Entry; TABLE_SIZE], log: u32) {
+        const LOOKUPS: usize = 4;
+        if self.bits == 0 {
+            return;
+        }
+        let shift = 64 - log;
+        // With nothing else to do in the meantime, what counts is how soon the next lookup can start. So more bits
+        // come from where the last ones came from, which is known ahead of time.
+        let consumed = self.bits.trailing_zeros();
+        // Where the bytes after those that `bits` was read from end.
+        let mut next = self.ip as usize;
+        let Some(Ok(container)) = self.src.get(next..next + 8).map(<[u8; 8]>::try_from) else {
+            return;
+        };
+        // The next bits, from the highest on: `valid` of them, or somewhat more.
+        let mut bits = u64::from_le_bytes(container) << consumed;
+        let mut valid = 64 - consumed;
+        let mut op = self.op as usize;
+        while let Some(window) = (self.out.get_mut(op..op + 3 * LOOKUPS + 1))
+            .and_then(|window| window.as_mut_array::<{ 3 * LOOKUPS + 1 }>())
+            && next >= 16
+            && let Some(Ok(more)) = self.src.get(next - 8..next).map(<[u8; 8]>::try_from)
+        {
+            bits |= u64::from_le_bytes(more) >> (valid & 63);
+            let nb_bytes = (63 - (valid & 63)) >> 3;
+            next -= nb_bytes as usize;
+            valid += 8 * nb_bytes;
+            let mut done = 0;
+            for _ in 0..LOOKUPS {
+                let entry = table.get((bits >> shift) as usize).copied().unwrap_or(0);
+                let nb_bits = (entry >> 24) & 63;
+                bits <<= nb_bits;
+                valid = valid.wrapping_sub(nb_bits);
+                if let Some(to) = window.get_mut(done..done + 4) {
+                    to.copy_from_slice(&entry.to_le_bytes());
+                }
+                done += (entry >> (24 + COUNT_SHIFT)) as usize;
+            }
+            op += done;
+        }
+        let position = 8 * next + valid as usize;
+        let end = position.div_ceil(8);
+        if let Some(Ok(container)) =
+            (self.src.get(end.wrapping_sub(8)..end)).map(<[u8; 8]>::try_from)
+        {
+            self.ip = (end - 8) as u32;
+            self.bits = (u64::from_le_bytes(container) | 1) << ((8 * end - position) & 63);
+            self.op = op as u32;
+        }
+    }
+}
+
+struct Streams<'a>([Stream<'a>; 4]);
+
+impl<'a> Streams<'a> {
+    fn new([part0, part1, part2, part3]: [Part<'a>; 4]) -> Option<Self> {
+        Some(Self([
+            Stream::new(part0)?,
+            Stream::new(part1)?,
+            Stream::new(part2)?,
+            Stream::new(part3)?,
+        ]))
+    }
+
+    /// Decodes for as long as no stream is close to its start and no output to its end. A lookup is of `LOG` bits, or of
+    /// `64 - shift` if that is 0, and `LOOKUPS` of them are at most 55 bits.
+    #[inline(always)]
+    fn decode_most<const LOG: u32, const LOOKUPS: usize>(
+        &mut self,
+        table: &[Entry; TABLE_SIZE],
+        shift: u32,
+    ) {
+        #[inline(always)]
+        fn lookup<const LOG: u32>(
+            table: &[Entry; TABLE_SIZE],
+            shift: u32,
+            bits: &mut u64,
+            window: &mut [u8; WINDOW],
+            done: &mut usize,
+        ) {
+            let index = if LOG == 0 {
+                (*bits >> shift) as usize % TABLE_SIZE
+            } else {
+                (*bits >> (64 - LOG)) as usize
+            };
+            if let Some(entry) = table.get(index) {
+                *bits <<= (entry >> 24) & 63;
+                if let Some(to) = window.get_mut(*done..*done + 4) {
+                    to.copy_from_slice(&entry.to_le_bytes());
+                }
+                *done += (entry >> (24 + COUNT_SHIFT)) as usize;
+            }
+        }
+
+        #[inline(always)]
+        fn window(out: &mut [u8], op: u32) -> Option<&mut [u8; WINDOW]> {
+            out.get_mut(op as usize..op as usize + WINDOW)?
+                .as_mut_array()
+        }
+
+        let [s0, s1, s2, s3] = &mut self.0;
+        let (mut bits0, mut bits1, mut bits2, mut bits3) = (s0.bits, s1.bits, s2.bits, s3.bits);
+        let (mut ip0, mut ip1, mut ip2, mut ip3) = (s0.ip, s1.ip, s2.ip, s3.ip);
+        let (mut op0, mut op1, mut op2, mut op3) = (s0.op, s1.op, s2.op, s3.op);
+        loop {
+            let (Some(window0), Some(window1), Some(window2), Some(window3)) = (
+                window(s0.out, op0),
+                window(s1.out, op1),
+                window(s2.out, op2),
+                window(s3.out, op3),
+            ) else {
+                break;
+            };
+            let (mut done0, mut done1, mut done2, mut done3) = (0, 0, 0, 0);
+            for _ in 0..LOOKUPS {
+                lookup::<LOG>(table, shift, &mut bits0, window0, &mut done0);
+                lookup::<LOG>(table, shift, &mut bits1, window1, &mut done1);
+                lookup::<LOG>(table, shift, &mut bits2, window2, &mut done2);
+                lookup::<LOG>(table, shift, &mut bits3, window3, &mut done3);
+            }
+            let mut more = reload(s0.src, &mut ip0, &mut bits0)
+                && reload(s1.src, &mut ip1, &mut bits1)
+                && reload(s2.src, &mut ip2, &mut bits2)
+                && reload(s3.src, &mut ip3, &mut bits3);
+            if more {
+                for _ in 0..LOOKUPS {
+                    lookup::<LOG>(table, shift, &mut bits0, window0, &mut done0);
+                    lookup::<LOG>(table, shift, &mut bits1, window1, &mut done1);
+                    lookup::<LOG>(table, shift, &mut bits2, window2, &mut done2);
+                    lookup::<LOG>(table, shift, &mut bits3, window3, &mut done3);
+                }
+                more = reload(s0.src, &mut ip0, &mut bits0)
+                    && reload(s1.src, &mut ip1, &mut bits1)
+                    && reload(s2.src, &mut ip2, &mut bits2)
+                    && reload(s3.src, &mut ip3, &mut bits3);
+            }
+            op0 += done0 as u32;
+            op1 += done1 as u32;
+            op2 += done2 as u32;
+            op3 += done3 as u32;
+            if !more {
+                break;
+            }
+        }
+        (s0.bits, s1.bits, s2.bits, s3.bits) = (bits0, bits1, bits2, bits3);
+        (s0.ip, s1.ip, s2.ip, s3.ip) = (ip0, ip1, ip2, ip3);
+        (s0.op, s1.op, s2.op, s3.op) = (op0, op1, op2, op3);
+    }
+}
+
+/// `HUF_readDTableX2_wksp`. Returns the size of the table's description in `src`.
+pub(crate) fn read_dtable_x2(
+    dtable: &mut HufDTable,
+    src: &[u8],
+    spread: &mut Spread,
+) -> Result<usize> {
+    dtable.read(src, TableType::X2, usize::MAX, spread)
 }
 
 /// `HUF_decompress1X_usingDTable`
@@ -967,19 +859,24 @@ pub(crate) fn decompress_1x_using_dtable(
     src: &[u8],
     dtable: &HufDTable,
 ) -> Result<usize> {
-    match dtable.table_type {
-        TableType::X1 => decompress_1x1_using_dtable(dst, src, dtable),
-        TableType::X2 => decompress_1x2_using_dtable(dst, src, dtable),
+    if dtable.decode_1x(dst, src) {
+        return Ok(dst.len());
     }
+    huf_exact::decompress_1x(dst, src, &dtable.code, dtable.table_type)
 }
 
 /// `HUF_decompress1X1_DCtx_wksp`
-pub(crate) fn decompress_1x1(dtable: &mut HufDTable, dst: &mut [u8], src: &[u8]) -> Result<usize> {
-    let h_size = read_dtable_x1(dtable, src)?;
+pub(crate) fn decompress_1x1(
+    dtable: &mut HufDTable,
+    dst: &mut [u8],
+    src: &[u8],
+    spread: &mut Spread,
+) -> Result<usize> {
+    let h_size = dtable.read(src, TableType::X1, dst.len(), spread)?;
     if h_size >= src.len() {
         return Err(ErrorCode::SrcSizeWrong);
     }
-    decompress_1x1_using_dtable(dst, src.sub(h_size..)?, dtable)
+    decompress_1x_using_dtable(dst, src.sub(h_size..)?, dtable)
 }
 
 /// `HUF_decompress4X_usingDTable`
@@ -988,10 +885,10 @@ pub(crate) fn decompress_4x_using_dtable(
     src: &[u8],
     dtable: &HufDTable,
 ) -> Result<usize> {
-    match dtable.table_type {
-        TableType::X1 => decompress_4x1_using_dtable(dst, src, dtable),
-        TableType::X2 => decompress_4x2_using_dtable(dst, src, dtable),
+    if dtable.decode_4x(dst, src) {
+        return Ok(dst.len());
     }
+    huf_exact::decompress_4x(dst, src, &dtable.code, dtable.table_type)
 }
 
 /// `HUF_decompress4X_hufOnly_wksp`
@@ -999,6 +896,7 @@ pub(crate) fn decompress_4x_huf_only(
     dtable: &mut HufDTable,
     dst: &mut [u8],
     src: &[u8],
+    spread: &mut Spread,
 ) -> Result<usize> {
     if dst.is_empty() {
         return Err(ErrorCode::DstSizeTooSmall);
@@ -1006,19 +904,14 @@ pub(crate) fn decompress_4x_huf_only(
     if src.is_empty() {
         return Err(ErrorCode::CorruptionDetected);
     }
-    let x2 = select_decoder_x2(dst.len(), src.len())?;
-    let h_size = if x2 {
-        read_dtable_x2(dtable, src)?
+    let table_type = if select_decoder_x2(dst.len(), src.len())? {
+        TableType::X2
     } else {
-        read_dtable_x1(dtable, src)?
+        TableType::X1
     };
+    let h_size = dtable.read(src, table_type, dst.len(), spread)?;
     if h_size >= src.len() {
         return Err(ErrorCode::SrcSizeWrong);
     }
-    let body = src.sub(h_size..)?;
-    if x2 {
-        decompress_4x2_using_dtable(dst, body, dtable)
-    } else {
-        decompress_4x1_using_dtable(dst, body, dtable)
-    }
+    decompress_4x_using_dtable(dst, src.sub(h_size..)?, dtable)
 }

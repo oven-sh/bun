@@ -2,7 +2,7 @@
 use crate::dec::{self, DecCase, compare, mutate};
 use crate::ffi::{self, c_compress};
 use crate::rng::Rng;
-use crate::{CORPUS_DIRS, api, args, big, grammar, oom, perf, random_enc_params, r#gen, ring, stream};
+use crate::{CORPUS_DIRS, api, args, big, grammar, oom, perf, random_enc_params, r#gen, ring, shapes, stream};
 
 /// `StreamingDecoder`: intact, cut short, damaged, and followed by something else.
 fn dec_stream(seed0: u64, iters: u64, max_len: usize) {
@@ -226,21 +226,26 @@ pub fn run(args: &[String]) -> bool {
         Some("dec-gen") => dec_gen(num(2, 1), num(3, 1000), num(4, 0) as usize),
         Some("dec-stream") => dec_stream(num(2, 1), num(3, 1000), num(4, 1 << 20) as usize),
         Some("dec-empty-commands") => {
-            let stream = grammar::empty_commands();
-            println!("{} bytes", stream.len());
-            for schedule in [0u64, 9, 5] {
-                let t = std::time::Instant::now();
-                let case = DecCase { stream: stream.clone(), large_window: false, no_realloc: false, dicts: vec![], schedule, max_output: usize::MAX };
-                let o = compare(&case, None).unwrap_or_else(|e| panic!("schedule {schedule}: {e}"));
-                assert_eq!((o.result, o.error), (0, -17), "schedule {schedule}: not _ERROR_FORMAT_BLOCK_SWITCH");
-                println!("schedule {schedule}: error {} after {} calls in {:.1} s", o.error, o.calls, t.elapsed().as_secs_f64());
+            for distances in [false, true] {
+                let stream = grammar::empty_commands(distances);
+                println!("{} bytes", stream.len());
+                for schedule in [0u64, 9, 5] {
+                    let t = std::time::Instant::now();
+                    let case = DecCase { stream: stream.clone(), large_window: false, no_realloc: false, dicts: vec![], schedule, max_output: usize::MAX };
+                    let o = compare(&case, None).unwrap_or_else(|e| panic!("schedule {schedule}: {e}"));
+                    assert_eq!((o.result, o.error), (0, -17), "schedule {schedule}: not _ERROR_FORMAT_BLOCK_SWITCH");
+                    println!("schedule {schedule}: error {} after {} calls in {:.1} s", o.error, o.calls, t.elapsed().as_secs_f64());
+                }
             }
         }
         Some("enc-tail") => ring::run_tail(num(2, 1), num(3, 1000), num(4, 0x1C), &corpus()),
         Some("enc-marks") => ring::run_marks(num(2, 1), num(3, 1000), num(4, 0x60), &args::rest(args, 5).iter().map(|s| args::parse(s) as usize).collect::<Vec<usize>>(), &corpus()),
         Some("enc-words") => ring::run_words(num(2, 1), num(3, 1000), num(4, 1 << 16) as usize, num(5, 0xFFF)),
         Some("enc-lengths") => ring::run_lengths(num(2, 1), num(3, 1000), num(4, 1 << 19) as usize, num(5, 0xFFF)),
+        Some("enc-dict") => shapes::run_dict(num(2, 1), num(3, 1000), num(4, 1 << 20) as usize, num(5, 0xFFC), &corpus()),
+        Some("enc-blocks") => shapes::run_blocks(num(2, 1), num(3, 100), num(4, 1 << 20) as usize, num(5, 0xFF0)),
         Some("enc-big") => big::run(num(2, 1), num(3, 6 << 30), args::params(args::rest(args, 4)), &corpus()),
+        Some("enc-lap") => big::run_lap(num(2, 1), num(3, (3 << 30) + (64 << 20)), args::params(args::rest(args, 4))),
         Some("api") => api::run(num(2, 1), num(3, 300), &corpus()),
         Some("oom") => oom::run(num(2, 1), num(3, 100), num(4, 1 << 18) as usize, &corpus()),
         Some("oom-cold") => oom::cold(),

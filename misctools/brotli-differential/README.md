@@ -27,7 +27,7 @@ quality `q`: `0xFFF` for all of them.
 | `dec-fuzz <seed> <iterations> <max length>` | streams of the C encoder: intact, then damaged |
 | `dec-garbage <seed> <iterations>` | random bytes |
 | `dec-gen <seed> <iterations> <evil>` | streams written bit by bit from the grammar of RFC 7932 (`grammar.rs`), with a model of the output. `evil`: one chance in this many, at each opportunity, to break a rule; 0 for valid streams only. `STATS=1` prints which rule gave which error |
-| `dec-empty-commands` | 2^24 commands without output, the only way to `_ERROR_FORMAT_BLOCK_SWITCH` |
+| `dec-empty-commands` | 2^24 commands without output, the only way to `_ERROR_FORMAT_BLOCK_SWITCH`: once for the commands, once for the distances |
 | `dec-stream <seed> <iterations> <max length>` | `StreamingDecoder` against the loop around the C decoder that it replaced |
 | `enc-fuzz <seed> <iterations> <max length> <mask of qualities>` | random data, parameters, dictionaries and schedules |
 | `enc-ring <seed> <iterations> <max length> <mask>` | lengths and pieces that end near the sizes of the ring buffer. Qualities 2 and up, which have one |
@@ -36,10 +36,13 @@ quality `q`: `0xFFF` for all of them.
 | `enc-marks <seed> <iterations> <mask> <position>...` | lengths, ends of pieces and flushes near the given positions, for thresholds inside the encoder |
 | `enc-words <seed> <iterations> <max length> <mask>` | words of the static dictionary after each of the 121 transforms |
 | `enc-lengths <seed> <iterations> <max length> <mask>` | runs of literals, copies and distances whose lengths are at the edges of the ranges of their codes |
+| `enc-dict <seed> <iterations> <max length> <mask>` | compound dictionaries: long copies from them, copies that go on in the next dictionary or in the next block of input, more matches than a search has room for |
+| `enc-blocks <seed> <iterations> <max length> <mask>` | stretches of many different kinds: many blocks, block types and histograms to cluster |
 | `enc-big <seed> <bytes> <param>=<value>...` | one long stream, through both decoders too. The position wraps at 3 GiB and then every 2 GiB |
+| `enc-lap <seed> <bytes> <param>=<value>...` | random data with a period of 2 GiB, for a window of more than 24 bits (`2=25 6=1`). The C encoder writes a stream that decodes to something else: its rolling hasher finds the current position in its table, left there by the lap before, and takes it for a match at distance 0. Only Rust's stream has to be right |
 | `enc-files <mask> <lgwin>`, `enc-one <file> <param>=<value>...` | files |
-| `api <seed> <iterations>` | values out of range, calls at the wrong time, metadata and dictionaries of every size, an input of more than 1 GiB: always the same cases, which take 2.5 GB of memory. The seed and the iterations are for `SpareCapacity` |
-| `oom <seed> <iterations> <max length>` | fails each allocation in turn, or 150 of them if there are more. An allocation that cannot fail is reported with its source line |
+| `api <seed> <iterations>` | values out of range, calls at the wrong time, metadata and dictionaries of every size, more than 1 GiB in one call: always the same cases, which take 3.5 GB of memory. The seed and the iterations are for `SpareCapacity` |
+| `oom <seed> <iterations> <max length>` | fails each allocation in turn, or 150 of them if there are more, in the encoder, the decoder and `StreamingDecoder`. An allocation that cannot fail is reported with its source line |
 | `oom-cold` | the same for the first call in a process, which builds the tables that later calls share; a process for each allocation |
 | `gen-corpus <dir> <n>`, `replay-dec <dir>` | seeds for the libFuzzer targets; runs a `fuzz_dec` corpus (for coverage) |
 | `bench-dec` / `bench-enc <file> <quality> <lgwin> <repetitions>`, `bench-small <file> <length> <quality> <lgwin> <repetitions>`, `bench-first <file> <length> <quality>` | speed, see below. `ONLY=c` or `ONLY=rust` leaves the other one out of `bench-dec` and `bench-enc`. `bench-first` measures Rust, or C with `ONLY=c` |
@@ -86,5 +89,6 @@ target/x86_64-unknown-linux-gnu/release/fuzz_enc -fork=8 -ignore_crashes=1 -max_
 Break `src/brotli` on purpose in a copy and see which subcommand notices. What was learned that way: long runs and short
 periods do not fill a bucket of a hasher (`enc-hash` does); a hasher is only prepared a second time after 3 GiB (`enc-big`);
 what the tail of the ring buffer holds after the first lap matters, but only `enc-tail` sees it; lengths exactly at the edge
-of a code's range need `enc-lengths`; most of the search in the static dictionary needs `enc-words`. A change that survives a
-few hundred iterations of `enc-fuzz` is not thereby harmless.
+of a code's range need `enc-lengths`; most of the search in the static dictionary needs `enc-words`; a copy from a compound
+dictionary is only taken up again in the next block in `enc-dict`; the queue of pairs of histograms only fills up with more
+than 8000 blocks (`enc-blocks`). A change that survives a few hundred iterations of `enc-fuzz` is not thereby harmless.

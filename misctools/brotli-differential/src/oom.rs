@@ -1,7 +1,7 @@
 //! Allocations that fail. Every one has to end in an error that is reported, never in an abort.
 use crate::r#gen;
 use crate::rng::Rng;
-use bun_brotli::{Decoder, DecoderParameter, DecoderResult, Encoder, EncoderError, EncoderOperation, EncoderParameter, PreparedDictionary};
+use bun_brotli::{Decoder, DecoderParameter, DecoderResult, Encoder, EncoderError, EncoderOperation, EncoderParameter, PreparedDictionary, StreamingDecoder};
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering::Relaxed};
 
@@ -132,6 +132,25 @@ fn decode(stream: &[u8], dict: Option<&Vec<u8>>, chunk: usize, cap: usize, expec
     }
 }
 
+fn decode_streaming(stream: &[u8], chunk: usize) -> Result<Vec<u8>, bun_brotli::Error> {
+    let mut out = Vec::new();
+    let mut d = armed(StreamingDecoder::new);
+    let mut pos = 0usize;
+    loop {
+        let end = pos.saturating_add(chunk.max(1)).min(stream.len());
+        match armed(|| d.decompress(&stream[pos..end], &mut out, usize::MAX, end == stream.len())) {
+            Ok(_) => return Ok(out),
+            Err(bun_brotli::Error::ShortRead) if end < stream.len() => pos = end,
+            Err(e) => {
+                // It stays that way.
+                let len = out.len();
+                assert!(matches!(d.decompress(&stream[pos..end], &mut out, usize::MAX, true), Ok(n) if n == end - pos) && out.len() == len && !d.is_inflating(), "a call after a failed one did something");
+                return Err(e);
+            }
+        }
+    }
+}
+
 fn with_failure<T>(at: i64, persistent: bool, f: impl FnOnce() -> T + std::panic::UnwindSafe) -> (Result<T, String>, u64) {
     COUNTDOWN.store(at, Relaxed);
     PERSISTENT.store(persistent, Relaxed);
@@ -146,7 +165,7 @@ fn with_failure<T>(at: i64, persistent: bool, f: impl FnOnce() -> T + std::panic
 }
 
 /// `MakeUncompressedStream` of the reference.
-fn uncompressed_stream(input: &[u8]) -> Vec<u8> {
+pub fn uncompressed_stream(input: &[u8]) -> Vec<u8> {
     let mut out = vec![0x21, 0x03];
     for chunk in input.chunks(1 << 24) {
         let n = chunk.len() as u32;
@@ -293,6 +312,30 @@ pub fn run(seed0: u64, iters: u64, max_len: usize, corpus: &r#gen::Corpus) {
                     }
                 }
             }
+        }
+        if case.dict.is_some() {
+            continue;
+        }
+        COUNT.store(0, Relaxed);
+        assert!(decode_streaming(&stream, dchunk).is_ok_and(|out| out == case.data), "{describe}: StreamingDecoder");
+        let n_str = COUNT.load(Relaxed) as i64;
+        for at in pick(&mut rng, n_str) {
+            let persistent = rng.chance(1, 2);
+            let s = stream.clone();
+            let (r, failed) = with_failure(at, persistent, move || decode_streaming(&s, dchunk));
+            runs += 1;
+            injected += failed.min(1);
+            let problem = match r {
+                Err(e) => e,
+                Ok(Err(bun_brotli::Error::OutOfMemory)) => continue,
+                Ok(Err(_)) => "StreamingDecoder reports another error after a failed allocation".into(),
+                Ok(Ok(out)) if out == case.data => {
+                    survived += 1;
+                    continue;
+                }
+                Ok(Ok(_)) => "StreamingDecoder went on after a failed allocation with other output".into(),
+            };
+            problems.entry(problem).or_insert((0, format!("{describe} StreamingDecoder allocation {at}/{n_str} persistent {persistent} chunk {dchunk}"))).0 += 1;
         }
     }
     let _ = std::panic::take_hook();

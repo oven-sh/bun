@@ -212,7 +212,26 @@ fn long_call(corpus: &r#gen::Corpus) -> Result<usize, String> {
             }
         }
     }
-    Ok(3)
+    // The same for the decoders.
+    let stream = crate::oom::uncompressed_stream(&data);
+    let (mut c, mut r) = (CDecoder::new(), Decoder::new());
+    let (mut a, mut b) = (vec![0u8; 1 << 24], vec![0u8; 1 << 24]);
+    let (mut pos, mut total) = (0usize, 0usize);
+    loop {
+        let (c_result, c_used, c_made) = c.stream(&stream[pos..], &mut a);
+        let mut input = &stream[pos..];
+        let mut output: &mut [u8] = &mut b;
+        let r_result = r.decompress_stream(&mut input, &mut output) as i32;
+        let (r_used, r_made) = (stream.len() - pos - input.len(), (1 << 24) - output.len());
+        if (c_result, c_used, c_made) != (r_result, r_used, r_made) || a[..c_made] != b[..c_made] || a[..c_made] != data[total..total + c_made] {
+            return Err(format!("{} bytes in one call, after {total} bytes of output: C {c_result} {c_used} {c_made}, Rust {r_result} {r_used} {r_made}", stream.len() - pos));
+        }
+        pos += c_used;
+        total += c_made;
+        if c_result != 3 {
+            return if c_result == 1 && total == data.len() { Ok(4) } else { Err(format!("{} bytes in one call: result {c_result} after {total}", stream.len())) };
+        }
+    }
 }
 
 const ERROR_CODES: &[bun_brotli::DecoderErrorCode] = {

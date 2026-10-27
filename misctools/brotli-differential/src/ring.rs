@@ -514,7 +514,23 @@ pub fn run_words(seed0: u64, iters: u64, max_len: usize, qualities: u64) {
             1 | 2 => rng.below(5000),
             _ => rng.below(max_len),
         };
-        let data = words(&mut rng, len);
+        let data = if rng.chance(1, 4) {
+            // A few words, each of them near the end of the input.
+            let mut few = Vec::new();
+            for _ in 0..rng.range(1, 3) {
+                if rng.chance(1, 3) {
+                    few.extend((0..rng.range(1, 4)).map(|_| rng.next() as u8));
+                }
+                let n = if rng.chance(1, 2) { rng.range(4, 7) } else { rng.range(4, 24) };
+                let index = rng.below(1 << crate::grammar::size_bits(n));
+                few.extend(crate::grammar::dictionary_word(n, index, rng.below(121)));
+            }
+            few.truncate(few.len().saturating_sub(rng.below(3)));
+            few
+        } else {
+            words(&mut rng, len)
+        };
+        let len = data.len();
         let mut params = vec![(1, q)];
         if rng.chance(1, 2) {
             params.push((2, rng.range(10, 24) as u32));
@@ -605,6 +621,19 @@ pub fn run_lengths(seed0: u64, iters: u64, max_len: usize, qualities: u64) {
             last = distance;
         }
         data.truncate(len);
+        // What comes after the last copy is one run of literals, wherever the search looked.
+        if rng.chance(1, 2) {
+            if rng.chance(1, 2) {
+                data.truncate(rng.range(8, 3000));
+            }
+            let b = rng.next() as u8;
+            data.extend(std::iter::repeat_n(b, rng.range(40, 400)));
+            let v = *rng.pick(&INSERT);
+            let n = edge(&mut rng, v);
+            let alphabet = *rng.pick(&[255, 64, 16]);
+            data.extend((0..n).map(|_| b.wrapping_add(1 + rng.below(alphabet) as u8)));
+        }
+        let len = data.len();
         let mut params = vec![(1, q), (2, lgwin as u32)];
         if rng.chance(1, 2) {
             let npostfix = rng.below(4) as u32;

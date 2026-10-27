@@ -12,6 +12,7 @@ mod oom;
 mod perf;
 mod ring;
 mod rng;
+mod shapes;
 mod stream;
 
 use dec::{DecCase, compare, mutate};

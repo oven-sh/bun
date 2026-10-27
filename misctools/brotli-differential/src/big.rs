@@ -135,3 +135,79 @@ pub fn run(seed: u64, total: u64, params: Vec<(i32, u32)>, corpus: &r#gen::Corpu
     }
     println!("ok: seed {seed} params {params:?}: {} -> {compressed} in {:.0} s", din.n, start.elapsed().as_secs_f64());
 }
+
+/// Random data that repeats after exactly 2 GiB, which is also how far apart two positions are that the encoder gives
+/// the same number once it has wrapped them (at 3 GiB). The rolling hasher of windows over 24 bits never forgets, so it
+/// finds each position of the second lap in its table, put there by the first. The C encoder takes that for a match at
+/// distance 0 (`__builtin_clz(0)`, then a stream that does not decode), so the two are not compared: each stream goes
+/// through a decoder, and only Rust's has to come out right.
+pub fn run_lap(seed: u64, total: u64, params: Vec<(i32, u32)>) {
+    const PIECE: usize = 1 << 20;
+    const PERIOD: u64 = 2 << 30;
+    let piece = |at: u64, buffer: &mut Vec<u8>| {
+        let mut rng = Rng(seed ^ ((at % PERIOD) / PIECE as u64).wrapping_mul(0x2545F4914F6CDD1D));
+        buffer.clear();
+        buffer.extend((0..PIECE / 8).flat_map(|_| rng.next().to_le_bytes()));
+    };
+    let mut out = vec![0u8; 2 << 20];
+    let mut plain = vec![0u8; 1 << 20];
+    let mut input = Vec::new();
+    for rust in [true, false] {
+        let name = if rust { "Rust" } else { "C" };
+        let start = std::time::Instant::now();
+        let mut c = crate::ffi::CEncoder::new();
+        let mut r = bun_brotli::Encoder::new();
+        for &(k, v) in &params {
+            assert!(c.set(k, v) && r.set_parameter(bun_brotli::EncoderParameter::from_raw(k as u32).unwrap(), v));
+        }
+        let mut d = Decoder::new();
+        assert!(d.set_parameter(DecoderParameter::LargeWindow, 1));
+        let (mut din, mut dout) = (Digest::new(), Digest::new());
+        let mut verdict = None;
+        'stream: while verdict.is_none() {
+            piece(din.n, &mut input);
+            input.truncate((total - din.n).min(PIECE as u64) as usize);
+            din.add(&input);
+            let op = if din.n == total { 2 } else { 0 };
+            let mut rest: &[u8] = &input;
+            loop {
+                let made = if rust {
+                    let mut o: &mut [u8] = &mut out;
+                    r.compress_stream(bun_brotli::EncoderOperation::from_raw(op as u32).unwrap(), &mut rest, &mut o).unwrap();
+                    (2 << 20) - o.len()
+                } else {
+                    let (ok, used, made) = c.stream(op, rest, &mut out);
+                    assert!(ok);
+                    rest = &rest[used..];
+                    made
+                };
+                let mut stream = &out[..made];
+                loop {
+                    let mut o: &mut [u8] = &mut plain;
+                    let result = d.decompress_stream(&mut stream, &mut o);
+                    let n = (1 << 20) - o.len();
+                    dout.add(&plain[..n]);
+                    match result {
+                        bun_brotli::DecoderResult::Error => {
+                            verdict = Some(format!("does not decode: {:?} after {} bytes", d.error_code(), dout.n));
+                            break 'stream;
+                        }
+                        bun_brotli::DecoderResult::Success => break,
+                        bun_brotli::DecoderResult::NeedsMoreInput if !d.has_more_output() => break,
+                        _ => {}
+                    }
+                }
+                let more = if rust { r.has_more_output() } else { c.has_more_output() };
+                if rest.is_empty() && !more {
+                    break;
+                }
+            }
+            if op == 2 {
+                verdict = Some(if din.get() == dout.get() { "ok".into() } else { "decodes to something else".into() });
+            }
+        }
+        let verdict = verdict.unwrap();
+        println!("{name}: {verdict} ({:.0} s)", start.elapsed().as_secs_f64());
+        assert!(!rust || verdict == "ok");
+    }
+}

@@ -879,30 +879,41 @@ pub fn stream(rng: &mut Rng, evil_rate: usize, max_output: usize) -> Stream {
     Stream { bytes: w.bytes, output: m.out, large_window, dictionaries, evil: evil.done }
 }
 
-/// 2^24 commands that put out nothing, in a meta-block without block switches: the count of the only block runs out.
-pub fn empty_commands() -> Vec<u8> {
+/// 2^24 commands that put out nothing, in a meta-block with one block type: the count of the only block runs out. That
+/// of the commands, or with `distances` that of the distances.
+pub fn empty_commands(distances: bool) -> Vec<u8> {
     let mut w = Bits::default();
-    w.put(1, 0); // lgwin 16
-    w.put(1, 1); // ISLAST
-    w.put(1, 0);
-    w.put(2, 0);
-    w.put(16, 9); // MLEN 10
-    for _ in 0..3 {
-        w.put(1, 0); // one block type
-    }
-    w.put(2, 0);
-    w.put(4, 0);
-    w.put(2, 0); // context mode
-    w.put(1, 0); // one literal tree
-    w.put(1, 0); // one distance tree
     let simple = |w: &mut Bits, bits: u32, symbol: u64| {
         w.put(2, 1);
         w.put(2, 0);
         w.put(bits, symbol);
     };
+    w.put(1, 0); // lgwin 16
+    w.put(1, 1); // ISLAST
+    w.put(1, 0);
+    w.put(2, 0);
+    w.put(16, 9); // MLEN 10
+    w.put(1, 0); // one block type
+    if distances {
+        // Two for the commands. The first block is as long as a block can be, which is longer than 2^24.
+        put_count(&mut w, 2);
+        simple(&mut w, 2, 0);
+        simple(&mut w, 5, 25);
+        w.put(COUNT_EXTRA[25], (1 << 24) - 1);
+    } else {
+        w.put(1, 0);
+    }
+    w.put(1, 0);
+    w.put(2, 0);
+    w.put(4, 0);
+    w.put(2, 0); // context mode
+    w.put(1, 0); // one literal tree
+    w.put(1, 0); // one distance tree
     simple(&mut w, 8, 65);
     // No literals, a copy of 4 bytes, an explicit distance.
-    simple(&mut w, 10, command_symbol(0, 2, false) as u64);
+    for _ in 0..1 + usize::from(distances) {
+        simple(&mut w, 10, command_symbol(0, 2, false) as u64);
+    }
     // Transform 34 omits the first 4 bytes of the word.
     let (omit, _) = (0..121).map(|t| (t, dictionary_word(4, 0, t))).find(|(_, word)| word.is_empty()).expect("a transform that leaves nothing");
     let (symbol, nbits, extra) = distance_symbol(1 + (omit << size_bits(4)), 0, 0);

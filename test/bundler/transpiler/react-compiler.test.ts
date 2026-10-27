@@ -4159,10 +4159,12 @@ test.skipIf(isDebug || isASAN)(
       stdout: "pipe",
       stderr: "pipe",
     });
-    const [linted] = await Promise.all([lint.stdout.text(), lint.exited]);
+    const [linted, lintErrors, lintExitCode] = await Promise.all([lint.stdout.text(), lint.stderr.text(), lint.exited]);
+    expect(lintErrors).toBe("");
     expect(
       JSON.parse(linted).diagnostics.map((it: { code: string; message: string }) => [it.code, it.message]),
     ).toEqual([["react(todo)", "[hoisting] EnterSSA: Expected identifier to be defined before being used"]]);
+    expect(lintExitCode).toBe(1);
 
     // The user CPU time of one build. The page faults of a build are system time, which changes from run to run.
     const userTime = async (entry: string) => {

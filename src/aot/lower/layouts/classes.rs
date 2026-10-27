@@ -469,10 +469,13 @@ impl FileLowering<'_, '_, '_, '_> {
         let hir = self.hir;
         let shape = self.queries.class_shape(class);
         let plan = self.class_plan(class.class);
-        let is_defined = |node: MemberId| {
-            let mut elements = plan.static_elements.iter();
-            elements.any(|it| matches!(*it, ClassElement::Field { member, .. } if member == node))
-        };
+        let defined: FxHashSet<MemberId> = (plan.static_elements.iter())
+            .filter_map(|element| match *element {
+                ClassElement::Field { member, .. } => Some(member),
+                _ => None,
+            })
+            .collect();
+        let is_defined = |node: MemberId| defined.contains(&node);
         let mut static_fields = Vec::new();
         let mut keys = FxHashSet::default();
         // A static method or accessor is a property of the class object, and a field of the same name redefines that property.

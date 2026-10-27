@@ -2,6 +2,7 @@ use bun_sema::atom::Atom;
 use bun_sema::bind::{CodeUnit, PrivateNameId};
 use bun_sema::check::aot::{ClassMemberSource, ClassRef};
 use bun_sema::hir::{ClassId, Flags, MemberId, ParamId, PatKind, PropKey};
+use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 use super::{ClassElement, FieldValue, is_auto_accessor, is_derived_class};
@@ -39,10 +40,20 @@ fn written_static_field_position(
     member: MemberId,
 ) -> DeclaredType {
     let shape = file.queries.class_shape(file.own_class(class));
-    let source = ClassMemberSource::Member(member);
-    let Some(entry) = shape.members.iter().find(|entry| entry.source == source) else {
+    let entries = file.classes.entries_of_members.entry(class);
+    let entries = entries.or_insert_with(|| {
+        let mut entries = FxHashMap::default();
+        for (index, entry) in shape.members.iter().enumerate() {
+            if let ClassMemberSource::Member(member) = entry.source {
+                entries.entry(member).or_insert(index as u32);
+            }
+        }
+        entries
+    });
+    let Some(&entry) = entries.get(&member) else {
         return file.member_annotation_position(member, TypeSiteKind::StaticField);
     };
+    let entry = &shape.members[entry as usize];
     let origin = SiteOrigin {
         kind: TypeSiteKind::StaticField,
         position: file.hir[member].name_pos,

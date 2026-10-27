@@ -6,7 +6,7 @@ generated(
   "a write between new and the first use of the object",
   Array.from({ length: programs }, (_, index) => ({
     name: `program ${index}.`,
-    isAlwaysRun: index % 100 === 0,
+    isAlwaysRun: index % 250 === 0,
     isOnlyCompiled: true as const,
     // Nothing is put into the text: a use of the object ahead of the write makes it another program.
     keepsItsText: true as const,

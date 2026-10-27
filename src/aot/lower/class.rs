@@ -102,6 +102,8 @@ pub(in crate::lower) struct ClassEvaluation {
 pub(crate) struct ClassState {
     plans: FxHashMap<ClassId, Rc<ClassPlan>>,
     constant_keys: FxHashMap<MemberId, PropertyKeyId>,
+    /// For a class, where the shape lists each of its members first.
+    entries_of_members: FxHashMap<ClassId, FxHashMap<MemberId, u32>>,
 }
 
 impl FileLowering<'_, '_, '_, '_> {

@@ -40,6 +40,13 @@ const rows: [sabotage: string, flags: string[], program: string, named: string][
     "an-element-is-tested-stored-on-a-way-seldom-taken-and-read-again.js",
     "LoadMayMove",
   ],
+  // The first read stands in the test of the loop, which is copied to the bottom of the loop: the second is held against the one in the first turn and against the other in the later ones.
+  [
+    "MergedLoadsOutlastWritesOnUnlikelyPaths",
+    [movedLoads],
+    "the-test-of-a-loop-reads-an-element-that-the-turn-stores-to-on-a-way-seldom-taken-and-reads-again.js",
+    "LoadMayMove",
+  ],
   [
     "SlotsOfSitesStayAsTheyAre",
     [movedLoads],

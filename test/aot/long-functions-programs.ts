@@ -57,6 +57,30 @@ export function writeClassWithFields(fieldCount: number): Program {
   };
 }
 
+export function writeClassWithStaticFields(fieldCount: number): Program {
+  return {
+    source: [
+      `class Table { ${indexesUpTo(fieldCount)
+        .map(index => `static k${index} = ${index};`)
+        .join(" ")} }`,
+      `console.log(Object.keys(Table).length, Table.k7, Table.k${fieldCount - 1});`,
+    ].join("\n"),
+    output: `${fieldCount} 7 ${fieldCount - 1}\n`,
+  };
+}
+
+export function writeMethodsStoredIntoPrototype(methodCount: number): Program {
+  return {
+    source: [
+      "function Table() {}",
+      ...indexesUpTo(methodCount).map(index => `Table.prototype.k${index} = function () { return ${index}; };`),
+      "const table = new Table();",
+      `console.log(Object.keys(Table.prototype).length, table.k7(), table.k${methodCount - 1}());`,
+    ].join("\n"),
+    output: `${methodCount} 7 ${methodCount - 1}\n`,
+  };
+}
+
 // The `try` block stores to every local, the `catch` block reads every local, and the second call throws halfway.
 function writeTryThatStoresToLocals(
   localCount: number,

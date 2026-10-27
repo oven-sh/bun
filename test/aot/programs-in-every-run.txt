@@ -34,6 +34,7 @@ arrays/a-literal-of-a-number-read-out-of-an-object-that-took-a-value-whose-check
 arrays/a-local-table-of-small-counts-is-read-where-nothing-asks-for-undefined
 arrays/a-lone-flat-map-hands-its-callback-the-array
 arrays/a-long-list-of-fractions-grows-behind-a-shift-an-unshift-and-a-splice
+arrays/a-loop-over-a-slice-stands-behind-a-test-inside-a-loop-over-the-list-it-was-cut-from
 arrays/a-method-by-kind-is-called-on-what-stands-in-front-of-the-list
 arrays/a-method-by-kind-is-called-on-what-stands-past-the-end-of-the-list
 arrays/a-method-by-kind-takes-an-argument-out-of-a-second-list-at-the-top-level
@@ -335,6 +336,8 @@ builtin-modules/a-connection-in-use-outlives-the-keep-alive-timeout
 builtin-modules/a-function-of-node-path-is-called-by-a-function-that-a-proxy-may-replace
 builtin-modules/a-host-method-is-found-on-a-receiver-that-it-refuses
 builtin-modules/a-host-method-reaches-a-receiver-that-it-refuses-by-many-roads
+builtin-modules/a-module-behind-getters-one-of-which-went-out-of-sight-is-read-under-keys-nobody-knows
+builtin-modules/a-module-that-went-out-of-sight-itself-or-a-getter-for-it-is-read-under-keys-nobody-knows
 builtin-modules/a-named-import-of-a-number-of-a-built-in-module-is-bound-once
 builtin-modules/a-socket-connects-to-a-name-that-a-function-of-the-program-looks-up-in-a-validating-build
 builtin-modules/accessors-of-library-classes-answer-under-keys-that-are-values
@@ -604,6 +607,7 @@ calls/what-one-call-reaches-through-call-or-through-a-bound-built-in-makes-what-
 claims-to-the-back-end/a-field-is-read-through-undefined-right-in-front-of-the-return
 claims-to-the-back-end/a-field-is-tested-in-front-of-a-store-and-a-maximum-is-taken-behind-it
 claims-to-the-back-end/a-function-calls-itself-in-tail-position-behind-the-tests-of-its-parameter
+claims-to-the-back-end/a-function-that-a-loop-calls-reads-a-method-of-objects-of-two-classes-one-after-the-other
 claims-to-the-back-end/a-list-written-in-the-text-is-stored-to-in-a-loop-that-asks-for-its-length-on-every-turn
 claims-to-the-back-end/increment-field-of-spread-copy-in-loop
 claims-to-the-back-end/one-place-in-a-loop-reads-a-method-of-objects-of-two-classes-one-after-the-other
@@ -1177,6 +1181,7 @@ constructor-functions/a-factory-makes-two-constructors-of-one-text
 constructor-functions/a-function-constructed-for-a-class-below-a-built-in-makes-an-ordinary-object
 constructor-functions/a-function-that-constructs-itself-when-called-plainly
 constructor-functions/a-function-that-constructs-itself-when-called-plainly-finds-the-global-object-to-be-its-instance
+constructor-functions/an-object-keeps-the-prototype-that-its-constructor-had-when-it-was-made
 constructor-functions/constructor-functions-store-through-this-in-code-that-is-not-strict
 constructor-functions/methods-defined-under-keys-that-a-helper-reads-out-of-a-list
 constructor-functions/objects-are-made-late-or-never-while-the-prototypes-of-their-constructors-change
@@ -3043,6 +3048,7 @@ static-modules/rulings/the-cache-lists-no-module-of-the-executable
 static-modules/rulings/ways-under-a-computed-key-are-shown-to-nobody-where-no-file-names-one
 strings/a-block-reads-one-started-string-and-starts-another
 strings/a-character-of-a-returned-part-goes-through-a-function-that-also-gets-numbers
+strings/a-json-text-behind-other-texts-makes-a-string-as-long-as-a-string-can-be-or-a-little-longer
 strings/a-line-is-joined-from-what-the-last-turn-of-a-loop-left-and-every-pass-is-verified
 strings/a-part-of-a-string-returned-behind-a-loop-is-read-by-position
 strings/a-part-of-a-string-returned-behind-a-loop-is-read-by-position-typed
@@ -3331,6 +3337,7 @@ untyped-code/names-born-undefined-are-filled-under-computed-keys
 untyped-code/object-filled-from-other-keys-keeps-structure
 untyped-code/objects-filled-by-key-settle-on-shapes
 untyped-code/one-place-reads-tests-and-stores-through-proxies-made-elsewhere
+untyped-code/own-keys-asked-again-and-again-of-objects-with-properties-beside-their-fields
 untyped-code/reflect-get-of-a-written-name-reads-for-the-receiver-it-is-handed
 untyped-code/the-text-of-an-index-names-an-element
 untyped-code/two-reads-one-call

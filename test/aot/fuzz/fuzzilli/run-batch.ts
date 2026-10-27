@@ -1078,7 +1078,15 @@ async function judgeTogether(texts: string[], extension: string, add: (kind: str
     plainEnv,
   );
   // A program that ends in an error is the last of its entry point. One that doesn't end in time has an entry point to itself later.
-  let programs = texts.map((text, index) => ({ text, end: alone.get(index)!.end }));
+  // A file that `bun run` refuses to read takes every program of its entry point with it: none of them runs.
+  const isRefused = ({ stdout, stderr }: Ended) =>
+    stdout.trim() === "" && refusalsOfBunRun.some(message => stderr.includes(message));
+  const read = texts.flatMap((text, index) =>
+    isRefused(alone.get(index)!) ? [] : [{ text, end: alone.get(index)!.end }],
+  );
+  add("bun run refuses the file", texts.length - read.length);
+  add("taken", read.length - texts.length);
+  let programs = read;
   for (const { end } of programs)
     if (end !== "0") add(`ends under bun run with: ${end.replace(/^the process ended.*/, "the process")}`);
   // In which order `bun run` runs several CommonJS files that a module imports differs from run to run.
@@ -1090,7 +1098,7 @@ async function judgeTogether(texts: string[], extension: string, add: (kind: str
   if (takesOnlyThrowers) {
     const throwers = programs.filter(canBeLast);
     add("ends in an error and waits for a batch of such", throwers.length);
-    add("taken", throwers.length + scripts.length - texts.length);
+    add("taken", throwers.length + scripts.length - read.length);
     waitingForABatchOfTheirOwn.push(...throwers.map(({ text }) => text));
     return;
   }

@@ -9,11 +9,12 @@
 //   a program of several files lies in a folder of its own, by itself and in a shared build, and TypeScript is asked about all its files
 //   a finding in several files is tried in one file first; where it takes the files, files are cut first, then lines
 //   a shared build is one program of many modules, but in the mode each-a-program: there the compiler runs once for each program, as it does for a program alone
+//   of two long lines that differ, what is shown begins a little in front of where they part
 import { expect, test } from "bun:test";
 import { chmodSync, existsSync, readFileSync, readdirSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
-import { ProductBed, projects, wholeText, type Bed, type Judged, type Program } from "./fuzz/beds";
+import { ProductBed, compare, projects, wholeText, type Bed, type Judged, type Program } from "./fuzz/beds";
 import { fuzz } from "./fuzz/fuzzer";
 import { reduceFiles, type Whole } from "./fuzz/reduce";
 import { allSources } from "./fuzz/sources";
@@ -574,3 +575,25 @@ test(
   },
   timeout,
 );
+
+test("of two long lines that differ, what is shown begins a little in front of where they part", () => {
+  const ran = (stdout: string) => ({ stdout, stderr: "", exitCode: 0, signal: null, timedOut: false });
+  const detail = (plain: string, compiled: string) => {
+    const verdict = compare(
+      standIn(() => {}),
+      { text: "", extension: "js" },
+      ran(plain),
+      { build: ran(""), run: ran(compiled) },
+    );
+    return verdict.kind === "different output" ? verdict.detail : verdict.kind;
+  };
+  const alike = "x".repeat(300);
+  expect(detail(`first\n${alike}one tail\n`, `first\n${alike}another tail\n`)).toBe(
+    `at character 300 of the line plain "..${"x".repeat(40)}one tail" compiled "..${"x".repeat(40)}another tail"`,
+  );
+  expect(detail(`${alike}\n`, `${alike}more\n`)).toBe(
+    `at character 300 of the line plain "..${"x".repeat(40)}" compiled "..${"x".repeat(40)}more"`,
+  );
+  expect(detail("a 1\n", "a 2\n")).toBe(`plain "a 1" compiled "a 2"`);
+  expect(detail("a\n", "a\nb\n")).toBe(`plain "" compiled "b"`);
+});

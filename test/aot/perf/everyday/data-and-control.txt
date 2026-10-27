@@ -119,6 +119,13 @@ function turn(i: number): number {
   const rows = JSON.parse(text) as { label: string }[];
   return JSON.stringify(rows).length + (i & 1);
 }
+//// json-stringify-a-list-parsed-by-a-type-that-lists-one-of-three-members-whose-texts-have-escapes
+const rowsOfText: string[] = [];
+for (let k = 0; k < 8; k++) rowsOfText.push('{"id":' + k + ',"label":"row\\n' + k + '","ok":' + (k % 2 === 0) + "}");
+const rows = JSON.parse("[" + rowsOfText.join(",") + "]") as { label: string }[];
+function turn(i: number): number {
+  return JSON.stringify(rows).length + (i & 1);
+}
 //// json-parse-texts-with-other-values-each-time-by-a-type-that-lists-one-of-three-members
 const texts: string[] = [];
 for (let k = 0; k < 64; k++) texts.push('{"id":' + (1000 + k * 37) + ',"name":"row ' + k + '","ok":' + (k % 3 === 0) + "}");

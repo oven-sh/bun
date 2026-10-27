@@ -671,6 +671,10 @@
     "typed": 964.3,
     "untyped": 937.6
   },
+  "everyday-data-and-control/json-stringify-a-list-parsed-by-a-type-that-lists-one-of-three-members-whose-texts-have-escapes": {
+    "typed": 7803.2,
+    "untyped": 7526.7
+  },
   "everyday-data-and-control/logical-operators": {
     "typed": 25.2,
     "untyped": 23
@@ -1810,6 +1814,18 @@
   "everyday-patterns-out-of-run-time-text/an-address-far-behind-the-start-of-a-line": {
     "typed": 1851.1,
     "untyped": 1851
+  },
+  "everyday-patterns-out-of-run-time-text/as-little-as-possible-from-every-bracket-of-a-line": {
+    "typed": 1841592.1,
+    "untyped": 1841590.9
+  },
+  "everyday-patterns-out-of-run-time-text/as-much-as-possible-from-every-bracket-of-a-line": {
+    "typed": 1492617.3,
+    "untyped": 1492616.4
+  },
+  "everyday-patterns-out-of-run-time-text/four-lookaheads-each-with-a-group-and-its-reference-that-find-nothing": {
+    "typed": 2337802.1,
+    "untyped": 2337800.2
   },
   "everyday-patterns-out-of-run-time-text/letters-and-digits-of-any-script-in-greek": {
     "typed": 857,

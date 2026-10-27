@@ -6,7 +6,9 @@ import {
   mix,
   writeClassWithFields,
   writeClassWithMethods,
+  writeClassWithStaticFields,
   writeLocalsReadInCatch,
+  writeMethodsStoredIntoPrototype,
   type Program,
 } from "./long-functions-programs";
 import { test } from "./supported";
@@ -120,6 +122,22 @@ test.skipIf(isSlowBuild || isWindows)(
   "the instructions of a build are linear in the number of fields of a class",
   async () => {
     await expectLinearInstructionCount(15_000, writeClassWithFields, 4.5);
+  },
+  240_000,
+);
+
+test.skipIf(isSlowBuild || isWindows)(
+  "the instructions of a build are linear in the number of static fields of a class",
+  async () => {
+    await expectLinearInstructionCount(15_000, writeClassWithStaticFields, 4.5);
+  },
+  240_000,
+);
+
+test.skipIf(isSlowBuild || isWindows)(
+  "the instructions of a build are linear in the number of methods stored into a prototype object",
+  async () => {
+    await expectLinearInstructionCount(15_000, writeMethodsStoredIntoPrototype, 4.5);
   },
   240_000,
 );

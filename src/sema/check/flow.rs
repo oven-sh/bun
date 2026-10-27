@@ -243,6 +243,11 @@ struct FlowRuns {
     /// For each assignment and declaration: the `root_key` of its target, the target's first
     /// property as in `TestSubjects::chains`, and the node. Sorted.
     assignments: Vec<(u32, u32, u32)>,
+    /// The assignments to `x.a.b` and longer, written with names alone: the `root_key`, the first two
+    /// properties as above, and the node. Sorted. They are not in `assignments`: such a target is the
+    /// reference or a prefix of it only if the reference begins with the same two names. Without
+    /// this, n assignments `F.prototype.m = ..` take n * n steps.
+    deep_assignments: Vec<(u32, u32, u32, u32)>,
     /// Indexed like `assignments`. For `x += 1` or `x++`: the first of the assignments like it that
     /// lead up to it in its run, with nothing else that concerns `x` in between, calls aside. For
     /// any other entry: the entry itself. See `skip_compound_assignments`.
@@ -276,6 +281,22 @@ impl FlowRuns {
         look_at(0);
         if let Some(AccessedName::Some(name)) = reference.path.first().map(|step| step.name.get()) {
             look_at(name.0.wrapping_add(1));
+            if let Some(AccessedName::Some(second)) = reference.path.get(1).map(|it| it.name.get())
+            {
+                let names = (root, name.0.wrapping_add(1), second.0.wrapping_add(1));
+                let deep = &self.deep_assignments;
+                let after = deep.partition_point(|&it| it <= (names.0, names.1, names.2, flow.0));
+                if let Some(&(its_root, first, second, node)) = deep[..after].last()
+                    && (its_root, first, second) == names
+                {
+                    last = last.max(node);
+                }
+                if let Some(&(its_root, first, second, node)) = deep.get(after)
+                    && (its_root, first, second) == names
+                {
+                    next = next.min(node);
+                }
+            }
         }
         let keys = &self.computed_key_nodes;
         let after = keys.partition_point(|&node| node <= flow.0);
@@ -2961,6 +2982,36 @@ impl<'p, 's> Checker<'p, 's> {
                 _ => false,
             };
         is_candidate.then_some(init)
+    }
+
+    /// For `x.a.b`, `this.a.b.c`: what `note_chain` records for the root, and the two properties next
+    /// to it. `None` for anything but names joined by dots, and for fewer than two of them.
+    fn first_names_of_plain_chain(&self, file: FileId, e: ExprId) -> Option<(u32, u32, u32)> {
+        let (hir, bound) = (self.hir(file), self.bound(file));
+        let (mut at, mut first, mut second) = (e, None, None);
+        let root = loop {
+            match hir.checked_kind(at) {
+                ExprKind::Dot {
+                    obj,
+                    name,
+                    chain: Chain::No,
+                    ..
+                } => {
+                    second = first.replace(name.0.wrapping_add(1));
+                    at = obj;
+                }
+                ExprKind::Ident(name) => {
+                    let symbol = bound.symbol_of_expr(at);
+                    break match symbol.is_none() {
+                        true => Root::Global(name),
+                        false => Root::Symbol(symbol),
+                    };
+                }
+                ExprKind::This => break Root::This,
+                _ => return None,
+            }
+        };
+        Some((root_key(root), first?, second?))
     }
 
     /// Adds to `about` the root of `e`, an expression that a reference is compared with, along with
@@ -8093,6 +8144,7 @@ impl<'p, 's> Checker<'p, 's> {
         let mut is_continued = vec![false; bound.flow.len()];
         let mut lengths: Vec<u32> = Vec::new();
         let mut assignments = Vec::new();
+        let mut deep_assignments = Vec::new();
         let mut computed_key_nodes = Vec::new();
         for (i, &node) in bound.flow.iter().enumerate() {
             let (Flow::Assign { before, .. }
@@ -8118,6 +8170,14 @@ impl<'p, 's> Checker<'p, 's> {
             let Flow::Assign { target, .. } = node else {
                 continue;
             };
+            if let FlowTarget::Expr(e) = target
+                && let Some((root, first, second)) = self.first_names_of_plain_chain(file, e)
+            {
+                if root != 0 {
+                    deep_assignments.push((root, first, second, i as u32));
+                }
+                continue;
+            }
             let about = &mut AssignmentSubjects {
                 node: i as u32,
                 assignments: &mut assignments,
@@ -8153,6 +8213,7 @@ impl<'p, 's> Checker<'p, 's> {
             }
         }
         assignments.shared_sort_unstable();
+        deep_assignments.shared_sort_unstable();
         let mut end = 0;
         let starts: Vec<u32> = (lengths.iter())
             .map(|&length| {
@@ -8233,6 +8294,7 @@ impl<'p, 's> Checker<'p, 's> {
             last_busy_call: (0..end).collect(),
             nodes,
             assignments,
+            deep_assignments,
             first_compound_assignment,
             computed_key_nodes,
         };

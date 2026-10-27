@@ -95,6 +95,12 @@ const noticedBy: Record<string, Row | Row[]> = {
       flags: [],
       programs: ["one-place-in-a-loop-reads-a-method-of-objects-of-two-classes-one-after-the-other.js"],
     },
+    // The read comes into the loop with the body of the function.
+    {
+      folder: "claims-to-the-back-end",
+      flags: [],
+      programs: ["a-function-that-a-loop-calls-reads-a-method-of-objects-of-two-classes-one-after-the-other.js"],
+    },
   ],
   FieldsNeverChange: toldTheBackEnd(
     "--aot-check=ClaimsToBackEnd",

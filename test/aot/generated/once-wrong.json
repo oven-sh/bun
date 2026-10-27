@@ -149,6 +149,17 @@
     "sum-over-the-other-order parsed-objects filled-where-has-own-finds-nothing for-each, alone.",
     "sum-over-the-other-order parsed-texts-then-numbers filled-where-in-finds-nothing for-each, alone."
   ],
+  "an element is tested, stored to and read again in one turn of a loop": [
+    "program 365.",
+    "program 471.",
+    "program 475.",
+    "program 547.",
+    "program 549.",
+    "program 696.",
+    "program 699.",
+    "program 770.",
+    "program 887."
+  ],
   "an expression whose value is a member of a built-in object does what else it says": [
     "commonjs comma a-call statement, alone.",
     "commonjs comma-in-brackets a-call statement-of-the-file, alone.",
@@ -227,6 +238,26 @@
     "seed 32.",
     "seed 37.",
     "seed 39."
+  ],
+  "counted loops inside counted loops over lists": [
+    "three a-copy store-behind-the-inner-loop seldom a-fixed-element-of-the-first bounds-0-1-2 from-zero an-element-by-a-counter length-read-once the-lists-are-looked-at-afterwards, alone.",
+    "three a-slice-and-a-copy store-in-front by-an-element the-third-by-the-inner-counter bounds-2-1-0 from-behind-the-counter-around a-fixed-element-of-the-first length-read-in-front-too holes-too, alone.",
+    "three a-slice-of-a-slice no-store seldom a-fixed-element-of-the-second bounds-0-0-0 from-zero nothing length-read-once holes-too, alone.",
+    "three a-slice-of-a-slice store-between by-an-element the-neighbor bounds-1-0-1 downward a-fixed-element-of-the-second length-read-once whole-numbers, alone.",
+    "three one-list store-between every-other-turn by-both-counters bounds-0-1-1 downward a-shorter-length length-read-in-front-too fractions-too, alone.",
+    "three one-list store-inside every-other-turn by-both-counters bounds-2-1-0 from-zero one-more-element length-read-in-front-too fractions-too, alone.",
+    "three-loops-a-slice-of-a-slice.mjs, its cases in one program.",
+    "two a-copy store-between seldom-or-else the-second-by-the-outer-counter bounds-1-0-1 from-zero a-fixed-element-of-the-first length-read-once the-lists-are-looked-at-afterwards, alone.",
+    "two a-copy-and-another-parameter store-inside by-an-element no-list bounds-2-1-0 up-to-a-length-read-once a-length-with-nothing-behind-it length-read-in-front-too one-call, alone.",
+    "two a-slice store-in-front seldom-or-else the-third-by-the-inner-counter bounds-0-1-1 up-to-a-length-read-once a-shorter-length length-read-in-front-too one-call-that-takes-the-seldom-way, alone.",
+    "two a-slice store-inside every-other-turn the-first-by-the-inner-counter bounds-0-0-0 from-the-counter-around a-length-with-nothing-behind-it length-read-in-front-too one-call, alone.",
+    "two another-parameter store-behind-the-inner-loop seldom-or-else a-length bounds-0-1-1 up-to-a-length-read-once an-element-by-a-counter length-read-once whole-numbers, alone.",
+    "two another-parameter store-inside every-other-turn the-second-by-the-inner-counter bounds-0-1-2 from-the-counter-around a-fixed-element-of-the-first length-read-once one-call-that-takes-the-seldom-way, alone.",
+    "two-loops-a-slice.mjs, its cases in one program."
+  ],
+  "counted loops inside counted loops over typed lists": [
+    "three-loops-another-parameter.ts, its cases in one program.",
+    "two-loops-one-list.ts, its cases in one program."
   ],
   "native code calls a built-in with an operand that it rejects": [
     "Atomics 1, a symbol, promises",

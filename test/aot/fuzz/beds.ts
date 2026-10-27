@@ -766,5 +766,11 @@ export function compare(bed: Bed, program: Program, plain: Run, compiled: Compil
   const label = (text: string | undefined) => /^\S*/.exec(text ?? "<end>")![0].slice(0, 40);
   const signature = run.exitCode === plain.exitCode ? `values ${label(theirs[at])} ${label(ours[at])}` : codes;
   const overflowed = [theirs[at], ours[at]].some(text => text?.includes("Maximum call stack size exceeded")) ? " | the line tells of a stack overflow" : "";
-  return failure("different output", `plain ${JSON.stringify((theirs[at] ?? "<end>").slice(0, 120))} compiled ${JSON.stringify((ours[at] ?? "<end>").slice(0, 120))}${exits}${overflowed}`, signature);
+  const [theirLine, ourLine] = [theirs[at] ?? "<end>", ours[at] ?? "<end>"];
+  let whereTheyPart = 0;
+  while (whereTheyPart < theirLine.length && theirLine[whereTheyPart] === ourLine[whereTheyPart]) whereTheyPart++;
+  const from = whereTheyPart < 100 ? 0 : whereTheyPart - 40;
+  const shown = (text: string) => JSON.stringify((from ? ".." : "") + text.slice(from, from + 120));
+  const place = from ? `at character ${whereTheyPart} of the line ` : "";
+  return failure("different output", `${place}plain ${shown(theirLine)} compiled ${shown(ourLine)}${exits}${overflowed}`, signature);
 }

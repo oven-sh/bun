@@ -9,6 +9,7 @@ use crate::module_format::ModuleFormat;
 use crate::resolve::{CodeResolution, SiteResolution};
 use std::cell::RefCell;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 #[derive(Copy, Clone, PartialEq, Debug)]
 enum Export {
@@ -404,6 +405,45 @@ fn imported_names<'w>(file: &'w WalkedFile<'_, '_>) -> &'w [ImportedName] {
 /// Each folding knows more than the one before, so there are few. Behind this many a file is folded as if it stood alone.
 const MOST_FOLDINGS_OF_ONE_FILE: u32 = 64;
 
+const FILES_OF_ONE_SHARE: usize = 128;
+
+/// The answers in the order of the shares.
+fn for_each_share<T: Send>(
+    threads: usize,
+    shares: &[&[u32]],
+    look_up: &(dyn Fn(&[u32]) -> T + Sync),
+) -> Vec<T> {
+    let helpers = threads.min(shares.len()).saturating_sub(1);
+    if helpers == 0 {
+        return shares.iter().map(|share| look_up(share)).collect();
+    }
+    let next = AtomicUsize::new(0);
+    let answers: Vec<Guarded<Option<T>>> = shares.iter().map(|_| Guarded::new(None)).collect();
+    let work = || {
+        loop {
+            let index = next.fetch_add(1, Ordering::Relaxed);
+            let Some(share) = shares.get(index) else {
+                return;
+            };
+            *answers[index].lock() = Some(look_up(share));
+        }
+    };
+    std::thread::scope(|scope| {
+        for _ in 0..helpers {
+            let thread = std::thread::Builder::new()
+                .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize);
+            let _ = thread.spawn_scoped(scope, work);
+        }
+        work();
+    });
+    let answers = answers
+        .into_iter()
+        .map(|mut answer| answer.get_mut().take());
+    answers
+        .map(|answer| answer.expect("every share was taken"))
+        .collect()
+}
+
 pub(super) fn fold_files_that_import_constants_again<'r>(
     context: &CodeLoadContext<'_, '_, 'r>,
     state: &mut WalkState<'_, 'r>,
@@ -427,27 +467,39 @@ pub(super) fn fold_files_that_import_constants_again<'r>(
     };
     asked.shared_sort_unstable();
     asked.dedup();
-    let mut exports = Exports {
-        files: &state.files,
-        replacements: &looked_up.replacements,
-        resolved: FxHashMap::default(),
-        stars: vec![None; state.files.len()],
-        first_targets_of_sites: RefCell::default(),
-        files_read: Vec::new(),
+    let look_up = |share: &[u32]| {
+        let mut exports = Exports {
+            files: &state.files,
+            replacements: &looked_up.replacements,
+            resolved: FxHashMap::default(),
+            stars: vec![None; state.files.len()],
+            first_targets_of_sites: RefCell::default(),
+            files_read: Vec::new(),
+        };
+        let mut importers: Vec<(u32, Vec<ImportedConstant>)> = Vec::new();
+        let mut reads: Vec<(u32, u32)> = Vec::new();
+        for &index in share {
+            let file = &state.files[index as usize];
+            let names = imported_names(file).iter();
+            let names = names.filter(|_| file.foldings_with_constants < MOST_FOLDINGS_OF_ONE_FILE);
+            let found: Vec<ImportedConstant> = names
+                .filter_map(|&name| exports.find_constant(index, name))
+                .collect();
+            reads.extend(exports.files_read.drain(..).map(|read| (read, index)));
+            if !are_same(&found, &file.imported_constants) {
+                importers.push((index, found));
+            }
+        }
+        (importers, reads)
     };
+    // The other threads of the walk wait for this one. A share is as long whatever their number, so a build says the same on any machine.
+    let shares: Vec<&[u32]> = asked.chunks(FILES_OF_ONE_SHARE).collect();
+    let answers = for_each_share(context.host.threads(), &shares, &look_up);
     let mut importers: Vec<(u32, Vec<ImportedConstant>)> = Vec::new();
     let mut reads: Vec<(u32, u32)> = Vec::new();
-    for index in asked {
-        let file = &state.files[index as usize];
-        let names = imported_names(file).iter();
-        let names = names.filter(|_| file.foldings_with_constants < MOST_FOLDINGS_OF_ONE_FILE);
-        let found: Vec<ImportedConstant> = names
-            .filter_map(|&name| exports.find_constant(index, name))
-            .collect();
-        reads.extend(exports.files_read.drain(..).map(|read| (read, index)));
-        if !are_same(&found, &file.imported_constants) {
-            importers.push((index, found));
-        }
+    for (importers_of_share, reads_of_share) in answers {
+        importers.extend(importers_of_share);
+        reads.extend(reads_of_share);
     }
     for (read, reader) in reads {
         if looked_up.is_reader.insert((read, reader)) {

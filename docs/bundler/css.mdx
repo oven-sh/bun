@@ -131,8 +131,8 @@ Relative color syntax modifies individual components of an existing color. Adjus
 
 ```css title="styles.css" icon="file-code"
 .theme-color {
-  /* Start with a base color and increase lightness by 15% */
-  --accent: lch(from purple calc(l + 15%) c h);
+  /* Start with a base color and increase lightness by 15 */
+  --accent: lch(from purple calc(l + 15) c h);
 
   /* Take our brand blue and make a desaturated version */
   --subtle-blue: oklch(from var(--brand-blue) l calc(c * 0.8) h);
@@ -143,7 +143,7 @@ Bun's CSS bundler computes these relative color modifications at build time (whe
 
 ```css
 .theme-color {
-  --accent: lch(69.32% 58.34 328.37);
+  --accent: lch(44.69% 66.83 327.11);
   --subtle-blue: oklch(60.92% 0.112 240.01);
 }
 ```
@@ -199,11 +199,11 @@ For browsers that don't support these color spaces, Bun's CSS bundler adds RGB f
 ```css title="styles.css" icon="file-code"
 .vivid-element {
   /* RGB fallback first for maximum compatibility */
-  color: #fa1a4c;
+  color: #ff1f51;
   /* Keep original for browsers that support it */
   color: color(display-p3 1 0.1 0.3);
 
-  background-color: #6a805d;
+  background-color: #6a815c;
   background-color: color(a98-rgb 0.44 0.5 0.37);
 }
 ```
@@ -303,40 +303,7 @@ The `light-dark()` function takes two colors and applies one based on the curren
 }
 ```
 
-For browsers that don't support `light-dark()`, Bun's CSS bundler converts it to CSS variables with fallbacks:
-
-```css title="styles.css" icon="file-code"
-:root {
-  --buncss-light: initial;
-  --buncss-dark: ;
-  color-scheme: light dark;
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --buncss-light: ;
-    --buncss-dark: initial;
-  }
-}
-
-.light-theme {
-  --buncss-light: initial;
-  --buncss-dark: ;
-  color-scheme: light;
-}
-
-.dark-theme {
-  --buncss-light: ;
-  --buncss-dark: initial;
-  color-scheme: dark;
-}
-
-.themed-component {
-  background-color: var(--buncss-light, #ffffff) var(--buncss-dark, #121212);
-  color: var(--buncss-light, #333333) var(--buncss-dark, #eeeeee);
-  border-color: var(--buncss-light, #dddddd) var(--buncss-dark, #555555);
-}
-```
+Bun's CSS bundler keeps `light-dark()` as written. It minifies the two colors and adds fallbacks for them like for any other color.
 
 ### Logical properties
 
@@ -482,13 +449,13 @@ The `:is()` pseudo-class function (formerly `:matches()`) takes a selector list 
 /* 
 .article h1,
 .article h2,
-.article h3 {
+.article .title {
   margin-top: 1.5em;
 }
 */
 
 /* You can write this */
-.article :is(h1, h2, h3) {
+.article :is(h1, h2, .title) {
   margin-top: 1.5em;
 }
 
@@ -502,29 +469,16 @@ For browsers that don't support `:is()`, Bun's CSS bundler provides fallbacks us
 
 ```css
 /* Fallback using -webkit-any */
-.article :-webkit-any(h1, h2, h3) {
-  margin-top: 1.5em;
-}
-
-/* Fallback using -moz-any */
-.article :-moz-any(h1, h2, h3) {
+.article :-webkit-any(h1, h2, .title) {
   margin-top: 1.5em;
 }
 
 /* Original preserved for modern browsers */
-.article :is(h1, h2, h3) {
+.article :is(h1, h2, .title) {
   margin-top: 1.5em;
 }
 
-/* Complex example with fallbacks */
-:-webkit-any(header, main, footer) :-webkit-any(h1, h2, .title) {
-  font-family: "Heading Font", sans-serif;
-}
-
-:-moz-any(header, main, footer) :-moz-any(h1, h2, .title) {
-  font-family: "Heading Font", sans-serif;
-}
-
+/* No fallback: the first list has only type selectors */
 :is(header, main, footer) :is(h1, h2, .title) {
   font-family: "Heading Font", sans-serif;
 }
@@ -532,7 +486,8 @@ For browsers that don't support `:is()`, Bun's CSS bundler provides fallbacks us
 
 <Warning>
   The vendor-prefixed versions have limitations compared to the standardized `:is()` selector, particularly with complex
-  selectors. Bun only uses the prefixed versions when they work correctly.
+  selectors. Bun only uses the prefixed versions when they work correctly. A list of only type selectors gets none:
+  browsers give `:-webkit-any()` the specificity of a class, so the fallback would outrank the `:is()` rule.
 </Warning>
 
 ### :not() selector
@@ -571,11 +526,6 @@ And if `:is()` isn't supported, Bun can generate further fallbacks:
 ```css title="styles.css" icon="file-code"
 /* Even more fallbacks for maximum compatibility */
 button:not(:-webkit-any(.primary, .secondary)) {
-  background-color: #f5f5f5;
-  border: 1px solid #ddd;
-}
-
-button:not(:-moz-any(.primary, .secondary)) {
   background-color: #f5f5f5;
   border: 1px solid #ddd;
 }

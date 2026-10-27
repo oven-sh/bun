@@ -1078,13 +1078,13 @@ describe.concurrent("modules that fail to print", () => {
   });
 
   test("bun build fails instead of emitting a truncated stylesheet when CSS cannot be generated", async () => {
-    // `composes` on a non-simple selector makes the CSS printer fail; the
-    // whole stylesheet body used to be dropped while the build exited 0.
+    // Compiling nesting away writes the parent selector for each `&`. With two per level the
+    // printer stops at its expansion limit.
     using dir = tempDir("build-css-print-err", {
-      "styles.module.css": ".b { color: blue }\n.a .c { composes: b; color: red }\n",
+      "styles.css": "&:is(.a, &.b) {\n".repeat(20) + "color: red;\n" + "}\n".repeat(20),
     });
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "build", "styles.module.css"],
+      cmd: [bunExe(), "build", "styles.css"],
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",
@@ -1092,7 +1092,7 @@ describe.concurrent("modules that fail to print", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain("Failed to generate CSS for this file");
-    expect(stderr).toContain("styles.module.css");
+    expect(stderr).toContain("styles.css");
     expect(stdout).toBe("");
     expect(exitCode).toBe(1);
   });

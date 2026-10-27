@@ -4,7 +4,8 @@
 //! the way that is fastest here. The others are left to [`huf_exact`](super::huf_exact).
 
 use super::huf_exact::{self, TableType, select_decoder_x2};
-use crate::common::entropy::huf_read_stats;
+use crate::common::entropy::huf_read_stats_wksp;
+use crate::common::fse_decompress::Spread;
 use crate::common::{HUF_SYMBOLVALUE_MAX, HUF_TABLELOG_MAX};
 use crate::error::{ErrorCode, Result};
 use crate::util::{BUG, SliceExt, read_le16};
@@ -281,8 +282,19 @@ impl HufDTable {
 
     /// Reads the description of a table at the start of `src`, and returns its size. The table is to decode
     /// `nb_literals` with.
-    fn read(&mut self, src: &[u8], table_type: TableType, nb_literals: usize) -> Result<usize> {
-        let stats = huf_read_stats(&mut self.code.weights, &mut self.code.rank_stats, src)?;
+    fn read(
+        &mut self,
+        src: &[u8],
+        table_type: TableType,
+        nb_literals: usize,
+        spread: &mut Spread,
+    ) -> Result<usize> {
+        let Code {
+            weights,
+            rank_stats,
+            ..
+        } = &mut self.code;
+        let stats = huf_read_stats_wksp(weights, rank_stats, src, spread)?;
         self.code.nb_symbols = stats.nb_symbols;
         self.code.table_log = stats.table_log;
         self.table_type = table_type;
@@ -682,28 +694,49 @@ impl<'a> Stream<'a> {
             return;
         }
         let shift = 64 - log;
-        let (mut ip, mut bits, mut op) = (self.ip, self.bits, self.op);
-        while let Some(window) = self
-            .out
-            .get_mut(op as usize..op as usize + 3 * LOOKUPS + 1)
+        // With nothing else to do in the meantime, what counts is how soon the next lookup can start. So more bits
+        // come from where the last ones came from, which is known ahead of time.
+        let consumed = self.bits.trailing_zeros();
+        // Where the bytes after those that `bits` was read from end.
+        let mut next = self.ip as usize;
+        let Some(Ok(container)) = self.src.get(next..next + 8).map(<[u8; 8]>::try_from) else {
+            return;
+        };
+        // The next bits, from the highest on: `valid` of them, or somewhat more.
+        let mut bits = u64::from_le_bytes(container) << consumed;
+        let mut valid = 64 - consumed;
+        let mut op = self.op as usize;
+        while let Some(window) = (self.out.get_mut(op..op + 3 * LOOKUPS + 1))
             .and_then(|window| window.as_mut_array::<{ 3 * LOOKUPS + 1 }>())
-            && reload(self.src, &mut ip, &mut bits)
+            && next >= 16
+            && let Some(Ok(more)) = self.src.get(next - 8..next).map(<[u8; 8]>::try_from)
         {
+            bits |= u64::from_le_bytes(more) >> (valid & 63);
+            let nb_bytes = (63 - (valid & 63)) >> 3;
+            next -= nb_bytes as usize;
+            valid += 8 * nb_bytes;
             let mut done = 0;
             for _ in 0..LOOKUPS {
-                let entry = table
-                    .get((bits >> shift) as usize % TABLE_SIZE)
-                    .copied()
-                    .unwrap_or(0);
-                bits <<= (entry >> 24) & 63;
+                let entry = table.get((bits >> shift) as usize).copied().unwrap_or(0);
+                let nb_bits = (entry >> 24) & 63;
+                bits <<= nb_bits;
+                valid = valid.wrapping_sub(nb_bits);
                 if let Some(to) = window.get_mut(done..done + 4) {
                     to.copy_from_slice(&entry.to_le_bytes());
                 }
                 done += (entry >> (24 + COUNT_SHIFT)) as usize;
             }
-            op += done as u32;
+            op += done;
         }
-        (self.ip, self.bits, self.op) = (ip, bits, op);
+        let position = 8 * next + valid as usize;
+        let end = position.div_ceil(8);
+        if let Some(Ok(container)) =
+            (self.src.get(end.wrapping_sub(8)..end)).map(<[u8; 8]>::try_from)
+        {
+            self.ip = (end - 8) as u32;
+            self.bits = (u64::from_le_bytes(container) | 1) << ((8 * end - position) & 63);
+            self.op = op as u32;
+        }
     }
 }
 
@@ -805,8 +838,12 @@ impl<'a> Streams<'a> {
 }
 
 /// `HUF_readDTableX2_wksp`. Returns the size of the table's description in `src`.
-pub(crate) fn read_dtable_x2(dtable: &mut HufDTable, src: &[u8]) -> Result<usize> {
-    dtable.read(src, TableType::X2, usize::MAX)
+pub(crate) fn read_dtable_x2(
+    dtable: &mut HufDTable,
+    src: &[u8],
+    spread: &mut Spread,
+) -> Result<usize> {
+    dtable.read(src, TableType::X2, usize::MAX, spread)
 }
 
 /// `HUF_decompress1X_usingDTable`
@@ -822,8 +859,13 @@ pub(crate) fn decompress_1x_using_dtable(
 }
 
 /// `HUF_decompress1X1_DCtx_wksp`
-pub(crate) fn decompress_1x1(dtable: &mut HufDTable, dst: &mut [u8], src: &[u8]) -> Result<usize> {
-    let h_size = dtable.read(src, TableType::X1, dst.len())?;
+pub(crate) fn decompress_1x1(
+    dtable: &mut HufDTable,
+    dst: &mut [u8],
+    src: &[u8],
+    spread: &mut Spread,
+) -> Result<usize> {
+    let h_size = dtable.read(src, TableType::X1, dst.len(), spread)?;
     if h_size >= src.len() {
         return Err(ErrorCode::SrcSizeWrong);
     }
@@ -847,6 +889,7 @@ pub(crate) fn decompress_4x_huf_only(
     dtable: &mut HufDTable,
     dst: &mut [u8],
     src: &[u8],
+    spread: &mut Spread,
 ) -> Result<usize> {
     if dst.is_empty() {
         return Err(ErrorCode::DstSizeTooSmall);
@@ -859,7 +902,7 @@ pub(crate) fn decompress_4x_huf_only(
     } else {
         TableType::X1
     };
-    let h_size = dtable.read(src, table_type, dst.len())?;
+    let h_size = dtable.read(src, table_type, dst.len(), spread)?;
     if h_size >= src.len() {
         return Err(ErrorCode::SrcSizeWrong);
     }

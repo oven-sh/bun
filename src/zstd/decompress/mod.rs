@@ -333,16 +333,21 @@ fn load_d_entropy(entropy: &mut EntropyDTables, dict: &[u8]) -> Result<[u32; ZST
     // The magic number and the ID.
     let mut pos = 8usize;
 
-    pos += huf::read_dtable_x2(&mut entropy.huf_table, dict.sub(pos..)?).map_err(|_| CORRUPTED)?;
+    pos += huf::read_dtable_x2(
+        &mut entropy.huf_table,
+        dict.sub(pos..)?,
+        &mut entropy.workspace,
+    )
+    .map_err(|_| CORRUPTED)?;
 
     {
-        let mut ncount = [0i16; MAX_OFF as usize + 1];
-        let header = read_ncount(&mut ncount, MAX_OFF, dict.sub(pos..)?).map_err(|_| CORRUPTED)?;
+        let header = read_ncount(&mut entropy.workspace.counts, MAX_OFF, dict.sub(pos..)?)
+            .map_err(|_| CORRUPTED)?;
         if header.max_symbol_value > MAX_OFF || header.table_log > OFF_FSE_LOG {
             return Err(CORRUPTED);
         }
         entropy.seq.of.build(
-            ncount.sub(..header.max_symbol_value as usize + 1)?,
+            header.max_symbol_value as usize + 1,
             &OF_CODES,
             header.table_log,
             &mut entropy.workspace,
@@ -350,13 +355,13 @@ fn load_d_entropy(entropy: &mut EntropyDTables, dict: &[u8]) -> Result<[u32; ZST
         pos += header.size;
     }
     {
-        let mut ncount = [0i16; MAX_ML as usize + 1];
-        let header = read_ncount(&mut ncount, MAX_ML, dict.sub(pos..)?).map_err(|_| CORRUPTED)?;
+        let header = read_ncount(&mut entropy.workspace.counts, MAX_ML, dict.sub(pos..)?)
+            .map_err(|_| CORRUPTED)?;
         if header.max_symbol_value > MAX_ML || header.table_log > ML_FSE_LOG {
             return Err(CORRUPTED);
         }
         entropy.seq.ml.build(
-            ncount.sub(..header.max_symbol_value as usize + 1)?,
+            header.max_symbol_value as usize + 1,
             &ML_CODES,
             header.table_log,
             &mut entropy.workspace,
@@ -364,13 +369,13 @@ fn load_d_entropy(entropy: &mut EntropyDTables, dict: &[u8]) -> Result<[u32; ZST
         pos += header.size;
     }
     {
-        let mut ncount = [0i16; MAX_LL as usize + 1];
-        let header = read_ncount(&mut ncount, MAX_LL, dict.sub(pos..)?).map_err(|_| CORRUPTED)?;
+        let header = read_ncount(&mut entropy.workspace.counts, MAX_LL, dict.sub(pos..)?)
+            .map_err(|_| CORRUPTED)?;
         if header.max_symbol_value > MAX_LL || header.table_log > LL_FSE_LOG {
             return Err(CORRUPTED);
         }
         entropy.seq.ll.build(
-            ncount.sub(..header.max_symbol_value as usize + 1)?,
+            header.max_symbol_value as usize + 1,
             &LL_CODES,
             header.table_log,
             &mut entropy.workspace,

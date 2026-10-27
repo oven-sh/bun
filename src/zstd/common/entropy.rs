@@ -1,6 +1,6 @@
 //! `entropy_common.c`: the headers of FSE and Huffman tables.
 
-use super::fse_decompress::fse_decompress_weights;
+use super::fse_decompress::{Spread, fse_decompress_weights};
 use super::{FSE_MIN_TABLELOG, FSE_TABLELOG_ABSOLUTE_MAX, HUF_TABLELOG_MAX};
 use crate::error::{ErrorCode, Result};
 use crate::util::{SliceExt, highbit32, read_le32};
@@ -161,11 +161,30 @@ pub(crate) struct HufStats {
     pub(crate) table_log: u32,
 }
 
+/// `weights`, which are fewer than 4, then zeroes.
+fn pad(weights: &[u8]) -> [u8; 4] {
+    let mut padded = [0; 4];
+    for (to, &weight) in padded.iter_mut().zip(weights) {
+        *to = weight;
+    }
+    padded
+}
+
 /// `HUF_readStats`
 pub(crate) fn huf_read_stats(
     huff_weight: &mut [u8; 256],
     rank_stats: &mut [u32; HUF_TABLELOG_MAX as usize + 1],
     src: &[u8],
+) -> Result<HufStats> {
+    huf_read_stats_wksp(huff_weight, rank_stats, src, &mut Spread::new())
+}
+
+/// `HUF_readStats_wksp`
+pub(crate) fn huf_read_stats_wksp(
+    huff_weight: &mut [u8; 256],
+    rank_stats: &mut [u32; HUF_TABLELOG_MAX as usize + 1],
+    src: &[u8],
+    spread: &mut Spread,
 ) -> Result<HufStats> {
     let Some((&first, rest)) = src.split_first() else {
         return Err(ErrorCode::SrcSizeWrong);
@@ -191,17 +210,34 @@ pub(crate) fn huf_read_stats(
         if i_size + 1 > src.len() {
             return Err(ErrorCode::SrcSizeWrong);
         }
-        o_size = fse_decompress_weights(huff_weight.sub_mut(..255)?, rest.sub(..i_size)?)?;
+        o_size = fse_decompress_weights(huff_weight.sub_mut(..255)?, rest.sub(..i_size)?, spread)?;
     }
 
-    rank_stats.fill(0);
+    // Four counts of each weight: one that is incremented again and again has to be waited for.
+    let mut counts = [[0u32; 16]; 4];
     let mut weight_total: u32 = 0;
-    for &weight in huff_weight.sub(..o_size)? {
-        let Some(rank) = rank_stats.get_mut(usize::from(weight)) else {
-            return Err(ErrorCode::CorruptionDetected);
-        };
-        *rank += 1;
-        weight_total += (1 << weight) >> 1;
+    let mut max_weight = 0;
+    let (fours, others) = huff_weight.sub(..o_size)?.as_chunks::<4>();
+    for weights in fours.iter().chain(&[pad(others)]) {
+        for (&weight, counts) in weights.iter().zip(&mut counts) {
+            if let Some(count) = counts.get_mut(usize::from(weight) % 16) {
+                *count += 1;
+            }
+            weight_total += (1 << (weight % 16)) >> 1;
+            max_weight = max_weight.max(weight);
+        }
+    }
+    if u32::from(max_weight) > HUF_TABLELOG_MAX {
+        return Err(ErrorCode::CorruptionDetected);
+    }
+    let [counts0, counts1, counts2, counts3] = &counts;
+    for (weight, rank) in rank_stats.iter_mut().enumerate() {
+        *rank =
+            counts0.at(weight)? + counts1.at(weight)? + counts2.at(weight)? + counts3.at(weight)?;
+    }
+    // Those that complete the last four.
+    if let Some(rank) = rank_stats.first_mut() {
+        *rank -= (4 - others.len()) as u32;
     }
     if weight_total == 0 {
         return Err(ErrorCode::CorruptionDetected);

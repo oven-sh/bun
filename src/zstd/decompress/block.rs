@@ -3,15 +3,16 @@
 use super::huf::{self, HufDTable};
 use super::seq_table::{
     Cell, Codes, LL_CODES, ML_CODES, OF_CODES, OffsetTable, SeqTable, SeqTableSources, SeqTables,
-    TableSource, Workspace,
+    TableSource,
 };
 use core::cell::{self, OnceCell};
 use core::hint::{Locality, prefetch_read};
 
 use crate::common::bitstream::BitDStream;
 use crate::common::entropy::read_ncount;
+use crate::common::fse_decompress::Spread;
 use crate::common::{
-    BlockType, LL_FSE_LOG, LONGNBSEQ, MAX_LL, MAX_ML, MAX_OFF, MAX_SEQ, MIN_CBLOCK_SIZE,
+    BlockType, LL_FSE_LOG, LONGNBSEQ, MAX_LL, MAX_ML, MAX_OFF, MIN_CBLOCK_SIZE,
     MIN_LITERALS_FOR_4_STREAMS, MIN_SEQUENCES_SIZE, MINMATCH, ML_FSE_LOG, OFF_FSE_LOG,
     REP_START_VALUE, SymbolEncodingType, WILDCOPY_OVERLENGTH, ZSTD_BLOCKHEADERSIZE, ZSTD_REP_NUM,
 };
@@ -55,7 +56,7 @@ pub(crate) fn get_c_block_size(src: &[u8]) -> Result<(usize, BlockProperties)> {
 pub(crate) struct EntropyDTables {
     pub(crate) seq: SeqTables,
     pub(crate) huf_table: HufDTable,
-    pub(crate) workspace: Workspace,
+    pub(crate) workspace: Spread,
 }
 
 impl EntropyDTables {
@@ -63,7 +64,7 @@ impl EntropyDTables {
         Self {
             seq: SeqTables::new(),
             huf_table: HufDTable::new(),
-            workspace: Workspace::new(),
+            workspace: Spread::new(),
         }
     }
 }
@@ -346,9 +347,19 @@ impl BlockDecoder {
                         huf::decompress_4x_using_dtable(dst, compressed, table)
                     }
                 } else if single_stream {
-                    huf::decompress_1x1(&mut entropy.huf_table, dst, compressed)
+                    huf::decompress_1x1(
+                        &mut entropy.huf_table,
+                        dst,
+                        compressed,
+                        &mut entropy.workspace,
+                    )
                 } else {
-                    huf::decompress_4x_huf_only(&mut entropy.huf_table, dst, compressed)
+                    huf::decompress_4x_huf_only(
+                        &mut entropy.huf_table,
+                        dst,
+                        compressed,
+                        &mut entropy.workspace,
+                    )
                 };
                 if huf_result.is_err() {
                     return Err(ErrorCode::CorruptionDetected);
@@ -641,7 +652,7 @@ fn build_seq_table<C: Cell, const N: usize>(
     max_log: u32,
     src: &[u8],
     codes: &Codes,
-    workspace: &mut Workspace,
+    workspace: &mut Spread,
     flag_repeat_table: bool,
 ) -> Result<usize> {
     match encoding_type {
@@ -667,14 +678,13 @@ fn build_seq_table<C: Cell, const N: usize>(
             Ok(0)
         }
         SymbolEncodingType::Compressed => {
-            let mut norm = [0i16; MAX_SEQ as usize + 1];
-            let header =
-                read_ncount(&mut norm, max, src).map_err(|_| ErrorCode::CorruptionDetected)?;
+            let header = read_ncount(&mut workspace.counts, max, src)
+                .map_err(|_| ErrorCode::CorruptionDetected)?;
             if header.table_log > max_log {
                 return Err(ErrorCode::CorruptionDetected);
             }
             table.build(
-                norm.sub(..header.max_symbol_value as usize + 1)?,
+                header.max_symbol_value as usize + 1,
                 codes,
                 header.table_log,
                 workspace,

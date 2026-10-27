@@ -1,4 +1,5 @@
 import bodyParser from "body-parser";
+import { storedOutgoingHeaders } from "bun:internal-for-testing";
 import express from "express";
 import fastify from "fastify";
 import http, { type IncomingMessage, type RequestListener, type Server, type ServerResponse } from "node:http";
@@ -107,10 +108,6 @@ async function createServer(stack: string): Promise<Server> {
   throw new Error("unknown stack " + stack);
 }
 
-function outgoingHeaders(res: ServerResponse) {
-  return (res as any)[Object.getOwnPropertySymbols(res).find(symbol => symbol.description === "kOutHeaders")!];
-}
-
 const server = await createServer(process.argv[2]);
 
 process.stdin.on("data", () => {});
@@ -123,7 +120,7 @@ process.stdin.on("end", () => {
       const counts = (coverage[route] ??= { requests: 0, fastDispatch: 0, compactHeaders: 0, singleTickFinish: 0 });
       counts.requests++;
       if (dispatcher !== "unknown" && dispatcher !== slowDispatcher) counts.fastDispatch++;
-      if (outgoingHeaders(res) === null) counts.compactHeaders++;
+      if (storedOutgoingHeaders(res) === null) counts.compactHeaders++;
       if (ticks.at(-1) === "emitResponseFinished 1") counts.singleTickFinish++;
     }
     console.log(JSON.stringify(coverage));

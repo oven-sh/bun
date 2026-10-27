@@ -726,6 +726,16 @@ export function setSocketOptions(socket: any, option: 1 | 2, size: number): void
 }
 
 /**
+ * What `node:http` itself finds under `kOutHeaders` on `message`: the map of its headers, or null where there is none.
+ *
+ * In an executable that is compiled ahead of time the headers of a server's response are in a compact form until
+ * somebody asks for the map, and this is null until then. A program that looks under the symbol asks for the map.
+ */
+export function storedOutgoingHeaders(message: any): Record<string, [string, unknown]> | null | undefined {
+  return message[require("internal/http").kOutHeaders];
+}
+
+/**
  * The syscalls instrumented in bsd.c, plus non-syscall hooks whose failure
  * paths are otherwise unreachable without injection ("ssl_loop_buffer",
  * "poll_start", "session_buffer", "ssl_write"; see fault_inject.h for the per-hook

@@ -5,8 +5,9 @@ import { type Coverage, fixture, measure, stacks } from "./node-http-fast-path-c
 // The node:http server has a fast path for dispatching a request, a compact form for response headers and a finish that
 // takes a single process.nextTick(). This pins how many requests of ordinary applications take each of them, so that a
 // change which quietly pushes a framework onto the slow path fails here. The functions of the fast path have the names
-// of those they stand in for, so the fixture tells them apart by the place of the onNodeHTTPRequest frame, the kOutHeaders
-// symbol and the number of arguments of the emitResponseFinished tick: changing one means updating it.
+// of those they stand in for, so the fixture tells them apart by the place of the onNodeHTTPRequest frame, what
+// node:http itself finds under the kOutHeaders symbol and the number of arguments of the emitResponseFinished tick:
+// changing one means updating it. A program that looks under the symbol finds the map, whichever form the headers had.
 //
 // The compact form is for an executable that is compiled ahead of time, which
 // test/aot/node-http-requests-on-a-keep-alive-connection-take-the-fast-path.test.ts measures with the same fixture.

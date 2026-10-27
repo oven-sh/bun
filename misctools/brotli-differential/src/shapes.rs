@@ -205,3 +205,38 @@ pub fn run_blocks(seed0: u64, iters: u64, max_len: usize, qualities: u64) {
     }
     println!("ok: {iters} iterations, {} -> {}", totals.0, totals.1);
 }
+
+/// Every quality with every window size and with size hints on both sides of 1 MiB: all that decides which hasher is used.
+pub fn run_select(seed: u64, len: usize, corpus: &r#gen::Corpus) {
+    let mut rng = Rng(seed);
+    let mut totals = (0usize, 0usize);
+    let mut cases = 0;
+    let inputs = [r#gen::data(&mut rng, corpus, len), crate::ring::records(&mut rng, len), crate::ring::words(&mut rng, len)];
+    for q in 0..12u32 {
+        for lgwin in 10..=30u32 {
+            // A window of 2^30 takes a hasher with 2^31 entries at qualities 10 and 11.
+            if q >= 10 && lgwin > 26 {
+                continue;
+            }
+            for hint in [0u32, 1, (1 << 20) - 1, 1 << 20, u32::MAX] {
+                let mut params = vec![(1, q), (6, u32::from(lgwin > 24)), (2, lgwin)];
+                if hint != 0 {
+                    params.push((5, hint));
+                }
+                for data in &inputs {
+                    let data = &data[..if q >= 10 { len.min(60_000) } else { len }];
+                    let case = EncCase { data: data.to_vec(), params: params.clone(), dicts: Vec::new(), schedule: 0, misuse: false };
+                    match enc::compare(&case) {
+                        Ok(out) => {
+                            totals.0 += data.len();
+                            totals.1 += out.len();
+                            cases += 1;
+                        }
+                        Err(e) => panic!("seed {seed}: {e}\nlen {} params {params:?}", data.len()),
+                    }
+                }
+            }
+        }
+    }
+    println!("ok: {cases} cases, {} -> {}", totals.0, totals.1);
+}

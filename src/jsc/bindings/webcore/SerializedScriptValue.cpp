@@ -39,6 +39,7 @@
 #include "CryptoKeyRSA.h"
 #include "CryptoKeyRSAComponents.h"
 #include "CryptoKeyRaw.h"
+#include "DOMQuotaExceededError.h"
 #include "JSCryptoKey.h"
 #include "JSDOMBinding.h"
 #include "JSDOMConvertBufferSource.h"
@@ -191,6 +192,7 @@ enum SerializationTag {
     DOMExceptionTag = 51,
     ResizableArrayBufferTag = 54,
     ErrorInstanceTag = 55,
+    QuotaExceededErrorTag = 69,
 
     Bun__BlobTag = 254,
     // bun types start at 254 and decrease with each addition
@@ -500,6 +502,7 @@ static constexpr unsigned StringDataIs8BitFlag = 0x80000000;
  *    | WasmMemoryTag <value:uint32_t>
  *    | RTCDataChannelTransferTag <identifier:uint32_t>
  *    | DOMExceptionTag <message:String> <name:String>
+ *    | QuotaExceededErrorTag <message:String> <name:String> <quota:double> <requested:double>, where a NaN is null
  *    | WebCodecsEncodedVideoChunkTag <identifier:uint32_t>
  *
  * Inside certificate, data is serialized in this format as per spec:
@@ -1070,9 +1073,14 @@ private:
         if (auto* exception = JSDOMException::toWrapped(m_lexicalGlobalObject->vm(), obj)) {
             if (!startObjectInternal(obj)) // handle duplicates
                 return;
-            write(DOMExceptionTag);
+            auto* quotaExceededError = dynamicDowncast<DOMQuotaExceededError>(*exception);
+            write(quotaExceededError ? QuotaExceededErrorTag : DOMExceptionTag);
             write(exception->message());
             write(exception->name());
+            if (quotaExceededError) {
+                write(quotaExceededError->quota().value_or(std::numeric_limits<double>::quiet_NaN()));
+                write(quotaExceededError->requested().value_or(std::numeric_limits<double>::quiet_NaN()));
+            }
             return;
         }
 
@@ -3511,7 +3519,7 @@ private:
         }
     }
 
-    JSValue readDOMException()
+    JSValue readDOMException(SerializationTag tag)
     {
         CachedStringRef message;
         if (!readStringData(message))
@@ -3519,8 +3527,26 @@ private:
         CachedStringRef name;
         if (!readStringData(name))
             return JSValue();
-        auto exception = DOMException::create(message->string(), name->string());
-        JSValue wrapper = getJSValue(exception);
+        RefPtr<DOMException> exception;
+        if (tag == QuotaExceededErrorTag) {
+            double quota;
+            double requested;
+            if (!read(quota) || !read(requested))
+                return JSValue();
+            auto toOptional = [](double value) -> std::optional<double> {
+                if (std::isnan(value))
+                    return std::nullopt;
+                return value;
+            };
+            auto quotaExceededError = DOMQuotaExceededError::create(message->string(), { toOptional(quota), toOptional(requested) });
+            if (quotaExceededError.hasException()) {
+                fail();
+                return JSValue();
+            }
+            exception = quotaExceededError.releaseReturnValue();
+        } else
+            exception = DOMException::create(message->string(), name->string());
+        JSValue wrapper = getJSValue(*exception);
         addTerminalToObjectPool(wrapper);
         return wrapper;
     }
@@ -3906,7 +3932,8 @@ private:
         }
 #endif
         case DOMExceptionTag:
-            return readDOMException();
+        case QuotaExceededErrorTag:
+            return readDOMException(tag);
 
         case Bun__BlobTag:
             return readBunType(Blob__onStructuredCloneDeserialize);

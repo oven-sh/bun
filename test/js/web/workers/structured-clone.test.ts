@@ -23,6 +23,7 @@ const identityCases: [string, () => object, Function][] = [
   ["TypeError", () => new TypeError("boom"), TypeError],
   ["URIError", () => new URIError("boom"), URIError],
   ["DOMException", () => new DOMException("boom", "NotFoundError"), DOMException],
+  ["QuotaExceededError", () => new QuotaExceededError("boom", { quota: 1 }), globalThis.QuotaExceededError],
   ["Blob", () => new Blob(["hi"], { type: "text/plain" }), Blob],
   ["File", () => new File(["hi"], "a.txt", { type: "text/plain" }), File],
   ["X509Certificate", () => new X509Certificate(tls.cert), X509Certificate],
@@ -854,6 +855,124 @@ describe("deserializing a version 13 payload", () => {
     expect(+cloned[0]).toBe(5);
     expect(+cloned[1]).toBe(5);
     expect(cloned[0]).not.toBe(cloned[1]);
+  });
+});
+
+// QuotaExceededError is a serializable interface of WebIDL: a clone keeps the class, quota and
+// requested. It has a record of its own, and the version of the format does not change for it.
+describe("QuotaExceededError", () => {
+  const describeError = (error: any) => ({
+    isQuotaExceededError: error instanceof QuotaExceededError,
+    isDOMException: error instanceof DOMException,
+    name: error.name,
+    message: error.message,
+    code: error.code,
+    quota: error.quota,
+    requested: error.requested,
+  });
+  const full = {
+    isQuotaExceededError: true,
+    isDOMException: true,
+    name: "QuotaExceededError",
+    message: "full",
+    code: 22,
+    quota: 42,
+    requested: 50,
+  };
+  const bytes = (value: unknown) => serialize(value, { binaryType: "nodebuffer" });
+
+  test.each([
+    ["structuredClone", structuredClone],
+    ["bun:jsc serialize and deserialize", jscSerializeRoundtrip],
+  ])("%s keeps the class, quota and requested", (_label, clone) => {
+    expect(describeError(clone(new QuotaExceededError("full", { quota: 42, requested: 50 })))).toEqual(full);
+    expect(describeError(clone(new QuotaExceededError("full", { requested: 0 })))).toEqual({
+      ...full,
+      quota: null,
+      requested: 0,
+    });
+    expect(describeError(clone(new QuotaExceededError()))).toEqual({
+      ...full,
+      message: "",
+      quota: null,
+      requested: null,
+    });
+  });
+
+  test("a Worker posts one to its parent", async () => {
+    const url = URL.createObjectURL(
+      new Blob([
+        `postMessage([new QuotaExceededError("full", { quota: 42, requested: 50 }), new QuotaExceededError()]);`,
+      ]),
+    );
+    const worker = new Worker(url);
+    try {
+      const { promise, resolve, reject } = Promise.withResolvers<MessageEvent>();
+      worker.onmessage = resolve;
+      worker.onerror = reject;
+      const [withValues, withDefaults] = (await promise).data;
+      expect(describeError(withValues)).toEqual(full);
+      expect(describeError(withDefaults)).toEqual({ ...full, message: "", quota: null, requested: null });
+    } finally {
+      worker.terminate();
+      URL.revokeObjectURL(url);
+    }
+  });
+
+  test("a DOMException with its name stays a DOMException", () => {
+    expect(describeError(structuredClone(new DOMException("full", "QuotaExceededError")))).toEqual({
+      ...full,
+      isQuotaExceededError: false,
+      quota: undefined,
+      requested: undefined,
+    });
+  });
+
+  test("its record is the DOMException record with another tag, then quota and requested", () => {
+    const domException = bytes(new DOMException("full", "QuotaExceededError"));
+    const nulls = bytes(new QuotaExceededError("full"));
+    const values = bytes(new QuotaExceededError("full", { quota: 42, requested: 50 }));
+
+    expect({ version: bytes(1).readUInt32LE(0), tag: domException[4] }).toEqual({ version: 14, tag: 51 });
+    for (const record of [nulls, values]) {
+      expect({ version: record.readUInt32LE(0), tag: record[4] }).toEqual({ version: 14, tag: 69 });
+      expect(record.subarray(5, -16)).toEqual(domException.subarray(5));
+    }
+    // A NaN stands for null.
+    expect([nulls.readDoubleLE(nulls.length - 16), nulls.readDoubleLE(nulls.length - 8)]).toEqual([NaN, NaN]);
+    expect([values.readDoubleLE(values.length - 16), values.readDoubleLE(values.length - 8)]).toEqual([42, 50]);
+  });
+
+  const unreadable = expect.objectContaining({ name: "TypeError", message: "Unable to deserialize data." });
+
+  test("a record that ends before requested does not deserialize", () => {
+    const record = bytes(new QuotaExceededError("full", { quota: 42, requested: 50 }));
+    expect(() => deserialize(record.subarray(0, -1))).toThrow(unreadable);
+    expect(() => deserialize(record.subarray(0, -9))).toThrow(unreadable);
+  });
+
+  // The bytes can come from anywhere, so the reader holds them to the rules of the constructor.
+  test.each([
+    ["a negative quota", -1, 50],
+    ["a negative requested", NaN, -1],
+    ["requested less than quota", 50, 42],
+    ["an infinite quota", Infinity, Infinity],
+    ["an infinite requested", 42, Infinity],
+    ["a requested of -Infinity", NaN, -Infinity],
+  ])("a record with %s does not deserialize", (_, quota, requested) => {
+    const record = bytes(new QuotaExceededError("full", { quota: 42, requested: 50 }));
+    record.writeDoubleLE(quota, record.length - 16);
+    record.writeDoubleLE(requested, record.length - 8);
+    expect(() => deserialize(record)).toThrow(unreadable);
+    // The reader does not take the bytes after a refused record for another value.
+    const emptyObject = Buffer.from([2, 0xff, 0xff, 0xff, 0xff]);
+    expect(() => deserialize(Buffer.concat([record, emptyObject]))).toThrow(unreadable);
+  });
+
+  test("a record with a NaN for quota reads as null", () => {
+    const record = bytes(new QuotaExceededError("full", { quota: 42, requested: 50 }));
+    record.writeDoubleLE(NaN, record.length - 16);
+    expect(describeError(deserialize(record))).toEqual({ ...full, quota: null });
   });
 });
 

@@ -63,8 +63,9 @@ for (const ctor of intTypedConstructors) {
   }
 
   // Diverges from upstream: Bun does not enforce getRandomValues' 65536-byte quota
-  // (no QuotaExceededError global yet, which upstream also asserts `instanceof` here).
-  // Restore verbatim once it exists: https://w3c.github.io/webcrypto/#Crypto-method-getRandomValues
+  // (https://w3c.github.io/webcrypto/#Crypto-method-getRandomValues). A review removed the check
+  // as a breaking change: https://github.com/oven-sh/bun/pull/19264#pullrequestreview-2793079268
+  // Restore this block verbatim only when a maintainer reverses that.
 
   // if (kData !== undefined) {
   //   assert.throws(

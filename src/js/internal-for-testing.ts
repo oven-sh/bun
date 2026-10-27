@@ -785,6 +785,13 @@ export const structuredCloneAdvanced: (
 
 export const isASANEnabled: () => boolean = $newCppFunction("InternalForTesting.cpp", "jsFunction_isASANEnabled", 0);
 
+/** What native code gets when it throws the `QuotaExceededError` exception code. No API of Bun throws it yet. */
+export const nativeQuotaExceededError: (message: string) => QuotaExceededError = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_nativeQuotaExceededError",
+  1,
+);
+
 export const BunString_threadIsolatedCopyRefCountDelta: () => number = $newCppFunction(
   "InternalForTesting.cpp",
   "jsFunction_BunString_threadIsolatedCopyRefCountDelta",

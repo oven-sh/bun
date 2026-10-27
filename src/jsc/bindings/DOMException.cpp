@@ -29,6 +29,8 @@
 #include "root.h"
 #include "DOMException.h"
 
+#include "DOMQuotaExceededError.h"
+
 namespace WebCore {
 
 // This array needs to be kept in sync with the ExceptionCode enumeration.
@@ -91,7 +93,11 @@ static DOMException::LegacyCode legacyCodeFromName(const String& name)
 Ref<DOMException> DOMException::create(ExceptionCode ec, const String& message)
 {
     auto& description = DOMException::description(ec);
-    return adoptRef(*new DOMException(description.legacyCode, description.name, !message.isEmpty() ? message : description.message));
+    String text = !message.isEmpty() ? message : description.message;
+    // WebIDL made this name an interface, so a native thrower of the code gets the subclass.
+    if (ec == ExceptionCode::QuotaExceededError)
+        return DOMQuotaExceededError::createUnchecked(text);
+    return adoptRef(*new DOMException(description.legacyCode, description.name, text));
 }
 
 Ref<DOMException> DOMException::create(const String& message, const String& name)
@@ -99,11 +105,29 @@ Ref<DOMException> DOMException::create(const String& message, const String& name
     return adoptRef(*new DOMException(legacyCodeFromName(name), name, message));
 }
 
-DOMException::DOMException(LegacyCode legacyCode, const String& name, const String& message)
-    : m_legacyCode(legacyCode)
+DOMException::DOMException(LegacyCode legacyCode, const String& name, const String& message, Type type)
+    : m_type(type)
+    , m_legacyCode(legacyCode)
     , m_name(name)
     , m_message(message)
 {
+}
+
+void DOMException::operator delete(DOMException* exception, std::destroying_delete_t)
+{
+    auto destroy = [](auto& derived) {
+        using Derived = std::decay_t<decltype(derived)>;
+        std::destroy_at(&derived);
+        Derived::freeAfterDestruction(&derived);
+    };
+    switch (exception->type()) {
+    case Type::Default:
+        destroy(*exception);
+        return;
+    case Type::QuotaExceededError:
+        destroy(uncheckedDowncast<DOMQuotaExceededError>(*exception));
+        return;
+    }
 }
 
 } // namespace WebCore

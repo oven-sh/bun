@@ -1,4 +1,5 @@
 import { spawn } from "bun";
+import * as internalForTesting from "bun:internal-for-testing";
 import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir, withoutAggressiveGC } from "harness";
 
@@ -460,6 +461,252 @@ test("globalThis.self = 123 works", () => {
   }
 });
 
+// https://webidl.spec.whatwg.org/#quotaexceedederror
+describe("QuotaExceededError", () => {
+  const describeError = error => ({
+    name: error.name,
+    message: error.message,
+    code: error.code,
+    quota: error.quota,
+    requested: error.requested,
+  });
+  const getter = name => Object.getOwnPropertyDescriptor(QuotaExceededError.prototype, name).get;
+
+  test("is an interface object that inherits from DOMException", () => {
+    expect(Object.getOwnPropertyDescriptor(globalThis, "QuotaExceededError")).toEqual({
+      value: QuotaExceededError,
+      writable: true,
+      enumerable: false,
+      configurable: true,
+    });
+    expect({
+      name: QuotaExceededError.name,
+      length: QuotaExceededError.length,
+      ownKeys: Reflect.ownKeys(QuotaExceededError),
+      prototype: Object.getPrototypeOf(QuotaExceededError) === DOMException,
+      inheritedConstant: QuotaExceededError.QUOTA_EXCEEDED_ERR,
+    }).toEqual({
+      name: "QuotaExceededError",
+      length: 0,
+      ownKeys: ["length", "name", "prototype"],
+      prototype: true,
+      inheritedConstant: 22,
+    });
+  });
+
+  test("its prototype has quota and requested as getters", () => {
+    const prototype = QuotaExceededError.prototype;
+    expect(Object.getPrototypeOf(prototype)).toBe(DOMException.prototype);
+    expect(Reflect.ownKeys(prototype)).toEqual(["constructor", "quota", "requested", Symbol.toStringTag]);
+    expect(Object.getOwnPropertyDescriptors(prototype)).toEqual({
+      constructor: { value: QuotaExceededError, writable: true, enumerable: false, configurable: true },
+      quota: { get: expect.any(Function), set: undefined, enumerable: true, configurable: true },
+      requested: { get: expect.any(Function), set: undefined, enumerable: true, configurable: true },
+      [Symbol.toStringTag]: { value: "QuotaExceededError", writable: false, enumerable: false, configurable: true },
+    });
+  });
+
+  test("has the defaults of the interface", () => {
+    const error = new QuotaExceededError();
+    expect(describeError(error)).toEqual({
+      name: "QuotaExceededError",
+      message: "",
+      code: 22,
+      quota: null,
+      requested: null,
+    });
+    expect(error).toBeInstanceOf(QuotaExceededError);
+    expect(error).toBeInstanceOf(DOMException);
+    expect(error).toBeInstanceOf(Error);
+    expect(Object.prototype.toString.call(error)).toBe("[object QuotaExceededError]");
+    expect(String(error)).toBe("QuotaExceededError");
+  });
+
+  test.each([
+    ["a message", ["out of space"], { message: "out of space", quota: null, requested: null }],
+    ["undefined as the message", [undefined], { message: "", quota: null, requested: null }],
+    ["null as the message", [null], { message: "null", quota: null, requested: null }],
+    ["quota and requested", ["full", { quota: 100, requested: 200 }], { message: "full", quota: 100, requested: 200 }],
+    ["quota only", ["full", { quota: 50 }], { message: "full", quota: 50, requested: null }],
+    ["requested only", ["full", { requested: 75 }], { message: "full", quota: null, requested: 75 }],
+    ["zero for both", ["full", { quota: 0, requested: 0 }], { message: "full", quota: 0, requested: 0 }],
+    [
+      "requested equal to quota",
+      ["full", { quota: 100, requested: 100 }],
+      { message: "full", quota: 100, requested: 100 },
+    ],
+    ["numeric strings", ["full", { quota: "10", requested: "20" }], { message: "full", quota: 10, requested: 20 }],
+    ["a fraction", ["full", { quota: 0.5, requested: 1.5 }], { message: "full", quota: 0.5, requested: 1.5 }],
+    [
+      "null for a member, which converts to 0",
+      ["full", { quota: null }],
+      { message: "full", quota: 0, requested: null },
+    ],
+    [
+      "undefined for a member, which is absent",
+      ["full", { quota: undefined, requested: 3 }],
+      { message: "full", quota: null, requested: 3 },
+    ],
+    ["null as the options", ["full", null], { message: "full", quota: null, requested: null }],
+    ["undefined as the options", ["full", undefined], { message: "full", quota: null, requested: null }],
+  ])("takes %s", (_, args, expected) => {
+    expect(describeError(new QuotaExceededError(...args))).toEqual({
+      name: "QuotaExceededError",
+      code: 22,
+      ...expected,
+    });
+  });
+
+  test("keeps the sign of a quota of -0", () => {
+    expect(new QuotaExceededError("full", { quota: -0 }).quota).toBe(-0);
+  });
+
+  test.each([
+    ["a negative quota", { quota: -1 }, "options.quota must not be negative"],
+    ["a negative requested", { requested: -1 }, "options.requested must not be negative"],
+    [
+      "requested less than quota",
+      { quota: 100, requested: 50 },
+      "options.requested must not be less than options.quota",
+    ],
+  ])("throws a RangeError for %s", (_, options, message) => {
+    expect(() => new QuotaExceededError("full", options)).toThrow(
+      expect.objectContaining({ name: "RangeError", message }),
+    );
+  });
+
+  const nonFinite = "The provided value is non-finite";
+  test.each([
+    ["a NaN quota", { quota: NaN }, nonFinite],
+    ["an infinite quota", { quota: Infinity }, nonFinite],
+    ["a quota of -Infinity", { quota: -Infinity }, nonFinite],
+    ["a quota that is not a number", { quota: "x" }, nonFinite],
+    ["a NaN requested", { requested: NaN }, nonFinite],
+    ["an infinite requested", { requested: Infinity }, nonFinite],
+    ["options that are not an object", 5, "Type error"],
+  ])("throws a TypeError for %s", (_, options, message) => {
+    expect(() => new QuotaExceededError("full", options)).toThrow(
+      expect.objectContaining({ name: "TypeError", message }),
+    );
+  });
+
+  test("converts every member before it validates any", () => {
+    expect(() => new QuotaExceededError("full", { quota: -1, requested: NaN })).toThrow(
+      expect.objectContaining({ name: "TypeError", message: nonFinite }),
+    );
+  });
+
+  test("reads quota before requested, once each", () => {
+    const reads = [];
+    const options = {
+      get quota() {
+        reads.push("quota");
+        return 1;
+      },
+      get requested() {
+        reads.push("requested");
+        return 2;
+      },
+    };
+    expect(describeError(new QuotaExceededError("full", options))).toMatchObject({ quota: 1, requested: 2 });
+    expect(reads).toEqual(["quota", "requested"]);
+  });
+
+  test("cannot be called without new", () => {
+    expect(() => QuotaExceededError("full")).toThrow(
+      expect.objectContaining({ name: "TypeError", code: "ERR_ILLEGAL_CONSTRUCTOR" }),
+    );
+  });
+
+  test.each([
+    ["a plain object", () => ({})],
+    ["its own prototype", () => QuotaExceededError.prototype],
+    ["a DOMException with its name", () => new DOMException("full", "QuotaExceededError")],
+  ])("the getters throw ERR_INVALID_THIS for %s", (_, receiver) => {
+    for (const name of ["quota", "requested"]) {
+      expect(() => getter(name).call(receiver())).toThrow(
+        expect.objectContaining({
+          name: "TypeError",
+          code: "ERR_INVALID_THIS",
+          // Node's text for the getters of DOMException and of this class. It has no "type" before the name.
+          message: 'Value of "this" must be of QuotaExceededError',
+        }),
+      );
+    }
+  });
+
+  test("new DOMException(message, 'QuotaExceededError') stays a DOMException with code 22", () => {
+    const error = new DOMException("full", "QuotaExceededError");
+    expect(describeError(error)).toEqual({
+      name: "QuotaExceededError",
+      message: "full",
+      code: 22,
+      quota: undefined,
+      requested: undefined,
+    });
+    expect(error).not.toBeInstanceOf(QuotaExceededError);
+    expect(Object.getPrototypeOf(error)).toBe(DOMException.prototype);
+  });
+
+  test("can be subclassed", () => {
+    class StorageFull extends QuotaExceededError {}
+    const error = new StorageFull("full", { quota: 1, requested: 2 });
+    expect(Object.getPrototypeOf(error)).toBe(StorageFull.prototype);
+    expect(error).toBeInstanceOf(QuotaExceededError);
+    expect(describeError(error)).toEqual({
+      name: "QuotaExceededError",
+      message: "full",
+      code: 22,
+      quota: 1,
+      requested: 2,
+    });
+  });
+
+  // No API of Bun throws the QuotaExceededError exception code yet, so a hook makes the error that such an API gets.
+  test("native code that throws its exception code gets the class", () => {
+    const error = internalForTesting.nativeQuotaExceededError("over the quota");
+    expect(Object.getPrototypeOf(error)).toBe(QuotaExceededError.prototype);
+    expect(describeError(error)).toEqual({
+      name: "QuotaExceededError",
+      message: "over the quota",
+      code: 22,
+      quota: null,
+      requested: null,
+    });
+    expect(typeof error.stack).toBe("string");
+    expect(internalForTesting.nativeQuotaExceededError("").message).toBe("The quota has been exceeded.");
+  });
+
+  // The class of that error comes from the global object, not from its `QuotaExceededError` property:
+  // a program that never read the property, deleted it or replaced it gets the same prototype.
+  test("native code does not read the QuotaExceededError property of the global", async () => {
+    const script = `
+      import { nativeQuotaExceededError } from "bun:internal-for-testing";
+      const unread = nativeQuotaExceededError("over the quota");
+      const prototype = Object.getPrototypeOf(unread);
+      const results = [
+        Object.prototype.toString.call(unread),
+        Object.getPrototypeOf(prototype) === DOMException.prototype,
+        unread.quota,
+        unread.requested,
+      ];
+      results.push(unread instanceof QuotaExceededError, prototype === QuotaExceededError.prototype);
+      delete globalThis.QuotaExceededError;
+      results.push(typeof QuotaExceededError, Object.getPrototypeOf(nativeQuotaExceededError("m")) === prototype);
+      globalThis.QuotaExceededError = class Replaced {};
+      results.push(Object.getPrototypeOf(nativeQuotaExceededError("m")) === prototype);
+      console.log(JSON.stringify(results));
+    `;
+    await using proc = spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify(["[object QuotaExceededError]", true, null, null, true, true, "undefined", true, true]),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 // A constructor reads `new.target.prototype` for the prototype of the object it makes. The read can
 // run script and throw, so it comes after the arguments convert and before the constructor steps.
 describe("new.target.prototype", () => {
@@ -491,6 +738,7 @@ describe("new.target.prototype", () => {
     ["MessageEvent", MessageEvent, ["message"]],
     ["PerformanceMark", PerformanceMark, ["mark"]],
     ["PerformanceObserver", PerformanceObserver, [() => {}]],
+    ["QuotaExceededError", QuotaExceededError, ["message", { quota: 1, requested: 2 }]],
     ["TextEncoder", TextEncoder, []],
     ["URL", URL, ["http://example.com/"]],
     ["URLPattern (pattern, base)", URLPattern, ["/a", "http://example.com/"]],
@@ -516,6 +764,7 @@ describe("new.target.prototype", () => {
     ["URLPattern (init)", URLPattern, [{ pathname: "((" }]],
     ["Headers", Headers, [{ "bad name": "1" }]],
     ["Bun.Cookie", Bun.Cookie, ["name", "value", { sameSite: "bogus" }]],
+    ["QuotaExceededError", QuotaExceededError, ["message", { quota: -1 }]],
     ["WebSocket (url)", WebSocket, ["http://[bad"]],
     ["WebSocket (url, protocol)", WebSocket, ["http://[bad", "chat"]],
     ["WebSocket (url, options)", WebSocket, ["http://[bad", {}]],

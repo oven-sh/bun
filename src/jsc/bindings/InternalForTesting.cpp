@@ -5,6 +5,7 @@
 #include "JavaScriptCore/JSCast.h"
 #include "JavaScriptCore/JSArrayBufferView.h"
 #include "headers-handwritten.h"
+#include "JSDOMExceptionHandling.h"
 #include "webcore/HTTPHeaderMap.h"
 #include "webcore/JSWebSocket.h"
 #include "webcore/WebSocket.h"
@@ -58,6 +59,16 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_hasReifiedStatic, (JSC::JSGlobalObject * glo
     }
 
     return JSValue::encode(jsBoolean(false));
+}
+
+// What a native thrower of ExceptionCode::QuotaExceededError gets, for tests: no API of Bun throws that code yet.
+JSC_DEFINE_HOST_FUNCTION(jsFunction_nativeQuotaExceededError, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto message = callFrame->argument(0).toWTFString(globalObject);
+    RETURN_IF_EXCEPTION(scope, {});
+    RELEASE_AND_RETURN(scope, JSValue::encode(WebCore::createDOMException(globalObject, WebCore::ExceptionCode::QuotaExceededError, message)));
 }
 
 // Side-effect-free report of whether this binary was compiled with

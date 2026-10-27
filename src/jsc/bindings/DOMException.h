@@ -41,6 +41,9 @@ public:
     // For DOM bindings.
     static Ref<DOMException> create(const String& message, const String& name);
 
+    // A subclass has fields of its own and there is no vtable, so the last deref() destroys by type().
+    void operator delete(DOMException*, std::destroying_delete_t);
+
     using LegacyCode = uint8_t;
     LegacyCode legacyCode() const { return m_legacyCode; }
 
@@ -55,13 +58,22 @@ public:
 
     WEBCORE_EXPORT static const Description& description(ExceptionCode);
 
+    enum class Type : uint8_t {
+        Default,
+        QuotaExceededError,
+    };
+    Type type() const { return m_type; }
+
 protected:
-    DOMException(LegacyCode, const String& name, const String& message);
+    DOMException(LegacyCode, const String& name, const String& message, Type = Type::Default);
 
 private:
+    Type m_type;
     LegacyCode m_legacyCode;
     String m_name;
     String m_message;
 };
+
+static_assert(!std::is_polymorphic_v<DOMException>, "a vtable pointer would add 8 bytes to every DOMException");
 
 } // namespace WebCore

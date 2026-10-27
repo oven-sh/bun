@@ -1006,6 +1006,32 @@ declare var DOMException: {
   readonly DATA_CLONE_ERR: 25;
 };
 
+// lib.dom.d.ts has no QuotaExceededError yet, so this is not in UseLibDomIfAvailable. The shape is the one of
+// @types/node 26, and the two declarations merge.
+/**
+ * The error of an operation that goes over a quota. It is a {@link DOMException} with the name
+ * `"QuotaExceededError"` and the code `22`.
+ *
+ * [MDN Reference](https://developer.mozilla.org/docs/Web/API/QuotaExceededError)
+ */
+interface QuotaExceededError extends DOMException {
+  /** The quota that the operation went over, or `null` when the thrower gave none. */
+  readonly quota: number | null;
+  /** The amount that the operation asked for, or `null` when the thrower gave none. */
+  readonly requested: number | null;
+}
+declare var QuotaExceededError: {
+  prototype: QuotaExceededError;
+  new (message?: string, options?: QuotaExceededErrorOptions): QuotaExceededError;
+};
+
+interface QuotaExceededErrorOptions {
+  /** The quota that the operation went over. A negative number throws a `RangeError`. */
+  quota?: number;
+  /** The amount that the operation asked for. A negative number, or one less than `quota`, throws a `RangeError`. */
+  requested?: number;
+}
+
 declare function alert(message?: string): void;
 declare function confirm(message?: string): boolean;
 declare function prompt(message?: string, _default?: string): string | null;

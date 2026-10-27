@@ -98,6 +98,7 @@ fn random_data(global: &JSGlobalObject, slice: &mut [u8]) {
                 .entropy_slice(slice.len());
             slice[..src.len()].copy_from_slice(src);
         }
+        // Deliberately no 65,536-byte quota, unlike WebCrypto and Node.js: https://github.com/oven-sh/bun/pull/19264#pullrequestreview-2793079268
         _ => {
             bun_boringssl_sys::rand_bytes(slice);
         }

@@ -11,16 +11,16 @@ use super::fse::FseRepeat;
 use super::huf::{self, HufRepeat};
 use super::internal::{
     BlockSrc, BufId, Buffers, CompressedBlockState, CompressionParameters, DictMatchState,
-    DictTableLoadMethod, EntropyCTablesMetadata, HASH_READ_SIZE, LdmState, LongLengthType,
-    MatchState, ParamSwitch, Prefix, RawSeq, RawSeqStore, SeqChunk, SeqStore, Strategy,
+    DictTableLoadMethod, EntropyCTablesMetadata, HASH_READ_SIZE, LdmState, LongLengthType, Match,
+    MatchState, Optimal, ParamSwitch, Prefix, RawSeq, RawSeqStore, SeqChunk, SeqStore, Strategy,
     TableFillPurpose, Window, ZSTD_CHUNKSIZE_MAX, ZSTD_CURRENT_MAX, ZSTD_DUBT_UNSORTED_MARK,
     ZSTD_OPT_SIZE, ZSTD_SHORT_CACHE_TAG_BITS, ZSTD_WINDOW_START_INDEX, min_gain, no_compress_block,
     offbase_is_repcode, offset_to_offbase, rle_compress_block, update_rep,
 };
 use super::params::{
-    CCtxParams, CParamMode, Format, MatchStateSizes, Workspace, WorkspaceNeeds,
-    adjust_c_params_internal, allocate_chain_table, cdict_indices_are_tagged, compress_bound,
-    cycle_log, get_c_params_from_cctx_params, max_nb_seq, resolve_row_match_finder_mode,
+    CCtxParams, CParamMode, Format, MatchStateSizes, adjust_c_params_internal,
+    allocate_chain_table, cdict_indices_are_tagged, compress_bound, cycle_log,
+    get_c_params_from_cctx_params, max_nb_seq, resolve_row_match_finder_mode,
     row_match_finder_used,
 };
 use super::superblock::compress_super_block;
@@ -31,7 +31,7 @@ use crate::common::{
     BlockType, LITBITS, LL_FSE_LOG, MAX_LL, MAX_ML, MAX_OFF, MIN_CBLOCK_SIZE, ML_FSE_LOG,
     OFF_FSE_LOG, ZSTD_BLOCKHEADERSIZE, ZSTD_BLOCKSIZE_MAX, ZSTD_CONTENTSIZE_UNKNOWN,
     ZSTD_FRAMEHEADERSIZE_MAX, ZSTD_MAGIC_DICTIONARY, ZSTD_MAGICNUMBER, ZSTD_REP_NUM,
-    ZSTD_WINDOWLOG_ABSOLUTEMIN,
+    ZSTD_WINDOWLOG_ABSOLUTEMIN, ZSTD_WORKSPACETOOLARGE_FACTOR, ZSTD_WORKSPACETOOLARGE_MAXDURATION,
 };
 use crate::error::{ErrorCode, Result};
 use crate::util::{
@@ -145,13 +145,16 @@ pub(crate) fn reset_table<T: bun_pod::Zeroable + Copy + Default>(
     len: usize,
     clean: bool,
 ) -> Result<()> {
-    if table.len() != len {
+    if len > table.capacity() {
         // First, so that both are not allocated at once.
         *table = Vec::new();
         *table = try_zeroed(len)?;
-    } else if clean {
-        table.fill(T::default());
+        return Ok(());
     }
+    if clean {
+        table.clear();
+    }
+    table.resize(len, T::default());
     Ok(())
 }
 
@@ -192,8 +195,6 @@ fn reset_match_state(
         }
         let row_log = c_params.search_log.clamp(4, 6);
         ms.row_hash_log = c_params.hash_log - row_log;
-    } else {
-        ms.tag_table = Vec::new();
     }
 
     if for_who == ResetTarget::CCtx && c_params.strat() >= Strategy::BtOpt {
@@ -203,13 +204,32 @@ fn reset_match_state(
         reset_table(&mut ms.opt.off_code_freq, MAX_OFF as usize + 1, false)?;
         reset_table(&mut ms.opt.match_table, ZSTD_OPT_SIZE, false)?;
         reset_table(&mut ms.opt.price_table, ZSTD_OPT_SIZE, false)?;
-    } else {
-        ms.opt.match_table = Vec::new();
-        ms.opt.price_table = Vec::new();
     }
 
     ms.c_params = *c_params;
     Ok(())
+}
+
+/// How many bytes the tables of a context take.
+fn tables_size(c_params: &CompressionParameters, use_row_match_finder: ParamSwitch) -> usize {
+    let sizes = MatchStateSizes::new(c_params, use_row_match_finder, true);
+    let mut size = (sizes.h_size + sizes.chain_size + sizes.h3_size) * size_of::<u32>();
+    if row_match_finder_used(c_params.strat(), use_row_match_finder) {
+        size += sizes.h_size;
+    }
+    if c_params.strat() >= Strategy::BtOpt {
+        size += ZSTD_OPT_SIZE * (size_of::<Match>() + size_of::<Optimal>());
+    }
+    size
+}
+
+/// How many bytes the tables of `ms` hold on to, in use or not.
+fn tables_capacity(ms: &MatchState) -> usize {
+    (ms.hash_table.capacity() + ms.chain_table.capacity() + ms.hash_table3.capacity())
+        * size_of::<u32>()
+        + ms.tag_table.capacity()
+        + ms.opt.match_table.capacity() * size_of::<Match>()
+        + ms.opt.price_table.capacity() * size_of::<Optimal>()
 }
 
 /// `ZSTD_indexTooCloseToMax`: starting a frame this close to the limit would mean bringing indices down during it.
@@ -766,9 +786,8 @@ pub(crate) struct FrameCompressor {
     pub(crate) applied_params: CCtxParams,
     pub(crate) dict_id: u32,
     pub(crate) dict_content_size: usize,
-    workspace: Workspace,
-    /// See [`Self::for_worker`].
-    room_for_any_block: bool,
+    /// For how many frames in a row the tables have been much larger than it takes.
+    oversized_duration: usize,
     pub(crate) block_size_max: usize,
     pub(crate) pledged_src_size_plus_one: u64,
     pub(crate) consumed_src_size: u64,
@@ -814,8 +833,7 @@ impl FrameCompressor {
             applied_params: CCtxParams::new(0),
             dict_id: 0,
             dict_content_size: 0,
-            workspace: Workspace::new(),
-            room_for_any_block: false,
+            oversized_duration: 0,
             block_size_max: 0,
             pledged_src_size_plus_one: 0,
             consumed_src_size: 0,
@@ -833,15 +851,8 @@ impl FrameCompressor {
         }
     }
 
-    /// For the jobs of one worker. The size of a job is all it is told about the size of the input, and a workspace that
-    /// is too small for a job a little larger than those before would be replaced, which clears the tables. The C code
-    /// hardly gets there, as small jobs all go to the context that had the first job of the frame, which did not know
-    /// the size. Which context a job goes to is a matter of timing there, so it cannot show in the output.
     pub(crate) fn for_worker() -> Self {
-        Self {
-            room_for_any_block: true,
-            ..Self::new()
-        }
+        Self::new()
     }
 
     /// `ZSTD_resetCCtx_internal`
@@ -881,24 +892,29 @@ impl FrameCompressor {
 
         let index_too_close = index_too_close_to_max(&self.match_state.window);
         let dict_too_big = loaded_dict_size > ZSTD_CHUNKSIZE_MAX as usize;
-        let mut needs_index_reset = if index_too_close || dict_too_big || !self.initialized {
+        // Whether indices go on or start again does not show: what the tables hold from before is too low to be valid.
+        let needs_index_reset = if index_too_close || dict_too_big || !self.initialized {
             IndexResetPolicy::Reset
         } else {
             IndexResetPolicy::Continue
         };
-        if self.workspace.reset(&WorkspaceNeeds {
-            c_params: &params.c_params,
-            ldm_params: &params.ldm_params,
-            use_row_match_finder: params.use_row_match_finder,
-            buff_in_size: sizes.buff_in_size,
-            buff_out_size: sizes.buff_out_size,
-            block_size: if self.room_for_any_block {
-                ZSTD_BLOCKSIZE_MAX.min(1 << params.c_params.window_log)
-            } else {
-                block_size
-            },
-        }) {
-            needs_index_reset = IndexResetPolicy::Reset;
+
+        // `ZSTD_cwksp_check_wasteful`: a context does not hold on for long to much more than it uses.
+        let needed = tables_size(&params.c_params, params.use_row_match_finder);
+        if tables_capacity(&self.match_state) < needed.saturating_mul(ZSTD_WORKSPACETOOLARGE_FACTOR)
+        {
+            self.oversized_duration = 0;
+        } else if self.oversized_duration < ZSTD_WORKSPACETOOLARGE_MAXDURATION {
+            self.oversized_duration += 1;
+        } else {
+            self.oversized_duration = 0;
+            let ms = &mut self.match_state;
+            ms.hash_table = Vec::new();
+            ms.chain_table = Vec::new();
+            ms.hash_table3 = Vec::new();
+            ms.tag_table = Vec::new();
+            ms.opt.match_table = Vec::new();
+            ms.opt.price_table = Vec::new();
         }
 
         self.match_state.c_params = params.c_params;

@@ -18,8 +18,8 @@ fn fill_double_hash_table_for_cdict(
     end: usize,
     dtlm: DictTableLoadMethod,
 ) -> Result<()> {
-    let h_bits_l = ms.c_params.hash_log + ZSTD_SHORT_CACHE_TAG_BITS;
-    let h_bits_s = ms.c_params.chain_log + ZSTD_SHORT_CACHE_TAG_BITS;
+    let h_bits_l = ms.tagged_hash_log();
+    let h_bits_s = ms.tagged_chain_log();
     let mls = ms.c_params.min_match;
     let hash_large = ms.hash_table.as_mut_slice();
     let hash_small = ms.chain_table.as_mut_slice();
@@ -303,16 +303,16 @@ fn compress_block_double_fast_dict_match_state_generic<const MLS: u32>(
     let h_bits_l = ms.c_params.hash_log;
     let h_bits_s = ms.c_params.chain_log;
     let [mut offset_1, mut offset_2, _] = *rep;
+    let hash_long = ms.hash_table.as_mut_slice();
+    let hash_small = ms.chain_table.as_mut_slice();
     let dms = src.dms.as_ref().ok_or(BUG)?;
     let dict_hash_long = dms.ms.hash_table.as_slice();
     let dict_hash_small = dms.ms.chain_table.as_slice();
-    let dict_h_bits_l = dms.ms.c_params.hash_log + ZSTD_SHORT_CACHE_TAG_BITS;
-    let dict_h_bits_s = dms.ms.c_params.chain_log + ZSTD_SHORT_CACHE_TAG_BITS;
-    let hash_long = ms.hash_table.as_mut_slice();
-    let hash_small = ms.chain_table.as_mut_slice();
+    let dict_h_bits_l = dms.ms.tagged_hash_log();
+    let dict_h_bits_s = dms.ms.tagged_chain_log();
 
     let mut anchor = seg.istart;
-    let mut ip = seg.istart + usize::from(seg.dict_and_prefix_length() == 0);
+    let mut ip = seg.first();
 
     'search: while ip < seg.ilimit {
         let h2 = hash_ptr(seg.buf, ip, h_bits_l, 8)?;

@@ -1268,6 +1268,16 @@ impl MatchState {
         }
     }
 
+    /// How many bits to hash to for `hash_table` when it is a dictionary's, where entries have tags.
+    pub(crate) const fn tagged_hash_log(&self) -> u32 {
+        self.c_params.hash_log + ZSTD_SHORT_CACHE_TAG_BITS
+    }
+
+    /// The same for `chain_table`, as `dfast` uses it.
+    pub(crate) const fn tagged_chain_log(&self) -> u32 {
+        self.c_params.chain_log + ZSTD_SHORT_CACHE_TAG_BITS
+    }
+
     /// `ZSTD_matchState_dictMode`: `dms` is the match state of the dictionary, if there is one to search.
     pub(crate) fn dict_mode(&self, dms: Option<&DictMatchState<'_>>) -> DictMode {
         if self.window.has_ext_dict() {

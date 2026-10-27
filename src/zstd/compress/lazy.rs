@@ -55,6 +55,10 @@ fn update_dubt(ms: &mut MatchState, prefix: Prefix<'_>, ip: usize, mls: u32) -> 
 /// What [`insert_dubt1`] works out about the position it sorts.
 struct Unsorted<'a> {
     bt_mask: u32,
+    /// Where its two slots are in the table.
+    slot: usize,
+    /// The next sorted candidate, which is in the first slot. The other one has the previous unsorted candidate.
+    next_sorted: u32,
     dict_limit: u32,
     dict_end: usize,
     prefix_start: usize,
@@ -66,8 +70,9 @@ struct Unsorted<'a> {
 }
 
 impl<'a> Unsorted<'a> {
-    fn new(ms: &MatchState, src: &BlockSrc<'a>, curr: u32, input_end: usize) -> Self {
-        let bt_log = ms.c_params.chain_log - 1;
+    fn new(ms: &MatchState, src: &BlockSrc<'a>, curr: u32, input_end: usize) -> Result<Self> {
+        let bt_mask = (1u32 << (ms.c_params.chain_log - 1)) - 1;
+        let slot = 2 * (curr & bt_mask) as usize;
         let dict_limit = ms.window.dict_limit;
         let dict_end = src.dict_pos_of(dict_limit);
         let (ip_buf, ip, iend) = if curr >= dict_limit {
@@ -77,8 +82,10 @@ impl<'a> Unsorted<'a> {
         };
         let window_valid = ms.window.low_limit;
         let max_distance = 1u32 << ms.c_params.window_log;
-        Self {
-            bt_mask: (1u32 << bt_log) - 1,
+        Ok(Self {
+            bt_mask,
+            slot,
+            next_sorted: ms.chain_table.at(slot)?,
             dict_limit,
             dict_end,
             prefix_start: src.pos_of(dict_limit),
@@ -90,7 +97,7 @@ impl<'a> Unsorted<'a> {
             } else {
                 window_valid
             },
-        }
+        })
     }
 }
 
@@ -103,14 +110,13 @@ fn insert_dubt1<const DICT_MODE: u8>(
     mut nb_compares: u32,
     bt_low: u32,
 ) -> Result<()> {
-    let at = Unsorted::new(ms, src, curr, input_end);
+    let at = Unsorted::new(ms, src, curr, input_end)?;
     let mut common_length_smaller = 0usize;
     let mut common_length_larger = 0usize;
     let bt = ms.chain_table.as_mut_slice();
-    let mut smaller_ptr = 2 * (curr & at.bt_mask) as usize;
+    let mut smaller_ptr = at.slot;
     let mut larger_ptr = smaller_ptr + 1;
-    // The next sorted candidate. The other slot has the previous unsorted one.
-    let mut match_index = bt.at(smaller_ptr)?;
+    let mut match_index = at.next_sorted;
 
     while nb_compares != 0 && match_index > at.window_low {
         let next_ptr = 2 * (match_index & at.bt_mask) as usize;

@@ -1,10 +1,10 @@
 //! `zstd_fast.c`: the `fast` strategy, which looks up one hash table.
 
 use super::internal::{
-    BlockSrc, DictTableLoadMethod, HASH_READ_SIZE, K_SEARCH_STRENGTH, MatchState, Near, Prefix,
-    REPCODE1_TO_OFFBASE, SeqSink, SeqStore, TableFillPurpose, ZSTD_SHORT_CACHE_TAG_BITS,
-    compare_packed_tags, count, count_2segments, hash_of, hash_ptr, index_overlap_check,
-    offset_to_offbase, table_get, table_put, write_tagged_index,
+    BlockSrc, CompressionParameters, DictTableLoadMethod, HASH_READ_SIZE, K_SEARCH_STRENGTH,
+    MatchState, Near, Prefix, REPCODE1_TO_OFFBASE, SeqSink, SeqStore, TableFillPurpose,
+    ZSTD_SHORT_CACHE_TAG_BITS, compare_packed_tags, count, count_2segments, hash_of, hash_ptr,
+    index_overlap_check, offset_to_offbase, table_get, table_put, write_tagged_index,
 };
 use crate::common::ZSTD_REP_NUM;
 use crate::error::Result;
@@ -101,12 +101,14 @@ impl<'a> TwoSegments<'a> {
         }))
     }
 
-    /// How many bytes matches can be in before the block.
-    pub(super) const fn dict_and_prefix_length(&self) -> u32 {
-        self.istart
+    /// The first position to look at, with a dictionary: not `istart` if there is nothing before it to match.
+    pub(super) const fn first(&self) -> usize {
+        let dict_and_prefix_length = self
+            .istart
             .wrapping_sub(self.prefix_start)
             .wrapping_add(self.dict_end)
-            .wrapping_sub(self.dict_start) as u32
+            .wrapping_sub(self.dict_start) as u32;
+        self.istart + (dict_and_prefix_length == 0) as usize
     }
 
     /// The position in `dict_buf` of an index of the other segment.
@@ -182,6 +184,12 @@ impl SavedRep {
             offset_saved2,
         }
     }
+
+    fn with_ext_dict(rep: &[u32; ZSTD_REP_NUM], src: &BlockSrc<'_>, seg: &TwoSegments<'_>) -> Self {
+        let max_rep = src.index_of(seg.istart).wrapping_sub(seg.dict_start_index);
+        // As far as `max_rep` is too far too.
+        Self::new(rep, max_rep.saturating_sub(1))
+    }
 }
 
 /// The repeat offsets to leave at the end of a block, at the start of which those that reached too far were saved and
@@ -220,7 +228,7 @@ fn fill_hash_table_for_cdict(
     end: usize,
     dtlm: DictTableLoadMethod,
 ) -> Result<()> {
-    let h_bits = ms.c_params.hash_log + ZSTD_SHORT_CACHE_TAG_BITS;
+    let h_bits = ms.tagged_hash_log();
     let mls = ms.c_params.min_match;
     let hash_table = ms.hash_table.as_mut_slice();
     let buf = prefix.buf;
@@ -246,13 +254,8 @@ fn fill_hash_table_for_cdict(
     Ok(())
 }
 
-/// `ZSTD_fillHashTableForCCtx`
-fn fill_hash_table_for_cctx(
-    ms: &mut MatchState,
-    prefix: Prefix<'_>,
-    end: usize,
-    dtlm: DictTableLoadMethod,
-) -> Result<()> {
+/// `ZSTD_fillHashTableForCCtx`, which is only for `ZSTD_dtlm_fast`.
+fn fill_hash_table_for_cctx(ms: &mut MatchState, prefix: Prefix<'_>, end: usize) -> Result<()> {
     let h_bits = ms.c_params.hash_log;
     let mls = ms.c_params.min_match;
     let hash_table = ms.hash_table.as_mut_slice();
@@ -265,15 +268,6 @@ fn fill_hash_table_for_cctx(
     while ip + (FAST_HASH_FILL_STEP as usize) < iend + 2 {
         let curr = prefix.index_of(ip);
         hash_table.put(hash_ptr(buf, ip, h_bits, mls)?, curr)?;
-        if dtlm == DictTableLoadMethod::Full {
-            // The positions in between only go where there is nothing yet.
-            for p in 1..FAST_HASH_FILL_STEP {
-                let hash = hash_ptr(buf, ip + p as usize, h_bits, mls)?;
-                if hash_table.at(hash)? == 0 {
-                    hash_table.put(hash, curr + p)?;
-                }
-            }
-        }
         ip += FAST_HASH_FILL_STEP as usize;
     }
     Ok(())
@@ -289,7 +283,7 @@ pub(crate) fn fill_hash_table(
 ) -> Result<()> {
     match tfp {
         TableFillPurpose::ForCDict => fill_hash_table_for_cdict(ms, prefix, end, dtlm),
-        TableFillPurpose::ForCCtx => fill_hash_table_for_cctx(ms, prefix, end, dtlm),
+        TableFillPurpose::ForCCtx => fill_hash_table_for_cctx(ms, prefix, end),
     }
 }
 
@@ -304,6 +298,11 @@ fn match4_found(
     idx_low_limit: u32,
 ) -> Result<bool> {
     Ok(match_idx >= idx_low_limit && read_le32(buf, current)? == read_le32(buf, match_pos)?)
+}
+
+/// `targetLength + !targetLength`: how far `fast` goes from one position to the next, before it speeds up.
+const fn least_step(c_params: &CompressionParameters) -> u32 {
+    c_params.target_length + (c_params.target_length == 0) as u32
 }
 
 /// What `fast` and `dfast` work out before they look for matches in a block, when there is no dictionary and the window
@@ -388,21 +387,13 @@ fn compress_block_fast_no_dict_generic<const MLS: u32>(
     let Some(block) = NoDictBlock::new(ms, rep, src)? else {
         return Ok(src.end - src.start);
     };
-    let NoDictBlock {
-        near,
-        base_index,
-        candidates,
-        prefix_lowest_index: prefix_start_index,
-        prefix_lowest: prefix_start,
-        ilimit,
-        offset_1: mut rep_offset1,
-        offset_2: mut rep_offset2,
-        ..
-    } = block;
+    let near = block.near;
+    let candidates = block.candidates;
+    let mut rep_offset1 = block.offset_1;
+    let mut rep_offset2 = block.offset_2;
     let hlog = ms.c_params.hash_log;
-    let target_length = ms.c_params.target_length;
     // The least step is 2, as two positions are looked at per turn.
-    let step_size = target_length + u32::from(target_length == 0) + 1;
+    let step_size = least_step(&ms.c_params) + 1;
     let mut anchor = block.istart;
     let mut ip0 = block.first;
     let mut seq_store = SeqSink::new(seq_store);
@@ -415,7 +406,7 @@ fn compress_block_fast_no_dict_generic<const MLS: u32>(
         let mut ip1 = ip0 + 1;
         let mut ip2 = ip0 + step;
         let mut ip3 = ip2 + 1;
-        if ip3 as usize >= ilimit {
+        if ip3 as usize >= block.ilimit {
             break 'start;
         }
 
@@ -432,7 +423,7 @@ fn compress_block_fast_no_dict_generic<const MLS: u32>(
             let bytes2 = near.read64(ip2).ok_or(BUG)?;
             let rval = near.read32(ip2.wrapping_sub(rep_offset1));
 
-            current0 = base_index.wrapping_add(ip0);
+            current0 = block.base_index.wrapping_add(ip0);
             table_put(hash_table, hash0, current0);
 
             if (rval == Some(bytes2 as u32)) & (rep_offset1 > 0) {
@@ -441,13 +432,14 @@ fn compress_block_fast_no_dict_generic<const MLS: u32>(
                 let back = u32::from(near.read8(ip0 - 1) == near.read8(match0.wrapping_sub(1)));
                 ip0 -= back;
                 // The hash of ip1 is there, and ip1 is before the end of the match.
-                table_put(hash_table, hash1, base_index.wrapping_add(ip1));
+                table_put(hash_table, hash1, block.base_index.wrapping_add(ip1));
                 break Some((match0.wrapping_sub(back), 4 + back));
             }
 
-            if candidates.read32(match_idx.wrapping_sub(prefix_start_index)) == Some(bytes0 as u32)
+            if candidates.read32(match_idx.wrapping_sub(block.prefix_lowest_index))
+                == Some(bytes0 as u32)
             {
-                table_put(hash_table, hash1, base_index.wrapping_add(ip1));
+                table_put(hash_table, hash1, block.base_index.wrapping_add(ip1));
                 break None;
             }
 
@@ -461,14 +453,15 @@ fn compress_block_fast_no_dict_generic<const MLS: u32>(
             ip1 = ip2;
             ip2 = ip3;
 
-            current0 = base_index.wrapping_add(ip0);
+            current0 = block.base_index.wrapping_add(ip0);
             table_put(hash_table, hash0, current0);
 
-            if candidates.read32(match_idx.wrapping_sub(prefix_start_index)) == Some(bytes0 as u32)
+            if candidates.read32(match_idx.wrapping_sub(block.prefix_lowest_index))
+                == Some(bytes0 as u32)
             {
                 // ip1 is certain to be before the end of the match only if the step is small.
                 if step <= 4 {
-                    table_put(hash_table, hash1, base_index.wrapping_add(ip1));
+                    table_put(hash_table, hash1, block.base_index.wrapping_add(ip1));
                 }
                 break None;
             }
@@ -488,7 +481,7 @@ fn compress_block_fast_no_dict_generic<const MLS: u32>(
                 step += 1;
                 next_step += K_STEP_INCR;
             }
-            if ip3 as usize >= ilimit {
+            if ip3 as usize >= block.ilimit {
                 break 'start;
             }
         };
@@ -496,10 +489,10 @@ fn compress_block_fast_no_dict_generic<const MLS: u32>(
         let (offcode, match0, mut m_length) = match rep_match {
             Some((match0, m_length)) => (REPCODE1_TO_OFFBASE, match0, m_length),
             None => {
-                let match0 = match_idx - base_index;
+                let match0 = match_idx - block.base_index;
                 rep_offset2 = rep_offset1;
                 rep_offset1 = ip0 - match0;
-                let back = near.count_backwards(ip0, anchor, match0, prefix_start);
+                let back = near.count_backwards(ip0, anchor, match0, block.prefix_lowest);
                 ip0 -= back;
                 (offset_to_offbase(rep_offset1), match0 - back, 4 + back)
             }
@@ -510,17 +503,17 @@ fn compress_block_fast_no_dict_generic<const MLS: u32>(
         ip0 += m_length;
         anchor = ip0;
 
-        if ip0 as usize <= ilimit {
-            let to_insert = near.read64(current0 + 2 - base_index).ok_or(BUG)?;
+        if ip0 as usize <= block.ilimit {
+            let to_insert = near.read64(current0 + 2 - block.base_index).ok_or(BUG)?;
             table_put(hash_table, hash_of::<MLS>(to_insert, hlog), current0 + 2);
             let before2 = near.read64(ip0 - 2).ok_or(BUG)?;
             table_put(
                 hash_table,
                 hash_of::<MLS>(before2, hlog),
-                base_index.wrapping_add(ip0 - 2),
+                block.base_index.wrapping_add(ip0 - 2),
             );
 
-            while rep_offset2 > 0 && ip0 as usize <= ilimit {
+            while rep_offset2 > 0 && ip0 as usize <= block.ilimit {
                 let bytes = near.read64(ip0).ok_or(BUG)?;
                 if near.read32(ip0.wrapping_sub(rep_offset2)) != Some(bytes as u32) {
                     break;
@@ -530,7 +523,7 @@ fn compress_block_fast_no_dict_generic<const MLS: u32>(
                 table_put(
                     hash_table,
                     hash_of::<MLS>(bytes, hlog),
-                    base_index.wrapping_add(ip0),
+                    block.base_index.wrapping_add(ip0),
                 );
                 ip0 += r_length;
                 seq_store.store_seq(0, near, anchor, REPCODE1_TO_OFFBASE, r_length)?;
@@ -575,16 +568,15 @@ fn compress_block_fast_dict_match_state_generic<const MLS: u32>(
     const K_STEP_INCR: usize = 1 << K_SEARCH_STRENGTH;
 
     let hlog = ms.c_params.hash_log;
-    let target_length = ms.c_params.target_length;
-    let step_size = (target_length + u32::from(target_length == 0)) as usize;
+    let step_size = least_step(&ms.c_params) as usize;
     let [mut offset_1, mut offset_2, _] = *rep;
+    let hash_table = ms.hash_table.as_mut_slice();
     let dms = src.dms.as_ref().ok_or(BUG)?;
     let dict_hash_table = dms.ms.hash_table.as_slice();
-    let dict_h_bits = dms.ms.c_params.hash_log + ZSTD_SHORT_CACHE_TAG_BITS;
-    let hash_table = ms.hash_table.as_mut_slice();
+    let dict_h_bits = dms.ms.tagged_hash_log();
 
     let mut anchor = seg.istart;
-    let mut ip0 = seg.istart + usize::from(seg.dict_and_prefix_length() == 0);
+    let mut ip0 = seg.first();
     let mut ip1 = seg.istart + step_size;
 
     'search: while ip1 <= seg.ilimit {
@@ -791,18 +783,15 @@ fn compress_block_fast_ext_dict_generic<const MLS: u32>(
     const K_STEP_INCR: usize = 1 << (K_SEARCH_STRENGTH - 1);
 
     let hlog = ms.c_params.hash_log;
-    let target_length = ms.c_params.target_length;
-    let step_size = (target_length + u32::from(target_length == 0) + 1) as usize;
+    let step_size = least_step(&ms.c_params) as usize + 1;
     let mut anchor = seg.istart;
     let mut ip0 = seg.istart;
-    let max_rep = src.index_of(ip0).wrapping_sub(seg.dict_start_index);
-    // As far as `max_rep` is too far too.
     let SavedRep {
         mut offset_1,
         mut offset_2,
         offset_saved1,
         offset_saved2,
-    } = SavedRep::new(rep, max_rep.saturating_sub(1));
+    } = SavedRep::with_ext_dict(rep, src, seg);
 
     // Whether there is a match for the position `ip` at `idx`, which is from the table.
     let match_found = |ip: usize, idx: u32| -> Result<bool> {

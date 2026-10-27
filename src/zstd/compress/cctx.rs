@@ -275,9 +275,10 @@ fn overflow_correct_if_needed(ms: &mut MatchState, params: &CCtxParams, ip: usiz
 }
 
 /// `ZSTD_loadDictionaryContent`: makes `src` the start of the window, and indexes it.
+///
+/// The C code also indexes it for long distance matching if it is a prefix from the user, which there is none of here.
 fn load_dictionary_content(
     ms: &mut MatchState,
-    ls: Option<&mut LdmState>,
     params: &CCtxParams,
     bufs: &Buffers<'_>,
     mut src: Span,
@@ -299,20 +300,6 @@ fn load_dictionary_content(
 
     ms.window
         .update(src.start_addr(), src.buf, src.len(), false);
-
-    if let Some(ls) = ls
-        && params.ldm_params.enable_ldm == ParamSwitch::Enable
-    {
-        ls.window
-            .update(src.start_addr(), src.buf, src.len(), false);
-        ls.loaded_dict_end = if params.force_window {
-            0
-        } else {
-            ls.window.index_of(src.end_addr())
-        };
-        let prefix = window_prefix(&ls.window, bufs);
-        ldm::fill_hash_table(ls, prefix, src.start, src.end, &params.ldm_params)?;
-    }
 
     {
         // More than the tables can hold is not worth indexing.
@@ -477,7 +464,6 @@ fn load_c_entropy(bs: &mut CompressedBlockState, dict: &[u8]) -> Result<usize> {
 fn compress_insert_dictionary(
     bs: &mut CompressedBlockState,
     ms: &mut MatchState,
-    ls: Option<&mut LdmState>,
     params: &CCtxParams,
     bufs: &Buffers<'_>,
     dict: Option<Span>,
@@ -495,7 +481,7 @@ fn compress_insert_dictionary(
     if dict_content_type == DictContentType::RawContent
         || read_le32(bytes, 0)? != ZSTD_MAGIC_DICTIONARY
     {
-        load_dictionary_content(ms, ls, params, bufs, dict, dtlm, tfp)?;
+        load_dictionary_content(ms, params, bufs, dict, dtlm, tfp)?;
         return Ok(0);
     }
 
@@ -510,7 +496,7 @@ fn compress_insert_dictionary(
         start: dict.start + e_size,
         ..dict
     };
-    load_dictionary_content(ms, None, params, bufs, content, dtlm, tfp)?;
+    load_dictionary_content(ms, params, bufs, content, dtlm, tfp)?;
     Ok(dict_id)
 }
 
@@ -559,7 +545,6 @@ impl CDict {
         cdict.dict_id = compress_insert_dictionary(
             &mut cdict.c_block_state,
             &mut cdict.match_state,
-            None,
             &params,
             &bufs,
             Some(Span {
@@ -1091,7 +1076,6 @@ impl FrameCompressor {
         self.dict_id = compress_insert_dictionary(
             &mut self.prev_c_block,
             &mut self.match_state,
-            Some(&mut self.ldm_state),
             &self.applied_params,
             &input.bufs,
             dict,

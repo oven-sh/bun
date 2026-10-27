@@ -9,7 +9,7 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{Receiver, Sender, channel};
+use std::sync::mpmc::{Receiver, Sender, TryRecvError, channel};
 use std::thread::JoinHandle;
 
 use super::cctx::{
@@ -350,8 +350,8 @@ impl PendingJob {
             } else {
                 match receiver.try_recv() {
                     Ok(progress) => Some(progress),
-                    Err(std::sync::mpsc::TryRecvError::Empty) => return,
-                    Err(std::sync::mpsc::TryRecvError::Disconnected) => None,
+                    Err(TryRecvError::Empty) => return,
+                    Err(TryRecvError::Disconnected) => None,
                 }
             };
             match received {

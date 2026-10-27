@@ -314,39 +314,6 @@ fn fill_fast_tables(ms: &mut MatchState, prefix: Prefix<'_>, end: usize) -> Resu
     }
 }
 
-/// `ZSTD_ldm_fillHashTable`: indexes the content of a dictionary, which is `prefix.buf` from `ip` to `iend`.
-pub(crate) fn fill_hash_table(
-    ldm_state: &mut LdmState,
-    prefix: Prefix<'_>,
-    mut ip: usize,
-    iend: usize,
-    params: &LdmParams,
-) -> Result<()> {
-    let min_match_length = params.min_match_length as usize;
-    let bucket_mask = bucket_mask(params);
-    let istart = ip;
-    let mut hash_state = RollingHashState::new(params);
-    let mut splits = [0usize; LDM_BATCH_SIZE];
-
-    while ip < iend {
-        let Fed { hashed, num_splits } = hash_state.feed(prefix.buf.sub(ip..iend)?, &mut splits);
-        for &split in splits.iter().take(num_splits) {
-            if ip + split >= istart + min_match_length {
-                let split = ip + split - min_match_length;
-                let xxhash = xxh64(prefix.buf.span(split, min_match_length)?);
-                let hash = xxhash as u32 & bucket_mask;
-                let entry = LdmEntry {
-                    offset: prefix.index_of(split),
-                    checksum: (xxhash >> 32) as u32,
-                };
-                insert_entry(ldm_state, hash as usize, entry, params.bucket_size_log)?;
-            }
-        }
-        ip += hashed;
-    }
-    Ok(())
-}
-
 /// `ZSTD_ldm_limitTableUpdate`: if the tables of `ms` are far behind `anchor`, skips most of the way.
 fn limit_table_update(ms: &mut MatchState, src: &BlockSrc<'_>, anchor: usize) {
     let curr = src.index_of(anchor);

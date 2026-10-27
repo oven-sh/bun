@@ -1,6 +1,6 @@
 //! Zstandard (RFC 8878). A port of https://github.com/facebook/zstd v1.5.7 (LICENSE.md): the same bytes out for the
 //! same bytes in, in both directions, and the same errors.
-#![feature(hint_prefetch, vec_push_within_capacity)]
+#![feature(hint_prefetch, mpmc_channel, vec_push_within_capacity)]
 #![forbid(unsafe_code)]
 // Frames come from anywhere and a panic aborts the process.
 #![deny(
@@ -26,6 +26,13 @@ pub use compress::stream::{CCtx, EndDirective, compress};
 pub use decompress::{DCtx, DDict, FrameExtent, frame_extent, get_frame_content_size};
 use decompress::{decompress, find_decompressed_size};
 pub use error::ErrorCode;
+
+// Callers share contexts between threads behind their own `unsafe impl`s, which should have nothing to vouch for here.
+const _: () = {
+    const fn shareable<T: Send + Sync>() {}
+    shareable::<CCtx>();
+    shareable::<DCtx>();
+};
 
 /// `ZSTD_inBuffer`
 pub struct InBuffer<'a> {

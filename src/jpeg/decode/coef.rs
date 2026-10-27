@@ -6,8 +6,9 @@ use super::huff::HuffDecoder;
 use super::idct::{self, DctTable};
 use super::input::Input;
 use super::phuff::PHuffDecoder;
-use super::{Block, Decoder, MAX_BLOCKS_IN_MCU};
+use super::{Block, Decoder, MAX_BLOCKS_IN_MCU, coef_at};
 use crate::error::{Error, Result, try_vec};
+use crate::tables::natural_order;
 
 /// Where an entropy decoder finds the blocks of the MCU it is decoding.
 pub(crate) trait McuBlocks {
@@ -87,25 +88,24 @@ impl Plane {
     }
 
     #[inline(always)]
-    pub(crate) fn row(&self, y: usize) -> &[u8] {
+    pub(crate) fn row(&self, y: usize) -> Result<&[u8]> {
         self.data
             .get(y * self.stride..(y + 1) * self.stride)
-            .unwrap_or(&[])
+            .ok_or(Error::Internal)
     }
 
     #[inline(always)]
-    fn put<const N: usize>(&mut self, y: usize, x: usize, samples: &[[u8; N]; N]) {
+    fn put<const N: usize>(&mut self, y: usize, x: usize, samples: &[[u8; N]; N]) -> Result<()> {
         let mut start = y * self.stride + x;
         for row in samples {
-            if let Some(out) = self
+            *self
                 .data
                 .get_mut(start..)
                 .and_then(|out| out.first_chunk_mut::<N>())
-            {
-                *out = *row;
-            }
+                .ok_or(Error::Internal)? = *row;
             start += self.stride;
         }
+        Ok(())
     }
 }
 
@@ -127,7 +127,7 @@ impl Idct {
     }
 
     #[inline(always)]
-    fn run(&self, coefs: &Block, plane: &mut Plane, y: usize, x: usize) {
+    fn run(&self, coefs: &Block, plane: &mut Plane, y: usize, x: usize) -> Result<()> {
         let table = &self.table;
         match self.size {
             8 => plane.put(y, x, &idct::idct8x8(coefs, table)),
@@ -141,7 +141,7 @@ impl Idct {
             10 => plane.put(y, x, &idct::idct10x10(coefs, table)),
             12 => plane.put(y, x, &idct::idct12x12(coefs, table)),
             14 => plane.put(y, x, &idct::idct14x14(coefs, table)),
-            _ => {}
+            _ => Err(Error::Internal),
         }
     }
 }
@@ -153,10 +153,10 @@ struct CoefArray {
 }
 
 impl CoefArray {
-    fn row(&self, y: usize) -> &[Block] {
+    fn row(&self, y: usize) -> Result<&[Block]> {
         self.blocks
             .get(y * self.blocks_per_row..(y + 1) * self.blocks_per_row)
-            .unwrap_or(&[])
+            .ok_or(Error::Internal)
     }
 }
 
@@ -177,6 +177,11 @@ impl McuBlocks for McuInImage<'_> {
 
 /// How many of `CoefBits`'s entries block smoothing looks at.
 const SAVED_COEFS: usize = 10;
+
+/// The first `SAVED_COEFS` in zigzag order of 64 in row-major order.
+fn low_frequencies<T: Copy + Default>(block: &[T; 64]) -> [T; SAVED_COEFS] {
+    core::array::from_fn(|k| block.get(natural_order(k)).copied().unwrap_or_default())
+}
 
 pub(crate) struct CoefController {
     pub(crate) entropy: Entropy,
@@ -261,7 +266,7 @@ impl CoefController {
                                 .skip(blkn)
                                 .take(useful_width as usize);
                             for (xindex, block) in blocks.enumerate() {
-                                idct.run(block, plane, y, start_col + xindex * size);
+                                idct.run(block, plane, y, start_col + xindex * size)?;
                             }
                         }
                         blkn += comp.mcu_width as usize;
@@ -330,39 +335,7 @@ impl CoefController {
             .zip(&coef_bits.previous)
         {
             // These divide.
-            let [
-                q00,
-                q01,
-                q02,
-                q03,
-                _,
-                _,
-                _,
-                _,
-                q10,
-                q11,
-                q12,
-                _,
-                _,
-                _,
-                _,
-                _,
-                q20,
-                q21,
-                _,
-                _,
-                _,
-                _,
-                _,
-                _,
-                q30,
-                ..,
-            ] = comp.quant_table?;
-            if [q00, q01, q02, q03, q10, q11, q12, q20, q21, q30]
-                .iter()
-                .min()
-                == Some(&0)
-            {
+            if low_frequencies(&comp.quant_table?).contains(&0) {
                 return None;
             }
             let current = *current.first_chunk::<SAVED_COEFS>()?;
@@ -408,12 +381,12 @@ impl CoefController {
             let Some(latch) = self.smoothing.as_ref().and_then(|latch| latch.get(ci)) else {
                 for block_row in 0..block_rows as usize {
                     for (block_num, block) in array
-                        .row(first_row + block_row)
+                        .row(first_row + block_row)?
                         .iter()
                         .take(width)
                         .enumerate()
                     {
-                        idct.run(block, plane, block_row * size, block_num * size);
+                        idct.run(block, plane, block_row * size, block_num * size)?;
                     }
                 }
                 continue;
@@ -434,24 +407,24 @@ impl CoefController {
             for block_row in 0..block_rows {
                 let image_block_row = output_imcu_row * block_rows + block_row;
                 let y = first_row + block_row as usize;
-                let this = array.row(y);
+                let this = array.row(y)?;
                 let prev = if image_block_row > 0 {
-                    array.row(y - 1)
+                    array.row(y - 1)?
                 } else {
                     this
                 };
                 let prev_prev = if image_block_row > 1 {
-                    array.row(y - 2)
+                    array.row(y - 2)?
                 } else {
                     prev
                 };
                 let next = if image_block_row + 1 < image_block_rows {
-                    array.row(y + 1)
+                    array.row(y + 1)?
                 } else {
                     this
                 };
                 let next_next = if image_block_row + 2 < image_block_rows {
-                    array.row(y + 2)
+                    array.row(y + 2)?
                 } else {
                     next
                 };
@@ -478,7 +451,7 @@ impl CoefController {
                         plane,
                         block_row as usize * size,
                         block_num * size,
-                    );
+                    )?;
                     let [_, c1, c2, c3, c4] = window;
                     window = [c1, c2, c3, c4, c4];
                 }
@@ -492,62 +465,16 @@ struct Smoother {
     coef_bits: [i32; SAVED_COEFS],
     /// With no AC coefficient seen at all, more of them are estimated and the DC coefficient is smoothed too.
     change_dc: bool,
-    q00: i64,
-    q01: i64,
-    q02: i64,
-    q03: i64,
-    q10: i64,
-    q11: i64,
-    q12: i64,
-    q20: i64,
-    q21: i64,
-    q30: i64,
+    quant: [i64; SAVED_COEFS],
 }
 
 impl Smoother {
     fn new(coef_bits: &[i32; SAVED_COEFS], quant: &[u16; 64]) -> Self {
-        let [
-            q00,
-            q01,
-            q02,
-            q03,
-            _,
-            _,
-            _,
-            _,
-            q10,
-            q11,
-            q12,
-            _,
-            _,
-            _,
-            _,
-            _,
-            q20,
-            q21,
-            _,
-            _,
-            _,
-            _,
-            _,
-            _,
-            q30,
-            ..,
-        ] = quant.map(i64::from);
         let [_, ac @ ..] = coef_bits;
         Smoother {
             coef_bits: *coef_bits,
             change_dc: ac.iter().all(|&bits| bits == -1),
-            q00,
-            q01,
-            q02,
-            q03,
-            q10,
-            q11,
-            q12,
-            q20,
-            q21,
-            q30,
+            quant: low_frequencies(quant).map(i64::from),
         }
     }
 
@@ -578,36 +505,10 @@ impl Smoother {
             [dc05, dc10, dc15, dc20, dc25],
         ] = *window;
         let [_, al01, al10, al20, al11, al02, al03, al12, al21, al30] = self.coef_bits;
-        let [
-            c00,
-            c01,
-            c02,
-            c03,
-            _,
-            _,
-            _,
-            _,
-            c10,
-            c11,
-            c12,
-            _,
-            _,
-            _,
-            _,
-            _,
-            c20,
-            c21,
-            _,
-            _,
-            _,
-            _,
-            _,
-            _,
-            c30,
-            ..,
-        ] = block;
+        let [q00, q01, q10, q20, q11, q02, q03, q12, q21, q30] = self.quant;
+        let mut coefs = low_frequencies(block);
+        let [c00, c01, c10, c20, c11, c02, c03, c12, c21, c30] = &mut coefs;
         let change_dc = self.change_dc;
-        let q00 = self.q00;
 
         // Only a coefficient that is still zero and not known in full is estimated.
         if al01 != 0 && *c01 == 0 {
@@ -629,7 +530,7 @@ impl Smoother {
                 } else {
                     -7 * dc11 + 50 * dc12 - 50 * dc14 + 7 * dc15
                 });
-            *c01 = Self::predict(num, self.q01, al01);
+            *c01 = Self::predict(num, q01, al01);
         }
         if al10 != 0 && *c10 == 0 {
             let num = q00
@@ -652,7 +553,7 @@ impl Smoother {
                 } else {
                     -7 * dc03 + 50 * dc08 - 50 * dc18 + 7 * dc23
                 });
-            *c10 = Self::predict(num, self.q10, al10);
+            *c10 = Self::predict(num, q10, al10);
         }
         if al20 != 0 && *c20 == 0 {
             let num = q00
@@ -665,7 +566,7 @@ impl Smoother {
                 } else {
                     -dc03 + 13 * dc08 - 24 * dc13 + 13 * dc18 - dc23
                 });
-            *c20 = Self::predict(num, self.q20, al20);
+            *c20 = Self::predict(num, q20, al20);
         }
         if al11 != 0 && *c11 == 0 {
             let num = q00
@@ -676,7 +577,7 @@ impl Smoother {
                         + 10 * dc07
                         - 10 * dc09
                 });
-            *c11 = Self::predict(num, self.q11, al11);
+            *c11 = Self::predict(num, q11, al11);
         }
         if al02 != 0 && *c02 == 0 {
             let num = q00
@@ -690,24 +591,24 @@ impl Smoother {
                 } else {
                     -dc11 + 13 * dc12 - 24 * dc13 + 13 * dc14 - dc15
                 });
-            *c02 = Self::predict(num, self.q02, al02);
+            *c02 = Self::predict(num, q02, al02);
         }
         if change_dc {
             if al03 != 0 && *c03 == 0 {
                 let num = q00 * i64::from(dc07 - dc09 + 2 * dc12 - 2 * dc14 + dc17 - dc19);
-                *c03 = Self::predict(num, self.q03, al03);
+                *c03 = Self::predict(num, q03, al03);
             }
             if al12 != 0 && *c12 == 0 {
                 let num = q00 * i64::from(dc07 - 3 * dc08 + dc09 - dc17 + 3 * dc18 - dc19);
-                *c12 = Self::predict(num, self.q12, al12);
+                *c12 = Self::predict(num, q12, al12);
             }
             if al21 != 0 && *c21 == 0 {
                 let num = q00 * i64::from(dc07 - dc09 - 3 * dc12 + 3 * dc14 + dc17 - dc19);
-                *c21 = Self::predict(num, self.q21, al21);
+                *c21 = Self::predict(num, q21, al21);
             }
             if al30 != 0 && *c30 == 0 {
                 let num = q00 * i64::from(dc07 + 2 * dc08 + dc09 - dc17 - 2 * dc18 - dc19);
-                *c30 = Self::predict(num, self.q30, al30);
+                *c30 = Self::predict(num, q30, al30);
             }
             let num = q00
                 * i64::from(
@@ -733,6 +634,11 @@ impl Smoother {
                         - 2 * dc25,
                 );
             *c00 = Self::predict(num, q00, 0);
+        }
+        for (k, coef) in coefs.into_iter().enumerate() {
+            if let Some(out) = coef_at(block, k) {
+                *out = coef;
+            }
         }
     }
 }

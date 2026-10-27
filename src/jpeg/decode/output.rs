@@ -154,20 +154,20 @@ impl Decoder<'_> {
                     None,
                     imcu_row == 0,
                     imcu_row + 1 == total,
-                );
+                )?;
             } else if imcu_row > 0 {
-                emitter.emit(&mut upsamplers, &current, Some(&next), imcu_row == 1, false);
+                emitter.emit(&mut upsamplers, &current, Some(&next), imcu_row == 1, false)?;
                 for (up, plane) in upsamplers.iter_mut().zip(&current) {
                     if up.method.needs_context() {
                         up.above.clear();
-                        up.above.extend_from_slice(plane.row(up.rows - 1));
+                        up.above.extend_from_slice(plane.row(up.rows - 1)?);
                     }
                 }
                 core::mem::swap(&mut current, &mut next);
             }
         }
         if need_context {
-            emitter.emit(&mut upsamplers, &current, None, total == 1, true);
+            emitter.emit(&mut upsamplers, &current, None, total == 1, true)?;
         }
 
         // Whatever follows has to be well formed up to the end of the image.
@@ -303,76 +303,60 @@ impl Emitter<'_> {
         below: Option<&[Plane]>,
         top: bool,
         bottom: bool,
-    ) {
+    ) -> Result<()> {
         for rowgroup in 0..self.rowgroups {
             if self.rows_left == 0 {
-                return;
+                break;
             }
             for (ci, (up, plane)) in upsamplers.iter_mut().zip(current).enumerate() {
                 let Upsampler { above, buffer, .. } = up;
                 let (width, rows) = (up.width, up.rows);
                 let limit = if bottom { up.last_rows } else { rows };
                 // `y` is one more than the row within the iMCU row, so that 0 is the row above it.
-                let row = |y: usize| -> &[u8] {
+                let row = |y: usize| -> Result<&[u8]> {
                     let row = match y.checked_sub(1) {
-                        None if top => plane.row(0),
+                        None if top => plane.row(0)?,
                         None => above.as_slice(),
-                        Some(y) if y < limit => plane.row(y),
-                        Some(_) if bottom => plane.row(limit - 1),
+                        Some(y) if y < limit => plane.row(y)?,
+                        Some(_) if bottom => plane.row(limit - 1)?,
                         Some(y) => below
                             .and_then(|below| below.get(ci))
-                            .map_or(&[][..], |plane| plane.row(y - rows)),
+                            .ok_or(Error::Internal)?
+                            .row(y - rows)?,
                     };
-                    row.get(..width).unwrap_or(&[])
+                    row.get(..width).ok_or(Error::Internal)
                 };
                 let first = rowgroup * up.rowgroup_height + 1;
                 let stride = buffer.stride.max(1);
                 let mut out_rows = buffer.data.chunks_exact_mut(stride);
+                let mut out_row = || out_rows.next().ok_or(Error::Internal);
 
                 match up.method {
                     Method::FullSize => {}
                     Method::H2V1Fancy => {
-                        for (y, out) in (first..).zip(out_rows) {
-                            upsample::h2v1_fancy(row(y), out);
+                        for y in first..first + up.rowgroup_height {
+                            upsample::h2v1_fancy(row(y)?, out_row()?);
                         }
                     }
                     Method::H1V2Fancy => {
                         for y in first..first + up.rowgroup_height {
-                            if let (Some(upper), Some(lower)) = (out_rows.next(), out_rows.next()) {
-                                upsample::h1v2_fancy(row(y), row(y - 1), true, upper);
-                                upsample::h1v2_fancy(row(y), row(y + 1), false, lower);
-                            }
+                            upsample::h1v2_fancy(row(y)?, row(y - 1)?, true, out_row()?);
+                            upsample::h1v2_fancy(row(y)?, row(y + 1)?, false, out_row()?);
                         }
                     }
                     Method::H2V2Fancy => {
                         for y in first..first + up.rowgroup_height {
-                            if let (Some(upper), Some(lower)) = (out_rows.next(), out_rows.next()) {
-                                upsample::h2v2_fancy(
-                                    row(y),
-                                    row(y - 1),
-                                    &mut self.column_sums,
-                                    upper,
-                                );
-                                upsample::h2v2_fancy(
-                                    row(y),
-                                    row(y + 1),
-                                    &mut self.column_sums,
-                                    lower,
-                                );
-                            }
+                            let sums = &mut self.column_sums;
+                            upsample::h2v2_fancy(row(y)?, row(y - 1)?, sums, out_row()?);
+                            upsample::h2v2_fancy(row(y)?, row(y + 1)?, sums, out_row()?);
                         }
                     }
                     Method::Replicate { h_expand, v_expand } => {
                         for y in first..first + up.rowgroup_height {
-                            let Some(out) = out_rows.next() else { break };
-                            let out = out.get_mut(..self.output_width).unwrap_or(&mut []);
-                            upsample::replicate(row(y), h_expand, out);
+                            let out = out_row()?;
+                            upsample::replicate(row(y)?, h_expand, out);
                             for _ in 1..v_expand {
-                                if let Some(copy) = out_rows.next() {
-                                    for (copy, &v) in copy.iter_mut().zip(out.iter()) {
-                                        *copy = v;
-                                    }
-                                }
+                                out_row()?.copy_from_slice(out);
                             }
                         }
                     }
@@ -381,19 +365,20 @@ impl Emitter<'_> {
 
             for r in 0..self.max_v_samp {
                 if self.rows_left == 0 {
-                    return;
+                    break;
                 }
                 self.rows_left -= 1;
                 let mut planes: [&[u8]; 4] = [&[]; 4];
                 for ((input, up), plane) in planes.iter_mut().zip(upsamplers.iter()).zip(current) {
                     *input = if up.method == Method::FullSize {
-                        plane.row(rowgroup * up.rowgroup_height + r)
+                        plane.row(rowgroup * up.rowgroup_height + r)?
                     } else {
-                        up.buffer.row(r)
+                        up.buffer.row(r)?
                     };
                 }
                 color::convert(self.conversion, planes, self.output_width, self.pixels);
             }
         }
+        Ok(())
     }
 }

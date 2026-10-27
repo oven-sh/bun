@@ -27,6 +27,11 @@ pub(crate) const NATURAL_ORDER: [u8; 64 + 16] = [
     63, 63, 63, 63, 63, 63, 63, 63,
 ];
 
+#[inline(always)]
+pub(crate) fn natural_order(k: usize) -> usize {
+    usize::from(NATURAL_ORDER.get(k).copied().unwrap_or(63))
+}
+
 #[allow(clippy::indexing_slicing, reason = "evaluated at compile time")]
 const fn spec<const N: usize>(bits: [u8; 17], val: [u8; N]) -> HuffSpec {
     let mut huffval = [0u8; 256];

@@ -3,9 +3,8 @@
 use super::coef::{CoefBits, McuBlocks};
 use super::input::Input;
 use super::phuff::{update_progression, validate_progression};
-use super::{Block, Decoder, MAX_BLOCKS_IN_MCU, MAX_COMPS_IN_SCAN, NUM_ARITH_TBLS};
+use super::{Block, Decoder, MAX_BLOCKS_IN_MCU, MAX_COMPS_IN_SCAN, NUM_ARITH_TBLS, coef_at};
 use crate::error::{Error, Result};
-use crate::tables::NATURAL_ORDER;
 
 /// Table D.2 of the standard. For each state of the probability estimation: Qe in the high 16 bits, then the next state
 /// after the more probable symbol, then the next state after the less probable one, with the bit on top of it that says
@@ -448,8 +447,7 @@ impl ArithDecoder {
                 }
             }
             let v = core.decode_magnitude(inp, stats, st + 14, m, sign)?;
-            let pos = NATURAL_ORDER.get(k).copied().unwrap_or(63);
-            if let Some(coef) = block.get_mut(usize::from(pos)) {
+            if let Some(coef) = coef_at(block, k) {
                 *coef = v.wrapping_shl(self.al) as i16;
             }
             k += 1;
@@ -465,11 +463,10 @@ impl ArithDecoder {
             .ok_or(Error::Internal)?;
         let p1 = 1i16 << self.al;
         let m1 = -1i16 << self.al;
-        let position = |k: usize| usize::from(NATURAL_ORDER.get(k).copied().unwrap_or(63));
 
         // Where the block ended as of the previous stage.
         let mut kex = self.se;
-        while kex > 0 && block.get(position(kex)).is_none_or(|&coef| coef == 0) {
+        while kex > 0 && coef_at(block, kex).is_none_or(|coef| *coef == 0) {
             kex -= 1;
         }
 
@@ -480,7 +477,7 @@ impl ArithDecoder {
                 break;
             }
             loop {
-                let coef = block.get_mut(position(k)).ok_or(Error::Internal)?;
+                let coef = coef_at(block, k).ok_or(Error::Internal)?;
                 if *coef != 0 {
                     if core.decode_at(inp, stats, st + 2)? {
                         *coef = coef.wrapping_add(if *coef < 0 { m1 } else { p1 });

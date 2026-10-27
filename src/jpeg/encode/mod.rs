@@ -8,7 +8,7 @@ mod phuff;
 mod sample;
 
 use crate::error::{Error, Result, try_vec};
-use crate::tables::{self, HuffSpec, MAX_DIMENSION, NATURAL_ORDER};
+use crate::tables::{self, HuffSpec, MAX_DIMENSION, natural_order};
 use fdct::Divisors;
 use huff::{BitWriter, Counts, EncodeTable, Output, SequentialTable};
 use phuff::{AcEncoder, Sink};
@@ -44,8 +44,10 @@ impl Block {
     /// The `k`th coefficient in zigzag order.
     #[inline(always)]
     fn zigzag(&self, k: u32) -> i16 {
-        let position = NATURAL_ORDER.get(k as usize).copied().unwrap_or(0);
-        self.coefs.get(usize::from(position)).copied().unwrap_or(0)
+        self.coefs
+            .get(natural_order(k as usize))
+            .copied()
+            .unwrap_or(0)
     }
 
     /// `nonzero` for the coefficients from `first` to `last`.

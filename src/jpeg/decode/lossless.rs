@@ -17,10 +17,10 @@ impl Rows {
         Ok(Rows { data, stride })
     }
 
-    fn row_mut(&mut self, y: usize) -> &mut [i32] {
+    fn row_mut(&mut self, y: usize) -> Result<&mut [i32]> {
         self.data
             .get_mut(y * self.stride..(y + 1) * self.stride)
-            .unwrap_or(&mut [])
+            .ok_or(Error::Internal)
     }
 }
 
@@ -133,7 +133,7 @@ impl DiffController {
             for run in self.runs.iter().take(self.num_runs) {
                 let rows = self.diff_buf.get_mut(run.comp).ok_or(Error::Internal)?;
                 for diff in rows
-                    .row_mut(mcu_row_num + run.yoffset)
+                    .row_mut(mcu_row_num + run.yoffset)?
                     .iter_mut()
                     .take(mcus_per_row * run.width)
                 {
@@ -152,7 +152,7 @@ impl DiffController {
                     .and_then(|t| t.as_deref());
                 let table = table.ok_or(Error::Internal)?;
                 let rows = self.diff_buf.get_mut(run.comp).ok_or(Error::Internal)?;
-                let row = rows.row_mut(mcu_row_num + run.yoffset);
+                let row = rows.row_mut(mcu_row_num + run.yoffset)?;
                 for diff in row.iter_mut().skip(mcu_num * run.width).take(run.width) {
                     let s = u32::from(self.bits.decode(inp, table));
                     *diff = match s {
@@ -209,31 +209,32 @@ impl DiffController {
             // The row above the first one is the last row of the iMCU row before.
             let mut prev_row = comp.v_samp as usize - 1;
             for row in 0..rows {
-                let diffs = diff_buf.row_mut(row).get(..width).ok_or(Error::Internal)?;
+                let diffs = diff_buf.row_mut(row)?.get(..width).ok_or(Error::Internal)?;
                 let stride = undiff_buf.stride;
                 if *first_row {
                     let initial = 1 << (d.precision - d.al - 1);
-                    undifference_1d(diffs, initial, undiff_buf.row_mut(row));
+                    undifference_1d(diffs, initial, undiff_buf.row_mut(row)?);
                     *first_row = false;
                 } else if prev_row == row {
                     // A component with one row in an iMCU row is predicted from the row that is being replaced.
-                    undifference_in_place(d.ss, diffs, undiff_buf.row_mut(row));
+                    undifference_in_place(d.ss, diffs, undiff_buf.row_mut(row)?);
                 } else {
                     let split = undiff_buf
                         .data
                         .split_at_mut_checked(prev_row.max(row) * stride);
                     let (above, below) = split.ok_or(Error::Internal)?;
                     let (prev, this) = if prev_row < row {
-                        (above.get(prev_row * stride..).unwrap_or(&[]), below)
+                        (above.get(prev_row * stride..), Some(below))
                     } else {
-                        (&*below, above.get_mut(row * stride..).unwrap_or(&mut []))
+                        (Some(&*below), above.get_mut(row * stride..))
                     };
+                    let (prev, this) = prev.zip(this).ok_or(Error::Internal)?;
                     undifference(d.ss, diffs, prev, this);
                 }
                 let samples = output(ci, row).ok_or(Error::Internal)?;
                 for (sample, &v) in samples
                     .iter_mut()
-                    .zip(undiff_buf.row_mut(row).iter())
+                    .zip(undiff_buf.row_mut(row)?.iter())
                     .take(width)
                 {
                     *sample = (v << d.al) as u8;
@@ -307,7 +308,7 @@ impl DiffController {
             let first = (output_imcu_row * comp.v_samp) as usize;
             let width = comp.width_in_blocks as usize;
             for (row, out) in plane.data.chunks_mut(plane.stride).enumerate().take(rows) {
-                for (out, &v) in out.iter_mut().zip(image.row(first + row)).take(width) {
+                for (out, &v) in out.iter_mut().zip(image.row(first + row)?).take(width) {
                     *out = v;
                 }
             }

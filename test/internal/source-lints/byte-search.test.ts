@@ -139,6 +139,8 @@ const ALLOW: Record<string, number> = {
   // `#[cfg(test)]` unit test built only by `cargo test -p bun_collections`,
   // which does not link the highway objects.
   "src/collections/linear_fifo.rs": 1,
+  // Ten `u16` quantization steps, not bytes.
+  "src/jpeg/decode/coef.rs": 1,
 };
 
 const counts: Record<string, number> = {};

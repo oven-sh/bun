@@ -3,9 +3,9 @@
 use super::bits::{BitReader, DerivedTable, FastBitReader, TableKind, huff_extend};
 use super::coef::McuBlocks;
 use super::input::Input;
-use super::{Block, Decoder, MAX_BLOCKS_IN_MCU, MAX_COMPS_IN_SCAN, NUM_HUFF_TBLS};
+use super::{Decoder, MAX_BLOCKS_IN_MCU, MAX_COMPS_IN_SCAN, NUM_HUFF_TBLS, coef_at};
 use crate::error::{Error, Result};
-use crate::tables::{self, NATURAL_ORDER};
+use crate::tables;
 
 #[derive(Default)]
 pub(crate) struct HuffDecoder {
@@ -191,8 +191,10 @@ impl HuffDecoder {
                 if s != 0 {
                     k += r;
                     let value = bits.bits(s);
-                    if info.ac_needed {
-                        store(block, k, huff_extend(value, s));
+                    if info.ac_needed
+                        && let Some(coef) = coef_at(block, k)
+                    {
+                        *coef = huff_extend(value, s) as i16;
                     }
                 } else {
                     if r != 15 {
@@ -267,13 +269,5 @@ impl Bits for FastBitReader<'_> {
     fn bits(&mut self, n: u32) -> i32 {
         self.fill();
         self.get(n)
-    }
-}
-
-#[inline(always)]
-fn store(block: &mut Block, k: usize, value: i32) {
-    let pos = NATURAL_ORDER.get(k).copied().unwrap_or(63);
-    if let Some(coef) = block.get_mut(usize::from(pos)) {
-        *coef = value as i16;
     }
 }

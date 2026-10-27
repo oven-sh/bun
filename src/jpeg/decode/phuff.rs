@@ -3,9 +3,8 @@
 use super::bits::{BitReader, DerivedTable, TableKind, huff_extend};
 use super::coef::{CoefBits, McuBlocks};
 use super::input::Input;
-use super::{Block, Decoder, MAX_BLOCKS_IN_MCU, MAX_COMPS_IN_SCAN, NUM_HUFF_TBLS};
+use super::{Decoder, MAX_BLOCKS_IN_MCU, MAX_COMPS_IN_SCAN, NUM_HUFF_TBLS, coef_at};
 use crate::error::{Error, Result};
-use crate::tables::NATURAL_ORDER;
 
 #[derive(Clone, Copy, Default)]
 enum Pass {
@@ -37,12 +36,6 @@ pub(crate) struct PHuffDecoder {
     blocks_in_mcu: usize,
     /// For each block of an MCU, the index into `last_dc_val` and the slot of the table.
     blocks: [(u8, u8); MAX_BLOCKS_IN_MCU],
-}
-
-#[inline(always)]
-fn coef_at(block: &mut Block, k: usize) -> Option<&mut i16> {
-    let pos = NATURAL_ORDER.get(k).copied().unwrap_or(63);
-    block.get_mut(usize::from(pos))
 }
 
 /// Records the scan in `coef_bits`. The arithmetic decoder does the same.

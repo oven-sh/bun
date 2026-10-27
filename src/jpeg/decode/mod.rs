@@ -14,7 +14,7 @@ mod phuff;
 mod upsample;
 
 use crate::error::{Error, Result};
-use crate::tables::{HuffSpec, MAX_DIMENSION};
+use crate::tables::{HuffSpec, MAX_DIMENSION, natural_order};
 use input::Input;
 use marker::Reached;
 use std::borrow::Cow;
@@ -30,6 +30,12 @@ pub(crate) const DCTSIZE: u32 = 8;
 
 /// 64 coefficients in row-major order.
 pub(crate) type Block = [i16; 64];
+
+/// The `k`th coefficient in zigzag order.
+#[inline(always)]
+pub(crate) fn coef_at(block: &mut Block, k: usize) -> Option<&mut i16> {
+    block.get_mut(natural_order(k))
+}
 
 /// What the components of the stream mean.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

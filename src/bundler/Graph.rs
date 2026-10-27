@@ -94,6 +94,9 @@ pub struct Graph<'a> {
 
     /// (importer source index, import record index) of each import that made a file a CSS module script.
     pub(crate) css_module_script_imports: Vec<(IndexInt, u32)>,
+
+    /// (CSS module script, file of one of its `url()`s). See `css_module_script::mark_url_files`.
+    pub(crate) css_module_script_urls: Vec<(IndexInt, IndexInt)>,
 }
 
 #[derive(Default)]
@@ -183,6 +186,7 @@ impl<'a> Graph<'a> {
             kit_referenced_client_data: false,
             has_any_secondary_paths: false,
             css_module_script_imports: Vec::new(),
+            css_module_script_urls: Vec::new(),
         }
     }
 }

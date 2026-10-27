@@ -1,6 +1,5 @@
 //! CSS module scripts: in a browser bundle, `import sheet from "./a.css" with { type: "css" }` loads the file as a JavaScript module that exports a constructed `CSSStyleSheet`.
 
-use core::fmt::Write as _;
 use std::borrow::Cow;
 use std::io::Write as _;
 
@@ -46,7 +45,12 @@ fn write_template_chars(js: &mut Vec<u8>, text: &[u8]) {
     }
 }
 
-/// Returns the module `export default <CSSStyleSheet of the text>`. The text is final before the bundler resolves anything: a `url()` to a file is an asset import, and `@import` is dropped.
+/// The start of the text that stands for a URL until `fill_urls` knows it. A number and `_` follow.
+fn write_url_placeholder_prefix(out: &mut Vec<u8>, unique_key_prefix: u64) {
+    let _ = write!(out, "__bun_css_url_{unique_key_prefix:016x}_");
+}
+
+/// Returns the module `export default <CSSStyleSheet of the text>`. `@import` is dropped. A `url()` that can be a file is a variable and an import record: `fill_urls` sets the variable after the scan.
 #[cold]
 #[inline(never)]
 pub(crate) fn parse(
@@ -103,50 +107,28 @@ pub(crate) fn parse(
         }
     }
 
-    // Print each `url()` to a file as a placeholder. `assets` has the distinct files.
+    // Print each `url()` that can be a file as a placeholder. `urls` has the distinct ones.
     let mut placeholder_prefix = Vec::<u8>::new();
-    let _ = write!(
-        &mut placeholder_prefix,
-        "__bun_css_url_{unique_key_prefix:016x}_"
-    );
-    let mut assets = Vec::<(bun_paths::fs::Path<'static>, bun_ast::Range)>::new();
-    let mut asset_of_record = vec![usize::MAX; css_records.len()];
+    write_url_placeholder_prefix(&mut placeholder_prefix, unique_key_prefix);
+    let mut urls = Vec::<(bun_paths::fs::Path<'static>, bun_ast::Range)>::new();
+    let mut url_of_record = vec![usize::MAX; css_records.len()];
     for (i, record) in css_records.iter_mut().enumerate() {
         if record.kind != ImportKind::Url || !is_file_url(record.path.text) {
             continue;
         }
-        asset_of_record[i] = match assets
+        url_of_record[i] = match urls
             .iter()
             .position(|(path, _)| path.text == record.path.text)
         {
-            Some(asset) => asset,
+            Some(url) => url,
             None => {
-                assets.push((record.path, record.range));
-                assets.len() - 1
+                urls.push((record.path, record.range));
+                urls.len() - 1
             }
         };
-        let mut placeholder = bun_alloc::ArenaString::new_in(bump);
-        let _ = write!(
-            &mut placeholder,
-            "{}{i}_",
-            bstr::BStr::new(&placeholder_prefix)
-        );
-        record.path.text = placeholder.into_bump_str().as_bytes();
-    }
-
-    if let Some(&(_, range)) = assets.first()
-        && topts.output_format != options::Format::Esm
-        && topts.public_path.is_empty()
-    {
-        temp_log.add_range_error_fmt(
-            Some(source),
-            range,
-            format_args!(
-                "A stylesheet that is imported with {{ type: \"css\" }} resolves this \"url()\" against the location of the bundle. Only the \"esm\" format knows that location. Use it, or set a public path."
-            ),
-        );
-        temp_log.append_to(log);
-        return Err(AnyError::BuildFailed);
+        let mut placeholder = placeholder_prefix.clone();
+        let _ = write!(&mut placeholder, "{i}_");
+        record.path.text = bump.alloc_slice_copy(&placeholder);
     }
 
     let symbols = bun_ast::symbol::Map::init_list(vec![extra.symbols]);
@@ -174,15 +156,19 @@ pub(crate) fn parse(
     };
 
     let mut js = Vec::<u8>::with_capacity(css.len() + 256);
-    for asset in 0..assets.len() {
-        let _ = writeln!(&mut js, "import asset{asset} from \"{asset}\";");
+    for url in 0..urls.len() {
+        let _ = writeln!(
+            &mut js,
+            "var url{url} = \"{}{url}_\";",
+            bstr::BStr::new(&placeholder_prefix)
+        );
     }
-    if !assets.is_empty() {
-        // A constructed stylesheet resolves a relative URL against the document: `url` makes the chunk-relative path of an asset absolute, and safe in a quoted `url()`.
+    if !urls.is_empty() {
+        // A constructed stylesheet resolves a relative URL against the document: `cssUrl` resolves it against the bundle, and makes it safe in a quoted `url()`.
         js.extend_from_slice(if topts.output_format == options::Format::Esm {
-            b"var url = (path) => {\n  try {\n    path = new URL(path, import.meta.url).href;\n  } catch {}\n  return path.replace(/[\"\\\\]/g, \"\\\\$&\");\n};\n"
+            b"var cssUrl = (url) => {\n  try {\n    url = new URL(url, import.meta.url).href;\n  } catch {}\n  return url.replace(/[\"\\\\]/g, \"\\\\$&\");\n};\n"
         } else {
-            b"var url = (path) => path.replace(/[\"\\\\]/g, \"\\\\$&\");\n"
+            b"var cssUrl = (url) => url.replace(/[\"\\\\]/g, \"\\\\$&\");\n"
         });
     }
     js.extend_from_slice(b"export default /* @__PURE__ */ ((sheet) => (sheet.replaceSync(`");
@@ -193,12 +179,12 @@ pub(crate) fn parse(
             .iter()
             .position(|byte| !byte.is_ascii_digit())
             .unwrap_or(after.len());
-        let asset = core::str::from_utf8(&after[..digits])
+        let url = core::str::from_utf8(&after[..digits])
             .ok()
             .and_then(|record| record.parse::<usize>().ok())
-            .and_then(|record| asset_of_record.get(record).copied())
-            .filter(|asset| *asset != usize::MAX && after.get(digits) == Some(&b'_'));
-        let Some(asset) = asset else {
+            .and_then(|record| url_of_record.get(record).copied())
+            .filter(|url| *url != usize::MAX && after.get(digits) == Some(&b'_'));
+        let Some(url) = url else {
             // The stylesheet itself has this text.
             write_template_chars(&mut js, &rest[..at + placeholder_prefix.len()]);
             rest = after;
@@ -210,13 +196,7 @@ pub(crate) fn parse(
         if !quoted {
             js.push(b'"');
         }
-        let _ = write!(&mut js, "${{url(asset{asset})}}");
-        for &byte in url_suffix(assets[asset].0.text) {
-            if matches!(byte, b'"' | b'\\') {
-                js.extend_from_slice(b"\\\\");
-            }
-            write_template_chars(&mut js, &[byte]);
-        }
+        let _ = write!(&mut js, "${{cssUrl(url{url})}}");
         if !quoted {
             js.push(b'"');
         }
@@ -238,24 +218,137 @@ pub(crate) fn parse(
     };
     let mut ast = JSAst::init(*ast);
 
-    // The imports are in the order of `assets`. Kind `Url` makes the scan resolve each one like its `url()`; `check_imports` then makes it a statement import.
-    let mut asset_imports = ast
-        .import_records
-        .iter_mut()
-        .filter(|record| !record.flags.contains(ImportRecordFlags::IS_INTERNAL));
-    for &(path, range) in &assets {
-        let Some(record) = asset_imports.next() else {
-            return Err(AnyError::ParserError);
-        };
-        record.path = path;
-        record.range = range;
-        record.kind = ImportKind::Url;
-        record.loader = Some(Loader::File);
+    // No statement uses these records. The scan resolves each one like the `url()` of a stylesheet, and `fill_urls` reads the result.
+    for (path, range) in urls {
+        ast.import_records.push(ImportRecord {
+            range,
+            path,
+            kind: ImportKind::Url,
+            tag: Default::default(),
+            loader: None,
+            source_index: Default::default(),
+            original_path: b"",
+            flags: Default::default(),
+        });
     }
     Ok(ast)
 }
 
-/// After the scan: reports a file used both with and without `type: "css"` (one path is one module), warns about an import that binds nothing, and makes the asset imports of `parse` statement imports.
+/// Gives each `url()` of the CSS module script `file` its text, as the CSS printer does for a stylesheet of the page: a `data:` URL, the key of a copied file, or the URL as the resolver left it. Returns false after an error.
+#[cold]
+#[allow(clippy::too_many_arguments)]
+fn fill_urls(
+    bump: &Bump,
+    log: &mut Log,
+    url_files: &mut Vec<(IndexInt, IndexInt)>,
+    file: usize,
+    import_records: &[ImportRecord],
+    parts: &[bun_ast::Part],
+    css_asts: &[crate::bundled_ast::CssCol],
+    urls_for_css: &[&[u8]],
+    unique_keys: &[Box<[u8], bun_alloc::AstAlloc>],
+    sources: &[Source],
+    loaders: &[Loader],
+    placeholder_prefix: &[u8],
+    bundle_has_url: bool,
+) -> bool {
+    // `parse` appended the `url()` records after the records of the JavaScript parser.
+    let Some(first) = import_records
+        .iter()
+        .position(|record| record.kind == ImportKind::Url)
+    else {
+        return true;
+    };
+    let urls = &import_records[first..];
+    let errors = log.errors;
+    let _ = crate::LinkerContext::scan_css_imports(
+        file as u32,
+        urls,
+        std::ptr::from_ref(css_asts),
+        sources,
+        loaders,
+        log,
+    );
+
+    let with_suffix = |url: &[u8], suffix: &[u8]| -> bun_ast::StoreStr {
+        let text = bump.alloc_slice_fill_copy(url.len() + suffix.len(), 0u8);
+        text[..url.len()].copy_from_slice(url);
+        text[url.len()..].copy_from_slice(suffix);
+        bun_ast::StoreStr::new(text)
+    };
+    let mut texts = Vec::<bun_ast::StoreStr>::with_capacity(urls.len());
+    for record in urls {
+        if record.source_index.is_valid() {
+            url_files.push((file as IndexInt, record.source_index.get()));
+            let target = record.source_index.get() as usize;
+            let suffix = url_suffix(record.original_path);
+            if !urls_for_css[target].is_empty() {
+                // A `?query` lands in the base64 body of a `data:` URL and breaks it: keep only the `#fragment`.
+                let fragment = match strings::index_of_char(suffix, b'#') {
+                    Some(i) => &suffix[i as usize..],
+                    None => b"",
+                };
+                texts.push(with_suffix(urls_for_css[target], fragment));
+                continue;
+            }
+            if !unique_keys[target].is_empty() {
+                if !bundle_has_url {
+                    log.add_range_error_fmt_with_notes(
+                        Some(&sources[file]),
+                        record.range,
+                        Box::new([bun_ast::range_data(
+                            None,
+                            bun_ast::Range::NONE,
+                            b"The bundle copies this file: it is too large for a \"data:\" URL.".to_vec(),
+                        )]),
+                        format_args!(
+                            "A stylesheet that is imported with {{ type: \"css\" }} resolves this \"url()\" against the location of the bundle. Only the \"esm\" format knows that location. Use it, or set a public path."
+                        ),
+                    );
+                }
+                texts.push(with_suffix(&unique_keys[target], suffix));
+                continue;
+            }
+        }
+        texts.push(with_suffix(record.path.text, b""));
+    }
+
+    // Each URL is `var url<n> = "<placeholder><n>_"` at the top level of the module.
+    let mut filled = 0usize;
+    for part in parts {
+        for stmt in part.stmts.slice() {
+            let bun_ast::StmtData::SLocal(mut local) = stmt.data else {
+                continue;
+            };
+            for decl in local.decls.iter_mut() {
+                let Some(bun_ast::ExprData::EString(mut string)) =
+                    decl.value.map(|value| value.data)
+                else {
+                    continue;
+                };
+                if string.is_utf16 {
+                    continue;
+                }
+                let Some(text) = string
+                    .slice8()
+                    .strip_prefix(placeholder_prefix)
+                    .and_then(|rest| rest.strip_suffix(b"_"))
+                    .and_then(|digits| core::str::from_utf8(digits).ok())
+                    .and_then(|digits| digits.parse::<usize>().ok())
+                    .and_then(|url| texts.get(url))
+                else {
+                    continue;
+                };
+                string.data = *text;
+                filled += 1;
+            }
+        }
+    }
+    debug_assert_eq!(filled, texts.len());
+    log.errors == errors
+}
+
+/// After the scan: reports a file used both with and without `type: "css"` (one path is one module), warns about an import that binds nothing, and gives each `url()` of a CSS module script its text.
 pub(crate) fn check_imports(this: &mut BundleV2<'_>) -> Result<(), AnyError> {
     if this.graph.css_module_script_imports.is_empty() {
         return Ok(());
@@ -269,37 +362,53 @@ pub(crate) fn check_imports(this: &mut BundleV2<'_>) -> Result<(), AnyError> {
             .is_ok()
     };
 
-    let mut ast_slice = this.graph.ast.slice();
-    let all_import_records = ast_slice.split_mut().import_records;
+    // The file of a bundle has a URL that the stylesheet can use in the esm format (`import.meta.url`), or with a public path.
+    let browser_options = &this.transpiler_for_target(options::Target::Browser).options;
+    let bundle_has_url = browser_options.output_format == options::Format::Esm
+        || !browser_options.public_path.is_empty();
+    let mut placeholder_prefix = Vec::<u8>::new();
+    write_url_placeholder_prefix(&mut placeholder_prefix, this.unique_key);
+
+    let bump = this.arena();
+    let all_import_records = this.graph.ast.items_import_records();
+    let all_parts = this.graph.ast.items_parts();
+    let css_asts = this.graph.ast.items_css();
+    let urls_for_css = this.graph.ast.items_url_for_css();
     let loaders = this.graph.input_files.items_loader();
     let sources = this.graph.input_files.items_source();
+    let unique_keys = this
+        .graph
+        .input_files
+        .items_unique_key_for_additional_file();
     let log = this.transpiler.log_mut();
 
     let mut has_error = false;
+    let mut url_files = Vec::<(IndexInt, IndexInt)>::new();
     // The files that one import uses as a CSS module script and another as a stylesheet.
     let mut conflicts = Vec::<IndexInt>::new();
-    for (importer, import_records) in all_import_records.iter_mut().enumerate() {
-        let importer_is_module_script = loaders[importer] == Loader::CssModuleScript;
-        for (i, record) in import_records.as_mut_slice().iter_mut().enumerate() {
+    for (importer, import_records) in all_import_records.iter().enumerate() {
+        if loaders[importer] == Loader::CssModuleScript
+            && !fill_urls(
+                bump,
+                log,
+                &mut url_files,
+                importer,
+                import_records.as_slice(),
+                all_parts[importer].as_slice(),
+                css_asts,
+                urls_for_css,
+                unique_keys,
+                sources,
+                loaders,
+                &placeholder_prefix,
+                bundle_has_url,
+            )
+        {
+            has_error = true;
+        }
+        for (i, record) in import_records.as_slice().iter().enumerate() {
             if !record.source_index.is_valid() {
-                if importer_is_module_script
-                    && record.kind == ImportKind::Url
-                    && !record.flags.contains(ImportRecordFlags::WAS_UNRESOLVED)
-                {
-                    has_error = true;
-                    log.add_range_error_fmt(
-                        Some(&sources[importer]),
-                        record.range,
-                        format_args!(
-                            "\"{}\" is external. A stylesheet that is imported with {{ type: \"css\" }} can only have a \"url()\" to a file of the bundle.",
-                            bstr::BStr::new(record.original_path),
-                        ),
-                    );
-                }
                 continue;
-            }
-            if importer_is_module_script && record.kind == ImportKind::Url {
-                record.kind = ImportKind::Stmt;
             }
             let file = record.source_index.get();
             if loaders[file as usize] == Loader::CssModuleScript && !is_typed_import(importer, i) {
@@ -387,6 +496,25 @@ pub(crate) fn check_imports(this: &mut BundleV2<'_>) -> Result<(), AnyError> {
     }
     if has_error {
         return Err(AnyError::BuildFailed);
+    }
+    this.graph.css_module_script_urls = url_files;
+    Ok(())
+}
+
+/// Marks the file of each `url()` live where its CSS module script is live, for the same entry points. The linker does this itself for a stylesheet: all its records count. For a JavaScript module it follows only the records of statements.
+#[cold]
+pub(crate) fn mark_url_files(
+    c: &mut crate::LinkerContext<'_>,
+) -> Result<(), bun_alloc::AllocError> {
+    for i in 0..c.parse_graph().css_module_script_urls.len() {
+        let (file, url_file) = c.parse_graph().css_module_script_urls[i];
+        if !c.graph.files_live.is_set(file as usize) {
+            continue;
+        }
+        c.graph.files_live.set(url_file as usize);
+        let entry_bits = c.graph.files.items_entry_bits_mut();
+        let reached_by = entry_bits[file as usize].clone()?;
+        entry_bits[url_file as usize].set_union(&reached_by);
     }
     Ok(())
 }

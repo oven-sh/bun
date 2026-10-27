@@ -1340,6 +1340,8 @@ pub struct Options<'a> {
     // allocator dropped — global mimalloc (this is an AST crate but Options.allocator is the global default)
     pub source_map_handler: Option<SourceMapHandler<'a>>,
     pub target: bun_ast::Target,
+    /// The output is for a browser: an import that stays in it keeps `with { type: "css" }` and loads as a CSS module script.
+    pub css_import_attribute: bool,
 
     pub runtime_transpiler_cache: Option<RuntimeTranspilerCacheRef>,
     pub module_info: Option<&'a mut analyze_transpiled_module::ModuleInfo>,
@@ -1426,6 +1428,7 @@ impl<'a> Default for Options<'a> {
             indent: Indentation::default(),
             source_map_handler: None,
             target: bun_ast::Target::Browser,
+            css_import_attribute: false,
             runtime_transpiler_cache: None,
             module_info: None,
             input_files_for_dev_server: None,
@@ -6556,13 +6559,14 @@ pub(crate) mod __gated_printer {
             self.print(quote);
         }
 
-        /// Only Bun targets print `type`, except for `css`: a browser runs an import that stays in the output as a CSS module script.
+        /// Only Bun targets print `type`, except for `css` in output for a browser (`Options::css_import_attribute`).
         #[inline(always)]
         fn print_css_type_attribute(&mut self, import_record: &ImportRecord) {
             if matches!(
                 import_record.loader,
                 Some(bun_ast::Loader::Css | bun_ast::Loader::CssModuleScript)
-            ) {
+            ) && self.options.css_import_attribute
+            {
                 self.print_whitespacer(ws!(b" with { type: \"css\" }"));
             }
         }

@@ -2229,12 +2229,18 @@ pub mod bv2_impl {
                                 && !self.all_urls_for_css
                                     [import_record.source_index.get() as usize]
                                     .is_empty();
-                            if is_css && is_inlined {
-                                self.additional_files_imported_by_css_and_inlined
-                                    .set(import_record.source_index.get() as usize);
-                            } else if is_inlined {
-                                self.additional_files_needed_outside_css
-                                    .set(import_record.source_index.get() as usize);
+                            if is_inlined {
+                                // A CSS module script has the `data:` URL in its text, like a stylesheet.
+                                if is_css
+                                    || self.all_loaders[source_index.get() as usize]
+                                        == Loader::CssModuleScript
+                                {
+                                    self.additional_files_imported_by_css_and_inlined
+                                        .set(import_record.source_index.get() as usize);
+                                } else {
+                                    self.additional_files_needed_outside_css
+                                        .set(import_record.source_index.get() as usize);
+                                }
                             }
 
                             let next_source = import_record.source_index;

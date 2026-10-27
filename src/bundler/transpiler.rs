@@ -2359,6 +2359,7 @@ impl<'a> Transpiler<'a> {
             runtime_transpiler_cache,
             hmr_ref: ast.wrapper_ref,
             mangled_props: None,
+            css_import_attribute: self.options.target == options::Target::Browser,
             ..Default::default()
         };
         js_printer::print_ast::<_, false, ENABLE_SOURCE_MAP>(
@@ -2453,6 +2454,7 @@ impl<'a> Transpiler<'a> {
             // hoist on `Target::Bun` — defaulting to `Browser` here regressed
             // oven-sh/bun#15738.
             target: to_bundle_enums_target(self.options.target),
+            css_import_attribute: self.options.target == options::Target::Browser,
             ..Default::default()
         };
         js_printer::print_ast::<_, IS_BUN, ENABLE_SOURCE_MAP>(

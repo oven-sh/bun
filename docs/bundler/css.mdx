@@ -1024,9 +1024,10 @@ root.adoptedStyleSheets = [sheet];
 
 When you bundle for the browser, Bun puts the CSS text of that file (minified with `--minify`) into the JavaScript chunk and constructs the stylesheet at runtime. The output also runs in browsers without native CSS module scripts. `import()` with the attribute works the same way.
 
-- A `url()` to a file points at the copied asset. The URL is resolved against the chunk, which needs the `esm` format or a [public path](/bundler#publicpath).
+- A `url()` is handled as in any other bundled stylesheet. A file smaller than 128 KB becomes a `data:` URL, a larger file is copied, and an external `url()` keeps its text.
+- The URL of a copied file is resolved against the chunk. That needs the `esm` format or a [public path](/bundler#publicpath). In the `esm` format, a relative external `url()` is resolved against the chunk too.
 - An `@import` in the file is ignored with a warning. Browsers ignore it in a CSS module script too.
 - One build cannot use the same file both with and without the attribute. That is a build error.
-- An import that stays in the output (an external import, `--no-bundle`, `Bun.Transpiler`) keeps the attribute.
+- An import that stays in browser output (an external import, `--no-bundle`, `Bun.Transpiler`) keeps the attribute.
 - The `bun` and `node` targets have no `CSSStyleSheet`. There the import keeps evaluating to `{}`.
 - The dev server does not support CSS module scripts yet and reports the import as an error.

@@ -3444,6 +3444,14 @@ console.log(<div {...obj} key="after" />);`),
         `export * from "./foo.css" with { type: "css" };`,
         `export * from "./foo.css" with { type: "css" }`,
       );
+      // Node rejects an import with `type: "css"`.
+      const node = new Bun.Transpiler({ target: "node" });
+      expect(parsed(`import sheet from "./foo.css" with { type: "css" };`, true, false, node)).toBe(
+        `import sheet from "./foo.css"`,
+      );
+      expect(parsed(`export * from "./foo.css" with { type: "css" };`, true, false, node)).toBe(
+        `export * from "./foo.css"`,
+      );
     });
 
     it("import with unicode", () => {

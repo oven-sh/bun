@@ -1104,6 +1104,10 @@ impl<'a> LinkerContext<'a> {
             }
         }
 
+        if !self.parse_graph().css_module_script_urls.is_empty() {
+            crate::css_module_script::mark_url_files(self)?;
+        }
+
         Ok(())
     }
 
@@ -2477,6 +2481,7 @@ impl<'a> LinkerContext<'a> {
                 js_printer::RequireOrImportMetaCallback::init(self),
             line_offset_tables: Some(line_offset_table),
             target: self.options.target,
+            css_import_attribute: ast.target == bun_ast::Target::Browser,
 
             hmr_ref: if self.options.output_format == Format::InternalBakeDev {
                 ast.wrapper_ref

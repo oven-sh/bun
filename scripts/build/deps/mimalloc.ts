@@ -39,7 +39,7 @@ export const mimalloc: Dependency = {
     //            otherwise sit on the uCRT heap are pointed at mimalloc one
     //            by one instead (ICU and libuv in bun_runtime::bin_entry's
     //            use_mimalloc_in_dependencies, BoringSSL via the hooks in
-    //            boringssl.ts, c-ares via ares_library_init_mem).
+    //            boringssl.ts).
     const override = cfg.linux && !cfg.asan;
 
     const defines: Record<string, string | number | true> = {

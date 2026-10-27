@@ -328,7 +328,7 @@ export interface NestedCmakeBuild {
   buildType?: BuildType;
   /**
    * Subdirectory within the build dir where libraries land.
-   * E.g. cares puts them in "lib/". Default: root.
+   * Default: root.
    */
   libSubdir?: string;
   /**
@@ -343,7 +343,7 @@ export interface NestedCmakeBuild {
    *
    * Most deps don't need this (we link statically into a non-PIE executable),
    * but some build intermediate tools or have internal shared libs that
-   * require PIC. cares/highway set it.
+   * require PIC. highway sets it.
    */
   pic?: boolean;
   /**
@@ -445,7 +445,6 @@ export type DepName =
   | "WebKit"
   | "boringssl"
   | "brotli"
-  | "cares"
   | "highway"
   | "libdeflate"
   | "libjpeg-turbo"

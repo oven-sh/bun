@@ -759,7 +759,6 @@ it("process.versions", async () => {
     zlib: "zlib",
     tinycc: "tinycc",
     lolhtml: "lolhtml",
-    ares: "cares",
     libdeflate: "libdeflate",
     zstd: "zstd",
     lshpack: "lshpack",
@@ -782,6 +781,9 @@ it("process.versions", async () => {
   expect(process.versions).toHaveProperty("usockets");
   expect(process.versions).toHaveProperty("uwebsockets");
   expect(process.versions.usockets).toBe(process.versions.uwebsockets);
+
+  // Node.js exposes its c-ares version here. Bun reports the release its resolver behaves as.
+  expect(process.versions.ares).toMatch(/^1\.\d+\.\d+$/);
 
   // Node.js exposes the bundled SQLite version here; Bun should too.
   expect(process.versions).toHaveProperty("sqlite");

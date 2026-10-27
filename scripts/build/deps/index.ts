@@ -13,7 +13,6 @@
 import type { Dependency } from "../source.ts";
 import { boringssl } from "./boringssl.ts";
 import { brotli } from "./brotli.ts";
-import { cares } from "./cares.ts";
 import { highway } from "./highway.ts";
 import { libdeflate } from "./libdeflate.ts";
 import { libjpegTurbo } from "./libjpeg-turbo.ts";
@@ -54,7 +53,6 @@ export const allDeps: readonly Dependency[] = [
   libjpegTurbo,
   libspng,
   libwebp,
-  cares,
   highway,
   libuv,
   lolhtml,
@@ -78,7 +76,6 @@ export const allDeps: readonly Dependency[] = [
 export {
   boringssl,
   brotli,
-  cares,
   highway,
   libdeflate,
   libjpegTurbo,

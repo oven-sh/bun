@@ -589,7 +589,7 @@ export const globalFlags: Flag[] = [
     // EnableSplitLTOUnit flag or lld dies with "inconsistent LTO Unit
     // splitting". -fwhole-program-vtables (above) defaults the split ON for
     // C++ on ELF targets but it's a cxx-only flag, so the C modules (zlib,
-    // c-ares, mimalloc, boringssl's .c files, ...) would disagree. Force it
+    // mimalloc, boringssl's .c files, ...) would disagree. Force it
     // OFF everywhere instead of on: split LTO units shunt every module's
     // vtables + type metadata into a merged regular-LTO half — a serial
     // merged module, which is exactly what ThinLTO is supposed to avoid.

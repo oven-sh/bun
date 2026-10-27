@@ -285,7 +285,8 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
         { "zlib", BUN_VERSION_ZLIB_HASH },
         { "tinycc", BUN_VERSION_TINYCC },
         { "lolhtml", BUN_VERSION_LOLHTML },
-        { "ares", BUN_VERSION_C_ARES },
+        // The c-ares release src/dns_resolver behaves as. Node.js reports its c-ares here.
+        { "ares", "1.34.9" },
         // Use commit hash for libdeflate to match test expectations
         { "libdeflate", BUN_VERSION_LIBDEFLATE_HASH },
         { "usockets", BUN_VERSION_USOCKETS },

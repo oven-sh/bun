@@ -469,7 +469,12 @@ pub fn words(rng: &mut Rng, len: usize) -> Vec<u8> {
     let few = rng.chance(1, 3);
     let only: Option<usize> = rng.chance(1, 4).then(|| rng.below(121));
     let glue = rng.below(4);
+    // The encoder stops looking words up when too few of its lookups find one.
+    let noise = rng.chance(1, 3);
     while out.len() < len {
+        if noise && (out.is_empty() || rng.chance(1, 40)) {
+            out.extend((0..rng.range(1, 1500)).map(|_| rng.next() as u8));
+        }
         let n = rng.range(4, 24);
         let bits = crate::grammar::size_bits(n);
         let index = if few { rng.below(8) } else { rng.below(1 << bits) };
@@ -568,7 +573,8 @@ pub fn run_words(seed0: u64, iters: u64, max_len: usize, qualities: u64) {
 /// with the lengths and distances at the edges of the ranges that the codes for them cover.
 pub fn run_lengths(seed0: u64, iters: u64, max_len: usize, qualities: u64) {
     const INSERT: [usize; 23] = [0, 1, 5, 6, 8, 10, 14, 18, 26, 34, 50, 66, 98, 130, 194, 322, 578, 1090, 2114, 6210, 22594, 64, 512];
-    const COPY: [usize; 24] = [4, 5, 8, 9, 10, 12, 14, 18, 22, 30, 38, 54, 70, 72, 102, 134, 136, 198, 326, 582, 1094, 2118, 2120, 16384];
+    // 576: qualities 10 and 11 remember only every eighth position of a copy that is longer.
+    const COPY: [usize; 25] = [4, 5, 8, 9, 10, 12, 14, 18, 22, 30, 38, 54, 70, 72, 102, 134, 136, 198, 326, 576, 582, 1094, 2118, 2120, 16384];
     let qs = args::qualities(qualities, 0..12);
     let (mut total_in, mut total_out) = (0usize, 0usize);
     for it in 0..iters {
@@ -588,6 +594,8 @@ pub fn run_lengths(seed0: u64, iters: u64, max_len: usize, qualities: u64) {
         let coarse = rng.chance(1, 2);
         let mut data: Vec<u8> = (0..rng.range(8, 3000)).map(|_| rng.next() as u8).collect();
         let mut last = 0usize;
+        // Where the last long copy ended, and its length.
+        let mut long = (0usize, 0usize);
         while data.len() < len {
             let v = *rng.pick(&INSERT);
             let mut insert = edge(&mut rng, v).min(longest);
@@ -607,6 +615,7 @@ pub fn run_lengths(seed0: u64, iters: u64, max_len: usize, qualities: u64) {
                 1 if last > 3 => last + rng.below(7) - 3,
                 2 => near(&mut rng, window),
                 3 => rng.range(1, 130),
+                6 if long.1 != 0 => cur - long.0 + rng.range(1, long.1),
                 4 | 5 => {
                     // Where the number of extra bits of the distance code changes, for some NPOSTFIX and NDIRECT.
                     let k = rng.range(2, 24);
@@ -619,6 +628,9 @@ pub fn run_lengths(seed0: u64, iters: u64, max_len: usize, qualities: u64) {
                 data.push(data[data.len() - distance]);
             }
             last = distance;
+            if copy >= 300 {
+                long = (data.len(), copy);
+            }
         }
         data.truncate(len);
         // What comes after the last copy is one run of literals, wherever the search looked.

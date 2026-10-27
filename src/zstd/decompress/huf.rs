@@ -43,7 +43,11 @@ impl Code {
         for nb_bits in 1..=log as usize {
             let weight = (table_log + 1).wrapping_sub(nb_bits);
             let count = self.rank_stats.get(weight).copied().unwrap_or(0);
-            let of_these = if weight == 0 { 0 } else { u64::from(count) << (weight - 1) };
+            let of_these = if weight == 0 {
+                0
+            } else {
+                u64::from(count) << (weight - 1)
+            };
             total += of_these;
             if let (Some(share), Some(one)) = (share.get_mut(nb_bits), one.get_mut(nb_bits)) {
                 *share = of_these;
@@ -296,10 +300,9 @@ impl HufDTable {
         let Some(mut streams) = Streams::new(parts) else {
             return false;
         };
-        match self.log {
-            11 => streams.decode_most::<11, 5>(&self.table),
-            12 => streams.decode_most::<12, 4>(&self.table),
-            _ => {}
+        let mut no_output = [[0u8; 512]; 4];
+        if self.log >= FAST_LOG {
+            self.decode_most(&mut streams, &mut no_output);
         }
         let mut exact = true;
         for stream in streams.0 {
@@ -310,6 +313,46 @@ impl HufDTable {
             exact &= self.decode_stream(out, &mut bit_d);
         }
         exact
+    }
+
+    /// Decodes each stream until it is close to its start, or its output to its end.
+    fn decode_most<'a>(&self, streams: &mut Streams<'a>, no_output: &'a mut [[u8; 512]; 4]) {
+        // Some streams get there before others, which go on four at a time all the same: with these.
+        static NO_STREAM: [u8; 256] = [0x55; 256];
+        let mut decoding = Streams(no_output.each_mut().map(|out| Stream {
+            src: &NO_STREAM,
+            ip: 0,
+            bits: 0,
+            out,
+            op: 0,
+        }));
+        for (slot, stream) in decoding.0.iter_mut().zip(&mut streams.0) {
+            core::mem::swap(slot, stream);
+        }
+        // `streams[i]` is in `decoding`.
+        let mut left = [true; 4];
+        loop {
+            for ((stream, done), left) in decoding.0.iter_mut().zip(&mut streams.0).zip(&mut left) {
+                if stream.has_most_left() {
+                    continue;
+                }
+                if *left {
+                    *left = false;
+                    core::mem::swap(stream, done);
+                }
+                stream.ip = NO_STREAM.len() as u32 - 8;
+                stream.bits = 1;
+                stream.op = 0;
+                stream.has_most_left();
+            }
+            if left == [false; 4] {
+                break;
+            }
+            match self.log {
+                11 => decoding.decode_most::<11, 5>(&self.table),
+                _ => decoding.decode_most::<12, 4>(&self.table),
+            }
+        }
     }
 }
 
@@ -330,8 +373,31 @@ impl<'a> Part<'a> {
         let (dst0, dst) = dst.split_at_mut_checked(segment)?;
         let (dst1, dst) = dst.split_at_mut_checked(segment)?;
         let (dst2, dst3) = dst.split_at_mut_checked(segment)?;
-        Some([(src0, dst0), (src1, dst1), (src2, dst2), (src3, dst3)].map(|(src, out)| Self { src, out }))
+        Some(
+            [(src0, dst0), (src1, dst1), (src2, dst2), (src3, dst3)]
+                .map(|(src, out)| Self { src, out }),
+        )
     }
+}
+
+/// What two rounds of lookups between reloads can write, as far as the compiler can tell.
+const WINDOW: usize = 32;
+
+/// Reads the 64 bits from where a stream is. Whether there are as many.
+#[inline(always)]
+fn reload(src: &[u8], ip: &mut u32, bits: &mut u64) -> bool {
+    let consumed = bits.trailing_zeros();
+    // Wraps around before the start.
+    let from = ip.wrapping_sub(consumed >> 3);
+    let Some(Ok(container)) = src
+        .get(from as usize..from as usize + 8)
+        .map(<[u8; 8]>::try_from)
+    else {
+        return false;
+    };
+    *ip = from;
+    *bits = (u64::from_le_bytes(container) | 1) << (consumed & 7);
+    true
 }
 
 /// A stream that is being decoded.
@@ -368,6 +434,14 @@ impl<'a> Stream<'a> {
         Some(stream)
     }
 
+    /// Whether the stream is far enough from its start and its output from its end for `Streams::decode_most`, for
+    /// which it then is ready.
+    fn has_most_left(&mut self) -> bool {
+        self.bits != 0
+            && self.op as usize + WINDOW <= self.out.len()
+            && reload(self.src, &mut self.ip, &mut self.bits)
+    }
+
     fn bit_d(&self) -> Result<BitDStream<'a>> {
         if self.bits == 0 {
             return BitDStream::new(self.src);
@@ -391,9 +465,6 @@ impl<'a> Streams<'a> {
     /// Decodes for as long as no stream is close to its start and no output to its end. `LOOKUPS` of `LOG` bits are at
     /// most 57 bits.
     fn decode_most<const LOG: u32, const LOOKUPS: usize>(&mut self, table: &[Entry; TABLE_SIZE]) {
-        /// What `LOOKUPS` lookups can write, as far as the compiler can tell.
-        const WINDOW: usize = 32;
-
         #[inline(always)]
         fn lookup<const LOG: u32>(
             table: &[Entry; TABLE_SIZE],
@@ -417,26 +488,6 @@ impl<'a> Streams<'a> {
                 .as_mut_array()
         }
 
-        /// Whether there are 8 bytes to read from where the stream is.
-        #[inline(always)]
-        fn reload(src: &[u8], ip: &mut u32, bits: &mut u64) -> bool {
-            let consumed = bits.trailing_zeros();
-            // Wraps around before the start.
-            let from = ip.wrapping_sub(consumed >> 3);
-            let Some(Ok(container)) = src
-                .get(from as usize..from as usize + 8)
-                .map(<[u8; 8]>::try_from)
-            else {
-                return false;
-            };
-            *ip = from;
-            *bits = (u64::from_le_bytes(container) | 1) << (consumed & 7);
-            true
-        }
-
-        if self.0.iter().any(|stream| stream.bits == 0) {
-            return;
-        }
         let [s0, s1, s2, s3] = &mut self.0;
         let (mut bits0, mut bits1, mut bits2, mut bits3) = (s0.bits, s1.bits, s2.bits, s3.bits);
         let (mut ip0, mut ip1, mut ip2, mut ip3) = (s0.ip, s1.ip, s2.ip, s3.ip);

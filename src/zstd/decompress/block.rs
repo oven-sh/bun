@@ -1130,7 +1130,9 @@ impl<'a> Executor<'_, 'a> {
     #[inline(always)]
     fn copy_close_match(&mut self, op: usize, offset: usize, match_length: usize) -> Result<()> {
         /// The largest multiple of an offset that is at most 16.
-        const STEPS: [u8; 16] = [16, 16, 16, 15, 16, 15, 12, 14, 16, 9, 10, 11, 12, 13, 14, 15];
+        const STEPS: [u8; 16] = [
+            16, 16, 16, 15, 16, 15, 12, 14, 16, 9, 10, 11, 12, 13, 14, 15,
+        ];
         let buf = self.out.bytes();
         // The `offset` bytes before the match, again and again.
         let mut pattern = u128::from_le_bytes(*buf.array_at(op - offset)?);

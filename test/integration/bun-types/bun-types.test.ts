@@ -310,6 +310,7 @@ function checkForEmptyInterfaces(program: ts.Program) {
  */
 const PUBLISHED_AS: Record<string, string | null> = {
   "Archive.bind.ts": "typeof Bun",
+  "ArchiveInternals.bind.ts": null,
   "Blob.bind.ts": "typeof Bun & { Blob: Class<Bun.BunFile> }",
   "BlobArguments.bind.ts": null,
   "BlockList.bind.ts": null,

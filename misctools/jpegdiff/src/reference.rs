@@ -75,6 +75,9 @@ fn dims(h: Handle) -> Option<(u32, u32)> {
     (w >= 1 && ht >= 1).then_some((w as u32, ht as u32))
 }
 
+/// Whether `decode` fills its buffer first, to show what the decoder does not write. Off for timing: Bun did not.
+pub static POISON_OUTPUT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
 /// `eighths` is the scaling factor the old code would have picked from its hint.
 pub fn decode(bytes: &[u8], eighths: u32, max_pixels: u64) -> Result<Decoded, Failure> {
     unsafe {
@@ -112,7 +115,13 @@ pub fn decode(bytes: &[u8], eighths: u32, max_pixels: u64) -> Result<Decoded, Fa
             0
         };
         let out_len = w as usize * ht as usize * 4;
-        let mut out = vec![0xA5u8; out_len];
+        let mut out = if POISON_OUTPUT.load(std::sync::atomic::Ordering::Relaxed) {
+            vec![0xA5u8; out_len]
+        } else {
+            let mut out = Vec::with_capacity(out_len);
+            out.set_len(out_len);
+            out
+        };
         let rc = tj3Decompress8(h, bytes.as_ptr(), bytes.len(), out.as_mut_ptr(), pitch, if cmyk { TJPF_CMYK } else { TJPF_RGBA });
         let decode_warned = rc != 0 && tj3BunCompletedWithWarning(h) != 0;
         let last_message = if rc != 0 { message(h) } else { String::new() };

@@ -39,6 +39,7 @@ fn photo(w: usize, h: usize) -> Vec<u8> {
     px
 }
 fn main() {
+    jpegdiff::reference::POISON_OUTPUT.store(false, std::sync::atomic::Ordering::Relaxed);
     let files: Vec<String> = std::env::args().skip(1).collect();
     let (w, h) = (3000usize, 2000usize);
     let px = photo(w, h);

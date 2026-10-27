@@ -12,6 +12,9 @@ use crate::tables::HuffSpec;
 
 const LOOKAHEAD: u32 = 8;
 
+/// The most bits of a `ShortCoefficient`.
+const SHORT_BITS: u32 = 11;
+
 /// A refill goes on until there are this many bits, so that another byte would not fit.
 const MIN_GET_BITS: u32 = 64 - 7;
 
@@ -27,6 +30,18 @@ pub(crate) struct DerivedTable {
     lookup: [u16; 1 << LOOKAHEAD],
     /// For each length from 9 to 16: the least 16 bits that begin with no code of up to that length.
     long_limits: [u16; 8],
+    /// Of an AC table, by the next `SHORT_BITS` bits.
+    short: [ShortCoefficient; 1 << SHORT_BITS],
+}
+
+/// An AC coefficient whose code and value are few bits together.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct ShortCoefficient {
+    pub(crate) value: i16,
+    /// Zeros before it.
+    pub(crate) run: u8,
+    /// Of the code and the value in bits, or 0 if the bits do not begin with such a coefficient.
+    length: u8,
 }
 
 /// What the symbols of a table stand for.
@@ -46,6 +61,7 @@ impl DerivedTable {
             huffval: spec.huffval,
             lookup: [((LOOKAHEAD + 1) << LOOKAHEAD) as u16; 1 << LOOKAHEAD],
             long_limits: [0; 8],
+            short: [ShortCoefficient::default(); 1 << SHORT_BITS],
         });
 
         let mut code: u32 = 0;
@@ -70,6 +86,12 @@ impl DerivedTable {
                         entries.zip(symbols.flat_map(|s| core::iter::repeat_n(s, 1 << shift)))
                     {
                         *entry = ((length as u16) << LOOKAHEAD) | u16::from(symbol);
+                    }
+                }
+                if kind == TableKind::Ac {
+                    let symbols = spec.huffval.iter().skip(first).take(count);
+                    for (code, &symbol) in (code..).zip(symbols) {
+                        add_short_coefficients(&mut table.short, code, length as u32, symbol);
                     }
                 }
                 code += count as u32;
@@ -109,6 +131,31 @@ impl DerivedTable {
     }
 }
 
+/// The coefficients that `symbol` announces, if they are short.
+fn add_short_coefficients(
+    short: &mut [ShortCoefficient; 1 << SHORT_BITS],
+    code: u32,
+    code_length: u32,
+    symbol: u8,
+) {
+    let size = u32::from(symbol & 15);
+    let length = code_length + size;
+    if size == 0 || length > SHORT_BITS {
+        return;
+    }
+    let unused = SHORT_BITS - length;
+    let mut entries = short.iter_mut().skip((code << (size + unused)) as usize);
+    for bits in 0..1 << size {
+        for entry in entries.by_ref().take(1 << unused) {
+            *entry = ShortCoefficient {
+                value: huff_extend(bits, size) as i16,
+                run: symbol >> 4,
+                length: length as u8,
+            };
+        }
+    }
+}
+
 pub(crate) type DerivedTables = [Option<Box<DerivedTable>>; NUM_HUFF_TABLES];
 
 /// Derives the table that `selector` picks among `specs`, for `table` to find in `tables`.
@@ -138,7 +185,8 @@ pub(crate) fn table(tables: &DerivedTables, selector: u8) -> Result<&DerivedTabl
 /// negative numbers.
 #[inline(always)]
 pub(crate) fn huff_extend(x: i32, s: u32) -> i32 {
-    x + (((x - (1 << (s - 1))) >> 31) & ((-1i32 << s) + 1))
+    let range = 1 << s;
+    x + (((x - (range >> 1)) >> 31) & (1 - range))
 }
 
 #[derive(Default, Clone, Copy)]
@@ -314,6 +362,27 @@ impl<'a> FastBitReader<'a> {
         self.bits.get(nbits)
     }
 
+    /// The next AC coefficient, if it is a short one.
+    ///
+    /// libjpeg-turbo looks whether to fill once more, between the code and the value. The next look makes up for that,
+    /// and `catch_up` does where there may be none.
+    #[inline(always)]
+    pub(crate) fn short_coefficient(&mut self, table: &DerivedTable) -> Option<ShortCoefficient> {
+        self.fill();
+        let next = (self.bits.buf >> (self.bits.bits_left - SHORT_BITS)) as usize;
+        let short = *table.short.get(next % (1 << SHORT_BITS))?;
+        self.bits.bits_left -= u32::from(short.length);
+        (short.length != 0).then_some(short)
+    }
+
+    #[inline(always)]
+    pub(crate) fn catch_up(&mut self, last: ShortCoefficient) {
+        let size = u16::BITS - last.value.unsigned_abs().leading_zeros();
+        if self.bits.bits_left + size <= 16 {
+            self.fill_6_bytes();
+        }
+    }
+
     /// The next symbol.
     #[inline(always)]
     pub(crate) fn decode(&mut self, table: &DerivedTable) -> u8 {
@@ -350,6 +419,25 @@ struct Filled {
 /// Six more bytes for `buf`, from `data[at..]`.
 #[inline(never)]
 fn fill_bytewise(data: &[u8], mut at: usize, mut buf: u64) -> Filled {
+    // Most often what is in the way is a single FF 00.
+    if let Some(&chunk) = data.get(at..).and_then(|data| data.first_chunk::<8>()) {
+        let w = u64::from_be_bytes(chunk);
+        // The top bit of every byte that is FF.
+        let ff = ((w & 0x7f7f_7f7f_7f7f_7f7f) + 0x0101_0101_0101_0101) & w & 0x8080_8080_8080_8080;
+        let before = ff.leading_zeros();
+        if before <= 40 {
+            let after = u64::MAX >> (before + 8);
+            let only_ff = (ff ^ (1 << 63 >> before)) >> 8 == 0;
+            if only_ff && (w & after) >> (48 - before) == 0 {
+                let without_zero = (w & !after) | ((w << 8) & after);
+                return Filled {
+                    buf: (buf << 48) | (without_zero >> 16),
+                    at: at + 7,
+                    saw_marker: false,
+                };
+            }
+        }
+    }
     let mut saw_marker = false;
     for _ in 0..6 {
         let c0 = data.get(at).copied().unwrap_or(0);

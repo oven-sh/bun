@@ -15,6 +15,7 @@ import { join } from "node:path";
 import { bunExeName, linksWithLld, type Config } from "./config.ts";
 import { overridesDarwinAllocator, replacedOperatorNewSymbols } from "./deps/mimalloc.ts";
 import { quote, slash } from "./shell.ts";
+import { loadFeatures } from "./trim/features.ts";
 import { ucrtServicingLibDir } from "./winsysroot.ts";
 
 export const safeStackDependencies = [
@@ -633,6 +634,18 @@ export const globalFlags: Flag[] = [
     flag: "-flto=thin",
     when: c => c.windows && c.lto,
     desc: "Thin link-time optimization (clang-cl)",
+  },
+  {
+    // A `c-function` of src/trim/features is cut where it is defined. ThinLTO inlines a small one into its callers in
+    // other files, also into Rust: then no function is left to cut, and all that it calls stays with the callers.
+    // The attribute has to be in the bitcode: the pipeline that the link runs does not read the option.
+    flag: c =>
+      [...new Set(loadFeatures(c.cwd).features.flatMap(feature => feature.cFunctions ?? []))]
+        .sort()
+        .flatMap(name => ["-mllvm", `-force-attribute=${name}:noinline`]),
+    when: c => c.trimmable && c.lto,
+    lang: "c",
+    desc: "Keep the C functions that trimming cuts as functions",
   },
   {
     // Unix only (not windows): on COFF, whole-program vtable opt drops

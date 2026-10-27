@@ -186,6 +186,10 @@ declare global {
 
 // EventEmitter must be a standard function because some old code will do weird tricks like `EventEmitter.$apply(this)`.
 function EventEmitter(this: $Node.EventEmitter, opts?: $Node.EventEmitterOptions) {
+  if ($isProxyObject(this)) {
+    ("unlikely");
+    return initializeProxyReceiver(this, opts);
+  }
   const events = this._events;
   const hasNoEvents = events === undefined || events === Object.getPrototypeOf(this)._events;
   const hasNoMaxListeners = this._maxListeners == null;
@@ -227,6 +231,30 @@ function EventEmitter(this: $Node.EventEmitter, opts?: $Node.EventEmitterOptions
     if (capture) {
       ("unlikely");
       storeEmitWithRejectionCapture(this);
+    }
+  }
+}
+
+function initializeProxyReceiver(emitter: any, opts?: $Node.EventEmitterOptions) {
+  if (emitter._events === undefined || emitter._events === emitter.__proto__._events) {
+    emitter._events = Object.create(null);
+    emitter._eventsCount = 0;
+    emitter[kShapeMode] = false;
+  } else {
+    emitter[kShapeMode] = true;
+  }
+
+  emitter._maxListeners ??= undefined;
+  if (opts?.captureRejections) {
+    validateBoolean(opts.captureRejections, "options.captureRejections");
+    emitter[kCapture] = !!opts.captureRejections;
+    emitter.emit = emitWithRejectionCapture;
+  } else {
+    emitter[kCapture] = EventEmitterPrototype[kCapture];
+    const capture = EventEmitterPrototype[kCapture];
+    emitter[kCapture] = capture;
+    if (capture) {
+      emitter.emit = emitWithRejectionCapture;
     }
   }
 }

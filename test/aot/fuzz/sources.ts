@@ -93,6 +93,7 @@
 //   objects-that-may-be-missing-hold-one-another two to four objects, each made under a try of its own, hold one another and something of their own; the last one leaves the function on some ways only (objects-that-may-be-missing-hold-one-another.ts)
 //   <any of these>-in-several-files the same program with the declarations at its top laid into up to four further files, which import from each other; in every second program they import from its first file too (declarations-in-files-of-their-own.ts), and in every second typed program some of them are JavaScript, half of these beside a declaration file that says too little: `1` for number, one member of a union; two in five of those files are not valid either, and the program has a tsconfig.json with skipLibCheck; three in five of the files with declarations are packages in node_modules, half of them CommonJS; one in four of the files that stay TypeScript says too little in its own annotations, under @ts-nocheck; in three programs of ten the first file imports through a barrel
 //   host-functions-throw-in-code-that-built-ins-call a function of the host or of the language throws inside a getter, a conversion, a callback, a trap, an iterator or a listener that a built-in function has called; the call stands in tail position or not, and the exception is caught in that function, around the built-in function, further up or nowhere (host-functions-throw-in-code-that-built-ins-call.ts)
+//   one-call-reaches-either-of-two-built-ins one call reaches either of two built-in functions, however the two arrive there and however they are called, and one thing is done with what it answers (one-call-reaches-either-of-two-built-ins.ts)
 import { existsSync, readdirSync, readFileSync } from "fs";
 import { join, relative } from "path";
 import { withPackedPrograms } from "../generate";
@@ -1090,6 +1091,7 @@ async function inOneFile(programsRoot: string, rejected: Set<string>): Promise<R
     "elements-stored-below-an-object-that-intercepts-them",
     "sums-of-whole-numbers-at-the-edges-of-what-a-double-holds",
     "host-functions-throw-in-code-that-built-ins-call",
+    "one-call-reaches-either-of-two-built-ins",
   ])
     if (existsSync(join(import.meta.dir, name + ".ts")))
       sources[name] = untypedForTheProduct(name, (await import(`./${name}.ts`)).generate);

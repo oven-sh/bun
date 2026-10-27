@@ -179,10 +179,12 @@ so that `bun test test/aot` never needs more than a Bun. The top of each test fi
   (`perf/pinned-everyday-idioms-<part>`) and `perf/application-pins.<os>-<arch>.json` (`perf/pinned-applications`: zod, the checker of TypeScript). A pin only goes down:
   `AOT_PERF=lower`. A platform without a file prints what it measures and judges nothing; `perf/pins-from-a-log.ts <os>-<arch> <logs>` writes its files from the log.
   That one loop takes no more than a few times what another takes is asked in instructions too: `perf/one-loop-against-another.test.ts`, which also holds what a row over its bound takes today.
-- **Most CI machines cannot count instructions**, so `hot-loops-of-stored-programs.test.ts` reads the generated code instead. For each program of
-  `perf/everyday/loops-over-lists-and-typed-arrays.txt` it asks `testaot` (`lower-to-air loops`) for the hot loop and compares it with `perf/hot-loops.json`: by how much
-  the counter steps (how often the loop was unrolled) and how many Air instructions and patchpoints the loop has. Nothing runs. The engine's
-  `aot/tests/codegen/typed-array-loops` and `array-loops`, and `engine-tests/codegen/typed-array-loops` here, check the B3 of the same loops.
+- **Most CI machines cannot count instructions**, so `perf/generated-code.ts` (`perf/generated-code-of-idioms-<part>`, `perf/generated-code-of-operations-<part>`) reads the
+  generated code of the same programs instead: the Air instructions and patchpoints of each function of the program, of its cheapest loop per element, and of one site
+  of each operation, as `testaot print <program> --command="lower-to-air size loops entry-modules"` counts them. Nothing runs.
+  `perf/generated-code-of-idioms.<os>-<arch>.txt` and `perf/generated-code-of-operations.<os>-<arch>.txt` only go down: `AOT_PERF=lower`. A platform without a file prints
+  what it finds and judges nothing. The engine's `aot/tests/codegen`, and `engine-tests/codegen` here, check the B3 of the same lowerings:
+  `tools/ir-test-from-source.ts` drafts such a test from a small program.
 - **What a script writes is not kept.** Some folders of `programs/` are written by a script, whole or in part: `generate.ts` lists
   them. What is kept under the name of such a program takes its place, and what somebody has decided about one (`<name>.expected.txt`, `<name>.json` ..) is kept under its name. A test file writes the programs that it runs into a temporary folder when it starts, under the names they would have in
   `programs/`, and treats them like any other program. `bun test/aot/generate.ts <folder> <where>` writes a folder out to be read. The programs of

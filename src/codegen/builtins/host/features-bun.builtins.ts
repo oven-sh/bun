@@ -95,6 +95,7 @@ export default b.declarations(
     ["InternalForTesting"],
     "bun:internal-for-testing",
     "internal/test/binding",
+    ...nativeBindings("Bindgen", "ArchiveInternals.bind.ts", "readTar", "writeTar"),
     ...nativeBindings("Bindgen", "fmt_jsc.bind.ts", "fmtString"),
     ...nativeBindings("Cpp", "CallSite.cpp", "createNativeFrameForTesting"),
     ...nativeBindings("Cpp", "IsolatedModuleCache.cpp", "createIsolatedModuleCacheSourceTypeForTesting"),

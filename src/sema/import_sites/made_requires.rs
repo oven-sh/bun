@@ -65,12 +65,14 @@ fn is_import_meta_require(hir: &File<'_>, e: ExprId) -> bool {
 pub(super) struct StepsLeft {
     parameters: usize,
     requests: usize,
+    pub(super) passes_get_builtin_module: bool,
 }
 
 impl StepsLeft {
     pub(super) const ALL: StepsLeft = StepsLeft {
         parameters: LONGEST_CHAIN_OF_PARAMETERS,
         requests: LONGEST_CHAIN_OF_REQUESTS,
+        passes_get_builtin_module: true,
     };
 }
 
@@ -676,6 +678,19 @@ pub fn is_made_require(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {
     let written = chain.last().and_then(|e| expr_kind(hir, e));
     matches!(written, Some(ExprKind::Call(call))
         if text.is_create_require(hir[call].callee, StepsLeft::ALL))
+}
+
+pub fn is_create_require_behind_get_builtin_module(
+    hir: &File<'_>,
+    bound: &Bound<'_>,
+    callee: ExprId,
+) -> bool {
+    let text = Text::of(hir, bound, None);
+    let without = StepsLeft {
+        passes_get_builtin_module: false,
+        ..StepsLeft::ALL
+    };
+    text.is_create_require(callee, StepsLeft::ALL) && !text.is_create_require(callee, without)
 }
 
 pub fn may_still_be_undefined(hir: &File<'_>, bound: &Bound<'_>, e: ExprId) -> bool {

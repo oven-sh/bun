@@ -3,11 +3,13 @@
 #   return JSON.stringify(point);
 # }
 # declare const input: any;
-# (globalThis as any).answer = write({ x: +input, y: +input });
+# for (let k = 0; k < input; k++) (globalThis as any).answer = write({ x: +input, y: k / 2 });
 # FORM: AsRead
 # OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls,pass:PromoteAggregateParameters
 # RUN: lower-to-b3 optimized f1
 # REQUIRES: unsanitized-code
+# RUN(CALLS): lower-to-b3 optimized f1
+# REQUIRES(CALLS): unsanitized-code
 # RUN(X64): lower-to-air size f1
 # REQUIRES(X64): x86_64 not-windows unsanitized-code
 # RUN(ARM64): lower-to-air size f1
@@ -17,8 +19,9 @@ module m0 path="main.ts" displayPath="main.ts" body=f0
 entry module=m0
 typesite w0 module=m0 position=54 kind=Parameter function=f1
 typesite w1 module=m0 position=39 kind=Result
-typesite w2 module=m0 position=167 kind=CallResult
-typesite w3 module=m0 position=87 kind=CallResult
+typesite w2 module=m0 position=147 kind=Variable
+typesite w3 module=m0 position=199 kind=CallResult
+typesite w4 module=m0 position=87 kind=CallResult
 layout L0 name="Point" module=m0 position=5 fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
 function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0():
@@ -26,27 +29,46 @@ function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} res
   b1():
     v0 = NewClosure function=f1
     v1 = Convert v0 declared={type=f1 flags=[IsFromCompiler]} illTypedCause=FromLooseType
-    v2 = Builtin builtin=GlobalThis
-    v3 = PropGet v2 key="globalThis" [isFreeName]
-    v4 = Convert v3 declared={type=builtin(GlobalThis) flags=[IsExpected]}
-    v5 = Convert v4 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v2 = Integer
+    v3 = Convert v2 declared={type=number site=w2}
+    Jump -> next b2(v3)
+  b2(v4: number):
+    LoopHint
     v6 = Builtin builtin=GlobalThis
     v7 = PropGet v6 key="input" [isFreeName]
     v8 = Convert v7 declared={type=number flags=[IsExpected]}
-    v9 = ToNumber v8
-    v10 = Convert v9 declared={type=number}
+    v9 = Less v4, v8
+    Branch v9 -> taken b3(| 0), notTaken b6(| 0)
+  b3(v10):
+    Jump -> next b4()
+  b4():
     v11 = Builtin builtin=GlobalThis
-    v12 = PropGet v11 key="input" [isFreeName]
-    v13 = Convert v12 declared={type=number flags=[IsExpected]}
-    v14 = ToNumber v13
-    v15 = Convert v14 declared={type=number}
-    v16 = NewObject -, v10, v15 layout=L0 fields=[0, 1]
-    v17 = FinishObject v16
-    v18 = Call v1, -, v17 calleeName="write"
-    v19 = Convert v18 declared={type=undefined|null|string site=w2 flags=[OmitsNull, OmitsUndefined]}
-    PropSet v5, v19 key="answer"
-    v21 = Undefined
-    Return v21
+    v12 = PropGet v11 key="globalThis" [isFreeName]
+    v13 = Convert v12 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v14 = Convert v13 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v15 = Builtin builtin=GlobalThis
+    v16 = PropGet v15 key="input" [isFreeName]
+    v17 = Convert v16 declared={type=number flags=[IsExpected]}
+    v18 = ToNumber v17
+    v19 = Convert v18 declared={type=number}
+    v20 = Integer integer=2
+    v21 = Div v10, v20
+    v22 = Convert v21 declared={type=number}
+    v23 = NewObject -, v19, v22 layout=L0 fields=[0, 1]
+    v24 = FinishObject v23
+    v25 = Call v1, -, v24 calleeName="write"
+    v26 = Convert v25 declared={type=undefined|null|string site=w3 flags=[OmitsNull, OmitsUndefined]}
+    PropSet v14, v26 key="answer"
+    Jump -> next b5()
+  b5():
+    v28 = Increment v10
+    v29 = Convert v28 declared={type=number site=w2}
+    Jump -> next b2(v29)
+  b6(v30):
+    Jump -> next b7()
+  b7():
+    v31 = Undefined
+    Return v31
 }
 function f1 name="write" module=m0 position=39 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|L0 site=w0 flags=[OmitsNull, OmitsUndefined]}] results=[{type=undefined|null|string site=w1 flags=[OmitsNull, OmitsUndefined]}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|L0):
@@ -56,20 +78,32 @@ function f1 name="write" module=m0 position=39 flags=[IsChecked, HasExplicitName
     v2 = PropGet v1 key="stringify"
     v3 = Convert v2 declared={type=builtin(JSONStringify) flags=[IsExpected]}
     v4 = Call v3, v1, v0 calleeKey="stringify" calleeName="JSON.stringify"
-    ReturnCall v4 casts=[{declared={type=undefined|null|string site=w3 flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string site=w1 flags=[OmitsNull, OmitsUndefined]}}]
+    ReturnCall v4 casts=[{declared={type=undefined|null|string site=w4 flags=[OmitsNull, OmitsUndefined]}}, {declared={type=undefined|null|string site=w1 flags=[OmitsNull, OmitsUndefined]}}]
 }
 
-# One JSON.stringify outside a loop calls the built-in itself, as native code is called. Three calls: one fetches its function object, one fetches JSON, the receiver, and the third is the call, with the object and undefined for the replacer.
+# JSON.stringify of an object with a proven layout does not start with the built-in. A string builder is taken from the pool by two loads and two stores.
 # CHECK-LABEL: name="write" role=Source
 # CHECK-NEXT: BB#0:
-# CHECK-NEXT: Int64 b@[[function]] = Patchpoint(resultConstraints = Register({{*}}), pureFunction = {{*}}:CallBuiltin)
-# CHECK-NEXT: Int64 b@[[receiver]] = Patchpoint(resultConstraints = Register({{*}}), pureFunction = {{*}}:CallBuiltin)
-# CHECK-NEXT: Int64 b@[[point]] = ArgumentReg(
-# CHECK-NEXT: Int64 b@[[undefined]] = Const64(10, {{*}}:Undefined)
-# CHECK-NEXT: Int64 b@[[text]] = Patchpoint(b@[[function]]:Register({{*}}), b@[[receiver]]:Register({{*}}), b@[[point]]:Register({{*}}), $10(b@[[undefined]]):Register({{*}}), resultConstraints = Register({{*}}), ExitsSideways{{*}}:CallBuiltin)
-# Nothing tests which function the member holds, and the result is handed on as it is.
-# CHECK-NEXT: Return(b@[[text]], Terminal)
+# CHECK: Int64 b@[[pooled]] = Load(b@{{*}}, offset = {{*}}, ControlDependent|Reads:collectorState, {{*}}:StringBuilderBegin)
+# CHECK-NEXT: Branch(b@[[pooled]], Terminal, {{*}}:StringBuilderBegin)
+# CHECK-NEXT: Successors: Then:#{{*}}, Else:Rare:#
+# CHECK: Int64 b@[[next]] = Load(b@[[pooled]], offset = {{*}}, ControlDependent|Reads:StringBuilderContents, {{*}}:StringBuilderBegin)
+# CHECK-NEXT: Store(b@[[next]], b@{{*}}, offset = {{*}}, ControlDependent|Writes:collectorState, {{*}}:StringBuilderBegin)
+# The writer that was compiled for the layout is called directly with the object and the builder, and says whether it could write all of it.
+# CHECK: Int32 b@[[written]] = Patchpoint(b@{{*}}:Register({{*}}), b@[[builder]]:Register({{*}}), resultConstraints = Register({{*}}), ExitsSideways{{*}}:CallDirect)
+# CHECK: Int32 b@{{*}} = Equal(b@[[written]], $1(b@{{*}}))
+# One more call makes the string out of the builder.
+# CHECK: Int64 b@{{*}} = Patchpoint(b@[[builder]]:Register({{*}}), {{*}}, resultConstraints = Register({{*}}), ExitsSideways{{*}}:StringBuilderFinish)
 # CHECK-LABEL: end of function
+# The writer and the built-in are each called at one place, the built-in behind a rare edge, for an object that the writer gave up on.
+# CALLS-LABEL: name="write" role=Source
+# CALLS-COUNT-1: ExitsSideways{{*}}:CallDirect)
+# CALLS-NOT: = Patchpoint({{*}}:CallDirect)
+# CALLS: Successors: Then:Rare:#[[itself]], Else:#
+# CALLS: BB#[[itself]]:
+# CALLS-COUNT-1: ExitsSideways{{*}}:CallBuiltin)
+# CALLS-NOT: ExitsSideways{{*}}:CallBuiltin)
+# CALLS-LABEL: end of function
 # The counts hold calls, whose moves follow the calling convention: not for Windows.
-# X64: instructions: 5, patchpoints: 3
-# ARM64: instructions: 8, patchpoints: 3
+# X64: instructions: 31, patchpoints: 2, rare instructions: 15
+# ARM64: instructions: 34, patchpoints: 2, rare instructions: 16

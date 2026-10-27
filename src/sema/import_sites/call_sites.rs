@@ -72,7 +72,8 @@ fn has_fixed_callee(
         },
         ImportSiteKind::ImportMetaRequire(_) => !bound.import_meta_may_be_modified(),
         ImportSiteKind::GetBuiltinModule(_) => {
-            matches!(hir.member_key(callee), Some((object, _))
+            left.passes_get_builtin_module
+                && matches!(hir.member_key(callee), Some((object, _))
                 if is_process(hir, bound, hir.skip_type_assertions(object), &[known::globalThis]))
         }
         _ => false,

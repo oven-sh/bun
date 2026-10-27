@@ -297,6 +297,9 @@ export const calls: Record<string, string[]> = {
   "Bun.FileSystemRouter": [`${temporary}\nnew Bun.FileSystemRouter({ style: "nextjs", dir: folder })`],
   "Bun.S3Client": ["new Bun.S3Client({})"],
   "Bun.Transpiler": ["new Bun.Transpiler()"],
+  "Bun.Transpiler.prototype.scan": ['new Bun.Transpiler().scan(`import a from "b"; export const c = a;`)'],
+  "Bun.Transpiler.prototype.scanImports": ['new Bun.Transpiler().scanImports(`import a from "b";`)'],
+  "Bun.Transpiler.prototype.transform": ['new Bun.Transpiler().transform("const a = 1;")'],
   "Bun.build": [
     `${temporary}\nawait Bun.write(folder + "/a.js", "export default 1;");\nconst asked = Bun.build({ entrypoints: [folder + "/a.js"] });\nawait asked;\nasked`,
   ],

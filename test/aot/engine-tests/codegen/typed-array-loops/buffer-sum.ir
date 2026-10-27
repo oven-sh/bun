@@ -125,4 +125,4 @@ function f1 name="turn" module=m0 position=38 flags=[IsChecked, HasExplicitName]
 # HOT-NOT: Double
 # HOT-LABEL: end of loop
 # X64: instructions: 21, patchpoints: 8, {{*}} steps by 8
-# ARM64: instructions: 27, patchpoints: 8, {{*}} steps by 8
+# ARM64: instructions: 21, patchpoints: 8, {{*}} steps by 8

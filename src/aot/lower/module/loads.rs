@@ -8,8 +8,8 @@ use bun_sema::hir::{
 };
 use bun_sema::import_sites::{
     ImportSite, ImportSiteKind, ImportSpecifier, OwnRequire, RequireCallForm, find_own_require,
-    find_require_call, holds_import_meta_require, is_made_require, is_require_made_for_own_file,
-    may_require_get_members, may_still_be_undefined,
+    find_require_call, holds_import_meta_require, is_create_require_behind_get_builtin_module,
+    is_made_require, is_require_made_for_own_file, may_require_get_members, may_still_be_undefined,
 };
 use bun_sema::program::FileId;
 use smallvec::smallvec;
@@ -119,12 +119,7 @@ impl FileLowering<'_, '_, '_, '_> {
             }
         };
         match table::entry(root_path.id).scope {
-            Scope::Realm => match callee_path.mutability {
-                Mutability::AlwaysLocked => CalleeKnowledge::Bound,
-                Mutability::ConstantUnlessWritten | Mutability::ChangesOnItsOwn => {
-                    CalleeKnowledge::Expected(callee_path.id)
-                }
-            },
+            Scope::Realm => CalleeKnowledge::Expected(callee_path.id),
             Scope::Module if may_member_be_replaced => CalleeKnowledge::Expected(callee_path.id),
             Scope::Module => match self.inputs.modules.kind(self.file) {
                 ModuleKind::CommonJs => match root_path.mutability {
@@ -308,6 +303,9 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
             if let Some(loaded) = self.try_lower_library_module_named_to_made_require(call, id) {
                 return Some(loaded);
             }
+            if let Some(made) = self.try_lower_create_require_behind_test(call, id, chain_exit) {
+                return Some(made);
+            }
             return self.try_lower_choice_of_builtin_modules(call, id, chain_exit);
         };
         let resolved_from = analysis.path_to_resolve_from(site).and_then(|path| {
@@ -385,6 +383,44 @@ impl FunctionLowering<'_, '_, '_, '_, '_> {
         };
         let loaded = lower_tested_call(self, call, chain_exit, test, operation, site);
         Some(loaded)
+    }
+
+    fn try_lower_create_require_behind_test(
+        &mut self,
+        call: ExprId,
+        id: CallId,
+        chain_exit: Option<BlockId>,
+    ) -> Option<ValueId> {
+        let hir = self.file.hir;
+        let (written, arguments) = (hir[id].callee, hir[id].args);
+        if has_spread_argument(hir, arguments)
+            || !is_create_require_behind_get_builtin_module(hir, self.file.bound, written)
+        {
+            return None;
+        }
+        let mut callee = self.lower_callee(written, chain_exit, None);
+        if hir[id].chain == Chain::Start {
+            let exit = chain_exit.expect("an optional call has the exit of its chain");
+            callee.function = self.branch_if_expression_nullish(written, callee.function, exit);
+        }
+        let arguments = self.lower_arguments(arguments);
+        let expected = self.builder.builtin(BuiltinId::NodeModuleCreateRequire);
+        let is_expected = self.builder.strict_eq(callee.function, expected);
+        let matched = self.create_block();
+        let other = self.create_unlikely_block();
+        self.builder
+            .branch(is_expected, Edge::to(matched), Edge::to(other));
+
+        self.continue_in(other);
+        let message = self.emit_text(
+            b"Cannot call createRequire: process.getBuiltinModule was replaced and returned a different createRequire. This executable can't load a module from a dynamic path.",
+        );
+        let constructor = self.builder.builtin(BuiltinId::Error);
+        let error = self.emit_construct(constructor, Arguments::Values(smallvec![message]), None);
+        self.builder.throw(error);
+
+        self.continue_in(matched);
+        Some(self.emit_call_expression(call, callee, arguments, Tail::No))
     }
 
     // `require_x()` and `init_x()` of a bundle, where `var require_x = __commonJS(..)` is a module of its own.

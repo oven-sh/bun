@@ -57,8 +57,8 @@ answer(text, worker);
 try {
 ${
   usesNode
-    ? `worker = new NodeWorker(new URL(import.meta.url), { workerData: job });\nworker.on("message", once);\nworker.on("error", error => once("failed " + error.name));`
-    : `worker = new Worker(new URL(import.meta.url));\nworker.onmessage = event => once(event.data);\nworker.onerror = event => {\nevent.preventDefault?.();\nonce("failed");\n};\nworker.postMessage(job);`
+    ? `worker = new NodeWorker(new URL(import.meta.url), { workerData: job });\nworker.on("message", once);\nworker.on("error", error => once(error instanceof TypeError ? "refused" : "failed " + error.name));`
+    : `worker = new Worker(new URL(import.meta.url));\nworker.onmessage = event => once(event.data);\nworker.onerror = event => {\nevent.preventDefault?.();\nonce(event.message.startsWith("TypeError: Failed to spawn") ? "refused" : "failed");\n};\nworker.postMessage(job);`
 }
 } catch (error) {
 once(error instanceof TypeError ? "refused" : "threw " + error.name);

@@ -631,7 +631,7 @@ Writable.prototype.end = function (
   let err;
 
   if (chunk != null) {
-    const ret = _write(this, state, chunk, encoding, undefined);
+    const ret = _write(this, this._writableState, chunk, encoding, undefined);
     if (Error.isError(ret)) {
       err = ret;
     }
@@ -799,11 +799,20 @@ function callFinishedCallbacks(state: WritableState, err): void {
   }
 }
 
+function getStateForAccessor(stream: $Node.Writable) {
+  const state = stream._writableState as WritableState | $Node.ForeignState | undefined;
+  if (state && $isProxyObject(stream)) {
+    ("unlikely");
+    return stream._writableState as WritableState | $Node.ForeignState | undefined;
+  }
+  return state;
+}
+
 const accessors = {
   closed: {
     __proto__: null,
     get(this: $Node.Writable) {
-      const state = this._writableState as WritableState | $Node.ForeignState | undefined;
+      const state = getStateForAccessor(this);
       return state ? (flagsOf(state) & Flag.Closed) !== 0 : false;
     },
   },
@@ -811,12 +820,12 @@ const accessors = {
   destroyed: {
     __proto__: null,
     get(this: $Node.Writable) {
-      const state = this._writableState as WritableState | $Node.ForeignState | undefined;
+      const state = getStateForAccessor(this);
       return state ? (flagsOf(state) & Flag.Destroyed) !== 0 : false;
     },
     set(this: $Node.Writable, value) {
       // Backward compatibility, the user is explicitly managing destroyed.
-      const state = this._writableState as WritableState | $Node.ForeignState | undefined;
+      const state = getStateForAccessor(this);
       if (!state) return;
 
       if (value) addFlags(state, Flag.Destroyed);

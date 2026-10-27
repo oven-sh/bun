@@ -2917,9 +2917,9 @@ function getPromiseDetails(promise: Promise<unknown>): [state: symbol, result: u
 function getProxyDetails(proxy: unknown, withHandler = true) {
   const isProxy = $isProxyObject(proxy);
   if (!isProxy) return undefined;
-  const handler = $getProxyInternalField(proxy, $proxyFieldHandler);
+  const handler = $getProxyInternalField(proxy as object, $proxyFieldHandler);
   // if handler is null, the proxy is revoked
-  const target = handler === null ? null : $getProxyInternalField(proxy, $proxyFieldTarget);
+  const target = handler === null ? null : $getProxyInternalField(proxy as object, $proxyFieldTarget);
   if (withHandler) return [target, handler];
   else return target;
 }

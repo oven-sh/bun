@@ -284,8 +284,6 @@ function OutgoingMessage(
     if (rejectNonStandardBodyWrites === undefined) rejectNonStandardBodyWrites = false;
   } else {
     Stream.$call(this, options);
-    highWaterMark = options?.highWaterMark ?? getDefaultHighWaterMark();
-    rejectNonStandardBodyWrites = options?.rejectNonStandardBodyWrites ?? false;
     keepAliveTimeout = 0;
   }
 
@@ -336,8 +334,9 @@ function OutgoingMessage(
   this._onPendingData = nop;
 
   this[kErrored] = null;
-  this[kHighWaterMark] = highWaterMark;
-  this[kRejectNonStandardBodyWrites] = rejectNonStandardBodyWrites;
+  this[kHighWaterMark] = options === kHandle ? highWaterMark! : (options?.highWaterMark ?? getDefaultHighWaterMark());
+  this[kRejectNonStandardBodyWrites] =
+    options === kHandle ? rejectNonStandardBodyWrites! : (options?.rejectNonStandardBodyWrites ?? false);
   // Declared here so the memoizing _isLenientHeaderValidation never
   // shape-transitions the message when it caches.
   this[kLenientValidation] = undefined;

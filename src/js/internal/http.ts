@@ -102,7 +102,7 @@ const responseRoad: {
     value: $Node.HttpHeaderValue,
   ) => void;
   outgoingSetHeader?: $Node.OutgoingMessage["setHeader"];
-  sendWhatIsHeld?: (response: $Node.ServerResponse | null | undefined) => void;
+  flushSocketHeldChunk?: (socket: object | null | undefined) => void;
 } = {};
 
 // node:_http_server registers its pipelined-response machinery here at module
@@ -179,11 +179,11 @@ function emitErrorNextTickIfErrorListener(
   }
 }
 
-function takeRequestTrailers(self: $Node.IncomingMessage, handle: $Node.NodeHTTPResponse) {
+function takeRequestTrailers(self: $Node.IncomingMessage, handle: $Node.NodeHTTPResponse | undefined) {
   // The lenient value bytes must match what the parser accepted on the wire, or a CTL byte in a trailer value would make the trailers vanish here.
   const server = self.socket?.server;
   const { calculateLenientFlags, HTTPParser } = require("node:_http_common");
-  return handle.takeRequestTrailers(
+  return (handle ?? self[kHandle]!).takeRequestTrailers(
     server != null &&
       calculateLenientFlags(server.httpValidation, server.insecureHTTPParser) !== HTTPParser.kLenientNone,
   );
@@ -199,8 +199,8 @@ function emitEOFIncomingMessageOuter(self: $Node.IncomingMessage) {
   // Trailers can only follow a chunked request body: a no-body request has
   // none, so skip the native call (and the socket/server option walk) for the
   // common GET/HEAD case.
-  if (!self[noBodySymbol] && self[kHandle] !== undefined) {
-    const rawTrailers = takeRequestTrailers(self, self[kHandle]);
+  if (self[kHandle] !== undefined && !self[noBodySymbol]) {
+    const rawTrailers = takeRequestTrailers(self, undefined);
     if (rawTrailers !== undefined) {
       ("unlikely");
       self._addHeaderLines(rawTrailers, rawTrailers.length);

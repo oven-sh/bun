@@ -89,6 +89,42 @@ function turn(i: number): number {
   const row = JSON.parse(text) as { name: string };
   return Object.keys(row).length + row.name.length + (i & 1);
 }
+//// json-parse-nested-objects-by-types-that-list-fewer-members
+const text = '{"version":2,"user":{"id":7,"name":"row","ok":true},"total":3,"place":{"city":"Oslo","zip":"0150","country":"NO"}}';
+function turn(i: number): number {
+  const reply = JSON.parse(text) as { user: { name: string }; place: { city: string } };
+  return reply.user.name.length + reply.place.city.length + (i & 1);
+}
+//// json-parse-a-list-by-a-type-that-lists-one-of-three-members
+const rowsOfText: string[] = [];
+for (let k = 0; k < 8; k++) rowsOfText.push('{"id":' + k + ',"label":"row ' + k + '","ok":' + (k % 2 === 0) + "}");
+const text = "[" + rowsOfText.join(",") + "]";
+function turn(i: number): number {
+  const rows = JSON.parse(text) as { label: string }[];
+  let sum = i & 1;
+  for (const row of rows) sum += row.label.length;
+  return sum;
+}
+//// json-parse-texts-with-other-values-each-time-by-a-type-that-lists-one-of-three-members
+const texts: string[] = [];
+for (let k = 0; k < 64; k++) texts.push('{"id":' + (1000 + k * 37) + ',"name":"row ' + k + '","ok":' + (k % 3 === 0) + "}");
+function turn(i: number): number {
+  const row = JSON.parse(texts[i & 63]) as { name: string };
+  return row.name.length + (i & 1);
+}
+//// json-parse-lists-with-other-values-each-time-by-a-type-that-lists-one-of-three-members
+const texts: string[] = [];
+for (let t = 0; t < 16; t++) {
+  const rowsOfText: string[] = [];
+  for (let k = 0; k < 8; k++) rowsOfText.push('{"id":' + (t * 100 + k) + ',"label":"row ' + (t * 8 + k) + '","ok":' + (k % 2 === 0) + "}");
+  texts.push("[" + rowsOfText.join(",") + "]");
+}
+function turn(i: number): number {
+  const rows = JSON.parse(texts[i & 15]) as { label: string }[];
+  let sum = i & 1;
+  for (const row of rows) sum += row.label.length;
+  return sum;
+}
 //// json-parse-nested
 const text = '{"user":{"id":7,"roles":["admin","dev"],"address":{"city":"Oslo"}},"total":3}';
 function turn(i: number): number {

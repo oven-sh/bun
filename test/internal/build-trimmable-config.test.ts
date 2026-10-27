@@ -94,6 +94,15 @@ describe.skipIf(isWindows)("trimmable build config", () => {
     expect(computeFlags(cfg).ldflags).toContain(`-Wl,-Map=${linkerMapPath(cfg)}`);
   });
 
+  test("with LTO, C is compiled so that each c-function of src/trim/features stays a function", () => {
+    const keepsFunction = "-force-attribute=us_nq_loop_drain:noinline";
+    const flagsOf = (partial: PartialConfig) => computeFlags(resolve({ ...linux, ...partial }));
+    expect(flagsOf({ lto: true }).cflags).toContain(keepsFunction);
+    expect(flagsOf({ lto: true }).cxxflags).not.toContain(keepsFunction);
+    expect(flagsOf({ lto: false }).cflags).not.toContain(keepsFunction);
+    expect(flagsOf({ lto: true, trimmable: false }).cflags).not.toContain(keepsFunction);
+  });
+
   test("is off unless asked for", () => {
     expect(resolveConfig({ ...linux, buildType: "Release" }, mockToolchain()).trimmable).toBe(false);
   });

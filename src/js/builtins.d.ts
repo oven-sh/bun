@@ -204,7 +204,7 @@ declare function $isArray(obj: any): obj is any[];
 declare function $isCallable<T>(fn: T & $NotAny<T>): fn is $GuardNarrow<T, CallableFunction> & $NotAny<T>;
 declare function $isCallable(fn: any): fn is $AnyCallable;
 declare function $isJSArray(obj: unknown): obj is any[];
-declare function $isProxyObject(obj: unknown): obj is Proxy;
+declare function $isProxyObject(obj: unknown): boolean;
 declare function $isRegExpObject(obj: unknown): obj is RegExp;
 declare function $isMap<K, V>(obj: unknown): obj is Map<K, V>;
 declare function $isSet<V>(obj: unknown): obj is Set<V>;

@@ -225,6 +225,39 @@ export const groups = {
         written([...declared, ...many]),
       ];
     }),
+  "whose values change under the same names": declared =>
+    [
+      "1",
+      "2",
+      "-1",
+      "1.5",
+      "1e21",
+      "12345678901",
+      "0",
+      "-0",
+      '"text"',
+      '"other text"',
+      '"a\\nb"',
+      `"${"long".repeat(20)}"`,
+      '""',
+      "true",
+      "false",
+      "null",
+      "{}",
+      '{"x":1}',
+      "[]",
+      "[1]",
+      '["a"]',
+    ].flatMap(value => [
+      written([["x", value], ...declared, ["y", value]]),
+      ...declared.map((_, changed) =>
+        written([
+          ["x", "1"],
+          ...declared.map(([name, its], i): Member => [name, i === changed ? value : its]),
+          ["y", '"why"'],
+        ]),
+      ),
+    ]),
 } as const satisfies Record<string, (declared: readonly Member[]) => string[]>;
 export type Group = keyof typeof groups;
 export const groupNames = Object.keys(groups) as Group[];
@@ -343,12 +376,32 @@ console.log(s);
 `;
       break;
     case "in lists":
-      text = `${head(objects.map((_, i) => `[${[0, 1, 2, 1, 0].map(step => objects[(i + step) % objects.length]).join(",")}]`))}for (const text of texts) {
+      text = `${head([
+        ...objects.map((_, i) => `[${[0, 1, 2, 1, 0].map(step => objects[(i + step) % objects.length]).join(",")}]`),
+        ...objects
+          .slice(0, 3)
+          .flatMap(object => [
+            `[${object},${object},${object}]`,
+            `[ ${object} , ${object} ]`,
+            `[${object},]`,
+            `[${object},${object},]`,
+            `[${object} ${object}]`,
+            `[${object},,${object}]`,
+            `[${object},null,${object}]`,
+            `[${object},1,${object}]`,
+            `[${object},[${object}]]`,
+            `[${object},${object}`,
+            `[${object},${object}}`,
+            `[${object},${object}]]`,
+          ]),
+      ])}for (const text of texts) {
   for (let r = 0; r < 3; r++) {
     try {
-      for (const o of JSON.parse(text) as T[]) {
+      const list = JSON.parse(text) as T[];
+      console.log(list.length);
+      for (const o of list) {
         show("json", () => JSON.stringify(o));
-        show("keys", () => Object.keys(o).join("|"));
+        show("keys", () => Object.keys((o as object) ?? {}).join("|"));
         show("spread", () => JSON.stringify({ ...o }));
       }
     } catch (e) {

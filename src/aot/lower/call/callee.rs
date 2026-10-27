@@ -1639,11 +1639,13 @@ impl FileLowering<'_, '_, '_, '_> {
                     self.find_literal_value(right)?,
                 ];
                 // The build leaves a power that may be inexact to the run time.
-                fold::apply_binary(atoms, op, operands, usize::MAX).or(match (op, operands) {
-                    (BinOp::Pow, [Constant::Number(base), Constant::Number(exponent)]) => {
-                        Some(Constant::Number(base.powf(exponent)))
+                fold::apply_binary(atoms, op, operands, usize::MAX).or_else(|| {
+                    match (op, operands) {
+                        (BinOp::Pow, [Constant::Number(base), Constant::Number(exponent)]) => {
+                            Some(Constant::Number(base.powf(exponent)))
+                        }
+                        _ => None,
                     }
-                    _ => None,
                 })
             }
             _ => None,

@@ -24,17 +24,11 @@
 
 // RUN(NATIVECALL): lower
 // NATIVECALL-LABEL: function {{*}}name="native"
-// NATIVECALL: [[process]] = Convert {{*}}type=builtin(Process)
+// NATIVECALL: [[process]] = Builtin builtin=Process
 // NATIVECALL: [[name]] = String string="node:buffer"
 // NATIVECALL: Branch {{*}}notTaken [[other]](| 0)
 // NATIVECALL: [[other]]([[callee]]):
-// NATIVECALL-NEXT: = Call [[callee]], [[process]], [[name]] calleeName="global.process.getBuiltinModule"
-
-// RUN(LOCKED): lower
-// LOCKED-LABEL: function {{*}}name="locked"
-// LOCKED-NOT: StrictEq
-// LOCKED: = RequireModule module=m
-// LOCKED-NOT: = Call
+// NATIVECALL-NEXT: = Call [[callee]], [[process]], [[name]] calleeName="process.getBuiltinModule"
 
 require = wrap(require);
 
@@ -47,11 +41,7 @@ function load() {
 }
 
 function native() {
-  return global.process.getBuiltinModule("node:buffer");
-}
-
-function locked() {
   return process.getBuiltinModule("node:buffer");
 }
 
-module.exports = { load, native, locked };
+module.exports = { load, native };

@@ -1,4 +1,0 @@
-the import is the function of the object: true
-the store: TypeError
-the property behind the store: object
-the import behind the store: function true

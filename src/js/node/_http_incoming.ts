@@ -578,9 +578,9 @@ const incomingMessageDestroy = function _destroy(
     // (node's _destroy null-socket check).
     this[kHandle] = undefined;
     handle.onabort = handle.ondata = undefined;
-    // oxlint-disable-next-line bun/no-duplicate-conditional-property-access
-    if (!handle.finished && shouldEmitAborted && this.socket) {
-      http.responseRoad.sendWhatIsHeld?.(this.socket._httpMessage as $Node.ServerResponse | null | undefined);
+    let connection: $Node.IncomingMessage["socket"];
+    if (!handle.finished && shouldEmitAborted && (connection = this.socket)) {
+      http.responseRoad.flushSocketHeldChunk?.(connection);
       handle.abort();
     }
     const socket = this.socket;
@@ -939,7 +939,7 @@ function isUnheard(req: $Node.IncomingMessage, name: string) {
 function endsUnwatched(req: $Node.IncomingMessage) {
   let state: $Node.ReadableState;
   try {
-    if (!req[noBodySymbol] || req.resume !== resume) {
+    if ($isProxyObject(req) || !req[noBodySymbol] || req.resume !== resume) {
       return false;
     }
     state = req._readableState;
@@ -1142,7 +1142,13 @@ function resumeRequestBody(stream: $Node.Readable, state: $Node.ReadableState): 
   const req: $Node.IncomingMessage = stream as any;
   let handle: $Node.IncomingMessage[typeof kHandle];
   try {
-    if ((flags & ~kDecoding) !== kBodyResumed || state.length !== 0 || req._read !== incomingMessageRead) return false;
+    if (
+      (flags & ~kDecoding) !== kBodyResumed ||
+      state.length !== 0 ||
+      $isProxyObject(req) ||
+      req._read !== incomingMessageRead
+    )
+      return false;
     handle = req[kHandle];
     if (
       !handle ||
@@ -1413,7 +1419,11 @@ function destroyEndedRequest(state: $Node.ReadableState, stream: $Node.Readable)
   const req: $Node.IncomingMessage = stream as any;
   let handle: $Node.IncomingMessage[typeof kHandle];
   try {
-    if ((state[kState] & kDestroysItselfMask) !== kDestroysItself || req._destroy !== incomingMessageDestroy)
+    if (
+      (state[kState] & kDestroysItselfMask) !== kDestroysItself ||
+      $isProxyObject(req) ||
+      req._destroy !== incomingMessageDestroy
+    )
       return false;
     handle = req[kHandle];
     if (

@@ -260,9 +260,10 @@ const stopped: Record<string, string[]> = {
   ],
 };
 
-/** The folders are dealt out in turn to the files programs-that-stopped-a-validating-build-<part>.test.ts. */
+/** The folders are dealt out in turn to the files programs-that-stopped-a-validating-build-<part>.test.ts. Each file takes its share of a long list. */
 export function programsThatStoppedAValidatingBuild(part: number, parts: number) {
   Object.entries(stopped).forEach(([folder, names], index) => {
-    if (index % parts === part - 1) programsBuiltWith(folder, "validated", [buildFlags.validate], {}, 1, 1, names);
+    if (names.length > 100) programsBuiltWith(folder, "validated", [buildFlags.validate], {}, part, parts, names);
+    else if (index % parts === part - 1) programsBuiltWith(folder, "validated", [buildFlags.validate], {}, 1, 1, names);
   });
 }

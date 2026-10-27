@@ -247,14 +247,22 @@ function isReadable(stream: $Node.MaybeStream) {
   if (stream && stream[kIsReadable] != null) return stream[kIsReadable];
   if (typeof stream?.readable !== "boolean") return null;
   if (isDestroyed(stream)) return false;
-  return isReadableNodeStream(stream) && stream.readable && !isReadableSideFinished(stream);
+  return (
+    isReadableNodeStream(stream) &&
+    stream.readable &&
+    !($isProxyObject(stream) ? isReadableFinished(stream) : isReadableSideFinished(stream))
+  );
 }
 
 function isWritable(stream: $Node.MaybeStream) {
   if (stream && stream[kIsWritable] != null) return stream[kIsWritable];
   if (typeof stream?.writable !== "boolean") return null;
   if (isDestroyed(stream)) return false;
-  return isWritableNodeStream(stream) && stream.writable && !isWritableSideEnded(stream);
+  return (
+    isWritableNodeStream(stream) &&
+    stream.writable &&
+    !($isProxyObject(stream) ? isWritableEnded(stream) : isWritableSideEnded(stream))
+  );
 }
 
 function isFinished(stream: $Node.MaybeStream, opts?) {

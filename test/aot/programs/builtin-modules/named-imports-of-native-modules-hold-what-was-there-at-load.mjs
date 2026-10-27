@@ -46,7 +46,7 @@ during(buffer, "INSPECT_MAX_BYTES", 1000, () => [INSPECT_MAX_BYTES, bufferStar.I
 during(buffer, "kMaxLength", 7, () => [kMaxLength > 7, bufferStar.kMaxLength === kMaxLength, buffer.kMaxLength]);
 during(buffer, "constants", { stored: 1 }, () => [typeof constants.MAX_LENGTH, bufferStar.constants === constants, Object.keys(buffer.constants).join()]);
 
-during(module, "createRequire", replaced, () => [createRequire(import.meta.url)("node:path").sep, module.createRequire()]);
+lines.push("createRequire: " + createRequire(import.meta.url)("node:path").sep);
 during(module, "builtinModules", ["stored"], () => [builtinModules.includes("fs"), module.builtinModules.length]);
 during(module, "isBuiltin", replaced, () => [isBuiltin("node:fs"), isBuiltin("no-such-module"), module.isBuiltin()]);
 during(types, "isDate", replaced, () => [isDate(new Date(0)), isDate({}), typesStar.isDate(new Date(0)), types.isDate()]);

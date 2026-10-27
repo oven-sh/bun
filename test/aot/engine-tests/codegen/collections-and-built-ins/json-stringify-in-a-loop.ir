@@ -7,7 +7,7 @@
 # declare const input: any;
 # const points: Point[] = [];
 # points.push({ x: +input, y: +input });
-# (globalThis as any).answer = write(points);
+# for (let turn = 0; turn < input; turn++) (globalThis as any).answer = write(points);
 # FORM: AsRead
 # OPTIONS: heat=EverythingIsHot disable=pass:InlineCalls
 # RUN(LOOP): lower-to-b3 optimized loops f1
@@ -25,12 +25,13 @@ typesite w0 module=m0 position=237 kind=Variable
 typesite w1 module=m0 position=54 kind=Parameter function=f1
 typesite w2 module=m0 position=39 kind=Result
 typesite w3 module=m0 position=259 kind=CallResult
-typesite w4 module=m0 position=327 kind=CallResult
-typesite w5 module=m0 position=87 kind=Variable
-typesite w6 module=m0 position=110 kind=Variable
-typesite w7 module=m0 position=121 kind=PropertyRead
-typesite w8 module=m0 position=166 kind=Element
-typesite w9 module=m0 position=151 kind=CallResult
+typesite w4 module=m0 position=307 kind=Variable
+typesite w5 module=m0 position=368 kind=CallResult
+typesite w6 module=m0 position=87 kind=Variable
+typesite w7 module=m0 position=110 kind=Variable
+typesite w8 module=m0 position=121 kind=PropertyRead
+typesite w9 module=m0 position=166 kind=Element
+typesite w10 module=m0 position=151 kind=CallResult
 layout L0 name="Point" module=m0 position=5 fields=[{key="x" declared={type=number} flags=[IsRequired]}, {key="y" declared={type=number} flags=[IsRequired]}] ownFieldCount=2
 data d0 root=Array{contents=undefined|null|L0} module=m0
 function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} results=[{type=anything}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
@@ -56,30 +57,51 @@ function f0 module=m0 kind=Module flags=[IsChecked] thisType={type=anything} res
     v16 = FinishObject v15
     v17 = Call v4, v3, v16 calleeKey="push" calleeName="points.push"
     v18 = Convert v17 declared={type=number site=w3} illTypedCause=DeclarationWithoutBody
-    v19 = Builtin builtin=GlobalThis
-    v20 = PropGet v19 key="globalThis" [isFreeName]
-    v21 = Convert v20 declared={type=builtin(GlobalThis) flags=[IsExpected]}
-    v22 = Convert v21 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
-    v23 = Call v1, -, v3 calleeName="write"
-    v24 = Convert v23 declared={type=number site=w4}
-    PropSet v22, v24 key="answer"
-    v26 = Undefined
-    Return v26
+    v19 = Integer
+    v20 = Convert v19 declared={type=number site=w4}
+    Jump -> next b2(v20)
+  b2(v21: number):
+    LoopHint
+    v23 = Builtin builtin=GlobalThis
+    v24 = PropGet v23 key="input" [isFreeName]
+    v25 = Convert v24 declared={type=number flags=[IsExpected]}
+    v26 = Less v21, v25
+    Branch v26 -> taken b3(| 0), notTaken b6(| 0)
+  b3(v27):
+    Jump -> next b4()
+  b4():
+    v28 = Builtin builtin=GlobalThis
+    v29 = PropGet v28 key="globalThis" [isFreeName]
+    v30 = Convert v29 declared={type=builtin(GlobalThis) flags=[IsExpected]}
+    v31 = Convert v30 declared={type=undefined|null|number|string|symbol|bigint|object flags=[IsExpected]}
+    v32 = Call v1, -, v3 calleeName="write"
+    v33 = Convert v32 declared={type=number site=w5}
+    PropSet v31, v33 key="answer"
+    Jump -> next b5()
+  b5():
+    v35 = Increment v27
+    v36 = Convert v35 declared={type=number site=w4}
+    Jump -> next b2(v36)
+  b6(v37):
+    Jump -> next b7()
+  b7():
+    v38 = Undefined
+    Return v38
 }
 function f1 name="write" module=m0 position=39 flags=[IsChecked, HasExplicitName] length=1 thisType={type=anything} parameters=[{type=undefined|null|Array<undefined|null|L0> site=w1 flags=[OmitsNull, OmitsUndefined]}] results=[{type=number site=w2}] capabilities=[MayChangeSignature, MayBeCloned, MayBeInlined, HasOrdinaryFrame, IsNeverCalledByHost] {
   b0(v0: undefined|null|Array<undefined|null|L0>):
     Jump -> next b1()
   b1():
     v1 = Integer
-    v2 = Convert v1 declared={type=number site=w5}
+    v2 = Convert v1 declared={type=number site=w6}
     v3 = Integer
-    v4 = Convert v3 declared={type=number site=w6}
+    v4 = Convert v3 declared={type=number site=w7}
     Jump -> next b2(v2, v4)
   b2(v5: number, v6: number):
     LoopHint
     v8 = Convert v6 declared={type=i32 flags=[IsExpected]}
     v9 = PropGet v0 key="length"
-    v10 = Convert v9 declared={type=number site=w7} illTypedCause=Assertion
+    v10 = Convert v9 declared={type=number site=w8} illTypedCause=Assertion
     v11 = Less v8, v10
     Branch v11 -> taken b3(| 0), notTaken b6(| 0)
   b3(v12):
@@ -90,16 +112,16 @@ function f1 name="write" module=m0 position=39 flags=[IsChecked, HasExplicitName
     v15 = Convert v14 declared={type=builtin(JSONStringify) flags=[IsExpected]}
     v16 = Convert v12 declared={type=i32 flags=[IsExpected]}
     v17 = ElemGet v0, v16
-    v18 = Convert v17 declared={type=undefined|null|L0 site=w8 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
+    v18 = Convert v17 declared={type=undefined|null|L0 site=w9 flags=[OmitsNull, OmitsUndefined]} illTypedCause=ContainerWriterUnseen
     v19 = Call v15, v13, v18 calleeKey="stringify" calleeName="JSON.stringify"
-    v20 = Convert v19 declared={type=undefined|null|string site=w9 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
+    v20 = Convert v19 declared={type=undefined|null|string site=w10 flags=[OmitsNull, OmitsUndefined]} illTypedCause=DeclarationWithoutBody
     v21 = PropGet v20 key="length"
     v22 = Add v5, v21
-    v23 = Convert v22 declared={type=number site=w5}
+    v23 = Convert v22 declared={type=number site=w6}
     Jump -> next b5()
   b5():
     v24 = Increment v16
-    v25 = Convert v24 declared={type=number site=w6}
+    v25 = Convert v24 declared={type=number site=w7}
     Jump -> next b2(v23, v25)
   b6(v26):
     Jump -> next b7()

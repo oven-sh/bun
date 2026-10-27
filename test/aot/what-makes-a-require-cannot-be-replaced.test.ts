@@ -8,6 +8,9 @@ const mine = `() => name => console.log("mine", name)`;
 const refusal = (what: string, how = "assign to") =>
   `TypeError: Cannot ${how} ${what} because built-in objects are read-only in a compiled executable`;
 const stopsTheBuild = "error: TS100014: this assignment always throws";
+const anotherCreateRequire =
+  "error: Cannot call createRequire: process.getBuiltinModule was replaced and returned a different createRequire. This executable can't load a module from a dynamic path.";
+const asPlain = "";
 
 const replaced: [entryPoint: string, text: string, plain: string, compiled: string][] = [
   [
@@ -98,37 +101,49 @@ const replaced: [entryPoint: string, text: string, plain: string, compiled: stri
     "main.cjs",
     `process.getBuiltinModule = () => ({ createRequire: ${mine} }); process.getBuiltinModule("node:module").createRequire(__filename)("./next.cjs");`,
     "mine ./next.cjs\n",
-    refusal("process.getBuiltinModule"),
+    anotherCreateRequire,
   ],
   [
     "main.cjs",
     `process.getBuiltinModule = () => "mine"; console.log(process.getBuiltinModule("node:path"));`,
     "mine\n",
-    refusal("process.getBuiltinModule"),
+    asPlain,
   ],
   [
     "main.cjs",
     `const host = process; host.getBuiltinModule = () => "mine"; console.log(host.getBuiltinModule(["node", "path"].join(":")));`,
     "mine\n",
-    refusal("process.getBuiltinModule"),
+    asPlain,
   ],
   [
     "main.cjs",
     `delete process.getBuiltinModule; console.log(typeof process.getBuiltinModule);`,
     "undefined\n",
-    refusal("process.getBuiltinModule", "delete"),
+    asPlain,
   ],
   [
     "main.mjs",
     `process.getBuiltinModule = () => ({ createRequire: ${mine} }); const load = process.getBuiltinModule("node:module").createRequire(import.meta.url); load("./next.cjs");`,
     "mine ./next.cjs\n",
-    stopsTheBuild,
+    anotherCreateRequire,
   ],
   [
     "main.mjs",
     `import process from "node:process"; process.getBuiltinModule = () => ({ createRequire: ${mine} }); process.getBuiltinModule("node:module").createRequire(import.meta.url)("./next.cjs");`,
     "mine ./next.cjs\n",
-    stopsTheBuild,
+    anotherCreateRequire,
+  ],
+  [
+    "main.cjs",
+    `const holder = {}, own = process.getBuiltinModule; holder.kept = process.getBuiltinModule = function (id) { console.log("asked for", id); return own.apply(this, arguments); }; console.log(typeof process.getBuiltinModule("node:path").sep, typeof process.getBuiltinModule(["node", "os"].join(":")).EOL, holder.kept === process.getBuiltinModule); process.getBuiltinModule("node:module").createRequire(__filename)("./next.cjs"); process.getBuiltinModule = own; console.log(typeof process.getBuiltinModule("node:path").sep);`,
+    "asked for node:path\nasked for node:os\nstring string true\nasked for node:module\nthe next file\nstring\n",
+    asPlain,
+  ],
+  [
+    "main.mjs",
+    `const own = process.getBuiltinModule; process.getBuiltinModule = function (id) { console.log("asked for", id); return own.apply(this, arguments); }; const load = process.getBuiltinModule("module").createRequire(import.meta.url); load("./next.cjs");`,
+    "asked for module\nthe next file\n",
+    asPlain,
   ],
 ];
 
@@ -177,6 +192,10 @@ describe.concurrent("a store to createRequire, Module or getBuiltinModule", () =
           }
           expect(ahead.built.exitCode).toBe(0);
           const ranAhead = await ahead.run();
+          if (compiled === asPlain) {
+            expect({ stdout: ranAhead.stdout, exitCode: ranAhead.exitCode }).toEqual({ stdout: plain, exitCode: 0 });
+            return;
+          }
           expect({
             stdout: ranAhead.stdout,
             error: firstError(ranAhead.stderr).split(" (bun compile")[0],
@@ -271,36 +290,6 @@ process.getBuiltinModule("node:module").createRequire(${entryPoint.endsWith(".cj
   }
 
   test(
-    "process.getBuiltinModule",
-    () =>
-      slot(async () => {
-        using dir = tempDir("aot-replaced-loaders", {
-          "main.cjs": `
-const M = process;
-const mine = () => "mine";
-const key = name => name.slice(0, 3) + name.slice(3);
-const { getBuiltinModule } = M;
-function attempt(change) {
-  try { console.log(String(change())); } catch (error) { console.log(String(error).split(" (bun compile")[0]); }
-}
-${attempts("getBuiltinModule")}
-process.mine = 1; process.title = "mine";
-console.log(process.mine, process.getBuiltinModule === getBuiltinModule, typeof process.getBuiltinModule("node:path").sep);
-`,
-        });
-        const ahead = await build(String(dir), "main.cjs", "ahead", "--aot");
-        expect({ error: firstError(ahead.built.stderr), exitCode: ahead.built.exitCode }).toEqual({
-          error: "",
-          exitCode: 0,
-        });
-        const ran = await ahead.run();
-        expect(ran.stdout.split("\n")).toEqual([...answers("process.getBuiltinModule"), "1 true string", ""]);
-        expect(ran.exitCode).toBe(0);
-      }),
-    600_000,
-  );
-
-  test(
     "a Worker has an object of its own",
     () =>
       slot(async () => {
@@ -310,7 +299,7 @@ import M from "node:module";
 import { Worker, isMainThread } from "node:worker_threads";
 if (isMainThread) new Worker(import.meta.filename);
 else {
-  for (const change of [() => { M.createRequire = ${mine}; }, () => { M.Module = {}; }, () => { process.getBuiltinModule = () => M; }]) {
+  for (const change of [() => { M.createRequire = ${mine}; }, () => { M.Module = {}; }]) {
     try { change(); console.log("done"); } catch (error) { console.log(String(error).split(" (bun compile")[0]); }
   }
   M.createRequire(import.meta.url)("./next.cjs");
@@ -327,7 +316,6 @@ else {
         expect(ran.stdout.split("\n")).toEqual([
           refusal("node:module.createRequire"),
           refusal("node:module.Module"),
-          refusal("process.getBuiltinModule"),
           "the next file",
           "",
         ]);

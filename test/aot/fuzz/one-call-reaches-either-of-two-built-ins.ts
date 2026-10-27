@@ -2,7 +2,7 @@
 //
 //   the two functions     drawn from about five hundred: they answer lists, objects of every built-in class, plain objects, primitives or nothing, or they throw
 //   how they arrive       as a parameter, through `?:`, out of a table by index, out of a field, a variable, a closure, a map, a pattern, a default, a rest parameter, a function that picks,
-//                         under one of two names on the object that holds both
+//                         under one of two names on the object that holds both, out of a field of the object that the call is made on
 //   how the call is made  plainly, with `call`, `apply`, `Reflect.apply`, `new`, `Reflect.construct`, a spread, `?.()`
 //   what is done          one of: `length`, `Array.isArray`, `typeof`, an index, a spread, `for-of`, a pattern, a method, `instanceof`, the prototype, a store, a sum ..
 //
@@ -100,13 +100,20 @@ export const holders: Holder[] = [
     members: "toArray forEach some every find reduce map filter take drop flatMap",
     receivers: ["[1, 2, 3].values()", "new Set([1]).values()"],
   },
-  { holder: "[].values().__proto__", members: "next", receivers: ["[1, 2].values()", "[].entries()"] },
-  { holder: "new Map().entries().__proto__", members: "next", receivers: ["new Map([[1, 2]]).entries()"] },
-  { holder: '"".matchAll(/a/g).__proto__', members: "next", receivers: ['"aa".matchAll(/a/g)'] },
+  { holder: "[].values()", members: "next", receivers: ["[1, 2].values()", "[].entries()"] },
+  { holder: "new Map().entries()", members: "next", receivers: ["new Map([[1, 2]]).entries()"] },
+  { holder: '"".matchAll(/a/g)', members: "next", receivers: ['"aa".matchAll(/a/g)'] },
+  { holder: "new Set().values()", members: "next", receivers: ["new Set([1]).values()"] },
+  { holder: '""[Symbol.iterator]()', members: "next", receivers: ['"ab"[Symbol.iterator]()'] },
   {
-    holder: "(function* () {}).prototype.__proto__",
+    holder: "(function* () {})()",
     members: "next return throw",
     receivers: ["(function* () { yield [1]; })()"],
+  },
+  {
+    holder: "(async function* () {})()",
+    members: "next return throw",
+    receivers: ["(async function* () { yield [1]; })()"],
   },
   {
     holder: "Intl",
@@ -406,9 +413,14 @@ export const arrivals = {
     "H[names[index]]",
     'const names = ["M", "N"];\nconst turn = second => { const index = Number(second); return @; };',
   ],
+  "a field of the receiver": ["receiver.f", "const turn = second => { receiver.f = second ? B : A; return @; };"],
 } satisfies Record<string, [string, string]>;
 
 const arrivalsUnderNames = ["one of two names", "one of two names in a table"] as const;
+/** The ways in which any two functions arrive. The others take two functions of one holder, or a receiver that takes a store. */
+export const arrivalsOfAnyTwo = (Object.keys(arrivals) as (keyof typeof arrivals)[]).filter(
+  arrival => arrival !== "a field of the receiver" && !arrivalsUnderNames.some(other => other === arrival),
+);
 
 export type Choice = {
   first: BuiltIn;
@@ -421,12 +433,15 @@ export type Choice = {
   /** Where `isWrittenOut`, the first stands in the call. Otherwise the call takes three variables, and runs once for each list. */
   operands: string[];
   isWrittenOut: boolean;
+  /** No promise that the program makes is rejected, so it listens for none. Whoever listens hands a function to the host. */
+  rejectsNothing?: true;
 };
 
 const replaced = (text: string, parts: Record<string, string>) =>
   text.replace(/@|\b[ABFRPHMN]\b/g, part => parts[part] ?? part);
 
-export function textOf({ first, second, arrival, call, use, receivers, operands, isWrittenOut }: Choice): string {
+export function textOf(choice: Choice): string {
+  const { first, second, arrival, call, use, receivers, operands, isWrittenOut, rejectsNothing } = choice;
   const [callee, frame] = arrivals[arrival];
   const receiver = isWrittenOut ? receivers[0] : "receiver";
   const names = {
@@ -443,8 +458,7 @@ export function textOf({ first, second, arrival, call, use, receivers, operands,
     P: isWrittenOut ? operands[0] : "p, q, r",
   });
   const imports = new Map([first.from, second.from].filter(from => from !== undefined));
-  return `${[...imports].map(([name, specifier]) => `import ${name} from "${specifier}";\n`).join("")}process.on("unhandledRejection", () => {});
-const show = value => ((typeof value === "object" && value !== null) || typeof value === "function" ? Object.prototype.toString.call(value) : typeof value + " " + String(value));
+  return `${[...imports].map(([name, specifier]) => `import ${name} from "${specifier}";\n`).join("")}${rejectsNothing ? "" : 'process.on("unhandledRejection", () => {});\n'}const show = value => ((typeof value === "object" && value !== null) || typeof value === "function" ? Object.prototype.toString.call(value) : typeof value + " " + String(value));
 let receiver, p, q, r;
 ${Object.entries(functions)
   .filter(([name]) => [...operands, ...receivers].some(text => text.split(/\W+/).includes(name)))
@@ -476,17 +490,26 @@ export function choose(random: Random): Choice {
     first,
     random.pick(isUnderNames ? beside : builtIns.filter(other => other !== first)),
     isUnderNames,
+    !isUnderNames && !!first.receivers && random.chance(0.3),
   );
 }
 
-export function chooseFor(random: Random, first: BuiltIn, second: BuiltIn, isUnderNames: boolean): Choice {
+export function chooseFor(
+  random: Random,
+  first: BuiltIn,
+  second: BuiltIn,
+  isUnderNames: boolean,
+  mayBeOnReceiver = false,
+): Choice {
   const takesReceiver = !!(first.receivers ?? second.receivers);
   const isConstructed = (first.isConstructed || second.isConstructed) && random.chance(0.6);
   const receivers = [first, second].map(({ receivers }) => (receivers ? random.pick(receivers) : "undefined")) as [
     string,
     string,
   ];
-  if (isUnderNames) receivers[1] = receivers[0];
+  // A built-in object takes no stores.
+  const isOnReceiver = mayBeOnReceiver && !/^([A-Z]\w*|undefined)$/.test(receivers[0]);
+  if (isUnderNames || isOnReceiver) receivers[1] = receivers[0];
   // Where the receiver is written out, both functions are called on it, and a built-in object takes no stores.
   const isWrittenOut =
     random.chance(0.4) && !/^[A-Z]\w*$/.test(receivers[0] === "undefined" ? receivers[1] : receivers[0]);
@@ -495,14 +518,12 @@ export function chooseFor(random: Random, first: BuiltIn, second: BuiltIn, isUnd
     second,
     arrival: isUnderNames
       ? random.pick(arrivalsUnderNames)
-      : random.pick(
-          (Object.keys(arrivals) as (keyof typeof arrivals)[]).filter(
-            arrival => !arrival.startsWith("one of two names"),
-          ),
-        ),
+      : isOnReceiver
+        ? "a field of the receiver"
+        : random.pick(arrivalsOfAnyTwo),
     call: isConstructed
       ? random.pick(["with new", "with new", "with Reflect.construct"])
-      : isUnderNames
+      : isUnderNames || isOnReceiver
         ? random.pick(["plainly", "plainly", "plainly", "with a spread", "if there is one"])
         : takesReceiver && random.chance(0.9)
           ? random.pick(["with call", "with call", "with apply", "with Reflect.apply"])

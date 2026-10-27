@@ -920,17 +920,21 @@ Readable.prototype.pipe = function (this: $Node.Readable, destination: $Node.Str
     }
   }
 
-  // Set once `dest` is known to be a Writable of ours: then `dest.write(chunk)` needs no call where `write` is Writable's own.
-  let destState: WritableState | undefined;
-
   src.on("data", ondata);
   function ondata(chunk) {
     $debug("ondata");
     try {
+      const write = dest.write!;
       const ret =
-        destState !== undefined && dest.write === internals.writingMethod
-          ? internals.writeToWritable!(dest as $Node.Writable, destState, chunk, undefined, undefined) === true
-          : dest.write!(chunk);
+        write === internals.writingMethod
+          ? internals.writeToWritable!(
+              dest as $Node.Writable,
+              (dest as $Node.Writable)._writableState,
+              chunk,
+              undefined,
+              undefined,
+            ) === true
+          : write.$call(dest, chunk);
       $debug("dest.write", ret);
       if (ret === false) {
         pause();
@@ -989,9 +993,6 @@ Readable.prototype.pipe = function (this: $Node.Readable, destination: $Node.Str
     $debug("pipe resume");
     src.resume();
   }
-
-  const writableState = dest._writableState;
-  if (isWritableState(writableState)) destState = writableState;
 
   return dest;
 };
@@ -1433,6 +1434,19 @@ async function* createAsyncIterator(stream: $Node.Readable, options?: $Node.Read
   }
 }
 
+// A Proxy observes every read, so these repeat each one that Node.js makes.
+function getStateFieldForProxy(stream: any, name: string, defaultValue: false | null) {
+  return stream._readableState ? stream._readableState[name] : defaultValue;
+}
+
+function getReadableAbortedForProxy(stream: any) {
+  return !!(
+    stream._readableState.readable !== false &&
+    (stream._readableState.destroyed || stream._readableState.errored) &&
+    !stream._readableState.endEmitted
+  );
+}
+
 // Making it explicit these properties are not enumerable
 // because otherwise some prototype manipulation in
 // userland will fail.
@@ -1474,6 +1488,10 @@ ObjectDefineProperties(Readable.prototype, {
     __proto__: null,
     enumerable: false,
     get: function (this: $Node.Readable) {
+      if ($isProxyObject(this)) {
+        ("unlikely");
+        return getReadableAbortedForProxy(this);
+      }
       const state = this._readableState as ReadableState | $Node.ForeignState | undefined;
       if (isReadableState(state)) {
         return (
@@ -1535,6 +1553,10 @@ ObjectDefineProperties(Readable.prototype, {
     __proto__: null,
     enumerable: false,
     get(this: $Node.Readable) {
+      if ($isProxyObject(this)) {
+        ("unlikely");
+        return getStateFieldForProxy(this, "objectMode", false);
+      }
       const state = this._readableState as ReadableState | $Node.ForeignState | undefined;
       return isReadableState(state) ? (state[kState] & Flag.ObjectMode) !== 0 : state ? state.objectMode : false;
     },
@@ -1544,6 +1566,10 @@ ObjectDefineProperties(Readable.prototype, {
     __proto__: null,
     enumerable: false,
     get(this: $Node.Readable) {
+      if ($isProxyObject(this)) {
+        ("unlikely");
+        return getStateFieldForProxy(this, "encoding", null);
+      }
       const state = this._readableState as ReadableState | $Node.ForeignState | undefined;
       if (!isReadableState(state)) return state ? state.encoding : null;
       return (state[kState] & Flag.Encoding) !== 0 ? state[kEncodingValue] : null;
@@ -1554,6 +1580,10 @@ ObjectDefineProperties(Readable.prototype, {
     __proto__: null,
     enumerable: false,
     get(this: $Node.Readable) {
+      if ($isProxyObject(this)) {
+        ("unlikely");
+        return getStateFieldForProxy(this, "errored", null);
+      }
       const state = this._readableState as ReadableState | $Node.ForeignState | undefined;
       if (!isReadableState(state)) return state ? state.errored : null;
       return (state[kState] & Flag.Errored) !== 0 ? state[kErroredValue] : null;
@@ -1563,6 +1593,10 @@ ObjectDefineProperties(Readable.prototype, {
   closed: {
     __proto__: null,
     get(this: $Node.Readable) {
+      if ($isProxyObject(this)) {
+        ("unlikely");
+        return getStateFieldForProxy(this, "closed", false);
+      }
       const state = this._readableState as ReadableState | $Node.ForeignState | undefined;
       return isReadableState(state) ? (state[kState] & Flag.Closed) !== 0 : state ? state.closed : false;
     },
@@ -1572,15 +1606,23 @@ ObjectDefineProperties(Readable.prototype, {
     __proto__: null,
     enumerable: false,
     get(this: $Node.Readable) {
+      if ($isProxyObject(this)) {
+        ("unlikely");
+        return getStateFieldForProxy(this, "destroyed", false);
+      }
       const state = this._readableState as ReadableState | $Node.ForeignState | undefined;
       return isReadableState(state) ? (state[kState] & Flag.Destroyed) !== 0 : state ? state.destroyed : false;
     },
     set(this: $Node.Readable, value) {
       // We ignore the value if the stream
       // has not been initialized yet.
-      const state = this._readableState as ReadableState | $Node.ForeignState | undefined;
+      let state = this._readableState as ReadableState | $Node.ForeignState | undefined;
       if (!state) {
         return;
+      }
+      if ($isProxyObject(this)) {
+        ("unlikely");
+        state = this._readableState as ReadableState | $Node.ForeignState;
       }
 
       // Backward compatibility, the user is explicitly
@@ -1594,6 +1636,10 @@ ObjectDefineProperties(Readable.prototype, {
     __proto__: null,
     enumerable: false,
     get(this: $Node.Readable) {
+      if ($isProxyObject(this)) {
+        ("unlikely");
+        return getStateFieldForProxy(this, "endEmitted", false);
+      }
       const state = this._readableState as ReadableState | $Node.ForeignState | undefined;
       return isReadableState(state) ? (state[kState] & Flag.EndEmitted) !== 0 : state ? state.endEmitted : false;
     },
@@ -1611,13 +1657,15 @@ function fromList(n: number, state: ReadableState) {
   // nothing buffered.
   if (state.length === 0) return null;
 
-  if ((state[kState] & Flag.ObjectMode) === 0) return bytesFromList(n, state);
-
   const idx = state.bufferIndex;
   const buf = state.buffer;
+  const len = buf.length;
+
+  if ((state[kState] & Flag.ObjectMode) === 0) return bytesFromList(n, state, idx, buf, len);
+
   const ret = buf[idx];
   buf[idx] = null;
-  advanceBuffer(state, idx + 1, buf.length);
+  advanceBuffer(state, idx + 1, len);
   return ret;
 }
 
@@ -1633,12 +1681,8 @@ function advanceBuffer(state: ReadableState, idx: number, len: number): void {
   }
 }
 
-function bytesFromList(n: number, state: ReadableState) {
-  let idx = state.bufferIndex;
+function bytesFromList(n: number, state: ReadableState, idx: number, buf: any[], len: number) {
   let ret;
-
-  const buf = state.buffer;
-  const len = buf.length;
 
   let stateLength;
   let firstLength: number;

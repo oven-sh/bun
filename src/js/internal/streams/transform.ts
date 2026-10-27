@@ -189,8 +189,9 @@ Transform.prototype._write = function (
     }
 
     if (val != null) {
-      if (this.push === internals.pushingMethod) internals.pushToReadable!(this, rState, val, undefined);
-      else this.push(val);
+      const push = this.push;
+      if (push === internals.pushingMethod) internals.pushToReadable!(this, this._readableState, val, undefined);
+      else push.$call(this, val);
     }
 
     if ((rState[kState] & ReadableFlag.Ended) !== 0) {

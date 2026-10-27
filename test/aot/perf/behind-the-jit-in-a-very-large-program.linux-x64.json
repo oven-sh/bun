@@ -14,7 +14,6 @@
   "baseline/nothing-in-function": 2,
   "built-in/async-local-storage-get-store": 1.83,
   "built-in/async-local-storage-of-records": 2.01,
-  "built-in/byte-length-of-chunks-written-to-a-view": 1.77,
   "built-in/events-beside-an-heir-that-came-late": 9.11,
   "built-in/events-emit": 12.28,
   "built-in/events-once": 2.32,

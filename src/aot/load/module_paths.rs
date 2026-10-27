@@ -125,13 +125,7 @@ pub(super) fn compute_public_path(context: &PathContext<'_>, input: &PathInput<'
             SourceKind::RuntimeModule(runtime_module) => {
                 let runtime_module = context.manifest.module(runtime_module.registry_id());
                 let specifier = runtime_module.and_then(|module| module.specifier.as_deref());
-                // `bun run` shows a module of src/js/thirdparty under the name of its file.
-                let file = runtime_module.and_then(|module| module.path.as_deref());
-                if let Some(name) = file.and_then(|it| it.strip_prefix(b"thirdparty/")) {
-                    let end = strings::last_index_of_char(name, b'.').unwrap_or(name.len());
-                    return name[..end].into();
-                }
-                // It shows a module of src/js/internal as internal:<name>.
+                // `bun run` shows a module of src/js/internal as internal:<name>.
                 return match (
                     specifier,
                     specifier.and_then(|it| it.strip_prefix(b"internal/")),
@@ -169,6 +163,20 @@ pub(super) fn compute_public_path(context: &PathContext<'_>, input: &PathInput<'
         true => path_of_form(&path, requested_loader(input.host_loader, input.file_name)).into(),
         false => path.into(),
     }
+}
+
+/// `bun run` shows a module of src/js/thirdparty under the name of its file, and its loader knows the module by the specifier.
+pub(super) fn compute_name_of_third_party_file(
+    manifest: &Manifest,
+    kind: SourceKind,
+) -> Option<Box<[u8]>> {
+    let SourceKind::RuntimeModule(module) = kind else {
+        return None;
+    };
+    let file = manifest.module(module.registry_id())?.path.as_deref()?;
+    let name = file.strip_prefix(b"thirdparty/")?;
+    let end = strings::last_index_of_char(name, b'.').unwrap_or(name.len());
+    Some(name[..end].into())
 }
 
 fn requested_loader(host_loader: HostLoader, file_name: &[u8]) -> Loader {
@@ -676,8 +684,12 @@ mod tests {
             ..program_file(1, b"/$bun/js/thirdparty/a_b.js", BY_NAME)
         };
         assert_eq!(
+            compute_name_of_third_party_file(&manifest, input.kind).as_deref(),
+            Some(&b"a_b"[..])
+        );
+        assert_eq!(
             public_path_with_manifest(&manifest, &FileMaps::default(), input),
-            b"a_b"
+            b"@a/b"
         );
     }
 

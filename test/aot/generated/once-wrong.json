@@ -19,6 +19,36 @@
     "5000: public fields of five classes in a row.",
     "5000: stores of a constructor function and public fields of its heir."
   ],
+  "a property that typed code has just stored is there": [
+    "over-a-literal parsed-fractions filled-where-has-own-finds-nothing closure, alone.",
+    "over-a-literal parsed-numbers-then-texts filled-where-in-finds-nothing method, alone.",
+    "sum made-from-entries in method, alone.",
+    "sum parsed-mixed reflect-has method, alone.",
+    "sum parsed-numbers-then-texts has-own by-index, alone.",
+    "sum parsed-texts filled-where-in-finds-nothing by-index, alone."
+  ],
+  "a property that was just stored is there": [
+    "behind-another parsed-booleans-and-null value-where-in-finds-it map, alone.",
+    "behind-another parsed-mixed reflect-has for-each, alone.",
+    "behind-another parsed-numbers-then-texts in-twice-around-a-delete map, alone.",
+    "behind-another parsed-objects in closure, alone.",
+    "compound parsed-mixed filled-where-has-own-finds-nothing for-each, alone.",
+    "conditional parsed-booleans-and-null filled-where-in-finds-nothing for-each, alone.",
+    "constant-key parsed-integers in closure, alone.",
+    "constant-key parsed-objects filled-where-in-finds-nothing map, alone.",
+    "constant-key parsed-texts-then-numbers has-own-property closure, alone.",
+    "either-arm parsed-booleans-and-null has-own method, alone.",
+    "either-arm parsed-mixed has-own-property-called for-each, alone.",
+    "either-arm parsed-numbers-then-texts filled-where-in-finds-nothing closure, alone.",
+    "either-arm parsed-texts-then-numbers in map, alone.",
+    "if-nullish parsed-fractions reflect-has method, alone.",
+    "if-nullish parsed-texts value-where-has-own-finds-it by-index, alone.",
+    "loop parsed-objects has-own-property-called for-each, alone.",
+    "plain parsed-integers has-own method, alone.",
+    "plain parsed-mixed in map, alone.",
+    "plain parsed-texts in-twice-around-a-delete method, alone.",
+    "sum made-from-entries in method, alone."
+  ],
   "an expression whose value is a member of a built-in object does what else it says": [
     "commonjs comma a-call statement, alone.",
     "commonjs comma-in-brackets a-call statement-of-the-file, alone.",

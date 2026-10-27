@@ -37,5 +37,5 @@ measure("undeclared keys in three places", [`{"a":1,"id":1,"b":[1],"c":{"d":1},"
 measure("undeclared keys below", [`{"id":1,"from":{"x":1,"o":1,"y":2},"to":{"p":1,"q":2,"x":1,"y":2},"tags":[]}`], 0, 2);
 measure("an index key", [`{"id":1,"from":${point},"to":${point},"tags":[],"0":1}`], 0, 1);
 measure("__proto__", [`{"id":1,"from":${point},"to":${point},"tags":[],"__proto__":1}`], 0, 1);
-measure("an escape in an undeclared key", [`{"id":1,"from":${point},"to":${point},"tags":[],"\\u0061":1,"caf\\u00e9":2}`], 0, 2);
+measure("an escape in an undeclared key", [`{"id":1,"from":${point},"to":${point},"tags":[],"\\u0061":1,"caf\\u00e9":2}`], 0, 1);
 measure("an escape in a declared key is read again", [`{"\\u0069d":1,"from":${point},"to":${point},"tags":[]}`], 1, 1);

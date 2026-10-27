@@ -56,6 +56,7 @@ const textsOfLibraries: Record<string, string[]> = {
   "libjpeg-turbo": ["Bogus Huffman table definition", "Unsupported JPEG process", "Invalid JPEG file structure"],
   libwebp: ["Frame setup failed", "Premature end-of-partition0 encountered", "NULL VP8Io parameter"],
   tar: ["Damaged tar archive", "Truncated tar archive", "Malformed pax attribute"],
+  lsquic: ["Attempt to create second control stream", "Client cannot send HANDSHAKE_DONE frame", "Packet Tolerance of zero is invalid"],
   SQLite: ["malformed database schema", "unable to open database file", "SQLite format 3"],
   TinyCC: ["cannot use local functions", "invalid operand types for binary operation"],
   "lol-html": ["The selector is empty", "Unexpected token in selector"],

@@ -161,10 +161,8 @@ impl<'s> Folder<'_, 's> {
         if !is_known && self.find_runtime_value_kind(init).is_none() {
             return false;
         }
-        let order = self
-            .run_order
-            .get_or_init(|| RunOrder::new(self.hir, self.bound));
-        match order.order_of_read(ident, init) {
+        let order = self.run_order.get_or_init(|| RunOrder::new(self.hir));
+        match order.order_of_read(self.hir, self.bound, ident, init) {
             ReadOrder::MayComeFirst => false,
             ReadOrder::Behind => true,
             ReadOrder::BehindUnlessCalledByImporter => {

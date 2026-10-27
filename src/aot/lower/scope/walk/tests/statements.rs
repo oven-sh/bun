@@ -187,7 +187,7 @@ fn callee_of_a_bound_module_call_is_no_use() {
         "{KEEPS_WRAPPER} function lazy() {{ return require('./other.cjs'); }} \
          function resolved() {{ return require.resolve('./other.cjs'); }} \
          function through() {{ return module.require('./other.cjs'); }} \
-         function value() {{ return [require, module]; }}"
+         function value() {{ return module; }}"
     );
     with_walk(
         &[("main.cjs", source.as_str()), ("other.cjs", "")],
@@ -200,8 +200,29 @@ fn callee_of_a_bound_module_call_is_no_use() {
             assert!(!uses("lazy", REQUIRE));
             assert!(!uses("resolved", REQUIRE));
             assert!(!uses("through", MODULE));
-            assert!(uses("value", REQUIRE));
             assert!(uses("value", MODULE));
+        },
+    );
+}
+
+#[test]
+fn callee_of_resolve_is_a_use_where_require_is_handed_on() {
+    let source = format!(
+        "{KEEPS_WRAPPER} function lazy() {{ return require('./other.cjs'); }} \
+         function resolved() {{ return require.resolve('./other.cjs'); }} \
+         function value() {{ return [require]; }}"
+    );
+    with_walk(
+        &[("main.cjs", source.as_str()), ("other.cjs", "")],
+        |hir, bound, walk| {
+            let require = BindingRef::Slot(file_scope(hir, bound), REQUIRE);
+            let uses = |name: &str| {
+                let function = walked(walk, function_named(hir, name));
+                has_use(walk, function, require)
+            };
+            assert!(!uses("lazy"));
+            assert!(uses("resolved"));
+            assert!(uses("value"));
         },
     );
 }

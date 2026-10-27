@@ -615,6 +615,10 @@
     "typed": 14,
     "untyped": 14
   },
+  "everyday-data-and-control/json-parse-a-list-by-a-type-that-lists-one-of-three-members": {
+    "typed": 4183.3,
+    "untyped": 6106.4
+  },
   "everyday-data-and-control/json-parse-a-small-object": {
     "typed": 436.1,
     "untyped": 1442
@@ -638,6 +642,18 @@
   "everyday-data-and-control/json-parse-by-a-type-that-lists-three-of-nine-members": {
     "typed": 2434.8,
     "untyped": 2259
+  },
+  "everyday-data-and-control/json-parse-lists-with-other-values-each-time-by-a-type-that-lists-one-of-three-members": {
+    "typed": 10472.9,
+    "untyped": 11624.1
+  },
+  "everyday-data-and-control/json-parse-nested-objects-by-types-that-list-fewer-members": {
+    "typed": 1864.8,
+    "untyped": 1998.7
+  },
+  "everyday-data-and-control/json-parse-texts-with-other-values-each-time-by-a-type-that-lists-one-of-three-members": {
+    "typed": 1012.7,
+    "untyped": 1638.6
   },
   "everyday-data-and-control/json-parse-with-a-member-that-the-type-does-not-declare": {
     "typed": 964.3,

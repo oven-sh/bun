@@ -91,6 +91,7 @@ arrays/frozen-array-error-messages
 arrays/hundreds-of-names-that-are-no-index-in-a-validating-build
 arrays/includes-and-index-of-short-and-long
 arrays/index-fill-grows-like-push
+arrays/index-of-and-includes-with-strings
 arrays/lists-name-a-parameter-that-a-call-stores-an-int32-to-and-each-gets-another-kind-of-value
 arrays/lists-of-fractions-returned-by-functions-that-are-handed-a-list-of-texts-are-read-by-index
 arrays/lists-of-fractions-returned-by-functions-that-are-handed-an-empty-list-are-read-by-index
@@ -375,6 +376,7 @@ callees-replaced-behind-their-test/two-closures-over-variables-that-change-below
 callees-replaced-behind-their-test/what-is-no-function-is-handed-to-a-loop-of-no-turns
 calls-fast-paths/a-callee-taken-in-makes-an-object-of-the-shape-that-the-caller-has-tested
 calls-fast-paths/a-function-bound-at-module-level-is-entered-directly
+calls-fast-paths/a-typed-function-with-a-loop-stays-a-function-in-code-that-runs-once
 calls-fast-paths/an-own-function-under-the-name-of-a-method-is-called-on-the-road-behind-a-failed-prediction
 calls-fast-paths/class-as-value
 calls-fast-paths/class-members-created-on-first-inspection
@@ -496,6 +498,7 @@ calls/text-is-encoded-into-a-range-counted-from-the-end-at-every-level-on-the-wa
 calls/text-made-at-run-time-calls-closures-from-other-contexts
 calls/the-program-calls-functions-made-at-run-time
 calls/the-stack-ends-at-the-entry-of-a-function-that-reads-its-arguments-from-the-stack
+calls/the-step-of-an-async-generator-or-object-keys-is-stored-on-the-generator-and-called-there
 calls/the-third-argument-of-a-callback-is-an-object-and-a-store-into-it-stays-in-it
 calls/the-third-argument-of-a-callback-is-an-object-when-the-receiver-is-a-string-or-a-date
 calls/the-third-argument-of-a-callback-is-an-object-when-the-receiver-is-a-string-or-a-record
@@ -503,6 +506,28 @@ calls/unused-results
 calls/what-a-call-with-a-list-refuses-first
 calls/what-a-function-did-before-the-stack-ended-is-undone-by-its-finally
 calls/what-call-reaches-through-another-function-makes-what-it-declares-anew-at-each-entry
+calls/what-exec-answers-where-nothing-matches-is-read-and-a-declared-function-hands-exec-on
+calls/what-exec-answers-where-nothing-matches-is-read-and-a-function-of-the-program-takes-the-place-of-exec
+calls/what-exec-answers-where-nothing-matches-is-read-and-a-text-is-handed-over
+calls/what-exec-answers-where-nothing-matches-is-read-and-exec-arrives-through-one-call
+calls/what-exec-answers-where-nothing-matches-is-read-and-exec-is-called-as-a-method
+calls/what-exec-answers-where-nothing-matches-is-read-and-exec-is-written-out
+calls/what-exec-answers-where-nothing-matches-is-read-and-find-of-a-list-takes-the-place-of-exec
+calls/what-exec-answers-where-nothing-matches-is-read-and-get-of-a-map-takes-the-place-of-exec
+calls/what-exec-answers-where-nothing-matches-is-read-and-match-takes-the-place-of-exec
+calls/what-exec-answers-where-nothing-matches-is-read-and-returned
+calls/what-exec-answers-where-nothing-matches-is-read-and-the-pattern-has-no-group
+calls/what-exec-answers-where-nothing-matches-is-read-and-the-try-is-in-a-block
+calls/what-exec-answers-where-nothing-matches-is-read-by-a-pattern-out-of-a-list-around-what-match-answers
+calls/what-exec-answers-where-nothing-matches-is-read-by-instanceof
+calls/what-exec-answers-where-nothing-matches-is-read-by-the-name-index
+calls/what-exec-answers-where-nothing-matches-is-read-in-a-counted-loop
+calls/what-exec-answers-where-nothing-matches-is-read-in-a-loop
+calls/what-exec-answers-where-nothing-matches-is-read-in-a-loop-inside-the-try
+calls/what-exec-answers-where-nothing-matches-is-read-in-a-loop-over-numbers
+calls/what-exec-answers-where-nothing-matches-is-read-out-of-a-field-of-a-literal
+calls/what-exec-answers-where-nothing-matches-is-read-out-of-a-list-around-what-match-answers
+calls/what-exec-answers-where-nothing-matches-is-read-outside-of-any-loop
 calls/what-one-call-reaches-through-call-or-through-a-bound-built-in-makes-what-it-declares-anew-at-each-entry
 claims-to-the-back-end/a-field-is-read-through-undefined-right-in-front-of-the-return
 claims-to-the-back-end/a-field-is-tested-in-front-of-a-store-and-a-maximum-is-taken-behind-it
@@ -1363,6 +1388,7 @@ errors/stack-frames-of-functions-that-an-accessor-above-them-renames-between-whe
 errors/stack-frames-of-functions-that-are-constructed-and-end-in-a-call
 errors/stack-frames-of-functions-that-come-back-from-text-made-at-run-time-and-are-renamed-before-their-maker-calls-them
 errors/stack-frames-of-functions-that-come-out-of-all-the-descriptors-of-an-object-and-are-renamed
+errors/stack-frames-of-functions-that-end-in-a-call-and-are-both-called-and-constructed
 errors/stack-frames-of-functions-that-end-in-a-call-and-are-constructed-by-reflect-construct
 errors/stack-frames-of-functions-that-name-a-returned-variable-again-behind-the-return
 errors/stack-frames-of-functions-that-reach-the-helper-that-renames-them-by-long-roads
@@ -1900,6 +1926,7 @@ library-modules/a-function-expression-that-bun-wrap-exports-is-constructed
 library-modules/a-global-defined-with-define-property
 library-modules/a-loader-that-the-compiler-does-not-follow-is-refused-with-advice
 library-modules/a-message-that-has-a-header-is-frozen-sealed-or-closed-and-asked-for-the-map-of-its-headers
+library-modules/a-module-whose-file-has-another-name-than-the-module-is-shown-under-one-and-found-under-the-other
 library-modules/a-name-that-the-program-writes-comes-to-a-loader-by-a-way-of-its-own
 library-modules/a-name-that-the-program-writes-comes-to-require-by-a-way-of-its-own
 library-modules/a-pipeline-hands-its-stages-one-signal
@@ -1933,6 +1960,7 @@ library-modules/names-that-hold-no-function-of-the-module-are-imported
 library-modules/native-functions-of-the-library-are-listed-above-the-functions-that-call-them
 library-modules/own-keys-of-responses-sockets-and-emitters-through-their-lives
 library-modules/places-inside-library-modules-that-the-engine-takes-from-the-last-record
+library-modules/stream-proxy-traps
 library-modules/the-body-of-a-library-module-is-listed-under-the-name-of-the-module
 library-modules/the-cursor-functions-of-a-terminal-stream
 library-modules/the-function-of-the-host-is-listed-between-a-library-module-and-the-code-that-required-it
@@ -1968,6 +1996,7 @@ modules/a-binding-behind-a-getter-of-a-commonjs-file-is-imported-by-name-beside-
 modules/a-binding-behind-a-getter-of-a-commonjs-file-is-read-on-a-namespace-that-is-also-printed
 modules/a-binding-behind-getters-of-two-commonjs-files-is-imported-by-name-beside-the-default
 modules/a-built-in-module-imported-with-a-type-is-the-one-module
+modules/a-built-in-module-written-in-native-code-is-one-module-under-a-name-made-at-run-time
 modules/a-bundle-in-the-commonjs-format-of-bun-build-is-commonjs-whatever-its-name-and-package-say
 modules/a-bundle-in-the-commonjs-format-of-bun-build-is-imported-by-name
 modules/a-call-behind-a-comment-that-calls-it-pure-runs-in-text-that-the-program-evaluates
@@ -2130,6 +2159,7 @@ modules/an-import-is-rejected-with-what-an-imported-commonjs-file-throws-after-d
 modules/an-import-of-a-package-with-module-and-main-loads-what-module-names-unless-the-package-is-required-too
 modules/an-import-of-an-evaluated-module-settles-in-the-same-job-however-the-module-was-first-loaded
 modules/an-import-statement-finds-a-getter-of-a-commonjs-file-that-is-not-enumerable-and-returns-a-name-of-another-file
+modules/an-import-that-the-loader-answers-settles-in-the-turn-of-plain-bun-and-its-rejection-is-reported
 modules/an-import-through-a-getter-of-a-commonjs-file-holds-what-the-variable-of-a-module-held-when-the-file-was-loaded
 modules/an-import-through-a-getter-of-a-commonjs-file-whose-object-is-looked-at-holds-what-the-variable-of-a-module-held-when-the-file-was-loaded
 modules/an-import-waits-for-a-commonjs-entry-point-that-drains-the-microtask-queue
@@ -2336,6 +2366,7 @@ native-callbacks/a-built-in-called-by-a-promise-rejects-its-operand-ways-that-we
 native-callbacks/a-fill-that-instanceof-calls-stores-a-fraction
 native-callbacks/a-getter-read-by-a-protocol-throws-async
 native-callbacks/a-method-called-without-its-receiver-converts-its-argument-first
+native-callbacks/a-method-of-regexp-prototype-called-through-a-variable-has-no-receiver
 native-callbacks/alpn-callback-stores-through-this
 native-callbacks/bound-array-methods-called-by-built-ins-and-timers
 native-callbacks/built-ins-of-the-engine-on-their-slow-roads
@@ -2388,6 +2419,7 @@ node-http-probes/frozen-sealed-and-closed-heirs
 node-http-probes/frozen-sealed-and-closed-objects
 node-http-probes/frozen-sealed-and-closed-streams
 node-http-probes/headers-of-a-response-through-a-proxy-and-an-heir
+node-http-probes/http-proxy-traps
 node-http-probes/listeners-on-a-frozen-socket
 node-http-probes/members-of-outgoing-messages-for-receivers-that-are-no-messages
 node-http-probes/objects-closed-in-other-ways
@@ -2964,7 +2996,10 @@ untyped-code/a-field-that-is-added-to-is-handed-what-is-no-integer
 untyped-code/a-method-applied-to-a-field-is-looked-up-on-what-is-stored-there
 untyped-code/a-name-that-is-a-field-here-and-a-getter-there
 untyped-code/a-read-through-a-proxy-asks-the-run-time-once
+untyped-code/a-read-through-a-proxy-calls-the-trap-of-its-handler
+untyped-code/a-sloppy-store-through-a-proxy-goes-on-when-the-trap-says-no
 untyped-code/a-store-for-a-proxy-of-the-object-ends-in-the-object
+untyped-code/a-test-or-a-store-through-a-proxy-calls-the-trap-of-its-handler
 untyped-code/a-value-read-from-a-field-is-expected-to-be-what-is-stored-there
 untyped-code/amounts-added-to-a-field-carry-into-its-high-word
 untyped-code/an-index-that-a-list-lacks-is-looked-for-above-the-list
@@ -3023,6 +3058,7 @@ untyped-speed/a-member-stored-on-a-constructor-function-in-a-file-imported-under
 untyped-speed/a-member-stored-on-a-constructor-function-is-not-three-times-as-slow-a-call-as-a-static-member-of-a-class
 untyped-speed/a-new-object-for-every-4096-words-with-256-names-is-not-three-times-as-slow-a-word-as-one-object-for-all
 untyped-speed/a-product-of-the-fields-of-a-merged-object-is-not-three-times-as-slow-as-of-a-literal
+untyped-speed/a-read-through-a-proxy-is-not-three-times-as-slow-as-a-call-of-its-trap
 untyped-speed/a-sum-in-a-field-of-a-literal-that-no-longer-fits-32-bits-is-not-ten-times-as-slow-a-turn
 untyped-speed/a-sum-in-a-field-set-by-the-constructor-that-no-longer-fits-32-bits-is-not-ten-times-as-slow-a-turn
 untyped-speed/a-text-with-members-that-nobody-reads-is-not-twice-as-slow-to-parse-as-by-a-callee-out-of-a-variable
@@ -3215,6 +3251,7 @@ writes-to-host-objects/create-require-is-assigned-on-the-default-of-the-namespac
 writes-to-host-objects/create-require-is-assigned-on-what-get-builtin-module-answers
 writes-to-host-objects/create-require-is-assigned-under-a-key-put-together-at-run-time
 writes-to-host-objects/create-require-is-defined-on-node-module
+writes-to-host-objects/get-builtin-module-is-assigned-a-function-that-is-kept-and-hands-on-to-the-one-before
 writes-to-host-objects/get-builtin-module-is-assigned-and-asked-for-node-module
 writes-to-host-objects/get-builtin-module-is-assigned-and-what-its-answer-makes-is-held-in-a-variable
 writes-to-host-objects/global-is-assigned-an-object-whose-process-answers-for-node-module

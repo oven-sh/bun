@@ -38,12 +38,28 @@ console.log("the next file");
 Object.defineProperty(require("node:module"), "createRequire", { value: () => name => console.log("mine", name) }); require("node:module").createRequire(__filename)("./next.cjs");
 //// create-require-is-defined-on-node-module/next.cjs
 console.log("the next file");
+//// get-builtin-module-is-assigned-a-function-that-is-kept-and-hands-on-to-the-one-before/main.cjs
+const holder = {};
+const own = process.getBuiltinModule;
+holder.kept = process.getBuiltinModule = function (id) {
+  console.log("asked for", id);
+  return own.apply(this, arguments);
+};
+console.log(typeof process.getBuiltinModule("node:path").sep, typeof process.getBuiltinModule(["node", "os"].join(":")).EOL);
+console.log(holder.kept === process.getBuiltinModule, process.getBuiltinModule === own);
+process.getBuiltinModule("node:module").createRequire(__filename)("./next.cjs");
+const load = process.getBuiltinModule("module").createRequire(__filename);
+load("./next.cjs");
+process.getBuiltinModule = own;
+console.log(typeof process.getBuiltinModule("node:path").sep, process.getBuiltinModule === own);
+//// get-builtin-module-is-assigned-a-function-that-is-kept-and-hands-on-to-the-one-before/next.cjs
+console.log("the next file");
 //// get-builtin-module-is-assigned-and-asked-for-node-module/main.mjs
-process.getBuiltinModule = () => ({ createRequire: () => name => console.log("mine", name) }); process.getBuiltinModule("node:module").createRequire(import.meta.url)("./next.mjs");
+process.getBuiltinModule = () => ({ createRequire: () => name => console.log("mine", name) }); try { process.getBuiltinModule("node:module").createRequire(import.meta.url)("./next.mjs"); } catch (error) { console.log(String(error)); }
 //// get-builtin-module-is-assigned-and-asked-for-node-module/next.mjs
 console.log("the next file");
 //// get-builtin-module-is-assigned-and-what-its-answer-makes-is-held-in-a-variable/main.mjs
-process.getBuiltinModule = () => ({ createRequire: () => name => console.log("mine", name) }); const load = process.getBuiltinModule("node:module").createRequire(import.meta.url); load("./next.mjs");
+process.getBuiltinModule = () => ({ createRequire: () => name => console.log("mine", name) }); try { const load = process.getBuiltinModule("node:module").createRequire(import.meta.url); load("./next.mjs"); } catch (error) { console.log(String(error)); }
 //// get-builtin-module-is-assigned-and-what-its-answer-makes-is-held-in-a-variable/next.mjs
 console.log("the next file");
 //// global-is-assigned-an-object-whose-process-answers-for-node-module/main.cjs

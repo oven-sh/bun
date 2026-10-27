@@ -1182,6 +1182,26 @@
     "untyped": 264.7,
     "jit": 143
   },
+  "built-in/length-of-six-kinds-behind-an-interface": {
+    "typed": 31,
+    "untyped": 31,
+    "jit": 88.5
+  },
+  "bytes/byte-length-of-views-and-buffers": {
+    "typed": 19.5,
+    "untyped": 19.5,
+    "jit": 21
+  },
+  "bytes/byte-length-of-array-buffers": {
+    "typed": 13,
+    "untyped": 13,
+    "jit": 96.8
+  },
+  "bytes/views-and-buffers-set-into-a-view": {
+    "typed": 147.9,
+    "untyped": 149.9,
+    "jit": 74.7
+  },
   "function/names-put-on-a-closure-just-made": {
     "typed": 274.4,
     "untyped": 263,
@@ -1417,5 +1437,40 @@
       "typed": 363,
       "untyped": 393.9
     }
+  },
+  "array/includes-long-string": {
+    "typed": 382.6,
+    "untyped": 377.5,
+    "jit": 377.3
+  },
+  "array/index-of-utf16-string": {
+    "typed": 256.5,
+    "untyped": 256.5,
+    "jit": 633.4
+  },
+  "array/index-of-string-or-undefined": {
+    "typed": 479.5,
+    "untyped": 479.5,
+    "jit": 1510.6
+  },
+  "array/index-of-string-in-mixed-array": {
+    "typed": 477.3,
+    "untyped": 479.3,
+    "jit": 465.6
+  },
+  "array/index-of-string-among-latin1-and-utf16": {
+    "typed": 572.5,
+    "untyped": 574.5,
+    "jit": 1782.3
+  },
+  "array/index-of-string": {
+    "typed": 694.9,
+    "untyped": 696.9,
+    "jit": 746.1
+  },
+  "array/index-of-sliced-string": {
+    "typed": 574.5,
+    "untyped": 574.5,
+    "jit": 2007.9
   }
 }

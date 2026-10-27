@@ -1,10 +1,10 @@
 // An order of declared keys that was seen before is laid on the new object by the compiled parser itself: the engine is not called.
-// Each declared key adds itself to the order as it is met, and the order is laid on the object where the object ends. Of the 81 texts that are parsed, nine hold an object with an undeclared key. The first two of them call the engine where that object ends.
-// From the third on the engine knows the names of that object: one call parses it whole and lays its order on it. None is given up and read again.
+// Each declared key adds itself to the order as it is met, and the order is laid on the object where the object ends. Of the 81 texts that are parsed, nine hold an object with an undeclared key. The first of them calls the engine where that object ends.
+// From the second on the engine knows the names of that object: one call parses it whole and lays its order on it. None is given up and read again.
 // IR+ ^ .*: keyorder = JSONObjectKey v[0-9]+ layout=L[0-9]+
 // IR+ ^ .* = JSONObjectFinish v[0-9]+, v[0-9]+, v[0-9]+ layout=L[0-9]+
 // COUNTER: operationAOTJSONSourceOpen = 81
-// COUNTER: operationAOTJSONObjectFinish = 2
+// COUNTER: operationAOTJSONObjectFinish = 1
 // COUNTER: operationAOTJSONSourceAbandon = 0
 declare const aotOperationCount: undefined | ((name: string) => number);
 interface Point { x: number; y: number; label?: string }

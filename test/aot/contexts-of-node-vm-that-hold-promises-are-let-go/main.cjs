@@ -287,17 +287,25 @@ const scenarios = [
   ],
 ];
 
+// In a callback of the event loop: under a promise job the stack still holds the handler of an earlier job.
+const collect = () =>
+  new Promise(resolve =>
+    setImmediate(() => {
+      Bun.gc(true);
+      resolve(process.memoryUsage().heapUsed);
+    }),
+  );
+
 async function settle() {
   for (let i = 0; i < 3; i++) await tick();
-  Bun.gc(true);
-  await tick();
-  Bun.gc(true);
-  return process.memoryUsage().heapUsed;
+  await collect();
+  return await collect();
 }
 
 async function main() {
-  const rounds = 8;
   for (const [name, each, turn] of scenarios) {
+    // Ninety contexts at 2 KB outweigh the last answer and the last context, which a reading may find on the stack.
+    const rounds = Math.max(8, Math.ceil(90 / each) + 3);
     const after = [];
     let held = 0;
     for (let round = -2; round < rounds; round++) {

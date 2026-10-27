@@ -1105,13 +1105,12 @@ Server.prototype[kRealListen] = function (
     const canUseInternalAssignSocket = ResponseClass?.prototype.assignSocket === ServerResponse.prototype.assignSocket;
     let server = this;
     let listenerGeneration: ListenerGeneration | undefined;
-    const uniqueHeaders = this[kUniqueHeaders];
-    const optimizeEmptyRequests = this[kOptimizeEmptyRequests];
     const usesOwnClasses =
       ResponseClass === ServerResponse &&
       RequestClass === IncomingMessage &&
-      uniqueHeaders == null &&
-      !optimizeEmptyRequests;
+      !$isProxyObject(this) &&
+      this[kUniqueHeaders] == null &&
+      !this[kOptimizeEmptyRequests];
 
     if (tls) {
       this.serverName = tls.serverName || host || "localhost";
@@ -1274,6 +1273,7 @@ Server.prototype[kRealListen] = function (
       // parseUniqueHeadersOption yields null when the option is unset, so
       // test != null: stamping null would still shape-transition every
       // response for a value renderNativeHeaders treats as absent anyway.
+      const uniqueHeaders = server[kUniqueHeaders];
       if (uniqueHeaders != null) http_res[kUniqueHeaders] = uniqueHeaders;
 
       // The request itself forbids connection reuse (HTTP/1.0, or the
@@ -1382,7 +1382,7 @@ Server.prototype[kRealListen] = function (
       // requests without body headers skip the Readable life cycle (no
       // 'data'/'end'/'close' events) and arrive pre-dumped.
       if (
-        optimizeEmptyRequests &&
+        server[kOptimizeEmptyRequests] &&
         !is_upgrade &&
         (dispatchBits & (DISPATCH_HAS_CONTENT_LENGTH | DISPATCH_HAS_TRANSFER_ENCODING)) === 0
       ) {
@@ -2347,7 +2347,7 @@ function getNodeHTTPServerSocket(): NodeHTTPServerSocketConstructor {
     }
 
     get bytesWritten() {
-      sendWhatIsHeld(this._httpMessage);
+      flushSocketHeldChunk(this);
       const handle = this[kHandle];
       let bytes = handle ? handleBytesWritten(handle) : this[kSocketBytesWritten];
       // Like net.Socket, include writes still queued in the Writable.
@@ -2619,7 +2619,7 @@ function getNodeHTTPServerSocket(): NodeHTTPServerSocketConstructor {
     }
 
     _destroy(err: Error | null, callback: $Node.ErrorCallback) {
-      sendWhatIsHeld(this._httpMessage);
+      flushSocketHeldChunk(this);
       // Match net.Socket._destroy: #onClose clears this too, but the native close is async and an already-due timer would fire first.
       const timer = this[kSocketTimeoutTimer];
       if (timer) {
@@ -2647,7 +2647,7 @@ function getNodeHTTPServerSocket(): NodeHTTPServerSocketConstructor {
     }
 
     _final(callback: $Node.ErrorCallback) {
-      sendWhatIsHeld(this._httpMessage);
+      flushSocketHeldChunk(this);
       const handle = this[kHandle];
       if (!handle) {
         callback();
@@ -2850,7 +2850,7 @@ function getNodeHTTPServerSocket(): NodeHTTPServerSocketConstructor {
     }
 
     _write(_chunk: $Node.HttpChunk, _encoding: string, _callback: $Node.ErrorCallback) {
-      sendWhatIsHeld(this._httpMessage);
+      flushSocketHeldChunk(this);
       const handle = this[kHandle];
       let err;
       this._unrefTimer();
@@ -4536,6 +4536,16 @@ function sendWhatIsHeld(res: $Node.ServerResponse | null | undefined): void {
   const exchange = res.$exchange;
   if (exchange !== undefined && (exchange.flags & EXCHANGE_HOLDS_CHUNK) !== 0)
     sendHeldChunk(exchange.response, exchange);
+}
+
+// Reads through to the target so that a Proxy does not observe this internal read.
+function flushSocketHeldChunk(socket: any): void {
+  if ($isProxyObject(socket)) {
+    ("unlikely");
+    do socket = $getProxyInternalField(socket, $proxyFieldTarget);
+    while ($isProxyObject(socket));
+  }
+  if (socket != null) sendWhatIsHeld(socket._httpMessage);
 }
 
 function finishExchangeInSteps(exchange: Exchange, flags: number): void {
@@ -6280,7 +6290,7 @@ function writeHeadInFull(
 
 // Share the pipelining machinery with internal/http1_server_fallback through
 // internal/http instead of the user-visible module exports.
-http.responseRoad.sendWhatIsHeld = sendWhatIsHeld;
+http.responseRoad.flushSocketHeldChunk = flushSocketHeldChunk;
 http.requestRoad.readsDestroyedUnseen = readsDestroyedUnseen as (socket: $Node.HttpSocket) => boolean;
 http1ServerPipeline.queuePipelinedResponse = queuePipelinedResponse;
 http1ServerPipeline.advanceResponsePipeline = advanceResponsePipeline;

@@ -15,7 +15,7 @@ SECTIONS = ['Functions', 'FunctionStarts', 'CodeGranules', 'InnerEntries', 'Fram
 TABLES = ['types', 'typeSites', 'layouts', 'classes', 'layoutSets', 'allocations', 'constructedAllocations', 'shapeSetBits', 'propertyRuns', 'fieldTable', 'fieldRecordIndices', 'classMemberRows', 'classAccessors', 'methodTableFunctions',
           'methodLookupFunctions', 'methodTableDependents', 'removedFields', 'addedNames', 'classPrototypeNames', 'parsedRecordFields',
           'functionNames', 'functionNameGroups', 'functionNameRuns', 'functionRecordNumbers', 'functionRecords', 'functionRecordsByFunction', 'functionSources', 'implementedBuiltins', 'closureFunctionKinds', 'functionLengths',
-          'closureCaptureCounts', 'functionsWithLargeCounts', 'closureCellNumbers', 'functionTexts', 'constructors', 'boundFunctions', 'constructEntrypoints',
+          'closureCaptureCounts', 'functionsWithLargeCounts', 'closureCellNumbers', 'functionTexts', 'constructors', 'boundFunctions', 'constructEntrypoints', 'placesOfTailCalls',
           'staticsLayout', 'staticsRuns', 'staticsOfFiles', 'staticsOfImportedFiles', 'staticsRoots', 'staticsNarrowRoots', 'staticsClearedEachCollection', 'functionVariables', 'identifiersByHash', 'identifiersOfEngineSymbols', 'keyCellIdentifiers', 'literalStrings',
           'literalStringTable', 'literalStringLimits', 'literalStringDigests', 'bigIntConstants', 'data', 'requests', 'builtinCells', 'eagerBuiltinCells', 'constantBuiltinMembers', 'globalBindings', 'entryPoints',
           'modules', 'moduleDirectories', 'moduleDisplayPaths', 'moduleRequests', 'linkRequests', 'evaluationRequests', 'groupsLoadedWithGroups', 'entryPointLinkPlan', 'linkPlanRoots', 'linkPlanStepsOfRoots', 'moduleExports', 'indirectExports',

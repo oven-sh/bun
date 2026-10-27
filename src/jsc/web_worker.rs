@@ -29,6 +29,11 @@
 //! performs the parent-side release itself (`parentContextWillDestroy`). This
 //! is Node's `stop_sub_worker_contexts()`; there is no process-global list.
 //!
+//! Room: a compiled program within a limit on its address space may have none
+//! for a new thread while a sibling that is ending still holds some. `create()`
+//! never waits for that sibling: the worker is registered without a thread, and
+//! the parent starts it when it releases the sibling (`start_waiting_children`).
+//!
 //! Threads: everything the worker thread needs from its parent VM (transform
 //! options, an env snapshot, the standalone graph) is copied on the parent
 //! thread in `create()`, and the thread holds a `Ticket` on the parent for its
@@ -41,7 +46,7 @@ use crate::JsCell;
 use core::cell::{Cell, OnceCell};
 use core::ffi::c_void;
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::thread::JoinHandle;
 
 use bun_core::{EncodedSlice, String as BunString, WTFStringImpl};
@@ -106,6 +111,8 @@ pub struct WebWorker {
     parent_poll_ref: JsCell<KeepAlive>,
     /// Taken by the parent to join the OS thread.
     join_handle: JsCell<Option<JoinHandle<()>>>,
+    /// What the thread is handed, until one has started; then null.
+    thread_start: Cell<*mut ThreadStart>,
 
     // ---- Worker-thread only -----------------------------------------------------
     // Mutated only on the worker thread, but through `&self` because other
@@ -134,6 +141,37 @@ struct WorkerVmInit {
     env_loader: bun_dotenv::Loader,
     proxy_env_slots: jsc::rare_data::ProxyEnvSlots,
 }
+
+/// What the worker thread is handed: its refcounted `WebWorker` (a ref of the
+/// thread's own), the parent's snapshot, and a ticket on the parent VM.
+struct ThreadStart {
+    worker: bun_ptr::RefPtr<WebWorker>,
+    init: WorkerVmInit,
+    table_pages: *mut c_void,
+    _parent_ticket: crate::Ticket,
+}
+// SAFETY: `WebWorker` is shared across threads by design (atomics,
+// `Guarded`, thread-confined cells — see the struct doc) and holds no
+// parent-VM state; `init` is an owned copy — byte buffers, scalars and
+// `Arc<RefCountedEnvValue>`s, no JSC or atom strings; the parent VM
+// itself is kept by `_parent_ticket`; `table_pages` is unused address
+// space that only the new thread touches.
+unsafe impl Send for ThreadStart {}
+
+/// Outlives a `spawn` that fails, which drops its closure.
+struct OwnedByThread(*mut ThreadStart);
+// SAFETY: as for `ThreadStart`; whoever holds it last takes the box.
+unsafe impl Send for OwnedByThread {}
+
+enum StartOutcome {
+    Started,
+    /// The address space of a compiled program is limited, and too little is left.
+    NoRoom,
+    Failed,
+}
+
+/// Workers of all threads that are registered without a thread.
+static WORKERS_WAITING_FOR_ROOM: AtomicU32 = AtomicU32::new(0);
 
 enum EntryOutcome {
     Continue,
@@ -177,6 +215,7 @@ unsafe extern "C" {
         err: JSValue,
     );
     safe fn WebWorker__postOutOfMemoryError(proxy: *mut c_void);
+    safe fn WebWorker__postFailedToStartError(proxy: *mut c_void);
     /// The address space a compiled program's thread needs for its tables, taken
     /// by the thread that starts it. False: there is none. `pages` may be null.
     fn Bun__AOT__tryReservePagesForNewThread(pages: *mut *mut c_void) -> bool;
@@ -243,6 +282,7 @@ impl Drop for WebWorker {
             self.join_handle.with_mut(|h| h.is_none()),
             "worker thread was never joined"
         );
+        debug_assert!(self.thread_start.get().is_null());
     }
 }
 
@@ -306,8 +346,8 @@ impl WebWorker {
 
     /// Allocate the thread object (one ref, owned by the calling proxy), take a
     /// keep-alive on the parent event loop, register as a child of the parent VM,
-    /// and spawn the thread. On any failure returns null with `error_message`
-    /// set and nothing to clean up.
+    /// and spawn the thread, now or once a sibling has ended (see "Room" above).
+    /// On any failure returns null with `error_message` set and nothing to clean up.
     #[unsafe(export_name = "WebWorker__create")]
     pub(crate) unsafe extern "C" fn create(
         proxy: *mut c_void,
@@ -489,6 +529,7 @@ impl WebWorker {
             vm: Cell::new(core::ptr::null_mut()),
             parent_poll_ref: JsCell::new(KeepAlive::init()),
             join_handle: JsCell::new(None),
+            thread_start: Cell::new(core::ptr::null_mut()),
             status: Cell::new(Status::Start),
             arena: JsCell::new(None),
             worker_env_loader: Cell::new(core::ptr::null_mut()),
@@ -510,106 +551,130 @@ impl WebWorker {
         // it runs: the parent joins it before its own teardown's wait, which
         // this ticket would otherwise hold.
         let parent_ticket = parent_ref.ticket();
-        /// What the worker thread is handed: its refcounted `WebWorker` (the ref
-        /// taken above is the thread's), the parent's snapshot, and a ticket on
-        /// the parent VM.
-        struct ThreadStart {
-            worker: bun_ptr::RefPtr<WebWorker>,
-            init: WorkerVmInit,
-            table_pages: *mut c_void,
-            _parent_ticket: crate::Ticket,
-        }
-        // SAFETY: `WebWorker` is shared across threads by design (atomics,
-        // `Guarded`, thread-confined cells — see the struct doc) and holds no
-        // parent-VM state; `init` is an owned copy — byte buffers, scalars and
-        // `Arc<RefCountedEnvValue>`s, no JSC or atom strings; the parent VM
-        // itself is kept by `_parent_ticket`; `table_pages` is unused address
-        // space that only the new thread touches.
-        unsafe impl Send for ThreadStart {}
-        let mut table_pages: *mut c_void = core::ptr::null_mut();
-        // A child that is ending still holds address space, so those are waited
-        // for before this one is refused.
-        // SAFETY: `table_pages` is a live local the callee writes once.
-        while !unsafe { Bun__AOT__tryReservePagesForNewThread(&raw mut table_pages) } {
-            // SAFETY: `parent` is the calling thread's VM.
-            if unsafe { Self::join_ending_children(parent) } {
-                continue;
-            }
-            worker_ref.with_parent_poll_ref(|p| p.unref(bun_io::js_vm_ctx()));
-            *error_message = BunString::static_("Failed to spawn worker thread");
-            return core::ptr::null_mut();
-        }
-        /// Outlives a `spawn` that fails, which drops its closure.
-        struct OwnedByThread(*mut ThreadStart);
-        // SAFETY: as for `ThreadStart`; whoever holds it last takes the box.
-        unsafe impl Send for OwnedByThread {}
         let start = bun_core::heap::alloc(ThreadStart {
             worker: thread_ref,
             init,
-            table_pages,
+            table_pages: core::ptr::null_mut(),
             _parent_ticket: parent_ticket,
         });
-        let spawn = loop {
-            let owned = OwnedByThread(start);
-            let spawn = std::thread::Builder::new()
-                .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize)
-                .spawn(move || {
-                    let owned = owned;
-                    // SAFETY: `heap::alloc`'d above; the thread that runs is its only owner.
-                    let start = *unsafe { bun_core::heap::take(owned.0) };
-                    Bun__AOT__adoptPagesForNewThread(start.table_pages);
-                    start.worker.thread_main(start.init);
-                    Bun__AOT__releaseUnusedPagesOfThread();
-                    // The thread's ref (and the parent ticket) drop here.
-                });
-            if spawn.is_ok() || table_pages.is_null() {
-                break spawn;
-            }
+        worker_ref.thread_start.set(start);
+        match worker_ref.try_start() {
+            StartOutcome::Started => {}
             // SAFETY: `parent` is the calling thread's VM.
-            if !unsafe { Self::join_ending_children(parent) } {
-                break spawn;
+            StartOutcome::NoRoom if unsafe { Self::has_ending_child(parent) } => {
+                log!("[{}] waits for room", this_context_id);
+                WORKERS_WAITING_FOR_ROOM.fetch_add(1, Ordering::Relaxed);
             }
-        };
-        match spawn {
-            Ok(handle) => {
-                worker_ref.join_handle.set(Some(handle));
-                let worker = worker.into_raw();
-                // SAFETY: `parent` is the calling thread's VM; parent-thread-only list.
-                unsafe { (*parent).child_workers.push(worker) };
-                worker
-            }
-            Err(_) => {
+            StartOutcome::NoRoom | StartOutcome::Failed => {
                 // The thread's ref goes down with this; ours drops on return.
-                // SAFETY: `heap::alloc`'d above; no thread took it.
-                drop(unsafe { bun_core::heap::take(start) });
-                Bun__AOT__releasePagesForNewThread(table_pages);
+                worker_ref.drop_thread_start();
                 worker_ref.with_parent_poll_ref(|p| p.unref(bun_io::js_vm_ctx()));
                 *error_message = BunString::static_("Failed to spawn worker thread");
-                core::ptr::null_mut()
+                return core::ptr::null_mut();
+            }
+        }
+        let worker = worker.into_raw();
+        // SAFETY: `parent` is the calling thread's VM; parent-thread-only list.
+        unsafe { (*parent).child_workers.push(worker) };
+        worker
+    }
+
+    /// Spawn the thread and hand it `thread_start`, which stays where it is unless that succeeds. Parent thread.
+    fn try_start(&self) -> StartOutcome {
+        let start = self.thread_start.get();
+        let mut table_pages: *mut c_void = core::ptr::null_mut();
+        // SAFETY: `table_pages` is a live local the callee writes once.
+        if !unsafe { Bun__AOT__tryReservePagesForNewThread(&raw mut table_pages) } {
+            return StartOutcome::NoRoom;
+        }
+        // SAFETY: `heap::alloc`'d in `create()`; no thread has it yet.
+        unsafe { (*start).table_pages = table_pages };
+        let owned = OwnedByThread(start);
+        let spawn = std::thread::Builder::new()
+            .stack_size(bun_threading::thread_pool::DEFAULT_THREAD_STACK_SIZE as usize)
+            .spawn(move || {
+                let owned = owned;
+                // SAFETY: `heap::alloc`'d in `create()`; the thread that runs is its only owner.
+                let start = *unsafe { bun_core::heap::take(owned.0) };
+                Bun__AOT__adoptPagesForNewThread(start.table_pages);
+                start.worker.thread_main(start.init);
+                Bun__AOT__releaseUnusedPagesOfThread();
+                // The thread's ref (and the parent ticket) drop here.
+            });
+        match spawn {
+            Ok(handle) => {
+                self.thread_start.set(core::ptr::null_mut());
+                self.join_handle.set(Some(handle));
+                StartOutcome::Started
+            }
+            Err(_) if table_pages.is_null() => StartOutcome::Failed,
+            Err(_) => {
+                Bun__AOT__releasePagesForNewThread(table_pages);
+                StartOutcome::NoRoom
             }
         }
     }
 
-    /// Block until the threads of `parent`'s children that were asked to
-    /// terminate, or are shutting down on their own, have returned. Returns
-    /// whether there were any. The parent-side release still happens in each
-    /// child's `workerGlobalScopeDestroyed` task.
+    fn drop_thread_start(&self) {
+        let start = self.thread_start.replace(core::ptr::null_mut());
+        // SAFETY: `heap::alloc`'d in `create()`; no thread took it.
+        drop(unsafe { bun_core::heap::take(start) });
+    }
+
+    /// Whether a thread of `parent`'s children was asked to terminate, or is
+    /// shutting down on its own: the parent will release it and what it holds.
     ///
     /// # Safety
     /// `parent` is the calling thread's VM.
-    unsafe fn join_ending_children(parent: *mut VirtualMachine) -> bool {
-        let mut joined_any = false;
-        // SAFETY: fn contract; nothing runs on this thread during a join, so the list does not change.
-        for &child in unsafe { (*parent).child_workers.iter() } {
+    unsafe fn has_ending_child(parent: *mut VirtualMachine) -> bool {
+        // SAFETY: fn contract.
+        unsafe { (*parent).child_workers.iter() }.any(|&child| {
             let worker = bun_ptr::ParentRef::from(NonNull::new(child).expect("registered child"));
-            let is_ending =
-                worker.has_requested_terminate() || worker.is_shutting_down.load(Ordering::Acquire);
-            if is_ending && worker.join_handle.with_mut(|handle| handle.is_some()) {
-                Self::join(child);
-                joined_any = true;
+            (worker.has_requested_terminate() || worker.is_shutting_down.load(Ordering::Acquire))
+                && worker.join_handle.with_mut(|handle| handle.is_some())
+        })
+    }
+
+    /// `parent` has released a child. Its children that wait for room start, oldest
+    /// first. Once no child is left that is ending, those that find none get 'error'.
+    /// A parent that is ending starts none: its stop phase ends them.
+    ///
+    /// # Safety
+    /// `parent` is the calling thread's VM.
+    unsafe fn start_waiting_children(parent: *mut VirtualMachine) {
+        while WORKERS_WAITING_FOR_ROOM.load(Ordering::Relaxed) != 0 {
+            // SAFETY: fn contract.
+            if unsafe { (*parent).is_shutting_down() || !(*parent).script_allowed() } {
+                return;
+            }
+            // SAFETY: fn contract; nothing below changes the list.
+            let oldest = unsafe { (*parent).child_workers.iter() }
+                .map(|&child| {
+                    bun_ptr::ParentRef::from(NonNull::new(child).expect("registered child"))
+                })
+                .filter(|worker| !worker.thread_start.get().is_null())
+                .min_by_key(|worker| worker.execution_context_id);
+            let Some(worker) = oldest else { return };
+            match worker.try_start() {
+                StartOutcome::Started => {
+                    WORKERS_WAITING_FOR_ROOM.fetch_sub(1, Ordering::Relaxed);
+                }
+                // SAFETY: fn contract.
+                StartOutcome::NoRoom if unsafe { Self::has_ending_child(parent) } => return,
+                StartOutcome::NoRoom | StartOutcome::Failed => {
+                    WebWorker__postFailedToStartError(worker.messaging_proxy);
+                    worker.end_without_thread(1);
+                }
             }
         }
-        joined_any
+    }
+
+    /// Reports the end of a worker that waits for room, as its thread would have. Parent thread.
+    fn end_without_thread(&self, exit_code: i32) {
+        log!("[{}] ends without a thread", self.execution_context_id);
+        WORKERS_WAITING_FOR_ROOM.fetch_sub(1, Ordering::Relaxed);
+        self.drop_thread_start();
+        WebWorker__workerGlobalScopeDestroyed(self.messaging_proxy, exit_code, false);
     }
 
     /// Drop one ref; the last one frees the allocation (`Drop` below). Any thread.
@@ -636,6 +701,8 @@ impl WebWorker {
             // hook; the join result carries nothing further.
             let _ = handle.join();
         }
+        // SAFETY: parent thread; `parent` outlives its children (it joins them).
+        unsafe { Self::start_waiting_children(this.parent) };
     }
 
     // =========================================================================
@@ -658,7 +725,7 @@ impl WebWorker {
 
     /// Ask the thread to stop: set `requested_terminate`, raise a
     /// TerminationException in its VM at the next safepoint, wake its loop.
-    /// Any thread that holds a ref (the proxy) may call this.
+    /// Parent thread.
     #[unsafe(export_name = "WebWorker__requestTermination")]
     pub(crate) extern "C" fn request_termination(this: *mut WebWorker) {
         let this = bun_ptr::ParentRef::from(NonNull::new(this).expect("WebWorker FFI ptr"));
@@ -680,6 +747,10 @@ impl WebWorker {
             // thread notices; a TerminationException is raised at its next
             // safepoint and its loop woken.
             handle.request_termination();
+        }
+        drop(handle);
+        if !this.thread_start.get().is_null() {
+            this.end_without_thread(0);
         }
     }
 

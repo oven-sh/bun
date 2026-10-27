@@ -6,14 +6,19 @@
 const { kEmptyObject, once } = require("internal/shared");
 const { validateAbortSignal, validateFunction, validateObject, validateBoolean } = require("internal/validators");
 const {
+  isClosed,
   isReadable,
   isReadableNodeStream,
   isReadableStream,
+  isReadableFinished,
+  isReadableErrored,
   isWritable,
   isWritableNodeStream,
   isWritableStream,
   isWritableFinished,
+  isWritableErrored,
   isNodeStream,
+  willEmitClose: _willEmitClose,
   isWritableSideFinished,
   isReadableSideFinished,
   errorOfWritableSide,
@@ -75,7 +80,9 @@ function hasAsyncContext() {
  * Returns the current stream error tracked by eos(), if any.
  */
 function getEosErrored(stream: $Node.AnyStream): Error | null {
-  const errored = errorOfWritableSide(stream) || errorOfReadableSide(stream);
+  const errored = $isProxyObject(stream)
+    ? isWritableErrored(stream) || isReadableErrored(stream)
+    : errorOfWritableSide(stream) || errorOfReadableSide(stream);
   return (typeof errored !== "boolean" && errored) || null;
 }
 
@@ -96,7 +103,7 @@ function getEosOnCloseError(
   }
 
   if (readable && !readableFinished && isReadableNodeStream(stream, true)) {
-    if (!isReadableSideFinished(stream, false)) {
+    if (!($isProxyObject(stream) ? isReadableFinished(stream, false) : isReadableSideFinished(stream, false))) {
       return $ERR_STREAM_PREMATURE_CLOSE();
     }
   }
@@ -132,25 +139,40 @@ function eos(stream: $Node.AnyStream | ReadableStream | WritableStream, options,
   const givenSignal = options.signal;
   if (givenSignal !== undefined) validateAbortSignal(givenSignal, "options.signal");
 
+  if (isReadableStream(stream) || isWritableStream(stream)) {
+    return eosWeb(stream, options, callback!);
+  }
+
   if (!isNodeStream(stream)) {
-    ("unlikely");
-    if (isReadableStream(stream) || isWritableStream(stream)) {
-      return eosWeb(stream, options, callback!);
-    }
     throw $ERR_INVALID_ARG_TYPE("stream", ["ReadableStream", "WritableStream", "Stream"], stream);
   }
 
-  const hasReadableSide = isReadableNodeStream(stream);
-  const hasWritableSide = isWritableNodeStream(stream);
-  const readable = options.readable ?? hasReadableSide;
-  const writable = options.writable ?? hasWritableSide;
-
+  const isProxy = $isProxyObject(stream);
+  let readable: boolean;
+  let writable: boolean;
   // TODO (ronag): Improve soft detection to include core modules and
   // common ecosystem modules that do properly emit 'close' but fail
   // this generic check.
-  let willEmitClose = willNodeStreamEmitClose(stream) && hasReadableSide === readable && hasWritableSide === writable;
-  let writableFinished = hasWritableSide ? isWritableSideFinished(stream, false) : null;
-  let readableFinished = hasReadableSide ? isReadableSideFinished(stream, false) : null;
+  let willEmitClose: boolean | null;
+  let writableFinished: boolean | null;
+  let readableFinished: boolean | null;
+  if (isProxy) {
+    ("unlikely");
+    readable = options.readable ?? isReadableNodeStream(stream);
+    writable = options.writable ?? isWritableNodeStream(stream);
+    willEmitClose =
+      _willEmitClose(stream) && isReadableNodeStream(stream) === readable && isWritableNodeStream(stream) === writable;
+    writableFinished = isWritableFinished(stream, false);
+    readableFinished = isReadableFinished(stream, false);
+  } else {
+    const hasReadableSide = isReadableNodeStream(stream);
+    const hasWritableSide = isWritableNodeStream(stream);
+    readable = options.readable ?? hasReadableSide;
+    writable = options.writable ?? hasWritableSide;
+    willEmitClose = willNodeStreamEmitClose(stream) && hasReadableSide === readable && hasWritableSide === writable;
+    writableFinished = hasWritableSide ? isWritableSideFinished(stream, false) : null;
+    readableFinished = hasReadableSide ? isReadableSideFinished(stream, false) : null;
+  }
 
   const wState = stream._writableState;
   const rState = stream._readableState;
@@ -161,7 +183,7 @@ function eos(stream: $Node.AnyStream | ReadableStream | WritableStream, options,
    * Error: an error occurred
    */
   let immediateResult: Error | null | undefined;
-  if (isNodeStreamClosed(stream)) {
+  if (isProxy ? isClosed(stream) : isNodeStreamClosed(stream)) {
     immediateResult = getEosOnCloseError(stream, readable, readableFinished, writable, writableFinished);
   } else if (
     (isWritableState(wState) ? (wState[kState] & Flag.ErrorEmitted) !== 0 : wState?.errorEmitted) ||

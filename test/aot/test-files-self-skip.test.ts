@@ -29,6 +29,7 @@ const needNoCompiler = [
   "aot/engine-types-are-defined-once.test.ts",
   "aot/the-compiler-reads-no-environment-variable.test.ts",
   "aot/the-frame-of-an-operation-outlives-whoever-is-handed-its-address.test.ts",
+  "aot/the-value-under-a-chain-of-casts-is-only-asked-about.test.ts",
   "aot/a-switch-of-the-compiler-names-every-enumerator.test.ts",
   "aot/lists-of-operations-in-the-compiler-only-shrink.test.ts",
   "aot/every-threshold-of-the-compiler-is-declared-as-one.test.ts",

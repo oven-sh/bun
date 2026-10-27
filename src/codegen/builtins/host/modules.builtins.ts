@@ -146,7 +146,6 @@ export default b.declarations(
     throws: true,
     uses: { id: [b.loadedAsModule] },
     implementation: b.hostCall,
-    mutability: "AlwaysLocked",
   }),
   b.static("process.mainModule", b.property(b.union(moduleObject, b.undefined))),
   b.class("node:module", {

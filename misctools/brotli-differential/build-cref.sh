@@ -10,7 +10,9 @@ CC=${CC:-clang}
 AR=${AR:-llvm-ar}
 rm -rf "$OUT"; mkdir -p "$OUT/src"
 cp -r "$REF/c" "$OUT/src/c"
-git -C "$OUT/src" apply --unsafe-paths --directory="$OUT/src" "$HERE/cref.patch" 2>/dev/null || (cd "$OUT/src" && git apply "$HERE/cref.patch")
+# Not as part of the repository this directory is in, where git would skip the patch without an error.
+(cd "$OUT/src" && GIT_DIR=/nonexistent git apply "$HERE/cref.patch")
+grep -q "Upstream leaves next_out_ stale" "$OUT/src/c/enc/encode.c"
 for f in "$OUT"/src/c/common/*.c "$OUT"/src/c/dec/*.c "$OUT"/src/c/enc/*.c; do
   o="$OUT/$(basename "$(dirname "$f")")_$(basename "$f" .c).o"
   $CC -O2 -g -fPIC -ffp-contract=off -I"$OUT/src/c/include" -c "$f" -o "$o"

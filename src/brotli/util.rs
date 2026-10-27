@@ -116,6 +116,13 @@ pub(crate) fn try_zeroed<T: bun_core::Zeroable>(len: usize) -> Result<Vec<T>, Ou
     bun_core::vec::try_zeroed(len).map_err(|_| OutOfMemory)
 }
 
+/// An empty `Vec` with room for `capacity` elements, or nothing if there is no memory for them.
+pub(crate) fn try_with_capacity<T>(capacity: usize) -> Result<Vec<T>, OutOfMemory> {
+    let mut vec = Vec::new();
+    vec.try_reserve_exact(capacity).map_err(|_| OutOfMemory)?;
+    Ok(vec)
+}
+
 /// `len` copies of `value`, or nothing if there is no memory for them.
 pub(crate) fn try_vec<T: Clone>(value: T, len: usize) -> Result<Vec<T>, OutOfMemory> {
     let mut vec = Vec::new();

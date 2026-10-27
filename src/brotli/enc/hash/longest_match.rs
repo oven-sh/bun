@@ -8,7 +8,7 @@ use super::{
 use crate::enc::Fallible;
 use crate::enc::find_match_length::find_match_length_with_limit;
 use crate::enc::params::EncoderParams;
-use crate::util::{Checked, SliceExt, load_u32_le, load_u64_le, try_zeroed};
+use crate::util::{Checked, SliceExt, load_u32_le, load_u64_le, try_with_capacity, try_zeroed};
 
 /// Hashes 5 bytes if `LONG`, which is for large inputs, else 4.
 pub(crate) struct HashLongestMatch<const LONG: bool> {
@@ -21,10 +21,14 @@ pub(crate) struct HashLongestMatch<const LONG: bool> {
     block_mask: usize,
     block_bits: u32,
     num_last_distances_to_check: usize,
-    /// How many positions were added to each bucket, modulo 65536.
-    num: Vec<u16>,
-    /// The buckets, each a ring buffer of `block_size` positions.
-    buckets: Vec<u32>,
+    /// For each bucket, in the low 16 bits how many positions were added to it, modulo 65536. In the high 16 bits which
+    /// block of `blocks` is its own, counted from 1, or 0 if it has none yet.
+    heads: Vec<u32>,
+    /// Ring buffers of `block_size` positions. A bucket gets one with its first position, so that of the room for all
+    /// of them, which can be 32 MiB, a short input only touches what it uses.
+    blocks: Vec<u32>,
+    /// `heads` is all 0 and `blocks` is empty.
+    is_clear: bool,
 }
 
 impl<const LONG: bool> HashLongestMatch<LONG> {
@@ -40,9 +44,27 @@ impl<const LONG: bool> HashLongestMatch<LONG> {
             block_mask: block_size - 1,
             block_bits: hasher.block_bits as u32,
             num_last_distances_to_check: hasher.num_last_distances_to_check as usize,
-            num: try_zeroed(bucket_size)?,
-            buckets: try_zeroed(bucket_size * block_size)?,
+            heads: try_zeroed(bucket_size)?,
+            blocks: try_with_capacity(bucket_size * block_size)?,
+            is_clear: true,
         })
+    }
+
+    /// The block of bucket `key` and how many positions were added to it so far. Counts one more.
+    #[inline(always)]
+    fn add_to_bucket(&mut self, key: usize) -> Checked<(&mut [u32], usize)> {
+        let head = self.heads.at_mut(key)?;
+        if *head >> 16 == 0 {
+            self.blocks.resize(self.blocks.len() + self.block_size, 0);
+            *head |= ((self.blocks.len() >> self.block_bits) as u32) << 16;
+        }
+        let num = (*head & 0xFFFF) as usize;
+        let start = ((*head >> 16) as usize - 1) << self.block_bits;
+        *head = (*head & !0xFFFF) | (head.wrapping_add(1) & 0xFFFF);
+        Ok((
+            self.blocks.sub_mut(start..)?.sub_mut(..self.block_size)?,
+            num,
+        ))
     }
 
     #[inline(always)]
@@ -64,13 +86,16 @@ impl<const LONG: bool> HasherImpl for HashLongestMatch<LONG> {
     fn prepare(&mut self, one_shot: bool, input_size: usize, data: &[u8]) -> Checked {
         // Clearing an entry at a time is 100 times slower for each of them.
         let partial_prepare_threshold = self.bucket_size >> 6;
-        if one_shot && input_size <= partial_prepare_threshold {
+        if self.is_clear {
+            self.is_clear = false;
+        } else if one_shot && input_size <= partial_prepare_threshold {
             for i in 0..input_size {
                 let key = self.hash_bytes(data, i)?;
-                self.num.put(key, 0)?;
+                *self.heads.at_mut(key)? &= !0xFFFF;
             }
         } else {
-            self.num.fill(0);
+            self.heads.fill(0);
+            self.blocks.clear();
         }
         Ok(())
     }
@@ -78,11 +103,9 @@ impl<const LONG: bool> HasherImpl for HashLongestMatch<LONG> {
     #[inline(always)]
     fn store(&mut self, data: &[u8], mask: usize, ix: usize) -> Checked {
         let key = self.hash_bytes(data, ix & mask)?;
-        let num = self.num.at_mut(key)?;
-        let minor_ix = usize::from(*num) & self.block_mask;
-        let offset = minor_ix + (key << self.block_bits);
-        *num = num.wrapping_add(1);
-        self.buckets.put(offset, ix as u32)
+        let block_mask = self.block_mask;
+        let (bucket, num) = self.add_to_bucket(key)?;
+        bucket.put(num & block_mask, ix as u32)
     }
 
     #[inline(always)]
@@ -110,11 +133,9 @@ impl<const LONG: bool> HasherImpl for HashLongestMatch<LONG> {
         let min_score = out.score;
         let mut best_len = out.len;
         let key = self.hash_bytes(data, cur_ix_masked)?;
-        let bucket = self
-            .buckets
-            .sub_mut(key << self.block_bits..)?
-            .sub_mut(..self.block_size)?;
-        let num = self.num.at_mut(key)?;
+        let (block_size, block_mask) = (self.block_size, self.block_mask);
+        let num_last_distances_to_check = self.num_last_distances_to_check;
+        let (bucket, newest) = self.add_to_bucket(key)?;
         out.len = 0;
         out.len_code_delta = 0;
 
@@ -122,7 +143,7 @@ impl<const LONG: bool> HasherImpl for HashLongestMatch<LONG> {
             data,
             ring_buffer_mask,
             distance_cache,
-            self.num_last_distances_to_check,
+            num_last_distances_to_check,
             cur_ix,
             max_length,
             max_backward,
@@ -134,10 +155,9 @@ impl<const LONG: bool> HasherImpl for HashLongestMatch<LONG> {
         if best_len < 3 {
             best_len = 3;
         }
-        let newest = usize::from(*num);
-        let down = newest.saturating_sub(self.block_size);
+        let down = newest.saturating_sub(block_size);
         for i in (down..newest).rev() {
-            let mut prev_ix = bucket.at(i & self.block_mask)? as usize;
+            let mut prev_ix = bucket.at(i & block_mask)? as usize;
             let backward = cur_ix.wrapping_sub(prev_ix);
             if backward > max_backward {
                 break;
@@ -175,8 +195,7 @@ impl<const LONG: bool> HasherImpl for HashLongestMatch<LONG> {
                 }
             }
         }
-        bucket.put(newest & self.block_mask, cur_ix as u32)?;
-        *num = num.wrapping_add(1);
+        bucket.put(newest & block_mask, cur_ix as u32)?;
         if min_score == out.score {
             search_in_static_dictionary(
                 dictionary,

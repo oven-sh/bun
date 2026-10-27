@@ -1,7 +1,6 @@
 // This is just a no-op. Intent is to prevent importing a bunch of stuff that isn't relevant.
-// The native fetch, not the user-replaceable `Bun.fetch` or `globalThis.fetch`.
-const nativeFetch = $cpp("NodeFetch.cpp", "createNodeFetchInternalBinding")[6];
-export default (wrapper = nativeFetch) => {
+// The default is the native fetch, not the user-replaceable `Bun.fetch` or `globalThis.fetch`.
+export default (wrapper = $cpp("NodeFetch.cpp", "createNativeFetchBinding")) => {
   async function vercelFetch(url, opts = {}) {
     // Convert Object bodies to JSON if they are JS objects
     if (

@@ -102,7 +102,22 @@
         // Reading `obj.prop` in an `if` condition and again in the body hits
         // the property (and any getter/Proxy trap) twice. Destructure or
         // cache the value in a local instead.
-        "bun/no-duplicate-conditional-property-access": "error"
+        "bun/no-duplicate-conditional-property-access": "error",
+        // `Bun.fetch` and `Bun.plugin` are user-writable. An internal module that
+        // needs the native fetch reads it from the NodeFetch or Undici binding.
+        "no-restricted-properties": [
+          "error",
+          {
+            "object": "Bun",
+            "property": "fetch",
+            "message": "Bun.fetch is user-writable. Read the native fetch from $cpp(\"NodeFetch.cpp\", \"createNativeFetchBinding\")."
+          },
+          {
+            "object": "Bun",
+            "property": "plugin",
+            "message": "Bun.plugin is user-writable. Do not read it from an internal module."
+          }
+        ]
       }
     }
   ]

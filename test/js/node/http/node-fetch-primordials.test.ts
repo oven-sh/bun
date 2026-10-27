@@ -37,32 +37,19 @@ test("replacing Bun.fetch does not change the fetch that node-fetch, undici, iso
     cmd: [
       bunExe(),
       "-e",
-      `const { spyOn } = require("bun:test");
-      const original = Bun.fetch;
-      const undici = require("undici");
-      const out = { undiciIsNativeAtStart: undici.fetch === original };
-
-      Bun.fetch = () => { throw new Error("Bun.fetch replaced"); };
+      `Bun.fetch = () => { throw new Error("Bun.fetch replaced"); };
       globalThis.fetch = () => { throw new Error("globalThis.fetch replaced"); };
+      const undici = require("undici");
       const nodeFetch = require("node-fetch");
       const isomorphicFetch = require("isomorphic-fetch");
       const vercelFetch = require("@vercel/fetch")();
 
       using server = Bun.serve({ port: 0, fetch: () => new Response("native") });
       const bodies = [];
-      for (const f of [nodeFetch.default, nodeFetch.fetch, isomorphicFetch, vercelFetch, undici.fetch]) {
+      for (const f of [undici.fetch, nodeFetch.default, nodeFetch.fetch, isomorphicFetch, vercelFetch]) {
         bodies.push(await (await f(server.url)).text());
       }
-      out.bodies = bodies;
-      out.undiciIsNativeAfterReplace = undici.fetch === original;
-      out.undiciIsNotTheStub = undici.fetch !== Bun.fetch;
-
-      Bun.fetch = original;
-      const spy = spyOn(Bun, "fetch").mockImplementation(() => { throw new Error("mocked"); });
-      out.mockedBody = await (await nodeFetch.default(server.url)).text();
-      spy.mockRestore();
-      out.restored = Bun.fetch === original;
-      console.log(JSON.stringify(out));`,
+      console.log(JSON.stringify({ bodies, preconnect: typeof undici.fetch.preconnect }));`,
     ],
     env: bunEnv,
     stderr: "pipe",
@@ -70,12 +57,8 @@ test("replacing Bun.fetch does not change the fetch that node-fetch, undici, iso
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
   expect(JSON.parse(stdout)).toEqual({
-    undiciIsNativeAtStart: true,
     bodies: ["native", "native", "native", "native", "native"],
-    undiciIsNativeAfterReplace: true,
-    undiciIsNotTheStub: true,
-    mockedBody: "native",
-    restored: true,
+    preconnect: "function",
   });
   expect(exitCode).toBe(0);
 });

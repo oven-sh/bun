@@ -60,4 +60,10 @@ JSC::JSValue createNodeFetchInternalBinding(Zig::GlobalObject* globalObject)
     return obj;
 }
 
+// The native fetch alone, for a module that needs nothing else from the binding above.
+JSC::JSValue createNativeFetchBinding(Zig::GlobalObject* globalObject)
+{
+    return globalObject->nativeFetchFunction();
+}
+
 }

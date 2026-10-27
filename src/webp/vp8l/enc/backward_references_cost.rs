@@ -8,8 +8,8 @@ use super::histogram::{Histogram, histogram_num_codes};
 use super::lossless::{LOG_2_PRECISION_BITS, div_round, fast_log2, prefix_encode};
 use crate::EncodeError;
 use crate::util::{Bug, Checked, OutOfMemory, SliceExt, try_vec};
-use crate::vp8l::enc::color_cache::ColorCache;
-use crate::vp8l::enc::format::{NUM_DISTANCE_CODES, NUM_LENGTH_CODES, NUM_LITERAL_CODES};
+use crate::vp8l::color_cache::ColorCache;
+use crate::vp8l::format_constants::{NUM_DISTANCE_CODES, NUM_LENGTH_CODES, NUM_LITERAL_CODES};
 
 /// What each symbol costs.
 struct CostModel {

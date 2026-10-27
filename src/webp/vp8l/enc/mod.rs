@@ -3,8 +3,6 @@
 mod backward_references;
 mod backward_references_cost;
 mod bit_writer;
-mod color_cache;
-mod format;
 mod histogram;
 mod huffman;
 mod lossless;
@@ -24,15 +22,15 @@ use self::lossless::{
 };
 use self::palette::{Palette, get_color_palette, palette_sort_minimize_deltas};
 use self::predictor::{color_space_transform, optimize_sampling, residual_image};
-use format::{
+use super::format_constants::{
     CODE_LENGTH_CODES, IMAGE_SIZE_BITS, MAGIC_BYTE, MAX_HUFFMAN_BITS, MAX_PALETTE_SIZE,
     MAX_TRANSFORM_BITS, MIN_HUFFMAN_BITS, MIN_TRANSFORM_BITS, NUM_DISTANCE_CODES, NUM_LENGTH_CODES,
     NUM_LITERAL_CODES, NUM_TRANSFORM_BITS, TransformType, VERSION, VERSION_BITS, sub_sample_size,
 };
-use predictors::sub_pixels;
 use crate::container::Image;
 use crate::util::{Bug, Checked, OutOfMemory, SliceExt, try_vec};
 use crate::{EncodeError, Input};
+use predictors::sub_pixels;
 
 /// The most tiles that can each have prefix codes of their own.
 const MAX_HUFF_IMAGE_SIZE: usize = 2600;

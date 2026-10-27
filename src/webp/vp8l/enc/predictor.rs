@@ -6,11 +6,11 @@ use super::lossless::{
 };
 use crate::EncodeError;
 use crate::util::{Checked, SliceExt, try_vec};
-use crate::vp8l::enc::format::{ARGB_BLACK, MAX_TRANSFORM_BITS, sub_sample_size};
 use crate::vp8l::enc::predictors::{
     predictor0, predictor1, predictor2, predictor3, predictor4, predictor5, predictor6, predictor7,
     predictor8, predictor9, predictor10, predictor11, predictor12, predictor13, sub_pixels,
 };
+use crate::vp8l::format_constants::{ARGB_BLACK, MAX_TRANSFORM_BITS, sub_sample_size};
 
 const SPATIAL_PREDICTOR_BIAS: i64 = 15 << LOG_2_PRECISION_BITS;
 const MASK_ALPHA: u32 = 0xff00_0000;

@@ -328,24 +328,6 @@ fn main() {
             }
             println!("profiles found: {some}, of which in animations: {some_anim}");
         }
-        Some("mux") => for f in files(&args[1..]) {
-            // assemble() of the parts of a reference-encoded file against the real mux, and without a profile against the file itself.
-            let data = std::fs::read(&f).unwrap();
-            let Some((w, h)) = reference::get_info(&data) else { continue };
-            let ll = chunk(&data, "VP8L");
-            let Some(bits) = ll.or(chunk(&data, "VP8 ")) else { continue };
-            let has_alpha = ll.is_some_and(|b| b[4] & 0x10 != 0);
-            let mut rng = Rng(data.len() as u64);
-            for n in [0usize, 1, 2, 3, 128, 3145] {
-                let icc: Vec<u8> = (0..n).map(|_| rng.next() as u8).collect();
-                let r = if n == 0 { Some(data.clone()) } else { reference::mux_icc(&data, &icc) };
-                let m = bun_webp::dev_hooks::assemble(w as usize, h as usize, bits.to_vec(), ll.is_some(), chunk(&data, "ALPH").map(<[u8]>::to_vec), has_alpha, Some(&icc));
-                report(&format!("{} icc={n}", f.display()), diff_bytes("mux", r.as_deref(), m.as_deref().map_err(|e| format!("{e:?}"))));
-                if let (Ok(m), true) = (&m, n > 0) {
-                    report(&format!("{} icc back", f.display()), (bun_webp::icc_profile(m) != Some(&icc[..])).then(|| "icc_profile(assemble(icc)) != icc".to_string()));
-                }
-            }
-        },
         Some("bench-dec") => {
             let data = std::fs::read(&args[1]).unwrap();
             let (w, h) = reference::get_info(&data).unwrap();

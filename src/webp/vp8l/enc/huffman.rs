@@ -1,7 +1,7 @@
 //! `huffman_encode_utils.c`: builds prefix codes of limited length, and the run-length coding of their lengths.
 
 use crate::util::{Bug, Checked, OutOfMemory, SliceExt, try_vec};
-use crate::vp8l::enc::format::MAX_ALLOWED_CODE_LENGTH;
+use crate::vp8l::format_constants::MAX_ALLOWED_CODE_LENGTH;
 
 /// One symbol of a `HuffmanTreeCode`, which is a slice of these.
 #[derive(Clone, Copy, Default)]

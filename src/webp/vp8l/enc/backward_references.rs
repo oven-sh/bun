@@ -5,8 +5,8 @@ use super::histogram::Histogram;
 use super::lossless::{prefix_encode, vector_mismatch};
 use crate::EncodeError;
 use crate::util::{Bug, Checked, OutOfMemory, SliceExt, try_vec};
-use crate::vp8l::enc::color_cache::{ColorCache, hash_pix};
-use crate::vp8l::enc::format::{NUM_LENGTH_CODES, NUM_LITERAL_CODES};
+use crate::vp8l::color_cache::{ColorCache, hash_pix};
+use crate::vp8l::format_constants::{NUM_LENGTH_CODES, NUM_LITERAL_CODES};
 
 /// The format allows 11.
 pub(crate) const MAX_COLOR_CACHE_BITS: u32 = 10;

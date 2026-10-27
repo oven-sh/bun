@@ -79,11 +79,11 @@ pub(crate) struct Info {
 /// `VP8LCheckSignature`
 pub(crate) fn check_signature(data: &[u8]) -> bool {
     matches!(data.first_chunk::<FRAME_HEADER_SIZE>(), Some(&[magic, _, _, _, last])
-        if u32::from(magic) == MAGIC_BYTE && last >> 5 == 0)
+        if magic == MAGIC_BYTE && last >> 5 == 0)
 }
 
 fn read_image_info(br: &mut BitReader<'_>) -> Option<Info> {
-    if br.read_bits(8) != MAGIC_BYTE {
+    if br.read_bits(8) != u32::from(MAGIC_BYTE) {
         return None;
     }
     let width = br.read_bits(IMAGE_SIZE_BITS) + 1;
@@ -548,7 +548,7 @@ fn decode_image_data(
             if code >= LEN_CODE_LIMIT {
                 let color_cache = color_cache.as_mut().ok_or(Bug)?;
                 cache_pixels(color_cache, &data, &mut last_cached)?;
-                break 'literal color_cache.lookup(code - LEN_CODE_LIMIT)?;
+                break 'literal color_cache.lookup((code - LEN_CODE_LIMIT) as u32)?;
             }
 
             let length = get_copy_length(code - NUM_LITERAL_CODES, br);

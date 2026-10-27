@@ -1,9 +1,9 @@
 //! `palette.c`: collects the colours of an image and orders them.
 
 use crate::util::{Checked, SliceExt};
-use crate::vp8l::enc::color_cache::hash_pix;
-use crate::vp8l::enc::format::MAX_PALETTE_SIZE;
+use crate::vp8l::color_cache::hash_pix;
 use crate::vp8l::enc::predictors::sub_pixels;
+use crate::vp8l::format_constants::MAX_PALETTE_SIZE;
 
 /// Up to `MAX_PALETTE_SIZE` colours.
 #[derive(Clone, Copy)]

@@ -8,7 +8,7 @@ use super::lossless::{
 };
 use crate::EncodeError;
 use crate::util::{Bug, Checked, OutOfMemory, SliceExt, try_vec};
-use crate::vp8l::enc::format::{
+use crate::vp8l::format_constants::{
     CODE_LENGTH_CODES, NUM_DISTANCE_CODES, NUM_LENGTH_CODES, NUM_LITERAL_CODES, sub_sample_size,
 };
 

@@ -1,7 +1,7 @@
 //! `lossless.c`, `lossless_common.h`: the 14 spatial predictors. Each guesses a pixel from its left, top-left, top
 //! and top-right neighbours.
 
-use super::format::ARGB_BLACK;
+use crate::vp8l::format_constants::ARGB_BLACK;
 
 /// `VP8LSubPixels`: the difference of each component, modulo 256.
 #[inline]

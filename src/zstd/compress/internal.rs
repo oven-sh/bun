@@ -1184,8 +1184,14 @@ impl<'a> TreeInput<'a> {
             near,
             dict_limit,
             dict,
-            far: near.len() > 1 << 16,
+            far: Self::is_far(near),
         })
+    }
+
+    /// What `far` is for a current segment.
+    #[inline(always)]
+    pub(crate) const fn is_far(near: Near<'_>) -> bool {
+        near.len() > 1 << 16
     }
 
     /// `ZSTD_count_2segments`, for the position `ip` of `near` and a match that starts in another segment.

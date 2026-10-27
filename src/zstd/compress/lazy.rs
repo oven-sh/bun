@@ -56,6 +56,7 @@ struct Dubt<'a> {
 }
 
 impl<'a> Dubt<'a> {
+    #[inline(always)]
     fn new(ms: &'a mut MatchState, src: &'a BlockSrc<'a>, search_dms: bool) -> Result<Self> {
         let MatchState {
             hash_table,
@@ -243,7 +244,7 @@ impl<'a> Dubt<'a> {
 impl Dubt<'_> {
     /// `ZSTD_BtFindBestMatch`: updates the trees up to the position `ip` of `input.near` and returns the best match there.
     /// Its length is 0 if there is none.
-    #[inline(never)]
+    #[inline(always)]
     fn search(&mut self, ip: u32) -> Result<Found> {
         let mut off_base = 999_999_999u32;
         let curr = ip.wrapping_add(self.input.dict_limit);
@@ -274,6 +275,12 @@ impl Dubt<'_> {
             len,
             off_base: NonZeroU32::new(off_base).ok_or(BUG)?,
         })
+    }
+
+    /// [`Self::search`], where the time goes to waiting for memory.
+    #[inline(never)]
+    fn search_far(&mut self, ip: u32) -> Result<Found> {
+        self.search(ip)
     }
 
     /// [`DictTree::root`] for the position `ip` of `input.near`.
@@ -757,14 +764,17 @@ trait Finder<'a>: Sized {
 
 // ── binary trees, for the parser ──────────────────────────────────────────
 
-struct TreeFinder<'a, const DICT_MODE: u8>(Dubt<'a>);
+/// `FAR` is [`TreeInput::far`].
+struct TreeFinder<'a, const DICT_MODE: u8, const FAR: bool>(Dubt<'a>);
 
-impl<'a, const DICT_MODE: u8> Finder<'a> for TreeFinder<'a, DICT_MODE> {
+impl<'a, const DICT_MODE: u8, const FAR: bool> Finder<'a> for TreeFinder<'a, DICT_MODE, FAR> {
     const MARGIN: u32 = 8;
 
     #[inline(always)]
     fn new(ms: &'a mut MatchState, src: &'a BlockSrc<'a>, _block: LazyBlock<'a>) -> Result<Self> {
-        Ok(Self(Dubt::new(ms, src, DICT_MODE == DICT_MATCH_STATE)?))
+        let mut dubt = Dubt::new(ms, src, DICT_MODE == DICT_MATCH_STATE)?;
+        dubt.input.far = FAR;
+        Ok(Self(dubt))
     }
 
     #[inline(always)]
@@ -774,7 +784,11 @@ impl<'a, const DICT_MODE: u8> Finder<'a> for TreeFinder<'a, DICT_MODE> {
         wanted: Wanted,
         _skipping: bool,
     ) -> Result<Option<Found>> {
-        let found = self.0.search(ip)?;
+        let found = if FAR {
+            self.0.search_far(ip)?
+        } else {
+            self.0.search(ip)?
+        };
         Ok(Some(found).filter(|found| found.len > wanted.longer_than))
     }
 
@@ -2207,8 +2221,11 @@ fn compress_block_lazy_any_strategy<const DICT_MODE: u8>(
         Strategy::Greedy => compress_block_lazy_hashed::<0, DICT_MODE>(args, use_row),
         Strategy::Lazy => compress_block_lazy_hashed::<1, DICT_MODE>(args, use_row),
         Strategy::Lazy2 => compress_block_lazy_hashed::<2, DICT_MODE>(args, use_row),
+        Strategy::BtLazy2 if !use_row && TreeInput::is_far(args.block.near) => {
+            compress_block_lazy_generic::<TreeFinder<DICT_MODE, true>, 2, DICT_MODE>(args)
+        }
         Strategy::BtLazy2 if !use_row => {
-            compress_block_lazy_generic::<TreeFinder<DICT_MODE>, 2, DICT_MODE>(args)
+            compress_block_lazy_generic::<TreeFinder<DICT_MODE, false>, 2, DICT_MODE>(args)
         }
         _ => Err(BUG),
     }

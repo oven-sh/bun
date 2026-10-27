@@ -35,12 +35,12 @@ export const SocketData = b.union({
 });
 /**
  * `byteOffset`, `byteLength` or `encoding`. A string or a `String` object in the place of the first two is the encoding.
- * `stringObject` and `other` are converted only as the encoding of data that an open socket writes.
+ * What is not a number is converted only as the encoding of data that an open socket writes.
  */
 export const SocketWriteOption = b.union({
   missing: b.undefined,
   number: b.f64,
-  text: b.string,
+  text: b.jsString,
   stringObject: b.stringObject,
   other: b.opaque,
 });

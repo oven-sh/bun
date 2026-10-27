@@ -2833,20 +2833,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return WriteResult::Fail;
         }
 
-        let buffer = match data {
-            SocketData::Blob(blob) | SocketData::BuildArtifact(BuildArtifact { blob, .. }) => {
-                Ok(Some(BlobOrStringOrBuffer::Blob(Box::new(blob.dupe()))))
-            }
-            SocketData::Request(request) => {
-                BlobOrStringOrBuffer::from_body_value(global, request.get_body_value()).map(Some)
-            }
-            SocketData::Response(response) => {
-                BlobOrStringOrBuffer::from_body_value(global, response.get_body_value()).map(Some)
-            }
-            SocketData::Data(data) => string_or_buffer_to_write(global, data, encoding_value)
-                .map(|buffer| buffer.map(BlobOrStringOrBuffer::StringOrBuffer)),
-        };
-        let buffer = match buffer {
+        let buffer = match data_to_write(global, data, encoding_value) {
             Ok(Some(b)) => b,
             Ok(None) => {
                 if !global.has_exception() {
@@ -3804,7 +3791,7 @@ fn string_or_buffer_to_write<'a>(
 ) -> JsResult<Option<StringOrBuffer<'static>>> {
     let encoding = match encoding {
         SocketWriteOption::Missing | SocketWriteOption::Number(_) => None,
-        SocketWriteOption::Text(name) => Encoding::from_bun_string(&name),
+        SocketWriteOption::Text(name) => Encoding::from_bun_string(&loose_string(global, name)?),
         SocketWriteOption::StringObject(name) => {
             Encoding::from_bun_string(&loose_string(global, name)?)
         }
@@ -3812,6 +3799,27 @@ fn string_or_buffer_to_write<'a>(
     }
     .unwrap_or(Encoding::Utf8);
     tls_socket_functions::string_or_buffer(global, data, encoding)
+}
+
+/// As [`string_or_buffer_to_write`], and the bytes of a blob or of a body.
+fn data_to_write<'a>(
+    global: &JSGlobalObject,
+    data: SocketData<'a>,
+    encoding: SocketWriteOption<'a>,
+) -> JsResult<Option<BlobOrStringOrBuffer>> {
+    match data {
+        SocketData::Blob(blob) | SocketData::BuildArtifact(BuildArtifact { blob, .. }) => {
+            Ok(Some(BlobOrStringOrBuffer::Blob(Box::new(blob.dupe()))))
+        }
+        SocketData::Request(request) => {
+            BlobOrStringOrBuffer::from_body_value(global, request.get_body_value()).map(Some)
+        }
+        SocketData::Response(response) => {
+            BlobOrStringOrBuffer::from_body_value(global, response.get_body_value()).map(Some)
+        }
+        SocketData::Data(data) => string_or_buffer_to_write(global, data, encoding)
+            .map(|buffer| buffer.map(BlobOrStringOrBuffer::StringOrBuffer)),
+    }
 }
 
 pub(crate) struct StoredVerifyError {

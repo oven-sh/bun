@@ -6600,7 +6600,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // the value is ignored because that's what the TypeScript compiler does.
     }
 
-    /// Un-counts the operand of a `typeof` that is folded, if `ref` is a macro import. Says whether it is one.
+    /// Un-counts the operand of a folded `typeof` if `ref` is a macro import, and says whether it is one. `reject_macro_value_uses` reads the count.
     #[cold]
     #[inline(never)]
     pub(crate) fn ignore_usage_if_macro_ref(&mut self, r#ref: Ref) -> bool {

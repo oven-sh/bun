@@ -51,7 +51,7 @@ Macros are import statements annotated with either:
 - `with { type: 'macro' }` — an import attribute, a Stage 4 ECMAScript proposal
 - `assert { type: 'macro' }` — an import assertion, an earlier incarnation of import attributes that has now been abandoned (but several browsers and runtimes already support it)
 
-Bun removes a macro import from the output and replaces each call of the macro with its result. The import has no value at runtime. If the output still names the import outside of a call, the build fails. Bun replaces `typeof random` with `"undefined"`.
+Bun removes a macro import and replaces each call of the macro with its result. The import has no value at runtime. If a file still names the import outside of a call after Bun transpiles it, the build fails. Bun replaces `typeof random` with `"undefined"`.
 
 ```ts title="cli.tsx" icon="/icons/typescript.svg"
 import { random } from "./random.ts" with { type: "macro" };
@@ -151,13 +151,15 @@ if (returnFalse()) {
 }
 ```
 
-Bun looks for the name of a macro import after it folds constants and removes dead code. The build fails only for a name that the output keeps:
+Bun checks each file by itself, after it folds constants and removes dead code in that file. Tree shaking runs later and does not change the result.
 
 - Bun removes the untaken side of a constant condition, such as `if (false)`. A name there is not an error.
-- Bun removes a statement that has no effect, such as `void random;`. With `--minify-syntax` it also removes the code after a `return`.
-- Bun keeps a function that nothing calls. A name in that function is an error.
+- Bun replaces `void random` with `undefined`. Bun removes a function expression that nothing uses, such as `(() => random);`. A name there is not an error.
+- Bun keeps the statement `random;`, so it is an error.
+- Bun does not check whether anything calls a function or reads a variable. A name there is an error, also where a bundle drops that code.
+- `bun run` and `bun test` remove the code after a `return`, and so does `--minify-syntax`. `bun build`, `Bun.build` and `Bun.Transpiler` keep that code without the option, and the debugger keeps it too. A name there is an error only where Bun keeps the code.
 
-A file can build with one command and fail with another, because `--minify-syntax` removes more code and the debugger removes less. `bun test --coverage`, `bun -p` and `bun repl` keep dead code, so they do not look for the name.
+`bun test --coverage`, `bun -p` and `bun repl` keep dead code, so they do not look for the name.
 
 ## Serializability
 

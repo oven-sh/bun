@@ -10,7 +10,7 @@ use bun_collections::VecExt as _;
 use crate::lexer as js_lexer;
 use crate::parser::{MacroRefs, RuntimeFeatures};
 
-/// Bun removes a macro import and replaces only its calls, so a name of it that `ast` still holds is an error. `_parse` halts on it.
+/// Bun removes a macro import and replaces only its calls, so a name of it that the AST of the file still holds is an error. `_parse` halts on it.
 #[cold]
 #[inline(never)]
 pub(crate) fn reject_macro_value_uses(
@@ -20,7 +20,7 @@ pub(crate) fn reject_macro_value_uses(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
 ) {
-    // The visit pass counts no use in code that it knows is dead, and a replaced call un-counts its target.
+    // The count is never zero for a name that runs: the visit pass counts each use outside of code that it knows is dead.
     let has_use = |r#ref: Ref| ast.symbols[r#ref.inner_index() as usize].use_count_estimate != 0;
     if !refs.keys().iter().any(|r#ref| has_use(*r#ref)) {
         return;
@@ -37,6 +37,10 @@ pub(crate) fn reject_macro_value_uses(
     }
     // With dead-code elimination off (`bun repl`, `bun -p`, `bun test --coverage`) the count has the code that never runs too.
     if !features.dead_code_elimination {
+        return;
+    }
+    // A graph scan reads only the imports of the file. The command that runs or prints the file has the error.
+    if features.graph_scan {
         return;
     }
     let (located, is_cut) = locate_macro_refs(ast.parts.as_slice(), refs);
@@ -67,16 +71,15 @@ pub(crate) fn reject_macro_value_uses(
     }
     reporter.locate_imports();
     for at in order {
-        let found = located[at as usize];
-        reporter.report(found.r#ref, Some(found));
+        reporter.report(located[at as usize]);
     }
-    // A walk that stopped at `MAX_DEPTH` did not see every name, so there the count decides for a binding with no error.
+    // The walk did not see every name. The printer stops on the same nesting.
     if is_cut {
-        for r#ref in refs.keys() {
-            if has_use(*r#ref) {
-                reporter.report(*r#ref, None);
-            }
-        }
+        log.add_error(
+            Some(source),
+            Loc::EMPTY,
+            b"Maximum call stack size exceeded",
+        );
     }
 }
 
@@ -163,14 +166,10 @@ impl<'r> Reporter<'r, '_> {
         }
     }
 
-    /// An error at the identifier `at`, or at the import for a binding that has no error yet. The first error of a binding has the notes.
-    fn report(&mut self, r#ref: Ref, at: Option<MacroRefUse>) {
-        let index = self.refs.get_index(&r#ref).expect("a key of the map");
-        let is_first = !self.bindings[index].has_error;
-        if at.is_none() && !is_first {
-            return;
-        }
-        self.bindings[index].has_error = true;
+    /// An error at the identifier. The first error of a binding has the notes.
+    fn report(&mut self, found: MacroRefUse) {
+        let index = self.refs.get_index(&found.r#ref).expect("a key of the map");
+        let is_first = !core::mem::replace(&mut self.bindings[index].has_error, true);
 
         let import = self.import(index);
         let (name, export) = (bstr::BStr::new(import.name), bstr::BStr::new(import.export));
@@ -179,9 +178,13 @@ impl<'r> Reporter<'r, '_> {
             if let Some(note) = self.bindings[index].import_note.take() {
                 notes.push(note);
             }
-            let replaced: &str = match self.macros_run {
-                true => "Bun replaces each direct call of a macro with its result. ",
-                false => "",
+            let (replaced, inline, call): (&str, &str, &str) = match self.macros_run {
+                true => (
+                    "Bun replaces each direct call of a macro with its result. ",
+                    "To inline a value, call a macro that returns it. ",
+                    "To inline a value, call the macro directly. ",
+                ),
+                false => ("", "", ""),
             };
             let mut advice = Vec::<u8>::new();
             let _ = if import.is_remapped {
@@ -189,41 +192,26 @@ impl<'r> Reporter<'r, '_> {
                     &mut advice,
                     "{replaced}To use \"{export}\" of the package at runtime, read it from a namespace import of the package, or remove the macro remap."
                 )
-            } else if at.is_some_and(|it| it.is_jsx_name) {
+            } else if found.is_jsx_name {
                 write!(
                     &mut advice,
-                    "Bun does not run a macro for a JSX element. \"{name}\" is the JSX factory or fragment of this file, so each element names it at runtime. Import the macro under another name, and add a regular import that declares \"{name}\"."
-                )
-            } else if self.macros_run {
-                write!(
-                    &mut advice,
-                    "{replaced}To inline a value, call a macro that returns it. To use \"{name}\" at runtime, add a regular import of it under another name."
+                    "\"{name}\" is the JSX factory or fragment of this file, so this element names it at runtime. {call}To use \"{name}\" at runtime, import the macro under another name, and add a regular import that declares \"{name}\"."
                 )
             } else {
                 write!(
                     &mut advice,
-                    "To use \"{name}\" at runtime, add a regular import of it under another name."
+                    "{replaced}{inline}To use \"{name}\" at runtime, add a regular import of it under another name."
                 )
             };
             notes.push(bun_ast::range_data(None, bun_ast::Range::NONE, advice));
         }
 
-        match at {
-            Some(found) => self.log.add_range_error_fmt_with_notes(
-                Some(self.source),
-                js_lexer::range_of_identifier(self.source, found.loc),
-                notes.into_boxed_slice(),
-                format_args!("\"{name}\" is a macro import and is not defined at runtime"),
-            ),
-            None => self.log.add_range_error_fmt_with_notes(
-                Some(self.source),
-                import.range,
-                notes.into_boxed_slice(),
-                format_args!(
-                    "\"{name}\" is a macro import and is not defined at runtime, but this file uses it outside of a call"
-                ),
-            ),
-        }
+        self.log.add_range_error_fmt_with_notes(
+            Some(self.source),
+            js_lexer::range_of_identifier(self.source, found.loc),
+            notes.into_boxed_slice(),
+            format_args!("\"{name}\" is a macro import and is not defined at runtime"),
+        );
     }
 }
 
@@ -231,9 +219,6 @@ impl<'r> Reporter<'r, '_> {
 pub(crate) fn is_macro_ref(refs: &MacroRefs<'_>, symbols: &[ast::Symbol], r#ref: Ref) -> bool {
     refs.contains_key(&ast::symbol::follow_symbols(symbols, r#ref))
 }
-
-/// Fits the smallest stack this runs on, as `function_identities::MAX_DEPTH` does.
-const MAX_DEPTH: u32 = 512;
 
 /// An identifier that still names a macro import.
 #[derive(Clone, Copy)]
@@ -249,18 +234,17 @@ struct Locator<'r, 'a> {
     found: Vec<MacroRefUse>,
     /// Where the last JSX element starts. The parser puts the factory and the fragment of the element there.
     jsx_start: i32,
-    depth: u32,
+    /// The stack had no room for a part of the AST.
     is_cut: bool,
     stack_check: bun_core::StackCheck,
 }
 
-/// Each identifier that names a key of `refs`, in statement order, and whether nesting deeper than `MAX_DEPTH` hid a part.
+/// Each identifier that names a key of `refs`, in statement order, and whether the stack had no room for a part of the AST.
 fn locate_macro_refs(parts: &[ast::Part], refs: &MacroRefs<'_>) -> (Vec<MacroRefUse>, bool) {
     let mut locator = Locator {
         refs,
         found: Vec::new(),
         jsx_start: i32::MIN,
-        depth: 0,
         is_cut: false,
         stack_check: bun_core::StackCheck::init(),
     };
@@ -272,7 +256,8 @@ fn locate_macro_refs(parts: &[ast::Part], refs: &MacroRefs<'_>) -> (Vec<MacroRef
 
 impl Locator<'_, '_> {
     fn name(&mut self, r#ref: Ref, loc: Loc) {
-        if self.refs.contains_key(&r#ref) {
+        // A name with no place in the source is one that a lowering wrote for a global. Without the import it is that global.
+        if loc.start >= 0 && self.refs.contains_key(&r#ref) {
             self.found.push(MacroRefUse {
                 r#ref,
                 loc,
@@ -281,19 +266,10 @@ impl Locator<'_, '_> {
         }
     }
 
-    /// Every `enter` that says yes is followed by a `leave`.
-    fn enter(&mut self) -> bool {
-        if self.depth >= MAX_DEPTH || !self.stack_check.is_safe_to_recurse() {
-            self.is_cut = true;
-            return false;
-        }
-        self.depth += 1;
-        true
-    }
-
-    #[inline]
-    fn leave(&mut self) {
-        self.depth -= 1;
+    fn has_stack(&mut self) -> bool {
+        let has_stack = self.stack_check.is_safe_to_recurse();
+        self.is_cut |= !has_stack;
+        has_stack
     }
 
     fn optional_expr(&mut self, expr: Option<&Expr>) {
@@ -315,7 +291,7 @@ impl Locator<'_, '_> {
     }
 
     fn binding(&mut self, binding: &ast::Binding) {
-        if !self.enter() {
+        if !self.has_stack() {
             return;
         }
         match &binding.data {
@@ -334,7 +310,6 @@ impl Locator<'_, '_> {
                 }
             }
         }
-        self.leave();
     }
 
     fn args(&mut self, args: &[G::Arg]) {
@@ -367,13 +342,12 @@ impl Locator<'_, '_> {
     }
 
     fn stmt(&mut self, stmt: &Stmt) {
-        if self.enter() {
-            self.stmt_at_depth(stmt);
-            self.leave();
+        if self.has_stack() {
+            self.stmt_inner(stmt);
         }
     }
 
-    fn stmt_at_depth(&mut self, stmt: &Stmt) {
+    fn stmt_inner(&mut self, stmt: &Stmt) {
         // `else if` after `else if` is as deep as it is long.
         let mut stmt = stmt;
         while let StmtData::SIf(s) = &stmt.data {
@@ -476,13 +450,12 @@ impl Locator<'_, '_> {
     }
 
     fn expr(&mut self, expr: &Expr) {
-        if self.enter() {
-            self.expr_at_depth(expr);
-            self.leave();
+        if self.has_stack() {
+            self.expr_inner(expr);
         }
     }
 
-    fn expr_at_depth(&mut self, expr: &Expr) {
+    fn expr_inner(&mut self, expr: &Expr) {
         // `a + b + c + ...` and `a.b().c()...` are as deep as they are long: their links wait here, not on the stack.
         let mut chain: Vec<&Expr> = Vec::new();
         let mut expr = expr;
@@ -521,7 +494,7 @@ impl Locator<'_, '_> {
     fn expr_outside_chain(&mut self, expr: &Expr) {
         match &expr.data {
             Data::EBinary(_) | Data::EDot(_) | Data::EIndex(_) | Data::ECall(_) => {
-                unreachable!("the loop in `expr_at_depth` ends at what is none of these")
+                unreachable!("the loop in `expr_inner` ends at what is none of these")
             }
             Data::EIdentifier(e) => self.name(e.ref_, expr.loc),
             Data::EImportIdentifier(e) => self.name(e.ref_, expr.loc),

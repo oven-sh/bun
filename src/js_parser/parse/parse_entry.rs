@@ -278,6 +278,7 @@ impl<'a> Options<'a> {
                 inlining: f.inlining,
                 inject_jest_globals: f.inject_jest_globals,
                 no_macros: f.no_macros,
+                graph_scan: f.graph_scan,
                 commonjs_named_exports: f.commonjs_named_exports,
                 minify_syntax: f.minify_syntax,
                 minify_identifiers: f.minify_identifiers,

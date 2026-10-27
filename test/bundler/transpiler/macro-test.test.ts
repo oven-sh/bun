@@ -819,15 +819,13 @@ describe("macro VM env loader", () => {
 // is transpiled.
 describe("a macro import that is used outside of a call", () => {
   const notDefined = (name: string) => `"${name}" is a macro import and is not defined at runtime`;
-  // Where the walk that finds the identifier stops at its depth limit: the error is at the import.
-  const notDefinedInFile = (name: string) => `${notDefined(name)}, but this file uses it outside of a call`;
   const importNote = (name: string) => `Bun removes this macro import of "${name}" from "./m.ts"`;
   const replaced = `Bun replaces each direct call of a macro with its result.`;
   const runtimeAdvice = (name: string) => `To use "${name}" at runtime, add a regular import of it under another name.`;
   const advice = (name: string) =>
     `${replaced} To inline a value, call a macro that returns it. ${runtimeAdvice(name)}`;
   const jsxAdvice = (name: string) =>
-    `Bun does not run a macro for a JSX element. "${name}" is the JSX factory or fragment of this file, so each element names it at runtime. Import the macro under another name, and add a regular import that declares "${name}".`;
+    `"${name}" is the JSX factory or fragment of this file, so this element names it at runtime. To inline a value, call the macro directly. To use "${name}" at runtime, import the macro under another name, and add a regular import that declares "${name}".`;
 
   const macroFile = [
     `export function m(x?: unknown) { return 42; }`,
@@ -896,7 +894,6 @@ describe("a macro import that is used outside of a call", () => {
       "jsx-child.jsx": `console.log(<div>{USE}</div>);`,
       // As deep to the left as it is long.
       "long-chain.js": `export const sum = USE${Buffer.alloc(2 * 5_000, "+x").toString()}; var x = 1;`,
-      // Inside the depth limit of the walk that finds the identifier. `deep.js` below is outside of it.
       "nested.js": `console.log(${Buffer.alloc(400, "[").toString()}USE${Buffer.alloc(400, "]").toString()});`,
     },
     "functions and classes": {
@@ -1028,10 +1025,11 @@ describe("a macro import that is used outside of a call", () => {
       notDefined("fn"),
       notDefined("ns"),
     ],
-    // The walk that finds the identifier stops at `MAX_DEPTH`. There the count of uses decides.
-    "deep.js": [
-      `${named} console.log(${Buffer.alloc(600, "[").toString()}m${Buffer.alloc(600, "]").toString()});`,
-      notDefinedInFile("m"),
+    // The count of uses does not say which name is live. A name in dead code that the output keeps is an error where the
+    // visit pass also counted a use that it then removed.
+    "dead-beside-removed.ts": [
+      `${named} if (false) { switch (m) {} } export function g() { void m; return m(); }`,
+      notDefined("m"),
     ],
     // An error of the visit pass comes alone: the call that failed is not one more reference.
     "failed-call.ts": [
@@ -1084,6 +1082,22 @@ describe("a macro import that is used outside of a call", () => {
       import: [],
       inspect: [notDefined("m"), notDefined("m"), notDefined("m"), notDefined("ns")],
       transform: [notDefined("m"), notDefined("m"), notDefined("m"), notDefined("ns")],
+    },
+    // The minifier inlines `element`, and the visit of the result runs the factory of the element as a macro.
+    "jsx-inlined.jsx": {
+      source: [
+        `/** @jsxRuntime classic */`,
+        `/** @jsx h */`,
+        `import { echo as h } from "./m.ts" with { type: "macro" };`,
+        `function show(visible) { const element = <div id="a" />; return visible && element; }`,
+        `console.log("jsx-inlined", show(true));`,
+      ].join("\n"),
+      stdout: "jsx-inlined div",
+      build: [notDefined("h")],
+      minified: [],
+      import: [],
+      inspect: [notDefined("h")],
+      transform: [notDefined("h")],
     },
   };
   // The minifier removes what follows a `return`, and the name with it.
@@ -1162,7 +1176,8 @@ describe("a macro import that is used outside of a call", () => {
     [`if (typeof boom === "function") { console.log(boom()); } console.log("typeof-guard");`, "typeof-guard"],
     // The operand is a constant for a macro too.
     [`console.log("typeof-argument", echo(typeof m));`, "typeof-argument undefined"],
-    // The visit pass removes an expression that has no effect, and the name of the macro import with it.
+    // The visit pass replaces `void m` with `undefined`, and removes a function expression that nothing uses. The name
+    // of the macro import goes with it.
     [`void m; console.log("void-statement", m());`, "void-statement 42"],
     [
       `function removed() { void m; (() => m.name); return m(); } console.log("removed-expression", removed());`,
@@ -1192,9 +1207,16 @@ describe("a macro import that is used outside of a call", () => {
   ];
   // A file whose only macro import is a namespace, in JavaScript.
   const acceptedStarOnly = `${star}\nconsole.log("star-only", ns.m(), ns?.m(), ns.default());`;
+  // The fold of `typeof` takes its use out of the count, so the dead code that the output keeps is not an error.
+  const acceptedGuardOnly = [
+    `import { m as guarded } from "./m.ts" with { type: "macro" };`,
+    `if (typeof guarded === "function") { switch ((guarded as any).kind) { default: console.log("never"); } }`,
+    `console.log("guard-only");`,
+  ].join("\n");
   const acceptedStdout = accepted.map(([, stdout]) => stdout).filter(line => line !== "");
   const acceptedSources: [string, string][] = [
     ["accepted.ts", accepted.map(([statement]) => statement).join("\n")],
+    ["guard-only.ts", acceptedGuardOnly],
     ["star-only.js", acceptedStarOnly],
   ];
 
@@ -1271,6 +1293,11 @@ describe("a macro import that is used outside of a call", () => {
       .filter(line => !line.startsWith("[macro]"));
     return { lines, stderr, exitCode };
   }
+  // Each error that the command line printed, as "<message> at <file>:<line>:<column>".
+  const errorsIn = (stderr: string) =>
+    [...stderr.matchAll(/^error: (.*)\n +at .*[\\/]([^\\/\n]+)$/gm)].map(
+      ([, message, where]) => `${message} at ${where}`,
+    );
   // The errors of each file of each directory, and what the files printed.
   async function transpile(directories: Record<string, Sources>, ...args: string[]) {
     using dir = tempDir("macro-value-use", fixture(directories));
@@ -1368,8 +1395,8 @@ describe("a macro import that is used outside of a call", () => {
     const [args, runs] = ways[way];
     const { errors, printed, stderr, exitCode } = await transpile({ accepted: acceptedSources }, ...args);
     expect({ errors: errors.accepted, printed, stderr }).toEqual({
-      errors: { "accepted.ts": [], "star-only.js": [] },
-      printed: runs ? [...acceptedStdout, "star-only 42 42 7"] : [],
+      errors: { "accepted.ts": [], "guard-only.ts": [], "star-only.js": [] },
+      printed: runs ? [...acceptedStdout, "guard-only", "star-only 42 42 7"] : [],
       stderr: "",
     });
     expect(exitCode).toBe(0);
@@ -1529,7 +1556,7 @@ describe("a macro import that is used outside of a call", () => {
   });
 
   // The React Compiler writes the body of a component again. A name that it drops is not in the output. A name that
-  // it writes is not one of the JSX lowering.
+  // it writes is not one of the JSX lowering. For a server it also drops the handlers and the ref of an element.
   test.concurrent("with the React Compiler, only a name that the output keeps is an error", async () => {
     const component = (...body: string[]) =>
       [
@@ -1548,6 +1575,7 @@ describe("a macro import that is used outside of a call", () => {
         `  for (const k in m) keys.push(k);`,
         `  return <div>{keys}{props.a}</div>;`,
       ),
+      "handler.jsx": component(`  return <div onClick={m} ref={m}>{m()}{props.a}</div>;`),
       "node_modules/react/package.json": JSON.stringify({
         name: "react",
         version: "0.0.0",
@@ -1561,15 +1589,44 @@ describe("a macro import that is used outside of a call", () => {
       "node_modules/react/jsx.js": `export function jsxDEV(type, props) { return { type, props }; }\nexport const jsx = jsxDEV, jsxs = jsxDEV;\n`,
       "node_modules/react/compiler.js": `export function c(size) { return new Array(size).fill(Symbol.for("react.memo_cache_sentinel")); }\n`,
     });
-    const build = (file: string) =>
-      run(String(dir), "build", "--react-compiler", "--target=bun", `./${file}`, "--outdir", "out");
-    const [dropped, forIn] = await Promise.all([build("dropped.jsx"), build("for-in.jsx")]);
-    expect({ stderr: dropped.stderr, exitCode: dropped.exitCode }).toEqual({ stderr: "", exitCode: 0 });
-    const ran = await run(String(dir), "out/dropped.js");
-    expect(ran).toEqual({ lines: ["[ 42, 1 ]"], stderr: "", exitCode: 0 });
-    expect(forIn.stderr).toContain(`error: ${notDefined("m")}`);
-    expect(forIn.stderr).toContain(`note: ${advice("m")}`);
-    expect(forIn.exitCode).toBe(1);
+    const files = ["dropped.jsx", "for-in.jsx", "handler.jsx"];
+    const built = await Promise.all(
+      ["bun", "browser"].flatMap(target =>
+        files.map(async file => {
+          const outdir = `out-${target}`;
+          const build = await run(
+            String(dir),
+            "build",
+            "--react-compiler",
+            `--target=${target}`,
+            `./${file}`,
+            "--outdir",
+            outdir,
+          );
+          const ran =
+            build.exitCode === 0 ? (await run(String(dir), `${outdir}/${file.replace(".jsx", ".js")}`)).lines : [];
+          return [
+            `${target} ${file}`,
+            { errors: errorsIn(build.stderr), ran, advice: build.stderr.includes(`note: ${advice("m")}`) },
+          ];
+        }),
+      ),
+    );
+    // The compiler gives the name in `for (const k in m)` the place of the statement.
+    const forIn = { errors: [expect.stringContaining(`${notDefined("m")} at for-in.jsx:4:`)], ran: [], advice: true };
+    const runs = { errors: [], ran: ["[ 42, 1 ]"], advice: false };
+    expect(Object.fromEntries(built)).toEqual({
+      "bun dropped.jsx": runs,
+      "bun for-in.jsx": forIn,
+      "bun handler.jsx": runs,
+      "browser dropped.jsx": runs,
+      "browser for-in.jsx": forIn,
+      "browser handler.jsx": {
+        errors: [`${notDefined("m")} at handler.jsx:3:24`, `${notDefined("m")} at handler.jsx:3:32`],
+        ran: [],
+        advice: true,
+      },
+    });
   });
 
   // A macro that returns an Error leaves its call in place, and that call was visited as a call. The minifier then
@@ -1626,11 +1683,6 @@ describe("a macro import that is used outside of a call", () => {
     const builds = await Promise.all(
       files.map(file => run(String(dir), "build", "--format=internal_bake_dev", "--target=browser", `./${file}`)),
     );
-    // Each error as "<message> at <file>:<line>:<column>".
-    const errorsIn = (stderr: string) =>
-      [...stderr.matchAll(/^error: (.*)\n +at .*[\\/]([^\\/\n]+)$/gm)].map(
-        ([, message, where]) => `${message} at ${where}`,
-      );
     expect(Object.fromEntries(files.map((file, i) => [file, errorsIn(builds[i].stderr)]))).toEqual({
       "alias.js": [`${notDefined("m")} at alias.js:2:11`],
       "exports.js": [
@@ -1734,6 +1786,17 @@ describe("a macro import that is used outside of a call", () => {
     }).toEqual({ escaped: expected, defined: expected });
   });
 
+  // The metadata of a decorated member names the global `String` for the type `string`. Bun removes the macro import
+  // of that name, so the name in the output is the global.
+  test("a name that a lowering writes for a global is not a use of a macro import of that name", () => {
+    const transpiler = new Bun.Transpiler({
+      loader: "ts",
+      tsconfig: { compilerOptions: { experimentalDecorators: true, emitDecoratorMetadata: true } },
+    });
+    const source = `import { m as String } from "./m.ts" with { type: "macro" };\n${dec}\nclass A { @dec() x: string = "s"; }\nconsole.log(A);\n`;
+    expect(transpiler.transformSync(source)).toContain(`("design:type", String)`);
+  });
+
   // A decorator is in the call that applies it, which the walk meets after the class.
   test("the errors are in the order of the source, with the notes on the first", () => {
     const source = `${named}\n${dec}\n@dec(m) class A { static x = m; }\nconsole.log(A);\n`;
@@ -1759,14 +1822,15 @@ describe("a macro import that is used outside of a call", () => {
     const count = 10_000;
     const names = Array.from({ length: count }, (_, i) => `b${i}`);
     const imports = names.map(name => `import { m as ${name} } from "./m.ts" with { type: "macro" };\n`);
-    const errors = errorsOfTransform(imports.join("") + names.join(";\n") + ";\n");
-    // Import N is on line N, and its reference is `count` lines after it.
+    // The references are in the reverse order of the imports: the log finds the line of each import in a pass of its own.
+    const errors = errorsOfTransform(imports.join("") + names.toReversed().join(";\n") + ";\n");
+    // Error N is on line `count + N + 1`. It names the import on line `count - N`.
     const at = (n: number) => [
-      notDefined(`b${n}`),
+      notDefined(`b${count - 1 - n}`),
       count + n + 1,
       1,
-      [importNote(`b${n}`), n + 1, 10],
-      [advice(`b${n}`), null, null],
+      [importNote(`b${count - 1 - n}`), count - n, 10],
+      [advice(`b${count - 1 - n}`), null, null],
     ];
     expect([errors[0], errors[1], errors.at(-1)]).toEqual([at(0), at(1), at(errors.length - 1)]);
   });

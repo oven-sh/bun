@@ -81,6 +81,8 @@
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSGenericTypedArrayViewInlines.h>
 #include <JavaScriptCore/JSObjectInlines.h>
+#include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/ObjectInitializationScope.h>
 
 extern "C" bool Bun__Node__ZeroFillBuffers;
 
@@ -127,6 +129,7 @@ JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_lastIndexOf);
 JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_swap16);
 JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_swap32);
 JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_swap64);
+JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_toJSON);
 JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_toString);
 JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_slice);
 JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_write);
@@ -2860,6 +2863,54 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_swap64, (JSGlobalObject * lex
     return IDLOperation<JSArrayBufferView>::call<jsBufferPrototypeFunction_swap64Body>(*lexicalGlobalObject, *callFrame, "swap64");
 }
 
+// https://github.com/nodejs/node/blob/v26.3.0/lib/buffer.js#L1241-L1250
+JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_toJSON, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Node reads the length with the %TypedArray%.prototype.length getter, which throws for any other receiver.
+    auto* view = dynamicDowncast<JSC::JSArrayBufferView>(callFrame->thisValue());
+    if (!view || view->type() == JSC::DataViewType) [[unlikely]]
+        return throwVMTypeError(lexicalGlobalObject, scope, "Receiver should be a typed array view"_s);
+
+    // 0 for a detached or out-of-bounds view.
+    const size_t length = view->length();
+    JSArray* data = nullptr;
+    // The array constructors take an unsigned length, and a Buffer can hold 2^32 bytes.
+    if (length <= MAX_STORAGE_VECTOR_LENGTH) [[likely]] {
+        const unsigned arrayLength = static_cast<unsigned>(length);
+        if (auto* bytes = dynamicDowncast<JSC::JSUint8Array>(view)) [[likely]] {
+            ObjectInitializationScope initializationScope(vm);
+            if ((data = JSArray::tryCreateUninitializedRestricted(initializationScope, lexicalGlobalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithInt32), arrayLength))) [[likely]] {
+                const uint8_t* vector = bytes->typedVector();
+                // The overload that takes the indexing type is inlined. The one that reads it is a call for each byte.
+                const IndexingType indexingType = data->indexingType();
+                for (unsigned i = 0; i < arrayLength; ++i)
+                    data->initializeIndex(initializationScope, i, jsNumber(vector[i]), indexingType);
+            }
+        } else if ((data = JSArray::tryCreate(vm, lexicalGlobalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithUndecided), arrayLength))) [[likely]] {
+            // A BigInt64Array element allocates, so this array cannot start uninitialized.
+            for (unsigned i = 0; i < arrayLength; ++i) {
+                JSValue element = view->getIndex(lexicalGlobalObject, i);
+                RETURN_IF_EXCEPTION(scope, {});
+                data->putDirectIndex(lexicalGlobalObject, i, element);
+                RETURN_IF_EXCEPTION(scope, {});
+            }
+        }
+    }
+    if (!data) [[unlikely]] {
+        throwOutOfMemoryError(lexicalGlobalObject, scope);
+        return {};
+    }
+
+    // The structure is `{ type, data }`.
+    JSObject* result = constructEmptyObject(vm, uncheckedDowncast<Bun::GlobalScope>(lexicalGlobalObject)->bufferToJSONObjectStructure());
+    result->putDirectOffset(vm, 0, Bun::commonStrings(vm).BufferString());
+    result->putDirectOffset(vm, 1, data);
+    return JSValue::encode(result);
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_slice, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSArrayBufferView>::call<jsBufferPrototypeFunction_sliceBody>(*lexicalGlobalObject, *callFrame, "slice");
@@ -3592,7 +3643,7 @@ static const HashTableValue JSBufferPrototypeTableValues[]
           { "swap16"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferPrototypeFunction_swap16, 0 } },
           { "swap32"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferPrototypeFunction_swap32, 0 } },
           { "swap64"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferPrototypeFunction_swap64, 0 } },
-          { "toJSON"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, jsBufferPrototypeToJSONCodeGenerator, 1 } },
+          { "toJSON"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferPrototypeFunction_toJSON, 0 } },
           { "toLocaleString"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferPrototypeFunction_toString, 4 } },
           { "toString"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferPrototypeFunction_toString, 4 } },
           { "ucs2Slice"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsBufferPrototypeFunction_utf16leSlice, 2 } },

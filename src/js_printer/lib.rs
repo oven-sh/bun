@@ -3055,12 +3055,11 @@ pub(crate) mod __gated_printer {
         }
 
         /// Closes a `__toESM(` call: `, 1` (`isNodeMode`) for an ES module by
-        /// type, then `)`. Not for a sqlite module: its `default` is the
-        /// database, and node mode would bind the namespace instead.
+        /// type, then `)`.
         fn print_to_esm_suffix(&mut self, record: &ImportRecord) {
-            if self.options.input_module_type == bundle_opts::ModuleType::Esm
-                && !record.loader.is_some_and(bun_ast::Loader::is_sqlite)
-            {
+            let node_mode = self.options.input_module_type == bundle_opts::ModuleType::Esm
+                && !record.loader.is_some_and(bun_ast::Loader::is_sqlite);
+            if node_mode {
                 self.print(b",");
                 self.print_space();
                 self.print(b"1");

@@ -1091,18 +1091,24 @@ describe("package.json exports targets nested too deeply", () => {
       "package.json": JSON.stringify({ name: "host" }),
       "node_modules/test-pkg/package.json": `{"name":"test-pkg","exports":{".":${target}}}`,
       "node_modules/test-pkg/t.js": "module.exports = 1;\n",
-      "index.js": `
-        try {
-          require.resolve("test-pkg");
-          console.log("resolved");
-        } catch (e) {
-          console.log("caught " + e.code);
+      "index.mjs": `
+        import { createRequire } from "node:module";
+        const require = createRequire(import.meta.url);
+        const results = [];
+        for (const load of [() => require.resolve("test-pkg"), () => require("test-pkg"), () => import("test-pkg")]) {
+          try {
+            await load();
+            results.push("resolved");
+          } catch (error) {
+            results.push({ name: error.name, code: error.code ?? null, message: error.message });
+          }
         }
+        console.log(JSON.stringify(results));
       `,
     });
 
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "index.js"],
+      cmd: [bunExe(), "index.mjs"],
       env: bunEnv,
       cwd: String(dir),
       stdout: "pipe",
@@ -1110,9 +1116,11 @@ describe("package.json exports targets nested too deeply", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    // Reaching the resolver's nesting guard rejects the exports target.
+    // Node 24.22.1 reports recursion exhaustion separately from malformed package metadata.
     expect({ stdout, stderr, exitCode }).toEqual({
-      stdout: expect.stringMatching(/^(caught ERR_PACKAGE_PATH_NOT_EXPORTED|resolved)\n$/),
+      stdout:
+        JSON.stringify(Array(3).fill({ name: "RangeError", code: null, message: "Maximum call stack size exceeded" })) +
+        "\n",
       stderr: "",
       exitCode: 0,
     });

@@ -1505,7 +1505,7 @@ impl<'a> Visitor<'a> {
             b"This value is nested too deeply",
         );
         Entry {
-            data: EntryData::Invalid(Box::default()),
+            data: EntryData::TooDeep,
         }
     }
 }
@@ -1528,6 +1528,7 @@ impl Entry {
 
 #[derive(Clone)]
 pub enum EntryData {
+    TooDeep,
     InvalidJson,
     /// Invalid target primitive, rendered for Node's error message.
     Invalid(Box<[u8]>),
@@ -1614,6 +1615,7 @@ pub struct Resolution {
 /// Context captured where the failing package key and target are still in scope.
 #[derive(Clone)]
 pub(crate) enum ResolutionDetail {
+    RecursionLimit,
     /// The offending map key and target value. `bare_string_target` is
     /// Node's `relError`: a non-empty target converted to a string not starting with "./"
     /// (which for `exports` appends `; targets must start with "./"`).
@@ -1624,7 +1626,9 @@ pub(crate) enum ResolutionDetail {
     },
     /// The package config shape itself is invalid; `message` is Node's
     /// trailing explanation.
-    ConfigMessage { message: Box<[u8]> },
+    ConfigMessage {
+        message: Box<[u8]>,
+    },
 }
 
 impl Default for Resolution {
@@ -2224,6 +2228,7 @@ impl<'a> ESModule<'a> {
             }
             return Resolution {
                 status: Status::InvalidPackageConfiguration,
+                detail: Some(Box::new(ResolutionDetail::RecursionLimit)),
                 ..Default::default()
             };
         }
@@ -2623,6 +2628,13 @@ impl<'a> ESModule<'a> {
                 }
 
                 return last_exception;
+            }
+            EntryData::TooDeep if self.validate_package_config => {
+                return Resolution {
+                    status: Status::InvalidPackageConfiguration,
+                    detail: Some(Box::new(ResolutionDetail::RecursionLimit)),
+                    ..Default::default()
+                };
             }
             EntryData::Invalid(rendered) => {
                 return Resolution {

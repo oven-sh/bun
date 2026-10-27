@@ -4177,14 +4177,21 @@ impl<'a> Resolver<'a> {
                 )
             }
             Status::InvalidPackageConfiguration => {
-                let message = match esm_resolution.detail.as_deref() {
-                    Some(ResolutionDetail::ConfigMessage { message }) => Some(&**message),
-                    _ => None,
-                };
-                let mut error =
-                    NodeModuleError::invalid_package_config_structure(pkg_json_path, message);
-                error.referrer_in_require = is_imports;
-                error
+                if matches!(
+                    esm_resolution.detail.as_deref(),
+                    Some(ResolutionDetail::RecursionLimit)
+                ) {
+                    NodeModuleError::recursion_limit()
+                } else {
+                    let message = match esm_resolution.detail.as_deref() {
+                        Some(ResolutionDetail::ConfigMessage { message }) => Some(&**message),
+                        _ => None,
+                    };
+                    let mut error =
+                        NodeModuleError::invalid_package_config_structure(pkg_json_path, message);
+                    error.referrer_in_require = is_imports;
+                    error
+                }
             }
             _ => return,
         };

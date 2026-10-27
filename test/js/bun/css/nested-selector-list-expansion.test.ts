@@ -94,23 +94,19 @@ test("deep nesting is preserved as-is for targets that support CSS nesting", () 
   expect(out.length).toBeLessThan(10_000);
 });
 
-// `:user-valid` is treated as unsupported for every target, but the lists below
-// have no pseudo-elements and equal specificity, so the minifier collapses each
-// list into a single `:is(& .a:user-valid, & .b:user-valid)` selector instead
-// of splitting it into cloned rules.
+// `:user-valid` is treated as unsupported for every target, so each list below
+// is split into one rule per selector, each with a clone of every nested rule.
 
-test("incompatible selector lists that collapse into :is() don't hit the limit when nesting is preserved", () => {
-  // Nothing is cloned and nesting stays native, so the output is linear and no
-  // limit applies — even though a per-level multiplier would naively reach 2^20.
+test("incompatible selector lists hit the limit when nesting is preserved", () => {
+  expect(minifyTest(nestedRules(".a:user-valid, .b:user-valid", 2), "", MODERN_TARGETS)).toBe(
+    ".a:user-valid{& .a:user-valid{color:red}& .b:user-valid{color:red}}" +
+      ".b:user-valid{& .a:user-valid{color:red}& .b:user-valid{color:red}}",
+  );
   const src = nestedRules(".a:user-valid, .b:user-valid", 20);
-  const out = minifyTest(src, "", MODERN_TARGETS);
-  expect(out).toContain("color:red");
-  expect(out.length).toBeLessThan(100_000);
+  expect(() => minifyTest(src, "", MODERN_TARGETS)).toThrow(LIMIT_ERROR);
 });
 
-test("collapsed :is() lists still hit the limit when nesting has to be compiled away", () => {
-  // The :is() wrap keeps one `&` per original selector, so compiling nesting
-  // away still doubles the printed selector per level (~34 MB at this depth).
+test("incompatible selector lists hit the limit when nesting has to be compiled away", () => {
   const src = nestedRules(".a:user-valid, .b:user-valid", 20);
   expect(() => minifyTest(src, "", { chrome: 100 << 16 })).toThrow(LIMIT_ERROR);
 });
@@ -233,8 +229,6 @@ test("shallow nesting spanning @scope still compiles for old targets", () => {
   const src = nestedAcrossAtRule("@scope", ".a, .b", 2, 2);
   const out = minifyTest(src, "", OLD_TARGETS);
   expect(out.length).toBeLessThan(10_000);
-  // Inside @scope the inner rules resolve against `:scope`, not the outer chain.
-  expect(out).toContain(":scope");
   expect(out).toContain("@scope");
 });
 

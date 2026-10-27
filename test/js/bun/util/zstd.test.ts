@@ -1456,7 +1456,7 @@ describe("bugs of zstd 1.5.7", () => {
     expect(() => zlib.zstdDecompressSync(frame, { chunkSize: 262086 })).toThrow(
       expect.objectContaining({ code: "ZSTD_error_corruption_detected" }),
     );
-    expect(() => Bun.zstdDecompressSync(frame)).toThrow();
+    expect(() => Bun.zstdDecompressSync(frame)).toThrow(expect.objectContaining({ code: "ERR_ZSTD" }));
   });
 
   // No decoder checked that. A streaming one keeps little more than the window, and gave whatever was there by then.

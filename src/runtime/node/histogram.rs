@@ -41,6 +41,8 @@ pub(crate) struct Histogram {
 /// read in the light of it, so every access is relaxed.
 struct Size(AtomicUsize);
 
+// There is one in each object, and a box would be one more pointer to follow in `record()`.
+#[allow(clippy::large_enum_variant)]
 enum Counts {
     /// Only this object has them, so `record()` takes no lock.
     Own(State),
@@ -849,7 +851,7 @@ impl QrdeJob {
         };
         let value = JSValue::create_empty_object_with_null_prototype(global);
         let put = |key: &'static str, property: JSValue| {
-            value.put(global, &bun_core::String::static_(key), property);
+            value.put(global, bun_core::String::static_(key), property);
         };
         put("probabilities", float64_array(&self.probabilities)?);
         put("quantiles", float64_array(&self.result.quantiles)?);

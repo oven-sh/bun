@@ -2780,6 +2780,7 @@ describe("the options of monitorEventLoopDelay", () => {
   test("samplePerIteration measures how long an iteration is busy, and not how long it waits", async () => {
     using h = monitorEventLoopDelay({ samplePerIteration: true });
     h.enable();
+    // The wait is what is tested: nothing tells JavaScript that the event loop is idle.
     await new Promise(resolve => setTimeout(resolve, 300));
     const idle = h.max;
     await turns(1);

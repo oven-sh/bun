@@ -7,7 +7,8 @@ const rows = {
   "untouched": {},
   // The module refuses a function that is not a host function. No row can show that check alone:
   // JSC gives a JS function a class of its own, and the check of the class refuses it first.
-  "a JS function, before the first load": { before: replaceWithJSFunction },
+  // This row also calls the function that Bun exports in its place from code that the DFG compiled.
+  "a JS function, before the first load": { before: replaceWithJSFunction, optimize: true },
   "deleted, before the first load": { before: `delete ArrayBuffer.isView;` },
   "an accessor, before the first load": {
     before: `Object.defineProperty(ArrayBuffer, "isView", { get() { replacementCalls++; return () => true; } });`,
@@ -33,7 +34,7 @@ if (process.platform !== "freebsd" && process.platform !== "android") {
   };
 }
 
-function exportedIn({ before = "", after = "" }) {
+function exportedIn({ before = "", after = "", optimize = false }) {
   return JSON.parse(
     new ShadowRealm().evaluate(`(() => {
       const original = ArrayBuffer.isView;
@@ -46,20 +47,46 @@ function exportedIn({ before = "", after = "" }) {
       const values = {
         Uint8Array: new Uint8Array(1),
         Buffer: Buffer.alloc(1),
+        Float64Array: new Float64Array(1),
         DataView: new DataView(new RealArrayBuffer(1)),
         ArrayBuffer: new RealArrayBuffer(1),
         object: {},
+        array: [],
         string: "view",
+        number: 1,
+        bigint: 1n,
+        symbol: Symbol(),
+        boolean: true,
+        null: null,
+        undefined: undefined,
       };
+      const names = Object.keys(values);
+      const list = Object.values(values);
+      const first = list.map(value => isArrayBufferView(value));
       // Read without a call of the getter that a row can put there.
       const slot = Object.getOwnPropertyDescriptor(RealArrayBuffer, "isView");
-      return JSON.stringify({
+      const result = {
         name: isArrayBufferView.name,
-        views: Object.keys(values).filter(name => isArrayBufferView(values[name])),
+        views: names.filter((name, i) => first[i]),
         replacementCalls,
         isReplacement: !!slot && "value" in slot && slot.value !== original && isArrayBufferView === slot.value,
         isOriginal: isArrayBufferView === original,
-      });
+      };
+      if (${optimize}) {
+        const { numberOfDFGCompiles, noInline } = load("bun:jsc");
+        const one = value => isArrayBufferView(value);
+        const none = () => isArrayBufferView();
+        noInline(one);
+        noInline(none);
+        result.mismatches = 0;
+        for (let i = 0; i < 20000; i++) {
+          const j = i % list.length;
+          if (one(list[j]) !== first[j]) result.mismatches++;
+          if (none() !== false) result.mismatches++;
+        }
+        result.optimized = numberOfDFGCompiles(one) > 0;
+      }
+      return JSON.stringify(result);
     })()`),
   );
 }

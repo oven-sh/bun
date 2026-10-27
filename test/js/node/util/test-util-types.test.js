@@ -378,10 +378,7 @@ test("util/types functions aren't constructors", () => {
 
 // As in Node, isArrayBufferView is ArrayBuffer.isView itself:
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/util/types.js#L67
-//
-// Not concurrent: five debug children that start together take about 2 s each. One at a time, each
-// takes less than 1 s.
-describe("isArrayBufferView", () => {
+describe.concurrent("isArrayBufferView", () => {
   async function run(cmd, env = {}) {
     await using proc = Bun.spawn({
       cmd,
@@ -450,13 +447,14 @@ describe("isArrayBufferView", () => {
   // either Bun saves the original now, or the module loads before the row's code runs and the row
   // no longer reaches Bun's own function.
   test("is never what a script put in place of ArrayBuffer.isView", async () => {
-    const { stdout, stderr, exitCode } = await run([
-      bunExe(),
-      join(import.meta.dir, "test-util-types-isArrayBufferView-fixture.js"),
-    ]);
+    const { stdout, stderr, exitCode } = await run(
+      [bunExe(), join(import.meta.dir, "test-util-types-isArrayBufferView-fixture.js")],
+      // The DFG compiles on the main thread, so the function is compiled when the row counts its compiles.
+      { BUN_JSC_useConcurrentJIT: "0", BUN_JSC_useFTLJIT: "0" },
+    );
     const row = isOriginal => ({
       name: "isView",
-      views: ["Uint8Array", "Buffer", "DataView"],
+      views: ["Uint8Array", "Buffer", "Float64Array", "DataView"],
       replacementCalls: 0,
       isReplacement: false,
       isOriginal,
@@ -464,7 +462,9 @@ describe("isArrayBufferView", () => {
     expect(stderr).toBe("");
     expect(JSON.parse(stdout)).toEqual({
       "untouched": row(true),
-      "a JS function, before the first load": row(false),
+      // The DFG compiles a call of Bun's own function to a type check, as it does for
+      // ArrayBuffer.isView. The optimized calls give the results of the first calls.
+      "a JS function, before the first load": { ...row(false), mismatches: 0, optimized: true },
       "deleted, before the first load": row(false),
       "an accessor, before the first load": row(false),
       "Array.isArray, before the first load": row(false),
@@ -473,73 +473,6 @@ describe("isArrayBufferView", () => {
       "a JS function, after the first load": row(true),
       // bun:ffi needs TinyCC, which these two targets do not have.
       ...(!isFreeBSD && !isAndroid && { "a bun:ffi function named isView, before the first load": row(false) }),
-    });
-    expect(exitCode).toBe(0);
-  });
-
-  // The DFG compiles a call of the export to a type check. This holds for ArrayBuffer.isView and
-  // for the function that Bun exports in its place.
-  test.each([
-    ["ArrayBuffer.isView", "", true],
-    ["Bun's own function", `ArrayBuffer.isView = function isView() { return true; };`, false],
-  ])("optimized calls of %s give the results of its first calls", async (_, beforeFirstLoad, isOriginal) => {
-    const { stdout, stderr, exitCode } = await run(
-      [
-        bunExe(),
-        "-e",
-        `
-        const original = ArrayBuffer.isView;
-        ${beforeFirstLoad}
-        const { isArrayBufferView } = require("node:util/types");
-        const { numberOfDFGCompiles, noInline } = require("bun:jsc");
-        const values = {
-          Uint8Array: new Uint8Array(1),
-          Buffer: Buffer.alloc(1),
-          Float64Array: new Float64Array(1),
-          DataView: new DataView(new ArrayBuffer(1)),
-          ArrayBuffer: new ArrayBuffer(1),
-          object: {},
-          array: [],
-          string: "view",
-          number: 1,
-          bigint: 1n,
-          symbol: Symbol(),
-          boolean: true,
-          null: null,
-          undefined: undefined,
-        };
-        const names = Object.keys(values);
-        const list = Object.values(values);
-        const first = list.map(value => isArrayBufferView(value));
-        function one(value) { return isArrayBufferView(value); }
-        function none() { return isArrayBufferView(); }
-        noInline(one);
-        noInline(none);
-        let mismatches = 0;
-        for (let i = 0; i < 20000; i++) {
-          const j = i % list.length;
-          if (one(list[j]) !== first[j]) mismatches++;
-          if (none() !== false) mismatches++;
-        }
-        console.log(JSON.stringify({
-          name: isArrayBufferView.name,
-          isOriginal: isArrayBufferView === original,
-          views: names.filter((name, i) => first[i]),
-          mismatches,
-          optimized: numberOfDFGCompiles(one) > 0,
-        }));
-        `,
-      ],
-      // The DFG compiles one() on the main thread after a few calls, as in test/js/node/buffer-jit.test.ts.
-      { BUN_JSC_useConcurrentJIT: "0", BUN_JSC_jitPolicyScale: "0.05", BUN_JSC_useFTLJIT: "0" },
-    );
-    expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual({
-      name: "isView",
-      isOriginal,
-      views: ["Uint8Array", "Buffer", "Float64Array", "DataView"],
-      mismatches: 0,
-      optimized: true,
     });
     expect(exitCode).toBe(0);
   });

@@ -5129,12 +5129,7 @@ impl<'a> Resolver<'a> {
         )
     }
 
-    /// Looks `input_path_` up by name: as written, then with each implicit
-    /// extension in `extension_order`, then as a directory index. The first
-    /// name that is a key wins, and the directory is not read.
-    /// `load_from_main_field` and `load_as_index_with_browser_remapping` pass
-    /// the order of the load that follows. The other callers pass the order
-    /// of the import kind.
+    /// Matches by name in `extension_order`. The first key wins, and the directory is not read.
     pub(crate) fn check_browser_map<const KIND: BrowserMapPathKind>(
         &mut self,
         dir_info: &DirInfo::DirInfo,

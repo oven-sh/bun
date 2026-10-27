@@ -576,6 +576,49 @@ describe("@types/bun integration test", () => {
     expect((await claude.text()).length).toBeGreaterThan(0);
   });
 
+  // The rule pages are generated and embedded in bun for `bun lint --explain` (#46989).
+  test("packed bun-types ships the docs without the generated lint rule pages", async () => {
+    const docsDir = join(BASE_FIXTURE_DIR, "node_modules", "bun-types", "docs");
+    const rulePages = await Array.fromAsync(new Bun.Glob("lint/rules/*/**").scan({ cwd: docsDir }));
+    expect(rulePages).toEqual([]);
+
+    expect(existsSync(join(docsDir, "lint", "rules", "index.mdx"))).toBe(true);
+  });
+
+  // A link to a copied section (`/lint`, `/format`, ...) is rewritten to `/docs/...`, with or
+  // without an anchor. A link to something the package does not carry stays on bun.com. Built
+  // from a docs tree of its own, so an edit to the prose in docs/ cannot break this test.
+  test("the build rewrites the links of the copied docs", async () => {
+    const dir = join(TEMP_DIR, "docs-links");
+    const sourceDocsDir = join(dir, "docs");
+    await makeTree(sourceDocsDir, {
+      "lint/index.mdx": "[all rules](/lint/rules) and [plugins](/lint/plugins#other-languages)\n",
+      "lint/plugins.mdx": "[`bun fmt`](/format) and [`bun/format`](/lint/rules/bun/format)\n",
+      "lint/rules/index.mdx": "[`bunfig.toml`](/lint#configure-rules) [`eqeqeq`](/lint/rules/eslint/eqeqeq)\n",
+      "lint/rules/eslint/eqeqeq.mdx": "generated\n",
+      "lint/rules/bun/format.mdx": "generated\n",
+      "format/index.mdx": "![cat](/images/cat.jpg) [blog](/blog/bun-v1.4) [bun](/)\n",
+      "typescript.mdx": "See [TypeScript 6](/typescript-6) and [docs](https://bun.com/docs/guides/a)\n",
+      "typescript-6.mdx": "Bun $BUN_LATEST_VERSION [TypeScript](/typescript)\n",
+    });
+    await $`cd ${BUN_TYPES_PACKAGE_ROOT} && BUN_VERSION=${BUN_VERSION} bun run build ${join(dir, "out")} ${sourceDocsDir}`.quiet();
+
+    const outDocsDir = join(dir, "out", "docs");
+    const outDocs: Record<string, string> = {};
+    for (const file of new Bun.Glob("**").scanSync({ cwd: outDocsDir })) {
+      outDocs[file.replaceAll("\\", "/")] = await Bun.file(join(outDocsDir, file)).text();
+    }
+    expect(outDocs).toEqual({
+      "lint/index.mdx": "[all rules](/docs/lint/rules) and [plugins](/docs/lint/plugins#other-languages)\n",
+      "lint/plugins.mdx": "[`bun fmt`](/docs/format) and [`bun/format`](https://bun.com/docs/lint/rules/bun/format)\n",
+      "lint/rules/index.mdx":
+        "[`bunfig.toml`](/docs/lint#configure-rules) [`eqeqeq`](https://bun.com/docs/lint/rules/eslint/eqeqeq)\n",
+      "format/index.mdx": "![cat](https://bun.com/images/cat.jpg) [blog](https://bun.com/blog/bun-v1.4) [bun](/)\n",
+      "typescript.mdx": "See [TypeScript 6](/docs/typescript-6) and [docs](https://bun.com/guides/a)\n",
+      "typescript-6.mdx": `Bun ${BUN_VERSION} [TypeScript](/docs/typescript)\n`,
+    });
+  });
+
   describe("basic type checks", () => {
     typeTest("checks without lib.dom.d.ts", {
       emptyInterfaces: expectedEmptyInterfacesWhenNoDOM,

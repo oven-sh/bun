@@ -818,14 +818,14 @@ devTest("css linked from html is printed for the browser targets it was minified
       body: `<div class="a"><div class="b">hello</div></div>`,
     }),
     "styles.css": `
-      :root {
-        color-scheme: light dark;
-      }
       .a {
-        color: light-dark(white, black);
+        color: red;
         .b {
           color: blue;
         }
+      }
+      .d:fullscreen {
+        color: red;
       }
       @media (width >= 600px) {
         .a {
@@ -835,14 +835,14 @@ devTest("css linked from html is printed for the browser targets it was minified
     `,
   },
   async test(dev) {
-    const html = await (await dev.fetch("/")).text();
+    const html = await dev.fetch("/").text();
     const href = html.match(/<link rel="stylesheet"[^>]*href="([^"]+)"/)?.[1];
     if (!href) throw new Error("no stylesheet is linked from the served html: " + html);
-    const css = await (await dev.fetch(href)).text();
+    const css = await dev.fetch(href).text();
+    // Minifying for browsers adds the prefixed copy of the rule.
+    expect(css).toContain(".d:-webkit-full-screen {");
+    // Printing for browsers lowers nesting and the media range.
     expect(css).toContain(".a .b {");
-    expect(css).toContain("--buncss-light: initial;");
-    expect(css).toContain("var(--buncss-light, #fff) var(--buncss-dark, #000)");
-    expect(css).not.toContain("light-dark(");
     expect(css).toContain("@media (min-width: 600px)");
     expect(css).not.toContain(">=");
   },

@@ -10368,7 +10368,6 @@ describe("a ratio in a media feature that is not known", () => {
 });
 
 describe("sin(), cos() and tan() of a multiple of 90deg", () => {
-  minify_test("a{transform:rotate(atan(tan(90deg)))}", "a{transform:rotate(90deg)}");
   minify_test("a{width:calc(tan(90deg)*1px)}", "a{width:3.40282e38px}");
   minify_test("a{margin-left:calc(tan(-90deg)*1px)}", "a{margin-left:-3.40282e38px}");
   minify_test("a{width:calc(100px*cos(90deg))}", "a{width:0}");

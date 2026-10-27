@@ -161,6 +161,9 @@ pub(crate) struct ParserSnapshot<'a> {
     allow_in: bool,
     allow_private_identifiers: bool,
     has_classic_runtime_warned: bool,
+    has_import_meta: bool,
+    has_with_scope: bool,
+    needs_jsx_import: NeedsJSXType,
     has_non_local_export_declare_inside_namespace: bool,
     should_fold_typescript_constant_expressions: bool,
     fn_or_arrow_data_parse: FnOrArrowDataParse,
@@ -8200,6 +8203,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             allow_in: self.allow_in,
             allow_private_identifiers: self.allow_private_identifiers,
             has_classic_runtime_warned: self.has_classic_runtime_warned,
+            has_import_meta: self.has_import_meta,
+            has_with_scope: self.has_with_scope,
+            needs_jsx_import: self.needs_jsx_import,
             has_non_local_export_declare_inside_namespace: self
                 .has_non_local_export_declare_inside_namespace,
             should_fold_typescript_constant_expressions: self
@@ -8234,6 +8240,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.allow_in = snapshot.allow_in;
         self.allow_private_identifiers = snapshot.allow_private_identifiers;
         self.has_classic_runtime_warned = snapshot.has_classic_runtime_warned;
+        self.has_import_meta = snapshot.has_import_meta;
+        self.has_with_scope = snapshot.has_with_scope;
+        self.needs_jsx_import = snapshot.needs_jsx_import;
         self.has_non_local_export_declare_inside_namespace =
             snapshot.has_non_local_export_declare_inside_namespace;
         self.should_fold_typescript_constant_expressions =

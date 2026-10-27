@@ -1635,9 +1635,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(is_arrow_fn)
     }
 
-    // Rare, and the parser snapshot is large: keep it out of the frame of `parse_paren_expr`.
-    #[cold]
-    #[inline(never)]
+    // A function of its own for the debug check above. A frame of its own would make chains of attempts nest less deep.
+    #[inline(always)]
     fn attempt_arrow_fn_before_colon(
         &mut self,
         arrow_data: &FnOrArrowDataParse,

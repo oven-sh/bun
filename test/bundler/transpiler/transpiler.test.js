@@ -557,6 +557,23 @@ describe("Bun.Transpiler", () => {
       expect(exitCode).toBe(0);
     });
 
+    it("a discarded arrow function attempt leaves no JSX import behind", () => {
+      const scanner = new Bun.Transpiler({ loader: "tsx" });
+      // In the attempt for "async (h) : R =>", "/x? class { p = /" is a regular expression and
+      // "[<div/>]" is JSX. The real parse reads "/.y + [<div/>] /g" as a regular expression.
+      expect(
+        scanner.scanImports(
+          "x = y ? async (h) : R => await /x? class { p = /.y + [<div/>] /g.test(s) ? (a) : T => d : e } : no;",
+        ),
+      ).toEqual([]);
+      // The same behind a private name. The attempt reads past it, outside of the class.
+      expect(
+        scanner.scanImports(
+          "x = y ? async (h) : R => await /x? class { #q = 1; p = /.y + (#q in o) + [<div/>] /g.test(s) ? (a) : T => d : e } : no;",
+        ),
+      ).toEqual([]);
+    });
+
     it("type-only import syntax", () => {
       const exp = ts.expectPrinted_;
       const errStartsWith = (code, prefix) => {

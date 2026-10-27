@@ -6,6 +6,7 @@ use std::io::Write as _;
 
 use bun_alloc::Arena as Bump;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, Log, Source};
+use bun_collections::index_sort;
 use bun_core::strings;
 use bun_js_parser as js_parser;
 
@@ -46,6 +47,8 @@ fn write_template_chars(js: &mut Vec<u8>, text: &[u8]) {
 }
 
 /// Returns the module `export default <CSSStyleSheet of the text>`. The text is final before the bundler resolves anything: a `url()` to a file is an asset import, and `@import` is dropped.
+#[cold]
+#[inline(never)]
 pub(crate) fn parse(
     log: &mut Log,
     topts: &options::BundleOptions<'_>,
@@ -259,7 +262,7 @@ pub(crate) fn check_imports(this: &mut BundleV2<'_>) -> Result<(), AnyError> {
     }
 
     let mut typed_imports = core::mem::take(&mut this.graph.css_module_script_imports);
-    typed_imports.sort_unstable();
+    index_sort::sort_slice_by(&mut typed_imports, |a, b| a.cmp(b));
     let is_typed_import = |importer: usize, record: usize| {
         typed_imports
             .binary_search(&(importer as IndexInt, record as u32))
@@ -270,6 +273,7 @@ pub(crate) fn check_imports(this: &mut BundleV2<'_>) -> Result<(), AnyError> {
     let all_import_records = ast_slice.split_mut().import_records;
     let loaders = this.graph.input_files.items_loader();
     let sources = this.graph.input_files.items_source();
+    let log = this.transpiler.log_mut();
 
     let mut has_error = false;
     // The files that one import uses as a CSS module script and another as a stylesheet.
@@ -283,7 +287,7 @@ pub(crate) fn check_imports(this: &mut BundleV2<'_>) -> Result<(), AnyError> {
                     && !record.flags.contains(ImportRecordFlags::WAS_UNRESOLVED)
                 {
                     has_error = true;
-                    this.transpiler.log_mut().add_range_error_fmt(
+                    log.add_range_error_fmt(
                         Some(&sources[importer]),
                         record.range,
                         format_args!(
@@ -298,33 +302,41 @@ pub(crate) fn check_imports(this: &mut BundleV2<'_>) -> Result<(), AnyError> {
                 record.kind = ImportKind::Stmt;
             }
             let file = record.source_index.get();
-            let typed = is_typed_import(importer, i);
-            if typed
-                && record
-                    .flags
-                    .contains(ImportRecordFlags::WAS_ORIGINALLY_BARE_IMPORT)
-            {
-                this.transpiler.log_mut().add_range_warning_fmt(
-                    Some(&sources[importer]),
-                    record.range,
-                    format_args!(
-                        "This import does nothing: it makes a CSSStyleSheet that no code can adopt. Remove {{ type: \"css\" }} to add \"{}\" to the page.",
-                        bstr::BStr::new(sources[file as usize].path.pretty),
-                    ),
-                );
+            if loaders[file as usize] == Loader::CssModuleScript && !is_typed_import(importer, i) {
+                conflicts.push(file);
             }
-            match loaders[file as usize] {
-                Loader::CssModuleScript if !typed => conflicts.push(file),
-                Loader::Css if typed => conflicts.push(file),
-                _ => {}
-            }
+        }
+    }
+    for &(importer, i) in &typed_imports {
+        let record = &all_import_records[importer as usize].as_slice()[i as usize];
+        if !record.source_index.is_valid() {
+            continue;
+        }
+        let file = record.source_index.get();
+        if loaders[file as usize] == Loader::Css {
+            conflicts.push(file);
+        }
+        if record
+            .flags
+            .contains(ImportRecordFlags::WAS_ORIGINALLY_BARE_IMPORT)
+        {
+            log.add_range_warning_fmt(
+                Some(&sources[importer as usize]),
+                record.range,
+                format_args!(
+                    "This import does nothing: it makes a CSSStyleSheet that no code can adopt. Remove {{ type: \"css\" }} to add \"{}\" to the page.",
+                    bstr::BStr::new(sources[file as usize].path.pretty),
+                ),
+            );
         }
     }
 
     // One error for each file at its first typed import, in an order that does not depend on which import the scan resolved first.
-    conflicts.sort_unstable();
+    index_sort::sort_slice_by(&mut conflicts, |a, b| {
+        let path = |file: &IndexInt| sources[*file as usize].path.text;
+        path(a).cmp(path(b)).then(a.cmp(b))
+    });
     conflicts.dedup();
-    conflicts.sort_unstable_by_key(|file| sources[*file as usize].path.text);
     for &file in &conflicts {
         // (not typed, path of the importer, offset in the importer, importer, import record)
         let mut uses = Vec::<(bool, &[u8], i32, usize, usize)>::new();
@@ -341,7 +353,7 @@ pub(crate) fn check_imports(this: &mut BundleV2<'_>) -> Result<(), AnyError> {
                 }
             }
         }
-        uses.sort_unstable();
+        index_sort::sort_slice_by(&mut uses, |a, b| a.cmp(b));
         let Some((&(_, _, _, importer, i), others)) = uses.split_first() else {
             continue;
         };
@@ -363,7 +375,7 @@ pub(crate) fn check_imports(this: &mut BundleV2<'_>) -> Result<(), AnyError> {
             })
             .collect();
         has_error = true;
-        this.transpiler.log_mut().add_range_error_fmt_with_notes(
+        log.add_range_error_fmt_with_notes(
             Some(&sources[importer]),
             all_import_records[importer].as_slice()[i].range,
             notes.into_boxed_slice(),

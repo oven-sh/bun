@@ -495,6 +495,11 @@ bun_simdutf_sys = { path = "src/simdutf_sys" }
 bun_which = { path = "src/which" }
 bun_transpiler = { path = "src/transpiler" }
 
+# At opt-level 0 a codec is slow enough for tests to time out. The C library that this replaces was optimized in debug
+# builds too.
+[profile.dev.package.bun_zstd]
+opt-level = 3
+
 [profile.release.package.bun_react_compiler]
 opt-level = "s"
 

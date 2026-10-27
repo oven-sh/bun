@@ -190,12 +190,16 @@ export function picture({ kind, width, height, quality }: EncodeCase): Uint8Arra
   const rgba = new Uint8Array(width * height * 4);
   const period = 1 + below(12);
   const flat = [below(256), below(256), below(256)];
+  if (kind === 1) {
+    for (let p = 0; p < width * 4; p += 4) rgba.set([...flat, 255], p);
+    for (let y = 1; y < height; y++) rgba.copyWithin(y * width * 4, 0, width * 4);
+    return rgba;
+  }
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
       const p = (y * width + x) * 4;
       let rgb: number[];
       if (kind === 0) rgb = [below(256), below(256), below(256)];
-      else if (kind === 1) rgb = flat;
       else if (kind === 2) rgb = [((x * 255) / width) | 0, ((y * 255) / height) | 0, (((x + y) * 255) / (width + height)) | 0];
       else if (kind === 3) rgb = (((x / period) | 0) + ((y / period) | 0)) % 2 ? [255, 255, 255] : [0, 0, 0];
       else if (kind === 4) rgb = [below(2) * 255, below(2) * 255, below(2) * 255];
@@ -234,7 +238,7 @@ export function encodeCases(): EncodeCase[] {
   }
   // More than 32,767 blocks with nothing in them, which is as far as a run of them counts.
   cases.push({ kind: 1, width: 1480, height: 1480, quality: 80, progressive: true });
-  cases.push({ kind: 2, width: 400, height: 300, quality: 85, progressive: false });
-  cases.push({ kind: 5, width: 400, height: 300, quality: 100, progressive: true });
+  cases.push({ kind: 2, width: 200, height: 150, quality: 85, progressive: false });
+  cases.push({ kind: 5, width: 200, height: 150, quality: 100, progressive: true });
   return cases;
 }

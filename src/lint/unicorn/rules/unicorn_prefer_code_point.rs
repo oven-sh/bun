@@ -40,7 +40,7 @@ impl Rule for PreferCodePoint {
     }
 }
 
-/// It is what a call of `charCodeAt` calls, or an argument of one.
+/// True if it's the callee or an argument of a `charCodeAt` call.
 fn is_in_call_of_char_code_at(member_expr: Expr) -> bool {
     let Some(call_expr) = member_expr.parent().as_expr().and_then(Expr::as_call) else {
         return false;

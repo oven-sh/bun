@@ -1,7 +1,7 @@
-//! `ts-api-utils`, as far as it is about types, symbols and compiler options. The names are those
-//! of the package in snake_case.
+//! The parts of `ts-api-utils` that deal with types, symbols and compiler options. The names are the package's in
+//! snake_case.
 //!
-//! What takes a `typeChecker` there does not here: a handle knows its checker.
+//! Functions that take a `typeChecker` there don't here, because a handle knows its checker.
 
 use super::signature::Signature;
 use super::ty::TypeList;
@@ -13,7 +13,7 @@ use crate::ast::MappedModifier;
 
 // ───────────────────────────── flags ─────────────────────────────
 
-/// `isTypeFlagSet(type, flag)`: of the type itself, not of the constituents of a union. For those,
+/// `isTypeFlagSet(type, flag)`, on the type's own flags, not those of a union's constituents. For those, use
 /// [`utils::is_type_flag_set`](super::utils::is_type_flag_set).
 #[inline]
 pub fn is_type_flag_set(ty: Type, flag: TypeFlags) -> bool {
@@ -28,7 +28,7 @@ pub fn is_object_flag_set(ty: Type, flag: ObjectFlags) -> bool {
 
 // ───────────────────────────── compiler options ─────────────────────────────
 
-/// An option that `isCompilerOptionEnabled` and `isStrictCompilerOptionEnabled` are asked about.
+/// An option that can be passed to `isCompilerOptionEnabled` and `isStrictCompilerOptionEnabled`.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum CompilerOption {
     AllowJs,
@@ -88,8 +88,8 @@ pub fn is_compiler_option_enabled(options: CompilerOptions, option: CompilerOpti
     }
 }
 
-/// `isStrictCompilerOptionEnabled(options, option)`. [`CompilerOptions`] has what `strict` implies
-/// resolved, so this is the same question.
+/// `isStrictCompilerOptionEnabled(options, option)`. [`CompilerOptions`] already has the options `strict` implies
+/// resolved, so this is the same check.
 #[inline]
 pub fn is_strict_compiler_option_enabled(options: CompilerOptions, option: CompilerOption) -> bool {
     is_compiler_option_enabled(options, option)
@@ -108,7 +108,7 @@ macro_rules! flag_guards {
 }
 
 flag_guards! {
-    /// `isIntrinsicAnyType(type)`. The error type is one too.
+    /// `isIntrinsicAnyType(type)`. Also true for the error type.
     is_intrinsic_any_type ANY;
     /// `isIntrinsicBigIntType(type)`
     is_intrinsic_big_int_type BIG_INT;
@@ -134,13 +134,13 @@ flag_guards! {
     is_intrinsic_unknown_type UNKNOWN;
     /// `isIntrinsicVoidType(type)`
     is_intrinsic_void_type VOID;
-    /// `isConditionalType(type)`. Its parts: [`Type::structure`].
+    /// `isConditionalType(type)`. Get its parts from [`Type::structure`].
     is_conditional_type CONDITIONAL;
     /// `isEnumType(type)`
     is_enum_type ENUM;
     /// `isFreshableType(type)`
     is_freshable_type FRESHABLE;
-    /// `isIndexedAccessType(type)`. Its parts: [`Type::structure`].
+    /// `isIndexedAccessType(type)`. Get its parts from [`Type::structure`].
     is_indexed_access_type INDEXED_ACCESS;
     /// `isIndexType(type)`: `keyof T`
     is_index_type INDEX;
@@ -168,7 +168,7 @@ flag_guards! {
     is_big_int_literal_type BIG_INT_LITERAL;
     /// `isBooleanLiteralType(type)`: `true` or `false`
     is_boolean_literal_type BOOLEAN_LITERAL;
-    /// `isLiteralType(type)`: also `true` and `false`, unlike [`Type::is_literal`].
+    /// `isLiteralType(type)`. Includes `true` and `false`, unlike [`Type::is_literal`].
     is_literal_type LITERAL;
     /// `isNumberLiteralType(type)`
     is_number_literal_type NUMBER_LITERAL;
@@ -201,8 +201,8 @@ pub fn is_true_literal_type(ty: Type) -> bool {
 
 // ───────────────────────────── constituents ─────────────────────────────
 
-/// `unionConstituents(type)`, `unionTypeParts(type)`: the constituents of a union, or the type
-/// itself. `never` yields `never`.
+/// `unionConstituents(type)`, `unionTypeParts(type)`: a union's constituents, or the type itself. `never` yields
+/// `never`.
 #[inline]
 pub fn union_constituents<'a>(ty: Type<'a>) -> TypeList<'a> {
     match is_union_type(ty) {
@@ -231,8 +231,8 @@ pub fn type_constituents<'a>(ty: Type<'a>) -> TypeList<'a> {
 
 // ───────────────────────────── getters ─────────────────────────────
 
-/// `getCallSignaturesOfType(type)`: of a union, those of all its constituents. Of an intersection,
-/// those of the one constituent that has any.
+/// `getCallSignaturesOfType(type)`. For a union, the signatures of all its constituents. For an intersection, those of
+/// the only constituent that has any.
 pub fn get_call_signatures_of_type<'a>(ty: Type<'a>) -> Vec<Signature<'a>> {
     fn collect<'a>(ty: Type<'a>) -> Vec<Signature<'a>> {
         if !bun_core::StackCheck::init().is_safe_to_recurse() {
@@ -259,8 +259,8 @@ pub fn get_call_signatures_of_type<'a>(ty: Type<'a>) -> Vec<Signature<'a>> {
     collect(ty)
 }
 
-/// `getWellKnownSymbolPropertyOfType(type, wellKnownSymbolName, typeChecker)`: the property whose
-/// key is `Symbol[name]`, as in `get_well_known_symbol_property_of_type(ty, "iterator")`.
+/// `getWellKnownSymbolPropertyOfType(type, wellKnownSymbolName, typeChecker)`: the property keyed by `Symbol[name]`, as
+/// in `get_well_known_symbol_property_of_type(ty, "iterator")`.
 pub fn get_well_known_symbol_property_of_type<'a>(
     ty: Type<'a>,
     name: &str,
@@ -273,7 +273,7 @@ pub fn get_well_known_symbol_property_of_type<'a>(
 
 // ───────────────────────────── utilities ─────────────────────────────
 
-/// `isFalsyType(type)`: every value of the type is falsy. Not for a union.
+/// `isFalsyType(type)`: true if every value of the type is falsy. Doesn't handle unions.
 pub fn is_falsy_type(ty: Type) -> bool {
     if is_type_flag_set(ty, TypeFlags::UNDEFINED | TypeFlags::NULL | TypeFlags::VOID) {
         return true;
@@ -289,7 +289,7 @@ pub fn is_falsy_type(ty: Type) -> bool {
     is_false_literal_type(ty)
 }
 
-/// `isThenableType(typeChecker, node, type)`: it has a `then` that can be called with a callback.
+/// `isThenableType(typeChecker, node, type)`: true if it has a `then` that can be called with a callback.
 pub fn is_thenable_type<'a>(node: impl Locate<'a>, ty: Type<'a>) -> bool {
     let node = node.locate(ty.file());
     for constituent in union_constituents(ty.get_apparent_type()) {
@@ -380,7 +380,8 @@ fn is_readonly_property_from_mapped_type(ty: Type, name: &[u8]) -> Option<bool> 
     let TypeStructure::Mapped { readonly, .. } = ty.structure() else {
         return None;
     };
-    // Upstream excepts `/^__@[^@]+$/`, which no name is since TypeScript 4: `__@iterator@12`.
+    // Upstream makes an exception for `/^__@[^@]+$/`, which hasn't matched any name since TypeScript 4
+    // (`__@iterator@12`).
     if readonly != MappedModifier::None {
         return Some(readonly != MappedModifier::Remove);
     }

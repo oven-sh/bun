@@ -104,7 +104,7 @@ impl<'a> NpmUrlWriter<'a> {
             return self.is_canonical(url, name, version, buf);
         }
         // `Scope::set_url` normalizes the registry href; `dist.tarball` is verbatim.
-        let normalized = bun_url::whatwg::href_from_string(&bun_core::String::borrow_utf8(url));
+        let normalized = bun_url::whatwg::href_from_string(&bun_core::StringView::borrow_utf8(url));
         if normalized.tag() == bun_core::string::Tag::Dead {
             return false;
         }
@@ -2777,7 +2777,11 @@ pub(crate) fn parse_into_binary_lockfile(
                     // keep the path-traversal guard intact at every version.
                     let enforce_safe_tag =
                         tag == ResolutionTag::Github || lockfile_version.at_least(Version::V2);
-                    if enforce_safe_tag && !crate::repository::is_safe_resolved_tag(bun_tag_str) {
+                    let too_long = bun_tag_str.len() > crate::repository::MAX_RESOLVED_TAG_LEN;
+                    if too_long
+                        || (enforce_safe_tag
+                            && !crate::repository::is_safe_resolved_tag(bun_tag_str))
+                    {
                         fail!(
                             InvalidPackageInfo,
                             at_item(key_loc, bun_tag_idx),

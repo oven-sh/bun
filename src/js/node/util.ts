@@ -36,7 +36,7 @@ function isFunction(value) {
 // https://github.com/nodejs/node/blob/main/lib/internal/util/comparisons.js
 const { isDeepStrictEqual } = require("internal/util/comparisons");
 
-const parseArgs = $newRustFunction("parse_args.rs", "parseArgs", 1);
+const parseArgs = $bindgen("parse_args.bind.ts", "parseArgs");
 
 let utl;
 function lazyInspectModule() {
@@ -551,9 +551,8 @@ function prepareCallSites(_err, callSites) {
   const result: CallSiteObject[] = [];
   for (let i = 0; i < callSites.length; i++) {
     const callSite = callSites[i];
-    // CallSite#getColumnNumber() is 0-based here but 1-based in V8, and node
-    // exposes the column under both names.
-    const columnNumber = (callSite.getColumnNumber() ?? 0) + 1;
+    // node exposes the column under both names.
+    const columnNumber = callSite.getColumnNumber() ?? 0;
     result.push({
       functionName: callSite.getFunctionName() ?? "",
       scriptId: `${callSite.getScriptId()}`,

@@ -13,7 +13,7 @@ const UNEXPECTED_CALL: Message = Message::new("unexpectedCall", "Redundant Boole
 const UNEXPECTED_NEGATION: Message =
     Message::new("unexpectedNegation", "Redundant double negation.");
 
-/// The callee is the global `Boolean`.
+/// True if the callee is the global `Boolean`.
 fn calls_boolean(call: Call) -> bool {
     call.callee().is_ident("Boolean") && is_global_by_name(call.callee())
 }
@@ -22,7 +22,7 @@ fn is_sequence(e: Expr) -> bool {
     e.binary_op() == Some(BinOp::Comma)
 }
 
-/// ESLint's `isInBooleanContext`. `parent`: the parent of `e`.
+/// ESLint's `isInBooleanContext`. `parent` is `e`'s parent.
 fn is_in_boolean_context<'a>(e: Expr<'a>, parent: Node<'a>) -> bool {
     match parent {
         Node::Expr(parent) => match parent.kind() {
@@ -44,7 +44,7 @@ fn is_in_boolean_context<'a>(e: Expr<'a>, parent: Node<'a>) -> bool {
     }
 }
 
-/// ESLint's `needsParens`: whether `node` needs parentheses where it replaces `previous`.
+/// ESLint's `needsParens`: true if `node` needs parentheses where it replaces `previous`.
 fn needs_parens<'a>(previous: Expr<'a>, node: Expr<'a>) -> bool {
     if previous.is_parenthesized() {
         return false;
@@ -56,7 +56,7 @@ fn needs_parens<'a>(previous: Expr<'a>, node: Expr<'a>) -> bool {
     match parent.kind() {
         ExprKind::Call(_) | ExprKind::New(_) => is_sequence(node),
         ExprKind::Cond { test, .. } if test == previous => precedence(node) <= precedence(parent),
-        // That of an `AssignmentExpression`.
+        // 1 is the precedence of an `AssignmentExpression`.
         ExprKind::Cond { .. } => precedence(node) < 1,
         ExprKind::Unary { .. } => precedence(node) < precedence(parent),
         ExprKind::Binary { op: BinOp::Comma, .. } => false,
@@ -71,12 +71,12 @@ fn needs_parens<'a>(previous: Expr<'a>, node: Expr<'a>) -> bool {
     }
 }
 
-/// oxlint does not look for them.
+/// oxlint doesn't check for comments.
 fn has_comments_inside(e: Expr) -> bool {
     !e.file().language().is_oxlint && e.file().comments_in(e).next().is_some()
 }
 
-/// A space, if `replacement` cannot directly follow the token that `replaced` directly follows.
+/// Returns a space if `replacement` can't directly follow the token that `replaced` directly follows.
 fn prefix<'a>(replaced: Expr<'a>, replacement: ast_utils::TokenOrText<'a>) -> &'static [u8] {
     match replaced.file().token_before(replaced) {
         Some(before)
@@ -139,7 +139,7 @@ fn is_rejected_by_typescript<'a>(cast: Expr<'a>, argument: Expr<'a>) -> bool {
 impl NoExtraBooleanCast {
     /// ESLint's `isInFlaggedContext`.
     fn is_in_flagged_context<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) -> bool {
-        // For oxlint the two options are one.
+        // oxlint treats the two options as one.
         let is_oxlint = cx.language().is_oxlint;
         let inner = self.enforce_for_inner_expressions || self.enforce_for_logical_operands && is_oxlint;
         let logical = inner || self.enforce_for_logical_operands;
@@ -148,7 +148,7 @@ impl NoExtraBooleanCast {
             let is_passed_on = match parent.as_expr().map(Expr::kind) {
                 Some(ExprKind::Binary { op: BinOp::Or | BinOp::And, .. }) => logical,
                 Some(ExprKind::Binary { op: BinOp::Nullish, right, .. }) => inner && right == e,
-                // Of a sequence it is the last expression.
+                // In a sequence, only the last expression counts.
                 Some(ExprKind::Binary { op: BinOp::Comma, right, .. }) => {
                     if !(inner && right == e && parent.as_expr().is_some_and(utils::is_sequence_root)) {
                         return Some(false);
@@ -163,7 +163,7 @@ impl NoExtraBooleanCast {
         is_flagged == Some(true)
     }
 
-    /// `e`: `!!argument`
+    /// `e` is `!!argument`.
     fn check_negation<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let is_negation = |it: &Expr| it.unary_op() == Some(UnOp::Not);
         let operand = Some(e).filter(is_negation).and_then(Expr::operand);
@@ -185,7 +185,7 @@ impl NoExtraBooleanCast {
         });
     }
 
-    /// `e`: `Boolean(..)`
+    /// `e` is `Boolean(..)`.
     fn check_call<'a>(&self, e: Expr<'a>, cx: &mut Cx<'a, Self>) {
         let Some(call) = e.as_call() else {
             return;
@@ -231,7 +231,7 @@ impl Rule for NoExtraBooleanCast {
         .fixable(Fixable::Code)
         .recommended();
     const ON: On = On::new().unaries(&[UnOp::Not]).function_calls(&["Boolean"]);
-    /// Whether an expression is in a flagged context.
+    /// Caches whether an expression is in a flagged context.
     type State<'a> = AncestorMemo<'a, bool>;
 
     fn new(options: &Options) -> Self {

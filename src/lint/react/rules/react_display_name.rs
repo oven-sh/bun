@@ -39,15 +39,15 @@ struct ReactComponentInfo<'a> {
     name: Option<Name<'a>>,
 }
 
-/// What oxlint's rule keeps.
+/// The state of oxlint's rule.
 struct State<'a> {
     ignore_transpiler_name: bool,
-    /// The option, and React is 16.3 or later.
+    /// True if the option is set and React is 16.3 or later.
     check_context_objects: bool,
     memo_forwardref_compatible: bool,
     component_wrapper_functions: &'a [Json],
     returns: Returns<'a>,
-    /// The innermost assignment around something.
+    /// Caches the innermost enclosing assignment.
     assignments: AncestorMemo<'a, Expr<'a>>,
 }
 
@@ -66,14 +66,14 @@ impl Rule for DisplayName {
 
     fn start<'a>(&self, file: &'a File<'a>) -> Option<()> {
         let may_have_context_objects = self.check_context_objects && file.mentions("createContext");
-        // oxlint goes by the variables of the file, upstream by its list of components.
+        // oxlint iterates over the file's variables, upstream over its list of components.
         if !file.language().is_oxlint {
             return (may_have_context_objects || Components::may_have_any(file)).then_some(());
         }
         if file.has_exprs([ExprTag::Jsx]) || !component_wrapper_functions(file).is_empty() {
             return Some(());
         }
-        // Without JSX it takes a call to make a component or a context.
+        // Without JSX, only a call can create a component or a context.
         let names = ["createClass", "createReactClass", "memo", "forwardRef"];
         const CALLS: On = On::new().calls_named(&[
             "createClass",
@@ -83,7 +83,7 @@ impl Rule for DisplayName {
             "createElement",
             "createContext",
         ]);
-        let makes_one = |call: Call| {
+        let creates_component_or_context = |call: Call| {
             callee_name(call).is_some_and(|name| {
                 name.is_any(&names)
                     || name.is("createElement") && is_create_element_call(call)
@@ -91,7 +91,7 @@ impl Rule for DisplayName {
             })
         };
         ((file.mentions("createElement") || file.mentions_any(&names) || may_have_context_objects)
-            && file.calls_on(&CALLS).filter_map(Expr::as_call).any(makes_one))
+            && file.calls_on(&CALLS).filter_map(Expr::as_call).any(creates_component_or_context))
         .then_some(())
     }
 
@@ -108,22 +108,22 @@ struct ContextObject<'a> {
     has_display_name: bool,
 }
 
-/// What upstream's listeners share.
+/// The state shared by upstream's listeners.
 struct Walk<'a> {
     ignore_transpiler_name: bool,
     components: Components<'a>,
     pragmas: Pragmas<'a>,
     /// The components with `hasDisplayName`.
     has_display_name: FxHashSet<ComponentId>,
-    /// The values of `contextObjects`, as their keys came.
+    /// The values of `contextObjects`, in key insertion order.
     context_objects: Vec<ContextObject<'a>>,
-    /// Where in `context_objects` the value of a key is. `None`: `undefined`.
+    /// Maps each key to its value's index in `context_objects`. The key `None` is `undefined`.
     context_object_of: FxHashMap<Option<Name<'a>>, usize>,
 }
 
 impl DisplayName {
-    /// The nodes at which a listener of upstream does what depends on the time, in the order of ESLint's walk. Then
-    /// `Program:exit`.
+    /// Visits the nodes where one of upstream's listeners does something that depends on traversal order, in ESLint's
+    /// order. Then does what `Program:exit` does.
     fn program_exit<'a>(&self, cx: &Cx<'a, DisplayName>) {
         let file = cx.file();
         let mut version = None;
@@ -270,7 +270,7 @@ impl<'a> Walk<'a> {
         if !self.components.is_pragma_component_wrapper(node) {
             return;
         }
-        // One report for `React.memo(React.forwardRef(..))`, at the call of `memo`.
+        // `React.memo(React.forwardRef(..))` gets one report, at the `memo` call.
         let is_wrapped_in_another_pragma = self.components.get_pragma_component_wrapper(node).is_some();
         if (is_wrapped_in_another_pragma || self.has_transpiler_name(Node::Func(function)))
             && self.components.get(node).is_some()
@@ -279,8 +279,8 @@ impl<'a> Walk<'a> {
         }
     }
 
-    /// What the listeners for functions and for `ObjectExpression` say of `node`, which is in the list from the moment
-    /// when ESLint enters it.
+    /// The result of the listeners for functions and `ObjectExpression` for `node`. It can be computed at the end,
+    /// because `node` is in the list from the moment ESLint enters it.
     fn has_display_name_by_itself(&self, node: Node<'a>) -> bool {
         match node {
             Node::Func(_) => self.has_transpiler_name(node),
@@ -335,12 +335,12 @@ impl<'a> Walk<'a> {
     }
 }
 
-/// `node.parent`. `None`: a `ChainExpression` or a `JSXExpressionContainer`.
+/// `node.parent`. `None` if that's a `ChainExpression` or a `JSXExpressionContainer`.
 fn parent_of(e: Expr<'_>) -> Option<Node<'_>> {
     (!e.is_chain_root() && e.jsx_container_span().is_none()).then(|| estree_parent(Node::Expr(e)))
 }
 
-/// `isDisplayNameDeclaration(node.key)` of a `MethodDefinition`.
+/// `isDisplayNameDeclaration(node.key)` for a `MethodDefinition`.
 fn is_display_name_method(node: Node<'_>) -> bool {
     matches!(node, Node::Member(member) if estree_type_name(node) == "MethodDefinition"
         && member.key().is_some_and(|key| is_display_name_key(member.file(), key)))
@@ -364,7 +364,7 @@ fn run_once<'a>(rule: &DisplayName, cx: &Cx<'a, DisplayName>) {
     let report = |cx: &Cx<'a, DisplayName>, info: ReactComponentInfo<'a>| {
         cx.report(info.span, if info.is_context { CONTEXT_DISPLAY_NAME } else { COMPONENT_DISPLAY_NAME });
     };
-    // All the names of a pattern are declared by the same declarator.
+    // All the names in a pattern share one declarator, so its result is reused.
     let mut last_declarator = None;
     for symbol in file.symbols() {
         let component_info = symbol.declarations().find_map(|declaration| match (declaration, declaration.node()) {
@@ -402,7 +402,7 @@ fn run_once<'a>(rule: &DisplayName, cx: &Cx<'a, DisplayName>) {
     if !file.mentions("module") {
         return;
     }
-    // Many a `module` can be in the same assignment.
+    // Several `module` references can be in the same assignment, so its result is cached.
     let mut known = FxHashMap::default();
     for reference in file.unresolved_references_to(b"module") {
         let is_assignment = |node: Node<'a>| node.as_expr().filter(|it| it.tag() == ExprTag::Assign);
@@ -427,8 +427,8 @@ fn has_display_name_via_semantic<'a>(symbol: Symbol<'a>, component_name: Option<
             && !member.is_jsx_tag_name()
             && assign.tag() == ExprTag::Assign
             && assign.left().is_some_and(|left| left.span().contains(reference.span()))
-            // With a name, oxlint compares it with what is before the `.`, which has to be an identifier as it is
-            // written.
+            // If there's a name, oxlint compares it with the object before the `.`, which has to be an unparenthesized
+            // identifier.
             && (component_name.is_none() || member.object().is_some_and(|it| it == reference && !it.is_parenthesized()))
     })
 }
@@ -538,7 +538,7 @@ fn is_react_component_function<'a>(func: Func<'a>, state: &mut State<'a>) -> Opt
         let StmtKind::Return(Some(expr)) = statement.kind() else {
             continue;
         };
-        // The name of a function that returns a component is not the name of the component.
+        // The name of a function that returns a component isn't the component's name.
         if find_innermost_function_with_jsx(expr, state.component_wrapper_functions, &mut state.returns).is_some() {
             return info(None);
         }
@@ -550,7 +550,7 @@ fn is_react_component_function<'a>(func: Func<'a>, state: &mut State<'a>) -> Opt
     None
 }
 
-/// `statement`: an `export default`. The place to report, if it exports a component without a name.
+/// `statement`: an `export default`. Returns the span to report if it exports an unnamed component.
 fn is_anonymous_export_component<'a>(statement: Stmt<'a>, state: &mut State<'a>) -> Option<Span> {
     let is_component = match statement.kind() {
         StmtKind::ExportDefault(e) => as_function_expression(e)
@@ -590,7 +590,7 @@ fn is_module_exports_component<'a>(assign: Expr<'a>, state: &mut State<'a>) -> O
     info(true).filter(|_| is_create_context_call(call) && state.check_context_objects)
 }
 
-/// An argument is an object with `displayName: ..`, or with `name: ..`.
+/// True if an argument is an object with `displayName: ..`, or with `name: ..`.
 fn has_create_react_class_display_name(call: Call, ignore_transpiler_name: bool) -> bool {
     let is_display_name = |property: Prop| {
         property.kind() != PropKind::Shorthand
@@ -612,7 +612,7 @@ fn class_has_static_display_name(class: Class) -> bool {
     })
 }
 
-/// A method of the class returns JSX.
+/// True if one of the class's methods returns JSX.
 fn class_returns_jsx<'a>(class: Class<'a>, state: &mut State<'a>) -> bool {
     let mut methods = class.members().iter().filter_map(|it| as_method_definition(Node::Member(it))?.func());
     methods.any(|func| function_returns(func, &mut state.returns).has_jsx())

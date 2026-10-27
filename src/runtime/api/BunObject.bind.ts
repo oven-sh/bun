@@ -53,16 +53,23 @@ export const ZlibDecompressionOptions = b.dictionary(
   { allowArray: true },
 );
 
-const zlib = (rustName: string, options: typeof ZlibCompressionOptions | typeof ZlibDecompressionOptions) =>
+const zlib = (
+  rustName: string,
+  options: typeof ZlibCompressionOptions | typeof ZlibDecompressionOptions,
+  data = stringOrBuffer,
+) =>
   b.fn({
-    args: { data: stringOrBuffer, options: options.default({}) },
+    args: { data, options: options.default({}) },
     returns: b.bufferSource,
     capability: "heap",
     throws: true,
     rustPath: `crate::api::bun_object::JSZlib::${rustName}`,
   });
 
-export const deflateSync = zlib("deflate_sync", ZlibCompressionOptions);
+/** libdeflate reads each input block twice, so copy shared buffers that another thread could change in between. */
+const compressionInput = b.bytes({ from: ["string", "buffer"], shared: "copied" });
+
+export const deflateSync = zlib("deflate_sync", ZlibCompressionOptions, compressionInput);
 
 export const gc = b.fn({
   args: {
@@ -74,7 +81,7 @@ export const gc = b.fn({
 });
 
 export const gunzipSync = zlib("gunzip_sync", ZlibDecompressionOptions);
-export const gzipSync = zlib("gzip_sync", ZlibCompressionOptions);
+export const gzipSync = zlib("gzip_sync", ZlibCompressionOptions, compressionInput);
 
 export const indexOfLine = b.fn({
   args: {
@@ -85,6 +92,29 @@ export const indexOfLine = b.fn({
 });
 
 export const inflateSync = zlib("inflate_sync", ZlibDecompressionOptions);
+
+export const InspectOptions = b.dictionary(
+  {
+    depth: b.f64.otherAsNull,
+    colors: b.bool.loose.optional,
+    sorted: b.bool.loose.optional,
+    compact: b.bool.loose.optional,
+  },
+  { allowArray: true },
+);
+export const InspectOptionsOrDepth = b.union({ options: InspectOptions, depth: b.f64, ignored: b.any });
+
+/**
+ * `(arg, options)` or `(arg, depth, colors)`. `Bun.inspect()` is `""` and `Bun.inspect(undefined)` is
+ * `"undefined"`.
+ */
+export const inspect = b.fn({
+  export: "Bun__BunObject__inspect",
+  args: { arg: b.any.ifPassed, options: InspectOptionsOrDepth, colors: b.bool.loose.nullable },
+  returns: b.string.utf8,
+  capability: "js",
+  throws: true,
+});
 
 export const MMapOptions = b.dictionary(
   {
@@ -120,10 +150,20 @@ export const openInEditor = b.fn({
     path: b.string.loose.utf8.nullable.default(""),
     options: EditorOptions.nullable.default({}),
   },
-  length: 1,
   capability: "heap",
   throws: true,
 });
+
+/** Without a `moduleId` or a `parent`, `resolveSync` throws and `resolve` rejects. */
+const resolveSignature = {
+  args: { moduleId: b.string.loose.nullable, parent: b.string.loose.nullable, esm: b.bool.default(true) },
+  capability: "js",
+  throws: true,
+} as const;
+export const resolve = b.fn({ ...resolveSignature, returns: b.any, rejects: true });
+export const resolveSync = b.fn({ ...resolveSignature, returns: b.string });
+
+export const serve = b.fn({ args: { options: b.any }, returns: b.any, capability: "js", throws: true });
 
 export const shellEscape = b.fn({
   args: { input: b.string.loose },
@@ -140,6 +180,28 @@ export const sleepSync = b.fn({
   throws: true,
 });
 
+/** The table of what is not an object is `""`. */
+const tabularData = b.object.otherAsNull;
+const tableSignature = {
+  export: "Bun__BunObject__table",
+  returns: b.string.utf8,
+  capability: "js",
+  throws: true,
+} as const;
+/** `Bun.inspect.table` */
+export const table = b.overloads(
+  {
+    ...tableSignature,
+    args: { tabularData, properties: b.jsArray, options: InspectOptions.otherAsNull },
+    rustPath: "crate::api::bun_object::table_with_properties",
+  },
+  {
+    ...tableSignature,
+    args: { tabularData, options: InspectOptions.otherAsNull },
+    rustPath: "crate::api::bun_object::table",
+  },
+);
+
 export const WhichOptions = b.dictionary(
   {
     PATH: b.string.loose.utf8.optional,
@@ -153,8 +215,7 @@ export const which = b.fn({
     command: b.string.loose.utf8.nullable.default(""),
     options: WhichOptions.nullable.default({}),
   },
-  length: 1,
-  returns: b.string.utf8.nullable,
+  returns: b.string.local.nullable,
   capability: "heap",
   throws: true,
 });

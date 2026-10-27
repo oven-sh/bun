@@ -24,7 +24,7 @@ const {
   createConnection: createPostgresConnection,
   createQuery: createPostgresQuery,
   init: initPostgres,
-} = $rust("postgres.rs", "createBinding") as PostgresDotZig;
+} = $bindgen("postgres.bind.ts", "binding") as PostgresDotZig;
 
 // 1 to 4 are the commands whose tag counts the rows written.
 const cmds = ["", "INSERT", "DELETE", "UPDATE", "MERGE", "SELECT", "MOVE", "FETCH", "COPY"];
@@ -231,14 +231,11 @@ interface PostgresDotZig {
     onRejectQuery: (query: Query<any, any>, err: Error) => void,
     arrayLiteral: (values: ArrayLike<unknown>, kind: ArrayKind) => string,
   ) => void;
-  createConnection: NativeCreateConnection<$ZigGeneratedClasses.PostgresSQLConnection>;
-  createQuery: NativeCreateQuery<$ZigGeneratedClasses.PostgresSQLQuery>;
+  createConnection: NativeCreateConnection<$Bindgen.PostgresSQLConnection>;
+  createQuery: NativeCreateQuery<$Bindgen.PostgresSQLQuery>;
 }
 
-class PostgresAdapter extends BaseSQLAdapter<
-  $ZigGeneratedClasses.PostgresSQLConnection,
-  $ZigGeneratedClasses.PostgresSQLQuery
-> {
+class PostgresAdapter extends BaseSQLAdapter<$Bindgen.PostgresSQLConnection, $Bindgen.PostgresSQLQuery> {
   readonly createNativeConnection = createPostgresConnection;
   protected readonly createNativeQuery = createPostgresQuery;
   readonly ErrorClass = PostgresError;
@@ -288,7 +285,7 @@ class PostgresAdapter extends BaseSQLAdapter<
 
 type Listener = (payload: string) => void;
 type OnListen = () => void;
-type ListenHandle = $ZigGeneratedClasses.PostgresSQLConnection;
+type ListenHandle = $Bindgen.PostgresSQLConnection;
 
 /** Resolved from `sql.listen()`; removes the registration that call made. */
 class ListenSubscription {
@@ -387,9 +384,9 @@ class ListenQuery {
   resolve!: () => void;
   reject!: (err: unknown) => void;
   [_results] = null;
-  [_handle]: $ZigGeneratedClasses.PostgresSQLQuery;
+  [_handle]: $Bindgen.PostgresSQLQuery;
 
-  constructor(handle: $ZigGeneratedClasses.PostgresSQLQuery) {
+  constructor(handle: $Bindgen.PostgresSQLQuery) {
     this[_handle] = handle;
   }
 
@@ -685,7 +682,7 @@ class ListenConnection {
 // COPY. The native query calls `copy(chunk)` when the server enters copy mode, then with each chunk (TO STDOUT) or
 // each time the socket has drained (FROM STDIN). The stream ends as the query does.
 
-type CopyHandle = $ZigGeneratedClasses.PostgresSQLQuery;
+type CopyHandle = $Bindgen.PostgresSQLQuery;
 
 function noop() {}
 

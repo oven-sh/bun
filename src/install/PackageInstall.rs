@@ -1308,12 +1308,12 @@ impl<'a> PackageInstall<'a> {
         is_linked_folder(&src, &dest)
     }
 
-    fn get_installed_package_json_source(
+    fn read_installed_package_json<'m>(
         &mut self,
         root_node_modules_dir: &Dir,
-        mutable: &mut MutableString,
+        mutable: &'m mut MutableString,
         until_eof: bool,
-    ) -> Option<bun_ast::Source> {
+    ) -> Option<&'m [u8]> {
         let mut total: usize = 0;
         mutable.reset();
         mutable.expand_to_capacity();
@@ -1343,10 +1343,7 @@ impl<'a> PackageInstall<'a> {
             }
         }
 
-        Some(bun_ast::Source::init_path_string(
-            package_json_path.as_bytes(),
-            &mutable.list[0..total],
-        ))
+        Some(&mutable.list[0..total])
     }
 
     fn verify_package_json_name_and_version(&mut self, root_node_modules_dir: &Dir) -> bool {
@@ -1371,12 +1368,12 @@ impl<'a> PackageInstall<'a> {
         // Don't keep it open while we're parsing the JSON.
         // The longer the file stays open, the more likely it causes issues for
         // other processes on Windows.
-        let Some(source) =
-            self.get_installed_package_json_source(root_node_modules_dir, mutable, until_eof)
+        let Some(contents) =
+            self.read_installed_package_json(root_node_modules_dir, mutable, until_eof)
         else {
             return Some(false);
         };
-        let source = &source;
+        let source = &bun_ast::Source::init_path_string("package.json", contents);
 
         // If it's not long enough to have {"name": "foo", "version": "1.2.0"}, there's no way it's valid
         let minimum = br#"{"name":"","version":""}"#.len()
@@ -2305,7 +2302,7 @@ impl<'a> PackageInstall<'a> {
             }
 
             let res = strings::copy_utf16_into_utf8(&mut dest_buf[..], &wbuf[..i]);
-            let mut offset: usize = res.written as usize;
+            let mut offset: usize = res.written;
             if dest_buf[offset - 1] != bun_paths::SEP_WINDOWS {
                 dest_buf[offset] = bun_paths::SEP_WINDOWS;
                 offset += 1;

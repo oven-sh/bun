@@ -170,6 +170,8 @@ Use `*` as the rule name to turn off every rule of a plugin. A setting for a sin
 ignorePatterns = ["vendor/", "**/*.gen.ts"]
 ```
 
+The patterns use `.gitignore` syntax and are relative to `bunfig.toml`. With an `eslint.config.*` file they're [ESLint `ignores`](/runtime/bunfig#lint-ignorepatterns) instead.
+
 ## ES modules and CommonJS
 
 `bun lint` works out whether a file is an ES module or CommonJS from the file itself, the way Node.js does:

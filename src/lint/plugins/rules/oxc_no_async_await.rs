@@ -22,13 +22,14 @@ impl Rule for NoAsyncAwait {
         }
         let file = cx.file();
         let whole = func.estree_span();
-        // An arrow function, and a function with a name, is looked at from its start, where the keyword nearly always is.
+        // oxlint searches an arrow function or a named function from its start, which is nearly always where the
+        // keyword is.
         if (func.is_arrow() || func.name().is_some()) && cx.slice(whole).starts_with(b"async") {
             cx.report(Span::new(whole.start, whole.start + 5), NO_ASYNC)
                 .called_with(func);
             return;
         }
-        // Where the keyword is looked for.
+        // The span that oxlint searches for the keyword.
         let async_span = match (func.owner(), func.name()) {
             (Node::Expr(_), _) if func.is_arrow() => Span::new(
                 whole.start,
@@ -41,7 +42,7 @@ impl Rule for NoAsyncAwait {
                     .key()
                     .map_or(whole.start, |it| it.inner_span(file).start),
             ),
-            // Before the key, also for `{ a: async function () {} }`, where there is nothing.
+            // oxlint searches before the key, even for `{ a: async function () {} }`, where it finds nothing.
             (Node::Expr(e), None) => match e.parent() {
                 Node::Prop(property) if !e.is_parenthesized() && !property.is_jsx_attribute() => {
                     Span::new(

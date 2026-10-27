@@ -22,7 +22,8 @@ impl Rule for ConstComparisons {
         .binaries(&[BinOp::And, BinOp::Or])
         .binaries(&[BinOp::Lt, BinOp::Le, BinOp::Gt, BinOp::Ge])
         .finish();
-    /// The comparisons of something with itself. In `a < a && a < a` the `&&` is reported at the same place, and first.
+    /// Comparisons of an expression with itself, reported in `finish`. In `a < a && a < a` the `&&` is reported at the
+    /// same offset, and has to come first.
     type State<'a> = Vec<Expr<'a>>;
 
     fn new(_: &Options) -> Self {
@@ -46,7 +47,7 @@ impl Rule for ConstComparisons {
         if op == BinOp::Or {
             return check_redundant_logical_expression(left, right, true, cx);
         }
-        // All the `&&` of `a && b && c` are looked at together, from the outermost.
+        // All the `&&` in `a && b && c` are checked together, starting from the outermost.
         let is_and = |it: Node| matches!(it, Node::Expr(parent) if parent.binary_op() == Some(BinOp::And));
         if !iter_outer_expressions(e).next().is_some_and(is_and) {
             check_logical_expressions(e, cx);
@@ -77,30 +78,31 @@ struct ComparisonToConst<'a> {
     op: CmpOp,
     expr: Expr<'a>,
     constant: f64,
-    /// As it is written.
+    /// The constant as written.
     literal: Expr<'a>,
     whole: Expr<'a>,
 }
 
 enum Step<'a> {
     Visit(Expr<'a>),
-    /// Between the operands of the `&&` with this index.
+    /// Marks the point between the operands of the `&&` with this index.
     EndOfLeft(usize),
 }
 
 struct And<'a> {
     left: Expr<'a>,
     right: Expr<'a>,
-    /// Which of the comparisons in the root are connected by `&&` in `left`.
-    on_the_left: std::ops::Range<usize>,
+    /// The range in the root's list of comparisons that are joined by `&&` in `left`.
+    left_comparisons: std::ops::Range<usize>,
 }
 
-/// For each `&&` in `root`, which is one. `x < 42 && x < 42`, `x < 42 && x > 42`: its right operand against all the comparisons that
-/// are connected by `&&` in its left operand. These are a part of the list of those in `root`, which is made first.
+/// Checks every `&&` in `root`, which is one itself, for `x < 42 && x < 42` and `x < 42 && x > 42`. Each right operand
+/// is compared with all the comparisons joined by `&&` in the left operand. Those are a range of the list of
+/// comparisons in `root`, which is built first.
 fn check_logical_expressions<'a>(root: Expr<'a>, cx: &Cx<'a, ConstComparisons>) {
     let mut steps: SmallVec<[Step<'a>; 8]> = smallvec![Step::Visit(root)];
     let mut found: SmallVec<[ComparisonToConst<'a>; 4]> = SmallVec::new();
-    // An outer one before an inner one, as oxlint comes to them: several can report at one place.
+    // Outer before inner, the order oxlint visits them in, because several can report at the same offset.
     let mut ands: SmallVec<[And<'a>; 4]> = SmallVec::new();
     while let Some(step) = steps.pop() {
         match step {
@@ -111,36 +113,36 @@ fn check_logical_expressions<'a>(root: Expr<'a>, cx: &Cx<'a, ConstComparisons>) 
                         steps.push(Step::Visit(right));
                         steps.push(Step::EndOfLeft(ands.len()));
                         steps.push(Step::Visit(left));
-                        ands.push(And { left, right, on_the_left: found.len()..found.len() });
+                        ands.push(And { left, right, left_comparisons: found.len()..found.len() });
                     }
                     _ => found.extend(comparison_to_const(e)),
                 }
             }
             Step::EndOfLeft(index) => {
                 if let Some(and) = ands.get_mut(index) {
-                    and.on_the_left.end = found.len();
+                    and.left_comparisons.end = found.len();
                 }
             }
         }
     }
     for and in &ands {
-        if let Some(on_the_left) = found.get(and.on_the_left.clone())
-            && !on_the_left.is_empty()
+        if let Some(left_comparisons) = found.get(and.left_comparisons.clone())
+            && !left_comparisons.is_empty()
             && let Some(comparison) = comparison_to_const(get_inner_expression(and.right))
         {
-            check_right_operand(on_the_left, comparison, and.right, cx);
+            check_right_operand(left_comparisons, comparison, and.right, cx);
         }
         check_redundant_logical_expression(and.left, and.right, false, cx);
     }
 }
 
 fn check_right_operand<'a>(
-    on_the_left: &[ComparisonToConst<'a>],
+    left_comparisons: &[ComparisonToConst<'a>],
     right: ComparisonToConst<'a>,
     right_operand: Expr<'a>,
     cx: &Cx<'a, ConstComparisons>,
 ) {
-    for left in on_the_left {
+    for left in left_comparisons {
         let Some(ordering) = left.constant.partial_cmp(&right.constant) else {
             return;
         };
@@ -235,9 +237,9 @@ fn check_redundant_logical_expression<'a>(left: Expr<'a>, right: Expr<'a>, is_or
     }
 }
 
-/// A comparison between a number and something else. `42 < x` is `x > 42`.
+/// Returns a comparison between a number and something else. `42 < x` is normalized to `x > 42`.
 fn comparison_to_const(e: Expr<'_>) -> Option<ComparisonToConst<'_>> {
-    let op = CmpOp::of(e.binary_op()?)?;
+    let op = CmpOp::from_binary_op(e.binary_op()?)?;
     let (left, right) = (e.left()?, e.right()?);
     let (left_literal, right_literal) = (get_inner_expression(left), get_inner_expression(right));
     if let Some(constant) = left_literal.as_number() {
@@ -310,7 +312,7 @@ enum CmpOp {
 }
 
 impl CmpOp {
-    fn of(op: BinOp) -> Option<CmpOp> {
+    fn from_binary_op(op: BinOp) -> Option<CmpOp> {
         match op {
             BinOp::Lt => Some(CmpOp::Lt),
             BinOp::Le => Some(CmpOp::Le),

@@ -183,6 +183,33 @@ export function writeNewObjectsStoredIntoFields(fieldCount: number): Program {
   };
 }
 
+export function writeEntriesPutIntoOneMap(entryCount: number): Program {
+  return {
+    source: [
+      "const map = new Map();",
+      ...indexesUpTo(entryCount).map(index => `map.set("k${index}", ${index});`),
+      'console.log(map.size, map.get("k7"));',
+    ].join("\n"),
+    output: `${entryCount} 7\n`,
+  };
+}
+
+export function writePromisesAwaitedTogether(promiseCount: number): Program {
+  return {
+    source: [
+      "async function answer(x) { return x; }",
+      "async function run() {",
+      "const all = await Promise.all([",
+      ...indexesUpTo(promiseCount).map(index => `answer(${index}),`),
+      "]);",
+      "return all.length + all[7];",
+      "}",
+      "run().then(sum => console.log(sum));",
+    ].join("\n"),
+    output: `${promiseCount + 7}\n`,
+  };
+}
+
 // The `try` block stores to every local, the `catch` block reads every local, and the second call throws halfway.
 function writeTryThatStoresToLocals(
   localCount: number,

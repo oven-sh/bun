@@ -14,6 +14,10 @@ async function* awaitsInside(at: number) {
   ran[at + wentOn]++;
   yield 1;
 }
+function* yieldsOnce(at: number) {
+  yield 1;
+  ran[at + wentOn]++;
+}
 const thenable = (at: number) => ({
   then(resolve: (value: number) => void) {
     ran[at + thenWasCalled]++;
@@ -35,6 +39,9 @@ const waits: Record<string, (at: number) => unknown> = {
   "an await inside an async generator": at => awaitsInside(at).next(),
   "a thenable handed to resolve": at => Promise.resolve(thenable(at)),
   "a top-level await": () => openGate(),
+  "a finally handler": at => Promise.resolve(1).finally(() => void ran[at + finallyRan]++),
+  "a step of a generator": at => { const steps = yieldsOnce(at); steps.next(); return Promise.resolve(1).then(steps.next.bind(steps)); },
+  "pull() of a stream": at => new ReadableStream({ pull(controller) { ran[at + wentOn]++; controller.close(); } }).getReader().read(),
   "a reaction": at => Promise.resolve(1).then(() => ran[at + wentOn]++),
   "a microtask": at => queueMicrotask(() => void ran[at + wentOn]++),
   "a tick": at => process.nextTick(() => void ran[at + wentOn]++),

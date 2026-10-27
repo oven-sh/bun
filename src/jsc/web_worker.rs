@@ -229,6 +229,7 @@ unsafe extern "C" {
     safe fn Bun__AOT__releasePagesForNewThread(pages: *mut c_void);
     safe fn Bun__AOT__adoptPagesForNewThread(pages: *mut c_void);
     safe fn Bun__AOT__releaseUnusedPagesOfThread();
+    safe fn Bun__AOT__didStartThread();
     safe fn Bun__freeSharedHeaderBufferForThreadExit();
     // Raw FFI (no RAII guard) so `thread_main` can take the API lock and abandon
     // it with the VM — see the note there.
@@ -642,6 +643,7 @@ impl WebWorker {
                 Bun__AOT__adoptPagesForNewThread(start.table_pages);
                 start.worker.thread_main(start.init);
                 Bun__AOT__releaseUnusedPagesOfThread();
+                Bun__AOT__didStartThread();
                 // The thread's ref (and the parent ticket) drop here.
             });
         match spawn {
@@ -1163,6 +1165,7 @@ impl WebWorker {
         // so buffered postMessageToThread deliveries drain and the sender's
         // Atomics.waitAsync settles. WebWorker__entrySettled re-calls it as a no-op.
         WebWorker__entrySettled(vm.global());
+        Bun__AOT__didStartThread();
         // The hook runs JS, which can request termination. If it did, stop before the start sequence's GC.
         if self.has_requested_terminate() {
             self.flush_logs(vm);

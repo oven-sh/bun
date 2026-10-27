@@ -1054,6 +1054,7 @@ impl<'s> Program<'s> {
             reverse_mapped_target_stack: Vec::new(),
             reverse_expanding: 0,
             flow_memo: Default::default(),
+            fixed_length_asked_last: None,
             discriminated: Default::default(),
             conditional_roots: Default::default(),
             contextual_properties: Default::default(),
@@ -1992,6 +1993,8 @@ pub struct Checker<'p, 's> {
     reverse_mapped_target_stack: Vec<(TypeId, u32)>,
     reverse_expanding: u8,
     flow_memo: flow::FlowMemo,
+    /// The tuple type that `contextual_element_at` looked at last, and its `fixed_length`.
+    fixed_length_asked_last: Option<(TypeId, usize)>,
     /// `deferredNodes` of the file being checked, an ordered set.
     deferred_nodes: std::collections::VecDeque<ExprId>,
     /// The class expressions that have two entries in `deferred_nodes`, the first for their type

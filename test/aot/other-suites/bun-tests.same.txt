@@ -1,4 +1,3 @@
-test/js/bun/archive.test.ts
 test/js/bun/binary/tls-segment-size.test.ts
 test/js/bun/bun-object/deep-equals-temporal.test.ts
 test/js/bun/bun-object/deep-equals.test.ts

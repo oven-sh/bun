@@ -1140,6 +1140,8 @@ struct PrefetchState<'s, 'r> {
     slots: Vec<Option<ParseSlot<'s, 'r>>>,
     /// Files read during the code walk, with their stamp from just before the read.
     read_early: Vec<(ToLoad<'r>, FileStamp)>,
+    /// Those of `read_early` that have changed since.
+    stale: Vec<ToLoad<'r>>,
     /// Files the early load skipped.
     skipped_early: Vec<ToLoad<'r>>,
     is_paused: bool,
@@ -1198,6 +1200,7 @@ impl<'s, 'r> Prefetch<'s, 'r> {
                 by_package_id: FxHashMap::default(),
                 slots: Vec::new(),
                 read_early: Vec::new(),
+                stale: Vec::new(),
                 skipped_early: Vec::new(),
                 is_paused: false,
                 expects_seeds: false,
@@ -1242,25 +1245,31 @@ impl<'s, 'r> Prefetch<'s, 'r> {
         self.wake_all();
     }
 
-    /// Call when no thread is loading.
-    fn finish_early_load(&self, host: &dyn Host) -> bool {
+    /// Call when no thread is loading, before `finish_early_load`. The calling thread runs `meanwhile`.
+    fn find_stale_files_while(&self, host: &dyn Host, meanwhile: &mut dyn FnMut()) {
         const FILES_PER_TASK: usize = 64;
         let read_early = std::mem::take(&mut self.state.lock().read_early);
         let stale: Guarded<Vec<ToLoad<'r>>> = Guarded::new(Vec::new());
         let tasks: Vec<&[(ToLoad<'r>, FileStamp)]> = read_early.chunks(FILES_PER_TASK).collect();
-        host.parallel(tasks.len(), &|task| {
+        let check = |task: usize| {
             for &(file, stamp) in tasks[task] {
                 if stamp != FileStamp::IMMUTABLE && host.file_stamp(file.path) != Some(stamp) {
                     stale.lock().push(file);
                 }
             }
-        });
-        let stale = std::mem::take(&mut *stale.lock());
+        };
+        host.parallel_while(tasks.len(), &check, meanwhile);
+        self.state.lock().stale = std::mem::take(&mut *stale.lock());
+    }
+
+    /// Call when no thread is loading.
+    fn finish_early_load(&self) -> bool {
+        let mut state = self.state.lock();
+        let state = &mut *state;
+        let stale = std::mem::take(&mut state.stale);
         if stale.iter().any(|file| file.package.is_some()) {
             return false;
         }
-        let mut state = self.state.lock();
-        let state = &mut *state;
         state.is_paused = false;
         for file in &stale {
             state.done.remove(file.path);
@@ -5673,7 +5682,7 @@ impl<'s> Files<'s> {
             .unwrap_or_default();
         package_json_info_cache.get_package_json_infos(host, &mut automatic_traces);
         let early_prefetch = early_prefetch.into_inner();
-        let prefetch = match early_prefetch.filter(|prefetch| prefetch.finish_early_load(host)) {
+        let prefetch = match early_prefetch.filter(Prefetch::finish_early_load) {
             Some(prefetch) => prefetch,
             None => Prefetch::new(seeds),
         };

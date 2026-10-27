@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { runtimeEnvironment } from "./harness/flags";
 import { run } from "./harness/run";
-import { test } from "./supported";
+import { test } from "./supported-with-counted-calls";
 
 const numberOfObjects = 300;
 const numbers = Array.from({ length: numberOfObjects }, (_, index) => index);

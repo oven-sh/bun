@@ -16,6 +16,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { availableParallelism } from "os";
 import { dirname, join } from "path";
+import { endAtMemoryLimit } from "./harness/memory-limit";
 import { unsupported, withoutDebugInformation } from "./run-programs";
 import known from "./typescript-cases.known.json";
 
@@ -63,7 +64,7 @@ function readCases(): [name: string, source: string][] {
     Bun.zstdDecompressSync(readFileSync(join(import.meta.dir, "../cli/check/typescript-go/bundle.zst"))),
   );
   const cases: [string, string][] = [];
-  for (let at = 0; at < bytes.length;) {
+  for (let at = 0; at < bytes.length; ) {
     const end = bytes.indexOf(10, at);
     const header = bytes.toString("utf8", at + 4, end);
     const space = header.lastIndexOf(" ");
@@ -110,6 +111,8 @@ function writeCase(folder: string, source: string): string | undefined {
 
 async function run(cmd: string[], cwd: string, timeout: number) {
   await using spawned = Bun.spawn({ cmd, cwd, env: bunEnv, stdin: "ignore", stdout: "pipe", stderr: "pipe", timeout });
+  // A program that never ends may fill memory for as long as it is let. It counts as one that took too long.
+  using _ = endAtMemoryLimit(spawned);
   const [stdout, stderr, exitCode] = await Promise.all([spawned.stdout.text(), spawned.stderr.text(), spawned.exited]);
   const timedOut = spawned.signalCode === "SIGTERM" || spawned.signalCode === "SIGKILL";
   return { stdout, stderr, exitCode, timedOut, signal: timedOut ? null : spawned.signalCode };

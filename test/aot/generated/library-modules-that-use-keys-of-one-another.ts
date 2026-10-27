@@ -496,7 +496,9 @@ import { connect, createServer, isIP, Socket } from "node:net";`,
   const idle = new Socket();
   idle.setTimeout(5);
   idle.on("timeout", () => console.log("idle"));
+  const holdsTheLoop = setInterval(() => {}, 1000);
   await once(idle, "timeout");
+  clearInterval(holdsTheLoop);
   idle.destroy();
   console.log(isIP("::1"), idle.destroyed);`,
     ),

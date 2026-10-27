@@ -1,5 +1,5 @@
 import { expect } from "bun:test";
-import { bunEnv, bunExe, isArm64, isASAN, isDebug, isLinux, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isLinux, tempDir } from "harness";
 import { run as runCommand } from "./harness/run";
 import { describe, test } from "./supported";
 
@@ -258,6 +258,43 @@ if (Bun.isMainThread) {
 
 // Starts Workers until the constructor throws three times in a row, then holds one up for two seconds while it ends and constructs another, which waits for that room.
 // When the first closes, its listener constructs Workers until the constructor throws. The waiting Worker can still fit where a new one doesn't, so the program repeats this until it doesn't.
+// Workers start until one does not. Then, forty times, one is terminated and has exited, and Workers start again until one does not.
+const startsNodeWorkersUntilConstructorThrows = `import { Worker, isMainThread, parentPort } from "node:worker_threads";
+if (isMainThread) {
+  const start = () =>
+    new Promise<Worker | string>(resolve => {
+      let worker: Worker;
+      try {
+        worker = new Worker(new URL(import.meta.url));
+      } catch (error) {
+        return resolve("the constructor threw " + (error as Error).name);
+      }
+      worker.once("message", () => resolve(worker));
+      worker.once("error", (error: Error) => resolve("'error' with " + error.name));
+    });
+  const workers: Worker[] = [];
+  const outcomes = new Set<string>();
+  const fill = async () => {
+    for (;;) {
+      const worker = await start();
+      outcomes.add(typeof worker === "string" ? worker : "started");
+      if (typeof worker === "string") return;
+      workers.push(worker);
+    }
+  };
+  await fill();
+  for (let round = 0; round < 40; round++) {
+    await workers.shift()!.terminate();
+    await fill();
+  }
+  console.log([...outcomes].sort().join(", "));
+  process.exit(0);
+} else {
+  setInterval(() => {}, 1000);
+  parentPort!.postMessage(1);
+}
+`;
+
 const takesRoomThatWorkerWaitsFor = `import { Worker as NodeWorker, parentPort } from "node:worker_threads";
 declare var self: Worker;
 const isNode = process.argv[2] === "node";
@@ -887,12 +924,23 @@ export function workersWithinAddressSpaceLimit(part: number, parts: number) {
       240_000,
     );
 
-    // On arm64 a Worker of node:worker_threads may start in less room than it then takes.
-    test.skipIf(!isLinux || isASAN).each(dealt(isArm64 ? ["web"] : ["web", "node"]))(
+    test.skipIf(!isLinux || isASAN).each(dealt(["web", "node"]))(
       "a Worker that waits for room that others take first gets an error (%s)",
       async kind => {
         expect(await runWithin(GB, takesRoomThatWorkerWaitsFor, kind)).toEqual({
           stdout: "TypeError: Failed to spawn worker thread, code 1\n",
+          stderr: "",
+          exitCode: 0,
+        });
+      },
+      240_000,
+    );
+
+    inPart(test.skipIf(!isLinux || isASAN))(
+      "every Worker of node:worker_threads that is constructed starts, up to the one for which the constructor throws",
+      async () => {
+        expect(await runWithin(GB, startsNodeWorkersUntilConstructorThrows)).toEqual({
+          stdout: "started, the constructor threw TypeError\n",
           stderr: "",
           exitCode: 0,
         });

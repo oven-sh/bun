@@ -1,6 +1,10 @@
 // Fixed seeds of fuzz/statements-between-a-declaration-and-the-return-of-its-variable.ts: functions that declare a variable whose value a build may know, do something, and give the variable back.
 import { Random } from "./fuzz/random";
-import { flagsOfTheBuild, generate } from "./fuzz/statements-between-a-declaration-and-the-return-of-its-variable";
+import {
+  flagsOfABuildThatIgnoresMarks,
+  flagsOfTheBuild,
+  generate,
+} from "./fuzz/statements-between-a-declaration-and-the-return-of-its-variable";
 import { generated } from "./generated/run-generated";
 
 const dialects = [
@@ -32,6 +36,8 @@ generated(
   })),
 );
 
+const onceWrongUnderFlags = [1, 3, 5, 8, 15, 18, 34, 47, 48, 58];
+
 const dialectsWithImports = ["module", "typescript", "module", "typescript that nobody checks"] as const;
 
 generated(
@@ -40,10 +46,11 @@ generated(
     name: `seed ${index + 1}.`,
     // Every run takes the first sixteen seeds; AOT_GENERATED=all takes all.
     isAlwaysRun: index < 16,
+    wasOnceWrong: onceWrongUnderFlags.includes(index + 1),
     isOnlyCompiled: true as const,
     keepsItsText: true as const,
     referenceIsCompiled: true as const,
-    flagsOfBothBuilds: flagsOfTheBuild,
+    flagsOfBothBuilds: index % 3 === 2 ? flagsOfABuildThatIgnoresMarks : flagsOfTheBuild,
     make: () => generate(new Random(index + 1), dialectsWithImports[index % dialectsWithImports.length], true),
   })),
 );

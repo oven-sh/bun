@@ -91,18 +91,28 @@ impl FileLowering<'_, '_, '_, '_> {
         let Some(elements) = find_tuple_elements(self, list) else {
             return find_contents_type(self, list, ContentsSlot::Element);
         };
-        for (position, element) in elements.iter().enumerate() {
-            match element.kind {
-                TupleElementKind::Required | TupleElementKind::Optional if position < index => {}
-                TupleElementKind::Required
-                | TupleElementKind::Optional
-                | TupleElementKind::Rest => {
-                    return Some(element.ty);
-                }
-                TupleElementKind::Variadic => return None,
+        let first_variable = match self.types.first_variable_element {
+            Some((asked, position)) if asked == list => position,
+            _ => {
+                let is_variable = |element: &TupleElement| {
+                    matches!(
+                        element.kind,
+                        TupleElementKind::Rest | TupleElementKind::Variadic
+                    )
+                };
+                let position = elements.iter().position(is_variable);
+                let position = position.unwrap_or(elements.len());
+                self.types.first_variable_element = Some((list, position));
+                position
             }
+        };
+        let element = elements.get(index.min(first_variable))?;
+        match element.kind {
+            TupleElementKind::Required | TupleElementKind::Optional | TupleElementKind::Rest => {
+                Some(element.ty)
+            }
+            TupleElementKind::Variadic => None,
         }
-        None
     }
 
     pub(super) fn collect_element_types_from(

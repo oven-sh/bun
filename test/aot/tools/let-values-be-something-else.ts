@@ -19,6 +19,7 @@
 //   parameter   (value => value)(E)
 //   field       ({ held: E }).held
 //   element     [E][0]
+//               neither where E is a function or class expression: the key would name it, and plain Bun reads both forms as E before it runs
 //   inline      E is the one use of a `const` or `let` of the same function: it becomes the initializer, and the declaration goes
 // Something else comes, and E may. E still does what it does:
 //   comes=n     (never ? E : (void (E), <kinds[n]>))
@@ -572,8 +573,10 @@ export function list({ places, names, inlinings, readsOfCaught }: Variants, turn
   return [
     ...places.flatMap(place =>
       formsOfOnePlace
-        // Plain Bun reads `[f][0]` as `f` before it runs, and a function without a name then takes the name of the variable that it is stored in.
-        .filter(form => !(place.isShorthand && form === "handed") && !(place.takesItsName && form === "element"))
+        .filter(
+          form =>
+            !(place.isShorthand && form === "handed") && !(place.takesItsName && (form === "field" || form === "element")),
+        )
         .map(form => `${form}@${spell(place)}`),
     ),
     ...(names.length

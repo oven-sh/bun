@@ -102,6 +102,7 @@ export const testsThatComeInParts = [
 /** These read the engine's sources, which no test machine has. .github/workflows/lint.yml runs them. */
 export const testsOfEngineSources = [
   "aot/a-switch-of-the-compiler-names-every-enumerator.test",
+  "aot/emitters-append-in-the-order-written.test",
   "aot/engine-types-are-defined-once.test",
   "aot/every-field-of-flows-results-is-written-and-read.test",
   "aot/every-threshold-of-the-compiler-is-declared-as-one.test",
@@ -206,13 +207,20 @@ export const testsAwaitedOn: Record<string, string[]> = {
     "aot/code-nested-in-itself",
     "aot/engine-tests-ir",
     "aot/every-program-28.",
+    "aot/every-program-3.",
     "aot/every-program-alone-82.",
+    "aot/minifying-first-saves-no-code-12.",
     "aot/pointers-into-what-a-cell-owns",
     "aot/programs-in-every-run-18.",
     "aot/programs-in-every-run-29.",
+    "aot/programs-in-every-run-31.",
+    "aot/programs-in-every-run-37.",
     "aot/programs-in-every-run-46.",
     "aot/programs-in-every-run-49.",
     "aot/programs-in-every-run-59.",
+    "aot/workers-from-embedded-files",
+    "aot/workers-from-texts-that-the-build-knows",
+    "aot/workers-named-by-relative-texts",
   ],
 };
 

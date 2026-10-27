@@ -77,9 +77,8 @@ const made: readonly { name: string; declares: string; makes: string; writes: re
     name: "the prototype of a constructor function that stores nothing",
     declares: `function Q($T) {}\n  const first$S = Q.prototype;\n  ${twoPrototypes}`,
     makes: "new $C(Q)()",
-    writes: toThePrototypeOf("Q").filter(write => write.name !== "a store under a computed key" && write.name !== "Object.assign"),
+    writes: toThePrototypeOf("Q"),
     asks: [...ofAPrototype, { name: "instanceof", text: "q instanceof Q" }],
-    isOnlyUntyped: true,
   },
   {
     name: "the prototype of a constructor function under another name",

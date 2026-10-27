@@ -9,12 +9,14 @@ import {
   writeClassWithMethods,
   writeClassWithStaticFields,
   writeCountedLoopsInARow,
+  writeEntriesPutIntoOneMap,
   writeLocalsReadInCatch,
   writeLoopsOverOneArrayInARow,
   writeMethodsStoredIntoPrototype,
   writeNewObjectsStoredIntoFields,
   writeOperandsOfOneLogicalChain,
   writeParametersOfOneFunction,
+  writePromisesAwaitedTogether,
   writeTryBlocksInARow,
   type Program,
 } from "./long-functions-programs";
@@ -202,6 +204,22 @@ test.skipIf(isSlowBuild || isWindows)(
   "the instructions of a build are far from the square of the number of new objects that a constructor stores into fields",
   async () => {
     await expectLinearInstructionCount(3_000, writeNewObjectsStoredIntoFields, 9);
+  },
+  240_000,
+);
+
+test.skipIf(isSlowBuild || isWindows)(
+  "the instructions of a build are linear in the number of entries put into one map",
+  async () => {
+    await expectLinearInstructionCount(3_000, writeEntriesPutIntoOneMap, 4.5);
+  },
+  240_000,
+);
+
+test.skipIf(isSlowBuild || isWindows)(
+  "the instructions of a build are nearly linear in the number of promises awaited together",
+  async () => {
+    await expectLinearInstructionCount(3_000, writePromisesAwaitedTogether, 5);
   },
   240_000,
 );

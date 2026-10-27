@@ -3754,6 +3754,9 @@
   "aot/generated-names-asked-of-full-tables-and-texts-converted-again.test.ts": {
     "default": 300
   },
+  "aot/generated-names-written-under-keys-that-the-build-cannot-know.test.ts": {
+    "default": 300
+  },
   "aot/generated-new-objects-kept-through-built-ins.test.ts": {
     "default": 300
   },
@@ -4047,15 +4050,30 @@
   "aot/hardened-start.test.ts": {
     "default": 300
   },
+  "aot/heap-limit-1.test.ts": {
+    "default": 26100,
+    "asan": 147400,
+    "windows": 15000
+  },
+  "aot/heap-limit-2.test.ts": {
+    "default": 31100,
+    "asan": 189200,
+    "windows": 15000
+  },
+  "aot/heap-limit-3.test.ts": {
+    "default": 28600,
+    "asan": 77700,
+    "windows": 15000
+  },
+  "aot/heap-limit-4.test.ts": {
+    "default": 36100,
+    "asan": 233600,
+    "windows": 15000
+  },
   "aot/heap-limit-too-small.test.ts": {
     "default": 644,
     "asan": 8716,
     "windows": 1432
-  },
-  "aot/heap-limit.test.ts": {
-    "default": 32582,
-    "asan": 110000,
-    "windows": 25559
   },
   "aot/heat/cold-1.test.ts": {
     "default": 35971,

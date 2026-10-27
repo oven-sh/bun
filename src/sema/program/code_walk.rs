@@ -22,7 +22,7 @@ const MAX_READY_TEXTS: usize = 256;
 const MAX_PLUGIN_READERS: usize = 64;
 
 type ParsedSlot<'s, 'r> = Guarded<Option<Box<ParsedCodeFile<'s, 'r>>>>;
-type EntryUpdate<'r> = (Option<HostPayload>, Vec<(&'r [u8], bool)>);
+type EntryUpdate<'r> = (LoadKey<'r>, Option<HostPayload>, Vec<(&'r [u8], bool)>);
 type LockedState<'w, 's, 'r> = GuardedLock<'w, WalkState<'s, 'r>, Mutex>;
 
 struct WalkedFile<'s, 'r> {
@@ -133,19 +133,28 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
         walk.run(meanwhile);
 
         let mut state = std::mem::take(walk.state.get_mut());
-        erase_sites_nothing_asked_for(&mut state);
-        import_what_is_required(self, &mut state);
+        let mut ordered = None;
+        let mut put_in_order = || {
+            erase_sites_nothing_asked_for(&mut state);
+            import_what_is_required(self, &mut state);
+            let mut files = order_files(self, std::mem::take(&mut state));
+            compute_package_depths(&mut files.entries, &files.entry_points, &files.steps);
+            copy_to_session(self.session, &mut files.entries, &files.parsed);
+            ordered = Some(files);
+        };
+        match early_prefetch.get() {
+            Some(prefetch) => prefetch.find_stale_files_while(self.host, &mut put_in_order),
+            None => put_in_order(),
+        }
         let OrderedFiles {
             mut entries,
             entry_points,
             parsed,
-            steps,
-        } = order_files(self, state);
-        compute_package_depths(&mut entries, &entry_points, &steps);
-        copy_to_session(self.session, &mut entries, &parsed);
+            ..
+        } = ordered.expect("the files were put in order");
 
         let updates: Vec<Guarded<EntryUpdate<'r>>> = (entries.iter())
-            .map(|_| Guarded::new((None, Vec::new())))
+            .map(|entry| Guarded::new((entry.key, None, Vec::new())))
             .collect();
         let names_to_resolve = |parsed: &ParsedSlot<'s, 'r>| {
             let parsed = parsed.lock();
@@ -155,18 +164,23 @@ impl<'a, 's: 'r, 'r> CodeLoadContext<'a, 's, 'r> {
         };
         let sizes: Vec<usize> = parsed.iter().map(names_to_resolve).collect();
         parallel_largest_first(self.host, &sizes, &|index| {
+            let entry = &entries[index];
+            let key = self.key_of_read_code(entry.key);
             let Some(parsed) = parsed[index].lock().take() else {
+                updates[index].lock().0 = key;
                 return;
             };
-            let entry = &entries[index];
             let arena = self.session.arena();
-            let (loaded, code, payload) = self.answer_types_question(arena, entry.key, *parsed);
-            *updates[index].lock() = (payload, predicted_type_files(self.host, &loaded));
+            let (loaded, code, payload) = self.answer_types_question(arena, key, *parsed);
+            *updates[index].lock() = (key, payload, predicted_type_files(self.host, &loaded));
             *entry.loaded.lock() = Some(loaded);
             *entry.code.lock() = Some(code);
         });
         for (entry, mut update) in entries.iter_mut().zip(updates) {
-            (entry.payload, entry.predicted_type_files) = std::mem::take(update.get_mut());
+            let (key, payload, predicted_type_files) = update.get_mut();
+            entry.key = *key;
+            entry.payload = payload.take();
+            entry.predicted_type_files = std::mem::take(predicted_type_files);
         }
 
         let keys = entries.iter().map(|entry| entry.key);
@@ -1028,7 +1042,7 @@ fn order_files<'s, 'r>(
         }
         ordered.steps.push(steps);
         ordered.entries.push(CodeEntry {
-            key: context.key_of_read_code(file.target.key),
+            key: file.target.key,
             host_module: file.target.host_module,
             role: match &file.parsed {
                 Some(parsed) => FileRole::of_tree(&parsed.parse.hir),

@@ -18,7 +18,7 @@ import { x as wholeAgain } from "./whole/again.mjs";
 import { K as whole } from "./whole/lib.cjs";
 
 function describe(error) {
-  return error.name + ": " + String(error.message).replace(/[^\s'"]*\//g, "");
+  return error.name + ": " + String(error.message).replace(/[^\s'"]*[\\/]/g, "");
 }
 
 console.log(guarded);

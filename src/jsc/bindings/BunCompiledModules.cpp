@@ -761,6 +761,7 @@ extern "C" bool Bun__AOT__tryReservePagesForNewThread(void** pages)
 extern "C" void Bun__AOT__releasePagesForNewThread(void* pages) { JSC::AOT::releasePagesForNewThread(pages); }
 extern "C" void Bun__AOT__adoptPagesForNewThread(void* pages) { JSC::AOT::adoptPagesForNewThread(pages); }
 extern "C" void Bun__AOT__releaseUnusedPagesOfThread() { JSC::AOT::releaseUnusedPagesOfThread(); }
+extern "C" void Bun__AOT__didStartThread() { JSC::AOT::didStartThread(nullptr); }
 
 extern "C" bool Bun__AOT__entryPointIsCommonJS(JSC::JSGlobalObject* globalObject)
 {
@@ -823,6 +824,7 @@ extern "C" bool Bun__AOT__tryReservePagesForNewThread(void** pages)
 extern "C" void Bun__AOT__releasePagesForNewThread(void*) {}
 extern "C" void Bun__AOT__adoptPagesForNewThread(void*) {}
 extern "C" void Bun__AOT__releaseUnusedPagesOfThread() {}
+extern "C" void Bun__AOT__didStartThread() {}
 extern "C" bool Bun__AOT__entryPointIsCommonJS(JSC::JSGlobalObject*) { return false; }
 extern "C" JSC::EncodedJSValue Bun__AOT__errorIfCodeOutsideImageIsRefused(JSC::JSGlobalObject*, Bun::ErrorCode, const BunString*) { return JSC::JSValue::encode({}); }
 extern "C" JSC::EncodedJSValue Bun__AOT__errorIfHostObjectOutsideImageIsRefused(JSC::JSGlobalObject*, Bun::ErrorCode, const BunString*) { return JSC::JSValue::encode({}); }

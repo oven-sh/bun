@@ -999,6 +999,7 @@ MISSING test/js/web/fetch/fetch.test.ts > fetch > Request: a name that changes f
 MISSING test/js/web/fetch/fetch.test.ts > fetch > URL: a name that changes from run to run
 MISSING test/js/web/fetch/fetch.test.ts > fetch > http://127.0.0.1:<port>/: a name that changes from run to run
 MISSING test/js/web/fetch/fetch.test.ts > fetch > https://127.0.0.1:<port>/: a name that changes from run to run
+NOT-BUILT test/js/bun/archive.test.ts: the check refuses the test's own text (a type error)
 NOT-BUILT test/js/bun/glob/match.test.ts: the check refuses the test's own text (a type error)
 NOT-BUILT test/js/bun/http/request-smuggling.test.ts: the check refuses the test's own text (a type error)
 NOT-BUILT test/js/bun/jsc/webkit-upgrade-23b0720b40.test.ts: the check refuses the test's own text (a type error)

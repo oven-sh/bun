@@ -26,6 +26,7 @@ const files = [...testFiles("")]
 
 // These pass where `bun build --compile --aot` and `bun run --aot` are refused.
 const needNoCompiler = [
+  "aot/emitters-append-in-the-order-written.test.ts",
   "aot/engine-types-are-defined-once.test.ts",
   "aot/the-compiler-reads-no-environment-variable.test.ts",
   "aot/the-frame-of-an-operation-outlives-whoever-is-handed-its-address.test.ts",
@@ -103,6 +104,18 @@ function asks(path: string, depth = 0): boolean {
 test("every test file of --aot asks the Bun under test whether it compiles", () => {
   expect(files.length).toBeGreaterThan(200);
   expect(files.filter(file => !needNoCompiler.includes(file) && !asks(join(tests, file)))).toEqual([]);
+});
+
+// README.md: the run time counts no calls of its operations on Windows, and a count of nothing proves nothing.
+test("a test file that reads how often operations were called skips itself where no call is counted", () => {
+  const readsCounts = /(?:["'`]|\\t)operation:/;
+  const reading = files.filter(
+    file => file.startsWith("aot/") && readsCounts.test(readFileSync(join(tests, file), "utf8")),
+  );
+  expect(reading.length).toBeGreaterThan(50);
+  expect(reading.filter(file => /from "(?:\.\.?\/)+supported";/.test(readFileSync(join(tests, file), "utf8")))).toEqual(
+    [],
+  );
 });
 
 test("the files that are said to need no compiler are there", () => {

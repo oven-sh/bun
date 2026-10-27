@@ -52,33 +52,74 @@ impl ReachedTargets {
         if words == 0 {
             return reached;
         }
-        // What a file imports comes before the file, but for a cycle, which takes another round.
-        let order = list_successors_first(successors);
-        loop {
-            let mut has_changed = false;
-            for &file in &order {
-                for successor in &successors[file] {
-                    has_changed |= reached.add_set(file, successor.idx());
-                }
+        reached.add_sets_of_successors(successors);
+        reached
+    }
+
+    // Tarjan's algorithm: a cycle is complete once everything it leads to is, and its files lead to the same targets.
+    fn add_sets_of_successors(&mut self, successors: &[Vec<FileId>]) {
+        const NOT_VISITED: u32 = u32::MAX;
+        let mut index_of = vec![NOT_VISITED; successors.len()];
+        let mut lowest_reached = vec![0u32; successors.len()];
+        let mut is_open = vec![false; successors.len()];
+        let mut open: Vec<usize> = Vec::new();
+        let mut path: Vec<(usize, usize)> = Vec::new();
+        let mut visited = 0;
+        for start in 0..successors.len() {
+            if successors[start].is_empty() || index_of[start] != NOT_VISITED {
+                continue;
             }
-            if !has_changed {
-                return reached;
+            path.push((start, 0));
+            while let Some(&(file, next)) = path.last() {
+                if next == 0 {
+                    (index_of[file], lowest_reached[file]) = (visited, visited);
+                    visited += 1;
+                    is_open[file] = true;
+                    open.push(file);
+                }
+                if let Some(successor) = successors[file].get(next) {
+                    path.last_mut().expect("the path holds `file`").1 += 1;
+                    let successor = successor.idx();
+                    if successors[successor].is_empty() {
+                        continue;
+                    }
+                    if index_of[successor] == NOT_VISITED {
+                        path.push((successor, 0));
+                    } else if is_open[successor] {
+                        lowest_reached[file] = lowest_reached[file].min(index_of[successor]);
+                    }
+                    continue;
+                }
+                path.pop();
+                if let Some(&(parent, _)) = path.last() {
+                    lowest_reached[parent] = lowest_reached[parent].min(lowest_reached[file]);
+                }
+                if lowest_reached[file] != index_of[file] {
+                    continue;
+                }
+                let first = open.iter().rposition(|&it| it == file);
+                let cycle = open.split_off(first.expect("an open file is listed"));
+                for &member in &cycle {
+                    self.add_set(file, member);
+                    for successor in &successors[member] {
+                        self.add_set(file, successor.idx());
+                    }
+                }
+                for &member in &cycle {
+                    self.add_set(member, file);
+                    is_open[member] = false;
+                }
             }
         }
     }
 
-    fn add_set(&mut self, into: usize, from: usize) -> bool {
+    fn add_set(&mut self, into: usize, from: usize) {
         if into == from {
-            return false;
+            return;
         }
-        let mut has_changed = false;
         for word in 0..self.words {
-            let added = self.sets[from * self.words + word];
-            let held = &mut self.sets[into * self.words + word];
-            has_changed |= added & !*held != 0;
-            *held |= added;
+            self.sets[into * self.words + word] |= self.sets[from * self.words + word];
         }
-        has_changed
     }
 
     fn set_of(&self, file: FileId) -> &[u64] {
@@ -125,33 +166,6 @@ impl RemainingTargets {
     }
 }
 
-fn list_successors_first(successors: &[Vec<FileId>]) -> Vec<usize> {
-    let mut order = Vec::new();
-    let mut is_visited = vec![false; successors.len()];
-    let mut path: Vec<(usize, usize)> = Vec::new();
-    for start in 0..successors.len() {
-        if successors[start].is_empty() || core::mem::replace(&mut is_visited[start], true) {
-            continue;
-        }
-        path.push((start, 0));
-        while let Some((file, next)) = path.last_mut() {
-            let Some(successor) = successors[*file].get(*next) else {
-                order.push(*file);
-                path.pop();
-                continue;
-            };
-            *next += 1;
-            let successor = successor.idx();
-            if !successors[successor].is_empty()
-                && !core::mem::replace(&mut is_visited[successor], true)
-            {
-                path.push((successor, 0));
-            }
-        }
-    }
-    order
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -189,6 +203,16 @@ mod tests {
             assert_eq!(below(&reached, file, 5), [3]);
         }
         assert!(!reached.leads_to_target(FileId(4)));
+    }
+
+    #[test]
+    fn a_cycle_leads_to_what_a_cycle_below_it_leads_to() {
+        let successors = graph(&[&[1], &[0, 2], &[3], &[2, 4], &[], &[0], &[3, 6]]);
+        let reached = ReachedTargets::compute([4, 2].into_iter().map(FileId), &successors);
+        for file in [0, 1, 2, 3, 5, 6] {
+            assert_eq!(below(&reached, file, 7), [2, 4]);
+        }
+        assert_eq!(below(&reached, 4, 7), [4]);
     }
 
     #[test]

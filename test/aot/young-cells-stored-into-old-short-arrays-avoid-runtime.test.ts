@@ -2,7 +2,7 @@ import { expect } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { test } from "./supported";
+import { test } from "./supported-with-counted-calls";
 
 const files = {
   // Every owner is old and is written once, so every store finds its owner black and has to remember it.

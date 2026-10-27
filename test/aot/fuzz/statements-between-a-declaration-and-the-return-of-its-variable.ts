@@ -8,7 +8,8 @@
 //   in between     nothing, a store, a call, a loop, an early `return`, a `throw`, a `try`, a declaration, a class with a static block, an `await`, a `yield`
 //   given back     by `return` as it is, in brackets, behind a comma, under a cast, out of either arm of a choice, inside a larger expression, twice, out of a `try` or a `finally`, by `throw`; by an inner
 //                  function, an arrow function, a getter or a static method that is called, or that nobody calls
-//   by the build   with `flagsOfTheBuild`: a flag of "bun:bundle" that is on or off, or a name that the build defines, guards what stands in between, chooses the value, or chooses what the `return` gives
+//   by the build   with `flagsOfTheBuild`: a flag of "bun:bundle" that is on or off, or a name that the build defines, guards what stands in between, chooses the value, or chooses what the `return` gives;
+//                  in between stands a call that the build drops, or one that is marked as pure, which `flagsOfABuildThatIgnoresMarks` keeps
 //   in             a function, a function expression, an arrow function, a method, a static method, a getter, a callback of a built-in, an async function, a generator, an async generator
 import type { Random } from "./random";
 
@@ -183,7 +184,10 @@ export const flagsOfTheBuild = [
   "BUILD_OFF=false",
   "--define",
   'process.env.CHANNEL="public"',
+  "--drop=dropped",
 ];
+
+export const flagsOfABuildThatIgnoresMarks = [...flagsOfTheBuild, "--ignore-dce-annotations"];
 
 const chosenByTheBuild: readonly string[] = [
   `feature("ON") ? say("made") : null`,
@@ -240,6 +244,12 @@ const betweenByTheBuild: readonly Text[] = [
   [`if (process.env.CHANNEL === "public") count++;`],
   [`if (process.env.CHANNEL !== "public") say("never");`],
   [`if (typeof BUILD_ON === "boolean") count++;`],
+  [`/* @__PURE__ */ say("marked as pure");`],
+  [`/* @__PURE__ */ holder.method();`],
+  [`/* @__PURE__ */ new Noted();`],
+  [`/* @__PURE__ */ (() => say("marked as pure"))();`],
+  [`dropped("dropped");`],
+  [`dropped(say("an argument of what is dropped"));`],
 ];
 
 const returnsByTheBuild: readonly Text[] = [
@@ -551,6 +561,9 @@ let text = "abcdef";
 function say(what${any})${any} {
 log.push(String(what));
 return what;
+}
+function dropped(what${any}) {
+log.push("not dropped: " + what);
 }
 function tag(parts${any}) {
 log.push("tagged " + parts[0]);

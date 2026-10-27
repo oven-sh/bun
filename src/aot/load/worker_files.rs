@@ -218,6 +218,24 @@ fn join_below_root(root: &[u8], relative: &[u8]) -> Vec<u8> {
     [root, &kept.join(&b"/"[..])].concat()
 }
 
+/// The file on disk that an executable holds under `named`, a path below its `root`.
+fn find_path_on_disk(root_directory: &[u8], root: &[u8], named: &[u8]) -> Option<Vec<u8>> {
+    let segments = strings::split(named.strip_prefix(root)?, b"/");
+    let segments = segments.map(|it| if it == b"_.._" { &b".."[..] } else { it });
+    let name = segments.collect::<Vec<_>>().join(&b"/"[..]);
+    join_paths(&[with_separators_of_program(root_directory), name], true)
+}
+
+/// A directory that the host has named, `C:\a\b` on Windows, as a program is taken to write it here.
+fn with_separators_of_program(directory: &[u8]) -> Vec<u8> {
+    match directory {
+        [drive, b':', b'\\', ..] if drive.is_ascii_alphabetic() => {
+            with_forward_slashes(directory.to_vec())
+        }
+        _ => directory.to_vec(),
+    }
+}
+
 struct Walk<'a, 's> {
     files: &'a Files<'s>,
     search: &'a WorkerSearch<'a>,
@@ -1015,7 +1033,7 @@ impl Walk<'_, '_> {
             ..
         } = self.search;
         let root = match runs_in_place {
-            true => paths.root_directory.clone(),
+            true => with_separators_of_program(&paths.root_directory),
             false => with_forward_slashes(paths.module_prefix.clone()),
         };
         // A package names the file of a Worker that most programs never start, and the program of such a file is no small one.
@@ -1047,12 +1065,7 @@ impl Walk<'_, '_> {
         };
         let written = match runs_in_place {
             true => Some(named.clone()),
-            false => named.strip_prefix(&root[..]).and_then(|name| {
-                let segments = strings::split(name, b"/");
-                let segments = segments.map(|it| if it == b"_.._" { &b".."[..] } else { it });
-                let name = segments.collect::<Vec<_>>().join(&b"/"[..]);
-                join_paths(&[paths.root_directory.clone(), name], true)
-            }),
+            false => find_path_on_disk(&paths.root_directory, &root, &named),
         };
         let found = written.and_then(|written| resolve_entry_point(&written));
         found.is_some_and(|path| self.add_file(&path, Some(&named)))
@@ -1281,6 +1294,27 @@ mod tests {
         assert_eq!(
             join("./a/../../../b/./w.js"),
             b"/$bunfs/root/_.._/_.._/b/w.js"
+        );
+    }
+
+    #[test]
+    fn a_path_in_the_executable_leads_to_the_file_on_disk() {
+        let find = |directory: &str, root: &str, named: &str| {
+            find_path_on_disk(directory.as_bytes(), root.as_bytes(), named.as_bytes())
+        };
+        let is = |path: &str| Some(path.as_bytes().to_vec());
+        let posix = "/$bunfs/root/";
+        assert_eq!(find("/a/b", posix, "/$bunfs/root/w.cjs"), is("/a/b/w.cjs"));
+        assert_eq!(find("/a/b", posix, "/$bunfs/root/_.._/w.js"), is("/a/w.js"));
+        assert_eq!(find("/a/b", posix, "/elsewhere/w.js"), None);
+        let windows = "B:/~BUN/root/";
+        assert_eq!(
+            find("C:\\a\\b", windows, "B:/~BUN/root/w.cjs"),
+            is("C:/a/b/w.cjs")
+        );
+        assert_eq!(
+            find("C:\\a\\b", windows, "B:/~BUN/root/_.._/lib/w.js"),
+            is("C:/a/lib/w.js")
         );
     }
 

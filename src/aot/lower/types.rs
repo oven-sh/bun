@@ -31,6 +31,9 @@ pub(crate) struct TypeState {
     sources: FxHashMap<TypeId, CheckerTypeId>,
     walk: exploration::Walk,
     alike_walk: shape_table::AlikeWalkTables,
+    /// The tuple that `find_element_type` was asked about last, and the position of its first
+    /// element that is not one value.
+    pub(in crate::lower) first_variable_element: Option<(CheckerTypeId, usize)>,
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]

@@ -90,12 +90,11 @@ async function pointersHeldIn(program: string) {
 }
 
 test.skipIf(process.arch !== "x64" || isASAN)("a pointer that is held across a handler alone is counted", async () => {
-  expect(await pointersHeldIn("only-the-handler-stands-between-two-reads-through-one-pointer.ts")).toEqual({
-    exitCode: 0,
-    pointers: 2,
-  });
-  expect(await pointersHeldIn("nothing-stands-between-two-reads-through-one-pointer.ts")).toEqual({
-    exitCode: 0,
-    pointers: 0,
+  expect({
+    withHandlers: await pointersHeldIn("only-the-handler-stands-between-two-reads-through-one-pointer.ts"),
+    without: await pointersHeldIn("nothing-stands-between-two-reads-through-one-pointer.ts"),
+  }).toEqual({
+    withHandlers: { exitCode: 0, pointers: 2 },
+    without: { exitCode: 0, pointers: 0 },
   });
 });

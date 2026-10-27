@@ -79,6 +79,23 @@ test("what the value did is still done where something else comes", () => {
   expect(write(file, "comes@0-9=2")).toBe(";(process.argv.length > 5 ? finish(1) : (void (finish(1)), []));\n");
 });
 
+test("a function or a class that is written in place goes into no literal", () => {
+  const text =
+    "exports.arrow = () => {};\nexports.plain = function () {};\nexports.made = class {};\nexports.read = kept;\n";
+  const variants = list(read("program.cjs", text));
+  const formsOf = (written: string) => {
+    const where = `@${text.indexOf(written)}-${text.indexOf(written) + written.length}`;
+    return variants.filter(variant => variant.split("=")[0].endsWith(where)).map(variant => variant.split("@")[0]);
+  };
+  for (const written of ["() => {}", "function () {}", "class {}"]) {
+    expect(formsOf(written)).toContain("parameter");
+    expect(formsOf(written)).not.toContain("field");
+    expect(formsOf(written)).not.toContain("element");
+  }
+  expect(formsOf("kept")).toContain("field");
+  expect(formsOf("kept")).toContain("element");
+});
+
 test("every program in which something else comes ends", async () => {
   using folder = tempDir("aot-something-else-comes", {});
   const file = read("program.mjs", program);

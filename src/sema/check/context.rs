@@ -2171,7 +2171,14 @@ impl<'p, 's> Checker<'p, 's> {
         for &part in self.parts(context) {
             if let TypeData::Tuple { flags, .. } = self.data(part) {
                 let elems = self.type_arguments(part);
-                let fixed = Self::fixed_length(flags);
+                let fixed = match self.fixed_length_asked_last {
+                    Some((asked, fixed)) if asked == part => fixed,
+                    _ => {
+                        let fixed = Self::fixed_length(flags);
+                        self.fixed_length_asked_last = Some((part, fixed));
+                        fixed
+                    }
+                };
                 if before_spreads && index < fixed {
                     let element = elems[index];
                     // An optional element also includes `undefined`, whether or not that is stored

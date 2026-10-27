@@ -477,6 +477,7 @@ export const rows: Row[] = [
   ["aot/generated-cases-three-ways", 8, "./three-ways/made-cases", "madeCasesOfAllTopics"],
   ["aot/generated-fresh-seeds", 3, "./generated/fresh-seeds", "freshSeeds"],
   ["aot/global-names", 3, "./global-names-cases", "globalNames"],
+  ["aot/heap-limit", 4, "./heap-limit-cases", "addressSpaceForObjects"],
   ["aot/heat/cold", 8, "./heat/run-heat", "heat", ["cold"]],
   ["aot/heat/hot", 8, "./heat/run-heat", "heat", ["hot"]],
   ["aot/heat/neither", 8, "./heat/run-heat", "heat", ["neither"]],

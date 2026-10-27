@@ -45,23 +45,10 @@ impl<R> ScopeRule<R> {
                 dest.write_char(b' ')?;
             }
             dest.write_str("to (")?;
-            // <scope-start> is treated as an ancestor of scope end.
-            // https://drafts.csswg.org/css-nesting/#nesting-at-scope
-            if let Some(scope_start) = &self.scope_start {
-                // `Printer::with_context` carries the captured state as the
-                // first closure arg (no `&self` capture across `&mut dest`).
-                dest.with_context(
-                    scope_start,
-                    scope_end,
-                    |scope_end: &SelectorList, d: &mut Printer| -> Result<(), PrintErr> {
-                        let ctx = d.ctx;
-                        serialize_selector_list(scope_end.v.slice(), d, ctx, false)
-                    },
-                )?;
-            } else {
-                let ctx = dest.ctx;
-                return serialize_selector_list(scope_end.v.slice(), dest, ctx, false);
-            }
+            // `&` in <scope-end> is the scoping root (css-cascade-6), not <scope-start>.
+            dest.with_cleared_context(scope_end, |scope_end, d: &mut Printer| {
+                serialize_selector_list(scope_end.v.slice(), d, None, false)
+            })?;
             dest.write_char(b')')?;
             dest.whitespace()?;
         }

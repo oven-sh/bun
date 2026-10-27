@@ -205,6 +205,13 @@ declare var Worker: Bun.__internal.UseLibDomIfAvailable<
   "Worker",
   {
     prototype: Worker;
+    /**
+     * Starts a thread that runs `scriptURL`.
+     *
+     * Add an `"error"` listener to the new `Worker`. An uncaught error that ends the worker
+     * fires `"error"`, and with no listener Bun reports it as an uncaught error of this thread
+     * (`process.on("uncaughtException")`, or print and exit code 1).
+     */
     new (scriptURL: string | URL, options?: Bun.WorkerOptions | undefined): Worker;
     /**
      * The cloned value of the `data` property passed to `new Worker()`.

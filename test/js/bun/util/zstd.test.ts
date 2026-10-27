@@ -1654,6 +1654,23 @@ describe("bugs that zstd has had", () => {
     expect(await decoded(hex("502a4d18f8ffffff"))).toEqual(["ERR_ZSTD", Buffer.alloc(0), Buffer.alloc(0)]);
   });
 
+  it("what no frame starts with is refused before there are 4 bytes of it", async () => {
+    const after = async (first: string) => {
+      const stream = zlib.createZstdDecompress();
+      const { promise, resolve } = Promise.withResolvers<string>();
+      stream.on("error", (error: any) => resolve(error.code));
+      stream.write(hex(first), error => resolve((error as any)?.code ?? "more"));
+      try {
+        return await promise;
+      } finally {
+        stream.destroy();
+      }
+    };
+    expect(await Promise.all(["28", "28b52f", "50", "5f2a4d"].map(after))).toEqual(["more", "more", "more", "more"]);
+    const unknown = "ZSTD_error_prefix_unknown";
+    expect(await Promise.all(["000000", "29", "28b530", "4f2a4d"].map(after))).toEqual(Array(4).fill(unknown));
+  });
+
   it("a first block cannot repeat the tables of the frame that was decoded before it", async () => {
     const text = zlib.zstdCompressSync(noise(20_000, 18, 15));
     for (const [frame, code] of [
@@ -1881,6 +1898,47 @@ describe("bugs that zstd has had", () => {
     for (const level of [1, 3, 9, 19]) roundTrip(input, { [c.ZSTD_c_compressionLevel]: level });
   });
 
+  it("a block of literals with a match for its last bytes", () => {
+    const input = noise(128 << 10, 19);
+    input.copy(input, input.length - 16, 1000, 1016);
+    for (const level of [16, 19, 22])
+      expect(roundTrip(input, { [c.ZSTD_c_compressionLevel]: level }).length).toBe(131084);
+  });
+
+  it("less input than the shortest long distance match", async () => {
+    const params = { [c.ZSTD_c_enableLongDistanceMatching]: 1, [c.ZSTD_c_ldmMinMatch]: 4096 };
+    const frames = [0, 1, 7, 63, 64, 4095].flatMap(length =>
+      [3, 19].map(level => roundTrip(noise(length, 21, 3), { ...params, [c.ZSTD_c_compressionLevel]: level })),
+    );
+    expect(Bun.MD5.hash(Buffer.concat(frames), "hex")).toStartWith("033266ef");
+
+    const input = noise(300, 22, 3);
+    const stream = zlib.createZstdCompress({ params });
+    const { promise, resolve } = Promise.withResolvers<Buffer>();
+    const output: Buffer[] = [];
+    stream.on("data", chunk => output.push(chunk)).on("end", () => resolve(Buffer.concat(output)));
+    for (const piece of pieces(input, 5)) {
+      stream.write(piece);
+      stream.flush();
+    }
+    stream.end();
+    const frame = await promise;
+    expect(`${frame.length} ${Bun.MD5.hash(frame, "hex").slice(0, 8)}`).toBe("504 1f230d95");
+    expect(zlib.zstdDecompressSync(frame)).toEqual(input);
+  });
+
+  it("the least and the most that parameters can be", () => {
+    const taken = (parameter: number, values: number[]) =>
+      values.filter(value => typeof attempt(() => roundTrip(hello, { [parameter]: value })) !== "string");
+    expect(taken(c.ZSTD_c_compressionLevel, [-200_000, -131_073, -131_072, 22, 23, 200_000])).toBeArrayOfSize(6);
+    expect(taken(c.ZSTD_c_windowLog, [9, 10, 31, 32])).toEqual([10, 31]);
+    expect(taken(c.ZSTD_c_enableLongDistanceMatching, [0, 1, 2, 3])).toEqual([0, 1, 2]);
+    expect(taken(c.ZSTD_c_ldmHashLog, [5, 6, 30, 31])).toEqual([6, 30]);
+    expect(taken(c.ZSTD_c_ldmMinMatch, [3, 4, 4096, 4097])).toEqual([4, 4096]);
+    expect(taken(c.ZSTD_c_ldmBucketSizeLog, [0, 1, 8, 9])).toEqual([0, 1, 8]);
+    expect(taken(c.ZSTD_c_ldmHashRateLog, [0, 25, 26])).toEqual([0, 25]);
+  });
+
   describe("dictionaries", () => {
     // `tests/dict-files/zero-weight-dict`
     const zeroWeights = base64(
@@ -1926,6 +1984,22 @@ describe("bugs that zstd has had", () => {
         hex("37a430ec").copy(raw);
         expect(taken(raw)).toEqual(length < 8 ? ["ok", "ok"] : refused);
       }
+    });
+
+    it("that do not make the window of a stream of unknown size smaller", async () => {
+      const chunks = [Buffer.from("abc"), Buffer.from("def")];
+      const start = async (options: zlib.ZstdOptions) =>
+        ((await through(zlib.createZstdCompress(options), chunks)) as Buffer).toString("hex", 0, 6);
+      const dictionary = noise(1000, 20, 7);
+      expect(await start({ dictionary })).toBe("28b52ffd0058");
+      expect(await start({ dictionary, pledgedSrcSize: 6 })).toBe("28b52ffd2006");
+    });
+
+    it("of which the tables have no room for all", () => {
+      const dictionary = noise(17 << 20, 24, 15);
+      const params = { [c.ZSTD_c_compressionLevel]: 1 };
+      expect(roundTrip(dictionary.subarray(0, 10240), params, dictionary).length).toBe(5154);
+      expect(roundTrip(dictionary.subarray(-10240), params, dictionary).length).toBe(19);
     });
 
     it("that leave the window", async () => {
@@ -1984,6 +2058,24 @@ describe("bugs that zstd has had", () => {
       };
       expect(await cut(input.length)).toBe("1398674 d981d509");
       for (const size of [1 << 20, 64 << 10, 1000]) expect(await cut(size)).toBe("1398687 a871b693");
+    });
+
+    it("make the same twice", async () => {
+      const input = noise(3 << 19, 23, 7);
+      for (const longDistance of [0, 1]) {
+        for (const level of [3, 16]) {
+          const params = {
+            [c.ZSTD_c_nbWorkers]: 2,
+            [c.ZSTD_c_jobSize]: 512 << 10,
+            [c.ZSTD_c_compressionLevel]: level,
+            [c.ZSTD_c_enableLongDistanceMatching]: longDistance,
+          };
+          const made = () => through(zlib.createZstdCompress({ params }), pieces(input, 100_000)) as Promise<Buffer>;
+          const [frame, again] = await Promise.all([made(), made()]);
+          expect(frame.equals(again)).toBe(true);
+          expect(zlib.zstdDecompressSync(frame).equals(input)).toBe(true);
+        }
+      }
     });
 
     it("with nothing left for the last job", async () => {

@@ -4996,15 +4996,13 @@ describe("css tests", () => {
             ".foo { background: -webkit-radial-gradient(circle at 30% 107%, red, blue); background: radial-gradient(circle at 30% 107%, red, #00f); }",
             targets,
           );
-          // A typed prefixed value stays before a value that is kept as tokens.
+          // The typed prefixed values stay before a value that is kept as tokens.
           cssTest(
             ".foo { background: -webkit-linear-gradient(red, blue); background: -webkit-radial-gradient(20px 30px, yellow, green) }",
             ".foo { background: -webkit-linear-gradient(red, #00f); background: -webkit-radial-gradient(20px 30px, yellow, green); }",
             targets,
           );
-          // With two of them, BackgroundHandler writes the first one last, as it does on main when the third value is `-ms-linear-gradient()`.
-          // Observed: `-moz-linear-gradient(red, #00f); -webkit-radial-gradient(20px 30px, yellow, green); -webkit-linear-gradient(red, #00f)`.
-          cssTestTodo(
+          cssTest(
             ".foo { background: -webkit-linear-gradient(red, blue); background: -moz-linear-gradient(red, blue); background: -webkit-radial-gradient(20px 30px, yellow, green) }",
             ".foo { background: -webkit-linear-gradient(red, #00f); background: -moz-linear-gradient(red, #00f); background: -webkit-radial-gradient(20px 30px, yellow, green); }",
             targets,
@@ -5065,18 +5063,16 @@ describe("css tests", () => {
         '@property --a { syntax: "<image>"; inherits: false; initial-value: -webkit-radial-gradient(closest-side circle, red, blue) }',
         '@property --a{syntax:"<image>";inherits:false;initial-value:-webkit-radial-gradient(circle closest-side,red,#00f)}',
       );
-      // `@property` has no fallback for a value that is not typed, so these are an error until #45806 keeps such a value.
+      // `@property` keeps a value that is not typed as written.
       for (const value of [
         "-webkit-radial-gradient(20px 30px, red, blue)",
         "-webkit-radial-gradient(circle at center, red, blue)",
         "-webkit-linear-gradient(red, 50%, blue)",
       ]) {
-        test(`@property initial-value: ${value}`, () => {
-          const source = `@property --a { syntax: "<image>"; inherits: false; initial-value: ${value} }`;
-          expect(() => minify_test_with_options(source, "")).toThrow(
-            `Unexpected token: ${value.slice(0, value.indexOf("(") + 1)}`,
-          );
-        });
+        minify_test(
+          `@property --a { syntax: "<image>"; inherits: false; initial-value: ${value} }`,
+          `@property --a{syntax:"<image>";inherits:false;initial-value:${value.replaceAll(", ", ",")}}`,
+        );
       }
 
       test("Bun.build", async () => {

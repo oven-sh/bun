@@ -517,3 +517,14 @@ pub(crate) struct SeqTableRefs<'a> {
     /// What the three are in, if that is one thing.
     pub(crate) side_by_side: Option<&'a SeqTables>,
 }
+
+impl SeqTableRefs<'_> {
+    /// Often enough for a branch on that to cost more than it saves: one that goes wrong costs about 10 times that.
+    pub(crate) fn lengths_often_have_more_bits(&self) -> bool {
+        self.ll.with_more_bits + self.ml.with_more_bits > 512 / 10
+    }
+
+    pub(crate) fn matches_are_long(&self) -> bool {
+        self.ml.with_more_bits > 512 / 2
+    }
+}

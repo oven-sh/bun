@@ -1540,14 +1540,12 @@ impl<'a> Executor<'_, 'a> {
         let start = PaddedStart::new();
         let mut seq_state: SeqState<'_> = *seq_state;
 
-        // A branch that goes wrong costs about 10 times what it saves.
-        let tables = seq_state.tables;
-        let more_bits = tables.ll.with_more_bits + tables.ml.with_more_bits > 512 / 10;
+        let more_bits = seq_state.tables.lengths_often_have_more_bits();
 
         let mut remaining = nb_seq;
         // Long copies go on while the next sequences are decoded, if that is what comes next. And a batch of a few
         // sequences is not worth it.
-        if (tables.ml.with_more_bits > 512 / 2 || nb_seq <= MAX_ONE_BY_ONE) && !self.split {
+        if (seq_state.tables.matches_are_long() || nb_seq <= MAX_ONE_BY_ONE) && !self.split {
             let mut exec = self.fork();
             while remaining > ahead.len() {
                 let sequence = seq_state.decode_sequence(remaining == 1);

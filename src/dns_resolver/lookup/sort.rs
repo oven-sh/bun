@@ -1,4 +1,5 @@
-// Portions of this file are derived from c-ares's ares_sortaddrinfo.c, under the BSD 3-Clause License:
+// Portions of this file are derived from c-ares's ares_sortaddrinfo.c, under the BSD 3-Clause
+// License:
 //
 // Copyright (C) 1995, 1996, 1997, and 1998 WIDE Project.
 // Copyright (C) 2018 The Android Open Source Project
@@ -127,8 +128,9 @@ fn compare(a: &Candidate, b: &Candidate) -> Ordering {
         })
 }
 
-/// Rule 9 compares only some pairs, so an answer can make `compare` no total order, which `sort_by` may panic on.
-/// Halves and merges as glibc's `qsort()` does, so the order of such an answer is the one c-ares gave too.
+/// Rule 9 compares only some pairs, so an answer can make `compare` no total order, which `sort_by`
+/// may panic on. Halves and merges as glibc's `qsort()` does, so the order of such an answer is the
+/// one c-ares gave too.
 fn merge_sort(list: Vec<Candidate>) -> Vec<Candidate> {
     if list.len() < 2 {
         return list;

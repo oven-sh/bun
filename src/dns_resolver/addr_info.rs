@@ -51,6 +51,13 @@ fn ttl_as_int(ttl: u32) -> i32 {
     i32::try_from(ttl).unwrap_or(i32::MAX)
 }
 
+/// What to make of a response with CNAME records and no address.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum AliasesAlone {
+    AreAnAnswer,
+    AreNoData,
+}
+
 impl AddrInfo {
     pub(crate) fn has_family(&self, family: Family) -> bool {
         self.nodes
@@ -66,12 +73,12 @@ impl AddrInfo {
         });
     }
 
-    /// Adds the CNAME records of `response`'s answer section, and the addresses of the type that its
-    /// question asks for.
+    /// Adds the CNAME records of `response`'s answer section, and the addresses of the type that
+    /// its question asks for.
     pub(crate) fn add_response(
         &mut self,
         response: &Message,
-        cname_alone_is_no_data: bool,
+        aliases_alone: AliasesAlone,
         port: u16,
     ) -> Result<()> {
         let qtype = response.question.qtype;
@@ -101,7 +108,9 @@ impl AddrInfo {
                 _ => {}
             }
         }
-        if found.nodes.is_empty() && (found.aliases.is_empty() || cname_alone_is_no_data) {
+        if found.nodes.is_empty()
+            && (found.aliases.is_empty() || aliases_alone == AliasesAlone::AreNoData)
+        {
             return Err(Error::ENODATA);
         }
 

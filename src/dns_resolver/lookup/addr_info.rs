@@ -1,4 +1,5 @@
-//! `getaddrinfo()`: the addresses of a host, from the hosts file and from the servers by way of the search list.
+//! `getaddrinfo()`: the addresses of a host, from the hosts file and from the servers by way of the
+//! search list.
 
 use core::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
@@ -7,7 +8,7 @@ use bun_core::strings;
 
 use super::sort::sort_addresses;
 use super::{is_localhost, is_onion_domain};
-use crate::addr_info::{AddrInfo, Family};
+use crate::addr_info::{AddrInfo, AliasesAlone, Family};
 use crate::channel::{Answer, Channel, LookupId, Owner, Serial, Token};
 use crate::io::Time;
 use crate::message::{Message, rr_type};
@@ -26,7 +27,8 @@ pub(crate) struct AddrInfoLookup {
     aaaa_query: Option<Serial>,
     /// Queries not answered yet.
     remaining: usize,
-    /// Some name exists, without addresses of the family. That is worth more to the caller than the last name not existing.
+    /// Some name exists, without addresses of the family. That is worth more to the caller than the
+    /// last name not existing.
     saw_no_data: bool,
 }
 
@@ -131,7 +133,8 @@ impl Channel {
                 }
             }
         }
-        // RFC 6761 section 6.3: localhost is the loopback address, whatever the file says or leaves out.
+        // RFC 6761 section 6.3: localhost is the loopback address, whatever the file says or leaves
+        // out.
         if is_localhost(&lookup.name) {
             let listed = self.io.loopback_addresses();
             if listed.is_some() {
@@ -171,7 +174,8 @@ impl Channel {
         lookup.remaining += qtypes.len();
         for &qtype in qtypes {
             let sent = self.ask(now, &name, qtype, Owner::AddrInfo { lookup: id });
-            // `None`: an answer from the cache has moved the lookup on to its next name by now, with queries of its own.
+            // `None`: an answer from the cache has moved the lookup on to its next name by now,
+            // with queries of its own.
             if qtype == rr_type::AAAA
                 && sent.is_some()
                 && let Some(lookup) = self.addr_info_lookups.get_mut(&id)
@@ -186,22 +190,21 @@ impl Channel {
         &mut self,
         now: Time,
         id: LookupId,
-        result: Result<&Message>,
+        result: Result<Message>,
     ) {
         let Some(lookup) = self.addr_info_lookups.get_mut(&id) else {
             return;
         };
         lookup.remaining = lookup.remaining.saturating_sub(1);
-        let status = result.map(|_| ());
-        let added = match result {
-            Ok(response) => lookup.found.add_response(response, true, lookup.port),
-            Err(_) => Ok(()),
-        };
+        let outcome = result.and_then(|response| {
+            lookup
+                .found
+                .add_response(&response, AliasesAlone::AreNoData, lookup.port)
+        });
         if lookup.remaining > 0 {
             // With an IPv4 address in hand, the AAAA query gets no more tries. Not the other way
             // around: hosts that cannot use IPv6 get AAAA answers too.
-            if result.is_ok()
-                && added.is_ok()
+            if outcome.is_ok()
                 && lookup.found.has_family(Family::V4)
                 && let Some(serial) = lookup.aaaa_query
             {
@@ -216,15 +219,13 @@ impl Channel {
             .checked_sub(1)
             .and_then(|last| lookup.names.get(last))
             .is_some_and(|name| !strings::contains_char(name, b'.'));
-        match (status, added) {
-            (Err(error @ (Error::EDESTRUCTION | Error::ECANCELLED)), _) => {
+        match outcome {
+            Err(error @ (Error::EDESTRUCTION | Error::ECANCELLED)) => {
                 self.end_addr_info_lookup(id, Err(error));
             }
-            (_, Err(Error::EBADRESP)) if has_addresses => self.end_addr_info_lookup(id, Ok(())),
-            (_, Err(error)) if error != Error::ENODATA => self.end_addr_info_lookup(id, Err(error)),
             _ if has_addresses => self.end_addr_info_lookup(id, Ok(())),
-            (Err(Error::ENOTFOUND | Error::ENODATA), _) | (_, Err(Error::ENODATA)) => {
-                lookup.saw_no_data |= status != Err(Error::ENOTFOUND);
+            Err(Error::ENOTFOUND | Error::ENODATA) => {
+                lookup.saw_no_data |= outcome == Err(Error::ENODATA);
                 let error = if lookup.saw_no_data {
                     Error::ENODATA
                 } else {
@@ -233,7 +234,7 @@ impl Channel {
                 self.addr_info_lookup_next(now, id, error);
             }
             // systemd-resolved answers so for a name of one label.
-            (Err(error @ (Error::ESERVFAIL | Error::EREFUSED)), _) if last_name_has_one_label => {
+            Err(error @ (Error::ESERVFAIL | Error::EREFUSED)) if last_name_has_one_label => {
                 let error = if lookup.saw_no_data {
                     Error::ENODATA
                 } else {
@@ -241,7 +242,7 @@ impl Channel {
                 };
                 self.addr_info_lookup_next(now, id, error);
             }
-            _ => self.end_addr_info_lookup(id, status),
+            _ => self.end_addr_info_lookup(id, outcome),
         }
     }
 }

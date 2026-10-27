@@ -2532,7 +2532,7 @@ declare module "bun" {
      * ## DNS resolver client
      *
      * Bun supports three DNS resolvers:
-     * - `c-ares` - Bun's own asynchronous resolver. It keeps the name of the c-ares library, which it replaced and whose behavior it matches. This is the default on Linux.
+     * - `c-ares` - Bun's own asynchronous resolver. It keeps the name of the c-ares library, which it replaced and whose behavior it follows. This is the default on Linux.
      * - `system` - Uses the system's non-blocking DNS resolver API if available, falls back to `getaddrinfo`. This is the default on macOS and the same as `getaddrinfo` on Linux.
      * - `getaddrinfo` - Uses the POSIX standard `getaddrinfo` function. Causes performance issues under concurrent loads.
      *

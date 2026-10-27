@@ -1,3 +1,5 @@
+//! From the bytes of a message to a [`Message`].
+
 use std::collections::BTreeMap;
 use std::collections::btree_map::Entry;
 
@@ -13,7 +15,8 @@ use crate::{Error, Result};
 /// Root name, type, class, TTL and RDLENGTH.
 const MIN_RR_LEN: usize = 11;
 
-/// The RDATA of one record: the cursor over the whole message, which a name may point back into, and where the RDATA ends.
+/// The RDATA of one record: the cursor over the whole message, which a name may point back into,
+/// and where the RDATA ends.
 struct RDataReader<'r, 'a> {
     reader: &'r mut Reader<'a>,
     start_len: usize,
@@ -55,7 +58,8 @@ impl<'a> RDataReader<'_, 'a> {
         }
     }
 
-    /// `(id, length, value)` until the RDATA ends. A later value for an id replaces the earlier one in its place.
+    /// `(id, length, value)` until the RDATA ends. A later value for an id replaces the earlier one
+    /// in its place.
     fn options(&mut self) -> Result<Vec<OptionValue>> {
         let mut options: Vec<OptionValue> = Vec::new();
         // One RDATA has room for 16,383 of them.
@@ -88,15 +92,15 @@ impl<'a> RDataReader<'_, 'a> {
     }
 }
 
-fn class_is_valid(value: u16, rr_type: u16, is_question: bool) -> bool {
-    match value {
-        class::IN | class::CHAOS | class::HESIOD | class::NONE => true,
-        class::ANY => is_question || rr_type == rr_type::SIG,
-        _ => false,
-    }
+fn is_class_of_records(value: u16) -> bool {
+    matches!(
+        value,
+        class::IN | class::CHAOS | class::HESIOD | class::NONE
+    )
 }
 
-/// The types c-ares knows: `ANY`, which [`parse_rdata`] refuses, and those it makes more of than [`RData::Raw`].
+/// The types c-ares knows: `ANY`, which [`parse_rdata`] refuses, and those it makes more of than
+/// [`RData::Raw`].
 fn is_known_type(rr_type: u16) -> bool {
     use rr_type::*;
     matches!(
@@ -190,7 +194,8 @@ fn parse_rdata(
             replacement: rdata.name(Allowed)?,
         }),
         rr_type::OPT => {
-            // RFC 6891 section 6.1.3: the TTL is the high bits of the RCODE, the version and the flags.
+            // RFC 6891 section 6.1.3: the TTL is the high bits of the RCODE, the version and the
+            // flags.
             *extended_rcode |= (raw_ttl >> 20) as u16 & 0x0ff0;
             RData::Opt {
                 udp_size: raw_class,
@@ -254,7 +259,9 @@ fn parse_rr(reader: &mut Reader<'_>, extended_rcode: &mut u16) -> Result<Rr> {
         _ => (raw_class, raw_ttl),
     };
     // The class of an unknown type is not checked.
-    if is_known_type(rr_type) && !class_is_valid(class, rr_type, false) {
+    let is_valid_class =
+        is_class_of_records(class) || (class == class::ANY && rr_type == rr_type::SIG);
+    if is_known_type(rr_type) && !is_valid_class {
         return Err(Error::EFORMERR);
     }
 
@@ -306,7 +313,7 @@ impl Message {
             qtype: reader.u16()?,
             qclass: reader.u16()?,
         };
-        if !class_is_valid(question.qclass, question.qtype, true) {
+        if !is_class_of_records(question.qclass) && question.qclass != class::ANY {
             return Err(Error::EFORMERR);
         }
 

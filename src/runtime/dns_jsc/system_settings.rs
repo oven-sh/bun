@@ -1,4 +1,5 @@
-//! Asks the system what it knows of its resolver. What to make of the answer is `bun_dns_resolver`'s business.
+//! Asks the system what it knows of its resolver. What to make of the answer is
+//! `bun_dns_resolver`'s business.
 
 #[cfg(not(windows))]
 use bun_dns_resolver::io::Settings;
@@ -25,7 +26,8 @@ pub(super) fn read() -> Settings {
         c"net.dns8",
     ] {
         let mut value = [0u8; LONGEST_VALUE];
-        // SAFETY: `name` is NUL-terminated and `value` has the `PROP_VALUE_MAX` bytes the function may write.
+        // SAFETY: `name` is NUL-terminated and `value` has the `PROP_VALUE_MAX` bytes the function
+        // may write.
         let len = unsafe { libc::__system_property_get(name.as_ptr(), value.as_mut_ptr().cast()) };
         match usize::try_from(len) {
             Ok(len @ 1..LONGEST_VALUE) => servers.push(value[..len].to_vec()),
@@ -114,8 +116,8 @@ mod mac {
         let _free = scopeguard::guard(config, |config| unsafe { free(config) });
 
         let mut resolvers = Vec::new();
-        // SAFETY: every count in a configuration is the length of the list beside it, every pointer in a list is valid
-        // until the configuration is freed, and every string is NUL-terminated.
+        // SAFETY: every count in a configuration is the length of the list beside it, every pointer
+        // in a list is valid until the configuration is freed, and every string is NUL-terminated.
         unsafe {
             let config = config.read_unaligned();
             for resolver in pointers(config.resolver, config.n_resolver) {
@@ -280,7 +282,8 @@ mod windows {
 
     fn route_metric(mut adapter: iphlpapi::NET_LUID, destination: &Address) -> Option<u32> {
         let mut to = SOCKADDR_INET([0; 7]);
-        // SAFETY: an `Address` is a `sockaddr_storage`, which is larger than a `SOCKADDR_INET`. Both are plain bytes.
+        // SAFETY: an `Address` is a `sockaddr_storage`, which is larger than a `SOCKADDR_INET`.
+        // Both are plain bytes.
         unsafe {
             core::ptr::copy_nonoverlapping(
                 destination.as_sockaddr().cast::<u8>(),
@@ -291,7 +294,8 @@ mod windows {
         let mut from = SOCKADDR_INET([0; 7]);
         // SAFETY: all-zero is a valid value of a struct of integers.
         let mut route: iphlpapi::MIB_IPFORWARD_ROW2 = unsafe { bun_core::ffi::zeroed_unchecked() };
-        // SAFETY: the index is ignored beside a LUID, no source address is asked for, and the last two are written.
+        // SAFETY: the index is ignored beside a LUID, no source address is asked for, and the last
+        // two are written.
         let status = unsafe {
             iphlpapi::GetBestRoute2(&mut adapter, 0, null(), &to, 0, &mut route, &mut from)
         };
@@ -325,8 +329,9 @@ mod windows {
         }
 
         let mut adapter: *const iphlpapi::IP_ADAPTER_ADDRESSES = buffer.as_ptr().cast();
-        // SAFETY: on success the buffer starts with an adapter, and every `Next`, `FirstDnsServerAddress` and
-        // `lpSockaddr` is null or points into the buffer, which outlives the loop.
+        // SAFETY: on success the buffer starts with an adapter, and every `Next`,
+        // `FirstDnsServerAddress` and `lpSockaddr` is null or points into the buffer, which
+        // outlives the loop.
         while let Some(it) = unsafe { adapter.as_ref() } {
             adapter = it.Next;
             if it.OperStatus != iphlpapi::IF_OPER_STATUS_UP {
@@ -366,7 +371,8 @@ mod windows {
         })
     }
 
-    /// `DatabasePath`, where `hosts` and `services` are. Normally `%SystemRoot%\System32\drivers\etc`.
+    /// `DatabasePath`, where `hosts` and `services` are. Normally
+    /// `%SystemRoot%\System32\drivers\etc`.
     pub(in super::super) fn etc_directory() -> Option<Vec<u8>> {
         let key = Key::open(
             advapi32::HKEY_LOCAL_MACHINE,

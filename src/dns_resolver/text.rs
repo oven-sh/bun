@@ -40,7 +40,8 @@ pub(crate) fn take_while(text: &[u8], belongs: impl Fn(u8) -> bool) -> (&[u8], &
 
 /// What is before the first white space, and the rest.
 pub(crate) fn word(text: &[u8]) -> (&[u8], &[u8]) {
-    take_while(text, |byte| !strings::contains_char(SPACES, byte))
+    let end = strings::index_of_any(text, SPACES).unwrap_or(text.len());
+    text.split_at_checked(end).unwrap_or((text, &[]))
 }
 
 /// `INET6_ADDRSTRLEN`.

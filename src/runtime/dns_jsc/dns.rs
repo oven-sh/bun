@@ -602,7 +602,7 @@ impl GetAddrInfoRequest {
             unsafe {
                 (*request).resolver_for_caching = resolver;
                 let pos = (*resolver.unwrap())
-                    .pending_host_cache()
+                    .pending_host_cache_mut()
                     .index_of(new)
                     .unwrap();
                 (*request).pending_slot = Some(pos as u8);
@@ -829,7 +829,7 @@ impl DNSLookup {
     /// (allocated == false; owner drops it) or a Boxed tail node (allocated == true;
     /// freed via `Self::destroy`). No `&mut` may alias `*this` across this call.
     unsafe fn on_complete(this: *mut Self, result: &GetAddrInfoResultAny) {
-        bun_output::scoped_log!(DNSLookup, "onCompleteNative");
+        bun_output::scoped_log!(DNSLookup, "onComplete");
         // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
         unsafe {
             let global = (*this).global_this();
@@ -842,7 +842,7 @@ impl DNSLookup {
 
     /// SAFETY: see `on_complete`.
     unsafe fn process_get_addr_info(this: *mut Self, status: i32, result: *mut AddrInfo) {
-        bun_output::scoped_log!(DNSLookup, "processGetAddrInfoNative: status={}", status);
+        bun_output::scoped_log!(DNSLookup, "processGetAddrInfo: status={}", status);
         // SAFETY: caller contract — `this` is live; JSGlobalObject outlives the request.
         unsafe {
             if let Some(err) = bun_dns::error_from_eai(status) {
@@ -2656,14 +2656,14 @@ impl Resolver {
     /// the borrow only for the duration of a slot read/claim/unset and never
     /// across a re-entrant call.
     #[allow(clippy::mut_from_ref)]
-    fn pending_host_cache(&self) -> &mut PendingCache {
+    fn pending_host_cache_mut(&self) -> &mut PendingCache {
         // SAFETY: single-JS-thread invariant; caller holds the borrow only for
         // a short, non-reentrant window (see fn doc).
         unsafe { self.pending_host_cache.get_mut() }
     }
 
     fn take_pending_key(&self, index: u8) -> get_addr_info_request::PendingCacheKey {
-        let cache = self.pending_host_cache();
+        let cache = self.pending_host_cache_mut();
         // SAFETY: slot at `index` was alloc'd by `get_or_put_into_pending_cache`.
         unsafe { cache.box_at(index as usize) }
             .expect("pending DNS slot")
@@ -2677,7 +2677,7 @@ impl Resolver {
         err: i32,
         result: &GetAddrInfoResultAny,
     ) {
-        bun_output::scoped_log!(DNSResolver, "drainPendingHostNative");
+        bun_output::scoped_log!(DNSResolver, "drainPendingHost");
         let key = self.take_pending_key(index);
 
         let _guard = self.ref_guard();
@@ -2741,7 +2741,7 @@ impl Resolver {
         &self,
         key: &get_addr_info_request::PendingCacheKey,
     ) -> CacheHit {
-        let cache = self.pending_host_cache();
+        let cache = self.pending_host_cache_mut();
         let mut inflight_iter = cache.used.iter_set();
 
         while let Some(index) = inflight_iter.next() {

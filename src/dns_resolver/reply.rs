@@ -2,12 +2,13 @@
 
 use core::net::IpAddr;
 
-use crate::addr_info::{AddrInfo, Family};
+use crate::addr_info::{AddrInfo, AliasesAlone, Family};
 pub use crate::message::{Caa, Mx, Naptr, Soa, Srv};
-use crate::message::{Message, Name, RData, Rr, class, rr_type};
+use crate::message::{Message, Name, RData, class, rr_type};
 use crate::{Error, Result};
 
-/// Bun gave `ares_parse_a_reply()` room for this many TTLs, so `ttl` is `undefined` from the 257th address on.
+/// Bun gave `ares_parse_a_reply()` room for this many TTLs, so `ttl` is `undefined` from the 257th
+/// address on.
 const MAX_TTLS: usize = 256;
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
@@ -111,7 +112,7 @@ pub struct AnyReply {
 
 fn addresses(response: &Message, family: Family) -> Result<Addresses> {
     let mut info = AddrInfo::default();
-    info.add_response(response, false, 0)?;
+    info.add_response(response, AliasesAlone::AreAnAnswer, 0)?;
 
     let lowest_alias_ttl = info.aliases.iter().map(|alias| alias.ttl).min();
     let addresses: Vec<Address> = info
@@ -134,23 +135,23 @@ fn addresses(response: &Message, family: Family) -> Result<Addresses> {
     Ok(Addresses { name, addresses })
 }
 
-/// What `pick` takes of the answer's records of class IN (and CHAOS, for the two types c-ares also takes it for).
+/// What `pick` takes of the answer's records of `classes`.
 fn list<'a, T: 'a>(
     response: &'a Message,
-    chaos_too: bool,
+    classes: &'a [u16],
     pick: impl Fn(&'a RData) -> Option<&'a T>,
 ) -> Result<impl Iterator<Item = &'a T>> {
     if response.answer.is_empty() {
         return Err(Error::ENODATA);
     }
-    let in_class = move |rr: &&Rr| rr.class == class::IN || (chaos_too && rr.class == class::CHAOS);
-    let records = response.answer.iter().filter(in_class);
+    let records = response.answer.iter();
+    let records = records.filter(move |rr| classes.contains(&rr.class));
     Ok(records.filter_map(move |rr| pick(&rr.data)))
 }
 
 /// [`list`], but none found is `ENODATA`.
 fn names(response: &Message, pick: impl Fn(&RData) -> Option<&Name>) -> Result<Vec<Name>> {
-    let found: Vec<Name> = list(response, false, pick)?.cloned().collect();
+    let found: Vec<Name> = list(response, &[class::IN], pick)?.cloned().collect();
     if found.is_empty() {
         return Err(Error::ENODATA);
     }
@@ -172,7 +173,7 @@ pub(crate) fn ptr(response: &Message) -> Result<Vec<Name>> {
 }
 
 fn caa(response: &Message) -> Result<Vec<Caa>> {
-    let found = list(response, true, |data| match data {
+    let found = list(response, &[class::IN, class::CHAOS], |data| match data {
         RData::Caa(caa) => Some(caa),
         _ => None,
     })?;
@@ -180,7 +181,7 @@ fn caa(response: &Message) -> Result<Vec<Caa>> {
 }
 
 fn mx(response: &Message) -> Result<Vec<Mx>> {
-    let found = list(response, false, |data| match data {
+    let found = list(response, &[class::IN], |data| match data {
         RData::Mx(mx) => Some(mx),
         _ => None,
     })?;
@@ -188,7 +189,7 @@ fn mx(response: &Message) -> Result<Vec<Mx>> {
 }
 
 fn naptr(response: &Message) -> Result<Vec<Naptr>> {
-    let found = list(response, false, |data| match data {
+    let found = list(response, &[class::IN], |data| match data {
         RData::Naptr(naptr) => Some(naptr),
         _ => None,
     })?;
@@ -196,7 +197,7 @@ fn naptr(response: &Message) -> Result<Vec<Naptr>> {
 }
 
 fn srv(response: &Message) -> Result<Vec<Srv>> {
-    let found = list(response, false, |data| match data {
+    let found = list(response, &[class::IN], |data| match data {
         RData::Srv(srv) => Some(srv),
         _ => None,
     })?;
@@ -204,7 +205,7 @@ fn srv(response: &Message) -> Result<Vec<Srv>> {
 }
 
 fn txt(response: &Message) -> Result<Vec<Vec<u8>>> {
-    let found = list(response, true, |data| match data {
+    let found = list(response, &[class::IN, class::CHAOS], |data| match data {
         RData::Txt(strings) => Some(strings),
         _ => None,
     })?;

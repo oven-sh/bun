@@ -1,3 +1,5 @@
+//! From a [`Message`] to its bytes.
+
 use super::name::{self, Charset, NameOffsets};
 use super::{MAX_MESSAGE_LEN, Message, OptionValue, RData, Rr, Svcb, rcode};
 use crate::{Error, Result};
@@ -43,7 +45,8 @@ fn put_svcb(out: &mut Vec<u8>, svcb: &Svcb) -> Result<()> {
     Ok(())
 }
 
-/// Only the types of RFC 1035 have their RDATA names compressed: a server that does not know a type passes it on as it is.
+/// Only the types of RFC 1035 have their RDATA names compressed: a server that does not know a type
+/// passes it on as it is.
 fn put_rdata(out: &mut Vec<u8>, written: &mut NameOffsets, data: &RData) -> Result<()> {
     let mut put_name =
         |out: &mut Vec<u8>, name: &[u8]| name::write(out, Some(written), Charset::Any, name);
@@ -167,7 +170,10 @@ impl Message {
 
     /// The message, with `ttl_decrement` seconds taken off every TTL.
     ///
-    /// Stricter than [`Message::parse`], as in c-ares: the name of the question and of every record has to be made of host name bytes unless an earlier RDATA already spelled it, no compressible name is longer than 255 bytes with its escapes, and a record of an unknown type has RDATA.
+    /// Stricter than [`Message::parse`], as in c-ares: the name of the question and of every record
+    /// has to be made of host name bytes unless an earlier RDATA already spelled it, no
+    /// compressible name is longer than 255 bytes with its escapes, and a record of an unknown type
+    /// has RDATA.
     pub(crate) fn write(&self, ttl_decrement: u32) -> Result<Vec<u8>> {
         let mut out = Vec::new();
         let written = &mut NameOffsets::default();

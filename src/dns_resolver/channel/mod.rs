@@ -440,18 +440,16 @@ impl Channel {
                     // c-ares hands a response over as bytes. One it cannot write is an error,
                     // whatever its RCODE.
                     let bytes = response.write(0)?;
-                    check_rcode(&response)?;
+                    checked(response)?;
                     Reply::parse(record_type, &bytes)
                 });
                 self.complete(token, reply.map(Answer::Reply));
             }
             Owner::AddrInfo { lookup } => {
-                let result = result.and_then(|it| check_rcode(&it).map(|()| it));
-                self.addr_info_lookup_answered(now, lookup, result.as_ref().map_err(|it| *it));
+                self.addr_info_lookup_answered(now, lookup, result.and_then(checked));
             }
             Owner::Host { lookup } => {
-                let result = result.and_then(|it| check_rcode(&it).map(|()| it));
-                self.host_lookup_answered(now, lookup, result.as_ref().map_err(|it| *it));
+                self.host_lookup_answered(now, lookup, result.and_then(checked));
             }
         }
     }
@@ -487,8 +485,8 @@ impl Channel {
     }
 }
 
-/// The error a response stands for, if it does.
-fn check_rcode(response: &Message) -> Result<()> {
+/// `response`, or the error it stands for.
+fn checked(response: Message) -> Result<Message> {
     match response.rcode {
         rcode::NOERROR if response.answer.is_empty() => Err(Error::ENODATA),
         rcode::FORMERR => Err(Error::EFORMERR),
@@ -496,6 +494,6 @@ fn check_rcode(response: &Message) -> Result<()> {
         rcode::NXDOMAIN => Err(Error::ENOTFOUND),
         rcode::NOTIMP => Err(Error::ENOTIMP),
         rcode::REFUSED => Err(Error::EREFUSED),
-        _ => Ok(()),
+        _ => Ok(response),
     }
 }

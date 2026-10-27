@@ -1,3 +1,5 @@
+//! The errors of a request.
+
 /// Why a request failed. The numbers are c-ares's `ARES_E*`, which `node:dns` reports as `errno`.
 #[repr(i32)]
 #[allow(non_camel_case_types)]

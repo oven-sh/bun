@@ -1,4 +1,5 @@
-//! The sockets of a channel: one TCP connection to a server at most, and as many UDP ones as timeouts have retired.
+//! The sockets of a channel: one TCP connection to a server at most, and as many UDP ones as
+//! timeouts have retired.
 
 use std::collections::BTreeSet;
 
@@ -14,10 +15,12 @@ pub(super) struct Connection {
     socket: Socket,
     pub(super) server: ServerId,
     pub(super) transport: Transport,
-    /// Nothing has been written yet to a TCP Fast Open socket, so the first write is what connects it.
+    /// Nothing has been written yet to a TCP Fast Open socket, so the first write is what connects
+    /// it.
     pub(super) fast_open_pending: bool,
     pub(super) connected: bool,
-    /// A query timed out here. Packets may be getting dropped, so new queries leave from another port.
+    /// A query timed out here. Packets may be getting dropped, so new queries leave from another
+    /// port.
     pub(super) retired: bool,
     /// `writable` as [`crate::io::Io::watch`] last heard it. `None`: it has not been called yet.
     watching_writable: Option<bool>,
@@ -93,7 +96,8 @@ impl Channel {
                 }
             }
         }
-        // A readable event before the first Fast Open write would read a socket that has no peer yet.
+        // A readable event before the first Fast Open write would read a socket that has no peer
+        // yet.
         if !opened.fast_open {
             self.watch(id, transport == Transport::Tcp);
         }
@@ -138,7 +142,8 @@ impl Channel {
                 break;
             }
         }
-        // Only a writable event says that a Fast Open socket has connected. A datagram that would block is left to time out.
+        // Only a writable event says that a Fast Open socket has connected. A datagram that would
+        // block is left to time out.
         let writable = fast_open || (is_tcp && !connection.unsent.is_empty());
         self.watch(id, writable);
         Ok(())
@@ -154,7 +159,8 @@ impl Channel {
         while let Some(connection) = self.connections.get_mut(&id) {
             let received = match connection.transport {
                 Transport::Tcp => self.io.recv(connection.socket, &mut buffer),
-                // The socket is connected, so the system has normally dropped what others send already.
+                // The socket is connected, so the system has normally dropped what others send
+                // already.
                 Transport::Udp => match self.io.recv_from(connection.socket, &mut buffer) {
                     // A port of 0: the system did not say. As in c-ares, what is queued behind
                     // a stranger's datagram waits for the next event.

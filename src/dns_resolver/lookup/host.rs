@@ -49,7 +49,8 @@ fn reverse_name(address: IpAddr) -> Vec<u8> {
     name
 }
 
-/// `strtoul(text, &rest, 0)` with `u32::MAX` for anything above it, as glibc reads a number in its databases. `None` without a digit.
+/// `strtoul(text, &rest, 0)` with `u32::MAX` for anything above it, as glibc reads a number in its
+/// databases. `None` without a digit.
 fn strtou32(text: &[u8]) -> Option<(u32, &[u8])> {
     let text = trim_start(text);
     let (negative, text) = match text {
@@ -81,7 +82,8 @@ fn strtou32(text: &[u8]) -> Option<(u32, &[u8])> {
     Some((value.min(u32::MAX.into()) as u32, rest))
 }
 
-/// services(5), lines of `name port/protocol aliases...`, the way glibc's `getservbyport_r()` reads them.
+/// services(5), lines of `name port/protocol aliases...`, the way glibc's `getservbyport_r()` reads
+/// them.
 fn tcp_service_name(services: &[u8], port: u16) -> Option<&[u8]> {
     strings::split(services, b"\n").find_map(|line| {
         // A line is a C string there.
@@ -154,11 +156,11 @@ impl Channel {
         &mut self,
         now: Time,
         id: LookupId,
-        result: Result<&Message>,
+        result: Result<Message>,
     ) {
         match result {
             Ok(response) => {
-                let host = reply::ptr(response).and_then(|names| {
+                let host = reply::ptr(&response).and_then(|names| {
                     Ok(Host {
                         name: names.last().ok_or(Error::ENODATA)?.clone(),
                         aliases: names,

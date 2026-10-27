@@ -87,7 +87,8 @@ impl SystemIo {
             let _ = socket::set_option(fd, IPPROTO_IPV6, IPV6_V6ONLY, 0);
         }
         if let Some(local) = local {
-            // The port is chosen at connect(2), when the four-tuple is known, so more of them can be in use.
+            // The port is chosen at connect(2), when the four-tuple is known, so more of them can
+            // be in use.
             #[cfg(any(target_os = "linux", target_os = "android"))]
             if transport == Transport::Tcp {
                 let _ = socket::set_option(fd, libc::SOL_IP, libc::IP_BIND_ADDRESS_NO_PORT, 1);
@@ -171,7 +172,8 @@ impl Io for SystemIo {
         // SAFETY: a live slot of the poll hive, freed only by `close`; JS thread.
         let poll = unsafe { &mut *poll };
 
-        // `FilePoll` cannot drop one direction, and a writable one left armed spins once the socket connects.
+        // `FilePoll` cannot drop one direction, and a writable one left armed spins once the socket
+        // connects.
         if poll.flags.contains(Async::PollFlag::PollWritable) && !writable {
             let _ = poll.unregister(loop_, false);
             let _ = poll.register(loop_, Async::PollKind::Readable, false);
@@ -193,7 +195,8 @@ impl Io for SystemIo {
             Some(poll) => *poll,
             None => {
                 let poll = UvDnsPoll::new(self.resolver, fd);
-                // SAFETY: the live loop of this thread, and a fresh allocation with a zeroed `uv_poll_t`.
+                // SAFETY: the live loop of this thread, and a fresh allocation with a zeroed
+                // `uv_poll_t`.
                 if unsafe {
                     uv::uv_poll_init_socket(self.vm.uv_loop(), &mut (*poll).poll, fd.native() as _)
                 } < 0
@@ -211,7 +214,8 @@ impl Io for SystemIo {
             < 0
         {
             let _ = self.polls.swap_remove(&fd);
-            // SAFETY: the handle is initialized, so `uv_close` is how it goes; `on_close_uv` frees it.
+            // SAFETY: the handle is initialized, so `uv_close` is how it goes; `on_close_uv` frees
+            // it.
             unsafe {
                 uv::uv_close(
                     core::ptr::from_mut(&mut (*poll).poll).cast(),
@@ -291,7 +295,8 @@ impl Io for SystemIo {
     #[cfg(windows)]
     fn hostname(&mut self) -> Option<Vec<u8>> {
         let mut buffer = [0u16; 256];
-        // SAFETY: the buffer has the units the function may write, and Winsock was started in `new`.
+        // SAFETY: the buffer has the units the function may write, and Winsock was started in
+        // `new`.
         let status =
             unsafe { sys::windows::GetHostNameW(buffer.as_mut_ptr(), buffer.len() as i32) };
         let len = bun_core::strings::index_of_scalar(&buffer, 0)?;

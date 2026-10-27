@@ -87,9 +87,10 @@ pub enum Settings {
 pub struct WindowsSettings {
     /// `FirstDnsServerAddress` of each adapter that is up, as `GetAdaptersAddresses` orders them.
     pub servers: Vec<WindowsServer>,
-    /// From the registry, in this order, those that are set:
-    /// `SearchList` and `Domain` of `Tcpip\Parameters`, `SearchList` of `Windows NT\DNSClient`, `PrimaryDNSSuffix` of
-    /// `System\DNSClient`, then `SearchList`, `Domain` and `DhcpDomain` of each key in `Tcpip\Parameters\Interfaces`.
+    /// From the registry, in this order, those that are set: `SearchList` and `Domain` of
+    /// `Tcpip\Parameters`, `SearchList` of `Windows NT\DNSClient`, `PrimaryDNSSuffix` of
+    /// `System\DNSClient`, then `SearchList`, `Domain` and `DhcpDomain` of each key in
+    /// `Tcpip\Parameters\Interfaces`.
     pub suffixes: Vec<Vec<u8>>,
 }
 
@@ -128,7 +129,8 @@ pub enum EnvVar {
 }
 
 pub trait Io {
-    /// A non-blocking socket, bound to `local` if there is one and connected (or connecting) to `server`.
+    /// A non-blocking socket, bound to `local` if there is one and connected (or connecting) to
+    /// `server`.
     fn open(
         &mut self,
         transport: Transport,
@@ -144,7 +146,8 @@ pub trait Io {
     ) -> Result<(usize, SocketAddr), IoError>;
     /// Bytes of a TCP stream, whose end is `Failed`.
     fn recv(&mut self, socket: Socket, buffer: &mut [u8]) -> Result<usize, IoError>;
-    /// From now on [`crate::Channel::socket_ready`] is to be called when the socket is readable, and if `writable` when it is writable.
+    /// From now on [`crate::Channel::socket_ready`] is to be called when the socket is readable,
+    /// and if `writable` when it is writable.
     fn watch(&mut self, socket: Socket, writable: bool);
     /// Also ends the watch.
     fn close(&mut self, socket: Socket);
@@ -164,7 +167,8 @@ pub trait Io {
     /// if_nametoindex(3).
     fn interface_index(&mut self, name: &[u8]) -> Option<u32>;
     fn has_interface(&mut self, index: u32) -> bool;
-    /// The address a datagram to `destination` would leave from, without sending one. `Ok(None)`: there is no route.
+    /// The address a datagram to `destination` would leave from, without sending one. `Ok(None)`:
+    /// there is no route.
     fn source_address(&mut self, destination: SocketAddr) -> Result<Option<IpAddr>, IoError>;
     /// The loopback addresses of this machine, if the system keeps a list of them.
     fn loopback_addresses(&mut self) -> Option<Vec<IpAddr>>;

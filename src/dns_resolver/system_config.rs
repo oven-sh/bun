@@ -1,4 +1,5 @@
-//! The system's resolver configuration: resolv.conf(5) and nsswitch.conf(5) or what the system has instead, then the environment.
+//! The system's resolver configuration: resolv.conf(5) and nsswitch.conf(5) or what the system has
+//! instead, then the environment.
 
 use core::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 
@@ -22,14 +23,13 @@ const PORT_SIZE: usize = 6;
 const INTERFACE_NAME_SIZE: usize = 16;
 
 /// Where a host's addresses, or an address's host, are looked up.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Source {
     /// hosts(5).
     Files,
     Dns,
 }
 
-#[derive(Debug, PartialEq, Eq)]
 pub(crate) struct SystemConfig {
     pub(crate) servers: Vec<ServerConfig>,
     pub(crate) search_domains: Vec<Vec<u8>>,
@@ -105,7 +105,8 @@ pub(crate) fn domain_of_hostname(io: &mut dyn Io) -> Option<Vec<u8>> {
 }
 
 impl SystemConfig {
-    /// A resolv.conf that is there and cannot be read is an error. Without nsswitch.conf only the order of sources is unknown.
+    /// A resolv.conf that is there and cannot be read is an error. Without nsswitch.conf only the
+    /// order of sources is unknown.
     fn read_files(&mut self, io: &mut dyn Io) -> Option<()> {
         match load_etc_file(io, "resolv.conf") {
             Ok(text) => {
@@ -264,7 +265,8 @@ impl SystemConfig {
     /// `interface` matters to a link-local address only, which is of no use without one.
     fn add_server(&mut self, io: &mut dyn Io, address: IpAddr, port: u16, interface: Option<u32>) {
         let scope_id = match address {
-            // Deprecated by RFC 3879. Windows and Android are known to list such servers; none exists.
+            // Deprecated by RFC 3879. Windows and Android are known to list such servers; none
+            // exists.
             IpAddr::V6(v6) if is_site_local(&v6) => return,
             IpAddr::V6(v6) if v6.is_unicast_link_local() => {
                 match interface.filter(|&index| io.has_interface(index)) {

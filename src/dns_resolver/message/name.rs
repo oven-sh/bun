@@ -171,7 +171,8 @@ pub(super) struct NameOffsets {
 }
 
 impl NameOffsets {
-    /// The length and place of the longest name that `text` is, or ends with after a dot, escaped or not. Case matters.
+    /// The length and place of the longest name that `text` is, or ends with after a dot, escaped
+    /// or not. Case matters.
     fn longest_suffix_of(&self, text: &[u8]) -> Option<(usize, usize)> {
         let mut suffix = text;
         loop {

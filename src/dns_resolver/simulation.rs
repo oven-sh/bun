@@ -1,13 +1,17 @@
-//! Runs a [`Channel`] in a world made up by a script, and logs all it does there. For tests: nothing else reaches it.
+//! Runs a [`Channel`] in a world made up by a script, and logs all it does there. For tests:
+//! nothing else reaches it.
 //!
-//! A script is lines of words separated by single spaces. `#` starts a comment line. A line that cannot be read is logged
-//! as `? line` and passed over. A *text* word stands for bytes: `%XX` is a byte, `%` alone is no bytes, all else is itself.
-//! A *hex* word is two digits a byte, `-` for none.
+//! A script is lines of words separated by single spaces. `#` starts a comment line. A line that
+//! cannot be read is logged as `? line` and passed over. A *text* word stands for bytes: `%XX` is a
+//! byte, `%` alone is no bytes, all else is itself. A *hex* word is two digits a byte, `-` for
+//! none.
 //!
-//! The world. `timeout` and `tries` come before the channel is made. So does what the channel reads only then, to have an
-//! effect: `settings` and what goes with it, `hostname`, `env` other than `HOSTALIASES`. The rest may come at any time.
+//! The world. `timeout` and `tries` come before the channel is made. So does what the channel reads
+//! only then, to have an effect: `settings` and what goes with it, `hostname`, `env` other than
+//! `HOSTALIASES`. The rest may come at any time.
 //! ```text
-//! file PATH text [MTIME]      its contents, and when it was modified in seconds since the epoch: 1699999000 unless said
+//! file PATH text [MTIME [INODE]]   its contents, when it was modified in seconds since the epoch (1699999000 unless
+//!                                  said), and its inode (0 unless said)
 //! unreadable PATH             it is there and cannot be read
 //! etc text                    what goes before `hosts` and the like, `/etc/` unless said; `-` for nowhere
 //! env LOCALDOMAIN|RES_OPTIONS|HOSTALIASES text
@@ -24,8 +28,8 @@
 //! fast-open                   TCP sockets are opened with TCP Fast Open
 //! timeout MS | tries NUMBER   the options of the channel
 //! ```
-//! What is asked of the channel. The first of these makes it, at 1700000000 seconds since the epoch. Requests are numbered
-//! from 0.
+//! What is asked of the channel. The first of these makes it, at 1700000000 seconds since the
+//! epoch. Requests are numbered from 0.
 //! ```text
 //! query TYPE text             TYPE as `resolve()` spells it
 //! lookup text PORT 0|4|6      the last is the family
@@ -73,8 +77,8 @@
 //! timer MS|none               the next timeout, in milliseconds since the start, whenever it changes
 //! ? line                      the line could not be read
 //! ```
-//! The ids of queries follow from `seed`, so to answer one, run the script as far as it goes and copy the id out of the
-//! `send` line:
+//! The ids of queries follow from `seed`, so to answer one, run the script as far as it goes and
+//! copy the id out of the `send` line:
 //! ```text
 //! file /etc/resolv.conf nameserver%2010.0.0.1%0A
 //! query A a.test
@@ -138,6 +142,7 @@ enum SettingsKind {
 struct File {
     contents: Option<Vec<u8>>,
     modified: Option<i64>,
+    inode: u64,
 }
 
 #[derive(Default)]
@@ -254,18 +259,27 @@ impl World {
     /// `None`: the line cannot be read.
     fn configure(&mut self, command: &[u8], words: Words) -> Option<()> {
         match (command, words) {
-            (b"file", [path, contents, modified @ ..]) => {
-                let modified = match modified {
-                    [] => Some(START_UNIX - 1000),
-                    [modified] => Some(parsed(modified)?),
+            (b"file", [path, contents, identity @ ..]) => {
+                let (modified, inode) = match identity {
+                    [] => (START_UNIX - 1000, 0),
+                    [modified] => (parsed(modified)?, 0),
+                    [modified, inode] => (parsed(modified)?, parsed(inode)?),
                     _ => return None,
                 };
-                let contents = Some(text(contents)?);
-                self.files.insert(text(path)?, File { contents, modified });
+                let file = File {
+                    contents: Some(text(contents)?),
+                    modified: Some(modified),
+                    inode,
+                };
+                self.files.insert(text(path)?, file);
             }
             (b"unreadable", [path]) => {
-                let (contents, modified) = (None, None);
-                self.files.insert(text(path)?, File { contents, modified });
+                let file = File {
+                    contents: None,
+                    modified: None,
+                    inode: 0,
+                };
+                self.files.insert(text(path)?, file);
             }
             (b"etc", [b"-"]) => self.etc = None,
             (b"etc", [prefix]) => self.etc = Some(text(prefix)?),
@@ -522,7 +536,7 @@ impl Io for World {
                 .contents
                 .as_ref()
                 .map_or(0, |contents| contents.len() as u64),
-            inode: 0,
+            inode: file.inode,
             device: 0,
         })
     }

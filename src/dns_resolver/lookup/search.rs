@@ -12,7 +12,8 @@ use crate::{Error, Result};
 const ALIAS_SIZE: usize = 64;
 
 impl Channel {
-    /// hostname(7): the file `HOSTALIASES` names has a line `alias name` for each alias, which has no dot.
+    /// hostname(7): the file `HOSTALIASES` names has a line `alias name` for each alias, which has
+    /// no dot.
     fn host_alias(&mut self, name: &[u8]) -> Result<Option<Vec<u8>>> {
         if strings::contains_char(name, b'.') {
             return Ok(None);

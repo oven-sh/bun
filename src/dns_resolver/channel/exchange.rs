@@ -144,7 +144,7 @@ impl Channel {
             return Ok(());
         }
 
-        // Whoever asked is told of a response that cannot be written: `finish` writes it too.
+        // A response that cannot be written again is not kept. That is no reason to refuse it.
         let _ = self.cache.insert(now, &query.cache_key, &response);
         self.clear_server_failures(server);
         self.end_query(now, Some(server), serial, Ok(response), Some(deferred));

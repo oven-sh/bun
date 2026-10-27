@@ -15,7 +15,8 @@ use crate::message::Name;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Host {
     pub(crate) name: Name,
-    /// From DNS, every name of the address, `name` among them. From the hosts file, the names after `name`.
+    /// From DNS, every name of the address, `name` among them. From the hosts file, the names after
+    /// `name`.
     pub aliases: Vec<Name>,
 }
 
@@ -35,7 +36,8 @@ fn ends_with_ignore_case(name: &[u8], suffix: &[u8]) -> bool {
 
 /// RFC 7686: these names are not for the DNS.
 pub(crate) fn is_onion_domain(name: &[u8]) -> bool {
-    ends_with_ignore_case(name, b".onion") || ends_with_ignore_case(name, b".onion.")
+    let name = name.strip_suffix(b".").unwrap_or(name);
+    ends_with_ignore_case(name, b".onion")
 }
 
 /// RFC 6761 section 6.3.

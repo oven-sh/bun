@@ -24,7 +24,8 @@
 // SOFTWARE.
 
 //! A stub DNS resolver without I/O of its own. Behaves as c-ares 1.34.9 with
-//! `ARES_FLAG_NOCHECKRESP` and otherwise default options.
+//! `ARES_FLAG_NOCHECKRESP` and otherwise default options, but for its bugs: the entries of
+//! test/js/node/dns/dns-simulation-c-ares.txt that start with `differs:` are where.
 #![forbid(unsafe_code)]
 // Answers come from anywhere and a panic aborts the process.
 #![deny(

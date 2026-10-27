@@ -1,3 +1,5 @@
+//! Reading the bytes of a message.
+
 use crate::{Error, Result};
 
 /// A cursor over the bytes of a message. Every read is checked.

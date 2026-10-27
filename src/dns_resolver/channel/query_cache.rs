@@ -21,7 +21,8 @@ pub(super) struct QueryCache {
     expiry: BTreeSet<(i64, Vec<u8>)>,
 }
 
-/// What two queries have to share for one's answer to be the other's. Names that differ only in case are one.
+/// What two queries have to share for one's answer to be the other's. Names that differ only in
+/// case are one.
 pub(super) fn key_of(query: &Message) -> Vec<u8> {
     let question = &query.question;
     let mut key = Vec::new();
@@ -81,13 +82,15 @@ impl QueryCache {
         entry.response.rewritten(age).ok()
     }
 
-    /// Keeps `response` if it is one to keep. `Err`: it cannot be written, so it could not be handed out again.
+    /// Keeps `response` if it is one to keep. `Err`: it cannot be written, so it could not be
+    /// handed out again.
     pub(super) fn insert(&mut self, now: Time, key: &[u8], response: &Message) -> Result<()> {
         let response = response.rewritten(0)?;
         let ttl = match response.rcode {
             _ if response.flags & flag::TC != 0 => return Ok(()),
             rcode::NOERROR if !response.answer.is_empty() => lowest_ttl(&response),
-            // RFC 2308 section 5 treats NODATA as NXDOMAIN. c-ares does not, and keeps it for `MAX_TTL`.
+            // RFC 2308 section 5 treats NODATA as NXDOMAIN. c-ares does not, and keeps it for
+            // `MAX_TTL`.
             rcode::NOERROR | rcode::NXDOMAIN => negative_ttl(&response),
             _ => return Ok(()),
         }

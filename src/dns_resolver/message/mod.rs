@@ -6,7 +6,8 @@ mod write;
 
 const MAX_MESSAGE_LEN: usize = 0xffff;
 
-/// A domain name in presentation form: labels joined by `.`, with `\` before `".;\()@$` and `\DDD` for a byte that does not print. No trailing dot; the root is empty.
+/// A domain name in presentation form: labels joined by `.`, with `\` before `".;\()@$` and `\DDD`
+/// for a byte that does not print. No trailing dot; the root is empty.
 pub(crate) type Name = Vec<u8>;
 
 pub(crate) mod rr_type {
@@ -64,7 +65,7 @@ pub(crate) mod flag {
     pub(crate) const ALL: u16 = QR | AA | TC | RD | RA | AD | CD;
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 pub(crate) struct Question {
     pub(crate) name: Name,
     pub(crate) qtype: u16,
@@ -72,7 +73,7 @@ pub(crate) struct Question {
 }
 
 /// One EDNS option or SVCB parameter.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 pub(crate) struct OptionValue {
     pub(crate) id: u16,
     pub(crate) value: Vec<u8>,
@@ -110,7 +111,7 @@ pub struct Soa {
     pub minimum: u32,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 pub(crate) struct Sig {
     pub(crate) type_covered: u16,
     pub(crate) algorithm: u8,
@@ -134,14 +135,14 @@ pub struct Naptr {
 }
 
 /// SVCB and HTTPS have one shape.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 pub(crate) struct Svcb {
     pub(crate) priority: u16,
     pub(crate) target: Name,
     pub(crate) params: Vec<OptionValue>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 pub(crate) enum RData {
     A([u8; 4]),
     Ns(Name),
@@ -179,7 +180,8 @@ pub(crate) enum RData {
         target: Vec<u8>,
     },
     Caa(Caa),
-    /// A type this crate does not read. [`Message::write`] refuses RDATA of no bytes, as c-ares does.
+    /// A type this crate does not read. [`Message::write`] refuses RDATA of no bytes, as c-ares
+    /// does.
     Raw {
         rr_type: u16,
         data: Vec<u8>,
@@ -212,7 +214,7 @@ impl RData {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 pub(crate) struct Rr {
     pub(crate) name: Name,
     pub(crate) class: u16,
@@ -226,7 +228,7 @@ impl Rr {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone)]
 pub(crate) struct Message {
     pub(crate) id: u16,
     /// Bits of [`flag`].

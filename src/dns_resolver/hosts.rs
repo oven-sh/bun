@@ -16,7 +16,7 @@ use crate::{Error, Result};
 /// Some block lists give one address hundreds of thousands of names.
 const MAX_ALIASES: usize = 100;
 
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub(crate) struct HostsFile {
     /// Seconds since the epoch.
     read_at: i64,

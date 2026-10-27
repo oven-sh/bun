@@ -327,8 +327,8 @@ pub fn vec_from_bytes<T: AnyBitPattern>(bytes: &[u8]) -> Option<alloc::vec::Vec<
     Some(elements.iter().map(|element| element.get()).collect())
 }
 
-/// `len` zeroed elements, as the allocator hands them out: a large request is pages that cost nothing until they are
-/// written to. `None` if there is no memory for them.
+/// `len` zeroed elements, as the allocator hands them out: it clears memory that it recycles, and leaves alone pages
+/// that are fresh from the system. `None` if there is no memory for them.
 #[cfg(any(test, feature = "alloc"))]
 pub fn try_zeroed_vec<T: Zeroable>(len: usize) -> Option<alloc::vec::Vec<T>> {
     let layout = core::alloc::Layout::array::<T>(len).ok()?;

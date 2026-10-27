@@ -29,7 +29,7 @@ use super::stream::EndDirective;
 use crate::common::ZSTD_BLOCKSIZE_MAX;
 use crate::common::xxhash::Xxh64;
 use crate::error::{ErrorCode, Result};
-use crate::util::{SliceExt, try_copy};
+use crate::util::{BUG, SliceExt, try_copy};
 use crate::{InBuffer, OutBuffer};
 
 /// `SerialState`: what has to see the input in order.
@@ -39,7 +39,7 @@ struct SerialState {
     ldm_state: LdmState,
     xxh_state: Xxh64,
     /// The input, where the C code has it in its round buffer: long distance matches reach further back than the
-    /// prefix of a job.
+    /// prefix of a job. It is as long as it has been written to.
     round_buff: Vec<u8>,
 }
 
@@ -74,7 +74,9 @@ impl SerialState {
             )?;
             reset_table(&mut self.ldm_state.bucket_offsets, 1 << bucket_log, true)?;
             self.ldm_state.loaded_dict_end = 0;
-            reset_table(&mut self.round_buff, round_buff_capacity, false)?;
+            self.round_buff.clear();
+            (self.round_buff.try_reserve_exact(round_buff_capacity))
+                .map_err(|_| ErrorCode::MemoryAllocation)?;
         } else {
             self.ldm_state = LdmState::new();
             self.round_buff = Vec::new();
@@ -92,7 +94,11 @@ impl SerialState {
         round_pos: usize,
     ) -> Result<()> {
         if self.ldm_params.enable_ldm == ParamSwitch::Enable {
-            self.round_buff.write_at(round_pos, src)?;
+            let written = self.round_buff.get_mut(round_pos..).ok_or(BUG)?;
+            let (over, beyond) = src.split_at(written.len().min(src.len()));
+            written.write_at(0, over)?;
+            (self.round_buff.try_reserve(beyond.len())).map_err(|_| ErrorCode::MemoryAllocation)?;
+            self.round_buff.extend_from_slice(beyond);
             (self.ldm_state.window).update(
                 BufId::InBuff.start() + round_pos,
                 BufId::InBuff,
@@ -158,6 +164,15 @@ struct WorkerState {
 
 const CHUNK_SIZE: usize = 4 * ZSTD_BLOCKSIZE_MAX;
 
+/// Makes `seq` `len` long, in the allocation that it has if that is large enough.
+fn resize_in_place(seq: &mut Vec<RawSeq>, len: usize) -> Result<()> {
+    seq.clear();
+    seq.try_reserve(len)
+        .map_err(|_| ErrorCode::MemoryAllocation)?;
+    seq.resize(len, RawSeq::default());
+    Ok(())
+}
+
 /// `ZSTDMT_compressionJob`
 fn compression_job(state: &mut WorkerState, job: &Job, cancelled: &AtomicBool) -> Result<()> {
     let mut job_params = job.params;
@@ -176,7 +191,7 @@ fn compression_job(state: &mut WorkerState, job: &Job, cancelled: &AtomicBool) -
     let generated = if cancelled.load(Ordering::SeqCst) {
         Err(ErrorCode::Generic)
     } else {
-        reset_struct_table(&mut raw_seq_store.seq, job.nb_seq_bound, false)
+        resize_in_place(&mut raw_seq_store.seq, job.nb_seq_bound)
             .and_then(|()| serial.gen_sequences(&mut raw_seq_store, src, job.round_pos))
     };
     // The receiver is gone if the frame is given up.
@@ -298,11 +313,6 @@ fn worker_main(jobs: &Receiver<Job>, cancelled: &AtomicBool) {
     }
 }
 
-struct Worker {
-    jobs: Sender<Job>,
-    thread: JoinHandle<()>,
-}
-
 /// `ZSTDMT_jobDescription`, as far as flushing is concerned.
 struct PendingJob {
     /// `None` for a job that needs no worker.
@@ -312,8 +322,6 @@ struct PendingJob {
     flushed: usize,
     /// How many bytes there are in `output` beyond `flushed`.
     to_flush: usize,
-    /// How many bytes were received in all.
-    c_size: usize,
     consumed: usize,
     src_size: usize,
     frame_checksum_needed: bool,
@@ -324,7 +332,6 @@ impl PendingJob {
     fn take(&mut self, progress: Progress) {
         match progress {
             Progress::Output { data, consumed } => {
-                self.c_size += data.len();
                 self.to_flush += data.len();
                 self.consumed = consumed;
                 if !data.is_empty() {
@@ -373,7 +380,11 @@ impl PendingJob {
 
 /// `ZSTDMT_CCtx`
 pub(crate) struct MtCtx {
-    workers: Vec<Worker>,
+    workers: Vec<JoinHandle<()>>,
+    /// Whichever worker is free takes the next job, so that a job does not wait for one thread to be scheduled.
+    queue: Sender<Job>,
+    /// The other end, for workers to come.
+    queue_end: Receiver<Job>,
     cancelled: Arc<AtomicBool>,
     /// The jobs from `doneJobID` to `nextJobID`.
     jobs: VecDeque<PendingJob>,
@@ -438,8 +449,11 @@ fn compute_overlap_size(params: &CCtxParams) -> usize {
 impl MtCtx {
     /// `ZSTDMT_createCCtx_advanced`
     pub(crate) fn new(nb_workers: u32) -> Result<Self> {
+        let (queue, queue_end) = channel();
         let mut mtctx = Self {
             workers: Vec::new(),
+            queue,
+            queue_end,
             cancelled: Arc::new(AtomicBool::new(false)),
             jobs: VecDeque::new(),
             params: CCtxParams::new(0),
@@ -463,22 +477,29 @@ impl MtCtx {
 
     /// `ZSTDMT_resize`: no job is under way.
     fn resize(&mut self, nb_workers: usize) -> Result<()> {
-        for worker in self.workers.drain(nb_workers.min(self.workers.len())..) {
-            drop(worker.jobs);
-            let _ = worker.thread.join();
+        if nb_workers < self.workers.len() {
+            self.stop_workers();
         }
         while self.workers.len() < nb_workers {
-            let (jobs, receiver) = channel();
+            let queue_end = self.queue_end.clone();
             let cancelled = Arc::clone(&self.cancelled);
-            let thread = std::thread::Builder::new()
+            let worker = std::thread::Builder::new()
                 .name("zstd".into())
                 .stack_size(2 << 20)
-                .spawn(move || worker_main(&receiver, &cancelled))
+                .spawn(move || worker_main(&queue_end, &cancelled))
                 .map_err(|_| ErrorCode::MemoryAllocation)?;
-            self.workers.push(Worker { jobs, thread });
+            self.workers.push(worker);
         }
         self.params.nb_workers = nb_workers as i32;
         Ok(())
+    }
+
+    fn stop_workers(&mut self) {
+        // They leave when nothing can be sent to the queue they have.
+        (self.queue, self.queue_end) = channel();
+        for worker in self.workers.drain(..) {
+            let _ = worker.join();
+        }
     }
 
     /// `ZSTDMT_waitForAllJobsCompleted` and `ZSTDMT_releaseAllJobResources`, for a frame that is given up.
@@ -604,7 +625,6 @@ impl MtCtx {
             output: VecDeque::new(),
             flushed: 0,
             to_flush: 0,
-            c_size: 0,
             consumed: 0,
             src_size,
             frame_checksum_needed,
@@ -647,10 +667,7 @@ impl MtCtx {
             serial_out,
             progress,
         };
-        let worker = (self.workers)
-            .get(self.next_job_id as usize % self.workers.len().max(1))
-            .ok_or(ErrorCode::Generic)?;
-        worker.jobs.send(job).map_err(|_| ErrorCode::Generic)?;
+        self.queue.send(job).map_err(|_| ErrorCode::Generic)?;
         self.jobs.push_back(pending);
         self.next_job_id += 1;
         Ok(())
@@ -805,9 +822,6 @@ impl MtCtx {
 impl Drop for MtCtx {
     fn drop(&mut self) {
         self.cancelled.store(true, Ordering::SeqCst);
-        for worker in self.workers.drain(..) {
-            drop(worker.jobs);
-            let _ = worker.thread.join();
-        }
+        self.stop_workers();
     }
 }

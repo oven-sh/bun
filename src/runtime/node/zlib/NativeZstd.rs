@@ -1,5 +1,104 @@
 pub(crate) use _impl::NativeZstd;
 
+/// The `ZSTD_*` members of `zlib.constants`, in Node's order, for `ProcessBindingConstants.cpp`.
+mod constants {
+    use core::ffi::{CStr, c_char};
+
+    use bun_zstd::{
+        EndDirective, ErrorCode, Strategy, ZSTD_CLEVEL_DEFAULT, ZSTD_D_WINDOW_LOG_MAX, c_param,
+    };
+
+    struct Constant {
+        name: &'static CStr,
+        value: i32,
+    }
+
+    const fn named(name: &'static CStr, value: i32) -> Constant {
+        Constant { name, value }
+    }
+
+    const fn error(code: ErrorCode) -> Constant {
+        named(code.name(), code as i32)
+    }
+
+    static CONSTANTS: [Constant; 61] = [
+        named(c"ZSTD_e_continue", EndDirective::Continue as i32),
+        named(c"ZSTD_e_flush", EndDirective::Flush as i32),
+        named(c"ZSTD_e_end", EndDirective::End as i32),
+        named(c"ZSTD_fast", Strategy::Fast as i32),
+        named(c"ZSTD_dfast", Strategy::DFast as i32),
+        named(c"ZSTD_greedy", Strategy::Greedy as i32),
+        named(c"ZSTD_lazy", Strategy::Lazy as i32),
+        named(c"ZSTD_lazy2", Strategy::Lazy2 as i32),
+        named(c"ZSTD_btlazy2", Strategy::BtLazy2 as i32),
+        named(c"ZSTD_btopt", Strategy::BtOpt as i32),
+        named(c"ZSTD_btultra", Strategy::BtUltra as i32),
+        named(c"ZSTD_btultra2", Strategy::BtUltra2 as i32),
+        named(c"ZSTD_c_compressionLevel", c_param::COMPRESSION_LEVEL),
+        named(c"ZSTD_c_windowLog", c_param::WINDOW_LOG),
+        named(c"ZSTD_c_hashLog", c_param::HASH_LOG),
+        named(c"ZSTD_c_chainLog", c_param::CHAIN_LOG),
+        named(c"ZSTD_c_searchLog", c_param::SEARCH_LOG),
+        named(c"ZSTD_c_minMatch", c_param::MIN_MATCH),
+        named(c"ZSTD_c_targetLength", c_param::TARGET_LENGTH),
+        named(c"ZSTD_c_strategy", c_param::STRATEGY),
+        named(
+            c"ZSTD_c_enableLongDistanceMatching",
+            c_param::ENABLE_LONG_DISTANCE_MATCHING,
+        ),
+        named(c"ZSTD_c_ldmHashLog", c_param::LDM_HASH_LOG),
+        named(c"ZSTD_c_ldmMinMatch", c_param::LDM_MIN_MATCH),
+        named(c"ZSTD_c_ldmBucketSizeLog", c_param::LDM_BUCKET_SIZE_LOG),
+        named(c"ZSTD_c_ldmHashRateLog", c_param::LDM_HASH_RATE_LOG),
+        named(c"ZSTD_c_contentSizeFlag", c_param::CONTENT_SIZE_FLAG),
+        named(c"ZSTD_c_checksumFlag", c_param::CHECKSUM_FLAG),
+        named(c"ZSTD_c_dictIDFlag", c_param::DICT_ID_FLAG),
+        named(c"ZSTD_c_nbWorkers", c_param::NB_WORKERS),
+        named(c"ZSTD_c_jobSize", c_param::JOB_SIZE),
+        named(c"ZSTD_c_overlapLog", c_param::OVERLAP_LOG),
+        named(c"ZSTD_d_windowLogMax", ZSTD_D_WINDOW_LOG_MAX),
+        named(c"ZSTD_CLEVEL_DEFAULT", ZSTD_CLEVEL_DEFAULT),
+        named(c"ZSTD_error_no_error", 0),
+        error(ErrorCode::Generic),
+        error(ErrorCode::PrefixUnknown),
+        error(ErrorCode::VersionUnsupported),
+        error(ErrorCode::FrameParameterUnsupported),
+        error(ErrorCode::FrameParameterWindowTooLarge),
+        error(ErrorCode::CorruptionDetected),
+        error(ErrorCode::ChecksumWrong),
+        error(ErrorCode::LiteralsHeaderWrong),
+        error(ErrorCode::DictionaryCorrupted),
+        error(ErrorCode::DictionaryWrong),
+        error(ErrorCode::DictionaryCreationFailed),
+        error(ErrorCode::ParameterUnsupported),
+        error(ErrorCode::ParameterCombinationUnsupported),
+        error(ErrorCode::ParameterOutOfBound),
+        error(ErrorCode::TableLogTooLarge),
+        error(ErrorCode::MaxSymbolValueTooLarge),
+        error(ErrorCode::MaxSymbolValueTooSmall),
+        error(ErrorCode::StabilityConditionNotRespected),
+        error(ErrorCode::StageWrong),
+        error(ErrorCode::InitMissing),
+        error(ErrorCode::MemoryAllocation),
+        error(ErrorCode::WorkSpaceTooSmall),
+        error(ErrorCode::DstSizeTooSmall),
+        error(ErrorCode::SrcSizeWrong),
+        error(ErrorCode::DstBufferNull),
+        error(ErrorCode::NoForwardProgressDestFull),
+        error(ErrorCode::NoForwardProgressInputEmpty),
+    ];
+
+    /// The name of the constant at `index`, whose value goes to `value`, or null past the last one.
+    #[unsafe(no_mangle)]
+    extern "C" fn Bun__zstdConstant(index: usize, value: &mut f64) -> *const c_char {
+        let Some(constant) = CONSTANTS.get(index) else {
+            return core::ptr::null();
+        };
+        *value = f64::from(constant.value);
+        constant.name.as_ptr()
+    }
+}
+
 mod _impl {
     use core::cell::Cell;
     use core::ffi::{c_int, c_uint};

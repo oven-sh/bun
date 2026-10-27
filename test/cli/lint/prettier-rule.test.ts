@@ -1,6 +1,6 @@
 // `prettier/prettier` is built in. It reports where a file differs from `bun fmt`'s output. It only replaces
 // eslint-plugin-prettier's rule where that output matches Prettier's byte for byte. Otherwise the package's rule runs.
-import { afterAll, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { afterAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isDebug, normalizeBunSnapshot, tempDir } from "harness";
 import { realpathSync } from "node:fs";
 import { relative } from "node:path";
@@ -8,9 +8,10 @@ import { endChildren, spawn } from "../children";
 
 afterAll(endChildren);
 
-// In a debug build a `bun lint` run with a config in JavaScript takes seconds, and longer while the runs of four other
-// tests go on: more than the 5 s that a test has by default. No lane of CI runs a debug build.
-if (isDebug) setDefaultTimeout(60_000);
+// A run with an `eslint.config.mjs` evaluates the config in JavaScript, and some also run the package's rule there. In a
+// debug build such a run takes seconds, and longer while the runs of four other tests go on: more than the 5 s that a
+// test has by default. A build that is not a debug build keeps the limit that it has.
+const timeout = isDebug ? 120_000 : undefined;
 
 // A stub for the package's rule, which shows which of the two rules ran. Its options are validated by its own schema
 // too.
@@ -190,7 +191,7 @@ const fixed = {
 };
 
 describe.concurrent("prettier/prettier", () => {
-  test("reports the same as the package's rule", async () => {
+  test("reports the same as the package's rule", { timeout }, async () => {
     expect(await lint({ ...files, ...installed(), "eslint.config.mjs": config(blocks) })).toEqual({
       reports: expected,
       stderr: "Linted 15 files",
@@ -198,7 +199,7 @@ describe.concurrent("prettier/prettier", () => {
     });
   });
 
-  test("--fix-dry-run produces Prettier's output", async () => {
+  test("--fix-dry-run produces Prettier's output", { timeout }, async () => {
     const project = { ...files, ...installed(), "eslint.config.mjs": config(blocks) };
     expect(await lint(project, "--fix-dry-run")).toEqual({
       // Nothing is left to report in the fixed text.
@@ -249,7 +250,7 @@ describe.concurrent("prettier/prettier", () => {
       { "eslint.config.mjs": config([{ rules: { "prettier/prettier": ["error", { optionOfTheirs: true }] } }]) },
       "bun fmt does not support one of the options",
     ],
-  ])("runs the package's rule: %s", async (_, packages, more, why) => {
+  ])("runs the package's rule: %s", { timeout }, async (_, packages, more, why) => {
     const files = { "a.js": "const a = {b:1}\n", "eslint.config.mjs": config(), ...packages, ...more };
     // The note is only printed in the formats meant for people. One run in such a format shows both the report of the
     // rule that ran, which is the stub's, and the note.
@@ -261,7 +262,7 @@ describe.concurrent("prettier/prettier", () => {
   });
 
   // ESLint's parser accepts it. Prettier's, which is chosen by the file name, doesn't.
-  test("runs the package's rule: a syntax error that only the formatter finds", async () => {
+  test("runs the package's rule: a syntax error that only the formatter finds", { timeout }, async () => {
     const blocks = [{ files: ["a.js"], languageOptions: { parser: { meta: { name: "typescript-eslint/parser" } } } }];
     const files = {
       "a.js": "namespace N {\n  export const a = 1;\n}\n",
@@ -294,30 +295,34 @@ describe.concurrent("prettier/prettier", () => {
     });
   });
 
-  test("prettier-plugin-tailwindcss: runs the package's rule, unless Tailwind CSS isn't installed", async () => {
-    const plugin = "prettier-plugin-tailwindcss";
-    const files = {
-      "a.js": 'html`<a class="p-4 flex"></a>`  ;\n',
-      ".prettierrc": `{ "plugins": ["${plugin}"] }`,
-      ...installed(),
-      "eslint.config.mjs": config(),
-    };
-    const [withPlugin, withPackage, without] = await Promise.all([
-      lint({ ...files, [`node_modules/${plugin}/package.json`]: "{}" }),
-      lint({ ...files, "node_modules/tailwindcss/package.json": "{}" }),
-      lint(files),
-    ]);
-    expect(withPlugin).toEqual({ reports: { "a.js": ["theirs"] }, stderr: "Linted 1 file", exitCode: 1 });
-    expect(withPackage).toEqual({ reports: { "a.js": ["theirs"] }, stderr: "Linted 1 file", exitCode: 1 });
-    // Same as `bun fmt`, which doesn't sort the classes then.
-    expect(without).toEqual({
-      reports: { "a.js": ['1:31-1:33 delete [30,32] "" Delete `··`'] },
-      stderr: "Linted 1 file",
-      exitCode: 1,
-    });
-  });
+  test(
+    "prettier-plugin-tailwindcss: runs the package's rule, unless Tailwind CSS isn't installed",
+    { timeout },
+    async () => {
+      const plugin = "prettier-plugin-tailwindcss";
+      const files = {
+        "a.js": 'html`<a class="p-4 flex"></a>`  ;\n',
+        ".prettierrc": `{ "plugins": ["${plugin}"] }`,
+        ...installed(),
+        "eslint.config.mjs": config(),
+      };
+      const [withPlugin, withPackage, without] = await Promise.all([
+        lint({ ...files, [`node_modules/${plugin}/package.json`]: "{}" }),
+        lint({ ...files, "node_modules/tailwindcss/package.json": "{}" }),
+        lint(files),
+      ]);
+      expect(withPlugin).toEqual({ reports: { "a.js": ["theirs"] }, stderr: "Linted 1 file", exitCode: 1 });
+      expect(withPackage).toEqual({ reports: { "a.js": ["theirs"] }, stderr: "Linted 1 file", exitCode: 1 });
+      // Same as `bun fmt`, which doesn't sort the classes then.
+      expect(without).toEqual({
+        reports: { "a.js": ['1:31-1:33 delete [30,32] "" Delete `··`'] },
+        stderr: "Linted 1 file",
+        exitCode: 1,
+      });
+    },
+  );
 
-  test("a disable comment also turns off the package's rule, and isn't reported as unused", async () => {
+  test("a disable comment also turns off the package's rule, and isn't reported as unused", { timeout }, async () => {
     const files = {
       // The stub reports the `Program` node, which starts at the first token.
       "a.js": "const a = {b:1} // eslint-disable-line prettier/prettier\n",
@@ -334,7 +339,7 @@ describe.concurrent("prettier/prettier", () => {
   });
 
   // As with pnpm, when a workspace package has the config: neither package can be resolved from the working directory.
-  test("reads the versions of the plugin and the prettier that the config loaded", async () => {
+  test("reads the versions of the plugin and the prettier that the config loaded", { timeout }, async () => {
     const shared = "packages/config/node_modules";
     const files = {
       "a.js": "const a = {b:1}\n",
@@ -366,7 +371,7 @@ describe.concurrent("prettier/prettier", () => {
   });
 
   // A project that's halfway through migrating from one major version of the plugin to the next.
-  test("with two plugins under the same name, each file uses the one its config block loads", async () => {
+  test("with two plugins under the same name, each file uses the one its config block loads", { timeout }, async () => {
     const copy = (directory: string, version: string) => ({
       [`${directory}/node_modules/prettier/package.json`]: JSON.stringify({ name: "prettier", version: "3.9.9" }),
       [`${directory}/node_modules/eslint-plugin-prettier/package.json`]: JSON.stringify({
@@ -416,7 +421,7 @@ describe.concurrent("prettier/prettier", () => {
   });
 
   // It behaves like `bun fmt`, which also skips files in `.gitignore`. The comment in off.js is for the other rule.
-  test("bun/format reports the same without anything installed", async () => {
+  test("bun/format reports the same without anything installed", { timeout }, async () => {
     const own = (text: string) => text.replaceAll("prettier/prettier", "bun/format");
     const { "off.js": _, ...others } = files;
     const { "off.js": __, ...reported } = expected;
@@ -428,7 +433,7 @@ describe.concurrent("prettier/prettier", () => {
   });
 
   // No other rule would check them.
-  test("bun/format reports the files it can't check, with the reason", async () => {
+  test("bun/format reports the files it can't check, with the reason", { timeout }, async () => {
     const rule = { "eslint.config.mjs": `export default [{ rules: { "bun/format": "error" } }];` };
     const unchecked = (why: string) => [`This file was not checked because ${why}.`];
     const withClasses = {

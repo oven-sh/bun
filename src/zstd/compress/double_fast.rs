@@ -196,7 +196,9 @@ impl Finder {
                 {
                     ip += 1;
                     let end = ip + 4 + sink.count_before(ip + 4, offset_1);
-                    look_ahead(near, end, hash_long, long, hash_small, small);
+                    if LONG == 0 || LONG >= 17 {
+                        look_ahead(near, end, hash_long, long, hash_small, small);
+                    }
                     sink.store::<16>(ip, end, REPCODE1_TO_OFFBASE);
                     break end;
                 }
@@ -234,7 +236,9 @@ impl Finder {
                     continue;
                 };
 
-                look_ahead(near, end, hash_long, long, hash_small, small);
+                if LONG == 0 || LONG >= 17 {
+                    look_ahead(near, end, hash_long, long, hash_small, small);
+                }
                 offset_2 = offset_1;
                 offset_1 = ip - match0;
                 // With a larger step, ip1 may be past the end of the match.

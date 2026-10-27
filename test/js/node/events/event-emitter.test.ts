@@ -1,5 +1,5 @@
 import { sleep } from "bun";
-import { describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe, tempDir } from "harness";
 import { createRequire } from "module";
 import { join } from "path";
@@ -1260,4 +1260,84 @@ test("emit() itself calls each of several listeners", () => {
     .slice(1, 3)
     .map(line => line.trim().split(" ")[1]);
   expect(functions).toEqual(["second", "emit"]);
+});
+
+// `process` and the other objects that use the native EventEmitter prototype. Under `bun --bun jest`, the `process`
+// that test code sees is an object that inherits that prototype (jest-util's createProcessObject()). No user of the
+// two receivers that the native constructor makes is known. The node:events EventEmitter is the reference: every
+// expected value is what it gives, and what node v26.3.0 gives for the same calls.
+describe("native EventEmitter", () => {
+  const nativeProto = Object.getPrototypeOf(process);
+  const NativeEventEmitter = nativeProto.constructor;
+
+  let nextName = 0;
+  const receivers: Array<[string, () => any]> = [
+    ["process", () => process],
+    ["new NativeEventEmitter()", () => new NativeEventEmitter()],
+    ["NativeEventEmitter()", () => NativeEventEmitter()],
+    ["an object that inherits the native prototype", () => Object.create(nativeProto)],
+    ["node:events EventEmitter", () => new EventEmitter()],
+  ];
+  const eventNames: Array<[string, () => string | symbol]> = [
+    ["a string", () => `native-emitter-${nextName++}`],
+    ["a symbol", () => Symbol("native-emitter")],
+  ];
+
+  describe.each(receivers)("%s", (_receiver, makeTarget) => {
+    let target: any;
+    const types: Array<string | symbol> = [];
+    const track = <T extends string | symbol>(type: T) => {
+      types.push(type);
+      return type;
+    };
+    beforeEach(() => {
+      target = makeTarget();
+    });
+    afterEach(() => {
+      for (const type of types.splice(0)) target.removeAllListeners(type);
+    });
+
+    describe.each(eventNames)("%s event name", (_kind, makeType) => {
+      const newType = () => track(makeType());
+
+      describe.each(["once", "prependOnceListener"] as const)("%s()", method => {
+        test("an emit from inside an earlier listener runs the listener one time", () => {
+          const type = newType();
+          let calls = 0;
+          let depth = 0;
+          target[method](type, () => calls++);
+          target.prependListener(type, () => {
+            if (depth++ === 0) target.emit(type);
+          });
+
+          target.emit(type);
+          expect(calls).toBe(1);
+          expect(target.listenerCount(type)).toBe(1);
+        });
+      });
+    });
+  });
+
+  // The native 'exit' emit holds the once() listener in its copy of the listeners while the first listener emits.
+  test.concurrent("a once('exit') listener runs one time when an earlier 'exit' listener emits 'exit'", async () => {
+    const src = `
+      let depth = 0;
+      process.on("exit", code => {
+        if (depth++ === 0) process.emit("exit", code);
+      });
+      process.once("exit", code => console.log("once exit listener", code));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "once exit listener 0\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });

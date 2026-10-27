@@ -55,7 +55,7 @@ impl Sink for &mut [u8] {
         Growth::None
     }
     fn grow(&mut self, _len: usize) -> Result<()> {
-        Ok(())
+        Err(Error::InsufficientSpace)
     }
 }
 

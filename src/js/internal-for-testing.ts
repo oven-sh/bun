@@ -333,6 +333,14 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   isAddress: $bindgen("imported_class_test.bind.ts", "isAddress"),
 };
 
+export const libdeflate = $bindgen("libdeflate_test.bind.ts", "maxBytesNeeded") && {
+  maxBytesNeeded: $bindgen("libdeflate_test.bind.ts", "maxBytesNeeded"),
+  compressToSlice: $bindgen("libdeflate_test.bind.ts", "compressToSlice"),
+  compressToVec: $bindgen("libdeflate_test.bind.ts", "compressToVec"),
+  decompressToSlice: $bindgen("libdeflate_test.bind.ts", "decompressToSlice"),
+  decompressToVec: $bindgen("libdeflate_test.bind.ts", "decompressToVec"),
+};
+
 export const noOpForTesting = $cpp("NoOpForTesting.cpp", "createNoOpForTesting");
 
 /**

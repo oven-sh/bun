@@ -309,7 +309,7 @@ impl<'a> InternalState<'a> {
                 }
                 let format = match self.encoding {
                     Encoding::Gzip => bun_libdeflate::Decoding::Gzip,
-                    // zlib-ng alone judges a zlib-wrapped body: libdeflate accepts more streams.
+                    // zlib-ng alone judges a zlib-wrapped body: libdeflate accepted more streams, so that decoder is not ported.
                     Encoding::Deflate if has_zlib_header(buffer) => break 'libdeflate,
                     Encoding::Deflate => bun_libdeflate::Decoding::Deflate,
                     _ => unreachable!(),

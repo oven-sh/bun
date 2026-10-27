@@ -56,6 +56,9 @@ pub(crate) mod js_transpiler;
 pub(crate) mod json5_object;
 #[path = "api/JSONCObject.rs"]
 pub(crate) mod jsonc_object;
+#[cfg(debug_assertions)]
+#[path = "api/libdeflate_test.rs"]
+pub(crate) mod libdeflate_test;
 #[path = "api/MarkdownObject.rs"]
 pub(crate) mod markdown_object;
 #[path = "api/NativePromiseContext.rs"]

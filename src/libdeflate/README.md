@@ -19,7 +19,7 @@ decompressor reports it as bad data, a compressor as a result that does not fit.
 
 | File                               | libdeflate                                      |                                              |
 | ---------------------------------- | ----------------------------------------------- | -------------------------------------------- |
-| `compressor.rs`, `decompressor.rs` | `gzip_*.c`, `zlib_*.c`                          | The public types, the gzip and zlib wrappers |
+| `compressor.rs`, `decompressor.rs` | `gzip_*.c`, `zlib_compress.c`                   | The public types, the gzip and zlib wrappers |
 | `decompress.rs`                    | `deflate_decompress.c`, `decompress_template.h` | Decode tables and the decoding loops         |
 | `compress.rs`                      | `deflate_compress.c`                            | Blocks, the output bit stream, levels 0 to 9 |
 | `near_optimal.rs`                  | `deflate_compress.c`                            | Levels 10 to 12                              |

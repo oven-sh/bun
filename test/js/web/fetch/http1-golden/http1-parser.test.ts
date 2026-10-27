@@ -1,7 +1,7 @@
 // Holds src/http1 to what picohttpparser, from which it derives, makes of the same bytes. See record.ts for where the
 // inputs and the recorded results come from.
-import { expect, test } from "bun:test";
-import { decoded, loadParserCases, parsed, parserCasesHash } from "./observe";
+import { describe, expect, test } from "bun:test";
+import { decoded, loadParserCases, parsed, parserCasesHash, received } from "./observe";
 
 const cases = await loadParserCases();
 
@@ -17,6 +17,31 @@ test("response heads", () => {
     return actual === expected ? [] : [{ slots, data, actual, expected }];
   });
   expect(wrong).toEqual([]);
+});
+
+// Neither client parses all it has received after every read. Both have to find what picohttpparser found that way.
+describe("the end of a response head", () => {
+  const heads = cases.heads.map(([slots, data, recorded]) => [slots, Buffer.from(data, "hex"), recorded] as const);
+
+  test("that comes whole", () => {
+    const wrong = heads.flatMap(([slots, data, recorded]) => {
+      const actual = received(slots, data, data.length);
+      const expected = `${data.length} ${recorded.split(" ")[3] ?? recorded}`;
+      return actual.every(found => found === expected) ? [] : [{ slots, data: data.toString("hex"), actual, expected }];
+    });
+    expect(wrong).toEqual([]);
+  });
+
+  test.each([1, 16])("that comes %d bytes at a time", piece => {
+    // To parse everything after every piece takes time quadratic in their number.
+    const few = heads.filter(([, data]) => data.length / piece <= 300);
+    expect(few.length).toBeGreaterThan(5300);
+    const wrong = few.flatMap(([slots, data]) => {
+      const [expected, ...actual] = received(slots, data, piece);
+      return actual.every(found => found === expected) ? [] : [{ slots, data: data.toString("hex"), actual, expected }];
+    });
+    expect(wrong).toEqual([]);
+  });
 });
 
 test("chunked bodies", () => {

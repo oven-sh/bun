@@ -2,8 +2,12 @@
 //! response head and a chunked body, so tables of cases need no server.
 
 use std::fmt::Write as _;
+use std::sync::atomic::Ordering;
 
-use bun_picohttp::{ChunkedDecoder, ChunkedStatus, Header, ParseResponseError, Response};
+use bun_picohttp::{
+    ChunkedDecoder, ChunkedStatus, HEAD_BYTES_READ, HeadScanner, Header, ParseResponseError,
+    Response,
+};
 
 /// `parseResponse(data, slots)`: `malformed`, `incomplete`, or
 /// `1.<minor> <status> <reason> <length of the head>` and a `<name>:<value>`
@@ -36,6 +40,40 @@ pub(crate) fn parse_response(data: &[u8], slots: usize) -> String {
         );
     }
     log
+}
+
+/// `receiveResponse(data, slots, piece)`: see `http1Internals`.
+pub(crate) fn receive_response(data: &[u8], slots: usize, piece: usize) -> String {
+    let mut headers = vec![Header::ZERO; slots];
+    let mut log = String::new();
+    for way in ["parse", "fetch", "ws"] {
+        let mut scanner = HeadScanner::default();
+        let mut received = 0;
+        let found = loop {
+            received = data.len().min(received + piece.max(1));
+            let buf = &data[..received];
+            let found = match way {
+                "parse" => Response::parse(buf, &mut headers).map(|head| head.bytes_read),
+                "fetch" => Response::parse_received(buf, &mut headers, &mut scanner)
+                    .map(|head| head.bytes_read),
+                _ => scanner.scan(buf, slots),
+            };
+            if found != Err(ParseResponseError::ShortRead) || received == data.len() {
+                break found;
+            }
+        };
+        _ = match found {
+            Err(ParseResponseError::ShortRead) => writeln!(log, "{received} incomplete"),
+            Err(ParseResponseError::MalformedHttpResponse) => writeln!(log, "{received} malformed"),
+            Ok(len) => writeln!(log, "{received} {len}"),
+        };
+    }
+    log
+}
+
+/// `headBytesRead()`
+pub(crate) fn head_bytes_read() -> usize {
+    HEAD_BYTES_READ.load(Ordering::Relaxed)
 }
 
 /// `decodeChunked(data, cuts)`: `data` decoded in pieces that end at `cuts` and

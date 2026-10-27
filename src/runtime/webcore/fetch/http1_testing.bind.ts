@@ -7,6 +7,13 @@ export const parseResponse = b.fn({
   returns: b.string.utf8,
 });
 
+export const receiveResponse = b.fn({
+  args: { data: b.bytes({ from: ["buffer"] }), slots: b.usize, piece: b.usize },
+  returns: b.string.utf8,
+});
+
+export const headBytesRead = b.fn({ returns: b.usize });
+
 export const decodeChunked = b.fn({
   args: { data: b.bytes({ from: ["buffer"] }), cuts: b.array(b.usize) },
   returns: b.string.utf8,

@@ -958,16 +958,24 @@ it("ErrorEvent", () => {
     colno: 10,
     error: new Error("Test error"),
   });
-  expect(normalizeBunSnapshot(Bun.inspect(errorEvent)).replace(/\d+ \| /gim, "NNN |")).toMatchInlineSnapshot(`
+  const inspected = normalizeBunSnapshot(Bun.inspect(errorEvent));
+  // The preview's gutter is as wide as its largest line number. The caret indent is that width plus the column.
+  const gutter = /(?<=^|error: ) *\d+ \| /gm;
+  const gutterWidth = inspected.match(gutter)[0].length;
+  expect(
+    inspected
+      .replace(gutter, "NNN | ")
+      .replace(/^ +\^$/m, caret => "^".padStart(caret.length - gutterWidth + "NNN | ".length)),
+  ).toMatchInlineSnapshot(`
     "ErrorEvent {
       type: "error",
       message: "Something went wrong",
-      error: NNN |  const errorEvent = new ErrorEvent("error", {
-    NNN |    message: "Something went wrong",
-    NNN |    filename: "script.js",
-    NNN |    lineno: 42,
-    NNN |    colno: 10,
-    NNN |    error: new Error("Test error"),
+      error: NNN |   const errorEvent = new ErrorEvent("error", {
+    NNN |     message: "Something went wrong",
+    NNN |     filename: "script.js",
+    NNN |     lineno: 42,
+    NNN |     colno: 10,
+    NNN |     error: new Error("Test error"),
                          ^
     error: Test error
         at <anonymous> (file:NN:NN)

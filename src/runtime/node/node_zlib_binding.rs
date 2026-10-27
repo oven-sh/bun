@@ -105,7 +105,8 @@ pub(crate) trait CompressionContext {
     fn reset(&mut self) -> Error;
     fn close(&mut self);
     fn get_error_info(&mut self) -> Error;
-    fn update_write_result(&mut self, avail_in: &mut u32, avail_out: &mut u32);
+    /// `[avail_out, avail_in]`, the order `_writeState` holds them in.
+    fn write_result(&self) -> [u32; 2];
 }
 
 /// Stores a stream's copy of an input that `can_be_freed_while_pinned`.
@@ -150,9 +151,13 @@ pub(crate) trait CompressionStreamImpl:
         if write_result.len() < 2 {
             return;
         }
-        let (r0, r1) = write_result.split_at_mut(1);
-        self.stream()
-            .with_mut(|s| s.update_write_result(&mut r1[0], &mut r0[0]));
+        write_result[..2].copy_from_slice(
+            &self
+                .stream()
+                .get()
+                .write_result()
+                .map(bun_core::Unaligned::new),
+        );
     }
 
     fn poll_ref(&self) -> &JsCell<CountedKeepAlive>;
@@ -783,9 +788,7 @@ pub(crate) unsafe fn run_from_js_thread<T: CompressionStreamImpl>(this_ptr: *mut
     this_value.ensure_still_alive();
 
     // The copy is only read again if some input is unconsumed, because JS then resends it.
-    let (mut avail_in, mut avail_out) = (0, 0);
-    this.stream()
-        .with_mut(|s| s.update_write_result(&mut avail_in, &mut avail_out));
+    let [_, avail_in] = this.stream().get().write_result();
     if avail_in == 0 {
         this.input_copy().set(InputCopy::default());
     }
@@ -873,8 +876,8 @@ macro_rules! __impl_compression_stream {
                 Self::get_error_info(self)
             }
             #[inline]
-            fn update_write_result(&mut self, avail_in: &mut u32, avail_out: &mut u32) {
-                Self::update_write_result(self, avail_in, avail_out)
+            fn write_result(&self) -> [u32; 2] {
+                Self::write_result(self)
             }
         }
 

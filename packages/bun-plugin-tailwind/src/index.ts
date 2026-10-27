@@ -21,9 +21,8 @@ const plugin: BunPlugin = {
     }
 
     build.onLoad({ filter: /\.css$/ }, async ({ defer, loader, path }) => {
-      // A stylesheet of `Bun.build({ files })` is not on disk, and a plugin cannot read it.
-      const file = Bun.file(path);
-      if (!(await file.exists())) return;
+      // `path` is the key of a file that Bun took from `Bun.build({ files })`, as it is written there.
+      const file = new Blob([build.config?.files?.[path] ?? Bun.file(path)]);
 
       const { Root } = await loading;
       let root = roots.get(path);

@@ -234,16 +234,24 @@ describe("Bun.build", () => {
     expect(deferred).toBe(true);
   });
 
-  test("leaves a stylesheet that is not on disk to Bun", async () => {
-    using dir = project({});
-    const entry = path.join(dir.root, "virtual.css");
+  test("reads a stylesheet of `Bun.build({ files })` from there", async () => {
+    using dir = project({
+      "index.css": `.disk { color: red }`,
+      "a.ts": `export default "underline";`,
+    });
     const result = await Bun.build({
       root: dir.root,
-      entrypoints: [entry],
-      files: { [entry]: `.virtual { color: red }` },
+      entrypoints: [path.join(dir.root, "index.css"), path.join(dir.root, "virtual.css")],
+      files: {
+        [path.join(dir.root, "index.css")]: `@import "tailwindcss/utilities";`,
+        [path.join(dir.root, "virtual.css")]: new TextEncoder().encode(`.virtual { @apply overline; }`),
+      },
       plugins: [tailwind],
     });
-    expect(await result.outputs[0].text()).toContain(".virtual {");
+    const [index, virtual] = await Promise.all(result.outputs.map(output => output.text()));
+    expect(index).toContain(".underline {");
+    expect(index).not.toContain(".disk");
+    expect(virtual).toContain("text-decoration-line: overline");
   });
 
   test("does not read assets", async () => {

@@ -93,7 +93,8 @@ pub fn tw_on_before_parse(handle: &mut OnBeforeParse) -> Result<()> {
   }
 
   // SAFETY: `src/index.ts` passes the external that `twctx_create` made, and keeps it alive for as
-  // long as the plugin is registered.
+  // long as the plugin is registered. Nothing takes a mutable reference to it: all of its state is
+  // behind the `Mutex`.
   let ctx: &TailwindContext =
     unsafe { handle.external(External::inner_from_raw) }?.ok_or_else(|| {
       anyhow::anyhow!("bun-plugin-tailwind: onBeforeParse was registered without its context")

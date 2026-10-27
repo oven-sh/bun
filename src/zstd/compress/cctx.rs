@@ -13,7 +13,7 @@ use super::internal::{
     BlockSrc, BufId, Buffers, CompressedBlockState, CompressionParameters, DictMatchState,
     DictTableLoadMethod, EntropyCTablesMetadata, HASH_READ_SIZE, LdmState, LongLengthType, Match,
     MatchState, Optimal, ParamSwitch, Prefix, RawSeq, RawSeqStore, SeqChunk, SeqStore, Strategy,
-    TableFillPurpose, Window, ZSTD_CHUNKSIZE_MAX, ZSTD_CURRENT_MAX, ZSTD_DUBT_UNSORTED_MARK,
+    Table, TableFillPurpose, Window, ZSTD_CHUNKSIZE_MAX, ZSTD_CURRENT_MAX, ZSTD_DUBT_UNSORTED_MARK,
     ZSTD_OPT_SIZE, ZSTD_SHORT_CACHE_TAG_BITS, ZSTD_WINDOW_START_INDEX, min_gain, no_compress_block,
     offbase_is_repcode, offset_to_offbase, rle_compress_block, update_rep,
 };
@@ -160,6 +160,13 @@ pub(crate) fn reset_table<T: bun_pod::Zeroable + Copy + Default>(
 
 pub(crate) use reset_table as reset_struct_table;
 
+/// `ZSTD_cwksp_mark_tables_dirty` and then `ZSTD_cwksp_mark_tables_clean`
+fn forget_unused_indices(ms: &mut MatchState) {
+    ms.hash_table.forget_rest();
+    ms.chain_table.forget_rest();
+    ms.hash_table3.forget_rest();
+}
+
 /// `ZSTD_reset_matchState`
 fn reset_match_state(
     ms: &mut MatchState,
@@ -180,17 +187,20 @@ fn reset_match_state(
 
     // As long as indices go on, the ones in the tables are too low to be valid.
     let clean = force_reset_index == IndexResetPolicy::Reset && crp != CompResetPolicy::LeaveDirty;
-    reset_table(&mut ms.hash_table, sizes.h_size, clean)?;
-    reset_table(&mut ms.chain_table, sizes.chain_size, clean)?;
-    reset_table(&mut ms.hash_table3, sizes.h3_size, clean)?;
+    ms.hash_table.reset(sizes.h_size, clean)?;
+    ms.chain_table.reset(sizes.chain_size, clean)?;
+    ms.hash_table3.reset(sizes.h3_size, clean)?;
+    if force_reset_index == IndexResetPolicy::Reset {
+        forget_unused_indices(ms);
+    }
 
     if row_match_finder_used(c_params.strat(), use_row_match_finder) {
         if for_who == ResetTarget::CCtx {
             // A new salt instead of erasing the tags.
-            reset_table(&mut ms.tag_table, sizes.h_size, false)?;
+            ms.tag_table.reset(sizes.h_size, false)?;
             ms.hash_salt = bitmix(ms.hash_salt, 8) ^ bitmix(u64::from(ms.hash_salt_entropy), 4);
         } else {
-            reset_table(&mut ms.tag_table, sizes.h_size, true)?;
+            ms.tag_table.reset(sizes.h_size, true)?;
             ms.hash_salt = 0;
         }
         let row_log = c_params.search_log.clamp(4, 6);
@@ -254,6 +264,7 @@ fn reduce_table(table: &mut [u32], reducer_value: u32, preserve_mark: bool) {
 
 /// `ZSTD_reduceIndex`
 fn reduce_index(ms: &mut MatchState, params: &CCtxParams, reducer_value: u32) {
+    forget_unused_indices(ms);
     reduce_table(&mut ms.hash_table, reducer_value, false);
     if allocate_chain_table(params.c_params.strat(), params.use_row_match_finder) {
         let preserve_mark = params.c_params.strat() == Strategy::BtLazy2;
@@ -909,10 +920,10 @@ impl FrameCompressor {
         } else {
             self.oversized_duration = 0;
             let ms = &mut self.match_state;
-            ms.hash_table = Vec::new();
-            ms.chain_table = Vec::new();
-            ms.hash_table3 = Vec::new();
-            ms.tag_table = Vec::new();
+            ms.hash_table = Table::new();
+            ms.chain_table = Table::new();
+            ms.hash_table3 = Table::new();
+            ms.tag_table = Table::new();
             ms.opt.match_table = Vec::new();
             ms.opt.price_table = Vec::new();
         }
@@ -1056,6 +1067,7 @@ impl FrameCompressor {
 
         let src = &cdict.match_state;
         let dst = &mut self.match_state;
+        forget_unused_indices(dst);
         let tagged = cdict_indices_are_tagged(&cdict_c_params);
         copy_table(&mut dst.hash_table, &src.hash_table, tagged)?;
         copy_table(&mut dst.chain_table, &src.chain_table, tagged)?;

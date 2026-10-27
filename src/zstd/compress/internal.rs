@@ -1,5 +1,6 @@
 //! `zstd_compress_internal.h`: what the parts of the compressor share.
 
+use super::cctx::reset_table;
 use super::fse::{FseCTable, FseRepeat};
 use super::huf::{HufCTable, HufRepeat};
 use super::sequences::SeqCodes;
@@ -1251,6 +1252,61 @@ impl OptState {
 
 pub(crate) const ZSTD_ROW_HASH_CACHE_SIZE: usize = 8;
 
+/// A table of a match finder. A frame that needs a shorter one than a frame before it had uses the start of that one.
+/// The rest stays as it is, for a frame that needs more again, so that nothing is cleared as long as indices go on.
+pub(crate) struct Table<T> {
+    all: Vec<T>,
+    len: usize,
+}
+
+impl<T: bun_pod::Zeroable + Copy + Default> Table<T> {
+    pub(crate) const fn new() -> Self {
+        Self {
+            all: Vec::new(),
+            len: 0,
+        }
+    }
+
+    /// Gives it the length `len`. What it holds is 0, or if `clean` is false possibly what it held at some time.
+    pub(crate) fn reset(&mut self, len: usize, clean: bool) -> Result<()> {
+        let kept = if clean { 0 } else { self.all.len() };
+        reset_table(&mut self.all, len.max(kept), clean)?;
+        self.len = len;
+        Ok(())
+    }
+
+    /// For when indices get lower: the ones behind the part in use would seem valid later.
+    pub(crate) fn forget_rest(&mut self) {
+        self.all.truncate(self.len);
+    }
+
+    pub(crate) fn capacity(&self) -> usize {
+        self.all.capacity()
+    }
+
+    pub(crate) fn as_slice(&self) -> &[T] {
+        self.all.get(..self.len).unwrap_or(&[])
+    }
+
+    pub(crate) fn as_mut_slice(&mut self) -> &mut [T] {
+        self.all.get_mut(..self.len).unwrap_or(&mut [])
+    }
+}
+
+impl<T: bun_pod::Zeroable + Copy + Default> core::ops::Deref for Table<T> {
+    type Target = [T];
+
+    fn deref(&self) -> &[T] {
+        self.as_slice()
+    }
+}
+
+impl<T: bun_pod::Zeroable + Copy + Default> core::ops::DerefMut for Table<T> {
+    fn deref_mut(&mut self) -> &mut [T] {
+        self.as_mut_slice()
+    }
+}
+
 /// `ZSTD_MatchState_t`. `dictMatchState`, `ldmSeqStore` and `opt.symbolCosts`, which point to what other structures
 /// own, are in [`BlockSrc`].
 pub(crate) struct MatchState {
@@ -1263,14 +1319,14 @@ pub(crate) struct MatchState {
     pub(crate) hash_log3: u32,
     pub(crate) row_hash_log: u32,
     /// For the row-based match finder: a byte of hash for each entry of `hash_table`.
-    pub(crate) tag_table: Vec<u8>,
+    pub(crate) tag_table: Table<u8>,
     pub(crate) hash_cache: [u32; ZSTD_ROW_HASH_CACHE_SIZE],
     /// Makes what a previous frame left in `tag_table` meaningless.
     pub(crate) hash_salt: u64,
     pub(crate) hash_salt_entropy: u32,
-    pub(crate) hash_table: Vec<u32>,
-    pub(crate) hash_table3: Vec<u32>,
-    pub(crate) chain_table: Vec<u32>,
+    pub(crate) hash_table: Table<u32>,
+    pub(crate) hash_table3: Table<u32>,
+    pub(crate) chain_table: Table<u32>,
     pub(crate) force_non_contiguous: bool,
     pub(crate) opt: OptState,
     /// `dictMatchState != NULL`: the match state of the dictionary is searched beside this one.
@@ -1287,13 +1343,13 @@ impl MatchState {
             next_to_update: 0,
             hash_log3: 0,
             row_hash_log: 0,
-            tag_table: Vec::new(),
+            tag_table: Table::new(),
             hash_cache: [0; ZSTD_ROW_HASH_CACHE_SIZE],
             hash_salt: 0,
             hash_salt_entropy: 0,
-            hash_table: Vec::new(),
-            hash_table3: Vec::new(),
-            chain_table: Vec::new(),
+            hash_table: Table::new(),
+            hash_table3: Table::new(),
+            chain_table: Table::new(),
             force_non_contiguous: false,
             opt: OptState::new(),
             has_dict_match_state: false,

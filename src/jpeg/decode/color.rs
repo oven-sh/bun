@@ -17,14 +17,27 @@ pub(crate) enum Conversion {
     YcckToCmyk,
 }
 
+/// `(a * b) >> 16`, which is one instruction (pmulhw).
+#[inline(always)]
+fn mul_high(a: i16, b: i16) -> i16 {
+    ((i32::from(a) * i32::from(b)) >> 16) as i16
+}
+
+/// In 16 bits wherever that gives what jdcolor.c's tables hold, as in libjpeg-turbo's SIMD: the whole part of a factor is
+/// added apart from its fraction, and a fraction is rounded by computing one more bit of the product.
 #[inline(always)]
 fn ycc_to_rgb(y: u8, cb: u8, cr: u8) -> [u8; 3] {
-    let y = i32::from(y);
-    let cb = i32::from(cb) - 128;
-    let cr = i32::from(cr) - 128;
-    let r = y + ((fix(1.40200) * cr + ONE_HALF) >> SCALEBITS);
-    let g = y + ((-fix(0.34414) * cb + ONE_HALF - fix(0.71414) * cr) >> SCALEBITS);
-    let b = y + ((fix(1.77200) * cb + ONE_HALF) >> SCALEBITS);
+    const F_0_402: i16 = (fix(1.40200) - fix(1.0)) as i16;
+    const MF_0_228: i16 = (fix(1.77200) - fix(2.0)) as i16;
+    const F_0_285: i32 = fix(1.0) - fix(0.71414);
+
+    let y = i16::from(y);
+    let cb = i16::from(cb) - 128;
+    let cr = i16::from(cr) - 128;
+    let r = y + cr + ((mul_high(2 * cr, F_0_402) + 1) >> 1);
+    let b = y + 2 * cb + ((mul_high(2 * cb, MF_0_228) + 1) >> 1);
+    let g = -fix(0.34414) * i32::from(cb) + F_0_285 * i32::from(cr) + ONE_HALF;
+    let g = y - cr + (g >> SCALEBITS) as i16;
     [r, g, b].map(|v| v.clamp(0, 255) as u8)
 }
 

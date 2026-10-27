@@ -94,7 +94,7 @@ use ensure_route::{HTMLRouter, ReqOrSaved, RequestEnsureRouteBundledCtx, ensure_
 use failures::mark_all_route_children;
 pub(crate) use finalize::{CachedFileIndex, HotUpdateContext};
 use half_saved_hold::HalfSavedHold;
-pub(crate) use half_saved_hold::release_half_saved_holds;
+pub(crate) use half_saved_hold::{HoldingDevServers, release_half_saved_holds};
 use hmr_socket::hmr_socket_behavior;
 pub(crate) use hot_reload_event::HotReloadEvent;
 use http::{

@@ -1,16 +1,19 @@
 //! Holds a hot reload whose event names a half-saved file: a save empties or renames the file before it writes the text.
 
 use super::*;
-use std::cell::RefCell;
+use core::cell::RefCell;
+use core::ptr::NonNull;
 use std::time::Duration;
 
+/// One half-saved file holds a reload for this long.
+const WAIT_MS: u64 = 100;
+/// A held file has its text when no look saw its size change for this long: a writer can use more than one write.
+const SETTLE_MS: u64 = 5;
 /// A hold ends this many times the wait for one file after it starts, at the latest.
 const MAX_WAITS: u32 = 10;
 
-thread_local! {
-    /// The dev servers of this thread that hold a reload.
-    static HOLDING: RefCell<Vec<*mut DevServer>> = const { RefCell::new(Vec::new()) };
-}
+/// The dev servers of one VM that hold a reload.
+pub(crate) type HoldingDevServers = RefCell<Vec<NonNull<DevServer>>>;
 
 struct HeldFile {
     /// At the last look. 0: empty or missing.
@@ -51,42 +54,39 @@ impl HalfSavedHold {
     }
 }
 
-/// How long one half-saved file holds a reload.
 fn wait() -> Duration {
     let ms = bun_core::env_var::BUN_DEBUG_TEST_DEV_SERVER_HALF_SAVED_WAIT_MS
         .get()
-        .unwrap_or(100);
+        .unwrap_or(WAIT_MS);
     Duration::from_millis(ms.min(u32::MAX as u64))
 }
 
-/// A held file has its text when no look saw its size change for this long: a writer can use more than one write.
 fn settle() -> Duration {
     let ms = bun_core::env_var::BUN_DEBUG_TEST_DEV_SERVER_HALF_SAVED_SETTLE_MS
         .get()
-        .unwrap_or(5);
+        .unwrap_or(SETTLE_MS);
     Duration::from_millis(ms.min(u32::MAX as u64))
 }
 
-/// `None` for a file that does not exist.
-fn size_of_existing_file(path: &[u8]) -> Option<u64> {
+/// `None` for a file that does not exist. A file with another `stat` error is not half-saved.
+fn size_of_file(path: &[u8]) -> sys::Maybe<Option<u64>> {
     let mut buf = paths::path_buffer_pool::get();
-    let stat = sys::stat(paths::resolve_path::z(path, &mut *buf)).ok()?;
-    Some(stat.st_size as u64)
-}
-
-/// 0 for a file that does not exist.
-fn size_of_file(path: &[u8]) -> u64 {
-    size_of_existing_file(path).unwrap_or(0)
-}
-
-/// Ends the holds of this thread. A run loop calls this before it waits with no timers: `bun --hot` after an uncaught error.
-pub(crate) fn release_half_saved_holds() {
-    if HOLDING.with(|holding| holding.borrow().is_empty()) {
-        return;
+    match sys::stat(paths::resolve_path::z(path, &mut *buf)) {
+        Ok(stat) => Ok(Some(stat.st_size as u64)),
+        Err(err) if err.get_errno() == sys::E::ENOENT => Ok(None),
+        Err(err) => Err(err),
     }
-    for dev in HOLDING.with(|holding| holding.borrow().clone()) {
-        // SAFETY: a dev server leaves `HOLDING` when its hold ends, and `Drop` ends its hold.
-        unsafe { (*dev).release_half_saved_hold(true) };
+}
+
+/// Ends the holds of the dev servers of `vm`. A run loop calls this before it waits with no timers: `bun --hot` after an uncaught error.
+pub(crate) fn release_half_saved_holds(vm: &VirtualMachine) {
+    let holding = match crate::jsc_hooks::half_saved_holds(vm) {
+        Some(holding) => holding.borrow().clone(),
+        None => return,
+    };
+    for dev in holding {
+        // SAFETY: a dev server leaves the list when its hold ends, and `Drop` ends its hold.
+        unsafe { (*dev.as_ptr()).release_half_saved_hold(true) };
     }
 }
 
@@ -109,7 +109,11 @@ impl DevServer {
             {
                 continue;
             }
-            if size_of_file(path) != 0 {
+            // The bundle reports a file that `stat` fails on.
+            let Ok(size) = size_of_file(path) else {
+                continue;
+            };
+            if size.unwrap_or(0) != 0 {
                 self.files_left_empty.swap_remove(path);
             } else if !batching && !self.files_left_empty.contains(path) {
                 half_saved.push(path.clone());
@@ -140,8 +144,10 @@ impl DevServer {
                 timer: *timer,
                 last_deadline: now + wait() * MAX_WAITS,
             });
-            let dev: *mut DevServer = self;
-            HOLDING.with(|holding| holding.borrow_mut().push(dev));
+            let dev = NonNull::from(&mut *self);
+            if let Some(holding) = crate::jsc_hooks::half_saved_holds(self.vm()) {
+                holding.borrow_mut().push(dev);
+            }
         }
         let hold = self.half_saved_hold.as_mut().expect("set above");
         let mut joined = !entry_points.set.is_empty();
@@ -187,7 +193,11 @@ impl DevServer {
                 hold.first_with_time_left = i + 1;
                 continue;
             }
-            let size = size_of_file(&hold.files.keys()[i]);
+            // The bundle reports a file that `stat` fails on.
+            let Ok(size) = size_of_file(&hold.files.keys()[i]) else {
+                continue;
+            };
+            let size = size.unwrap_or(0);
             let file = &mut hold.files.values_mut()[i];
             if size != file.size {
                 file.size = size;
@@ -215,7 +225,7 @@ impl DevServer {
         false
     }
 
-    /// Takes the hold out of the timer heap and out of `HOLDING`.
+    /// Takes the hold out of the timer heap and out of the list of the VM.
     pub(crate) fn take_half_saved_hold(&mut self) -> Option<HalfSavedHold> {
         let hold = self.half_saved_hold.take()?;
         if self.half_saved_hold_timer.state == EventLoopTimerState::ACTIVE {
@@ -223,7 +233,9 @@ impl DevServer {
             self.timer_heap().remove(timer);
         }
         let dev: *mut DevServer = self;
-        HOLDING.with(|holding| holding.borrow_mut().retain(|held| *held != dev));
+        if let Some(holding) = crate::jsc_hooks::half_saved_holds(self.vm()) {
+            holding.borrow_mut().retain(|held| held.as_ptr() != dev);
+        }
         Some(hold)
     }
 
@@ -231,7 +243,7 @@ impl DevServer {
         let hold = self.take_half_saved_hold().expect("the caller saw a hold");
         for path in hold.files.keys() {
             // This file was saved empty. The next event that finds it empty starts no hold.
-            if size_of_existing_file(path) == Some(0) {
+            if matches!(size_of_file(path), Ok(Some(0))) {
                 bun_core::handle_oom(self.files_left_empty.put(path, ()));
             }
         }

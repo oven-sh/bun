@@ -9,6 +9,7 @@ import {
   readFileSync,
   renameSync,
   statSync,
+  symlinkSync,
   unlinkSync,
   writeFileSync,
   writeSync,
@@ -617,8 +618,8 @@ devTest("a hot-reload event that invalidates nothing is processed once", {
 // `ReadDirectoryChangesW` report that at once. The dev server holds the file event until the
 // file has its text. kqueue does not report a truncation, so nothing is held there.
 const holdFor = (ms: number) => ({ BUN_DEBUG_TEST_DEV_SERVER_HALF_SAVED_WAIT_MS: String(ms) });
-// Longer than a test keeps a file half-saved, so the speed of the machine does not decide the result.
-const holdLong = holdFor(30_000);
+// Longer than a test keeps a file half-saved and than a wait of the harness, so the speed of the machine does not decide the result.
+const holdLong = holdFor(30_000 * WAIT_MULTIPLIER);
 const setsText = (id: string, value: string) =>
   `document.getElementById("${id}").textContent = "${value}";\nimport.meta.hot.accept();\n`;
 /** The first step of a save in place. */
@@ -1127,6 +1128,67 @@ devTest("a save is not held for an empty file that no page uses", {
       await c.expectElemText("#a", String(round));
     }
     expect(dev.eventsHeld).toBe(0);
+  },
+});
+devTest("a file that stat fails on, but that is not missing, is not held", {
+  skip: [
+    "win32", // a symlink to a file needs a privilege there
+  ],
+  env: holdLong,
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+      body: `<p id="a"></p>`,
+    }),
+    "index.ts": `
+      import "./a";
+    `,
+    "a.ts": setsText("a", "a1"),
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectElemText("#a", "a1");
+
+    // `stat` fails with ELOOP on a symlink to itself. The rename puts it there in one step, so the file is never missing.
+    const file = dev.join("a.ts");
+    symlinkSync("a.ts", file + ".loop");
+    const failed = c.nextAck("the bundle that cannot read the file");
+    renameSync(file + ".loop", file);
+    // A hold would keep this bundle back for longer than this wait.
+    await failed;
+    expect(await c.readErrorOverlay()).toEqual([`a.ts: error: ELOOP reading file: "${file}"`]);
+    expect(dev.eventsHeld).toBe(0);
+  },
+});
+devTest("a held file that stat then fails on stops to hold the reload", {
+  skip: [
+    "win32", // a symlink to a file needs a privilege there
+  ],
+  env: holdLong,
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+      body: `<p id="a"></p>`,
+    }),
+    "index.ts": `
+      import "./a";
+    `,
+    "a.ts": setsText("a", "a1"),
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectElemText("#a", "a1");
+
+    const file = dev.join("a.ts");
+    const held = dev.heldEvents();
+    unlinkSync(file);
+    await held;
+    // The file is not missing any more, and `stat` fails on it with ELOOP.
+    const ended = dev.endedHolds();
+    const failed = c.nextAck("the bundle that cannot read the file");
+    symlinkSync("a.ts", file);
+    await Promise.all([ended, failed]);
+    expect(await c.readErrorOverlay()).toEqual([`a.ts: error: ELOOP reading file: "${file}"`]);
   },
 });
 devTest("with the hold off, the dev server bundles a file while a save keeps it empty", {

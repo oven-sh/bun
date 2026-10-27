@@ -103,6 +103,8 @@ pub(crate) struct RuntimeState {
     /// stop; one ref per entry, released by `CronJob::remove_from_list` /
     /// `clear_all_for_vm`.
     pub(crate) cron_jobs: Vec<bun_ptr::RefPtr<crate::api::cron::CronJob>>,
+    /// The dev servers that hold a hot reload for a half-saved file. Each leaves the list when its hold ends.
+    pub(crate) half_saved_holds: crate::bake::dev_server::HoldingDevServers,
     /// `bun lint`: what runs the rules of JavaScript plugins in this VM.
     pub(crate) lint: core::cell::OnceCell<Box<crate::cli::lint_js::LintVm>>,
     /// The `uv_loop_t` that addons get for this VM. Stored inline because addons
@@ -178,6 +180,19 @@ pub(crate) fn cron_jobs_mut() -> Option<&'static mut Vec<bun_ptr::RefPtr<crate::
     }
     // SAFETY: live boxed per-thread `RuntimeState`; single JS thread.
     Some(unsafe { &mut (*state).cron_jobs })
+}
+
+/// [`RuntimeState::half_saved_holds`] of `vm`.
+#[inline]
+pub(crate) fn half_saved_holds(
+    vm: &VirtualMachine,
+) -> Option<&crate::bake::dev_server::HoldingDevServers> {
+    let state = vm.runtime_state.cast::<RuntimeState>();
+    if state.is_null() {
+        return None;
+    }
+    // SAFETY: the live boxed `RuntimeState` of `vm`. Only the JS thread of `vm` uses this field.
+    Some(unsafe { &(*state).half_saved_holds })
 }
 
 /// Per-VM lazy DNS resolver storage. Shared borrow only — c-ares callbacks
@@ -378,6 +393,7 @@ unsafe fn init_runtime_state(
         },
         wake_ctx: None,
         cron_jobs: Vec::new(),
+        half_saved_holds: Default::default(),
         lint: core::cell::OnceCell::new(),
         // SAFETY: `vm` is the live VM being initialized. `VirtualMachine::init`
         // wrote `handle` before calling this hook (the wake context below reads

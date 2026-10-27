@@ -9,7 +9,6 @@
     clippy::unreachable
 )]
 #![warn(unused_must_use)]
-#![allow(dead_code)] // WIP
 
 pub mod addrinfo;
 mod buf;

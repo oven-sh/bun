@@ -185,6 +185,9 @@ export const npm_manifest_test_helpers = $bindgen("npm_jsc.bind.ts", "npmManifes
 
 export const readTarball = $bindgen("pack_command.bind.ts", "readTarball");
 
+export const readTar = $bindgen("ArchiveInternals.bind.ts", "readTar");
+export const writeTar = $bindgen("ArchiveInternals.bind.ts", "writeTar");
+
 export const isArchitectureMatch: (architecture: string[]) => boolean = $bindgen(
   "npm_jsc.bind.ts",
   "architectureIsMatch",
@@ -240,6 +243,9 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   sumBytesIfAny: $bindgen("bindgen_test.bind.ts", "sumBytesIfAny"),
   fillBuffer: $bindgen("bindgen_test.bind.ts", "fillBuffer"),
   stringOrObjectEcho: $bindgen("bindgen_test.bind.ts", "stringOrObjectEcho"),
+  stringViewEcho: $bindgen("bindgen_test.bind.ts", "stringViewEcho"),
+  stringViewCloneOutlivesBytes: $bindgen("bindgen_test.bind.ts", "stringViewCloneOutlivesBytes"),
+  stringOrObjectViewEcho: $bindgen("bindgen_test.bind.ts", "stringOrObjectViewEcho"),
   sumBeforeAndAfterCallback: $bindgen("bindgen_test.bind.ts", "sumBeforeAndAfterCallback"),
   callOr: $bindgen("bindgen_test.bind.ts", "callOr"),
   stringAsIsOrBytesIfAny: $bindgen("bindgen_test.bind.ts", "stringAsIsOrBytesIfAny"),
@@ -250,8 +256,17 @@ export const bindgen = $bindgen("bindgen_test.bind.ts", "add") && {
   TestRefCounted: $bindgen("bindgen_test.bind.ts", "TestRefCounted"),
   makeToken: $bindgen("bindgen_test.bind.ts", "makeToken"),
   TestError: $bindgen("bindgen_test.bind.ts", "TestError"),
+  TestReadOnly: $bindgen("bindgen_test.bind.ts", "TestReadOnly"),
+  TestMemberFunctions: $bindgen("bindgen_test.bind.ts", "TestMemberFunctions"),
   TestBoundThis: $bindgen("bindgen_test.bind.ts", "TestBoundThis"),
   TestNonFinal: $bindgen("bindgen_test.bind.ts", "TestNonFinal"),
+  TestShape: $bindgen("bindgen_test.bind.ts", "TestShape"),
+  TestSquare: $bindgen("bindgen_test.bind.ts", "TestSquare"),
+  makeShape: $bindgen("bindgen_test.bind.ts", "makeShape"),
+  makeSquare: $bindgen("bindgen_test.bind.ts", "makeSquare"),
+  makeSquareWrapper: $bindgen("bindgen_test.bind.ts", "makeSquareWrapper"),
+  shapeFromJS: $bindgen("bindgen_test.bind.ts", "shapeFromJS"),
+  droppedShapes: $bindgen("bindgen_test.bind.ts", "droppedShapes"),
   TestNote: $bindgen("bindgen_test.bind.ts", "TestNote"),
   TestRefCountedNote: $bindgen("bindgen_test.bind.ts", "TestRefCountedNote"),
   isNoteFromJSDirect: $bindgen("bindgen_test.bind.ts", "isNoteFromJSDirect"),

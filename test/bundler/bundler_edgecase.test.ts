@@ -2383,6 +2383,117 @@ describe("bundler", () => {
       api.expectFile("/out.js").toMatch(/[^\.:]module/); // `.module` and `node:module` are not ok.
     },
   });
+  // `require.main == module` needs parentheses next to an operator that binds tighter than `==`,
+  // and none next to the others.
+  itBundled("edgecase/ImportMetaMainPrecedenceCjs", {
+    files: {
+      "/entry.ts": /* js */ `
+        globalThis['ca' + 'pture'] = x => x;
+        console.log(
+          capture("x=" + (require.main === module) + "!"),
+          capture(1 + (require.main === module)),
+          capture("x" + !(require.main !== module)),
+          capture(!import.meta.main),
+          capture(typeof import.meta.main),
+          capture((require.main === module).toString()),
+          capture((require.main !== module) ** 2),
+          capture(process.exitCode == (require.main === module)),
+          capture((require.main === module) == true),
+          capture(require.main === module ? 1 : 2),
+          capture(import.meta.main && 1),
+          capture(new (require.main === module)()),
+        );
+      `,
+    },
+    target: "node",
+    format: "cjs",
+    capture: [
+      `"x=" + (require.main == module) + "!"`,
+      `1 + (require.main == module)`,
+      `"x" + !(require.main != module)`,
+      `!(require.main == module)`,
+      `typeof (require.main == module)`,
+      `(require.main == module).toString()`,
+      `(require.main != module) ** 2`,
+      `process.exitCode == (require.main == module)`,
+      `require.main == module == true`,
+      `require.main == module ? 1 : 2`,
+      `require.main == module && 1`,
+      `new (require.main == module)`,
+    ],
+  });
+  // `!import.meta.main` is a unary expression. It cannot be the left operand of `**` as it is.
+  itBundled("edgecase/ImportMetaMainPrecedenceEsm", {
+    files: {
+      "/entry.ts": /* js */ `
+        globalThis['ca' + 'pture'] = x => x;
+        console.log(
+          capture("x=" + (require.main !== module) + "!"),
+          capture((require.main !== module).toString()),
+          capture((require.main !== module) ** 2),
+          capture(2 ** (require.main !== module)),
+          capture(typeof (require.main !== module)),
+          capture(import.meta.main.toString()),
+        );
+      `,
+    },
+    capture: [
+      `"x=" + !import.meta.main + "!"`,
+      `(!import.meta.main).toString()`,
+      `(!import.meta.main) ** 2`,
+      `2 ** !import.meta.main`,
+      `typeof !import.meta.main`,
+      `import.meta.main.toString()`,
+    ],
+  });
+  // A library with a CLI part, built for Node.js. Node.js runs it, then loads it from another file.
+  for (const format of ["cjs", "esm"] as const) {
+    const ext = format === "cjs" ? "cjs" : "mjs";
+    for (const minify of [false, true]) {
+      itBundled(`edgecase/ImportMetaMainPrecedenceNode+${format}${minify ? "+minify" : ""}`, {
+        files: {
+          "/entry.ts": /* js */ `
+            if (!import.meta.main) console.log("loaded as a library");
+            else console.log("run as main");
+            // With minifySyntax, the one use of "isMain" is replaced by its value.
+            function inlined() {
+              const isMain = require.main === module;
+              return isMain.toString();
+            }
+            console.log(JSON.stringify([
+              typeof import.meta.main,
+              "x=" + import.meta.main,
+              import.meta.main.toString(),
+              !import.meta.main + 1,
+              1 + (require.main === module),
+              (require.main !== module).toString(),
+              (require.main !== module) ** 2,
+              inlined(),
+            ]));
+          `,
+        },
+        runtimeFiles: {
+          // A CommonJS entry point in both cases, so that `require.main` is defined. An ES module
+          // that imports the ESM output gets `true` from `__require.main == __require.module`: #43687.
+          "/loader.cjs": format === "cjs" ? `require("./out.cjs");` : `import("./out.mjs");`,
+        },
+        outfile: `/out.${ext}`,
+        target: "node",
+        format,
+        minifySyntax: minify,
+        minifyWhitespace: minify,
+        minifyIdentifiers: minify,
+        run: [
+          { runtime: "node", stdout: `run as main\n["boolean","x=true","true",1,2,"false",0,"true"]` },
+          {
+            runtime: "node",
+            file: "/loader.cjs",
+            stdout: `loaded as a library\n["boolean","x=false","false",2,1,"true",1,"false"]`,
+          },
+        ],
+      });
+    }
+  }
   itBundled("edgecase/IdentifierInEnum#13081", {
     files: {
       "/entry.ts": `
@@ -3885,9 +3996,9 @@ describe("bundler", () => {
     },
     run: { stdout: "true" },
   });
-  // `import.meta.main` is rewritten to EImportMetaMain; under `target: node`
-  // that prints as `__require.main == __require.module` without its own paren
-  // wrap, so an unwrapped `delete` would bind to `__require.main`.
+  // `import.meta.main` is rewritten to EImportMetaMain, which can print as the
+  // property access `import.meta.main`. The `(0, ...)` guard keeps `delete` off
+  // that property access.
   itBundled("edgecase/DeleteFoldedImportMetaMainRef", {
     files: {
       "/entry.js": /* js */ `
@@ -3927,6 +4038,38 @@ describe("bundler", () => {
       expect(code).not.toMatch(/delete\s+Infinity\b/);
     },
     run: { stdout: "true true true" },
+  });
+  // The left operand of `**` cannot start with a unary operator. These operands get their `-` or
+  // their `void` when they are printed.
+  itBundled("edgecase/ExponentLeftInlinedEnum", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { Other } from "./other";
+        enum Local { A = -1 }
+        const enum Const { A = -2 }
+        console.log(Local.A ** 2, Const.A ** 2, Other.A ** 2, Other["A"] ** 2, Other.B ** 2);
+      `,
+      "/other.ts": /* ts */ `
+        export enum Other { A = -3, B = 4 }
+      `,
+    },
+    run: { stdout: "1 4 9 9 16" },
+  });
+  itBundled("edgecase/ExponentLeftUndefinedMinify", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import * as lib from "./lib";
+        console.log(import.meta.hot ** 2, lib.missing ** 2, undefined ** 2, true ** 2);
+      `,
+      "/lib.ts": /* ts */ `
+        export const present = 1;
+      `,
+    },
+    minifySyntax: true,
+    bundleWarnings: {
+      "/entry.ts": [`Import "missing" will always be undefined because there is no matching export in "lib.ts"`],
+    },
+    run: { stdout: "NaN NaN NaN 1" },
   });
   // https://github.com/oven-sh/bun/issues/14509
   // A require() in the catch handler of a try/catch is the common "fallback

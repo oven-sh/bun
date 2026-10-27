@@ -3336,6 +3336,64 @@ console.log(<div {...obj} key="after" />);`),
       expectParseError("await -x ** 0", "Unexpected **");
     });
 
+    // One node stands for `import.meta.main` and `require.main === module`. An ES module prints
+    // it as `import.meta.main`, a CommonJS module as `require.main == module`.
+    it("import.meta.main next to another operator", () => {
+      for (const print of [expectPrinted_, expectPrintedMin_, expectBunPrinted_]) {
+        print(
+          "export default (require.main !== module).toString();",
+          "export default (!import.meta.main).toString();\n",
+        );
+        print("export default (require.main !== module) ** 2;", "export default (!import.meta.main) ** 2;\n");
+        print("export default typeof (require.main !== module);", "export default typeof !import.meta.main;\n");
+        print("export default import.meta.main.toString();", "export default import.meta.main.toString();\n");
+
+        print(
+          'module.exports = "x=" + (require.main === module);',
+          'module.exports = "x=" + (require.main == module);\n',
+        );
+        print("module.exports = 1 + (require.main !== module);", "module.exports = 1 + (require.main != module);\n");
+        print(
+          "module.exports = typeof (require.main === module);",
+          "module.exports = typeof (require.main == module);\n",
+        );
+        print(
+          "module.exports = (require.main === module).toString();",
+          "module.exports = (require.main == module).toString();\n",
+        );
+        print("module.exports = (require.main !== module) ** 2;", "module.exports = (require.main != module) ** 2;\n");
+        print(
+          "module.exports = require.main === module ? 1 : 2;",
+          "module.exports = require.main == module ? 1 : 2;\n",
+        );
+      }
+      // With `minify.syntax`, the `!` is part of the node.
+      expectPrinted_("module.exports = !import.meta.main;", "module.exports = !(require.main == module);\n");
+      expectPrintedMin_("module.exports = !import.meta.main;", "module.exports = require.main != module;\n");
+      expectPrintedMin_("module.exports = 1 + !import.meta.main;", "module.exports = 1 + (require.main != module);\n");
+      expectPrintedMin_(
+        "export default (!import.meta.main).toString();",
+        "export default (!import.meta.main).toString();\n",
+      );
+    });
+
+    // The operand left of `**` can get its unary operator when it is printed.
+    it("exponentiation of an inlined enum and of minified literals", () => {
+      ts.expectPrinted_(
+        "enum E { A = -1, B = 2 }\nx = [E.A ** 2, E['A'] ** 2, E.B ** 2];",
+        'var E;\n((E) => {\n  E[E["A"] = -1] = "A";\n  E[E["B"] = 2] = "B";\n})(E ||= {});\n' +
+          "x = [(-1) /* A */ ** 2, (-1) /* A */ ** 2, 2 /* B */ ** 2];\n",
+      );
+      expectPrintedMin_("x = undefined ** 2;", "x = (void 0) ** 2;\n");
+      expectPrintedMin_("x = true ** 2;", "x = (!0) ** 2;\n");
+      expectPrintedMin_("x = false ** 2;", "x = (!1) ** 2;\n");
+      expectPrintedMin_("x = (-y) ** 2;", "x = (-y) ** 2;\n");
+      expectPrintedMin_("x = ++y ** 2;", "x = ++y ** 2;\n");
+      expectPrintedMin_("x = y-- ** 2;", "x = y-- ** 2;\n");
+      expectPrintedMin_("x = new Y ** 2;", "x = new Y ** 2;\n");
+      expectPrintedMin_("x = 2 ** -y;", "x = 2 ** -y;\n");
+    });
+
     it("for-of loop variable named async", () => {
       // "\u0061sync" is the identifier `async`, which is legal as a for-of loop
       // variable, but printing it as the raw token sequence `async of` is a

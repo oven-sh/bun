@@ -2942,8 +2942,16 @@ impl Resolver {
             poll.deinit();
             return;
         }
+        // A refused datagram is EPOLLERR alone. As in libuv, an error is what was waited for, so that reading finds it.
+        let failed = !poll
+            .flags
+            .is_disjoint(bun_io::PollFlag::Eof | bun_io::PollFlag::Hup);
+        let readable =
+            poll.is_readable() || (failed && poll.flags.contains(bun_io::PollFlag::PollReadable));
+        let writable =
+            poll.is_writable() || (failed && poll.flags.contains(bun_io::PollFlag::PollWritable));
         // The channel may close the socket, which frees `poll`.
-        let (socket, readable, writable) = (poll.fd, poll.is_readable(), poll.is_writable());
+        let socket = poll.fd;
         self.with_channel(|channel, now| {
             channel.process(now, readable.then_some(socket), writable.then_some(socket))
         });

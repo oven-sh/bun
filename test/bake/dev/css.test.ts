@@ -811,6 +811,126 @@ devTest("css import before create project relative", {
   },
 });
 
+// `bun build` turns this import into a constructed `CSSStyleSheet`. The dev
+// server cannot represent that yet, so it reports it instead of emitting a
+// dangling binding and applying the file to the page. An `onResolve` plugin
+// that resolves the stylesheet does not change that.
+for (const resolvedByPlugin of [false, true]) {
+  devTest(
+    `css module script import is reported as unsupported${resolvedByPlugin ? " when a plugin resolves it" : ""}`,
+    {
+      files: {
+        ...(resolvedByPlugin && {
+          "bunfig.toml": `
+            [serve.static]
+            plugins = ["./css-plugin.ts"]
+          `,
+          "css-plugin.ts": `
+            import path from "node:path";
+            export default {
+              name: "css-plugin",
+              setup(build) {
+                build.onResolve({ filter: /widget\\.css$/ }, args => ({
+                  path: path.join(path.dirname(args.importer), "widget.css"),
+                }));
+              },
+            };
+          `,
+        }),
+        "index.html": emptyHtmlFile({
+          styles: [],
+          scripts: ["index.ts"],
+        }),
+        "index.ts": `
+          import sheet from "./widget.css" with { type: "css" };
+          console.log(sheet);
+        `,
+        "widget.css": `body { color: red; }`,
+      },
+      async test(dev) {
+        await using c = await dev.client("/", {
+          errors: [
+            'index.ts:1:19: error: The dev server does not support CSS module scripts (import attribute type: "css") yet. Use "bun build", or remove the attribute to apply "./widget.css" to the page.',
+          ],
+        });
+        await c.expectReload(async () => {
+          await dev.write("index.ts", `import "./widget.css"; console.log("plain");`);
+        });
+        await c.expectMessage("plain");
+        await c.style("body").color.expect.toBe("red");
+      },
+    },
+  );
+}
+
+// A stylesheet that the page already uses takes another path through the dev
+// server. The import gets the same error there.
+devTest("css module script import of a stylesheet that the page uses is reported as unsupported", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import "./widget.css";
+      console.log("plain");
+    `,
+    "widget.css": `body { color: red; }`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("plain");
+    await c.style("body").color.expect.toBe("red");
+    await dev.write(
+      "index.ts",
+      `
+        import "./widget.css";
+        import sheet from "./widget.css" with { type: "css" };
+        console.log(sheet);
+      `,
+      {
+        errors: [
+          'index.ts:2:19: error: The dev server does not support CSS module scripts (import attribute type: "css") yet. Use "bun build", or remove the attribute to apply "./widget.css" to the page.',
+        ],
+      },
+    );
+  },
+});
+
+// A plugin can load the file as JavaScript. The import is then an import of that module.
+devTest("css module script import of a file that a plugin loads as JavaScript works", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./css-plugin.ts"]
+    `,
+    "css-plugin.ts": `
+      export default {
+        name: "css-plugin",
+        setup(build) {
+          build.onLoad({ filter: /widget\\.css$/ }, () => ({
+            contents: "export default 'from the plugin';",
+            loader: "js",
+          }));
+        },
+      };
+    `,
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import value from "./widget.css" with { type: "css" };
+      console.log(value);
+    `,
+    "widget.css": `body { color: red; }`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("from the plugin");
+  },
+});
+
 function extractCssUrl(backgroundImage: string): string {
   const url = backgroundImage.match(/url\((['"])(.*?)\1\)/);
   if (!url) {

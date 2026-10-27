@@ -205,7 +205,7 @@ impl LoaderExt for Loader {
             Loader::Js => api::Loader::js,
             Loader::Ts => api::Loader::ts,
             Loader::Tsx => api::Loader::tsx,
-            Loader::Css => api::Loader::css,
+            Loader::Css | Loader::CssModuleScript => api::Loader::css,
             Loader::Html => api::Loader::html,
             Loader::File | Loader::Bunsh => api::Loader::file,
             Loader::Json => api::Loader::json,

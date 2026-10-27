@@ -457,6 +457,8 @@ During bundling, Bun combines all imported CSS files into a single `.css` file i
 }
 ```
 
+In a browser build, an import with the `type: "css"` attribute does not add the file to that `.css` file. It gives a `CSSStyleSheet`: see [CSS module scripts](/bundler/css#css-module-scripts).
+
 ---
 
 ### `sh`

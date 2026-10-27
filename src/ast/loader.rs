@@ -51,6 +51,9 @@ pub enum Loader {
     Json5 = 19,
     Md = 20,
     Xml = 21,
+    /// Internal: a stylesheet that browser code imports `with { type: "css" }`, loaded as a JavaScript module (see `css_module_script`). No name parses to it.
+    #[strum(serialize = "css")]
+    CssModuleScript = 22,
 }
 
 // Crosses FFI as `uint8_t default_loader` / `uint8_t loader` in
@@ -63,8 +66,22 @@ bun_core::assert_ffi_discr!(
     Jsx = 0, Js = 1, Ts = 2, Tsx = 3, Css = 4, File = 5, Json = 6,
     Jsonc = 7, Toml = 8, Wasm = 9, Napi = 10, Base64 = 11, Dataurl = 12,
     Text = 13, Bunsh = 14, Sqlite = 15, SqliteEmbedded = 16, Html = 17,
-    Yaml = 18, Json5 = 19, Md = 20, Xml = 21,
+    Yaml = 18, Json5 = 19, Md = 20, Xml = 21, CssModuleScript = 22,
 );
+
+/// The [`Loader`] names to list for a user: `Loader::VARIANTS` without `CssModuleScript`, which reads as `css`.
+pub struct UserFacingLoaderNames;
+
+impl strum::VariantNames for UserFacingLoaderNames {
+    const VARIANTS: &'static [&'static str] = {
+        let all = <Loader as strum::VariantNames>::VARIANTS;
+        assert!(Loader::CssModuleScript as usize + 1 == all.len());
+        match all {
+            [names @ .., _] => names,
+            [] => all,
+        }
+    };
+}
 
 // E0658: inherent assoc types are nightly-only; lifted to module scope.
 pub type LoaderHashTable = bun_collections::StringArrayHashMap<Loader>;
@@ -127,7 +144,10 @@ impl Loader {
     }
 
     pub fn handles_empty_file(self) -> bool {
-        matches!(self, Loader::Wasm | Loader::File | Loader::Text)
+        matches!(
+            self,
+            Loader::Wasm | Loader::File | Loader::Text | Loader::CssModuleScript
+        )
     }
 
     // `to_mime_type` / `from_mime_type` stay in bun_http_types as extension

@@ -429,6 +429,17 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                 .flags
                 .remove(import_record::Flags::IS_UNUSED);
 
+            // The merged import keeps `type: "css"` and its location: the dev server reports that import, also after a plain import of the same file.
+            let duplicate = &p.import_records.items()[import_record_index as usize];
+            if duplicate.loader == Some(bun_ast::Loader::Css) {
+                let range = duplicate.range;
+                let record = &mut p.import_records.items_mut()[stmt.import_record_index as usize];
+                if record.loader.is_none() {
+                    record.loader = Some(bun_ast::Loader::Css);
+                    record.range = range;
+                }
+            }
+
             let items_len = items.len();
             if items_len > 0 {
                 if stmt.items.is_empty() {

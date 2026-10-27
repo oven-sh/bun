@@ -3431,6 +3431,27 @@ console.log(<div {...obj} key="after" />);`),
       expectPrinted_(`import json from "./foo.json" assert { type: "json" };`, `import json from "./foo.json"`);
       expectPrinted_(`import json from "./foo.json";`, `import json from "./foo.json"`);
       expectPrinted_(`import("./foo.json", { type: "json" });`, `import("./foo.json", { type: \"json\" })`);
+      // A browser runs an import with `type: "css"` as a CSS module script, so the attribute stays.
+      expectPrinted_(
+        `import sheet from "./foo.css" with { type: "css" };`,
+        `import sheet from "./foo.css" with { type: "css" }`,
+      );
+      expectPrinted_(
+        `export { default as sheet } from "./foo.css" with { type: "css" };`,
+        `export { default as sheet } from "./foo.css" with { type: "css" }`,
+      );
+      expectPrinted_(
+        `export * from "./foo.css" with { type: "css" };`,
+        `export * from "./foo.css" with { type: "css" }`,
+      );
+      // Node rejects an import with `type: "css"`.
+      const node = new Bun.Transpiler({ target: "node" });
+      expect(parsed(`import sheet from "./foo.css" with { type: "css" };`, true, false, node)).toBe(
+        `import sheet from "./foo.css"`,
+      );
+      expect(parsed(`export * from "./foo.css" with { type: "css" };`, true, false, node)).toBe(
+        `export * from "./foo.css"`,
+      );
     });
 
     it("import with unicode", () => {

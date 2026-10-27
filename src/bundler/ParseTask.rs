@@ -1369,6 +1369,17 @@ pub mod parse_worker {
                 ast.import_records = bun_alloc::vec_from_iter_in(import_records, bump);
                 return Ok(ast);
             }
+            Loader::CssModuleScript => {
+                return crate::css_module_script::parse(
+                    log,
+                    topts,
+                    &topts.define,
+                    opts,
+                    bump,
+                    source,
+                    unique_key_prefix,
+                );
+            }
             // TODO:
             Loader::Dataurl | Loader::Base64 | Loader::Bunsh => {
                 return get_empty_ast::<E::String>(log, transpiler, opts, bump, source);
@@ -2077,6 +2088,11 @@ pub mod parse_worker {
             plugin: &bundler::JSBundlerPlugin,
             from_plugin: &mut bool,
         ) -> core::result::Result<CacheEntry, AnyError> {
+            // The plugin ABI has no value for the internal kind of a stylesheet.
+            let default_loader = match *self.loader {
+                Loader::CssModuleScript => Loader::Css,
+                loader => loader,
+            };
             let mut args = OnBeforeParseArguments {
                 // `context` is filled in immediately before the FFI call below —
                 // deriving it here would create a raw from `&mut self` that gets
@@ -2084,7 +2100,7 @@ pub mod parse_worker {
                 // follow, making the callback's `&mut *args.context` UB.
                 path_ptr: self.file_path.text.as_ptr(),
                 path_len: self.file_path.text.len(),
-                default_loader: *self.loader,
+                default_loader,
                 ..Default::default()
             };
             if !self.file_path.namespace.is_empty() {
@@ -2095,14 +2111,14 @@ pub mod parse_worker {
                 original_source: core::ptr::null(),
                 original_source_len: 0,
                 original_source_fd: Fd::INVALID,
-                loader: *self.loader,
+                loader: default_loader,
                 #[cfg(debug_assertions)]
                 check: 42069,
                 result: OnBeforeParseResult {
                     struct_size: core::mem::size_of::<OnBeforeParseResult>(),
                     source_ptr: core::ptr::null(),
                     source_len: 0,
-                    loader: *self.loader,
+                    loader: default_loader,
                     fetch_source_code_fn: fetch_source_code,
                     user_context: core::ptr::null_mut(),
                     free_user_context: None,

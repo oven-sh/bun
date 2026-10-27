@@ -1270,6 +1270,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         loc,
                         b"cannot use export statement with \"type\" attribute",
                     );
+                } else if path.loader == Some(bun_ast::Loader::Css) {
+                    p.keep_css_type(import_record_index);
                 }
 
                 if Self::TRACK_SYMBOL_USAGE_DURING_PARSE_PASS {
@@ -1329,6 +1331,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     let import_record_index =
                         p.add_import_record(ImportKind::Stmt, parsed_path.loc, parsed_path.text);
+                    if parsed_path.loader == Some(bun_ast::Loader::Css) {
+                        p.keep_css_type(import_record_index);
+                    }
                     let path_name = fs::PathName::init(parsed_path.text);
                     let namespace_ref = {
                         use std::io::Write as _;

@@ -2229,12 +2229,18 @@ pub mod bv2_impl {
                                 && !self.all_urls_for_css
                                     [import_record.source_index.get() as usize]
                                     .is_empty();
-                            if is_css && is_inlined {
-                                self.additional_files_imported_by_css_and_inlined
-                                    .set(import_record.source_index.get() as usize);
-                            } else if is_inlined {
-                                self.additional_files_needed_outside_css
-                                    .set(import_record.source_index.get() as usize);
+                            if is_inlined {
+                                // A CSS module script has the `data:` URL in its text, like a stylesheet.
+                                if is_css
+                                    || self.all_loaders[source_index.get() as usize]
+                                        == Loader::CssModuleScript
+                                {
+                                    self.additional_files_imported_by_css_and_inlined
+                                        .set(import_record.source_index.get() as usize);
+                                } else {
+                                    self.additional_files_needed_outside_css
+                                        .set(import_record.source_index.get() as usize);
+                                }
                             }
 
                             let next_source = import_record.source_index;
@@ -2681,6 +2687,11 @@ pub mod bv2_impl {
                 ) {
                     let file_map_result = _file_map_result;
                     let mut path_primary = file_map_result.path_pair.primary;
+                    let Ok(typed_css_loader) =
+                        self.typed_css_import_loader_after_plugins(import_record, &path_primary)
+                    else {
+                        return;
+                    };
                     // reshaped for borrowck — `get_or_put` borrows `*self` mutably via
                     // `self.graph`; capture the slot as `*mut u32` so subsequent `self.*` calls
                     // type-check. SAFETY: `path_to_source_index_map(target)` is not mutated again
@@ -2697,6 +2708,9 @@ pub mod bv2_impl {
                     };
                     if !found_existing {
                         let loader: Loader = 'brk: {
+                            if let Some(loader) = typed_css_loader {
+                                break 'brk loader;
+                            }
                             let record: &mut ImportRecord =
                                 &mut self.graph.ast.items_import_records_mut()
                                     [import_record.importer_source_index as usize]
@@ -2934,6 +2948,12 @@ pub mod bv2_impl {
             path.assert_pretty_is_valid();
             path.assert_file_path_is_absolute();
 
+            let Ok(typed_css_loader) =
+                self.typed_css_import_loader_after_plugins(import_record, &path)
+            else {
+                return;
+            };
+
             // borrowck: get-then-put (instead of a single get-or-put) so the map
             // borrow doesn't span `enqueue_parse_task` (which needs `&mut self`).
             if let Some(existing) = self.path_to_source_index_map(target).get(path.text) {
@@ -2943,6 +2963,9 @@ pub mod bv2_impl {
                     .path_with_pretty_initialized(&path, target)
                     .expect("oom");
                 let loader: Loader = 'brk: {
+                    if let Some(loader) = typed_css_loader {
+                        break 'brk loader;
+                    }
                     let record: &ImportRecord = &self.graph.ast.items_import_records()
                         [import_record.importer_source_index as usize]
                         .as_slice()[import_record.import_record_index as usize];
@@ -3107,6 +3130,75 @@ pub mod bv2_impl {
                 path.loader(&self.transpiler.options.loaders)
                     .unwrap_or(Loader::File)
             })
+        }
+
+        /// The loader for `import ... with { type: "css" }`: in a browser graph the file is a CSS module script (see `css_module_script`).
+        #[cold]
+        fn typed_css_import_loader(
+            &mut self,
+            path: &Fs::Path<'_>,
+            target: options::Target,
+            importer_source_index: IndexInt,
+            import_record_index: u32,
+        ) -> Result<Loader, TypedCssImportError> {
+            if target != Target::Browser {
+                return Ok(Loader::Css);
+            }
+            if self.dev_server.is_some()
+                || self.transpiler.options.output_format == options::Format::InternalBakeDev
+            {
+                // An `onLoad` plugin can load the file as JavaScript.
+                if self
+                    .plugins_ref()
+                    .is_some_and(|plugins| plugins.has_any_matches(path, true))
+                {
+                    return Ok(Loader::Css);
+                }
+                return Err(TypedCssImportError::DevServer);
+            }
+            if path.text.ends_with(b".module.css") {
+                return Err(TypedCssImportError::CssModulesFile);
+            }
+            self.graph
+                .css_module_script_imports
+                .push((importer_source_index, import_record_index));
+            Ok(Loader::CssModuleScript)
+        }
+
+        /// `typed_css_import_loader` after `onResolve` plugins. `Ok(None)`: no `type: "css"`. `Err`: the error is in the log.
+        fn typed_css_import_loader_after_plugins(
+            &mut self,
+            import_record: &jsc_api::JSBundler::MiniImportRecord,
+            path: &Fs::Path<'_>,
+        ) -> Result<Option<Loader>, ()> {
+            if import_record.loader != Some(Loader::Css)
+                || import_record.kind == ImportKind::EntryPointBuild
+            {
+                return Ok(None);
+            }
+            let target = import_record.original_target;
+            match self.typed_css_import_loader(
+                path,
+                target,
+                import_record.importer_source_index,
+                import_record.import_record_index,
+            ) {
+                Ok(loader) => Ok(Some(loader)),
+                Err(err) => {
+                    // SAFETY: the log lives in the transpiler or the dev server, disjoint
+                    // from `graph.input_files`, which the borrow below reads.
+                    let log: &mut bun_ast::Log = unsafe {
+                        bun_ptr::detach_lifetime_mut(self.log_for_resolution_failures(
+                            &import_record.source_file,
+                            target.bake_graph(),
+                        ))
+                    };
+                    let importer = &self.graph.input_files.items_source()
+                        [import_record.importer_source_index as usize];
+                    err.log(log, importer, import_record.range, &import_record.specifier);
+                    Err(())
+                }
+            }
         }
 
         /// `loader`: see `requested_file_loader`.
@@ -4427,6 +4519,7 @@ pub mod bv2_impl {
                 this.type_check()?;
 
                 this.scan_for_secondary_paths();
+                crate::css_module_script::check_imports(&mut this)?;
 
                 this.process_server_component_manifest_files()?;
 
@@ -4592,6 +4685,7 @@ pub mod bv2_impl {
                 }
 
                 this.scan_for_secondary_paths();
+                crate::css_module_script::check_imports(&mut this)?;
 
                 this.process_server_component_manifest_files()?;
 
@@ -5026,8 +5120,16 @@ pub mod bv2_impl {
                 }
                 jsc_api::JSBundler::LoadValue::Success(code) => {
                     // `code`: LoadSuccess { source_code, loader }
+                    // A plugin sees the loader as "css": the stylesheet it returns for an import with `type: "css"` stays a CSS module script.
+                    let loader = if code.loader == Loader::Css
+                        && load.parse_task().loader == Some(Loader::CssModuleScript)
+                    {
+                        Loader::CssModuleScript
+                    } else {
+                        code.loader
+                    };
                     // When a plugin returns a file loader, we always need to populate additional_files
-                    let should_copy_for_bundling = code.loader.should_copy_for_bundling();
+                    let should_copy_for_bundling = loader.should_copy_for_bundling();
                     if should_copy_for_bundling {
                         let source_index = load.source_index;
                         let additional_files: &mut bun_alloc::AstVec<crate::AdditionalFile> =
@@ -5041,7 +5143,7 @@ pub mod bv2_impl {
                         this.graph.estimated_file_loader_count += 1;
                     }
                     this.graph.input_files.items_loader_mut()[load.source_index.get() as usize] =
-                        code.loader;
+                        loader;
                     this.graph.input_files.items_flags_mut()[load.source_index.get() as usize]
                         .insert(crate::Graph::InputFileFlags::IS_LOADED_BY_PLUGIN);
                     // For copied assets keep the bytes Owned in `source.contents`
@@ -5062,7 +5164,7 @@ pub mod bv2_impl {
                         std::borrow::Cow::Borrowed(source_code)
                     };
                     let parse_task = load.parse_task_mut();
-                    parse_task.loader = Some(code.loader);
+                    parse_task.loader = Some(loader);
                     parse_task.contents_or_fd = parse_task::ContentsOrFd::Contents(source_code);
                     this.graph.pool().schedule(parse_task);
 
@@ -5293,6 +5395,26 @@ pub mod bv2_impl {
                         path.namespace = &result.namespace;
                     }
                     if !result.external {
+                        // The plugin can send the import to a file that is not a stylesheet.
+                        let typed_css_loader = if resolve.import_record.loader == Some(Loader::Css)
+                            && this.requested_file_loader(
+                                &path,
+                                resolve
+                                    .import_record
+                                    .loader
+                                    .filter(|_| path.text == &*resolve.import_record.specifier),
+                            ) == Loader::Css
+                        {
+                            let Ok(loader) = this.typed_css_import_loader_after_plugins(
+                                &resolve.import_record,
+                                &path,
+                            ) else {
+                                return;
+                            };
+                            loader
+                        } else {
+                            None
+                        };
                         // SAFETY: `GetOrPutResult` borrows `&mut this` for its whole
                         // lifetime, blocking the `graph` accesses below.
                         // Capture `value_ptr` as a raw ptr + `found_existing` and drop
@@ -5326,13 +5448,15 @@ pub mod bv2_impl {
                             out_source_index = Some(source_index);
                             let _ = this.graph.ast.append(JSAst::empty_in(this.graph.heap)); // OOM/capacity: fire-and-forget
                             // A file that a plugin resolved the record to instead keeps its own loader.
-                            let loader = this.requested_file_loader(
-                                &path,
-                                resolve
-                                    .import_record
-                                    .loader
-                                    .filter(|_| path.text == &*resolve.import_record.specifier),
-                            );
+                            let loader = typed_css_loader.unwrap_or_else(|| {
+                                this.requested_file_loader(
+                                    &path,
+                                    resolve
+                                        .import_record
+                                        .loader
+                                        .filter(|_| path.text == &*resolve.import_record.specifier),
+                                )
+                            });
 
                             this.graph
                                 .input_files
@@ -5635,6 +5759,7 @@ pub mod bv2_impl {
             self.type_check()?;
 
             self.scan_for_secondary_paths();
+            crate::css_module_script::check_imports(self)?;
 
             self.process_server_component_manifest_files()?;
 
@@ -6254,7 +6379,8 @@ pub mod bv2_impl {
                             import_record_index,
                             range: import_record.range,
                             original_target,
-                            loader: None,
+                            // `type: "css"` decides the kind of module: see `typed_css_import_loader`.
+                            loader: import_record.loader.filter(|loader| *loader == Loader::Css),
                         },
                     );
 
@@ -6339,7 +6465,11 @@ pub mod bv2_impl {
                 parse.contents_or_fd = parse_task::ContentsOrFd::Contents(decoded);
                 parse.loader = Some(match data_url.decode_mime_type().category {
                     bun_http_types::MimeType::Category::Javascript => Loader::Js,
-                    bun_http_types::MimeType::Category::Css => Loader::Css,
+                    bun_http_types::MimeType::Category::Css
+                        if parse.loader != Some(Loader::CssModuleScript) =>
+                    {
+                        Loader::Css
+                    }
                     bun_http_types::MimeType::Category::Json => Loader::Json,
                     _ => parse.loader.unwrap_or(Loader::File),
                 });
@@ -6559,6 +6689,40 @@ pub mod bv2_impl {
             }
 
             resolve_result.resolve_queue
+        }
+    }
+
+    /// Why an import with `type: "css"` cannot be a CSS module script.
+    pub(crate) enum TypedCssImportError {
+        DevServer,
+        CssModulesFile,
+    }
+
+    impl TypedCssImportError {
+        pub(crate) fn log(
+            &self,
+            log: &mut bun_ast::Log,
+            importer: &bun_ast::Source<'_>,
+            range: bun_ast::Range,
+            specifier: &[u8],
+        ) {
+            let specifier = bstr::BStr::new(specifier);
+            match self {
+                Self::DevServer => log.add_range_error_fmt(
+                    Some(importer),
+                    range,
+                    format_args!(
+                        "The dev server does not support CSS module scripts (import attribute type: \"css\") yet. Use \"bun build\", or remove the attribute to apply \"{specifier}\" to the page.",
+                    ),
+                ),
+                Self::CssModulesFile => log.add_range_error_fmt(
+                    Some(importer),
+                    range,
+                    format_args!(
+                        "A CSS module (\"{specifier}\") cannot be imported with {{ type: \"css\" }}. Rename it to not end in \".module.css\", or remove the import attribute to get its class names.",
+                    ),
+                ),
+            }
         }
     }
 
@@ -6828,11 +6992,32 @@ pub mod bv2_impl {
                     {
                         let mut file_map_result = _file_map_result;
                         let mut path_primary = file_map_result.path_pair.primary;
-                        let import_record_loader = import_record.loader.unwrap_or_else(|| {
-                            Fs::Path::init(path_primary.text)
+                        let import_record_loader = match import_record.loader {
+                            None => Fs::Path::init(path_primary.text)
                                 .loader(&transpiler.options.loaders)
-                                .unwrap_or(Loader::File)
-                        });
+                                .unwrap_or(Loader::File),
+                            Some(Loader::Css) => match self.typed_css_import_loader(
+                                &path_primary,
+                                target,
+                                source.index.0,
+                                i as u32,
+                            ) {
+                                Ok(loader) => loader,
+                                Err(err) => {
+                                    err.log(
+                                        self.log_for_resolution_failures(
+                                            source.path.text,
+                                            ctx.target.bake_graph(),
+                                        ),
+                                        source,
+                                        import_record.range,
+                                        import_record.original_path,
+                                    );
+                                    continue;
+                                }
+                            },
+                            Some(asked) => asked,
+                        };
                         import_record.loader = Some(import_record_loader);
 
                         if let Some(id) =
@@ -7135,8 +7320,11 @@ pub mod bv2_impl {
                             continue 'outer;
                         }
 
-                        if loader == Loader::Css {
-                            // Do not use cached files for CSS.
+                        // Do not use cached files for CSS, or for a browser import with `type: "css"`: the loader decision below reports it.
+                        if loader == Loader::Css
+                            || (import_record.loader == Some(Loader::Css)
+                                && target == Target::Browser)
+                        {
                             break 'brk;
                         }
 
@@ -7188,10 +7376,32 @@ pub mod bv2_impl {
                 }
 
                 let import_record_loader = 'brk: {
-                    let resolved_loader = import_record.loader.unwrap_or_else(|| {
-                        path.loader(&transpiler.options.loaders)
-                            .unwrap_or(Loader::File)
-                    });
+                    let resolved_loader = match import_record.loader {
+                        None => path
+                            .loader(&transpiler.options.loaders)
+                            .unwrap_or(Loader::File),
+                        Some(Loader::Css) => match self.typed_css_import_loader(
+                            path,
+                            target,
+                            source.index.0,
+                            i as u32,
+                        ) {
+                            Ok(loader) => loader,
+                            Err(err) => {
+                                err.log(
+                                    self.log_for_resolution_failures(
+                                        source.path.text,
+                                        ctx.target.bake_graph(),
+                                    ),
+                                    source,
+                                    import_record.range,
+                                    import_record.original_path,
+                                );
+                                continue 'outer;
+                            }
+                        },
+                        Some(asked) => asked,
+                    };
                     // When an HTML file references a URL asset (e.g. <link rel="manifest" href="./manifest.json" />),
                     // the file must be copied to the output directory as-is. If the resolved loader would
                     // parse/transform the file (e.g. .json, .toml) rather than copy it, force the .file loader

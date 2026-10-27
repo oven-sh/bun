@@ -366,9 +366,7 @@ devTest("deleting imported file shows error then recovers", {
     });
   },
 });
-// A tab has no code for a file that failed to build before the tab loaded it. A module that imports
-// such a file cannot run in the tab. The tab keeps the build error on screen and loads the page again
-// at the next build. It used to report "a bug in Bun's bundler" and reload at once.
+// A tab has no code for a file that failed to build before the tab loaded it, so an importer of that file cannot run.
 const brokenFile = `export const broken = ;`;
 const brokenFileError = "broken.ts:1:23: error: Unexpected ;";
 const acceptingModule = (text: string) => `
@@ -392,7 +390,7 @@ devTest("a tab shows the build error of a new file that a saved module imports",
     await c.expectReload(() => fixBrokenFile(dev));
     await c.expectMessage("index v2 1");
 
-    // The tab now has code for broken.ts, so a save above a later error in it is a hot update, as before.
+    // The tab now has code for broken.ts, so a save above a later error in it is a hot update.
     await dev.write("broken.ts", brokenFile, { errors: [brokenFileError] });
     await dev.write("index.ts", importsBrokenFile("v3"), { errors: [brokenFileError] });
     await c.expectMessage("index v3 1");
@@ -452,8 +450,7 @@ for (const [how, importer, files] of [
     },
   });
 }
-// The next build with code for the tab ends the wait, whatever it fixes. The tab that loads then has no
-// build error listed: the dev server sends it again when a later build parses broken.ts again.
+// Any build with code ends the wait, and a later build that parses broken.ts again sends its build error again.
 devTest("a tab that waits above a build error loads the page again when the import is removed", {
   files: { ...pageWithScript, "broken.ts": brokenFile },
   async test(dev) {
@@ -470,8 +467,7 @@ devTest("a tab that waits above a build error loads the page again when the impo
     await c.expectMessage("index v4 1");
   },
 });
-// A request for a failed page bundles the page and its modules again, unless BUN_ASSUME_PERFECT_INCREMENTAL is set.
-// The tab must not run side.ts again under the modules that it has.
+// A request for a failed page bundles its modules again: the tab must not run side.ts again under the modules it has.
 devTest("a tab that waits above a build error does not run the modules that a request bundles again", {
   files: {
     "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
@@ -494,8 +490,7 @@ devTest("a tab that waits above a build error does not run the modules that a re
     await c.expectMessage("side", "index leaf 1");
   },
 });
-// The fix of a stylesheet has no code for the tab. The tab loads the page again when the build error that it
-// waits for leaves the list, and at no other build without code.
+// The fix of a stylesheet has no code for the tab, and neither has a save of another stylesheet, which fixes nothing.
 devTest("a tab that waits above a build error loads the page again when a build without code fixes the error", {
   files: {
     "index.html": emptyHtmlFile({ scripts: ["index.ts"], styles: ["page.css"] }),
@@ -542,7 +537,6 @@ devTest("a tab whose page removed the error overlay does not wait above a build 
   },
 });
 // A framework route can get its script from before the save at a reload, so its tab does not wait.
-// It reports the import and reloads at once, as before.
 devTest("a tab of a framework route does not wait above a build error", {
   framework: {
     fileSystemRouterTypes: [{ ...minimalFramework.fileSystemRouterTypes![0], clientEntryPoint: "./client.ts" }],
@@ -567,8 +561,7 @@ devTest("a tab of a framework route does not wait above a build error", {
     await c.expectMessage("reported: Cannot load 'broken.ts' because it has a build error.");
   },
 });
-// The dispose callback of widget.ts takes away what the timer of ticker.ts uses. Until the reload, the errors
-// of that timer come from the update that waits.
+// The dispose callback of widget.ts takes away what the timer of ticker.ts uses, so that timer throws until the reload.
 devTest("a tab that waits above a build error does not report the errors of the page it left half updated", {
   files: {
     "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
@@ -631,7 +624,7 @@ devTest("code that catches the import of a file with a build error gets that as 
     );
     await c.expectMessage("rejected: Cannot load 'broken.ts' because it has a build error.");
 
-    // An update that fails for another reason is reported and reloads the tab at once, as before.
+    // An update that fails for another reason is reported and reloads the tab at once.
     await c.expectReload(async () => {
       await dev.write(
         "index.ts",
@@ -641,8 +634,7 @@ devTest("code that catches the import of a file with a build error gets that as 
     });
   },
 });
-// No build error is listed for lib/value.ts, which the tab does not have: both old reports stay for it.
-// import() of a module that the dev server did not bundle still goes to the browser.
+// Neither lib/value.ts nor the data: module has a build error listed: the old reports and the browser's import() stay.
 devTest("a tab reports a module that it lacks when only files with a similar name have a build error", {
   files: { ...pageWithScript, "value.ts": brokenFile, "nested/lib/value.ts": brokenFile },
   async test(dev) {
@@ -689,8 +681,7 @@ devTest("a tab reports a module that it lacks when only files with a similar nam
     await c.expectMessage(...messages);
   },
 });
-// lazy.ts keeps the error of its first run. The tab must not wait for a build error that is fixed,
-// whatever else is listed.
+// lazy.ts keeps the error of its first run: the tab must not wait for a fixed build error, whatever else is listed.
 devTest("a tab reloads when a module throws again the import of a file whose build error is fixed", {
   files: {
     ...pageWithScript,

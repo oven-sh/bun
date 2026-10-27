@@ -1,5 +1,4 @@
 #![warn(unused_must_use)]
-use core::ffi::c_int;
 use core::fmt;
 
 use bstr::BStr;
@@ -14,52 +13,7 @@ use bun_core::pretty_fmt;
 // while the returned slices are in use.
 pub use bun_core::StringBuilder;
 
-// FFI surface over vendor/picohttpparser. Hand-written rather than
-// bindgen-generated.
-mod c {
-    use core::ffi::{c_char, c_int};
-    #[repr(C)]
-    pub(super) struct phr_header {
-        pub name: *const c_char,
-        pub name_len: usize,
-        pub value: *const c_char,
-        pub value_len: usize,
-    }
-    /// Mirrors `struct phr_chunked_decoder` from picohttpparser.h. The HTTP
-    /// client owns the storage and writes `consume_trailer` directly, so the
-    /// layout must match C exactly.
-    #[repr(C)]
-    #[derive(Clone, Copy, Default)]
-    pub struct phr_chunked_decoder {
-        pub(crate) bytes_left_in_chunk: usize,
-        /// Set to 1 to discard trailing headers after the terminal `0\r\n` chunk.
-        pub consume_trailer: core::ffi::c_char,
-        pub(crate) _hex_count: core::ffi::c_char,
-        pub(crate) _state: core::ffi::c_char,
-        pub(crate) _total_read: u64,
-        pub(crate) _total_overhead: u64,
-    }
-    unsafe extern "C" {
-        pub(super) fn phr_parse_response(
-            buf: *const u8,
-            len: usize,
-            minor_version: *mut c_int,
-            status: *mut c_int,
-            msg: *mut *const c_char,
-            msg_len: *mut usize,
-            headers: *mut phr_header,
-            num_headers: *mut usize,
-            last_len: usize,
-        ) -> c_int;
-        pub fn phr_decode_chunked(
-            decoder: *mut phr_chunked_decoder,
-            buf: *mut u8,
-            len: *mut usize,
-        ) -> isize;
-        /// Added by patches/picohttpparser/chunked-decoder.patch.
-        pub safe fn phr_decode_chunked_is_in_trailers(decoder: &phr_chunked_decoder) -> c_int;
-    }
-}
+pub use bun_http1::{ChunkedDecoder, ChunkedStatus};
 
 use bun_core::strings;
 
@@ -67,7 +21,7 @@ use bun_core::strings;
 // Header
 // ──────────────────────────────────────────────────────────────────────────
 
-/// NOTE: layout MUST match `c::phr_header` exactly (see static asserts below).
+/// NOTE: C++ reads this layout (`PicoHTTPHeader`, `WebSocket::HandshakeRawHeader`).
 /// Rust `&[u8]` has no guaranteed field order in
 /// `#[repr(C)]`, so we spell the fields out and expose `.name()` / `.value()`.
 #[repr(C)]
@@ -115,23 +69,16 @@ impl Header {
 
     #[inline]
     pub fn name(&self) -> &[u8] {
-        // picohttpparser sets `name = NULL, name_len = 0` for multiline /
-        // continuation headers. `ffi::slice` tolerates the (null, 0) shape.
-        // SAFETY: ptr/len originate from picohttpparser pointing into the
-        // caller-provided buffer, or from StringBuilder::append.
+        // SAFETY: ptr/len come from a slice given to `new` or from
+        // StringBuilder::append, or are `ZERO`'s (null, 0), which `ffi::slice`
+        // tolerates.
         unsafe { bun_core::ffi::slice(self.name_ptr, self.name_len) }
     }
 
     #[inline]
     pub fn value(&self) -> &[u8] {
-        // Defensive: picohttpparser always points `value` into `buf` on
-        // success; `ffi::slice` tolerates the (null, 0) shape.
         // SAFETY: same as name()
         unsafe { bun_core::ffi::slice(self.value_ptr, self.value_len) }
-    }
-
-    pub(crate) fn is_multiline(&self) -> bool {
-        self.name_len == 0
     }
 
     pub(crate) fn count(&self, builder: &mut StringBuilder) {
@@ -165,41 +112,30 @@ impl fmt::Display for Header {
         // NOTE: pretty_fmt! is the compile-time ANSI-tag expander (`<r><cyan>` → escape
         // codes).
         if enable_ansi_colors_stderr() {
-            if self.is_multiline() {
-                write!(
-                    f,
-                    pretty_fmt!("<r><cyan>{}", true),
-                    for_terminal(BStr::new(self.value()))
-                )
-            } else {
-                write!(
-                    f,
-                    pretty_fmt!("<r><cyan>{}<r><d>: <r>{}", true),
-                    escape_control_chars(self.name()),
-                    for_terminal(BStr::new(self.value())),
-                )
-            }
+            write!(
+                f,
+                pretty_fmt!("<r><cyan>{}<r><d>: <r>{}", true),
+                escape_control_chars(self.name()),
+                for_terminal(BStr::new(self.value())),
+            )
         } else {
-            if self.is_multiline() {
-                write!(
-                    f,
-                    pretty_fmt!("<r><cyan>{}", false),
-                    for_terminal(BStr::new(self.value()))
-                )
-            } else {
-                write!(
-                    f,
-                    pretty_fmt!("<r><cyan>{}<r><d>: <r>{}", false),
-                    escape_control_chars(self.name()),
-                    for_terminal(BStr::new(self.value())),
-                )
-            }
+            write!(
+                f,
+                pretty_fmt!("<r><cyan>{}<r><d>: <r>{}", false),
+                escape_control_chars(self.name()),
+                for_terminal(BStr::new(self.value())),
+            )
         }
     }
 }
 
-const _: () = assert!(core::mem::size_of::<Header>() == core::mem::size_of::<c::phr_header>());
-const _: () = assert!(core::mem::align_of::<Header>() == core::mem::align_of::<c::phr_header>());
+impl From<bun_http1::Header<'_>> for Header {
+    /// As with `new`, the caller keeps the parsed buffer alive.
+    #[inline]
+    fn from(header: bun_http1::Header<'_>) -> Self {
+        Self::new(header.name, header.value)
+    }
+}
 
 struct HeaderCurlFormatter<'a> {
     header: &'a Header,
@@ -477,78 +413,23 @@ impl<'a> Response<'a> {
         }
     }
 
-    pub fn parse_parts(
-        buf: &'a [u8],
-        src: &'a mut [Header],
-        offset: Option<&mut usize>,
-    ) -> Result<Response<'a>, ParseResponseError> {
-        let mut minor_version: c_int = 1;
-        let mut status_code: c_int = 0;
-        let mut status_ptr: *const u8 = b"".as_ptr();
-        let mut status_len: usize = 0;
-        let mut num_headers: usize = src.len();
-
-        let offset = offset.unwrap();
-
-        // SAFETY: src is layout-compatible with phr_header (asserted above);
-        // out-params are valid for write.
-        let rc = unsafe {
-            c::phr_parse_response(
-                buf.as_ptr(),
-                buf.len(),
-                &raw mut minor_version,
-                &raw mut status_code,
-                (&raw mut status_ptr).cast::<*const core::ffi::c_char>(),
-                &raw mut status_len,
-                src.as_mut_ptr().cast::<c::phr_header>(),
-                &raw mut num_headers,
-                *offset,
-            )
-        };
-
-        match rc {
-            -1 => {
+    pub fn parse(buf: &'a [u8], src: &'a mut [Header]) -> Result<Response<'a>, ParseResponseError> {
+        match bun_http1::parse_response(buf, src) {
+            Ok(head) => Ok(Response {
+                minor_version: head.minor_version.into(),
+                status_code: head.status_code.into(),
+                status: head.reason,
+                headers: HeaderList {
+                    list: &src[..head.header_count],
+                },
+                bytes_read: head.len,
+            }),
+            Err(bun_http1::ParseError::Malformed) => {
                 bun_core::debug!("Malformed HTTP response:\n{}", BStr::new(buf));
                 Err(ParseResponseError::MalformedHttpResponse)
             }
-            -2 => {
-                *offset += buf.len();
-                Err(ParseResponseError::ShortRead)
-            }
-            _ => {
-                // RFC 9112 section 5.2: picohttpparser surfaces an obs-fold
-                // continuation line as a separate entry with an empty name.
-                // `Response` has no way to splice it back into the preceding
-                // field value, and silently dropping it corrupts the value
-                // (and, for Transfer-Encoding / Content-Length, the message
-                // framing). Treat the fold as malformed; Node does the same.
-                if src[0..num_headers.min(src.len())]
-                    .iter()
-                    .any(Header::is_multiline)
-                {
-                    bun_core::debug!("obs-fold in HTTP response:\n{}", BStr::new(buf));
-                    return Err(ParseResponseError::MalformedHttpResponse);
-                }
-                Ok(Response {
-                    minor_version: usize::try_from(minor_version).expect("int cast"),
-                    status_code: u32::try_from(status_code).expect("int cast"),
-                    // SAFETY: on success, ptr/len point into `buf`.
-                    status: unsafe { bun_core::ffi::slice(status_ptr, status_len) },
-                    headers: HeaderList {
-                        list: &src[0..num_headers.min(src.len())],
-                    },
-                    // > 0 here: -1/-2 were handled above and 0 is not a
-                    // return value of phr_parse_response.
-                    bytes_read: rc as usize,
-                })
-            }
+            Err(bun_http1::ParseError::Incomplete) => Err(ParseResponseError::ShortRead),
         }
-    }
-
-    pub fn parse(buf: &'a [u8], src: &'a mut [Header]) -> Result<Response<'a>, ParseResponseError> {
-        let mut offset: usize = 0;
-        let response = Self::parse_parts(buf, src, Some(&mut offset))?;
-        Ok(response)
     }
 }
 
@@ -577,11 +458,3 @@ impl fmt::Display for Response<'_> {
         Ok(())
     }
 }
-
-// ──────────────────────────────────────────────────────────────────────────
-// Re-exports from picohttp_sys
-// ──────────────────────────────────────────────────────────────────────────
-
-pub use c::phr_chunked_decoder;
-pub use c::phr_decode_chunked;
-pub use c::phr_decode_chunked_is_in_trailers;

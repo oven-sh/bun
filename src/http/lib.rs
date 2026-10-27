@@ -3815,19 +3815,13 @@ impl<'a> HTTPClient<'a> {
 
         let shared_resp = scratch::response_headers();
         let mut response = loop {
-            let mut amount_read: usize = 0;
-
             // minimal http/1.1 response is 16 bytes ("HTTP/1.1 200\r\n\r\n")
             // if less than 16 it will always be a ShortRead
             if to_read.len() < 16 {
                 short_read!();
             }
 
-            let parsed = match picohttp::Response::parse_parts(
-                to_read,
-                &mut shared_resp[..],
-                Some(&mut amount_read),
-            ) {
+            let parsed = match picohttp::Response::parse(to_read, &mut shared_resp[..]) {
                 Ok(r) => r,
                 Err(picohttp::ParseResponseError::ShortRead) => {
                     // `MAX_HTTP_HEADER_SIZE` (default 16 KB) is the *server*/
@@ -4852,45 +4846,23 @@ impl<'a> HTTPClient<'a> {
         // operate on safe references. Deep-cloning the buffer here would
         // diverge (mutations from process_body_buffer would be lost).
         let (decoder, body_buf) = self.state.chunked_decoder_and_body_buffer();
+        let decoded_before = body_buf.list.len();
         body_buf.append_slice(incoming_data)?;
 
-        // set consume_trailer to 1 to discard the trailing header
-        // using content-encoding per chunk is not supported
-        decoder.consume_trailer = 1;
-
-        let mut bytes_decoded = incoming_data.len();
-        // phr_decode_chunked mutates in-place
-        // SAFETY: body_buf.list is initialized for [0..len()) and uniquely
-        // borrowed here; the offset is len() - incoming_data.len() (the
-        // just-appended tail), which is in bounds.
-        let pret = unsafe {
-            picohttp::phr_decode_chunked(
-                &raw mut *decoder,
-                body_buf
-                    .list
-                    .as_mut_ptr()
-                    .add(body_buf.list.len().saturating_sub(incoming_data.len())),
-                &raw mut bytes_decoded,
-            )
-        };
-        let new_len = body_buf
-            .list
-            .len()
-            .saturating_sub(incoming_data.len() - bytes_decoded);
-        body_buf.list.truncate(new_len);
+        // Decodes the just-appended tail in place.
+        let decoded = decoder.decode(&mut body_buf.list[decoded_before..]);
+        body_buf.list.truncate(decoded_before + decoded.len);
         let buffer_len = body_buf.list.len();
-        self.state.total_body_received += bytes_decoded;
+        self.state.total_body_received += decoded.len;
         bun_core::scoped_log!(
             fetch,
             "handleResponseBodyChunkedEncodingFromMultiplePackets {}",
             self.state.total_body_received
         );
 
-        match pret {
-            // Invalid HTTP response body
-            -1 => return Err(crate::Error::InvalidHTTPResponse),
-            // Needs more data
-            -2 => {
+        match decoded.status {
+            picohttp::ChunkedStatus::Malformed => return Err(crate::Error::InvalidHTTPResponse),
+            picohttp::ChunkedStatus::Incomplete => {
                 self.report_progress(buffer_len);
                 // streaming chunks
                 if self.signals.get(signals::Field::ResponseBodyStreaming)
@@ -4903,8 +4875,7 @@ impl<'a> HTTPClient<'a> {
 
                 return Ok(false);
             }
-            // Done
-            _ => {
+            picohttp::ChunkedStatus::Complete { .. } => {
                 self.state.flags.received_last_chunk = true;
                 let processed = self.process_received_body(true)?;
 
@@ -4923,43 +4894,24 @@ impl<'a> HTTPClient<'a> {
         let small = scratch::single_packet_small_buffer();
         debug_assert!(incoming_data.len() <= small.len());
 
-        // set consume_trailer to 1 to discard the trailing header
-        // using content-encoding per chunk is not supported
-        self.state.chunked_decoder.consume_trailer = 1;
-
         // `handle_on_data_headers` moves `response_message_buffer` into a
         // local before dispatching here, so `incoming_data` never aliases
         // `self` and the scratch copy is always sufficient (the dispatcher
         // bounds `incoming_data.len()` to the scratch size).
-        let in_len = incoming_data.len();
-        let buffer = &mut small[0..in_len];
+        let buffer = &mut small[0..incoming_data.len()];
         buffer.copy_from_slice(incoming_data);
 
-        let mut bytes_decoded = in_len;
-        // phr_decode_chunked mutates in-place
-        // SAFETY: `buffer` is an exclusive &mut [u8] of len == in_len; offset
-        // len - in_len == 0 is trivially in bounds. `chunked_decoder` is a
-        // disjoint field of `self.state` (`buffer` borrows `small`).
-        let pret = unsafe {
-            picohttp::phr_decode_chunked(
-                &raw mut self.state.chunked_decoder,
-                buffer.as_mut_ptr().add(buffer.len().saturating_sub(in_len)),
-                &raw mut bytes_decoded,
-            )
-        };
-        let new_len = buffer.len().saturating_sub(in_len - bytes_decoded);
-        let buffer = &mut buffer[..new_len];
-        self.state.total_body_received += bytes_decoded;
+        let decoded = self.state.chunked_decoder.decode(buffer);
+        let buffer = &mut buffer[..decoded.len];
+        self.state.total_body_received += decoded.len;
         bun_core::scoped_log!(
             fetch,
             "handleResponseBodyChunkedEncodingFromSinglePacket {}",
             self.state.total_body_received
         );
-        match pret {
-            // Invalid HTTP response body
-            -1 => Err(crate::Error::InvalidHTTPResponse),
-            // Needs more data
-            -2 => {
+        match decoded.status {
+            picohttp::ChunkedStatus::Malformed => Err(crate::Error::InvalidHTTPResponse),
+            picohttp::ChunkedStatus::Incomplete => {
                 self.report_progress(buffer.len());
                 self.state.get_body_buffer().append_slice_exact(buffer)?;
 
@@ -4975,8 +4927,7 @@ impl<'a> HTTPClient<'a> {
 
                 Ok(false)
             }
-            // Done
-            _ => {
+            picohttp::ChunkedStatus::Complete { .. } => {
                 self.state.flags.received_last_chunk = true;
                 self.handle_response_body_from_single_packet(buffer)?;
                 debug_assert!(self.state.decoded_body.list.as_ptr() != buffer.as_ptr());

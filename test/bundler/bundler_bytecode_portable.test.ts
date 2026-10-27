@@ -519,8 +519,8 @@ describe("bytecode cache portability", () => {
         "bun build --bytecode libraries.js": {
           "js": "7b8ce5d1861461086be174e60797d52794328828458a2086f4d49b39a3f8b28a",
           "jsc": {
-            "bytes": 21177808,
-            "sha256": "62bc4de3ff1aba67c153ff59c0e42e4d999b90ef6b87067005bcff30cc9d5e2c",
+            "bytes": 21177768,
+            "sha256": "620db040f8b0f43357f79a042560fd6d58a3ece4d4627d0aff4714eb9194fced",
           },
         },
         "bun build --bytecode lodash/lodash.js": {

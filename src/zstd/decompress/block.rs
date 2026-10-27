@@ -1472,7 +1472,8 @@ impl<'a> Executor<'_, 'a> {
             let mut match_end = o_lit_end + 3;
             if EXT == EXT_WITHIN && offset_value as usize > o_lit_end + 3 {
                 let back = offset_value as usize - 3 - o_lit_end;
-                if back > within.len() || match_length > back {
+                // All that gets copied is of the older part, which is more than the match.
+                if back > within.len() || back < 64 {
                     break;
                 }
                 match_end += within.end;

@@ -1123,6 +1123,9 @@ impl DState {
             self.in_buff = Buffer::with_size(needed_in_buff_size)?;
             self.out_buff = Buffer::with_size(needed_out_buff_size)?;
         }
+        // Nothing of the frame before is there to be read.
+        self.in_buff.bytes.clear();
+        self.out_buff.bytes.clear();
         Ok(())
     }
 

@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
 import fs, { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import path, { join } from "node:path";
+import { canFailReserve, failingReserveEnv } from "./failingReserve";
 
 (describe.concurrent as any)(
   "bun build",
@@ -484,6 +485,35 @@ test("exits with the build error when a build fails while the IO pool is still r
   expect(normalizeBunSnapshot(stderr, dir)).toBe('error: ModuleNotFound resolving "./missing.ts" (entry point)');
   expect(exitCode).toBe(1);
 });
+
+// One reserve of the enqueue fails: the `ast` rows for the first count, the `input_files` rows for the second.
+test.skipIf(!canFailReserve).each(isASAN ? [3000, 6000] : [8000])(
+  "exits with the build error when the reserve for %d entry points fails",
+  async count => {
+    const files: Record<string, string> = {};
+    for (let i = 0; i < count; i++) {
+      files[`e${i}.ts`] = `export default ${i};\n`;
+    }
+    using dir = tempDir("build-enqueue-reserve", files);
+    const build = async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", ...Object.keys(files).map(name => `./${name}`), "--outdir", "out"],
+        env: failingReserveEnv,
+        cwd: String(dir),
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      // The ASAN allocator reports the allocation that it refuses.
+      const error = stderr.split("\n").filter(line => !line.includes("AddressSanitizer failed to allocate"));
+      return { error, exitCode };
+    };
+    // A build that already has a task on the pool when the reserve fails crashes in some of its runs.
+    expect(await Promise.all(Array.from({ length: 4 }, build))).toEqual(
+      Array.from({ length: 4 }, () => ({ error: ["error: OutOfMemory"], exitCode: 1 })),
+    );
+  },
+);
 
 // https://github.com/oven-sh/bun/issues/9859
 describe.concurrent("--no-bundle with --outdir", () => {

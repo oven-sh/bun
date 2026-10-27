@@ -16,6 +16,7 @@ import {
 import path, { join } from "path";
 import { SourceMapConsumer } from "source-map";
 import { buildNoThrow } from "./buildNoThrow";
+import { canFailReserve, failingReserveEnv } from "./failingReserve";
 
 describe("Bun.build", () => {
   test("css works", async () => {
@@ -363,6 +364,36 @@ describe("Bun.build", () => {
       const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
       expect(stdout).toBe("0\n");
       expect(exitCode).toBe(0);
+    },
+  );
+
+  // One reserve of the enqueue fails: the `ast` rows for the first count, the `input_files` rows for the second.
+  // A build that has handed a task out by then frees the bundle under the task.
+  test.skipIf(!canFailReserve).each(isASAN ? [3000, 8000] : [8000, 32000])(
+    "a build of %d entry points whose reserve fails leaves no task on the pool",
+    async count => {
+      using dir = tempDir("bun-build-api-enqueue-reserve", {
+        "reserve-fixture.ts": /* ts */ `
+          import { bundlerWorkerLiveCount } from "bun:internal-for-testing";
+          const files = {};
+          for (let i = 0; i < Number(process.argv[2]); i++) files["/entry" + i + ".ts"] = "export default " + i + ";";
+          const error = await Bun.build({ entrypoints: Object.keys(files), files }).then(() => undefined, e => e);
+          console.log(error?.message, error?.errors?.length);
+          const deadline = Date.now() + 5000;
+          while (bundlerWorkerLiveCount() > 0 && Date.now() < deadline) await Bun.sleep(5);
+          console.log(bundlerWorkerLiveCount());
+        `,
+      });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "reserve-fixture.ts", String(count)],
+        env: failingReserveEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout).toBe("Bundle failed 0\n0\n");
+      expect(exitCode, stderr).toBe(0);
     },
   );
 

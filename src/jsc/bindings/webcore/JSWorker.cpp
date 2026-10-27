@@ -159,7 +159,7 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
     RETURN_IF_EXCEPTION(throwScope, {});
     // node:worker_threads' `eval: true` arrives here as a blob: URL of the source.
     if (Bun::isDataOrBlobURL(scriptUrl)) [[unlikely]] {
-        RETURN_IF_MAY_NOT_MAKE_SCRIPT_FROM_STRINGS(lexicalGlobalObject, throwScope, {});
+        THROW_AND_RETURN_IF_CODE_GENERATION_FROM_STRINGS_IS_STRICT(lexicalGlobalObject, throwScope, {});
     }
     EnsureStillAliveScope argument1 = callFrame->argument(1);
 
@@ -276,8 +276,9 @@ template<> __attribute__((minsize)) JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES
 
             if (envValue && envValue.isCell()) {
                 envObject = dynamicDowncast<JSC::JSObject>(envValue);
-            } else if (globalObject->m_processEnvObject.isInitialized()) {
-                envObject = globalObject->processEnvObject();
+            } else {
+                // Null if nothing has read process.env yet, in which case there's nothing to copy.
+                envObject = globalObject->m_processEnvObject.get();
             }
 
             if (envObject) {

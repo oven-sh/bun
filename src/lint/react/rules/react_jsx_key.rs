@@ -22,13 +22,13 @@ pub struct JsxKey {
     oxlint: Checks,
 }
 
-/// The options.
 #[derive(Copy, Clone, Default)]
 struct Checks {
     key_must_before_spread: bool,
     warn_on_duplicates: bool,
     fragment_shorthand: bool,
-    /// `checkArraysOutsideJSX`, which only `bun lint` has. `false`: an array literal counts only where React renders it as a list.
+    /// `checkArraysOutsideJSX`, which only `bun lint` has. If false, an array literal only counts where React renders
+    /// it as a list.
     arrays_outside_jsx: bool,
 }
 
@@ -58,22 +58,22 @@ const DUPLICATE_KEY_PROP: Message = Message::new("", "Duplicate key '{{key_value
 #[derive(Copy, Clone)]
 enum InsideArrayOrIterator {
     Array(Span),
-    /// Where the name of the method is. For ESLint: the call.
+    /// The span of the method name. For ESLint, the span of the call.
     Iterator(Span),
 }
 
 const OUTSIDE_CONTAINING_FUNCTION: u8 = 1 << 0;
 const EXPLICIT_RETURN: u8 = 1 << 1;
 
-/// What the walk up for ESLint has come to: the element,
+/// States of the upward walk for ESLint. `ELEMENT` is the element itself.
 const ELEMENT: u8 = 0;
-/// the `?:`, `&&`, `||` or `??` that it is a result of,
+/// At the `?:`, `&&`, `||` or `??` that evaluates to it.
 const BRANCH: u8 = 1;
-/// the `return` of it, or an `if` around that,
+/// At the `return` of it, or at an `if` around that.
 const RETURNED: u8 = 2;
-/// a block around that, which has to be a branch of an `if`,
+/// At a block around that, which has to be a branch of an `if`.
 const BLOCK: u8 = 3;
-/// the function, and the expression that it is.
+/// At the function (`FUNCTION`), then at the function expression (`ARGUMENT`).
 const FUNCTION: u8 = 4;
 const ARGUMENT: u8 = 5;
 
@@ -82,21 +82,22 @@ pub struct State<'a> {
     in_array_or_iter: AncestorWalk<'a, u8, Option<InsideArrayOrIterator>>,
     within_children_to_array: AncestorMemo<'a, ()>,
     imports: OnceCell<Imports<'a>>,
-    /// Where upstream's `isWithinChildrenToArray` changes, in order: twice the end of a call, twice the start plus 1.
+    /// The sorted points where upstream's `isWithinChildrenToArray` changes: `2 * start + 1` where a call sets it, `2 *
+    /// end` where a call resets it.
     children_to_array_changes: OnceCell<Vec<u64>>,
     pragma: OnceCell<&'a [u8]>,
     checks: Checks,
     is_oxlint: bool,
-    /// The file mentions `key`, `toArray`.
+    /// True if the file mentions `key`, `toArray`.
     mentions_key: bool,
     mentions_to_array: bool,
 }
 
-/// What is asked about the imports of a file.
+/// Facts about a file's imports.
 struct Imports<'a> {
-    /// The names under which something is imported from `react`.
+    /// The local names of everything imported from `react`.
     from_react: FxHashSet<Name<'a>>,
-    /// The file imports and declares nothing.
+    /// True if the file imports and declares nothing.
     is_bare: bool,
 }
 
@@ -106,15 +107,15 @@ impl Rule for JsxKey {
     type State<'a> = State<'a>;
 
     fn new(options: &Options) -> Self {
-        let (is_given, options) = (options.get(0).is_some_and(|it| it.as_object().is_some()), options.object(0));
+        let (has_options_object, options) = (options.get(0).is_some_and(|it| it.as_object().is_some()), options.object(0));
         let checks = |default| Checks {
             key_must_before_spread: options.bool_or("checkKeyMustBeforeSpread", default),
             warn_on_duplicates: options.bool_or("warnOnDuplicates", default),
             fragment_shorthand: options.bool_or("checkFragmentShorthand", default),
             arrays_outside_jsx: options.bool_or("checkArraysOutsideJSX", true),
         };
-        // oxlint: without options nothing is on. In an object of options, what is missing is on.
-        JsxKey { eslint: checks(false), oxlint: checks(is_given) }
+        // oxlint turns every check off if there are no options. In an options object, a missing key is on.
+        JsxKey { eslint: checks(false), oxlint: checks(has_options_object) }
     }
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
@@ -147,7 +148,7 @@ impl Rule for JsxKey {
                 if let ExprKind::Array(elements) = e.kind()
                     && (is_oxlint || !cx.state.is_within_children_to_array(cx.file(), e.span()))
                 {
-                    // oxlint takes what is in parentheses for no element.
+                    // In oxlint's AST a parenthesized element isn't an element.
                     check_duplicate_keys(&mut elements.iter().filter(|it| !is_oxlint || !it.is_parenthesized()), cx);
                 }
             }
@@ -183,7 +184,7 @@ fn check_element_or_fragment<'a>(e: Expr<'a>, cx: &mut Cx<'a, JsxKey>) {
     }
     let children = || jsx.children().iter().filter(|it| it.jsx_container_span().is_none());
     if !is_oxlint {
-        // Upstream goes through all children once for each child that is an element.
+        // Upstream iterates over all the children once for each child that's an element.
         let is_listened = |it: &Expr<'a>| {
             as_jsx_element(*it).is_some() && !cx.state.is_within_children_to_array(cx.file(), it.span())
         };
@@ -207,7 +208,7 @@ fn is_key(attribute: Prop) -> bool {
     attribute.key().is_some_and(|key| key.is("key"))
 }
 
-/// The array or the iterator that `e` is an element of, unless that is within `Children.toArray(..)`.
+/// Returns the array or iterator that `e` is an element of, unless it's inside `Children.toArray(..)`.
 fn array_or_iterator_of<'a>(e: Expr<'a>, jsx: Jsx<'a>, cx: &mut Cx<'a, JsxKey>) -> Option<InsideArrayOrIterator> {
     if !cx.state.is_oxlint {
         let outer = cx.state.in_array_or_iter.run(Node::Expr(e), ELEMENT, is_element_of_array_or_iter)?;
@@ -228,8 +229,9 @@ fn array_or_iterator_of<'a>(e: Expr<'a>, jsx: Jsx<'a>, cx: &mut Cx<'a, JsxKey>) 
     Some(outer)
 }
 
-/// Whether React gets to render `array` as a list: it's a child of an element, or a function returns it. Not `steps[step]`, a
-/// table of icons, or a prop like `actions={[<a />, <b />]}`, where the component decides what to do with the elements.
+/// True if React renders `array` as a list, because it's a child of an element or a function returns it. Not
+/// `steps[step]`, a table of icons, or a prop like `actions={[<a />, <b />]}`, where the component decides what to do
+/// with the elements.
 fn is_rendered_as_a_list(array: Expr) -> bool {
     let mut e = array;
     loop {
@@ -262,7 +264,7 @@ fn check_missing_key<'a>(e: Expr<'a>, jsx: Jsx<'a>, cx: &mut Cx<'a, JsxKey>) {
         let message = match (outer, jsx.is_fragment()) {
             (InsideArrayOrIterator::Array(_), false) => MISSING_ARRAY_KEY,
             (InsideArrayOrIterator::Array(_), true) => MISSING_ARRAY_KEY_USE_PRAG,
-            // `hasProp` ignores the case.
+            // `hasProp` is case-insensitive.
             (InsideArrayOrIterator::Iterator(_), false) if has_jsx_prop_ignore_case(jsx, "key").is_some() => return,
             (InsideArrayOrIterator::Iterator(_), false) => MISSING_ITER_KEY,
             (InsideArrayOrIterator::Iterator(_), true) => MISSING_ITER_KEY_USE_PRAG,
@@ -273,7 +275,7 @@ fn check_missing_key<'a>(e: Expr<'a>, jsx: Jsx<'a>, cx: &mut Cx<'a, JsxKey>) {
         }
         return;
     }
-    // oxlint points at the name, or at the `<>`.
+    // oxlint reports the name, or the `<>`.
     let span = jsx.tag().map_or_else(|| jsx.opening_span(), |name| name.span());
     match outer {
         InsideArrayOrIterator::Array(_) => cx.report(span, MISSING_KEY_PROP_FOR_ELEMENT_IN_ARRAY),
@@ -284,7 +286,7 @@ fn check_missing_key<'a>(e: Expr<'a>, jsx: Jsx<'a>, cx: &mut Cx<'a, JsxKey>) {
     };
 }
 
-/// One step of the way up from an element, to where upstream comes down from: `checkArrowFunctionWithJSX`,
+/// One step up from an element, retracing the way upstream comes down: `checkArrowFunctionWithJSX`,
 /// `checkFunctionsBlockStatement`, `getReturnStatements`.
 fn is_element_of_array_or_iter<'a>(
     child: Node<'a>,
@@ -321,7 +323,7 @@ fn is_element_of_array_or_iter<'a>(
     }
 }
 
-/// One step of the way up from an element.
+/// oxlint's version: one step up from an element.
 fn is_in_array_or_iter<'a>(
     child: Node<'a>,
     parent: Node<'a>,
@@ -353,7 +355,8 @@ fn is_in_array_or_iter<'a>(
     }
 }
 
-/// `argument` is what `a.map(..)`, `a.flatMap(..)` or `Array.from(a, ..)` calls for each element.
+/// Returns the iterator if `argument` is the callback that `a.map(..)`, `a.flatMap(..)` or `Array.from(a, ..)` calls
+/// for each element.
 fn iterator_of_argument<'a>(e: Expr<'a>, argument: Node<'a>) -> Option<InsideArrayOrIterator> {
     let call = e.as_call()?;
     let callee = Some(call.callee()).filter(|it| !it.is_chain_root())?;
@@ -384,15 +387,15 @@ impl<'a> State<'a> {
         let Some(object) = call.callee().filter(|it| is_member_called(*it, "toArray")).and_then(Expr::object) else {
             return false;
         };
-        // What has no name is called `undefined` for esquery.
+        // esquery sees a missing name as `undefined`.
         let name_of = |it: Expr<'a>| it.as_ident().map_or(&b"undefined"[..], Name::bytes);
         object.is_ident("Children")
             || (is_member_called(object, "Children")
                 && object.object().is_some_and(|it| name_of(it) == self.pragma(call.file())))
     }
 
-    /// Upstream's `isWithinChildrenToArray` when ESLint enters `node`: it is set where such a call is entered, and
-    /// reset where one is left, also inside of another.
+    /// Upstream's `isWithinChildrenToArray` at the moment ESLint enters `node`. It's set on entering such a call and
+    /// reset on leaving one, even a nested one.
     fn is_within_children_to_array(&self, file: &'a File<'a>, node: Span) -> bool {
         let changes = self.children_to_array_changes.get_or_init(|| {
             let mut changes = Vec::new();
@@ -436,7 +439,7 @@ impl<'a> Imports<'a> {
         Imports { from_react, is_bare }
     }
 
-    /// An import from `react` is called `actual_local_name` here.
+    /// True if `actual_local_name` is the local name of an import from `react`.
     fn import_matcher(&self, actual_local_name: Name<'a>) -> bool {
         self.from_react.contains(&actual_local_name)
     }
@@ -482,7 +485,7 @@ fn is_children<'a>(call: Call<'a>, imports: &Imports<'a>) -> bool {
             .is_some_and(|name| imports.is_import(name))
 }
 
-/// How many `key`s an element has for which `isKeyAfterSpread` holds, else 0.
+/// Returns the number of `key`s on an element if `isKeyAfterSpread` is true for it, else 0.
 fn count_keys_if_one_is_after_spread(jsx: Jsx) -> usize {
     match jsx.attrs().iter().skip_while(|it| it.kind() != PropKind::Spread).any(is_key) {
         true => jsx.attrs().iter().filter(|it| is_key(*it)).count(),
@@ -496,7 +499,7 @@ fn check_jsx_element_is_key_before_spread<'a>(e: Expr<'a>, jsx: Jsx<'a>, cx: &mu
         if keys == 0 {
             return;
         }
-        // Upstream reports the array, once for each `key`, or the element of the iterator.
+        // Upstream reports the array, once per `key`, or the iterator's element.
         let (at, times) = match array_or_iterator_of(e, jsx, cx) {
             Some(InsideArrayOrIterator::Array(array)) => (array, keys),
             Some(InsideArrayOrIterator::Iterator(_)) => (e.span(), 1),
@@ -510,7 +513,7 @@ fn check_jsx_element_is_key_before_spread<'a>(e: Expr<'a>, jsx: Jsx<'a>, cx: &mu
     let (mut key, mut has_spread) = (None, false);
     for attribute in jsx.attrs() {
         if attribute.kind() == PropKind::Spread {
-            // A `key` before it is in the right place.
+            // A `key` before the spread is in the right place.
             if key.is_some() {
                 return;
             }
@@ -527,7 +530,7 @@ fn check_jsx_element_is_key_before_spread<'a>(e: Expr<'a>, jsx: Jsx<'a>, cx: &mu
     }
 }
 
-/// The value of the first `key` of an element that is a string or a number, and the attribute.
+/// Returns the value of an element's first `key` that's a string or a number, and the attribute.
 fn get_jsx_element_key_value(e: Expr<'_>) -> Option<(Cow<'_, [u8]>, Prop<'_>)> {
     as_jsx_element(e)?.attrs().iter().filter(|it| is_key(*it)).find_map(|attribute| {
         let value = match get_prop_value(attribute)? {
@@ -544,13 +547,13 @@ fn get_jsx_element_key_value(e: Expr<'_>) -> Option<(Cow<'_, [u8]>, Prop<'_>)> {
     })
 }
 
-/// `getText(context, attr.value)`. Empty without a value, where upstream has the text of the file.
+/// `getText(context, attr.value)`. Empty if there's no value, where upstream gets the whole file's text.
 fn text_of_value(attribute: Prop<'_>) -> &[u8] {
     let span = attribute.value().map(|it| it.jsx_container_span().unwrap_or_else(|| it.span()));
     span.map(|it| attribute.file().slice(it)).unwrap_or_default()
 }
 
-/// `elements`: of an array, or the children of an element.
+/// `elements`: an array's elements, or an element's children.
 fn check_duplicate_keys<'a>(elements: &mut dyn Iterator<Item = Expr<'a>>, cx: &Cx<'a, JsxKey>) {
     let is_oxlint = cx.state.is_oxlint;
     let mut keys: SmallVec<[(Cow<'a, [u8]>, Prop<'a>); 4]> = SmallVec::new();
@@ -558,7 +561,7 @@ fn check_duplicate_keys<'a>(elements: &mut dyn Iterator<Item = Expr<'a>>, cx: &C
         if is_oxlint {
             keys.extend(get_jsx_element_key_value(element));
         } else if let Some(jsx) = as_jsx_element(element) {
-            // Upstream compares the texts of all of them.
+            // Upstream compares the source text of all of them.
             let attributes = jsx.attrs().iter().filter(|it| is_key(*it));
             keys.extend(attributes.map(|it| (Cow::Borrowed(text_of_value(it)), it)));
         }

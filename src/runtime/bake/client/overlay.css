@@ -2,6 +2,9 @@
  * This file is mounted within Shadow DOM so interference with
  * the user's application causes no issue. This sheet is used to
  * style error popups and other elements provided by DevServer.
+ *
+ * The look follows bun.com: hard 1.5px frames with a cut corner, a solid offset shadow, the pink
+ * signal colour for counts and locations, small uppercase mono labels. System fonts only.
  */
 
 /* Reset and base styles */
@@ -14,75 +17,95 @@
 .root {
   all: initial;
 
-  /* TODO: revive light theme error modal */
-  /* color-scheme: light dark;
-  --modal-bg: light-dark(#efefef, #202020);
-  --modal-text: light-dark(#0a0a0a, #fafafa);
-  --modal-text-faded: light-dark(#0a0a0a88, #fafafa88);
-  --item-bg: light-dark(#d4d4d4, #0f0f0f);
-  --item-bg-main: light-dark(#d4d4d4, #262626);
-  --log-error: light-dark(#dc0000, #ff5858);
-  --log-warn: light-dark(#eab308, #fbbf24);
-  --log-note: light-dark(#008ae6, #22d3ee);
-  --log-colon: light-dark(#888, #888); */
+  --canvas: #ffffff;
+  --subtle: #f6f6f6;
+  --line: #e2e2e2;
+  --rule: #181818;
+  --frame: #0a0a0a;
+  --shadow: #181818;
+  --fg: #0a0a0a;
+  --fg-muted: #525252;
+  --fg-faint: #707070;
+  --accent: #ff1f8f;
+  --accent-strong: #d60066;
+  --accent-tint: #ff1f8f12;
+  --code-bg: #f6f6f6;
+  --error: #d61f2d;
+  --warn: #c27803;
+  --note: #1450dc;
+  --scrim: #ffffffdb;
 
-  --modal-bg: #202020;
-  --modal-text: #fafafa;
-  --modal-text-faded: #fafafa88;
-  --item-bg: #0f0f0f;
-  --item-bg-main: #262626;
-  --log-error: #ff5858;
-  --log-warn: #fbbf24;
-  --log-note: #22d3ee;
-  --log-colon: #888;
+  --syntax-comment: #707070;
+  --syntax-cyan: #0b7285;
+  --syntax-green: #2b8a3e;
+  --syntax-orange: #c2410c;
+  --syntax-pink: #d60066;
+  --syntax-purple: #7048e8;
+  --syntax-red: #c92a2a;
+  --syntax-yellow: #946200;
 
-  --red: #ff5858;
-  --red-faded: #ff58582f;
-  --error-bg: #ff58582f;
-  --warn-bg: #eab3082f;
+  --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  --sans: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --cut: 14px;
 
-  --syntax-comment: #6272a4;
-  --syntax-cyan: #8be9fd;
-  --syntax-green: #50fa7b;
-  --syntax-orange: #ffb86c;
-  --syntax-pink: #ff79c6;
-  --syntax-purple: #bd93f9;
-  --syntax-red: #ff5555;
-  --syntax-yellow: #f1fa8c;
-
-  font-family:
-    system-ui,
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    Roboto,
-    Oxygen,
-    Ubuntu,
-    Cantarell,
-    "Open Sans",
-    "Helvetica Neue",
-    sans-serif;
+  font-family: var(--sans);
+  color: var(--fg);
+  background: var(--scrim);
   position: fixed;
   top: 0;
   left: 0;
   width: 100%;
   height: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
+  /* The errors can be taller than the window. */
+  overflow-y: auto;
+  padding: 56px 24px 64px;
+}
+
+@media (prefers-color-scheme: dark) {
+  .root {
+    --canvas: #0d0a0c;
+    --subtle: #171316;
+    --line: #28282b;
+    --rule: #3e3e42;
+    --frame: #48484c;
+    --shadow: #000000;
+    --fg: #eaeae8;
+    --fg-muted: #a8a8a5;
+    --fg-faint: #80807e;
+    --accent: #ff2e97;
+    --accent-strong: #ff5cb0;
+    --accent-tint: #ff2e9714;
+    --code-bg: #080708;
+    --error: #ff5a5a;
+    --warn: #f5b43c;
+    --note: #78aaff;
+    --scrim: #0d0a0cdb;
+
+    --syntax-comment: #6272a4;
+    --syntax-cyan: #8be9fd;
+    --syntax-green: #50fa7b;
+    --syntax-orange: #ffb86c;
+    --syntax-pink: #ff79c6;
+    --syntax-purple: #bd93f9;
+    --syntax-red: #ff5555;
+    --syntax-yellow: #f1fa8c;
+  }
 }
 
 code,
-.message,
-.function-name,
+pre,
+.code,
 .file-name,
-.code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+.function-name,
+.label,
+footer {
+  font-family: var(--mono);
 }
 
 pre,
 code {
   font: unset;
+  font-family: var(--mono);
 }
 
 button {
@@ -90,6 +113,7 @@ button {
   background-color: transparent;
   border: none;
   font-size: unset;
+  color: inherit;
   cursor: pointer;
 }
 
@@ -98,181 +122,282 @@ button {
   flex: 1;
 }
 .muted {
-  color: var(--modal-text-faded);
+  color: var(--fg-faint);
 }
 
-/* Modal */
-.modal {
-  color: var(--modal-text);
-  background-color: var(--modal-bg);
-  border-top: 8px solid var(--red);
-  border-radius: 8px;
-  margin: 4rem 2rem 2rem 2rem;
+/* Modal: a hard offset shadow that follows the cut corner (box-shadow would be clipped), a frame
+   in the border colour clipped to the shape, and the modal 1.5px inside it with the same clip. */
+.shadow {
   max-width: 940px;
-  width: 100%;
-  box-shadow:
-    0 2px 6px #0004,
-    0 2px 32px #0003;
+  margin: 0 auto;
+  filter: drop-shadow(8px 8px 0 var(--shadow));
+}
+.frame {
+  background: var(--frame);
+  padding: 1.5px;
+  clip-path: polygon(0 0, calc(100% - var(--cut)) 0, 100% var(--cut), 100% 100%, 0 100%);
+}
+.modal {
+  background: var(--canvas);
+  clip-path: polygon(0 0, calc(100% - var(--cut) + 0.62px) 0, 100% calc(var(--cut) - 0.62px), 100% 100%, 0 100%);
 }
 
-footer {
+/* Header */
+header {
   display: flex;
-  color: var(--modal-text-faded);
-  margin: 1rem;
+  align-items: flex-end;
+  gap: 16px;
+  padding: 22px 26px 18px;
+  border-bottom: 1.5px solid var(--frame);
+}
+.eyebrow {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+.eyebrow::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  background: var(--accent);
+}
+.title {
+  font-size: 36px;
+  line-height: 0.95;
+  font-weight: 850;
+  letter-spacing: -0.035em;
+  font-stretch: condensed;
+}
+.title .count {
+  color: var(--accent);
+}
+.hint {
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.6;
+  color: var(--fg-faint);
+  text-align: right;
 }
 
-/* Navigation bar */
+/* Tick ruler, as on bun.com: 8px minor, 80px major. */
+.rule {
+  height: 9px;
+  margin: 0 26px;
+  background:
+    repeating-linear-gradient(to right, var(--rule) 0 1px, transparent 1px 80px) left bottom / 100% 9px no-repeat,
+    repeating-linear-gradient(to right, color-mix(in srgb, var(--rule) 45%, transparent) 0 1px, transparent 1px 8px)
+      left bottom / 100% 4px no-repeat;
+}
+
+/* Runtime error switcher */
 nav {
   display: flex;
-  margin: 1rem;
   align-items: center;
-  color: var(--modal-text-faded);
+  gap: 8px;
+  padding: 12px 26px;
+  border-bottom: 1px solid var(--line);
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--fg-faint);
 }
-
+nav code {
+  color: var(--fg);
+  font-weight: 700;
+}
 .tab-button {
   width: 24px;
   height: 24px;
-  border-radius: 4px;
-  background-color: var(--red-faded);
+  border: 1px solid var(--line);
+  background-position: center;
+  background-repeat: no-repeat;
 }
 .tab-button[disabled] {
-  opacity: 0.5;
-}
-.tab-button.left {
-  border-top-right-radius: 0;
-  border-bottom-right-radius: 0;
-  margin-right: 2px;
-}
-.tab-button.right {
-  border-top-left-radius: 0;
-  border-bottom-left-radius: 0;
-  margin-right: 0.5rem;
+  opacity: 0.35;
+  cursor: default;
 }
 .dismiss-all {
   width: 24px;
   height: 24px;
+  background-position: center;
+  background-repeat: no-repeat;
 }
 
-/* Header / Title */
-header {
-  margin: 1rem;
-  display: flex;
-  align-items: center;
+.error-content {
+  padding: 14px 0 4px;
 }
 
-.title {
-  color: var(--red);
-  font-size: 2rem;
-  font-weight: bold;
-}
-
-/* Runtime Error */
-.r-error {
-  background-color: var(--item-bg);
-}
-.message-desc {
-  padding: 0rem 1.5rem;
-}
-.message-desc.error {
-  padding: 1rem 1.5rem;
-  background-color: var(--error-bg);
-}
-.message-desc.warn {
-  padding: 1rem 1.5rem;
-  background-color: var(--warn-bg);
-}
-.r-error .name {
-  color: var(--red);
-  font-weight: bold;
-}
-
-.file-name {
-  color: var(--modal-text);
-  font-weight: bold;
-}
-.r-code-wrap {
-  background-color: var(--item-bg-main);
-  --color: var(--log-error);
-}
-
-/* Bundler messages */
+/* A file's errors */
 .b-group {
-  display: flex;
-  flex-direction: column;
-  background-color: var(--item-bg);
+  padding: 0 26px 6px;
 }
 .b-group + .b-group {
-  border-top: 1px solid var(--modal-text-faded);
+  padding-top: 10px;
 }
-.b-group .code {
-  padding-bottom: 1rem;
+.file-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 0 10px;
 }
-.log-error {
-  --color: var(--log-error);
-  font-weight: bold;
+.file-name {
+  font-size: 13px;
+  font-weight: 700;
 }
-.log-warn {
-  --color: var(--log-warn);
+.file-name .dir {
+  color: var(--fg-faint);
+  font-weight: 500;
 }
-.log-note {
-  --color: var(--log-note);
+.label,
+.pill {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
-.log-colon {
-  --color: var(--log-colon);
+.pill {
+  padding: 3px 7px;
+  border: 1px solid var(--line);
+  color: var(--fg-muted);
+}
+
+/* One card per kind of error: errors with the same message share it, one row each. */
+.b-kind {
+  border: 1px solid var(--line);
+  margin-bottom: 14px;
+}
+.message-desc {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 11px 14px;
+  font-size: 14.5px;
+  line-height: 1.4;
+  border-left: 3px solid var(--color, var(--error));
+}
+.message-desc + .message-desc {
+  border-top: 1px solid var(--line);
+}
+.message-desc.error {
+  --color: var(--error);
+}
+.message-desc.warn {
+  --color: var(--warn);
+}
+.message-desc.note {
+  --color: var(--note);
+  font-size: 13.5px;
 }
 .log-label {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
   color: var(--color);
 }
-
-.message-desc.note + .code {
-  padding-top: 0.75rem;
+.log-error {
+  --color: var(--error);
+}
+.log-warn {
+  --color: var(--warn);
+}
+.log-note {
+  --color: var(--note);
+}
+.log-colon {
+  display: none;
+}
+.log-text {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.times {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 7px;
+  background: var(--subtle);
 }
 
-/* Trace Frames */
+/* Runtime errors */
+.r-error {
+  margin: 0 26px 14px;
+  border: 1px solid var(--line);
+}
+.r-error .name {
+  color: var(--error);
+  font-weight: 700;
+}
+.r-code-wrap {
+  --color: var(--error);
+}
+.r-error-trace {
+  padding: 6px 0;
+}
+
+/* Trace frames */
 .trace-frame {
-  padding: 0.7rem 1.5rem;
-}
-.trace-frame + .trace-frame {
-  margin-top: -0.5rem;
+  padding: 4px 14px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--fg-muted);
 }
 .function-name {
-  color: var(--syntax-cyan);
-  font-style: italic;
+  color: var(--fg);
 }
 
-/* Code View + Message Highlighting (Underline) */
+/* Code: the line of the error, with its span underlined. */
 .code {
   display: flex;
-  padding-top: 1rem;
+  font-size: 12.5px;
+  line-height: 20px;
+  background: var(--code-bg);
+  border-top: 1px solid var(--line);
+  padding: 6px 0;
+}
+/* Rows of a card after the first continue its code block. */
+.b-msg + .b-msg .code {
+  border-top: none;
+  padding-top: 0;
 }
 .code .gutter {
-  display: flex;
-  flex-direction: column;
-  padding: 0.3rem 0;
-  padding-left: 0.5rem;
+  flex: 0 0 auto;
+  min-width: 52px;
+  padding-right: 14px;
   text-align: right;
-  margin-right: 1rem;
-  padding-right: 0.5rem;
   user-select: none;
   pointer-events: none;
-  color: var(--modal-text-faded);
-  border-right: 1px solid var(--modal-text-faded);
-  border-width: 1.5px;
+  color: var(--accent);
+  font-weight: 700;
 }
 .code .gutter div {
   white-space: pre;
 }
 .code .gutter .highlight-gap {
-  font-size: 8px;
+  height: 10px;
 }
 .code .view {
-  padding: 0.3rem 0;
+  min-width: 0;
+  overflow-x: auto;
+}
+.code .view pre {
+  white-space: pre;
 }
 .highlight-wrap {
   color: transparent;
   user-select: none;
   -webkit-user-select: none;
   pointer-events: none;
+  white-space: pre;
   transform: translateY(-16px);
   margin-bottom: -10px;
 }
@@ -283,21 +408,30 @@ header {
 .highlight-gap {
   height: 10px;
 }
-
 .highlight-wrap .line {
-  text-decoration: underline;
-  text-decoration-style: wavy;
-  text-decoration-color: var(--color);
+  text-decoration: underline wavy var(--color);
+  text-decoration-thickness: 1.5px;
 }
 
-@media (prefers-color-scheme: light) {
-  .log-warn,
-  .log-note {
-    font-weight: bold;
-  }
+/* Footer */
+footer {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  border-top: 1.5px solid var(--frame);
+  padding: 12px 26px;
+  font-size: 11px;
+  color: var(--fg-faint);
+}
+footer .version {
+  color: var(--fg);
+  font-weight: 700;
+}
+footer .version b {
+  color: var(--accent);
 }
 
-/* Syntax Highlighting */
+/* Syntax highlighting */
 .syntax-pink {
   color: var(--syntax-pink);
 }
@@ -335,6 +469,7 @@ header {
   opacity: 0.5;
 }
 @media (prefers-color-scheme: light) {
+  .tab-button,
   .dismiss-all {
     filter: invert(1);
   }

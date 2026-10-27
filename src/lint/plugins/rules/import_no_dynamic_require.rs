@@ -38,7 +38,7 @@ impl Rule for NoDynamicRequire {
                 if let ExprKind::ImportCall { args } = e.kind()
                     && let Some(source) = args.first().filter(|it| !is_static_value(*it, is_oxlint))
                 {
-                    // oxlint points at the argument.
+                    // oxlint reports the argument.
                     match is_oxlint {
                         true => cx.report(source.outer_span(), OXLINT),
                         false => cx.report(e, IMPORT),
@@ -47,13 +47,13 @@ impl Rule for NoDynamicRequire {
             }
             ExprTag::Call => {
                 let Some(call) = e.as_call() else { return };
-                // oxlint looks through TypeScript's wrappers.
+                // oxlint looks through TypeScript wrappers such as `as` and `!`.
                 let is_require = match is_oxlint {
                     true => is_specific_id(call.callee(), "require"),
                     false => call.callee().is_ident("require"),
                 };
                 if is_require && call.args().first().is_some_and(|it| !is_static_value(it, is_oxlint)) {
-                    // oxlint points at `require`.
+                    // oxlint reports `require`.
                     match is_oxlint {
                         true => cx.report(call.callee().outer_span(), OXLINT),
                         false => cx.report(e, REQUIRE),
@@ -65,7 +65,8 @@ impl Rule for NoDynamicRequire {
     }
 }
 
-/// upstream's `isStaticValue`. oxlint takes no literal but a string, none in parentheses, and says nothing of `...a`.
+/// upstream's `isStaticValue`. For oxlint the only static literal is a string, nothing parenthesized is static, and
+/// `...a` isn't reported.
 fn is_static_value(e: Expr, is_oxlint: bool) -> bool {
     match e.kind() {
         _ if is_oxlint && e.is_parenthesized() => false,

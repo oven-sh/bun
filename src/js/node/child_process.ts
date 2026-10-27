@@ -682,8 +682,8 @@ function spawnSync(file, args, options?): SpawnSyncResult {
 
   return result;
 }
-const etimedoutErrorCode = $newRustFunction("node_util_binding.rs", "etimedoutErrorCode", 0);
-const enobufsErrorCode = $newRustFunction("node_util_binding.rs", "enobufsErrorCode", 0);
+const etimedoutErrorCode = $bindgen("node_util_binding.bind.ts", "etimedoutErrorCode");
+const enobufsErrorCode = $bindgen("node_util_binding.bind.ts", "enobufsErrorCode");
 
 /**
  * Spawns a file as a shell synchronously.

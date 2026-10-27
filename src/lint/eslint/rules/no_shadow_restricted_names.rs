@@ -5,14 +5,14 @@ use smallvec::SmallVec;
 
 /// Disallow identifiers from shadowing restricted names.
 pub struct NoShadowRestrictedNames {
-    /// `None`: `true` since ESLint 10.
+    /// `None` means the default, which is `true` since ESLint 10.
     report_global_this: Option<bool>,
 }
 
 const SHADOWING_RESTRICTED_NAME: Message =
     Message::new("shadowingRestrictedName", "Shadowing of global property '{{name}}'.");
 
-/// A variable named `undefined` that is never given a value is the same as the global.
+/// A variable named `undefined` that's never assigned behaves like the global.
 fn safely_shadows_undefined(symbol: Symbol) -> bool {
     symbol.name().is("undefined")
         && symbol.declarations().all(|declaration| {
@@ -24,7 +24,7 @@ fn safely_shadows_undefined(symbol: Symbol) -> bool {
         && symbol.references().all(|reference| !reference.is_write())
 }
 
-/// ESLint's `def.name`: typescript-eslint has the type annotation as a part of the `Identifier`, oxlint has not.
+/// ESLint's `def.name`. typescript-eslint includes the type annotation in the `Identifier`, and oxlint doesn't.
 fn name_span(declaration: Declaration) -> Option<Span> {
     match declaration {
         Declaration::Var(pat) | Declaration::Param(pat) if !pat.file().language().is_oxlint => {
@@ -35,21 +35,20 @@ fn name_span(declaration: Declaration) -> Option<Span> {
 }
 
 pub struct State<'a> {
-    /// Those of the restricted names that the file mentions.
+    /// The restricted names that the file mentions.
     restricted: SmallVec<[Name<'a>; 6]>,
-    /// A bit for the last bits of the number of each of them.
-    numbers: u64,
-    /// Where the names that have been reported start.
+    /// A filter over `restricted`: bit `atom % 64` is set for each name.
+    name_bits: u64,
+    /// Start offsets of the names already reported.
     reported: FxHashSet<u32>,
-    /// `safely_shadows_undefined`, for the variables with several declarations that have been looked
-    /// at.
+    /// Caches `safely_shadows_undefined` for the variables with several declarations.
     seen: IdMap<Symbol<'a>, bool>,
 }
 
 impl NoShadowRestrictedNames {
     #[inline]
     fn is_restricted<'a>(name: Name<'a>, cx: &Cx<'a, Self>) -> bool {
-        cx.state.numbers >> (name.atom().0 % 64) & 1 != 0 && cx.state.restricted.contains(&name)
+        cx.state.name_bits >> (name.atom().0 % 64) & 1 != 0 && cx.state.restricted.contains(&name)
     }
 
     fn report_once<'a>(at: Span, name: Name<'a>, cx: &mut Cx<'a, Self>) {
@@ -58,8 +57,7 @@ impl NoShadowRestrictedNames {
         }
     }
 
-    /// `at`: where a restricted `name` is declared. All the declarations of the variable are
-    /// reported with it.
+    /// `at` is where a restricted `name` is declared. The variable's other declarations are reported along with it.
     fn report<'a>(at: Span, name: Name<'a>, symbol: Option<Symbol<'a>>, cx: &mut Cx<'a, Self>) {
         let with_others = symbol.filter(|it| it.declaration_count() > 1);
         let seen = with_others.and_then(|it| cx.state.seen.get(it).copied());
@@ -71,7 +69,7 @@ impl NoShadowRestrictedNames {
             return;
         }
         Self::report_once(at, name, cx);
-        // The other declarations have been reported with the first.
+        // The other declarations were reported along with the first.
         if seen.is_some() {
             return;
         }
@@ -87,15 +85,15 @@ impl NoShadowRestrictedNames {
             return;
         };
         let owner = Node::Pat(pat).ancestors().find(|it| matches!(it, Node::VarDecl(_) | Node::Param(_)));
-        // The parameters of a signature or of an overload are not those of a `:function`. oxlint looks at them.
+        // `:function` doesn't match a signature or an overload, so ESLint skips their parameters. oxlint checks them.
         if let Some(Node::Param(param)) = owner
             && !param.func().is_some_and(Func::has_body)
             && !cx.language().is_oxlint
         {
             return;
         }
-        let place = if cx.language().is_oxlint { pat.span() } else { utils::estree_span(Node::Pat(pat)) };
-        Self::report(place, name, pat.symbol(), cx);
+        let location = if cx.language().is_oxlint { pat.span() } else { utils::estree_span(Node::Pat(pat)) };
+        Self::report(location, name, pat.symbol(), cx);
     }
 }
 
@@ -124,7 +122,7 @@ impl Rule for NoShadowRestrictedNames {
 
     fn narrow<'a>(&self, file: &'a File<'a>) -> On {
         let mut on = On::new().pats(&[PatTag::Ident]).funcs().classes();
-        // oxlint looks at all that oxc has a symbol for: `namespace globalThis {}`, `interface NaN {}`, `<Infinity>`.
+        // oxlint checks everything oxc has a symbol for: `namespace globalThis {}`, `interface NaN {}`, `<Infinity>`.
         if file.language().is_oxlint {
             on = on.type_params().stmts(&[
                 StmtTag::Module,
@@ -144,7 +142,7 @@ impl Rule for NoShadowRestrictedNames {
         let restricted: SmallVec<[Name<'a>; 6]> =
             names.into_iter().filter_map(|name| file.find_name(name)).collect();
         let state = State {
-            numbers: restricted.iter().fold(0, |numbers, name| numbers | 1 << (name.atom().0 % 64)),
+            name_bits: restricted.iter().fold(0, |name_bits, name| name_bits | 1 << (name.atom().0 % 64)),
             restricted,
             reported: FxHashSet::default(),
             seen: IdMap::default(),

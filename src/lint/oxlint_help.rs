@@ -1,12 +1,13 @@
-//! What oxlint says besides the message of a diagnostic: its `help`, its `note`, and what it says at the place.
+//! The texts oxlint prints for a diagnostic besides its message: the `help`, the `note`, and the first label's text.
 //!
-//! Made from what oxlint 1.87 prints for the cases of the test suites, each paired with what `bun lint` reports at the same place: an
-//! entry is the text of oxlint in which the values that the rule gives to [`Report::data`](crate::context::Report::data) are
-//! replaced by their names, if that makes the text of all the pairs with that message, letter for letter.
+//! The table was built from oxlint 1.87's output for the test suites' cases, with each diagnostic paired with what `bun
+//! lint` reports at the same position. An entry is oxlint's text with the values that the rule passes to
+//! [`Report::data`](crate::context::Report::data) replaced by their names. It's only included if that template
+//! reproduces oxlint's text exactly for every pair with that message.
 //!
-//! The texts are in `oxlint_help.txt`, one per line, where `\n` stands for a newline and `\\` for a backslash. The table here
-//! refers to them by line number, counted from 1 as editors do. Release builds embed the file compressed and inflate it the
-//! first time a text is needed, which is when a problem that has one is printed.
+//! The texts are in `oxlint_help.txt`, one per line, with `\n` for a newline and `\\` for a backslash. The table here
+//! refers to them by 1-based line number. Release builds embed the file compressed and decompress it the first time a
+//! text is needed, which is when a diagnostic that has one is printed.
 
 use self::Edits::{All, First};
 use self::Texts::{One, Three};
@@ -15,15 +16,15 @@ use bun_core::strings;
 use std::borrow::Cow;
 use std::num::NonZeroU32;
 
-/// What the table has for a message.
+/// A message's entry in the table.
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct Help(NonZeroU32);
 
-/// Which text of a diagnostic.
+/// One of a diagnostic's texts.
 #[derive(Copy, Clone)]
 pub(crate) enum Part {
     Help,
-    /// What is said at the place of the report.
+    /// The text of the label at the reported span.
     FirstLabel,
     Note,
 }
@@ -34,20 +35,20 @@ pub(crate) enum Found {
     Constant(&'static str),
     /// With `{{names}}`.
     WithData(&'static str),
-    /// oxlint has no help of its own, and says what its `RuleFixer` says about the fix. `removes`: of a replacement by nothing that
-    /// is "Remove `..`.", and not "Delete this code.".
-    OfTheFix {
+    /// The rule has no help text, so oxlint prints its `RuleFixer`'s description of the fix. With `removes`, a
+    /// replacement with nothing is described as "Remove `..`." instead of "Delete this code.".
+    FixDescription {
         removes: bool,
         edits: Edits,
     },
 }
 
-/// Of which edits of a fix oxlint speaks.
+/// Selects which of a fix's edits oxlint describes.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub(crate) enum Edits {
-    /// Its fix has several too, and it says what it says about the first.
+    /// oxlint's fix also has several edits, and it describes the first.
     First,
-    /// It makes one, which does what all of them do.
+    /// oxlint's fix is a single edit that has the effect of all of ours.
     All,
 }
 
@@ -61,10 +62,12 @@ impl Help {
             return Found::Nothing;
         };
         let line = match (texts, part) {
-            (Texts::OfTheFix { removes, edits, .. }, Part::Help) => {
-                return Found::OfTheFix { removes, edits };
+            (Texts::FixDescription { removes, edits, .. }, Part::Help) => {
+                return Found::FixDescription { removes, edits };
             }
-            (One(line), Part::Help) | (Texts::OfTheFix { note: line, .. }, Part::Note) => line,
+            (One(line), Part::Help) | (Texts::FixDescription { note: line, .. }, Part::Note) => {
+                line
+            }
             (Three(first), part) => first + part as u16,
             _ => 0,
         };
@@ -76,7 +79,7 @@ impl Help {
         }
     }
 
-    /// The text, if it is one without values. Else "".
+    /// The text, if it has no placeholders. Otherwise "".
     pub(crate) fn constant(self, part: Part) -> &'static str {
         match self.found(part) {
             Found::Constant(text) => text,
@@ -84,25 +87,25 @@ impl Help {
         }
     }
 
-    /// One of the texts has values in it.
+    /// True if any of the texts has placeholders.
     pub(crate) fn has_values(self) -> bool {
         self.entry().is_some_and(|it| it.2 != 0)
     }
 
-    /// The help is [`Found::OfTheFix`].
-    pub(crate) fn is_of_the_fix(self) -> bool {
-        matches!(self.entry(), Some((_, Texts::OfTheFix { .. }, _)))
+    /// True if the help is [`Found::FixDescription`].
+    pub(crate) fn is_fix_description(self) -> bool {
+        matches!(self.entry(), Some((_, Texts::FixDescription { .. }, _)))
     }
 }
 
-/// What there is for `message`, which is as oxlint says it, of `rule`.
+/// Looks up the entry for `rule`'s `message`, which must be oxlint's version of the message.
 pub(crate) fn of(rule: &Meta, message: Message) -> Option<Help> {
     let key = rule.key ^ message.key.rotate_left(16);
     let at = INDEX.binary_search_by_key(&key, |it| it.0).ok()?;
     NonZeroU32::new(at as u32 + 1).map(Help)
 }
 
-/// Line `line` of `oxlint_help.txt`. "" for 0, which stands for no text.
+/// Line `line` of `oxlint_help.txt`. "" for 0, which means no text.
 fn text_at(line: u16) -> &'static str {
     static LINES: bun_core::Once<Vec<Cow<'static, [u8]>>> = bun_core::Once::new();
     let Some(at) = line.checked_sub(1) else {
@@ -138,30 +141,31 @@ fn unescaped(mut line: &'static [u8]) -> Cow<'static, [u8]> {
 enum Texts {
     /// The help.
     One(u16),
-    /// The help, what is said at the place of the report and the note, on three lines from this one on. An empty line: there is none.
+    /// The help, the first label's text and the note, on three lines starting at this one. An empty line means there's
+    /// no such text.
     Three(u16),
-    /// [`Found::OfTheFix`], and the note. 0: there is none.
-    OfTheFix {
+    /// [`Found::FixDescription`], and the note. 0 means there's no note.
+    FixDescription {
         removes: bool,
         edits: Edits,
         note: u16,
     },
 }
 
-const fn of_the_fix(removes: bool, edits: Edits, note: u16) -> Texts {
-    Texts::OfTheFix {
+const fn fix_description(removes: bool, edits: Edits, note: u16) -> Texts {
+    Texts::FixDescription {
         removes,
         edits,
         note,
     }
 }
 
-/// Sorted by the key, which is made of `Meta::key` and `Message::key`. The last number has a bit for each [`Part`] whose text has
-/// `{{` in it.
+/// Sorted by key, which combines `Meta::key` and `Message::key`. The last number has one bit per [`Part`] whose text
+/// contains `{{`.
 #[rustfmt::skip]
 static INDEX: &[(u32, Texts, u8)] = &[
     (0x0060F26E, One(645), 0), // no-unsafe-function-type bannedFunctionType
-    (0x00794F6C, of_the_fix(false, First, 0), 0), // prefer-to-be-falsy
+    (0x00794F6C, fix_description(false, First, 0), 0), // prefer-to-be-falsy
     (0x0080189E, One(167), 0), // func-name-matching matchProperty
     (0x009D1FB0, One(664), 0), // no-useless-computed-key unnecessarilyComputedProperty
     (0x00B328BB, Three(711), 0), // prefer-at
@@ -195,9 +199,9 @@ static INDEX: &[(u32, Texts, u8)] = &[
     (0x0947BAC4, One(533), 0), // no-nonoctal-decimal-escape decimalEscape
     (0x09DA5F90, One(854), 1), // restrict-plus-operands mismatched
     (0x0A513778, Three(254), 0), // no-anonymous-default-export
-    (0x0AAD4A16, of_the_fix(false, First, 0), 0), // sort-keys sortKeys
+    (0x0AAD4A16, fix_description(false, First, 0), 0), // sort-keys sortKeys
     (0x0AB65693, One(543), 0), // no-process-env
-    (0x0B3AFDA4, of_the_fix(false, First, 0), 0), // prefer-string-starts-ends-with
+    (0x0B3AFDA4, fix_description(false, First, 0), 0), // prefer-string-starts-ends-with
     (0x0B4075BA, One(407), 0), // no-fallthrough default
     (0x0BA721AE, One(167), 0), // func-name-matching matchVariable
     (0x0BD4ACB3, One(82), 1), // consistent-type-assertions angle-bracket
@@ -207,7 +211,7 @@ static INDEX: &[(u32, Texts, u8)] = &[
     (0x0C91E0A2, One(876), 0), // unicode-bom unexpected
     (0x0CAEE6D8, One(574), 0), // no-sequences unexpectedCommaExpression
     (0x0CC03201, Three(741), 1), // prefer-enum-initializers defineInitializer
-    (0x0CFAB60A, of_the_fix(false, First, 0), 0), // prefer-includes
+    (0x0CFAB60A, fix_description(false, First, 0), 0), // prefer-includes
     (0x0D14EA50, One(205), 0), // jsx-no-duplicate-props
     (0x0D7DC07F, One(199), 0), // jsx-fragments
     (0x0D8D8E11, One(823), 0), // promise-function-async missingAsyncHybridReturn
@@ -225,20 +229,20 @@ static INDEX: &[(u32, Texts, u8)] = &[
     (0x105BB692, One(335), 0), // no-default-export
     (0x106D3C17, One(149), 0), // explicit-member-accessibility unwantedPublicAccessibility
     (0x108B4503, One(440), 0), // no-implicit-globals globalVariableLeak
-    (0x10EC629D, of_the_fix(false, First, 0), 0), // prefer-to-be
+    (0x10EC629D, fix_description(false, First, 0), 0), // prefer-to-be
     (0x10FCE172, Three(761), 0), // prefer-function-component
     (0x1140A6BB, One(748), 0), // prefer-expect-assertions
-    (0x116D0C7B, of_the_fix(false, First, 0), 0), // prefer-to-be
+    (0x116D0C7B, fix_description(false, First, 0), 0), // prefer-to-be
     (0x11DDDB46, One(459), 0), // no-iterator noIterator
     (0x1237F276, One(6), 0), // alt-text
     (0x12425C48, One(123), 0), // display-name
     (0x124AB7BF, One(177), 0), // grouped-accessor-pairs notGrouped
-    (0x12D67E80, of_the_fix(false, First, 0), 0), // prefer-string-slice
+    (0x12D67E80, fix_description(false, First, 0), 0), // prefer-string-slice
     (0x131E6446, One(7), 0), // alt-text
     (0x1331A7D3, One(675), 0), // no-useless-promise-resolve-reject
     (0x13B134F0, Three(111), 0), // constructor-super duplicate
     (0x144B9C52, One(1), 0), // accessor-pairs missingGetterInClass
-    (0x144D600D, of_the_fix(false, First, 0), 0), // prefer-to-be-truthy
+    (0x144D600D, fix_description(false, First, 0), 0), // prefer-to-be-truthy
     (0x1481816A, One(103), 1), // const-comparisons
     (0x14BA2452, One(444), 0), // no-import-assign readonlyMember
     (0x14C236C5, One(702), 0), // prefer-add-event-listener
@@ -253,8 +257,8 @@ static INDEX: &[(u32, Texts, u8)] = &[
     (0x16FCD447, One(212), 0), // jsx-no-target-blank
     (0x1716694C, One(715), 0), // prefer-await-to-callbacks
     (0x17DA8860, One(451), 0), // no-instanceof-array
-    (0x18610854, of_the_fix(false, First, 0), 0), // prefer-to-contain
-    (0x187F550D, of_the_fix(false, All, 0), 0), // array-type errorStringGeneric
+    (0x18610854, fix_description(false, First, 0), 0), // prefer-to-contain
+    (0x187F550D, fix_description(false, All, 0), 0), // array-type errorStringGeneric
     (0x18A66ABB, One(545), 0), // no-promise-executor-return returnsValue
     (0x1905F47D, One(640), 0), // no-unsafe-call errorCallThis
     (0x193E14CD, Three(254), 0), // no-anonymous-default-export
@@ -291,7 +295,7 @@ static INDEX: &[(u32, Texts, u8)] = &[
     (0x24487926, One(832), 1), // require-awaited-expect-poll
     (0x244A0CCB, One(628), 0), // no-unnecessary-array-splice-count
     (0x2481EB1F, One(801), 0), // prefer-rest-params preferRestParams
-    (0x24E68FCA, of_the_fix(false, First, 0), 0), // prefer-to-be
+    (0x24E68FCA, fix_description(false, First, 0), 0), // prefer-to-be
     (0x250F790D, One(81), 1), // consistent-test-it
     (0x25AAA242, One(660), 0), // no-useless-backreference nested
     (0x25ADCBD5, One(178), 0), // guard-for-in wrap
@@ -299,7 +303,7 @@ static INDEX: &[(u32, Texts, u8)] = &[
     (0x25B6FA93, Three(269), 0), // no-async-endpoint-handlers
     (0x25EE7DEF, One(643), 0), // no-unsafe-enum-comparison mismatchedCondition
     (0x2602EF24, One(567), 0), // no-return-wrap
-    (0x266406B4, of_the_fix(false, First, 0), 0), // text-encoding-identifier-case
+    (0x266406B4, fix_description(false, First, 0), 0), // text-encoding-identifier-case
     (0x2692F915, One(212), 0), // jsx-no-target-blank
     (0x26B202C5, One(343), 0), // no-div-regex unexpected
     (0x26F06D05, One(282), 0), // no-before-interactive-script-outside-document
@@ -311,7 +315,7 @@ static INDEX: &[(u32, Texts, u8)] = &[
     (0x28AF844A, One(167), 0), // func-name-matching notMatchProperty
     (0x28B8D6A6, One(518), 1), // no-new-native-nonconstructor noNewNonconstructor
     (0x28EF0ABD, One(869), 0), // symbol-description expected
-    (0x28F15987, of_the_fix(false, First, 0), 0), // prefer-to-be
+    (0x28F15987, fix_description(false, First, 0), 0), // prefer-to-be
     (0x2905BD12, One(163), 0), // first
     (0x2936D5DD, One(444), 0), // no-import-assign readonly
     (0x294AC64D, One(601), 0), // no-this-assignment
@@ -323,7 +327,7 @@ static INDEX: &[(u32, Texts, u8)] = &[
     (0x2AB32820, One(11), 1), // anchor-ambiguous-text
     (0x2B1406AF, Three(365), 0), // no-duplicate-imports export
     (0x2B87867E, Three(877), 0), // unified-signatures allParametersAreSame
-    (0x2C48190F, of_the_fix(false, First, 0), 0), // no-useless-escape unnecessaryEscape
+    (0x2C48190F, fix_description(false, First, 0), 0), // no-useless-escape unnecessaryEscape
     (0x2D0C060F, One(193), 0), // interactive-supports-focus
     (0x2D97980B, One(842), 0), // require-test-timeout
     (0x2D97C338, One(27), 0), // await-thenable await
@@ -335,7 +339,7 @@ static INDEX: &[(u32, Texts, u8)] = &[
     (0x2F4F170A, One(300), 0), // no-conditional-tests
     (0x2F8E0659, One(67), 0), // class-literal-property-style preferGetterStyle
     (0x2FD0D405, One(856), 1), // role-supports-aria-props
-    (0x302217C2, of_the_fix(false, First, 0), 0), // prefer-to-be
+    (0x302217C2, fix_description(false, First, 0), 0), // prefer-to-be
     (0x305AA56F, One(781), 1), // prefer-mock-return-shorthand
     (0x30A935DC, One(80), 1), // consistent-test-filename
     (0x30DA2BE4, One(25), 1), // autocomplete-valid
@@ -346,7 +350,7 @@ static INDEX: &[(u32, Texts, u8)] = &[
     (0x323049FB, One(641), 0), // no-unsafe-declaration-merging unsafeMerging
     (0x32F34167, One(789), 1), // prefer-node-protocol
     (0x331EE56D, One(22), 0), // arrow-body-style expectedBlock
-    (0x338A21D2, of_the_fix(false, First, 0), 0), // prefer-to-have-length
+    (0x338A21D2, fix_description(false, First, 0), 0), // prefer-to-have-length
     (0x33ADF728, One(802), 0), // prefer-set-has
     (0x345D4F08, One(122), 0), // default-param-last shouldBeLast
     (0x3491E50F, One(29), 0), // await-thenable forAwaitOfNonAsyncIterable
@@ -382,7 +386,7 @@ static INDEX: &[(u32, Texts, u8)] = &[
     (0x4037A6A1, One(759), 0), // prefer-export-from
     (0x403D7235, One(485), 0), // no-misleading-character-class regionalIndicatorSymbol
     (0x40451C31, One(464), 0), // no-labels unexpectedLabel
-    (0x406EC540, of_the_fix(false, First, 0), 0), // prefer-optional-catch-binding
+    (0x406EC540, fix_description(false, First, 0), 0), // prefer-optional-catch-binding
     (0x40C9F62F, One(564), 1), // no-restricted-properties restrictedProperty
     (0x40CE6680, One(152), 0), // explicit-module-boundary-types missingReturnType
     (0x412B54E4, One(730), 0), // prefer-default-export
@@ -413,7 +417,7 @@ static INDEX: &[(u32, Texts, u8)] = &[
     (0x470CFC81, One(720), 0), // prefer-called-times
     (0x471B73CB, One(797), 0), // prefer-readonly preferReadonly
     (0x47AD07A4, Three(615), 0), // no-unexpected-multiline division
-    (0x4905AD5B, of_the_fix(false, All, 0), 0), // consistent-type-definitions typeOverInterface
+    (0x4905AD5B, fix_description(false, All, 0), 0), // consistent-type-definitions typeOverInterface
     (0x492CC0DB, One(155), 0), // export
     (0x4937801E, One(691), 1), // number-arg-out-of-range
     (0x49BD2FA0, One(491), 0), // no-misused-spread noFunctionSpreadInObject
@@ -431,14 +435,14 @@ static INDEX: &[(u32, Texts, u8)] = &[
     (0x4CC7D5D8, One(705), 0), // prefer-array-flat-map
     (0x4CD9641B, One(871), 0), // throw-new-error
     (0x4CFCA4DC, One(23), 0), // arrow-body-style unexpectedEmptyBlock
-    (0x4CFFC774, of_the_fix(false, First, 0), 0), // no-deprecated-functions
+    (0x4CFFC774, fix_description(false, First, 0), 0), // no-deprecated-functions
     (0x4D020C34, One(740), 0), // prefer-ending-with-an-expect
     (0x4D9BF559, Three(254), 0), // no-anonymous-default-export
     (0x4DA2D1D3, One(817), 0), // prefer-to-have-been-called-times
     (0x4DCA515A, One(632), 1), // no-unnecessary-type-constraint unnecessaryConstraint
     (0x4DF5D5D7, One(223), 0), // max-nested-callbacks exceed
     (0x4E109504, Three(846), 0), // require-unicode-regexp requireUFlag
-    (0x4E226EF4, of_the_fix(false, First, 0), 0), // escape-case
+    (0x4E226EF4, fix_description(false, First, 0), 0), // escape-case
     (0x4E99BC4E, One(257), 0), // no-aria-hidden-on-focusable
     (0x4E9DB508, Three(269), 0), // no-async-endpoint-handlers
     (0x4EF6DB9D, One(217), 0), // max-classes-per-file maximumExceeded
@@ -454,7 +458,7 @@ static INDEX: &[(u32, Texts, u8)] = &[
     (0x52821B9E, Three(595), 0), // no-test-return-statement
     (0x52A4DF84, One(128), 0), // erasing-op
     (0x52AF321E, One(887), 0), // use-isnan caseNaN
-    (0x52B28245, of_the_fix(false, First, 0), 0), // curly unexpectedCurlyAfter
+    (0x52B28245, fix_description(false, First, 0), 0), // curly unexpectedCurlyAfter
     (0x52BC8235, One(911), 0), // warn-todo
     (0x53091EDD, One(125), 1), // double-comparisons
     (0x531E3EC8, One(660), 0), // no-useless-backreference disjunctive
@@ -476,13 +480,13 @@ static INDEX: &[(u32, Texts, u8)] = &[
     (0x5782557A, One(166), 0), // forward-ref-uses-ref
     (0x58A466ED, One(118), 0), // default-case missingDefaultCase
     (0x58DA34B4, One(227), 0), // media-has-caption
-    (0x590E840B, of_the_fix(false, First, 0), 0), // prefer-spy-on
+    (0x590E840B, fix_description(false, First, 0), 0), // prefer-spy-on
     (0x593BD524, One(589), 0), // no-string-refs
     (0x59B22FBB, One(251), 0), // no-alert unexpected
     (0x59F21520, One(719), 1), // prefer-called-once
     (0x5A2BB6EF, One(663), 0), // no-useless-catch unnecessaryCatchClause
     (0x5A2D5611, One(456), 0), // no-invalid-void-type invalidVoidForGeneric
-    (0x5A60BB58, of_the_fix(false, First, 0), 0), // no-useless-collection-argument
+    (0x5A60BB58, fix_description(false, First, 0), 0), // no-useless-collection-argument
     (0x5A80AFB1, One(824), 0), // radix invalidRadix
     (0x5A9E7553, One(487), 0), // no-misleading-character-class surrogatePairWithoutUFlag
     (0x5AF1595D, One(170), 0), // func-style declaration
@@ -507,7 +511,7 @@ static INDEX: &[(u32, Texts, u8)] = &[
     (0x5F1AAC0D, Three(515), 0), // no-new-func noFunctionConstructor
     (0x5FC22DE6, One(901), 0), // valid-expect-in-promise
     (0x60274EAA, One(159), 0), // exports-style
-    (0x6050AC87, of_the_fix(false, All, 0), 0), // array-type errorStringArray
+    (0x6050AC87, fix_description(false, All, 0), 0), // array-type errorStringArray
     (0x6064B3C1, One(633), 0), // no-unneeded-async-expect-function
     (0x6099C903, Three(3), 1), // adjacent-overload-signatures adjacentSignature
     (0x6182F6AE, One(130), 0), // error-message
@@ -531,15 +535,15 @@ static INDEX: &[(u32, Texts, u8)] = &[
     (0x67CED70F, One(226), 0), // max-params exceed
     (0x67D5835A, One(793), 0), // prefer-object-spread useLiteralMessage
     (0x680FDFE8, One(167), 0), // func-name-matching notMatchVariable
-    (0x686191F3, of_the_fix(false, First, 0), 0), // function-component-definition
+    (0x686191F3, fix_description(false, First, 0), 0), // function-component-definition
     (0x686EEEB2, One(331), 0), // no-css-tags
     (0x68A1A5BB, One(136), 0), // exhaustive-deps
     (0x68B710EF, One(676), 0), // no-useless-promise-resolve-reject
     (0x692FE0A5, One(562), 1), // no-restricted-imports pathWithCustomMessage
     (0x697C0C1E, One(137), 0), // exhaustive-deps
     (0x69ABD53A, One(207), 0), // jsx-no-literals
-    (0x6A29E837, of_the_fix(false, First, 0), 0), // prefer-math-trunc
-    (0x6B9BE531, of_the_fix(false, First, 0), 0), // prefer-prototype-methods
+    (0x6A29E837, fix_description(false, First, 0), 0), // prefer-math-trunc
+    (0x6B9BE531, fix_description(false, First, 0), 0), // prefer-prototype-methods
     (0x6B9CF3B0, One(181), 0), // hoisted-apis-on-top
     (0x6BCE2B27, Three(849), 0), // require-unicode-regexp requireVFlag
     (0x6BE5A143, One(902), 0), // valid-title
@@ -550,21 +554,21 @@ static INDEX: &[(u32, Texts, u8)] = &[
     (0x6D67D4DA, One(809), 0), // prefer-strict-equal
     (0x6D94AF0C, One(540), 0), // no-param-reassign assignmentToFunctionParamProp
     (0x6DA49EAF, One(49), 0), // ban-types
-    (0x6DE8A23F, of_the_fix(false, First, 0), 0), // no-empty-named-blocks
+    (0x6DE8A23F, fix_description(false, First, 0), 0), // no-empty-named-blocks
     (0x6E4044E9, One(604), 0), // no-this-in-sfc
-    (0x6E5C6A36, of_the_fix(false, First, 0), 0), // function-component-definition
+    (0x6E5C6A36, fix_description(false, First, 0), 0), // function-component-definition
     (0x6E682581, One(835), 1), // require-mock-type-parameters
     (0x6E72D2C7, One(821), 0), // preserve-caught-error missingCause
-    (0x6EB15CD7, of_the_fix(false, First, 0), 0), // no-null
+    (0x6EB15CD7, fix_description(false, First, 0), 0), // no-null
     (0x6F0AB04C, One(562), 1), // no-restricted-imports everythingWithAllowedImportNamePatternWithCustomMessage
-    (0x6F1DD394, of_the_fix(false, First, 0), 0), // object-shorthand expectedMethodShorthand
+    (0x6F1DD394, fix_description(false, First, 0), 0), // object-shorthand expectedMethodShorthand
     (0x6FF55E58, One(670), 0), // no-useless-default-assignment uselessUndefined
     (0x70393C91, One(231), 0), // missing-throw
     (0x7043F91E, One(464), 0), // no-labels unexpectedLabelInContinue
     (0x70558DB2, One(77), 0), // consistent-indexed-object-style preferIndexSignature
     (0x70962A56, One(729), 0), // prefer-date-now
     (0x70BF82FC, One(450), 1), // no-inner-declarations moveDeclToRoot
-    (0x710AF355, of_the_fix(false, First, 0), 0), // ban-tslint-comment commentDetected
+    (0x710AF355, fix_description(false, First, 0), 0), // ban-tslint-comment commentDetected
     (0x718431E5, One(95), 0), // consistent-type-imports noImportTypeAnnotations
     (0x71BF1211, One(591), 0), // no-styled-jsx-in-document
     (0x71C9BA62, Three(477), 0), // no-map-spread
@@ -574,8 +578,8 @@ static INDEX: &[(u32, Texts, u8)] = &[
     (0x7289F291, One(307), 0), // no-confusing-non-null-assertion confusingAssign
     (0x7316FAB1, One(530), 0), // no-noninteractive-element-interactions
     (0x7350C08B, One(891), 0), // valid-describe-callback
-    (0x7370F353, of_the_fix(false, First, 0), 0), // consistent-type-assertions as
-    (0x73ADA4DE, of_the_fix(false, First, 0), 0), // function-component-definition
+    (0x7370F353, fix_description(false, First, 0), 0), // consistent-type-assertions as
+    (0x73ADA4DE, fix_description(false, First, 0), 0), // function-component-definition
     (0x73BD2A09, One(888), 0), // use-isnan comparisonWithNaN
     (0x73DAE700, One(692), 0), // number-literal-case
     (0x73E689A2, One(177), 0), // grouped-accessor-pairs invalidOrder
@@ -605,12 +609,12 @@ static INDEX: &[(u32, Texts, u8)] = &[
     (0x7A5C1437, One(799), 0), // prefer-regexp-test
     (0x7A83C681, Three(86), 0), // consistent-type-assertions unexpectedArrayTypeAssertion
     (0x7B1FB820, One(830), 0), // require-array-join-separator
-    (0x7B6BF287, of_the_fix(false, All, 0), 0), // consistent-type-definitions interfaceOverType
+    (0x7B6BF287, fix_description(false, All, 0), 0), // consistent-type-definitions interfaceOverType
     (0x7B8E21D0, One(872), 0), // triple-slash-reference tripleSlashReference
     (0x7BA56C1B, One(640), 0), // no-unsafe-member-access unsafeThisMemberExpression
     (0x7BA57611, One(498), 0), // no-multi-str multilineString
     (0x7BE6F2F9, One(313), 0), // no-confusing-void-expression invalidVoidExprReturnLast
-    (0x7CBAD694, of_the_fix(false, First, 0), 0), // no-test-prefixes
+    (0x7CBAD694, fix_description(false, First, 0), 0), // no-test-prefixes
     (0x7CC8D36D, One(139), 0), // exhaustive-deps
     (0x7D500530, One(910), 0), // void-dom-elements-no-children
     (0x7D8088CC, One(739), 1), // prefer-each
@@ -619,21 +623,21 @@ static INDEX: &[(u32, Texts, u8)] = &[
     (0x7DA5DD05, One(66), 0), // class-literal-property-style preferFieldStyle
     (0x7DA8315F, One(453), 0), // no-interactive-element-to-noninteractive-role
     (0x7DEA67FA, Three(527), 0), // no-non-null-assertion noNonNull
-    (0x7DF33290, of_the_fix(false, First, 0), 0), // explicit-length-check
+    (0x7DF33290, fix_description(false, First, 0), 0), // explicit-length-check
     (0x7E03A6C9, One(406), 0), // no-extraneous-class onlyStatic
     (0x7E327F05, One(721), 1), // prefer-called-with
     (0x7E38A935, One(105), 0), // const-comparisons
     (0x7E3DED4F, One(186), 0), // iframe-has-title
     (0x7E5C6924, One(117), 1), // default
     (0x7F15A285, One(442), 0), // no-implied-eval impliedEval
-    (0x7F38C6CD, of_the_fix(false, First, 0), 0), // jsx-boolean-value
-    (0x7F86BC56, of_the_fix(false, First, 0), 0), // catch-error-name
+    (0x7F38C6CD, fix_description(false, First, 0), 0), // jsx-boolean-value
+    (0x7F86BC56, fix_description(false, First, 0), 0), // catch-error-name
     (0x7F943CCB, One(536), 0), // no-object-type-as-default-prop
     (0x801EF696, One(19), 1), // array-callback-return expectedNoReturnValue
     (0x80AC457B, One(50), 0), // ban-types
     (0x810DC9D9, One(206), 0), // jsx-no-new-object-as-prop
     (0x81181E35, One(140), 0), // exhaustive-deps
-    (0x81ECF042, of_the_fix(false, First, 0), 0), // no-unused-labels unused
+    (0x81ECF042, fix_description(false, First, 0), 0), // no-unused-labels unused
     (0x81F75B05, One(258), 0), // no-array-callback-reference
     (0x822664B6, One(909), 0), // vars-on-top top
     (0x823B2F2D, One(146), 0), // expect-expect
@@ -646,17 +650,17 @@ static INDEX: &[(u32, Texts, u8)] = &[
     (0x83451D02, One(59), 1), // button-has-type
     (0x835861AA, One(825), 0), // radix missingParameters
     (0x8360E1E4, One(395), 0), // no-exports-assign
-    (0x838A42D5, of_the_fix(false, First, 0), 0), // prefer-string-replace-all
-    (0x83E2D9AC, of_the_fix(false, First, 0), 0), // prefer-string-replace-all
+    (0x838A42D5, fix_description(false, First, 0), 0), // prefer-string-replace-all
+    (0x83E2D9AC, fix_description(false, First, 0), 0), // prefer-string-replace-all
     (0x841A2F88, One(148), 0), // explicit-member-accessibility missingAccessibility
     (0x84551859, One(64), 0), // checked-requires-onchange-or-readonly
     (0x8471437D, One(843), 0), // require-test-timeout
     (0x8484729E, One(508), 0), // no-nested-ternary
     (0x84AB82D0, One(804), 0), // prefer-snapshot-hint
-    (0x84BCD86A, of_the_fix(false, First, 0), 0), // sort-imports sortMembersAlphabetically
+    (0x84BCD86A, fix_description(false, First, 0), 0), // sort-imports sortMembersAlphabetically
     (0x84CC3F4B, One(534), 0), // no-obj-calls unexpectedCall
     (0x853D3736, One(173), 0), // google-font-display
-    (0x856525FC, of_the_fix(false, First, 0), 0), // curly missingCurlyAfterCondition
+    (0x856525FC, fix_description(false, First, 0), 0), // curly missingCurlyAfterCondition
     (0x85AF642F, Three(317), 2), // no-const-assign const
     (0x872D13BE, One(646), 1), // no-unsafe-negation unexpected
     (0x87322D5F, One(314), 1), // no-console limited
@@ -682,10 +686,10 @@ static INDEX: &[(u32, Texts, u8)] = &[
     (0x8ABD121A, One(137), 0), // exhaustive-deps
     (0x8AD4C18A, One(834), 0), // require-local-test-context-for-concurrent-snapshots
     (0x8AE6F07F, One(867), 0), // switch-case-braces
-    (0x8B6CA6B8, of_the_fix(false, First, 839), 0), // require-post-message-target-origin
-    (0x8B9EEF6D, of_the_fix(true, First, 0), 0), // jsx-no-useless-fragment
+    (0x8B6CA6B8, fix_description(false, First, 839), 0), // require-post-message-target-origin
+    (0x8B9EEF6D, fix_description(true, First, 0), 0), // jsx-no-useless-fragment
     (0x8BA4818B, One(106), 0), // const-comparisons
-    (0x8C9A3028, of_the_fix(false, First, 0), 0), // consistent-empty-array-spread
+    (0x8C9A3028, fix_description(false, First, 0), 0), // consistent-empty-array-spread
     (0x8D1408A7, Three(576), 7), // no-shadow noEnumShadow
     (0x8D4EEAAF, One(405), 0), // no-extraneous-class onlyConstructor
     (0x8D628DE3, One(387), 0), // no-empty-static-block unexpected
@@ -709,10 +713,10 @@ static INDEX: &[(u32, Texts, u8)] = &[
     (0x93E80588, Three(45), 1), // ban-ts-comment tsDirectiveCommentRequiresDescription
     (0x93FAA91F, One(674), 0), // no-useless-iterator-to-array
     (0x93FFFE35, Three(480), 0), // no-map-spread
-    (0x94116C9A, of_the_fix(false, First, 689), 4), // no-wrapper-object-types bannedClassType
+    (0x94116C9A, fix_description(false, First, 689), 4), // no-wrapper-object-types bannedClassType
     (0x94EDCB08, One(644), 0), // no-unsafe-finally unsafeUsage
     (0x95283D32, One(329), 0), // no-continue unexpected
-    (0x95474AF7, of_the_fix(false, First, 0), 0), // prefer-string-starts-ends-with
+    (0x95474AF7, fix_description(false, First, 0), 0), // prefer-string-starts-ends-with
     (0x9573D46D, One(174), 0), // google-font-preconnect
     (0x95E7A825, One(842), 0), // require-test-timeout
     (0x95FED5F5, One(672), 0), // no-useless-error-capture-stack-trace
@@ -720,12 +724,12 @@ static INDEX: &[(u32, Texts, u8)] = &[
     (0x97730A48, One(476), 0), // no-magic-numbers useConst
     (0x97CD5B21, One(229), 0), // method-signature-style errorProperty
     (0x98214428, One(795), 0), // prefer-promise-reject-errors rejectAnError
-    (0x984ACAFA, of_the_fix(false, First, 0), 0), // explicit-length-check
+    (0x984ACAFA, fix_description(false, First, 0), 0), // explicit-length-check
     (0x9860D0C0, One(734), 0), // prefer-dom-node-append
     (0x98B1D184, One(723), 0), // prefer-class-fields
     (0x98C42E09, One(648), 0), // no-unsafe-optional-chaining unsafeOptionalChain
     (0x98F58515, One(169), 0), // func-names unnamed
-    (0x98F68BCF, of_the_fix(false, First, 0), 0), // prefer-math-min-max
+    (0x98F68BCF, fix_description(false, First, 0), 0), // prefer-math-min-max
     (0x99B68D6E, One(684), 0), // no-void noVoid
     (0x99EBCD74, One(703), 0), // prefer-array-find
     (0x9A28EDC3, One(457), 0), // no-irregular-whitespace noIrregularWhitespace
@@ -742,17 +746,17 @@ static INDEX: &[(u32, Texts, u8)] = &[
     (0x9D0C9DCE, One(276), 0), // no-await-in-promise-methods
     (0x9DA05EA0, One(208), 0), // jsx-no-literals
     (0x9DC29154, One(219), 0), // max-depth tooDeeply
-    (0x9E01697E, of_the_fix(false, First, 0), 0), // jsx-boolean-value
+    (0x9E01697E, fix_description(false, First, 0), 0), // jsx-boolean-value
     (0x9E236B61, One(428), 0), // no-identical-title
     (0x9EC2FE79, One(892), 0), // valid-describe-callback
     (0x9FE1D3CE, One(674), 0), // no-useless-iterator-to-array
     (0xA01AC578, One(724), 0), // prefer-class-fields
     (0xA032BEA0, Three(368), 0), // no-duplicate-imports import
-    (0xA04674AC, of_the_fix(false, First, 0), 0), // prefer-dom-node-dataset
+    (0xA04674AC, fix_description(false, First, 0), 0), // prefer-dom-node-dataset
     (0xA087B343, One(427), 0), // no-html-link-for-pages
     (0xA09B127D, One(43), 1), // ban-ts-comment tsDirectiveComment
     (0xA0D015A0, One(416), 0), // no-focused-tests
-    (0xA0E2E977, of_the_fix(true, First, 0), 0), // jsx-curly-brace-presence
+    (0xA0E2E977, fix_description(true, First, 0), 0), // jsx-curly-brace-presence
     (0xA0E3B9A9, One(904), 0), // valid-title
     (0xA11E2B4B, One(107), 1), // const-comparisons
     (0xA1395355, One(265), 0), // no-array-sort
@@ -764,7 +768,7 @@ static INDEX: &[(u32, Texts, u8)] = &[
     (0xA21E96A6, One(905), 0), // valid-title
     (0xA239492E, Three(421), 3), // no-global-assign globalShouldNotBeModified
     (0xA24F6A04, One(562), 1), // no-restricted-imports patternAndEverythingWithCustomMessage
-    (0xA299A7EB, of_the_fix(false, First, 0), 0), // prefer-prototype-methods
+    (0xA299A7EB, fix_description(false, First, 0), 0), // prefer-prototype-methods
     (0xA2BB9DDF, Three(254), 0), // no-anonymous-default-export
     (0xA35BBFF4, One(535), 0), // no-object-constructor preferLiteral
     (0xA36125B5, One(228), 0), // method-signature-style errorMethod
@@ -784,7 +788,7 @@ static INDEX: &[(u32, Texts, u8)] = &[
     (0xA59D59AF, One(636), 0), // no-unreachable unreachableCode
     (0xA5DF2034, One(502), 0), // no-named-default
     (0xA63FC691, One(234), 1), // named
-    (0xA680EB4A, of_the_fix(false, First, 0), 0), // prefer-importing-jest-globals
+    (0xA680EB4A, fix_description(false, First, 0), 0), // prefer-importing-jest-globals
     (0xA6848C64, One(651), 1), // no-untyped-mock-factory
     (0xA6A3075C, One(154), 0), // explicit-timer-delay
     (0xA6C73740, One(179), 0), // handle-callback-err
@@ -796,7 +800,7 @@ static INDEX: &[(u32, Texts, u8)] = &[
     (0xA86EE8DB, One(666), 0), // no-useless-constructor noUselessConstructor
     (0xA88D6F0B, One(74), 1), // consistent-function-scoping
     (0xA8D87DAF, One(503), 0), // no-named-export
-    (0xA94E0D11, of_the_fix(false, First, 0), 0), // prefer-string-raw
+    (0xA94E0D11, fix_description(false, First, 0), 0), // prefer-string-raw
     (0xA95AEAAE, One(600), 0), // no-this-alias thisDestructure
     (0xA97AE8D9, One(764), 1), // prefer-function-type functionTypeOverCallableType
     (0xA9FE8F0B, One(751), 1), // prefer-expect-assertions
@@ -812,10 +816,10 @@ static INDEX: &[(u32, Texts, u8)] = &[
     (0xAB94B666, One(114), 0), // constructor-super missingAll
     (0xABA004B6, One(769), 0), // prefer-hooks-on-top
     (0xAC654D44, One(630), 0), // no-unnecessary-parameter-property-assignment unnecessaryAssign
-    (0xACC35EBF, of_the_fix(false, First, 0), 0), // no-test-prefixes
+    (0xACC35EBF, fix_description(false, First, 0), 0), // no-test-prefixes
     (0xAD4FC5F0, One(559), 0), // no-restricted-exports restrictedDefault
     (0xADA5BAA4, One(296), 0), // no-compare-neg-zero unexpected
-    (0xADB36002, of_the_fix(false, First, 0), 0), // object-shorthand expectedLiteralMethodLongform
+    (0xADB36002, fix_description(false, First, 0), 0), // object-shorthand expectedLiteralMethodLongform
     (0xADEA61F1, One(2), 0), // accessor-pairs missingSetterInClass
     (0xAE5D281B, Three(354), 0), // no-dupe-keys unexpected
     (0xAE60BBEC, One(71), 0), // consistent-date-clone
@@ -835,7 +839,7 @@ static INDEX: &[(u32, Texts, u8)] = &[
     (0xB107B85E, One(532), 0), // no-noninteractive-tabindex
     (0xB12E5352, One(63), 0), // capitalized-comments unexpectedUppercaseComment
     (0xB19ED905, One(252), 1), // no-alias-methods
-    (0xB1A814F2, of_the_fix(false, All, 0), 0), // array-type errorStringGenericSimple
+    (0xB1A814F2, fix_description(false, All, 0), 0), // array-type errorStringGenericSimple
     (0xB2443EEA, One(521), 0), // no-new-wrappers notAConstructor
     (0xB2C78415, One(413), 0), // no-floating-promises floatingUselessRejectionHandler
     (0xB2D20D3D, One(141), 0), // exhaustive-deps
@@ -847,7 +851,7 @@ static INDEX: &[(u32, Texts, u8)] = &[
     (0xB5B04ECD, One(142), 0), // exhaustive-deps
     (0xB5D340E7, One(374), 0), // no-duplicates
     (0xB63C4486, One(266), 0), // no-assign-module-variable
-    (0xB6495F3F, of_the_fix(false, First, 0), 0), // prefer-numeric-literals useLiteral
+    (0xB6495F3F, fix_description(false, First, 0), 0), // prefer-numeric-literals useLiteral
     (0xB6FEBA1F, One(261), 0), // no-array-index-key
     (0xB733DAF4, One(697), 0), // only-used-in-recursion
     (0xB7A2A3A3, One(537), 0), // no-page-custom-font
@@ -865,7 +869,7 @@ static INDEX: &[(u32, Texts, u8)] = &[
     (0xBACA7360, One(236), 0), // namespace
     (0xBAEB47B1, One(771), 0), // prefer-import-meta-properties
     (0xBAFB064B, One(324), 0), // no-constant-binary-expression constantShortCircuit
-    (0xBB8E23B2, of_the_fix(false, First, 0), 0), // no-typeof-undefined
+    (0xBB8E23B2, fix_description(false, First, 0), 0), // no-typeof-undefined
     (0xBB941C45, Three(51), 0), // ban-types
     (0xBBB60C82, One(814), 0), // prefer-ternary
     (0xBBDC9945, One(216), 0), // lang
@@ -878,19 +882,19 @@ static INDEX: &[(u32, Texts, u8)] = &[
     (0xBDAA4491, One(792), 0), // prefer-object-from-entries
     (0xBDFFAF10, One(894), 0), // valid-describe-callback
     (0xBE055C31, One(685), 0), // no-warning-comments unexpectedComment
-    (0xBE2456FB, of_the_fix(false, First, 0), 0), // operator-assignment replaced
+    (0xBE2456FB, fix_description(false, First, 0), 0), // operator-assignment replaced
     (0xBE70D594, One(308), 0), // no-confusing-non-null-assertion confusingEqual
     (0xBEAC061A, One(495), 0), // no-mocks-import
     (0xBEC89835, One(794), 0), // prefer-object-spread useSpreadMessage
     (0xBED5EED0, One(773), 0), // prefer-jest-mocked
     (0xBED66FB7, One(493), 0), // no-misused-spread noPromiseSpreadInObject
-    (0xBFCE433D, of_the_fix(false, First, 0), 0), // prefer-array-some
+    (0xBFCE433D, fix_description(false, First, 0), 0), // prefer-array-some
     (0xBFDF8F0D, One(44), 1), // ban-ts-comment tsDirectiveCommentDescriptionNotMatchPattern
     (0xBFDF9F72, One(115), 0), // constructor-super missingSome
     (0xC032897D, One(26), 0), // avoid-new
     (0xC0F0D78A, One(593), 0), // no-template-curly-in-string unexpectedTemplateExpression
     (0xC12E8574, One(79), 0), // consistent-template-literal-escape
-    (0xC145FD68, of_the_fix(false, First, 0), 0), // curly unexpectedCurlyAfterCondition
+    (0xC145FD68, fix_description(false, First, 0), 0), // curly unexpectedCurlyAfterCondition
     (0xC1BBA066, One(15), 1), // approx-constant
     (0xC1E275BC, One(605), 0), // no-throw-literal undef
     (0xC20FCE34, One(202), 0), // jsx-key
@@ -899,15 +903,15 @@ static INDEX: &[(u32, Texts, u8)] = &[
     (0xC316E67B, Three(621), 0), // no-unexpected-multiline property
     (0xC370CDF0, One(363), 0), // no-duplicate-head
     (0xC3C08E65, Three(624), 0), // no-unexpected-multiline taggedTemplate
-    (0xC434E826, of_the_fix(false, First, 0), 0), // prefer-to-be-truthy
+    (0xC434E826, fix_description(false, First, 0), 0), // prefer-to-be-truthy
     (0xC482FC9B, One(14), 0), // anchor-is-valid
     (0xC488C6EB, One(264), 0), // no-array-reverse
     (0xC4AF6C32, One(744), 0), // prefer-equality-matcher
-    (0xC4DE872E, of_the_fix(false, First, 0), 0), // curly missingCurlyAfter
+    (0xC4DE872E, fix_description(false, First, 0), 0), // curly missingCurlyAfter
     (0xC52F8ED0, One(610), 1), // no-typos
     (0xC5475EA0, One(48), 0), // ban-ts-comment tsIgnoreInsteadOfExpectError
     (0xC572B7B0, Three(351), 0), // no-dupe-else-if unexpected
-    (0xC5D7A5F7, of_the_fix(false, First, 0), 0), // object-shorthand expectedPropertyShorthand
+    (0xC5D7A5F7, fix_description(false, First, 0), 0), // object-shorthand expectedPropertyShorthand
     (0xC5DC7B37, One(566), 0), // no-return-in-finally
     (0xC5ECFCBE, One(547), 0), // no-proto unexpectedProto
     (0xC5F3BE7B, One(777), 0), // prefer-literal-enum-member notLiteralOrBitwiseExpression
@@ -932,7 +936,7 @@ static INDEX: &[(u32, Texts, u8)] = &[
     (0xCB71F493, One(575), 0), // no-setter-return returnsValue
     (0xCB8E4930, One(307), 0), // no-confusing-non-null-assertion confusingOperator
     (0xCBA8F125, Three(774), 1), // prefer-keyboard-event-key
-    (0xCBA9E28F, of_the_fix(false, First, 0), 0), // object-shorthand expectedMethodLongform
+    (0xCBA9E28F, fix_description(false, First, 0), 0), // object-shorthand expectedMethodLongform
     (0xCBB7DD3F, One(381), 0), // no-empty-character-class unexpected
     (0xCC066ACD, One(559), 0), // no-restricted-exports restrictedDefault
     (0xCC4B2F1B, One(639), 1), // no-unsafe
@@ -946,7 +950,7 @@ static INDEX: &[(u32, Texts, u8)] = &[
     (0xCF7B7BEF, One(598), 0), // no-thenable
     (0xCF8B528E, One(725), 0), // prefer-classlist-toggle
     (0xCFE5E9CF, One(465), 0), // no-length-as-slice-end
-    (0xD000C747, of_the_fix(false, First, 0), 0), // prefer-to-be-falsy
+    (0xD000C747, fix_description(false, First, 0), 0), // prefer-to-be-falsy
     (0xD0426592, One(32), 1), // bad-bitwise-operator
     (0xD047BF05, One(674), 0), // no-useless-iterator-to-array
     (0xD072A46A, One(280), 0), // no-base-to-string baseArrayJoin
@@ -959,7 +963,7 @@ static INDEX: &[(u32, Texts, u8)] = &[
     (0xD20E792C, One(770), 1), // prefer-import-in-mock
     (0xD359EFA2, One(78), 0), // consistent-indexed-object-style preferRecord
     (0xD39CB001, One(144), 0), // exhaustive-deps
-    (0xD3AA1A97, of_the_fix(false, First, 0), 0), // prefer-object-has-own useHasOwn
+    (0xD3AA1A97, fix_description(false, First, 0), 0), // prefer-object-has-own useHasOwn
     (0xD3CC24A7, One(488), 0), // no-misleading-character-class zwj
     (0xD3E94999, One(538), 0), // no-page-custom-font
     (0xD3FDEBA0, One(206), 0), // jsx-no-jsx-as-prop
@@ -971,7 +975,7 @@ static INDEX: &[(u32, Texts, u8)] = &[
     (0xD513A642, One(316), 0), // no-console-spaces
     (0xD5BEDB50, One(815), 0), // prefer-to-be-object
     (0xD6C0B474, One(594), 0), // no-ternary noTernaryOperator
-    (0xD6C97C3E, of_the_fix(true, First, 0), 0), // jsx-no-useless-fragment
+    (0xD6C97C3E, fix_description(true, First, 0), 0), // jsx-no-useless-fragment
     (0xD70F0A96, One(627), 0), // no-unnecessary-array-flat-depth
     (0xD885CC19, One(206), 0), // jsx-no-new-array-as-prop
     (0xD899622F, One(559), 0), // no-restricted-exports restrictedDefault
@@ -1020,7 +1024,7 @@ static INDEX: &[(u32, Texts, u8)] = &[
     (0xE306EC1A, One(494), 0), // no-misused-spread noStringSpread
     (0xE47FB7DA, One(470), 0), // no-loop-func unsafeRefs
     (0xE498E2B0, One(283), 0), // no-bitwise unexpected
-    (0xE4D0D7C0, of_the_fix(false, First, 0), 0), // no-hex-escape
+    (0xE4D0D7C0, fix_description(false, First, 0), 0), // no-hex-escape
     (0xE4EC54A3, Three(325), 0), // no-constant-condition unexpected
     (0xE4FCAE99, One(364), 0), // no-duplicate-hooks
     (0xE50EA630, One(655), 0), // no-unwanted-polyfillio
@@ -1031,7 +1035,7 @@ static INDEX: &[(u32, Texts, u8)] = &[
     (0xE706377D, One(665), 0), // no-useless-concat unexpectedConcat
     (0xE777912D, One(541), 0), // no-path-concat
     (0xE8EE39F8, One(562), 1), // no-restricted-imports importNameWithCustomMessage
-    (0xE92A065A, of_the_fix(false, First, 0), 0), // prefer-todo
+    (0xE92A065A, fix_description(false, First, 0), 0), // prefer-todo
     (0xE971B765, One(708), 0), // prefer-array-some
     (0xE97E09AF, One(342), 1), // no-distracting-elements
     (0xE99D5267, One(642), 0), // no-unsafe-enum-comparison mismatchedCase
@@ -1084,11 +1088,11 @@ static INDEX: &[(u32, Texts, u8)] = &[
     (0xF99C9D8A, One(900), 0), // valid-expect
     (0xF9B34A33, One(562), 1), // no-restricted-imports allowedImportNameWithCustomMessage
     (0xFA73A165, One(521), 0), // no-new-wrappers noConstructor
-    (0xFACAC847, of_the_fix(false, First, 0), 0), // prefer-modern-dom-apis
+    (0xFACAC847, fix_description(false, First, 0), 0), // prefer-modern-dom-apis
     (0xFB27139E, One(783), 0), // prefer-module
     (0xFB660D51, One(908), 0), // valid-title
     (0xFC42BC7F, One(437), 0), // no-immediate-mutation
-    (0xFC4F3444, of_the_fix(false, All, 0), 0), // array-type errorStringArraySimple
+    (0xFC4F3444, fix_description(false, All, 0), 0), // array-type errorStringArraySimple
     (0xFC854321, One(852), 0), // require-yield missingYield
     (0xFCA1907E, One(829), 0), // relative-url-style
     (0xFCD64168, One(192), 0), // inline-script-id
@@ -1105,7 +1109,7 @@ static INDEX: &[(u32, Texts, u8)] = &[
     (0xFF321DDB, One(659), 0), // no-useless-assignment unnecessaryAssignment
     (0xFF3DA765, One(886), 0), // uninvoked-array-callback
     (0xFF4FF175, One(730), 0), // prefer-default-export
-    (0xFF674826, of_the_fix(false, First, 0), 0), // jsx-boolean-value
+    (0xFF674826, fix_description(false, First, 0), 0), // jsx-boolean-value
     (0xFF73BE67, One(39), 1), // bad-object-literal-comparison
-    (0xFFE6404B, of_the_fix(false, First, 0), 0), // operator-assignment unexpected
+    (0xFFE6404B, fix_description(false, First, 0), 0), // operator-assignment unexpected
 ];

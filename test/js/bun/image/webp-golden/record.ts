@@ -1,4 +1,4 @@
-// Fills in the expected results of decode.json.gz and encode.json.gz, and makes intervals.webp, from the Bun that runs
+// Fills in the expected results of decode.json.gz and encode.json.gz, and makes the .webp files, from the Bun that runs
 // this script:
 //
 //   bun record.ts [--fresh] [--decode <directory of .webp files>]... [--encode <cases.jsonl>]...
@@ -137,4 +137,42 @@ await Bun.write(
   join(import.meta.dir, "intervals.webp"),
   await new Bun.Image(intervalImage()).webp({ lossless: true }).bytes(),
 );
+
+/**
+ * An image that is large enough for the lossless decoder to keep only its last rows. Each of the last 30 rows starts with a
+ * copy of pixels that are as far back as a backward reference reaches. The pixel in front of it keeps the encoder from
+ * starting the reference earlier. At this width, the encoders look that far back.
+ *
+ * The pixels differ in `channels`. With a `period`, the rest of the alpha plane repeats as many random levels, for which
+ * the encoder takes a palette and nothing else, and the decoder keeps bytes rather than pixels.
+ */
+function farCopies(channels: number[], period?: number) {
+  const [width, height, length, farthest] = [16383, 170, 40, (1 << 20) - 120];
+  const rgba = new Uint8Array(width * height * 4).fill(255);
+  let state = 1;
+  const next = () => (state = (Math.imul(state, 1103515245) + 12345) >>> 0) >>> 24;
+  if (period !== undefined) {
+    const levels = Array.from({ length: period }, next);
+    for (let i = 0; i < width * height; i++) rgba[i * 4 + 3] = levels[i % period];
+  }
+  for (let y = height - 30; y < height; y++) {
+    rgba[(y * width - 1) * 4 + 3] = 254;
+    for (let x = 0; x < length; x++) {
+      for (const channel of channels) {
+        const value = next();
+        for (const at of [y * width + x - farthest, y * width + x]) rgba[at * 4 + channel] = value;
+      }
+    }
+  }
+  return encodePng(width, height, rgba);
+}
+for (const [name, image, options] of [
+  ["window.webp", farCopies([0, 1, 2]), { lossless: true }],
+  ["window-alpha.webp", farCopies([3]), { quality: 20 }],
+  ["window-alpha-palette.webp", farCopies([3], 300), { quality: 20 }],
+] as const) {
+  const file = await new Bun.Image(image).webp(options).bytes();
+  await Bun.write(join(import.meta.dir, name), file);
+  console.log(name, await observeDecode(file));
+}
 console.log(`recorded ${decoded.length} decodes and ${encoded.length} encodes with Bun ${Bun.version}`);

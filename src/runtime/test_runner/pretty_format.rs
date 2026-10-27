@@ -2412,15 +2412,7 @@ impl<'a> Formatter<'a> {
 
                     macro_rules! print_typed_slice {
                         ($t:ty) => {{
-                            // SAFETY: `Unaligned<$t>` has align 1 and the same size as `$t`, so any
-                            // `*const u8` is a valid `*const Unaligned<$t>`; `slice` is the live
-                            // backing store of a JSC typed array whose elements are valid `$t`.
-                            let slice_with_type: &[bun_core::Unaligned<$t>] = unsafe {
-                                core::slice::from_raw_parts(
-                                    slice.as_ptr().cast::<bun_core::Unaligned<$t>>(),
-                                    slice.len() / core::mem::size_of::<$t>(),
-                                )
-                            };
+                            let slice_with_type = bun_core::Unaligned::<$t>::slice_of(slice);
                             self.indent += 1;
                             for el in slice_with_type {
                                 writer.write_all(b"\n");

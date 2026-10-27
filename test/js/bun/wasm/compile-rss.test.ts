@@ -3,14 +3,14 @@ import { bunEnv, bunExe, isASAN, isDebug, isMacOS } from "harness";
 import path from "node:path";
 
 // A burst is 6 compiles of one module, each result dropped. Idle wasm compiler threads that do not
-// release what they freed keep 38 to 54 MiB of it after a burst (8 threads), until they exit after
-// 10 s. With one release they keep 7 to 44 MiB: one release leaves the large blocks that a thread
-// used a moment ago. When they release again for those, RSS returns to about 4 MiB over where it
-// started, about 200 ms after the burst.
+// release what they freed keep 31 to 61 MiB of it after a burst (8 threads), until they exit after
+// 10 s. With one release they keep 5 to 48 MiB after every burst but the first: one release leaves
+// the large blocks that a thread used a moment ago. When they release again for those, RSS returns
+// to about 4 MiB over where it started, about 200 ms after the burst.
 const idleTargetMiB = 10;
 
-// On Darwin a later burst grows the footprint by 17 to 37 MiB, where the first one grows it by 62
-// to 64, so what it leaves says little about what the threads keep. Only the first burst runs
+// On Darwin a later burst grows the footprint by 10 to 41 MiB, where the first one grows it by 62
+// to 73, so what it leaves says little about what the threads keep. Only the first burst runs
 // there.
 const laterBursts = !isMacOS;
 

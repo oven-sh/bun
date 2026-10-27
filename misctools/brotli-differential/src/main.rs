@@ -382,19 +382,24 @@ fn bench_dec(path: &str, quality: u32, lgwin: u32, reps: usize) {
     let stream = c_compress(&data, &EncParams { params: vec![(1, quality), (2, lgwin)], dict: None });
     let mut out = vec![0u8; data.len() + 16];
     let mut best = [f64::MAX; 2];
+    let only = std::env::var("ONLY").unwrap_or_default();
     for _ in 0..reps {
-        let t = std::time::Instant::now();
-        let mut c = ffi::CDecoder::new();
-        let (r, _, made) = c.stream(&stream, &mut out);
-        assert!(r == 1 && made == data.len());
-        best[0] = best[0].min(t.elapsed().as_secs_f64());
-        let t = std::time::Instant::now();
-        let mut d = bun_brotli::Decoder::new();
-        let mut input: &[u8] = &stream;
-        let mut o: &mut [u8] = &mut out;
-        let r = d.decompress_stream(&mut input, &mut o);
-        assert!(r == bun_brotli::DecoderResult::Success);
-        best[1] = best[1].min(t.elapsed().as_secs_f64());
+        if only != "rust" {
+            let t = std::time::Instant::now();
+            let mut c = ffi::CDecoder::new();
+            let (r, _, made) = c.stream(&stream, &mut out);
+            assert!(r == 1 && made == data.len());
+            best[0] = best[0].min(t.elapsed().as_secs_f64());
+        }
+        if only != "c" {
+            let t = std::time::Instant::now();
+            let mut d = bun_brotli::Decoder::new();
+            let mut input: &[u8] = &stream;
+            let mut o: &mut [u8] = &mut out;
+            let r = d.decompress_stream(&mut input, &mut o);
+            assert!(r == bun_brotli::DecoderResult::Success);
+            best[1] = best[1].min(t.elapsed().as_secs_f64());
+        }
     }
     let mb = data.len() as f64 / 1e6;
     println!("{path} q{quality} w{lgwin}: {} -> {} bytes; C {:.1} MB/s, Rust {:.1} MB/s ({:.0}%)", data.len(), stream.len(), mb / best[0], mb / best[1], 100.0 * best[0] / best[1]);

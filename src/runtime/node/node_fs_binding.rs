@@ -50,17 +50,20 @@ where
 /// `Bindings(FunctionEnum).runAsync` for every operation except `.cp` /
 /// `.readdir` (those have bespoke entry points below).
 ///
-/// Without `callback` it is `node:fs/promises` and returns a promise.
+/// Without `callback` it is `node:fs/promises` and returns a promise. Out of
+/// line, so that the two forms of an operation share one copy.
 ///
 /// `create_task` is `async_::<FunctionName>::create` — passed in because the
 /// Windows path picks `UVFSRequest` for a handful of fds-only ops while
 /// everything else uses `AsyncFSTask`, and that choice is encoded in the
 /// `async_::*` type aliases rather than derivable from `F` alone.
+#[inline(never)]
 fn run_async<A: FsArgument>(
     this: &Binding,
     cx: &mut JsScope<'_>,
     callback: Option<JsLocal<'_, Callable>>,
-    from_js: impl FnOnce(&JSGlobalObject, &mut Parsing) -> JsResult<A>,
+    args: A,
+    parsing: Parsing,
     create_task: fn(
         &bun_jsc::JsThread<'_>,
         &Binding,
@@ -72,7 +75,7 @@ fn run_async<A: FsArgument>(
     let cx = cx.js_thread();
     let global = cx.global();
     let callback = callback.map(JsLocal::to_js);
-    let args = match parse_async_args(global, from_js)? {
+    let args = match parsed_async_args(global, args, parsing) {
         ParsedAsyncArgs::Args(args) => args,
         ParsedAsyncArgs::Rejected(error) => return reject_before_schedule(global, callback, error),
     };
@@ -86,13 +89,13 @@ enum ParsedAsyncArgs<A> {
     Rejected(JSValue),
 }
 
-/// Parses an async binding's arguments. A validation error is thrown, as node does for both arms.
-fn parse_async_args<A: FsArgument>(
+/// `args` was parsed with `parsing`, which is [`Flavor::Async`]. A validation error was thrown, as node does for both arms.
+fn parsed_async_args<A: FsArgument>(
     global: &JSGlobalObject,
-    from_js: impl FnOnce(&JSGlobalObject, &mut Parsing) -> JsResult<A>,
-) -> JsResult<ParsedAsyncArgs<A>> {
-    let mut parsing = Parsing::new(Flavor::Async);
-    let args = from_js(global, &mut parsing)?;
+    args: A,
+    mut parsing: Parsing,
+) -> ParsedAsyncArgs<A> {
+    debug_assert!(matches!(parsing.flavor, Flavor::Async));
     // SAFETY: parsed under [`Flavor::Async`]: its strings are thread-safe and its buffers pinned.
     let args = unsafe { ThreadIsolated::new(args) };
 
@@ -101,13 +104,13 @@ fn parse_async_args<A: FsArgument>(
             .signal()
             .and_then(|signal| signal.node_abort_error_if_aborted(global))
         {
-            return Ok(ParsedAsyncArgs::Rejected(abort_error));
+            return ParsedAsyncArgs::Rejected(abort_error);
         }
     }
     if let Some(err) = parsing.deferred_error.take() {
-        return Ok(ParsedAsyncArgs::Rejected((*err).to_error_instance(global)));
+        return ParsedAsyncArgs::Rejected((*err).to_error_instance(global));
     }
-    Ok(ParsedAsyncArgs::Args(args))
+    ParsedAsyncArgs::Args(args)
 }
 
 /// An error found before scheduling. The callback goes to nextTick bare: it asserts against an `AsyncContextFrame`.
@@ -157,9 +160,17 @@ impl Binding {
     ) -> JsResult<JSValue> {
         let cx = cx.js_thread();
         let global = cx.global();
-        let cp_args = match parse_async_args(global, |global, parsing| {
-            args::Cp::from_js(global, parsing, src, dest, recursive, error_on_exist, force)
-        })? {
+        let mut parsing = Parsing::new(Flavor::Async);
+        let cp_args = args::Cp::from_js(
+            global,
+            &mut parsing,
+            src,
+            dest,
+            recursive,
+            error_on_exist,
+            force,
+        )?;
+        let cp_args = match parsed_async_args(global, cp_args, parsing) {
             ParsedAsyncArgs::Args(args) => args,
             ParsedAsyncArgs::Rejected(error) => return reject_before_schedule(global, None, error),
         };
@@ -229,9 +240,9 @@ impl Binding {
         let cx = cx.js_thread();
         let global = cx.global();
         let callback = callback.map(JsLocal::to_js);
-        let rd_args = match parse_async_args(global, |global, parsing| {
-            args::Readdir::from_js(global, parsing, path, options)
-        })? {
+        let mut parsing = Parsing::new(Flavor::Async);
+        let rd_args = args::Readdir::from_js(global, &mut parsing, path, options)?;
+        let rd_args = match parsed_async_args(global, rd_args, parsing) {
             ParsedAsyncArgs::Args(args) => args,
             ParsedAsyncArgs::Rejected(error) => {
                 return reject_before_schedule(global, callback, error);
@@ -317,7 +328,9 @@ macro_rules! node_fs_bindings {
                     cx: &mut JsScope<'_>,
                     $( $arg: $Arg, )*
                 ) -> JsResult<JSValue> {
-                    run_async::<$Args>(self, cx, None, $from_js, async_::$F::create)
+                    let mut parsing = Parsing::new(Flavor::Async);
+                    let args: JsResult<$Args> = ($from_js)(cx.global(), &mut parsing);
+                    run_async(self, cx, None, args?, parsing, async_::$F::create)
                 }
                 pub(crate) fn $callback(
                     &self,
@@ -325,7 +338,9 @@ macro_rules! node_fs_bindings {
                     callback: JsLocal<'_, Callable>,
                     $( $arg: $Arg, )*
                 ) -> JsResult<()> {
-                    run_async::<$Args>(self, cx, Some(callback), $from_js, async_::$F::create)?;
+                    let mut parsing = Parsing::new(Flavor::Async);
+                    let args: JsResult<$Args> = ($from_js)(cx.global(), &mut parsing);
+                    run_async(self, cx, Some(callback), args?, parsing, async_::$F::create)?;
                     Ok(())
                 }
             )*

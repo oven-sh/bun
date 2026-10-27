@@ -692,6 +692,13 @@ impl<'a> Trees<'a> {
 
         let min_match = self.min_match;
         let bytes = near.read64(ip).ok_or(BUG)?;
+        let mut dict_root = match self.dms {
+            Some(dms) => {
+                let hasher = self.hasher.with_log(dms.ms.c_params.hash_log);
+                DictTree::root(dms, hasher.hash(bytes))?
+            }
+            None => 0,
+        };
         let window_low = self.lowest_match_index(curr);
         let mut mnum = 0u32;
         let mut best_length = min_match - 1;
@@ -761,7 +768,6 @@ impl<'a> Trees<'a> {
 
         // The farthest position any match refers to, which detects repetitive patterns.
         let mut match_end_idx = curr.wrapping_add(8 + 1);
-        let mut search_dms = self.dms.is_some();
         let nb_compares = self.walk(ip, bytes, match_low, |match_index, common| {
             if common.len > best_length {
                 if common.len > match_end_idx.wrapping_sub(match_index) {
@@ -779,20 +785,20 @@ impl<'a> Trees<'a> {
                 if common.len > ZSTD_OPT_NUM as u32 || common.match_is_smaller.is_none() {
                     // If they are equal, there is no telling which is smaller. Dropping it keeps the tree consistent.
                     // The dictionary is not to be searched either.
-                    search_dms = false;
+                    dict_root = 0;
                     return Ok(false);
                 }
             }
             Ok(true)
         })?;
 
-        if search_dms {
+        if dict_root != 0 && nb_compares != 0 {
             let mut found = Found {
                 mnum,
                 best_length,
                 match_end_idx,
             };
-            self.search_dms(matches, ip, bytes, window_low, nb_compares, &mut found)?;
+            self.search_dms(matches, ip, dict_root, window_low, nb_compares, &mut found)?;
             mnum = found.mnum;
             match_end_idx = found.match_end_idx;
         }
@@ -802,14 +808,14 @@ impl<'a> Trees<'a> {
         Ok(mnum)
     }
 
-    /// The end of `ZSTD_insertBtAndGetAllMatches`: goes on in the tree of the dictionary, for `nb_compares` positions at
-    /// most.
+    /// The end of `ZSTD_insertBtAndGetAllMatches`: goes on in the tree of the dictionary whose root is `root`, for
+    /// `nb_compares` positions at most.
     #[inline(never)]
     fn search_dms(
         &self,
         matches: &mut [Match],
         ip: u32,
-        bytes: u64,
+        root: u32,
         window_low: u32,
         nb_compares: u32,
         found: &mut Found,
@@ -818,8 +824,7 @@ impl<'a> Trees<'a> {
         let input = self.input;
         let curr = ip.wrapping_add(input.dict_limit);
         let tree = DictTree::new(dms, window_low)?;
-        let hash = self.hasher.with_log(dms.ms.c_params.hash_log).hash(bytes);
-        tree.walk(&input, ip, hash, nb_compares, |dict_match_index, common| {
+        tree.walk(&input, ip, root, nb_compares, |dict_match_index, common| {
             if common.len > found.best_length {
                 let match_index = dict_match_index.wrapping_add(tree.index_delta);
                 if common.len > found.match_end_idx.wrapping_sub(match_index) {

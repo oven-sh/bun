@@ -1036,7 +1036,7 @@ impl<'a> TreeInput<'a> {
     /// [`Near::compare`] wherever the match is, for what [`Near::compare_chunks`] leaves.
     #[cold]
     #[inline(never)]
-    fn compare_rest(&self, ip: u32, match_index: u32, from: u32) -> Result<Common> {
+    fn compare_rest(self, ip: u32, match_index: u32, from: u32) -> Result<Common> {
         // A position of the older segment, as one of the current segment, only makes sense with a length that brings
         // it there.
         if u64::from(match_index) + u64::from(from) >= u64::from(self.dict_limit) {
@@ -1140,6 +1140,7 @@ pub(crate) fn bt_walk(
 }
 
 /// The tree of a dictionary that a search goes on in. It is only read.
+#[derive(Clone, Copy)]
 pub(crate) struct DictTree<'a> {
     dms: DictMatchState<'a>,
     bt: &'a Nodes,
@@ -1177,12 +1178,28 @@ impl<'a> DictTree<'a> {
         })
     }
 
+    /// The root of the tree of `dms` for `hash`, or 0 if there is none, and a hint that the way down is about to start.
+    #[inline(always)]
+    pub(crate) fn root(dms: DictMatchState<'_>, hash: usize) -> Result<u32> {
+        let root = dms.ms.hash_table.at(hash)?;
+        if root <= dms.ms.window.low_limit {
+            return Ok(0);
+        }
+        let (bt, _) = dms.ms.chain_table.as_chunks();
+        bt_prefetch(bt, root);
+        prefetch_read(
+            dms.buf.as_ptr().wrapping_add(dms.pos_of(root)),
+            Locality::L1,
+        );
+        Ok(root)
+    }
+
     /// [`Near::compare`] for a match in the dictionary, for what [`Near::compare_chunks_with`] leaves. A match that
     /// reaches the end of the dictionary goes on at the start of the current segment.
     #[cold]
     #[inline(never)]
     fn compare_rest(
-        &self,
+        self,
         input: &TreeInput<'_>,
         ip: u32,
         dict_match_index: u32,
@@ -1205,24 +1222,29 @@ impl<'a> DictTree<'a> {
         Ok(Common::followed_by(len, match_byte, byte))
     }
 
-    /// Goes down the tree for the position `ip` of `input.near`, whose hash for the table of the dictionary is `hash`.
-    /// `visit` is called with each position that is met on the way, at most `nb_compares` of them, and what it has in
+    /// Goes down the tree for the position `ip` of `input.near`, from what [`Self::root`] returns for it. `visit` is called with each position that is met on the way, at most `nb_compares` of them, and what it has in
     /// common with `ip`, and returns whether to go on.
     #[inline(always)]
     pub(crate) fn walk(
         &self,
         input: &TreeInput<'_>,
         ip: u32,
-        hash: usize,
+        root: u32,
         mut nb_compares: u32,
         mut visit: impl FnMut(u32, Common) -> Result<bool>,
     ) -> Result<()> {
-        let mut dict_match_index = self.dms.ms.hash_table.at(hash)?;
+        let mut dict_match_index = root;
         let mut common_smaller = 0u32;
         let mut common_larger = 0u32;
         while nb_compares != 0 && dict_match_index > self.low_limit {
             let [smaller_child, larger_child] = bt_children(self.bt, dict_match_index);
             let from = common_smaller.min(common_larger);
+            // Whichever way it goes, the next step does not wait as long for memory.
+            for child in [smaller_child, larger_child] {
+                bt_prefetch(self.bt, child);
+                let pos = child.wrapping_sub(self.low_limit);
+                self.content.prefetch(pos.wrapping_add(from));
+            }
             let match_pos = dict_match_index.wrapping_sub(self.low_limit);
             let chunks = input
                 .near

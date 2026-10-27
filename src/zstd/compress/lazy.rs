@@ -92,6 +92,18 @@ impl<'a> Dubt<'a> {
     #[inline(always)]
     fn update(&mut self) -> Result<()> {
         let near = self.input.near;
+        if self.curr.saturating_sub(self.next_to_update) >= LONG_UPDATE {
+            let first = self.next_to_update..self.curr;
+            let dict_limit = self.input.dict_limit;
+            return update_many(
+                self.hash_table,
+                self.bt,
+                near,
+                self.hasher,
+                first,
+                dict_limit,
+            );
+        }
         for idx in self.next_to_update..self.curr {
             let bytes = near.read64(idx.wrapping_sub(self.input.dict_limit));
             let h = self.hasher.hash(bytes.ok_or(BUG)?);
@@ -117,26 +129,17 @@ impl<'a> Dubt<'a> {
             self.low_limit
         };
         if curr < self.input.dict_limit {
-            return self.insert_dubt1_in_dict(curr, nb_compares, bt_low, window_low);
+            return sort_dubt1_in_dict(
+                self.bt,
+                self.input,
+                self.low_limit,
+                curr,
+                nb_compares,
+                bt_low,
+                window_low,
+            );
         }
         sort_dubt1(self.bt, &self.input, curr, nb_compares, bt_low, window_low)
-    }
-
-    /// [`Self::insert_dubt1`] of a position of the older segment, which all that is before it is in too.
-    #[cold]
-    #[inline(never)]
-    fn insert_dubt1_in_dict(
-        &mut self,
-        curr: u32,
-        nb_compares: u32,
-        bt_low: u32,
-        window_low: u32,
-    ) -> Result<()> {
-        let no_dict = Prefix { buf: &[], base: 0 };
-        let dict = self.input.dict;
-        let dict_end = dict.pos_of(self.input.dict_limit);
-        let input = TreeInput::new(dict, no_dict, self.low_limit, dict_end)?;
-        sort_dubt1(self.bt, &input, curr, nb_compares, bt_low, window_low)
     }
 
     /// `ZSTD_DUBT_findBestMatch`, but for the dictionary. Returns the length of the best match, or 0, and how many more
@@ -226,43 +229,99 @@ impl<'a> Dubt<'a> {
 }
 
 impl Dubt<'_> {
-    /// `ZSTD_DUBT_findBetterDictMatch`: goes on, in the tree of the dictionary, with a search that found `found`. Returns
-    /// the length of the best match.
-    #[inline(never)]
-    fn find_better_dict_match(
-        &self,
-        dms: DictMatchState<'_>,
-        found: &DubtFound,
-        offset_ptr: &mut u32,
-    ) -> Result<u32> {
-        let curr = self.curr;
-        let tree = DictTree::new(dms, self.low_limit)?;
+    /// [`DictTree::root`] for the position that is searched for.
+    #[inline(always)]
+    fn dict_root(&self, dms: &DictMatchState<'_>) -> Result<u32> {
         let bytes = self.input.near.read64(self.ip).ok_or(BUG)?;
-        let hash = self.hasher.with_log(dms.ms.c_params.hash_log).hash(bytes);
-        let mut best_length = found.best_length;
-        tree.walk(
-            &self.input,
-            self.ip,
-            hash,
-            found.nb_compares,
-            |dict_match_index, common| {
-                if common.len > best_length {
-                    let match_index = dict_match_index.wrapping_add(tree.index_delta);
-                    if 4 * (common.len - best_length) as i32
-                        > highbit32(curr.wrapping_sub(match_index).wrapping_add(1)) as i32
-                            - highbit32(offset_ptr.wrapping_add(1)) as i32
-                    {
-                        best_length = common.len;
-                        *offset_ptr = offset_to_offbase(curr.wrapping_sub(match_index));
-                    }
-                    // At the end, there is no way to know which is smaller.
-                    return Ok(common.match_is_smaller.is_some());
-                }
-                Ok(true)
-            },
-        )?;
-        Ok(best_length)
+        let hasher = self.hasher.with_log(dms.ms.c_params.hash_log);
+        DictTree::root(*dms, hasher.hash(bytes))
     }
+}
+
+/// From that many positions on, [`Dubt::update`] leaves them to [`update_many`].
+const LONG_UPDATE: u32 = 32;
+
+/// `ZSTD_updateDUBT` of the indices `indices`, which are in `near`, whose first index is `dict_limit`. There are enough
+/// of them not to wait for memory.
+#[cold]
+#[inline(never)]
+fn update_many(
+    hash_table: &mut [u32],
+    bt: &mut Nodes,
+    near: Near<'_>,
+    hasher: Hasher,
+    indices: core::ops::Range<u32>,
+    dict_limit: u32,
+) -> Result<()> {
+    let first = indices.start.wrapping_sub(dict_limit) as usize;
+    let last = indices.end.wrapping_sub(dict_limit) as usize;
+    let bytes = near.bytes().sub(first..last + 7)?;
+    for (idx, bytes) in indices.zip(bytes.array_windows()) {
+        let h = hasher.hash(u64::from_le_bytes(*bytes));
+        let match_index = table_get(hash_table, h);
+        table_put(hash_table, h, idx);
+        bt_set_children(bt, idx, [match_index, ZSTD_DUBT_UNSORTED_MARK]);
+    }
+    Ok(())
+}
+
+/// `ZSTD_DUBT_findBetterDictMatch`: goes on, in the tree of the dictionary whose root is `root`, with a search for the
+/// position `ip` of `input.near` that found `found`. `low_limit` is `window.lowLimit`. Returns the length of the best
+/// match.
+#[inline(never)]
+fn find_better_dict_match(
+    dms: &DictMatchState<'_>,
+    input: TreeInput<'_>,
+    low_limit: u32,
+    ip: u32,
+    root: u32,
+    found: DubtFound,
+    offset_ptr: &mut u32,
+) -> Result<u32> {
+    let tree = DictTree::new(*dms, low_limit)?;
+    let curr = ip.wrapping_add(input.dict_limit);
+    let mut best_length = found.best_length;
+    tree.walk(
+        &input,
+        ip,
+        root,
+        found.nb_compares,
+        |dict_match_index, common| {
+            if common.len > best_length {
+                let match_index = dict_match_index.wrapping_add(tree.index_delta);
+                if 4 * (common.len - best_length) as i32
+                    > highbit32(curr.wrapping_sub(match_index).wrapping_add(1)) as i32
+                        - highbit32(offset_ptr.wrapping_add(1)) as i32
+                {
+                    best_length = common.len;
+                    *offset_ptr = offset_to_offbase(curr.wrapping_sub(match_index));
+                }
+                // At the end, there is no way to know which is smaller.
+                return Ok(common.match_is_smaller.is_some());
+            }
+            Ok(true)
+        },
+    )?;
+    Ok(best_length)
+}
+
+/// [`sort_dubt1`] of a position of the older segment of `input`, which starts at the index `low_limit`. All that is
+/// before the position is in that segment too.
+#[cold]
+#[inline(never)]
+fn sort_dubt1_in_dict(
+    bt: &mut Nodes,
+    input: TreeInput<'_>,
+    low_limit: u32,
+    curr: u32,
+    nb_compares: u32,
+    bt_low: u32,
+    window_low: u32,
+) -> Result<()> {
+    let no_dict = Prefix { buf: &[], base: 0 };
+    let dict_end = input.dict.pos_of(input.dict_limit);
+    let dict = TreeInput::new(input.dict, no_dict, low_limit, dict_end)?;
+    sort_dubt1(bt, &dict, curr, nb_compares, bt_low, window_low)
 }
 
 /// The body of `ZSTD_insertDUBT1`, for a position of `input.near`.
@@ -292,6 +351,7 @@ fn sort_dubt1(
 }
 
 /// What [`Dubt::find_best_match`] returns.
+#[derive(Clone, Copy)]
 struct DubtFound {
     best_length: u32,
     nb_compares: u32,
@@ -313,12 +373,24 @@ fn bt_search(
         return Ok(0);
     }
     let mut dubt = Dubt::new(ms, src, ip, i_limit, mls)?;
+    let dms = src.dms.as_ref().filter(|_| search_dms);
+    let dict_root = match dms {
+        Some(dms) => dubt.dict_root(dms)?,
+        None => 0,
+    };
     dubt.update()?;
     let found = dubt.find_best_match(off_base_ptr)?;
-    let best_length = if search_dms && found.nb_compares != 0 {
-        dubt.find_better_dict_match(src.dms.ok_or(BUG)?, &found, off_base_ptr)?
-    } else {
-        found.best_length
+    let best_length = match dms {
+        Some(dms) if dict_root != 0 && found.nb_compares != 0 => find_better_dict_match(
+            dms,
+            dubt.input,
+            dubt.low_limit,
+            dubt.ip,
+            dict_root,
+            found,
+            off_base_ptr,
+        )?,
+        _ => found.best_length,
     };
     ms.next_to_update = dubt.next_to_update;
     Ok(best_length as usize)

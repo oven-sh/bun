@@ -678,7 +678,7 @@ describe("bare :global", () => {
   itBundled("css-module/BareGlobalPseudoClassIsAnError", {
     files: {
       "/index.module.css": /* css */ `
-      :global .foo {
+      :global.foo {
         color: red;
       }
       `,
@@ -795,10 +795,35 @@ describe("css modules", () => {
       styles: { a: "a_H", g: "g_H" },
     },
     {
+      name: "a bare :global inside :host() ends at its closing parenthesis",
+      css: `:host(:global .dark) .title { color: red }`,
+      out: `:host(.dark) .title_H { color: red; }`,
+      styles: { title: "title_H" },
+    },
+    {
+      name: "the at-rules of Tailwind and Mantine stay in their class, so every exported class has a rule",
+      css: `.wrapper { @apply flex; & cite { @apply text-base; } } .hidden { @mixin larger-than $x { display: none } }`,
+      out: `.wrapper_H { @apply flex; } .wrapper_H cite { @apply text-base; } .hidden_H { @mixin larger-than $x { display: none } }`,
+      styles: { wrapper: "wrapper_H", hidden: "hidden_H" },
+      logs: ["@apply", "@apply", "@mixin"].map(name => `invalid @ rule encountered: '${name}'`),
+    },
+    {
       name: ":local() inside :global()",
       css: `:global(.g :local(.l)) .m { color: red }`,
       out: `.g .l_H .m_H { color: red; }`,
       styles: { l: "l_H", m: "m_H" },
+    },
+    {
+      name: "a bare :global or :local holds up to the next one or the comma",
+      css: `.c1 :local .c2 :global .c3 .c4 :local .c5, .c3 { color: red } :global .g > .h { color: blue }`,
+      out: `.c1_H .c2_H .c3 .c4 .c5_H, .c3_H { color: red; } .g > .h { color: #00f; }`,
+      styles: { c1: "c1_H", c2: "c2_H", c5: "c5_H", c3: "c3_H" },
+    },
+    {
+      name: "a bare :global ends with the selector list that holds it, and with the prelude",
+      css: `.a:not(:global .g) .b { color: red } :global .g { .n { color: blue } }`,
+      out: `.a_H:not(.g) .b_H { color: red; } .g .n_H { color: #00f; }`,
+      styles: { a: "a_H", b: "b_H", n: "n_H" },
     },
     {
       name: "view transition names and classes inside :global()",
@@ -820,8 +845,8 @@ describe("css modules", () => {
       out: `.b_H { margin: 0; } .a_H { color: red; }`,
       styles: { a: "a_H", b: "b_H" },
     },
-  ])("$name", async ({ css, out, styles }) => {
-    expect(await bundle({ "styles.module.css": css })).toEqual({ logs: [], css: out, styles });
+  ])("$name", async ({ css, out, styles, logs = [] }) => {
+    expect(await bundle({ "styles.module.css": css })).toEqual({ logs, css: out, styles });
   });
 
   const nested = '"composes" is not allowed inside nested selectors';
@@ -907,6 +932,26 @@ describe("css modules", () => {
       logs: [],
       css: `.k { composes: g from "./g.css"; } .j { composes: m from "./missing.css"; } .i { composes: 12px; }`,
       styles: {},
+    });
+  });
+});
+
+describe("bare :global and :local: what stays an error", () => {
+  describe.each([
+    ["NoSpaceBefore", ".a:global .b", "CSS module class: 'global' is currently not supported."],
+    ["NoSpaceAfterLocal", ":local.a", "CSS module class: 'local' is currently not supported."],
+    ["NothingAfter", ".a :global ", "Found a dangling combinator with no selector"],
+    ["FunctionAfterPart", ".a::part(x):global(.g)", "Token is not allowed in this state"],
+  ])("%s", (name, selector, error) => {
+    itBundled(`css-module/BareGlobal${name}IsAnError`, {
+      files: {
+        "/index.module.css": `${selector}{ color: red; }`,
+      },
+      outdir: "/out",
+      entryPoints: ["/index.module.css"],
+      bundleErrors: {
+        "/index.module.css": [error],
+      },
     });
   });
 });

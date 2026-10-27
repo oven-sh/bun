@@ -454,9 +454,14 @@ macro_rules! property_helper {
         // or if the value contains syntax that isn't supported across all targets,
         // preserve the previous value as a fallback.
         if $category != $this.category
-            || ($this.$field.is_some()
-                && $context.targets.browsers.is_some()
-                && !$value.is_compatible($context.targets.browsers.as_ref().unwrap()))
+            || $this
+                .$field
+                .as_ref()
+                .is_some_and(|held| match &$context.targets.browsers {
+                    Some(browsers) => !$value.is_compatible(browsers),
+                    // Only targets can tell which prefixed keyword is not needed.
+                    None => held.has_vendor_prefix() || $value.has_vendor_prefix(),
+                })
         {
             $this.flush($dest, $context);
         }
@@ -491,6 +496,7 @@ macro_rules! logical_unparsed_helper {
 /// out-of-line helper per value type instead of one expansion per property.
 trait PrefixedKeyword: Sized {
     fn unprefixed_keyword(&self) -> Option<(css::prefixes::Feature, fn(VendorPrefix) -> Self)>;
+    fn has_vendor_prefix(&self) -> bool;
 }
 
 macro_rules! impl_prefixed_keyword {
@@ -515,6 +521,14 @@ macro_rules! impl_prefixed_keyword {
                     }
                     _ => None,
                 }
+            }
+
+            fn has_vendor_prefix(&self) -> bool {
+                matches!(
+                    self,
+                    $ty::Stretch(vp) | $ty::MinContent(vp) | $ty::MaxContent(vp) | $ty::FitContent(vp)
+                        if *vp != VendorPrefix::NONE
+                )
             }
         }
     };

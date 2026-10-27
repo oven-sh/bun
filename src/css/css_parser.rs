@@ -2942,18 +2942,6 @@ where
             }
 
             let token = *tok;
-            // `*zoom: 1`, an IE 7 hack. No selector starts with `*` and a name: browsers skip it.
-            if matches!(token, Token::Delim(delim) if delim == u32::from(b'*'))
-                && P::parse_declarations(self.parser)
-                && self.input.input.tokenizer.is_ident_start()
-            {
-                let delimiters = Delimiters::SEMICOLON | Delimiters::CURLY_BRACKET;
-                let _ = self
-                    .input
-                    .parse_until_after(delimiters, Parser::parse_empty);
-                continue;
-            }
-
             let result: CssResult<I<P>> = if P::parse_qualified(self.parser) {
                 self.input.reset(&start);
                 let delimiters = if P::parse_declarations(self.parser) {
@@ -3082,6 +3070,8 @@ bitflags::bitflags! {
         const GLOBAL_SCOPE = 0b100;
         /// For `Bun.color`: clips a relative color or `color-mix()` that a style sheet keeps as written.
         const CLIP_COLORS = 0b1000;
+        /// Lengths and percentages have the range `[0,∞]`: a math function below zero means zero, a literal is invalid.
+        const NON_NEGATIVE = 0b10000;
     }
 }
 impl ParserOpts {
@@ -3104,6 +3094,11 @@ impl ParserOpts {
     #[inline]
     pub(crate) fn clip_colors(self) -> bool {
         self.contains(Self::CLIP_COLORS)
+    }
+
+    #[inline]
+    pub(crate) fn non_negative(self) -> bool {
+        self.contains(Self::NON_NEGATIVE)
     }
 }
 
@@ -3353,6 +3348,18 @@ impl<'a> Parser<'a> {
     ) -> CssResult<R> {
         let saved = self.flags;
         self.flags.insert(ParserOpts::RAW_URL_TOKENS);
+        let result = func(self);
+        self.flags = saved;
+        result
+    }
+
+    pub(crate) fn parse_with_non_negative<R>(
+        &mut self,
+        non_negative: bool,
+        func: impl FnOnce(&mut Parser) -> CssResult<R>,
+    ) -> CssResult<R> {
+        let saved = self.flags;
+        self.flags.set(ParserOpts::NON_NEGATIVE, non_negative);
         let result = func(self);
         self.flags = saved;
         result

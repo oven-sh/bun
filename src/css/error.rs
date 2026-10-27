@@ -358,8 +358,6 @@ pub enum SelectorError {
     invalid_pseudo_class_after_pseudo_element,
     /// An invalid pseudo class was encountered after a `-webkit-scrollbar` pseudo element.
     invalid_pseudo_class_after_webkit_scrollbar,
-    /// A `-webkit-scrollbar` state was encountered before a `-webkit-scrollbar` pseudo element.
-    invalid_pseudo_class_before_webkit_scrollbar,
     /// Invalid qualified name in attribute selector.
     invalid_qual_name_in_attr(Token),
     /// The current token is not allowed in this state.
@@ -399,9 +397,6 @@ impl fmt::Display for SelectorError {
             }
             Self::invalid_pseudo_class_after_webkit_scrollbar => {
                 f.write_str("Invalid pseudo-class after -webkit-scrollbar")
-            }
-            Self::invalid_pseudo_class_before_webkit_scrollbar => {
-                f.write_str("-webkit-scrollbar state found before -webkit-scrollbar pseudo-element")
             }
 
             Self::expected_namespace(s) => write!(f, "Expected namespace '{}'", bs(*s)),

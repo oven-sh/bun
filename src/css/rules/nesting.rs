@@ -46,19 +46,26 @@ pub struct NestedDeclarationsRule {
     pub(crate) loc: Location,
 }
 
+/// Where nesting is compiled away, prints the selectors of the enclosing style rule, for the
+/// block of a rule that has none of its own. False where there is no such style rule.
+pub(super) fn enclosing_selectors_to_css(dest: &mut Printer) -> Result<bool, PrintErr> {
+    // Read the `Copy` field directly: `Printer::context()` ties the borrow to `dest`.
+    let Some(ctx) = dest.ctx else {
+        return Ok(false);
+    };
+    let vendor_prefix = core::mem::replace(&mut dest.vendor_prefix, ctx.vendor_prefix);
+    dest.ctx = ctx.parent;
+    dest.nesting_expansions = 0;
+    let result = serialize_selector_list(ctx.selectors.v.slice(), dest, ctx.parent, false);
+    dest.ctx = Some(ctx);
+    dest.vendor_prefix = vendor_prefix;
+    result.map(|()| true)
+}
+
 impl NestedDeclarationsRule {
     pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        // Read the `Copy` field directly: `Printer::context()` ties the borrow to `dest`.
-        if let Some(ctx) = dest.ctx {
-            // Nesting is compiled away: a block under the enclosing selectors and their prefix.
-            let vendor_prefix = core::mem::replace(&mut dest.vendor_prefix, ctx.vendor_prefix);
-            dest.ctx = ctx.parent;
-            dest.nesting_expansions = 0;
-            let result = serialize_selector_list(ctx.selectors.v.slice(), dest, ctx.parent, false)
-                .and_then(|()| super::decl_block_to_css(&self.declarations, dest));
-            dest.ctx = Some(ctx);
-            dest.vendor_prefix = vendor_prefix;
-            return result;
+        if enclosing_selectors_to_css(dest)? {
+            return super::decl_block_to_css(&self.declarations, dest);
         }
         if dest.targets.should_compile_same(Feature::Nesting) {
             // `@scope` clears the context: what `&` prints there stands in.

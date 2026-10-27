@@ -57,7 +57,16 @@ macro_rules! css_rule_variants {
             pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
                 match self {
                     $( CssRule::$Variant(x) => x.to_css(dest), )+
-                    CssRule::Unknown(x) => x.to_css(dest),
+                    CssRule::Unknown(x) => {
+                        // `.a { @apply x }`: outside of its style rule it would apply to nothing.
+                        if nesting::enclosing_selectors_to_css(dest)? {
+                            return dest.block(|d| {
+                                d.newline()?;
+                                x.to_css(d)
+                            });
+                        }
+                        x.to_css(dest)
+                    }
                     // The only concrete `R` is `DefaultAtRule`, so erroring here
                     // is correct for every `R` that is actually instantiated. If
                     // another `R` is ever added, thread a `ToCss`-style bound
@@ -649,6 +658,10 @@ impl<R> CssRuleList<R> {
                         // See `Container` above: recurse so nested style rules
                         // count against the selector-expansion cap.
                         rl.rules.minify(context, parent_is_unused)?;
+                    }
+                    CssRule::Unknown(unknown) => {
+                        // Like nested declarations, it prints the enclosing selector list.
+                        context.charge_selector_expansion(1, unknown.loc)?;
                     }
                     CssRule::FontPaletteValues(_) => {}
                     CssRule::Property(_) => {}

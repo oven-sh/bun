@@ -24,6 +24,9 @@ impl Percentage {
         }
 
         let percent = input.expect_percentage()?;
+        if input.flags.non_negative() && percent < 0.0 {
+            return Err(input.new_custom_error(ParserError::invalid_value));
+        }
         Ok(Percentage { v: percent })
     }
 

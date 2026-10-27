@@ -212,6 +212,11 @@ impl SyntaxString {
 
                     input.reset(&state);
                 }
+
+                // An empty value is a missing one, which is an error for a typed syntax.
+                if input.is_exhausted() {
+                    return Err(input.new_error_for_next_token());
+                }
             }
         }
 

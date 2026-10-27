@@ -705,6 +705,14 @@ fn parse_compound_selector<Impl: BunSelectorImpl>(
 ) -> CResult<bool> {
     input.skip_whitespace();
 
+    if input.flags.css_modules() {
+        while let Ok(global) = input.try_parse(parse_scope_switch) {
+            input
+                .flags
+                .set(crate::css_parser::ParserOpts::GLOBAL_SCOPE, global);
+        }
+    }
+
     let mut empty: bool = true;
     if parser.is_nesting_allowed() && input.try_parse(|i| i.expect_delim(b'&')).is_ok() {
         state.insert(SelectorParsingState::AFTER_NESTING);
@@ -786,6 +794,7 @@ fn parse_compound_selector<Impl: BunSelectorImpl>(
                 if !p.is_unknown() {
                     state.insert(if p.is_element_backed() {
                         SelectorParsingState::AFTER_PART
+                            | SelectorParsingState::AFTER_ELEMENT_BACKED
                     } else {
                         SelectorParsingState::AFTER_PSEUDO_ELEMENT
                     });
@@ -806,7 +815,9 @@ fn parse_compound_selector<Impl: BunSelectorImpl>(
                     state.insert(SelectorParsingState::AFTER_VIEW_TRANSITION);
                 }
 
-                if matches!(p, PseudoElement::Selection(_)) {
+                if matches!(p, PseudoElement::Selection(_))
+                    && p.get_prefix() == css::VendorPrefix::NONE
+                {
                     state.insert(SelectorParsingState::AFTER_SELECTION);
                 }
 
@@ -816,6 +827,23 @@ fn parse_compound_selector<Impl: BunSelectorImpl>(
     }
 
     Ok(empty)
+}
+
+/// A bare `:global` or `:local` of a CSS module, with white space on both sides as in css-loader.
+/// It sets the scope of the names that follow, up to the end of the selector.
+fn parse_scope_switch(input: &mut CssParser) -> CResult<bool> {
+    input.expect_colon()?;
+    let name = *input.next_including_whitespace()?;
+    let after = *input.next_including_whitespace()?;
+    let (Token::Ident(name), Token::Whitespace(_)) = (name, after) else {
+        return Err(input.new_unexpected_token_error(after));
+    };
+    input.skip_whitespace();
+    crate::match_ignore_ascii_case! { name, {
+        b"global" => Ok(true),
+        b"local" => Ok(false),
+        _ => Err(input.new_unexpected_token_error(after)),
+    }}
 }
 
 fn parse_relative_selector<Impl: BunSelectorImpl>(
@@ -1102,10 +1130,6 @@ impl PseudoClass {
             self,
             P::Active | P::Hover | P::Focus | P::FocusWithin | P::FocusVisible
         )
-    }
-
-    pub(crate) fn is_valid_before_webkit_scrollbar(&self) -> bool {
-        !matches!(self, PseudoClass::WebkitScrollbar(_))
     }
 
     pub(crate) fn is_valid_after_webkit_scrollbar(&self) -> bool {
@@ -1537,7 +1561,7 @@ fn lookup_non_ts_pseudo_class(name: &[u8]) -> Option<PseudoClass> {
         b"single-button" => P::WebkitScrollbar(WS::SingleButton),
         b"no-button" => P::WebkitScrollbar(WS::NoButton),
         b"corner-present" => P::WebkitScrollbar(WS::CornerPresent),
-        // Unlike lightningcss, not a scrollbar state: WebKit and Blink take it in a plain compound.
+        // Not a scrollbar state: WebKit and Blink also take it after `::selection` and `::part()`.
         b"window-inactive" => P::WindowInactive,
         _ => return None,
     } })
@@ -1699,8 +1723,11 @@ impl<Impl: BunSelectorImpl> GenericSelectorList<Impl> {
             let selector =
                 input.parse_until_before(css::Delimiters::COMMA, |input2: &mut CssParser| {
                     let mut selector_state = original_state;
+                    // A bare `:global` ends with its selector.
+                    let flags = input2.flags;
                     let result =
                         parse_one(parser, input2, &mut selector_state, nesting_requirement);
+                    input2.flags = flags;
                     if selector_state.contains(SelectorParsingState::AFTER_NESTING) {
                         saw_nesting = true;
                     }
@@ -2628,6 +2655,8 @@ bitflags::bitflags! {
         const AFTER_VIEW_TRANSITION = 1 << 9;
         const AFTER_UNKNOWN_PSEUDO_ELEMENT = 1 << 10;
         const AFTER_SELECTION = 1 << 11;
+        /// Set with `AFTER_PART`, which alone lets unknown pseudo-classes and pseudo-elements through.
+        const AFTER_ELEMENT_BACKED = 1 << 12;
     }
 }
 
@@ -2662,8 +2691,9 @@ impl SelectorParsingState {
         !self.contains(Self::DISALLOW_COMBINATORS)
     }
 
-    pub(crate) fn allows_custom_functional_pseudo_classes(self) -> bool {
+    pub(crate) fn allows_custom_functional_pseudo_classes(self, is_valid_after_part: bool) -> bool {
         !self.intersects(Self::AFTER_SLOTTED | Self::AFTER_PSEUDO_ELEMENT)
+            && (is_valid_after_part || !self.contains(Self::AFTER_PART))
     }
 }
 
@@ -2783,7 +2813,6 @@ pub enum SelectorParseErrorKind {
     ExpectedBarInAttr(Token),
     EmptySelector,
     DanglingCombinator,
-    InvalidPseudoClassBeforeWebkitScrollbar,
     InvalidPseudoClassAfterWebkitScrollbar,
     InvalidPseudoClassAfterPseudoElement,
     MissingNestingSelector,
@@ -2822,9 +2851,6 @@ impl SelectorParseErrorKind {
             K::ExpectedBarInAttr(token) => S::expected_bar_in_attr(token),
             K::EmptySelector => S::empty_selector,
             K::DanglingCombinator => S::dangling_combinator,
-            K::InvalidPseudoClassBeforeWebkitScrollbar => {
-                S::invalid_pseudo_class_before_webkit_scrollbar
-            }
             K::InvalidPseudoClassAfterWebkitScrollbar => {
                 S::invalid_pseudo_class_after_webkit_scrollbar
             }
@@ -3270,7 +3296,9 @@ pub(crate) fn parse_one_simple_selector<Impl: BunSelectorImpl>(
                             PseudoElement::Before | PseudoElement::After
                         ))
                     );
-                if !state.allows_pseudos() && !is_marker_of_generated_content {
+                if is_marker_of_generated_content {
+                    state.insert(SelectorParsingState::AFTER_NON_STATEFUL_PSEUDO_ELEMENT);
+                } else if !state.allows_pseudos() {
                     return Err(input.new_custom_error(
                         SelectorParseErrorKind::InvalidState.into_default_parser_error(),
                     ));
@@ -3327,6 +3355,15 @@ pub(crate) fn parse_one_simple_selector<Impl: BunSelectorImpl>(
                 } else {
                     parser.parse_pseudo_element(location, name)?
                 };
+
+                if state.contains(SelectorParsingState::AFTER_ELEMENT_BACKED)
+                    && pseudo_element.is_unknown()
+                    && !name.starts_with(b"-webkit-")
+                {
+                    return Err(input.new_custom_error(
+                        SelectorParseErrorKind::InvalidState.into_default_parser_error(),
+                    ));
+                }
 
                 if state.contains(SelectorParsingState::AFTER_SLOTTED)
                     && pseudo_element.valid_after_slotted()
@@ -3574,7 +3611,11 @@ pub(crate) fn parse_inner_compound_selector<Impl: BunSelectorImpl>(
         child_state.insert(SelectorParsingState::DISALLOW_COMBINATORS);
         child_state
     };
-    let result = parse_selector::<Impl>(parser, input, &mut child_state, NestingRequirement::None)?;
+    // A bare `:global` ends with its selector.
+    let flags = input.flags;
+    let result = parse_selector::<Impl>(parser, input, &mut child_state, NestingRequirement::None);
+    input.flags = flags;
+    let result = result?;
     if child_state.contains(SelectorParsingState::AFTER_NESTING) {
         state.insert(SelectorParsingState::AFTER_NESTING);
     }
@@ -3621,7 +3662,12 @@ pub(crate) fn parse_functional_pseudo_class<Impl: BunSelectorImpl>(
         });
     }
 
-    if !state.allows_custom_functional_pseudo_classes() {
+    // Of these, `::part()` takes `:dir()`, `:lang()` and `:state()`.
+    let is_valid_after_part = crate::match_ignore_ascii_case! { name, {
+        b"dir" | b"lang" | b"state" => true,
+        _ => false,
+    }};
+    if !state.allows_custom_functional_pseudo_classes(is_valid_after_part) {
         return Err(input
             .new_custom_error(SelectorParseErrorKind::InvalidState.into_default_parser_error()));
     }
@@ -3687,9 +3733,17 @@ pub(crate) fn parse_simple_pseudo_class<Impl: BunSelectorImpl>(
                     .into_default_parser_error(),
             ));
         }
-    } else if !pseudo_class.is_valid_before_webkit_scrollbar() {
+    } else if state.intersects(match pseudo_class {
+        // Unlike lightningcss, valid in a plain compound, as in WebKit and Blink.
+        PseudoClass::WebkitScrollbar(_) => {
+            SelectorParsingState::AFTER_PART | SelectorParsingState::AFTER_UNKNOWN_PSEUDO_ELEMENT
+        }
+        PseudoClass::WindowInactive => SelectorParsingState::AFTER_UNKNOWN_PSEUDO_ELEMENT,
+        PseudoClass::Custom { .. } => SelectorParsingState::AFTER_ELEMENT_BACKED,
+        _ => SelectorParsingState::empty(),
+    }) {
         return Err(location.new_custom_error(
-            SelectorParseErrorKind::InvalidPseudoClassBeforeWebkitScrollbar
+            SelectorParseErrorKind::InvalidPseudoClassAfterPseudoElement
                 .into_default_parser_error(),
         ));
     }

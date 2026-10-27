@@ -36,12 +36,14 @@ test("CSS parser should handle extremely large floating-point values without cra
 .test-percentages {
   width: 999999999999999999%;
   height: -999999999999999999%;
+  top: -999999999999999999%;
 }
 
 /* Tests edge cases around integer boundaries */
 .test-boundaries {
   margin: 2147483647px; /* i32 max */
   padding: -2147483648px; /* i32 min */
+  right: -2147483648px;
   left: 4294967295px; /* u32 max */
 }
 
@@ -85,9 +87,9 @@ test("CSS parser should handle extremely large floating-point values without cra
   expect(normalizeCSSOutput(outputContent)).toMatchInlineSnapshot(`
     "/* [path] */
     .test-rounded-full {
-      border-radius: 3.40282e38px;
       width: 2147483600px;
-      height: -2147483600px;
+      height: -2147483649px;
+      border-radius: 3.40282e38px;
     }
 
     .test-negative {
@@ -105,13 +107,15 @@ test("CSS parser should handle extremely large floating-point values without cra
 
     .test-percentages {
       width: 1000000050000000000%;
-      height: -1000000050000000000%;
+      height: -999999999999999999%;
+      top: -1000000050000000000%;
     }
 
     .test-boundaries {
+      padding: -2147483648px;
       margin: 2147483600px;
-      padding: -2147483600px;
       left: 4294967300px;
+      right: -2147483600px;
     }
 
     .test-normal {

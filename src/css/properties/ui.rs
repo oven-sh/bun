@@ -18,6 +18,8 @@ bitflags::bitflags! {
         const DARK  = 1 << 1;
         /// Forbids the user agent from overriding the color scheme for the element.
         const ONLY  = 1 << 2;
+        /// `dark light`: the order is the author's preference.
+        const DARK_FIRST = 1 << 3;
     }
 }
 
@@ -49,7 +51,12 @@ impl ColorScheme {
                         res.insert(ColorScheme::ONLY);
                         return Ok(res);
                     }
-                    ColorSchemeKeyword::Light => res.insert(ColorScheme::LIGHT),
+                    ColorSchemeKeyword::Light => {
+                        if res.contains(ColorScheme::DARK) && !res.contains(ColorScheme::LIGHT) {
+                            res.insert(ColorScheme::DARK_FIRST);
+                        }
+                        res.insert(ColorScheme::LIGHT);
+                    }
                     ColorSchemeKeyword::Dark => res.insert(ColorScheme::DARK),
                 }
             }
@@ -68,14 +75,19 @@ impl ColorScheme {
             return dest.write_str("normal");
         }
 
+        let dark_first = self.contains(ColorScheme::DARK_FIRST);
+        if dark_first {
+            dest.write_str("dark ")?;
+        }
+
         if self.contains(ColorScheme::LIGHT) {
             dest.write_str("light")?;
-            if self.contains(ColorScheme::DARK) {
+            if self.contains(ColorScheme::DARK) && !dark_first {
                 dest.write_char(b' ')?;
             }
         }
 
-        if self.contains(ColorScheme::DARK) {
+        if self.contains(ColorScheme::DARK) && !dark_first {
             dest.write_str("dark")?;
         }
 

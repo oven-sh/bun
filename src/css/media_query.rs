@@ -894,6 +894,14 @@ impl<FeatureId: FeatureIdTrait> QueryFeature<FeatureId> {
                 name.to_css(dest)?;
                 dest.delim(b':', false)?;
                 value.to_css(dest)?;
+                // `-o-min-device-pixel-ratio: 2/1`: a feature we do not know may need both numbers.
+                if matches!(name, MediaFeatureName::Unknown(_))
+                    && let MediaFeatureValue::Ratio(ratio) = value
+                    && ratio.denominator == 1.0
+                {
+                    dest.delim(b'/', true)?;
+                    dest.write_char(b'1')?;
+                }
             }
             QueryFeature::Range {
                 name,
@@ -1414,24 +1422,18 @@ impl MediaList {
     pub fn parse(input: &mut Parser, options: &css::ParserOptions) -> Result<MediaList> {
         let mut media_queries: Vec<MediaQuery, ArenaPtr> =
             Vec::new_in(ArenaPtr::new(input.arena()));
-        if input.is_exhausted() {
-            return Ok(MediaList { media_queries });
-        }
         loop {
-            match input
-                .parse_until_before(css::Delimiters::COMMA, |i| MediaQuery::parse(i, options))
-            {
-                Ok(mq) => media_queries.push(mq),
-                // Browsers read a query that does not parse as `not all`.
-                Err(e) => {
-                    options.warn(&e);
-                    media_queries.push(MediaQuery {
-                        qualifier: Some(Qualifier::Not),
-                        media_type: MediaType::All,
-                        condition: None,
-                    });
+            // Only a blank query ends the list: `@media {}`, `@media screen, {}`.
+            let Some(mq) = input.parse_until_before(css::Delimiters::COMMA, |i| {
+                if i.is_exhausted() {
+                    return Ok(None);
                 }
-            }
+                MediaQuery::parse(i, options).map(Some)
+            })?
+            else {
+                break;
+            };
+            media_queries.push(mq);
 
             match input.next() {
                 Ok(tok) => {
@@ -1559,8 +1561,8 @@ fn parse_parens_or_function<C: QueryCondition>(
     options: &css::ParserOptions,
 ) -> Result<C> {
     use bun_core::strings;
-    input.skip_whitespace();
     let location = input.current_source_location();
+    input.skip_whitespace();
     let start = input.position();
     let t = *input.next()?;
     let result = match &t {

@@ -271,3 +271,8 @@ test("merged at-rules that hold only declarations stay far from the limit", () =
   const src = `.a,.b{${"@media print{color:red}@supports (x:y){}".repeat(512)}}`;
   expect(minifyTest(src, "", OLD_TARGETS)).toBe("@media print{.a,.b{color:red}}");
 });
+
+// Like a declaration in a nested at-rule, it prints the whole chain of enclosing selectors.
+test("unknown at-rules in a style rule count against the limit", () => {
+  expect(() => minifyTest(".a, .b {\n".repeat(15) + "@apply x;", "", OLD_TARGETS)).toThrow(LIMIT_ERROR);
+});

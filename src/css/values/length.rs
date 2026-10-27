@@ -5,7 +5,7 @@ use crate::targets::Browsers;
 use crate::values::angle::Angle;
 use crate::values::calc::{Calc, MathFunction};
 use crate::values::number::CSSNumber;
-use crate::values::percentage::{DimensionPercentage, Percentage};
+use crate::values::percentage::DimensionPercentage;
 use crate::values::protocol;
 
 use core::cmp::Ordering;
@@ -40,17 +40,9 @@ impl Default for LengthOrNumber {
 pub(crate) type LengthPercentage = DimensionPercentage<LengthValue>;
 
 impl LengthPercentage {
-    /// `<length-percentage [0,∞]>`: a math function below zero means zero, a literal is invalid.
+    /// `<length-percentage [0,∞]>`
     pub(crate) fn parse_non_negative(input: &mut Parser) -> CssResult<Self> {
-        let start = input.state();
-        let is_math = matches!(input.next(), Ok(Token::Function(_)));
-        input.reset(&start);
-        let clamp = |v: f32| if is_math && v < 0.0 { 0.0 } else { v };
-        Ok(match Self::parse(input)? {
-            Self::Dimension(length) => Self::Dimension(length.map_value(clamp)),
-            Self::Percentage(p) => Self::Percentage(Percentage { v: clamp(p.v) }),
-            calc => calc,
-        })
+        input.parse_with_non_negative(true, Self::parse)
     }
 }
 
@@ -284,7 +276,7 @@ impl LengthValue {
         let location = input.current_source_location();
         let token = *input.next()?;
         match &token {
-            Token::Dimension(dim) => {
+            Token::Dimension(dim) if !(input.flags.non_negative() && dim.num.value < 0.0) => {
                 if let Some(v) = Self::from_unit_ci(dim.unit, dim.num.value) {
                     return Ok(v);
                 }

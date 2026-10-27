@@ -5425,24 +5425,6 @@ describe("css tests", () => {
       }
     }
 
-    for (const clasz of [
-      "horizontal",
-      "vertical",
-      "decrement",
-      "increment",
-      "start",
-      "end",
-      "double-button",
-      "single-button",
-      "no-button",
-      "corner-present",
-    ]) {
-      error_test(
-        `:${clasz} {color: red}`,
-        "ParserError::SelectorError(SelectorError::InvalidPseudoClassBeforeWebKitScrollbar)",
-      );
-    }
-
     for (const element of [
       "-webkit-scrollbar",
       "-webkit-scrollbar-button",
@@ -6038,13 +6020,10 @@ describe("css tests", () => {
       "@media (not (color)) or (hover) { .foo { color: chartreuse }}",
       "@media (not (color)) or (hover){.foo{color:#7fff00}}",
     );
-    // The examples of Media Queries 4, section 3.2.
     minify_test(
       "@media (example, all,), speech { .foo { color: chartreuse }}",
       "@media (example, all,),speech{.foo{color:#7fff00}}",
     );
-    minify_test("@media &test, speech { .foo { color: chartreuse }}", "@media not all,speech{.foo{color:#7fff00}}");
-    minify_test("@media &test { .foo { color: chartreuse }}", "");
     minify_test(
       "@media (min-width: calc(200px + 40px)) { .foo { color: chartreuse }}",
       "@media (width>=240px){.foo{color:#7fff00}}",
@@ -6665,7 +6644,10 @@ describe("css tests", () => {
     `,
       `
       .foo {
-        transition: opacity 90ms ease-in-out .5s;
+        transition-property: opacity;
+        transition-duration: 90ms;
+        transition-delay: .5s;
+        transition-timing-function: ease-in-out;
       }
     `,
     );
@@ -6724,7 +6706,10 @@ describe("css tests", () => {
     `,
       `
       .foo {
-        transition: opacity 2s ease-in-out .5s, color 4s ease-in;
+        transition-property: opacity, color;
+        transition-duration: 2s, 4s;
+        transition-delay: .5s, 0s;
+        transition-timing-function: ease-in-out, ease-in;
       }
     `,
     );
@@ -6739,7 +6724,10 @@ describe("css tests", () => {
     `,
       `
       .foo {
-        transition: opacity 2s ease-in-out .5s, color 2s ease-in-out .5s;
+        transition-property: opacity, color;
+        transition-duration: 2s;
+        transition-delay: .5s;
+        transition-timing-function: ease-in-out;
       }
     `,
     );
@@ -6754,7 +6742,10 @@ describe("css tests", () => {
     `,
       `
       .foo {
-        transition: opacity 2s, color 4s, width 2s, height 4s;
+        transition-property: opacity, color, width, height;
+        transition-duration: 2s, 4s;
+        transition-delay: 0s;
+        transition-timing-function: ease;
       }
     `,
     );
@@ -6770,7 +6761,10 @@ describe("css tests", () => {
     `,
       `
       .foo {
-        -webkit-transition: opacity 2s ease-in-out .5s, color 4s ease-in;
+        -webkit-transition-property: opacity, color;
+        -webkit-transition-duration: 2s, 4s;
+        -webkit-transition-delay: .5s, 0s;
+        -webkit-transition-timing-function: ease-in-out, ease-in;
       }
     `,
     );
@@ -6794,9 +6788,18 @@ describe("css tests", () => {
     `,
       `
       .foo {
-        -webkit-transition: opacity 2s ease-in-out .5s, color 4s ease-in;
-        -moz-transition: opacity 2s ease-in-out .5s, color 4s ease-in;
-        transition: opacity 2s ease-in-out .5s, color 4s ease-in;
+        -webkit-transition-property: opacity, color;
+        -moz-transition-property: opacity, color;
+        transition-property: opacity, color;
+        -webkit-transition-duration: 2s, 4s;
+        -moz-transition-duration: 2s, 4s;
+        transition-duration: 2s, 4s;
+        -webkit-transition-delay: .5s, 0s;
+        -moz-transition-delay: .5s, 0s;
+        transition-delay: .5s, 0s;
+        -webkit-transition-timing-function: ease-in-out, ease-in;
+        -moz-transition-timing-function: ease-in-out, ease-in;
+        transition-timing-function: ease-in-out, ease-in;
       }
     `,
     );
@@ -6820,9 +6823,18 @@ describe("css tests", () => {
     `,
       `
       .foo {
-        -webkit-transition: opacity 2s ease-in-out .5s, color 4s ease-in;
-        -moz-transition: opacity 2s ease-in-out .5s, color 4s ease-in;
-        transition: opacity 2s ease-in-out .5s, color 4s ease-in;
+        -webkit-transition-property: opacity, color;
+        -moz-transition-property: opacity, color;
+        transition-property: opacity, color;
+        -webkit-transition-duration: 2s, 4s;
+        -moz-transition-duration: 2s, 4s;
+        transition-duration: 2s, 4s;
+        -webkit-transition-delay: .5s, 0s;
+        -moz-transition-delay: .5s, 0s;
+        transition-delay: .5s, 0s;
+        -webkit-transition-timing-function: ease-in-out, ease-in;
+        -moz-transition-timing-function: ease-in-out, ease-in;
+        transition-timing-function: ease-in-out, ease-in;
       }
     `,
     );
@@ -7648,10 +7660,10 @@ describe("css tests", () => {
     minify_test(".foo { color-scheme: light; }", ".foo{color-scheme:light}");
     minify_test(".foo { color-scheme: dark; }", ".foo{color-scheme:dark}");
     minify_test(".foo { color-scheme: light dark; }", ".foo{color-scheme:light dark}");
-    minify_test(".foo { color-scheme: dark light; }", ".foo{color-scheme:light dark}");
+    minify_test(".foo { color-scheme: dark light; }", ".foo{color-scheme:dark light}");
     minify_test(".foo { color-scheme: only light; }", ".foo{color-scheme:light only}");
     minify_test(".foo { color-scheme: only dark; }", ".foo{color-scheme:dark only}");
-    minify_test(".foo { color-scheme: dark light only; }", ".foo{color-scheme:light dark only}");
+    minify_test(".foo { color-scheme: dark light only; }", ".foo{color-scheme:dark light only}");
     minify_test(".foo { color-scheme: foo bar light; }", ".foo{color-scheme:light}");
     minify_test(".foo { color-scheme: only foo dark bar; }", ".foo{color-scheme:dark only}");
     prefix_test(
@@ -8365,28 +8377,6 @@ for (const source of ${JSON.stringify(cases.map(([source]) => source))}) console
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stdout.trim().split("\n")).toEqual(cases.map(([, expected]) => expected));
     expect(exitCode).toBe(0);
-  });
-});
-
-describe("IE star hack", () => {
-  // A browser skips `*zoom: 1` and keeps the rest of the rule.
-  minify_test(".a{color:red;*zoom:1;top:0}", ".a{color:red;top:0}");
-  minify_test(".cf { *zoom: 1 }", "");
-  minify_test(".a { *zoom: expression(this.runtimeStyle.zoom='1;'); color: red }", ".a{color:red}");
-  minify_test(".a { *display: inline !ie; color: red }", ".a{color:red}");
-  minify_test("@page { *zoom: 1; margin: 1px }", "@page{margin:1px}");
-  // It ends at a block too, as an invalid nested rule does.
-  minify_test(".a { *zoom:hover { color: red } top: 0 }", ".a{top:0}");
-
-  // A nested rule that starts with `*` is a rule.
-  minify_test(".a { *:hover { color: red } }", ".a{& :hover{color:red}}");
-  minify_test(".a { * { color: red } }", ".a{& *{color:red}}");
-
-  test.each([
-    [".a { * zoom: 1 }", "Unexpected end of input"],
-    ["@media screen { *zoom: 1; .a { color: red } }", "Unexpected token: zoom"],
-  ])("ERROR: %s", (source, error) => {
-    expect(() => minify_test_with_options(source, "")).toThrow(`parsing failed: ${error}`);
   });
 });
 
@@ -9460,10 +9450,11 @@ describe("@property", () => {
     '@property --c {\n  syntax: "<color>";\n  inherits: true;\n  initial-value: light-dark(red, #00f);\n}\n',
     { chrome: 80 << 16 },
   );
-  test('ERROR: @property --l{syntax:"<length>";inherits:true}', () => {
-    expect(() => minify_test_with_options('@property --l{syntax:"<length>";inherits:true}', "")).toThrow(
-      "Invalid at-rule body",
-    );
+  test.each([
+    ['@property --l{syntax:"<length>";inherits:true}', "Invalid at-rule body"],
+    ['@property --l{syntax:"<length>";inherits:true;initial-value:}', "Unexpected end of input"],
+  ])("ERROR: %s", (source, message) => {
+    expect(() => minify_test_with_options(source, "")).toThrow(message);
   });
 });
 
@@ -9585,37 +9576,48 @@ describe("media queries", () => {
     minify_test("@media ((color) and (hover) x){.a{top:1px}}", "@media ((color) and (hover) x){.a{top:1px}}");
   });
 
-  describe("a query that does not parse is `not all`", () => {
+  test.each([
+    ["@media &test{.a{top:1px}}", "Unexpected token: &"],
+    ["@media &test,speech{.a{top:1px}}", "Unexpected token: &"],
     // govuk-frontend: the escape takes the space, so the media type is `screen\0and`.
-    minify_test("@media screen\\0 and (min-width:40.0625em),print{.a{top:1px}}", "@media not all,print{.a{top:1px}}");
-    minify_test("@media screen\\0 and (min-width:40.0625em){.a{top:1px}}.b{top:2px}", ".b{top:2px}");
-    minify_test("@media screen and (color) or (hover),print{.a{top:1px}}", "@media not all,print{.a{top:1px}}");
-    minify_test("@media screen and {.a{top:1px}}.b{top:2px}", ".b{top:2px}");
-    minify_test("@media (min-width:0\\0) foo,print{.a{top:1px}}", "@media not all,print{.a{top:1px}}");
-    // An error token is not `<any-value>`.
-    minify_test("@media (a ] b),print{.a{top:1px}}", "@media not all,print{.a{top:1px}}");
-    test("ERROR: @media (min-width:0\\0 {.a{top:1px}}", () => {
-      expect(() => minify_test_with_options("@media (min-width:0\\0 {.a{top:1px}}", "")).toThrow("parsing failed");
-    });
+    ["@media screen\\0 and (min-width:40.0625em){.a{top:1px}}", "Unexpected token: ("],
+    ["@media screen and (color) or (hover){.a{top:1px}}", "Unexpected token: or"],
+    ["@media , screen{.a{top:1px}}", "Unexpected token: ,"],
+    // Something follows a kept block.
+    ["@media (min-width:0\\0) foo{.a{top:1px}}", "Unexpected token: foo"],
+    // An error token is not `<any-value>`, and the block has to be closed.
+    ["@media (a ] b){.a{top:1px}}", "Unexpected token: ]"],
+    ["@media (min-width:0\\0 {.a{top:1px}}", "Invalid media query"],
+    ["@media foo(bar {.a{top:1px}}", "Unexpected token: foo("],
+    // The query ends after `and`, `or` or `not`.
+    ["@media screen and {.a{top:1px}}", "Unexpected end of input"],
+    ["@media not {.a{top:1px}}", "Unexpected end of input"],
+    ["@media (color) or {.a{top:1px}}", "Unexpected end of input"],
+    ["@media (min-width:0\\0) and {.a{top:1px}}", "Unexpected end of input"],
+    ["@media screen, print and {.a{top:1px}}", "Unexpected end of input"],
+    ['@import "b.css" screen and;', "Unexpected end of input"],
+    ["@custom-media --m screen and;", "Unexpected end of input"],
+  ])("ERROR: %s", (source, message) => {
+    expect(() => minify_test_with_options(source, "")).toThrow(`parsing failed: ${message}`);
   });
+  // A blank query after a comma ends the list.
+  minify_test("@media screen, {.a{top:1px}}", "@media screen{.a{top:1px}}");
 
-  test("bun build warns about an invalid query, not about an unknown condition", async () => {
+  test("bun build keeps an unknown condition without a warning", async () => {
     using dir = tempDir("css-media-conditions", {
       "entry.css": `
         @import "./dep.css" screen and (min-width:0\\0);
         @media (max-width: $tablet) and (color), print { .a { color: red } }
         @container scroll-state(stuck: top) { .b { color: red } }
-        @media screen\\0 and (min-width: 40em), print { .c { color: red } }
       `,
       "dep.css": ".dep { color: red }",
     });
     const result = await Bun.build({ entrypoints: [join(String(dir), "entry.css")], minify: true });
-    expect(result.logs.map(log => [log.level, log.message])).toEqual([["warn", "unexpected token: ("]]);
+    expect(result.logs).toEqual([]);
     expect(await result.outputs[0].text()).toBe(
       "@media screen and (min-width:0\\0){.dep{color:red}}" +
         "@media (max-width: $tablet) and (color),print{.a{color:red}}" +
-        "@container scroll-state(stuck: top){.b{color:red}}" +
-        "@media not all,print{.c{color:red}}\n",
+        "@container scroll-state(stuck: top){.b{color:red}}\n",
     );
   });
 
@@ -10201,4 +10203,204 @@ describe("consecutive nested declarations are one rule", () => {
     expect(cssInternals.minifyTest(source, "")).toBe(kept);
     expect(cssInternals.minifyTest(source, "", { chrome: 80 << 16 })).toBe(compiled);
   });
+});
+
+describe("an unknown at-rule in a style rule", () => {
+  const compiled = (source: string) => cssInternals.minifyTest(source, "", { chrome: 80 << 16 });
+
+  describe("stays in a block of that rule when nesting is compiled away", () => {
+    test.each([
+      [".btn{@apply font-bold}", ".btn{@apply font-bold;}"],
+      [".btn{color:red;@apply font-bold}", ".btn{color:red}.btn{@apply font-bold;}"],
+      [".a,.b{@apply x}", ".a,.b{@apply x;}"],
+      [".p{.q{@apply x}}", ".p .q{@apply x;}"],
+      [".a{@media print{@apply x}}", "@media print{.a{@apply x;}}"],
+      // It keeps its place among the nested rules and the declarations.
+      [".a{.b{top:0}@apply x;color:red}", ".a .b{top:0}.a{@apply x;}.a{color:red}"],
+    ])("%s", (source, expected) => {
+      expect(compiled(source)).toBe(expected);
+    });
+
+    // Chrome ignores a nested `@position-try`. At the top level it would be live.
+    test.each(["@mixin larger-than $x{display:none}", "@position-try --p{top:0}"])("%s", atRule => {
+      expect(compiled(`.a{${atRule}}`)).toBe(`.a{${compiled(atRule)}}`);
+    });
+
+    test("in each vendor prefix pass", () => {
+      expect(cssInternals.minifyTest(".a:fullscreen{@apply x}", "", { safari: 14 << 16 })).toBe(
+        ".a:-webkit-full-screen{@apply x;}.a:fullscreen{@apply x;}",
+      );
+    });
+  });
+
+  minify_test(".a{@media print{@apply x}}", ".a{@media print{@apply x;}}");
+  test("@apply x; at the top level", () => {
+    expect(compiled("@media print{@apply x}")).toBe("@media print{@apply x;}");
+  });
+});
+
+describe("without targets nothing an author prefixed is dropped", () => {
+  minify_test(
+    "a{inline-size:-webkit-fill-available;inline-size:-moz-available}",
+    "a{inline-size:-webkit-fill-available;inline-size:-moz-available}",
+  );
+  minify_test(
+    "a{min-height:100vh;min-height:-webkit-fill-available}",
+    "a{min-height:100vh;min-height:-webkit-fill-available}",
+  );
+  minify_test(
+    "a{max-width:-webkit-max-content;max-width:-moz-max-content;max-width:max-content}",
+    "a{max-width:-webkit-max-content;max-width:-moz-max-content;max-width:max-content}",
+  );
+  minify_test("a{width:1px;width:2px}", "a{width:2px}");
+
+  minify_test(
+    "a{-webkit-box-align:center;-webkit-align-items:center}",
+    "a{-webkit-box-align:center;-webkit-align-items:center}",
+  );
+  minify_test(
+    "a{-webkit-box-align:center;-ms-flex-align:center;align-items:center;-webkit-box-pack:justify;-ms-flex-pack:justify;justify-content:space-between}",
+    "a{-webkit-box-align:center;-webkit-box-pack:justify;-ms-flex-pack:justify;-ms-flex-align:center;justify-content:space-between;align-items:center}",
+  );
+  minify_test(
+    "a{-ms-flex-item-align:center;align-self:center;-ms-flex-line-pack:center;align-content:center}",
+    "a{-ms-flex-item-align:center;-ms-flex-line-pack:center;align-content:center;align-self:center}",
+  );
+  // The targets say that nobody needs them.
+  prefix_test("a{-webkit-box-align:center;-ms-flex-align:center;align-items:center}", "a{align-items:center;}", {
+    chrome: 80 << 16,
+  });
+});
+
+describe("`transition` is printed only where the rule wrote one", () => {
+  minify_test(
+    "a{transition-delay:0s;transition-duration:1s;transition-property:all;transition-timing-function:ease}",
+    "a{transition-property:all;transition-duration:1s;transition-delay:0s;transition-timing-function:ease}",
+  );
+  minify_test("a{transition:all 1s;transition-duration:2s}", "a{transition:all 2s}");
+  minify_test(
+    "a{transition-property:all;transition-duration:1s;transition-delay:0s;transition-timing-function:ease;transition:opacity 2s}",
+    "a{transition:opacity 2s}",
+  );
+  // The copy the targets add needs its own duration.
+  prefix_test(
+    "a{transition-property:mask-image,opacity;transition-duration:1s,2s;transition-delay:0s;transition-timing-function:ease}",
+    "a{transition:-webkit-mask-image 1s,mask-image 1s,opacity 2s;}",
+    { chrome: 80 << 16 },
+  );
+});
+
+describe("color-scheme keeps the order of its schemes", () => {
+  minify_test("a{color-scheme:dark light}", "a{color-scheme:dark light}");
+  minify_test("a{color-scheme:only dark light}", "a{color-scheme:dark light only}");
+  minify_test(
+    "a{color-scheme:light dark}b{color-scheme:dark light}",
+    "a{color-scheme:light dark}b{color-scheme:dark light}",
+  );
+  prefix_test(
+    "a{color-scheme:dark light}",
+    `a{--buncss-light:initial;--buncss-dark: ;color-scheme:dark light;}
+     @media (prefers-color-scheme: dark){a{--buncss-light: ;--buncss-dark:initial;}}`,
+    { chrome: 90 << 16 },
+  );
+});
+
+describe("scrollbar pseudo-classes", () => {
+  // WebKit and Blink take them in a plain compound too.
+  describe.each([
+    "horizontal",
+    "vertical",
+    "decrement",
+    "increment",
+    "start",
+    "end",
+    "double-button",
+    "single-button",
+    "no-button",
+    "corner-present",
+  ])(":%s", state => {
+    minify_test(`a:${state} {color:red}`, `a:${state}{color:red}`);
+  });
+  minify_test("a:not(:horizontal) b {color:red}", "a:not(:horizontal) b{color:red}");
+  minify_test("a:is(:horizontal) {color:red}", "a:horizontal{color:red}");
+  minify_test("::-webkit-scrollbar { &:horizontal {color:red} }", "::-webkit-scrollbar{&:horizontal{color:red}}");
+  prefix_test("::-webkit-scrollbar { &:horizontal {color:red} }", "::-webkit-scrollbar:horizontal { color: red; }", {
+    chrome: 100 << 16,
+  });
+  minify_test("::part(x):window-inactive {color:red}", "::part(x):window-inactive{color:red}");
+  minify_test("::details-content:window-inactive {color:red}", "::details-content:window-inactive{color:red}");
+});
+
+describe("selectors that Chromium drops stay errors", () => {
+  const afterPseudoElement = "Invalid pseudo-class after pseudo-element";
+  const notAllowed = "Token is not allowed in this state";
+  test.each([
+    ["::part(x):horizontal", afterPseudoElement],
+    ["::details-content:horizontal", afterPseudoElement],
+    ["::-webkit-slider-thumb:horizontal", afterPseudoElement],
+    ["::before:horizontal", afterPseudoElement],
+    ["::-webkit-slider-thumb:window-inactive", afterPseudoElement],
+    ["::-moz-selection:window-inactive", afterPseudoElement],
+    ["::details-content:first-child", afterPseudoElement],
+    ["::picker(select):host", afterPseudoElement],
+    ["::picker(select):foo", afterPseudoElement],
+    ["::details-content::foo", notAllowed],
+    ["::details-content:foo(a)", notAllowed],
+    ["::part(x):foo(a)", notAllowed],
+    ["::before::marker:hover", notAllowed],
+  ])("ERROR: %s {color:red}", (selector, message) => {
+    expect(() => minify_test_with_options(`${selector} {color:red}`, "")).toThrow(message);
+  });
+  minify_test("::details-content::-webkit-foo {color:red}", "::details-content::-webkit-foo{color:red}");
+});
+
+describe("a ratio in a media feature that is not known", () => {
+  // Presto reads `2/1` and not `2`.
+  minify_test(
+    "@media (-o-min-device-pixel-ratio: 2/1) {a {color:red}}",
+    "@media (-o-min-device-pixel-ratio:2/1){a{color:red}}",
+  );
+  minify_test(
+    "@media (-o-min-device-pixel-ratio: 3/2) {a {color:red}}",
+    "@media (-o-min-device-pixel-ratio:3/2){a{color:red}}",
+  );
+  minify_test("@media (min-aspect-ratio: 2/1) {a {color:red}}", "@media (aspect-ratio>=2){a{color:red}}");
+});
+
+describe("sin(), cos() and tan() of a multiple of 90deg", () => {
+  minify_test("a{transform:rotate(atan(tan(90deg)))}", "a{transform:rotate(90deg)}");
+  minify_test("a{width:calc(tan(90deg)*1px)}", "a{width:3.40282e38px}");
+  minify_test("a{margin-left:calc(tan(-90deg)*1px)}", "a{margin-left:-3.40282e38px}");
+  minify_test("a{width:calc(100px*cos(90deg))}", "a{width:0}");
+  minify_test("a{margin-left:calc(100px*sin(.5turn))}", "a{margin-left:0}");
+  minify_test("a{opacity:tan(180deg)}", "a{opacity:0}");
+  minify_test("a{width:calc(100px*cos(60deg))}", "a{width:50px}");
+});
+
+describe("properties of the range [0,∞]", () => {
+  describe.each([
+    "padding",
+    "padding-left",
+    "padding-inline",
+    "gap",
+    "row-gap",
+    "font-size",
+    "border-width",
+    "border-left-width",
+    "outline-width",
+    "flex-basis",
+  ])("%s", property => {
+    minify_test(`a{${property}:calc(1px - 5px)}`, `a{${property}:0}`);
+    // A browser drops the negative literal and keeps the declaration before it.
+    minify_test(`a{${property}:1px;${property}:-5px}`, `a{${property}:1px;${property}:-5px}`);
+  });
+  minify_test("a{padding:calc(1% - 5%)}", "a{padding:0%}");
+  minify_test("a{padding:2px calc(1px - 5px)}", "a{padding:2px 0}");
+  minify_test("a{flex:1 1 calc(1px - 5px)}", "a{flex:1 1 0}");
+  minify_test("a{width:10px;width:-5px}", "a{width:10px;width:-5px}");
+  minify_test("a{border-radius:1px;border-radius:-5px}", "a{border-radius:1px;border-radius:-5px}");
+  // The arguments have no range.
+  minify_test("a{padding:calc(10px + calc(1px - 5px))}", "a{padding:6px}");
+  minify_test("a{padding:max(-5px,2px)}", "a{padding:2px}");
+  minify_test("a{margin:calc(1px - 5px)}", "a{margin:-4px}");
 });

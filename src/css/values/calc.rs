@@ -285,7 +285,19 @@ impl<V: CalcValue> Calc<V> {
     }
 
     pub fn parse(input: &mut css::Parser) -> CssResult<Self> {
-        Self::parse_with(input, &|_| None)
+        // The range of the property clamps the result, not the arguments.
+        let non_negative = input.flags.non_negative();
+        let calc = input.parse_with_non_negative(false, |i| Self::parse_with(i, &|_| None))?;
+        Ok(match calc {
+            Calc::Value(v) if non_negative && v.try_sign().is_some_and(|sign| sign < 0.0) => {
+                // `try_map` refuses a percentage, which is +0 when multiplied by -0.
+                let zero = v.try_map(|_| 0.0);
+                Calc::Value(Box::new(
+                    zero.unwrap_or_else(|| Self::mul_value_f32(*v, -0.0)),
+                ))
+            }
+            calc => calc,
+        })
     }
 
     pub(crate) fn parse_with(
@@ -706,10 +718,21 @@ impl<V: CalcValue> Calc<V> {
 
             let rad: f32 = 'rad: {
                 match &v {
-                    Calc::Value(angle) => {
-                        if !to_angle {
+                    Calc::Value(angle) if !to_angle => {
+                        let quarter_turns = angle.to_degrees() / 90.0;
+                        if quarter_turns.fract() != 0.0 {
                             break 'rad trig_fn(angle.to_radians());
                         }
+                        // The results are exact at a multiple of 90deg, which no f32 radian is.
+                        const SIN_COS: [(f32, f32); 4] =
+                            [(0.0, 1.0), (1.0, 0.0), (0.0, -1.0), (-1.0, 0.0)];
+                        let (sin, cos) = SIN_COS[quarter_turns.rem_euclid(4.0) as usize];
+                        break 'rad match trig_fn_kind {
+                            TrigFnKind::Sin => sin,
+                            TrigFnKind::Cos => cos,
+                            // `+ 0.0` turns the -0 of tan(180deg) into 0.
+                            _ => sin / cos + 0.0,
+                        };
                     }
                     Calc::Number(n) => break 'rad trig_fn(*n),
                     _ => {}

@@ -150,8 +150,7 @@ fn get_argv0(
     })
 }
 
-/// `Array.isArray`: an Array, an Array subclass, or a Proxy of one. `options.cmd` has always
-/// run a Proxy of an array, so its check keeps that.
+/// What `Array.isArray` accepts.
 fn is_array_or_proxy_of_array(mut value: JSValue) -> bool {
     loop {
         if value.is_array() {

@@ -22,14 +22,14 @@ use super::internal::{
 };
 use super::ldm;
 use super::params::{
-    CCtxParams, CParamMode, ZSTDMT_JOBLOG_MAX, ZSTDMT_JOBSIZE_MAX, ZSTDMT_JOBSIZE_MIN,
-    ZSTDMT_NBWORKERS_MAX, compress_bound, cycle_log, get_c_params_from_cctx_params,
+    CCtxParams, NO_LDM_PARAMS, ZSTDMT_JOBLOG_MAX, ZSTDMT_JOBSIZE_MAX, ZSTDMT_JOBSIZE_MIN,
+    ZSTDMT_NBWORKERS_MAX, compress_bound, cycle_log,
 };
 use super::stream::EndDirective;
+use crate::common::ZSTD_BLOCKSIZE_MAX;
 use crate::common::xxhash::Xxh64;
-use crate::common::{ZSTD_BLOCKSIZE_MAX, ZSTD_CONTENTSIZE_UNKNOWN};
 use crate::error::{ErrorCode, Result};
-use crate::util::SliceExt;
+use crate::util::{SliceExt, try_copy};
 use crate::{InBuffer, OutBuffer};
 
 /// `SerialState`: what has to see the input in order.
@@ -119,15 +119,6 @@ impl SerialState {
     }
 }
 
-const NO_LDM_PARAMS: LdmParams = LdmParams {
-    enable_ldm: ParamSwitch::Auto,
-    hash_log: 0,
-    bucket_size_log: 0,
-    min_match_length: 0,
-    hash_rate_log: 0,
-    window_log: 0,
-};
-
 /// What a job tells about itself.
 enum Progress {
     /// Some more output, and how much of the input is consumed by now.
@@ -180,7 +171,7 @@ fn compression_job(state: &mut WorkerState, job: &Job, cancelled: &AtomicBool) -
         capacity: job.max_nb_seq,
     };
     let mut serial = job.serial_in.recv().map_err(|_| ErrorCode::Generic)?;
-    let generated = if cancelled.load(Ordering::Relaxed) {
+    let generated = if cancelled.load(Ordering::SeqCst) {
         Err(ErrorCode::Generic)
     } else {
         reset_struct_table(&mut raw_seq_store.seq, job.max_nb_seq, false)
@@ -258,15 +249,12 @@ fn compression_job(state: &mut WorkerState, job: &Job, cancelled: &AtomicBool) -
     let nb_chunks = src_size.div_ceil(CHUNK_SIZE);
     let mut ip = job.prefix_size;
     let send = |dst: &[u8], consumed: usize| -> Result<()> {
-        let mut data = Vec::new();
-        data.try_reserve_exact(dst.len())
-            .map_err(|_| ErrorCode::MemoryAllocation)?;
-        data.extend_from_slice(dst);
+        let data = try_copy(dst)?;
         let _ = job.progress.send(Progress::Output { data, consumed });
         Ok(())
     };
     for chunk_nb in 1..nb_chunks {
-        if cancelled.load(Ordering::Relaxed) {
+        if cancelled.load(Ordering::SeqCst) {
             return Err(ErrorCode::Generic);
         }
         let chunk = Span {
@@ -493,7 +481,7 @@ impl MtCtx {
 
     /// `ZSTDMT_waitForAllJobsCompleted` and `ZSTDMT_releaseAllJobResources`, for a frame that is given up.
     fn abandon_jobs(&mut self) {
-        self.cancelled.store(true, Ordering::Relaxed);
+        self.cancelled.store(true, Ordering::SeqCst);
         for job in &mut self.jobs {
             while !job.is_complete() {
                 job.to_flush = 0;
@@ -501,7 +489,7 @@ impl MtCtx {
                 job.poll(true);
             }
         }
-        self.cancelled.store(false, Ordering::Relaxed);
+        self.cancelled.store(false, Ordering::SeqCst);
         self.jobs.clear();
         self.in_buff = Vec::new();
         self.in_buff_prefix_size = 0;
@@ -514,21 +502,6 @@ impl MtCtx {
         (self.serial.take())
             .and_then(|serial| serial.recv().ok())
             .unwrap_or_else(|| Box::new(SerialState::new()))
-    }
-
-    /// `ZSTDMT_updateCParams_whileCompressing`: for the jobs to come.
-    pub(crate) fn update_c_params_while_compressing(&mut self, cctx_params: &CCtxParams) {
-        // The window is in the frame header.
-        let saved_wlog = self.params.c_params.window_log;
-        self.params.compression_level = cctx_params.compression_level;
-        let mut c_params = get_c_params_from_cctx_params(
-            cctx_params,
-            ZSTD_CONTENTSIZE_UNKNOWN,
-            0,
-            CParamMode::NoAttachDict,
-        );
-        c_params.window_log = saved_wlog;
-        self.params.c_params = c_params;
     }
 
     /// `ZSTDMT_initCStream_internal`
@@ -614,11 +587,7 @@ impl MtCtx {
         self.in_buff_prefix_size = 0;
         if !end_frame {
             let new_prefix_size = src_size.min(self.target_prefix_size);
-            self.in_buff
-                .try_reserve_exact(new_prefix_size + self.target_section_size)
-                .map_err(|_| ErrorCode::MemoryAllocation)?;
-            self.in_buff
-                .extend_from_slice(data.sub(data.len() - new_prefix_size..)?);
+            self.in_buff = try_copy(data.sub(data.len() - new_prefix_size..)?)?;
             self.in_buff_prefix_size = new_prefix_size;
         } else {
             self.frame_ended = true;
@@ -766,11 +735,22 @@ impl MtCtx {
             // The C code moves the prefix to the start of the round buffer.
             self.round_buff_pos = self.in_buff_prefix_size;
         }
-        self.in_buff
-            .try_reserve_exact(self.target_section_size)
-            .map_err(|_| ErrorCode::MemoryAllocation)?;
         self.in_buff_ready = true;
         Ok(true)
+    }
+
+    /// Room for `more` input. A section that is flushed early is not to cost as much as a whole one.
+    fn reserve_input(&mut self, more: usize) -> Result<()> {
+        let needed = self.in_buff.len() + more;
+        if needed <= self.in_buff.capacity() {
+            return Ok(());
+        }
+        let capacity = needed
+            .max(self.in_buff.capacity().saturating_mul(2))
+            .min(self.in_buff_prefix_size + self.target_section_size);
+        self.in_buff
+            .try_reserve_exact(capacity - self.in_buff.len())
+            .map_err(|_| ErrorCode::MemoryAllocation)
     }
 
     /// `ZSTDMT_compressStream_generic`
@@ -790,6 +770,7 @@ impl MtCtx {
         if input.src.len() > input.pos && (self.in_buff_ready || self.try_get_input_range()?) {
             let filled = self.in_buff.len() - self.in_buff_prefix_size;
             let to_load = (input.src.len() - input.pos).min(self.target_section_size - filled);
+            self.reserve_input(to_load)?;
             self.in_buff
                 .extend_from_slice(input.src.span(input.pos, to_load)?);
             input.pos += to_load;
@@ -820,7 +801,7 @@ impl MtCtx {
 
 impl Drop for MtCtx {
     fn drop(&mut self) {
-        self.cancelled.store(true, Ordering::Relaxed);
+        self.cancelled.store(true, Ordering::SeqCst);
         for worker in self.workers.drain(..) {
             drop(worker.jobs);
             let _ = worker.thread.join();

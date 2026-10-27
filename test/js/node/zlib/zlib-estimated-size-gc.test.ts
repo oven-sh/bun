@@ -12,7 +12,7 @@ import zlib from "node:zlib";
 
 // estimateShallowMemoryUsageOf(cell) == sizeof(cell) + estimated_size(). `min`
 // is a floor below the per-mode footprint the constructor caches (brotli encode
-// 5143, brotli decode 855, zstd compress 5272, zstd decompress 95968).
+// 5143, brotli decode 855, zstd compress about 14000, zstd decompress about 35000).
 function checkFootprintStableAcrossClose(create: () => any, min: number) {
   const engine = create();
   engine.on("error", () => {});
@@ -34,11 +34,11 @@ test("brotli decompress: estimated size stays tied to construction mode across c
 });
 
 test("zstd compress: estimated size stays tied to construction mode across close", () => {
-  checkFootprintStableAcrossClose(() => zlib.createZstdCompress(), 5000);
+  checkFootprintStableAcrossClose(() => zlib.createZstdCompress(), 12000);
 });
 
 test("zstd decompress: estimated size stays tied to construction mode across close", () => {
-  checkFootprintStableAcrossClose(() => zlib.createZstdDecompress(), 90000);
+  checkFootprintStableAcrossClose(() => zlib.createZstdDecompress(), 30000);
 });
 
 // GC-safety guard: drive a write so the JS thread enters with_mut, then force

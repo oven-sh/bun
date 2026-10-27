@@ -5,15 +5,12 @@ use super::internal::{
     LdmParams, LdmState, MatchState, ParamSwitch, Prefix, RawSeq, RawSeqStore, SeqStore, Strategy,
     TableFillPurpose, count, count_2segments, offset_to_offbase,
 };
+use super::params::{ZSTD_HASHLOG_MAX, ZSTD_HASHLOG_MIN, ZSTD_LDM_BUCKETSIZELOG_MAX};
 use super::{compress_block, double_fast, fast};
 use crate::common::ZSTD_REP_NUM;
 use crate::common::xxhash::Xxh64;
 use crate::error::{ErrorCode, Result};
 use crate::util::{BUG, SliceExt};
-
-const ZSTD_HASHLOG_MIN: u32 = 6;
-const ZSTD_HASHLOG_MAX: u32 = 30;
-const ZSTD_LDM_BUCKETSIZELOG_MAX: u32 = 8;
 
 const LDM_BUCKET_SIZE_LOG: u32 = 4;
 const LDM_MIN_MATCH_LENGTH: u32 = 64;
@@ -177,7 +174,7 @@ pub(crate) fn adjust_parameters(params: &mut LdmParams, c_params: &CompressionPa
         params.hash_log = params
             .window_log
             .wrapping_sub(params.hash_rate_log)
-            .clamp(ZSTD_HASHLOG_MIN, ZSTD_HASHLOG_MAX);
+            .clamp(ZSTD_HASHLOG_MIN as u32, ZSTD_HASHLOG_MAX as u32);
     }
     if params.min_match_length == 0 {
         params.min_match_length = LDM_MIN_MATCH_LENGTH;
@@ -187,7 +184,7 @@ pub(crate) fn adjust_parameters(params: &mut LdmParams, c_params: &CompressionPa
     }
     if params.bucket_size_log == 0 {
         params.bucket_size_log =
-            (strategy as u32).clamp(LDM_BUCKET_SIZE_LOG, ZSTD_LDM_BUCKETSIZELOG_MAX);
+            (strategy as u32).clamp(LDM_BUCKET_SIZE_LOG, ZSTD_LDM_BUCKETSIZELOG_MAX as u32);
     }
     params.bucket_size_log = params.bucket_size_log.min(params.hash_log);
 }

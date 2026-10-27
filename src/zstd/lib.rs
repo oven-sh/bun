@@ -18,15 +18,13 @@ mod decompress;
 mod error;
 mod util;
 
-pub use common::{ZSTD_CONTENTSIZE_ERROR, ZSTD_CONTENTSIZE_UNKNOWN};
-pub use compress::params::{
-    ZSTD_CLEVEL_DEFAULT, ZSTD_MAX_CLEVEL, ZSTD_MIN_CLEVEL, c_param, compress_bound,
-};
+pub use common::ZSTD_CONTENTSIZE_ERROR;
+use common::ZSTD_CONTENTSIZE_UNKNOWN;
+pub use compress::params::c_param::COMPRESSION_LEVEL as ZSTD_C_COMPRESSION_LEVEL;
+pub use compress::params::{ZSTD_CLEVEL_DEFAULT, compress_bound};
 pub use compress::stream::{CCtx, EndDirective, compress};
-pub use decompress::{
-    DCtx, DDict, FrameExtent, ZSTD_D_WINDOW_LOG_MAX, decompress, find_decompressed_size,
-    find_frame_compressed_size, frame_extent, get_frame_content_size,
-};
+pub use decompress::{DCtx, DDict, FrameExtent, frame_extent, get_frame_content_size};
+use decompress::{decompress, find_decompressed_size};
 pub use error::ErrorCode;
 
 /// `ZSTD_inBuffer`
@@ -43,12 +41,58 @@ pub struct OutBuffer<'a> {
     pub pos: usize,
 }
 
-/// `ZSTD_ResetDirective`
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum ResetDirective {
-    SessionOnly = 1,
-    Parameters = 2,
-    SessionAndParameters = 3,
+/// Output at the end of a `Vec`. The codecs write to initialized memory only: this zeroes about as much as gets
+/// written, however many calls that takes and however much capacity the `Vec` has to spare.
+pub struct VecOutput<'a> {
+    vec: &'a mut Vec<u8>,
+    start: usize,
+    /// `vec[..filled]` is output, the rest of it zeros. The `Vec` is cut to it on drop.
+    filled: usize,
+}
+
+impl<'a> VecOutput<'a> {
+    pub fn new(vec: &'a mut Vec<u8>) -> Self {
+        let filled = vec.len();
+        Self {
+            vec,
+            start: filled,
+            filled,
+        }
+    }
+
+    /// The length of the `Vec` up to the end of the output.
+    pub fn filled(&self) -> usize {
+        self.filled
+    }
+
+    /// Room for one call of a codec: `step` bytes or more, but never past `limit`. [`advance`](Self::advance) by
+    /// what it wrote.
+    pub fn buffer(&mut self, step: usize, limit: usize) -> Result<OutBuffer<'_>, ErrorCode> {
+        let room = self.vec.len() - self.filled;
+        let budget = limit.saturating_sub(self.filled);
+        if room < step.min(budget) {
+            let more = step.max(self.filled - self.start).min(budget) - room;
+            self.vec
+                .try_reserve(more)
+                .map_err(|_| ErrorCode::MemoryAllocation)?;
+            self.vec.resize(self.vec.len() + more, 0);
+        }
+        let end = self.vec.len().min(limit);
+        Ok(OutBuffer {
+            dst: self.vec.get_mut(self.filled..end).unwrap_or_default(),
+            pos: 0,
+        })
+    }
+
+    pub fn advance(&mut self, written: usize) {
+        self.filled = (self.filled + written).min(self.vec.len());
+    }
+}
+
+impl Drop for VecOutput<'_> {
+    fn drop(&mut self) {
+        self.vec.truncate(self.filled);
+    }
 }
 
 // -----------------------------------
@@ -205,7 +249,7 @@ impl StreamingDecoder {
         matches!(self.state, State::Inflating)
     }
 
-    /// Append decompressed bytes to `out` (growing in 4096-byte steps) until `input` is
+    /// Append decompressed bytes to `out` (growing in steps of 4096 bytes or more) until `input` is
     /// consumed or `out.len()` reaches `max_output`. Returns the input bytes consumed.
     /// Returns `ShortRead` when more input is required and `is_done` is false.
     pub fn decompress(
@@ -220,6 +264,7 @@ impl StreamingDecoder {
         }
 
         let mut in_buf = InBuffer { src: input, pos: 0 };
+        let mut out = VecOutput::new(out);
         while matches!(self.state, State::Uninitialized | State::Inflating) {
             let next_in_len = input.len() - in_buf.pos;
 
@@ -235,27 +280,19 @@ impl StreamingDecoder {
                 return Ok(in_buf.pos);
             }
 
-            if out.len() >= max_output {
+            if out.filled() >= max_output {
                 return Ok(in_buf.pos);
             }
 
-            if out.try_reserve(STREAMING_OUTPUT_STEP).is_err() {
+            let Ok(mut out_buf) = out.buffer(STREAMING_OUTPUT_STEP, max_output) else {
                 self.state = State::Error;
                 return Err(ZstdError::OutOfMemory);
-            }
-            // The decoder writes to initialized memory only.
-            let written_before = out.len();
-            let window = (out.capacity() - written_before).min(max_output - written_before);
-            out.resize(written_before + window, 0);
-            let mut out_buf = OutBuffer {
-                dst: out.get_mut(written_before..).unwrap_or_default(),
-                pos: 0,
             };
             let read_before = in_buf.pos;
 
             let result = self.stream.decompress_stream(&mut out_buf, &mut in_buf);
-            let bytes_written = out_buf.pos;
-            out.truncate(written_before + bytes_written);
+            let (bytes_written, window) = (out_buf.pos, out_buf.dst.len());
+            out.advance(bytes_written);
             let remaining = match result {
                 Ok(remaining) => remaining,
                 Err(code) => {

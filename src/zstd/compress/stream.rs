@@ -3,16 +3,16 @@
 use std::sync::Arc;
 
 use super::cctx::{CDict, DictContentType, FrameCompressor, Input, Span};
-use super::internal::{BufId, Buffers, DictTableLoadMethod};
+use super::internal::{BufId, Buffers, CompressedBlockState, DictTableLoadMethod};
 use super::mt::MtCtx;
 use super::params::{
     CCtxParams, CParamMode, ZSTD_CLEVEL_DEFAULT, ZSTDMT_JOBSIZE_MIN, compress_bound,
-    get_c_params_from_cctx_params, get_params_internal, is_update_authorized,
-    resolve_block_splitter_mode, resolve_enable_ldm, resolve_row_match_finder_mode,
+    get_c_params_from_cctx_params, get_params_internal, resolve_block_splitter_mode,
+    resolve_enable_ldm, resolve_row_match_finder_mode,
 };
 use crate::error::{ErrorCode, Result};
-use crate::util::{SliceExt, try_zeroed};
-use crate::{InBuffer, OutBuffer, ResetDirective};
+use crate::util::{SliceExt, try_copy, try_zeroed};
+use crate::{InBuffer, OutBuffer};
 
 /// `ZSTD_EndDirective`
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -36,7 +36,6 @@ enum StreamStage {
 /// `ZSTD_CCtx`
 pub struct CCtx {
     frame: FrameCompressor,
-    c_params_changed: bool,
     requested_params: CCtxParams,
     in_buff: Vec<u8>,
     in_to_compress: usize,
@@ -63,8 +62,8 @@ impl Default for CCtx {
 /// `ZSTD_limitCopy`
 fn limit_copy(dst: &mut [u8], src: &[u8]) -> usize {
     let length = dst.len().min(src.len());
-    for (to, from) in dst.iter_mut().zip(src) {
-        *to = *from;
+    if let (Some(dst), Some(src)) = (dst.get_mut(..length), src.get(..length)) {
+        dst.copy_from_slice(src);
     }
     length
 }
@@ -78,11 +77,13 @@ fn resize_buffer(buffer: &mut Vec<u8>, len: usize) -> Result<()> {
 }
 
 impl CCtx {
+    /// How much memory a new one takes.
+    pub const SIZE: usize = size_of::<Self>() + 2 * size_of::<CompressedBlockState>();
+
     /// `ZSTD_createCCtx`
     pub fn new() -> Self {
         Self {
             frame: FrameCompressor::new(),
-            c_params_changed: false,
             requested_params: CCtxParams::new(ZSTD_CLEVEL_DEFAULT),
             in_buff: Vec::new(),
             in_to_compress: 0,
@@ -102,11 +103,7 @@ impl CCtx {
     /// `ZSTD_CCtx_setParameter`: `param` is one of [`super::params::c_param`].
     pub fn set_parameter(&mut self, param: i32, value: i32) -> Result<usize> {
         if self.stream_stage != StreamStage::Init {
-            if is_update_authorized(param) {
-                self.c_params_changed = true;
-            } else {
-                return Err(ErrorCode::StageWrong);
-            }
+            return Err(ErrorCode::StageWrong);
         }
         self.requested_params.set_parameter(param, value)
     }
@@ -120,52 +117,21 @@ impl CCtx {
         Ok(())
     }
 
-    /// `ZSTD_clearAllDicts`
-    fn clear_all_dicts(&mut self) {
-        self.local_dict = None;
-        self.cdict = None;
-    }
-
     /// `ZSTD_CCtx_loadDictionary`: every frame from now on starts with `dict`, of which a copy is kept. If it is empty,
     /// with no dictionary.
     pub fn load_dictionary(&mut self, dict: &[u8]) -> Result<()> {
         if self.stream_stage != StreamStage::Init {
             return Err(ErrorCode::StageWrong);
         }
-        self.clear_all_dicts();
-        if dict.is_empty() {
-            return Ok(());
-        }
-        let mut copy = Vec::new();
-        copy.try_reserve_exact(dict.len())
-            .map_err(|_| ErrorCode::MemoryAllocation)?;
-        copy.extend_from_slice(dict);
-        self.local_dict = Some(Arc::new(copy));
-        Ok(())
-    }
-
-    /// `ZSTD_CCtx_reset`
-    pub fn reset(&mut self, reset: ResetDirective) -> Result<()> {
-        if matches!(
-            reset,
-            ResetDirective::SessionOnly | ResetDirective::SessionAndParameters
-        ) {
-            self.stream_stage = StreamStage::Init;
-            self.frame.pledged_src_size_plus_one = 0;
-        }
-        if matches!(
-            reset,
-            ResetDirective::Parameters | ResetDirective::SessionAndParameters
-        ) {
-            if self.stream_stage != StreamStage::Init {
-                return Err(ErrorCode::StageWrong);
-            }
-            self.clear_all_dicts();
-            self.requested_params = CCtxParams::new(ZSTD_CLEVEL_DEFAULT);
+        self.local_dict = None;
+        self.cdict = None;
+        if !dict.is_empty() {
+            self.local_dict = Some(Arc::new(try_copy(dict)?));
         }
         Ok(())
     }
 
+    /// `ZSTD_CCtx_reset` with `ZSTD_reset_session_only`
     fn reset_session(&mut self) {
         self.stream_stage = StreamStage::Init;
         self.frame.pledged_src_size_plus_one = 0;
@@ -440,10 +406,6 @@ impl CCtx {
 
         if self.frame.applied_params.nb_workers > 0 {
             let mtctx = self.mtctx.as_mut().ok_or(ErrorCode::Generic)?;
-            if self.c_params_changed {
-                mtctx.update_c_params_while_compressing(&self.requested_params);
-                self.c_params_changed = false;
-            }
             loop {
                 let ipos = input.pos;
                 let opos = output.pos;
@@ -451,6 +413,7 @@ impl CCtx {
                 self.frame.consumed_src_size += (input.pos - ipos) as u64;
                 self.frame.produced_c_size += (output.pos - opos) as u64;
                 if flush_min.is_err() || (end_op == EndDirective::End && flush_min == Ok(0)) {
+                    // `reset_session`, but `mtctx` is borrowed.
                     self.stream_stage = StreamStage::Init;
                     self.frame.pledged_src_size_plus_one = 0;
                 }

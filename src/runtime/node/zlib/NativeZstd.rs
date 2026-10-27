@@ -92,9 +92,8 @@ mod _impl {
         /// Per-mode external-allocation footprint, fixed at construction.
         fn external_size_for(mode: NodeMode) -> usize {
             match mode {
-                // About what a new context takes, with the tables it allocates at once.
-                NodeMode::ZSTD_COMPRESS => 14 * 1024,
-                NodeMode::ZSTD_DECOMPRESS => 28 * 1024,
+                NodeMode::ZSTD_COMPRESS => CCtx::SIZE,
+                NodeMode::ZSTD_DECOMPRESS => DCtx::SIZE,
                 _ => 0,
             }
         }
@@ -398,7 +397,17 @@ mod _impl {
             };
             let result = match state {
                 State::Compress(state) => {
-                    state.compress_stream2(&mut output, &mut input, self.flush)
+                    let mut ret = state.compress_stream2(&mut output, &mut input, self.flush);
+                    // With workers, a call returns after any progress. `zlib.ts` takes room left in
+                    // the output to mean that all the input is consumed.
+                    while ret.is_ok()
+                        && self.flush == EndDirective::Continue
+                        && input.pos < input.src.len()
+                        && output.pos < output.dst.len()
+                    {
+                        ret = state.compress_stream2(&mut output, &mut input, self.flush);
+                    }
+                    ret
                 }
                 State::Decompress(state) => {
                     let mut ret = state.decompress_stream(&mut output, &mut input);

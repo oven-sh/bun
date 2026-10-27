@@ -18,7 +18,7 @@ pub(crate) const ZSTD_WINDOWLOG_MAX: u32 = 31;
 pub(crate) const ZSTD_WINDOWLOG_ABSOLUTEMIN: u32 = 10;
 pub(crate) const ZSTD_WINDOWLOG_LIMIT_DEFAULT: u32 = 27;
 
-pub const ZSTD_CONTENTSIZE_UNKNOWN: u64 = u64::MAX;
+pub(crate) const ZSTD_CONTENTSIZE_UNKNOWN: u64 = u64::MAX;
 pub const ZSTD_CONTENTSIZE_ERROR: u64 = u64::MAX - 1;
 
 pub(crate) const ZSTD_REP_NUM: usize = 3;
@@ -30,6 +30,9 @@ pub(crate) const ZSTD_DID_FIELD_SIZE: [usize; 4] = [0, 1, 2, 4];
 pub(crate) const ZSTD_FRAMEIDSIZE: usize = 4;
 pub(crate) const ZSTD_BLOCKHEADERSIZE: usize = 3;
 pub(crate) const ZSTD_FRAMEHEADERSIZE_MAX: usize = 18;
+
+pub(crate) const ZSTD_WORKSPACETOOLARGE_FACTOR: usize = 3;
+pub(crate) const ZSTD_WORKSPACETOOLARGE_MAXDURATION: usize = 128;
 
 /// `blockType_e`
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

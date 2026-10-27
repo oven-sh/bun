@@ -74,15 +74,6 @@ fn spare(out: &mut Vec<u8>, cap: usize) -> Result<&mut [core::mem::MaybeUninit<u
     Ok(&mut spare[..len])
 }
 
-/// [`spare`], as zeros at the end of `out`, for a codec that takes initialized memory. Returns where they start:
-/// the caller truncates `out` to what was written.
-fn zeroed_spare(out: &mut Vec<u8>, cap: usize) -> Result<usize, CodecError> {
-    let start = out.len();
-    let len = spare(out, cap)?.len();
-    out.resize(start + len, 0);
-    Ok(start)
-}
-
 fn zstd_error(code: zstd::ErrorCode, message: &'static str) -> CodecError {
     if code == zstd::ErrorCode::MemoryAllocation {
         CodecError::OutOfMemory
@@ -257,7 +248,7 @@ impl CompressionStreamCoder {
             (Format::Zstd, false) => {
                 let mut cctx = Box::new(zstd::CCtx::new());
                 if let Some(lvl) = level
-                    && (cctx.set_parameter(zstd::c_param::COMPRESSION_LEVEL, lvl)).is_err()
+                    && (cctx.set_parameter(zstd::ZSTD_C_COMPRESSION_LEVEL, lvl)).is_err()
                 {
                     return Err(CodecError::Message("failed to set zstd level"));
                 }
@@ -594,24 +585,20 @@ impl CompressionStreamCoder {
                 } else {
                     zstd::EndDirective::Continue
                 };
-                let mut input_buf = zstd::InBuffer {
-                    src: input,
-                    pos: 0,
-                };
+                let mut input_buf = zstd::InBuffer { src: input, pos: 0 };
+                let mut out = zstd::VecOutput::new(out);
                 loop {
-                    if out.len() >= cap {
+                    if out.filled() >= cap {
                         return Ok(Progress::More {
                             consumed: input_buf.pos,
                         });
                     }
-                    let start = zeroed_spare(out, cap)?;
-                    let mut output_buf = zstd::OutBuffer {
-                        dst: &mut out[start..],
-                        pos: 0,
-                    };
+                    let mut output_buf = out
+                        .buffer(CHUNK, cap)
+                        .map_err(|_| CodecError::OutOfMemory)?;
                     let remaining = cctx.compress_stream2(&mut output_buf, &mut input_buf, end);
                     let written = output_buf.pos;
-                    out.truncate(start + written);
+                    out.advance(written);
                     let remaining =
                         remaining.map_err(|code| zstd_error(code, "zstd encode failed"))?;
                     if input_buf.pos == input.len() && (!finish || remaining == 0) {
@@ -622,10 +609,8 @@ impl CompressionStreamCoder {
             Backend::ZstdDecode(dctx) => {
                 // After a frame completes, whatever follows must be another frame
                 // magic (see `zstd_head`); `step` has already re-attached a split one.
-                let mut input_buf = zstd::InBuffer {
-                    src: input,
-                    pos: 0,
-                };
+                let mut input_buf = zstd::InBuffer { src: input, pos: 0 };
+                let mut out = zstd::VecOutput::new(out);
                 loop {
                     if self.ended {
                         let rest = &input[input_buf.pos..];
@@ -644,23 +629,20 @@ impl CompressionStreamCoder {
                             self.zstd_head_len = head.len() as u8;
                             return Ok(Progress::Done);
                         }
-                        // Between frames, this cannot fail.
-                        let _ = dctx.reset(zstd::ResetDirective::SessionAndParameters);
+                        dctx.init_stream();
                         self.ended = false;
                     }
-                    if out.len() >= cap {
+                    if out.filled() >= cap {
                         return Ok(Progress::More {
                             consumed: input_buf.pos,
                         });
                     }
-                    let start = zeroed_spare(out, cap)?;
-                    let mut output_buf = zstd::OutBuffer {
-                        dst: &mut out[start..],
-                        pos: 0,
-                    };
+                    let mut output_buf = out
+                        .buffer(CHUNK, cap)
+                        .map_err(|_| CodecError::OutOfMemory)?;
                     let remaining = dctx.decompress_stream(&mut output_buf, &mut input_buf);
                     let (written, room) = (output_buf.pos, output_buf.dst.len());
-                    out.truncate(start + written);
+                    out.advance(written);
                     let remaining =
                         remaining.map_err(|code| zstd_error(code, "zstd decode failed"))?;
                     if remaining == 0 {

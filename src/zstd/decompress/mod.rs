@@ -17,26 +17,24 @@ use crate::common::{
     BlockType, LL_BITS, LL_FSE_LOG, MAX_LL, MAX_ML, MAX_OFF, ML_BITS, ML_FSE_LOG, OFF_FSE_LOG,
     REP_START_VALUE, WILDCOPY_OVERLENGTH, ZSTD_BLOCKHEADERSIZE, ZSTD_BLOCKSIZE_MAX,
     ZSTD_CONTENTSIZE_ERROR, ZSTD_CONTENTSIZE_UNKNOWN, ZSTD_DID_FIELD_SIZE, ZSTD_FCS_FIELD_SIZE,
-    ZSTD_FRAMEIDSIZE, ZSTD_MAGIC_DICTIONARY, ZSTD_MAGIC_SKIPPABLE_MASK, ZSTD_MAGIC_SKIPPABLE_START,
-    ZSTD_MAGICNUMBER, ZSTD_SKIPPABLEHEADERSIZE, ZSTD_WINDOWLOG_ABSOLUTEMIN,
-    ZSTD_WINDOWLOG_LIMIT_DEFAULT, ZSTD_WINDOWLOG_MAX,
+    ZSTD_FRAMEHEADERSIZE_MAX, ZSTD_FRAMEIDSIZE, ZSTD_MAGIC_DICTIONARY, ZSTD_MAGIC_SKIPPABLE_MASK,
+    ZSTD_MAGIC_SKIPPABLE_START, ZSTD_MAGICNUMBER, ZSTD_SKIPPABLEHEADERSIZE,
+    ZSTD_WINDOWLOG_ABSOLUTEMIN, ZSTD_WINDOWLOG_LIMIT_DEFAULT, ZSTD_WINDOWLOG_MAX,
+    ZSTD_WORKSPACETOOLARGE_FACTOR, ZSTD_WORKSPACETOOLARGE_MAXDURATION,
 };
 use crate::error::{ErrorCode, Result};
 use crate::util::{SliceExt, read_le16, read_le32, read_le64, try_copy, try_zeroed};
-use crate::{InBuffer, OutBuffer, ResetDirective};
+use crate::{InBuffer, OutBuffer};
 
 /// `ZSTD_FRAMEHEADERSIZE_PREFIX`: what it takes to know the size of a frame header.
 const FRAMEHEADERSIZE_PREFIX: usize = 5;
 const FRAMEHEADERSIZE_MIN: usize = 6;
-const FRAMEHEADERSIZE_MAX: usize = 18;
 
 const ZSTD_MAXWINDOWSIZE_DEFAULT: usize = (1 << ZSTD_WINDOWLOG_LIMIT_DEFAULT) + 1;
 const ZSTD_NO_FORWARD_PROGRESS_MAX: u32 = 16;
-const ZSTD_WORKSPACETOOLARGE_FACTOR: usize = 3;
-const ZSTD_WORKSPACETOOLARGE_MAXDURATION: usize = 128;
 
 /// `ZSTD_d_windowLogMax`, the only parameter of a [`DCtx`] that `node:zlib` can name.
-pub const ZSTD_D_WINDOW_LOG_MAX: i32 = 100;
+const ZSTD_D_WINDOW_LOG_MAX: i32 = 100;
 
 // ── frame headers ─────────────────────────────────────────────────────────
 
@@ -277,7 +275,7 @@ pub fn frame_extent(src: &[u8]) -> Result<FrameExtent> {
 }
 
 /// `ZSTD_findFrameCompressedSize`: how many bytes the frame at the start of `src` takes.
-pub fn find_frame_compressed_size(src: &[u8]) -> Result<usize> {
+fn find_frame_compressed_size(src: &[u8]) -> Result<usize> {
     match frame_extent(src)? {
         FrameExtent::Whole(size) => Ok(size),
         FrameExtent::AtLeast(_) => Err(ErrorCode::SrcSizeWrong),
@@ -286,7 +284,7 @@ pub fn find_frame_compressed_size(src: &[u8]) -> Result<usize> {
 
 /// `ZSTD_findDecompressedSize`: the size of all the frames of `src` together, once decompressed.
 /// [`ZSTD_CONTENTSIZE_UNKNOWN`] if one of them does not say, [`ZSTD_CONTENTSIZE_ERROR`] if `src` is not whole frames.
-pub fn find_decompressed_size(mut src: &[u8]) -> u64 {
+pub(crate) fn find_decompressed_size(mut src: &[u8]) -> u64 {
     let mut total_dst_size = 0u64;
     while src.len() >= FRAMEHEADERSIZE_PREFIX {
         let frame_src_size = if read_le32(src, 0).is_ok_and(is_skippable_magic) {
@@ -428,7 +426,7 @@ impl<'a> DDict<'a> {
     }
 
     /// What `ZSTD_DCtx_refPrefix` makes of `prefix`: content to refer to, whatever it starts with.
-    pub fn prefix(prefix: &'a [u8]) -> Result<Self> {
+    pub(crate) fn prefix(prefix: &'a [u8]) -> Result<Self> {
         Self::new(Cow::Borrowed(prefix), DictContentType::RawContent)
     }
 
@@ -503,7 +501,7 @@ struct DState {
     /// The last byte of a frame's input is held back until its output is flushed.
     hostage_byte: bool,
     no_forward_progress: u32,
-    header_buffer: [u8; FRAMEHEADERSIZE_MAX],
+    header_buffer: [u8; ZSTD_FRAMEHEADERSIZE_MAX],
     oversized_duration: usize,
 }
 
@@ -521,6 +519,9 @@ impl Default for DCtx {
 }
 
 impl DCtx {
+    /// How much memory a new one takes.
+    pub const SIZE: usize = size_of::<Self>() + size_of::<EntropyDTables>();
+
     /// `ZSTD_createDCtx`
     pub fn new() -> Self {
         Self {
@@ -549,7 +550,7 @@ impl DCtx {
                 lh_size: 0,
                 hostage_byte: false,
                 no_forward_progress: 0,
-                header_buffer: [0; FRAMEHEADERSIZE_MAX],
+                header_buffer: [0; ZSTD_FRAMEHEADERSIZE_MAX],
                 oversized_duration: 0,
             },
             ddict: None,
@@ -606,28 +607,6 @@ impl DCtx {
         Ok(())
     }
 
-    /// `ZSTD_DCtx_reset`
-    pub fn reset(&mut self, reset: ResetDirective) -> Result<()> {
-        if matches!(
-            reset,
-            ResetDirective::SessionOnly | ResetDirective::SessionAndParameters
-        ) {
-            self.state.stream_stage = DStreamStage::Init;
-            self.state.no_forward_progress = 0;
-        }
-        if matches!(
-            reset,
-            ResetDirective::Parameters | ResetDirective::SessionAndParameters
-        ) {
-            if self.state.stream_stage != DStreamStage::Init {
-                return Err(ErrorCode::StageWrong);
-            }
-            self.ddict = None;
-            self.state.max_window_size = ZSTD_MAXWINDOWSIZE_DEFAULT;
-        }
-        Ok(())
-    }
-
     /// `ZSTD_initDStream`: forgets the frame in progress and the dictionary.
     pub fn init_stream(&mut self) {
         self.state.stream_stage = DStreamStage::Init;
@@ -648,7 +627,7 @@ impl DCtx {
 }
 
 /// `ZSTD_decompress`
-pub fn decompress(dst: &mut [u8], src: &[u8]) -> Result<usize> {
+pub(crate) fn decompress(dst: &mut [u8], src: &[u8]) -> Result<usize> {
     DCtx::new().decompress(dst, src)
 }
 

@@ -9,18 +9,18 @@ use super::{ldm, row_match_finder_supported};
 use crate::common::{
     LITBITS, MAX_LL, MAX_ML, MAX_OFF, WILDCOPY_OVERLENGTH, ZSTD_BLOCKSIZE_MAX,
     ZSTD_CONTENTSIZE_UNKNOWN, ZSTD_WINDOWLOG_ABSOLUTEMIN, ZSTD_WINDOWLOG_LIMIT_DEFAULT,
-    ZSTD_WINDOWLOG_MAX,
+    ZSTD_WINDOWLOG_MAX, ZSTD_WORKSPACETOOLARGE_FACTOR, ZSTD_WORKSPACETOOLARGE_MAXDURATION,
 };
 use crate::error::{ErrorCode, Result};
 use crate::util::highbit32;
 
 pub const ZSTD_CLEVEL_DEFAULT: i32 = 3;
-pub const ZSTD_MAX_CLEVEL: i32 = 22;
-pub const ZSTD_MIN_CLEVEL: i32 = -(ZSTD_TARGETLENGTH_MAX);
+const ZSTD_MAX_CLEVEL: i32 = 22;
+const ZSTD_MIN_CLEVEL: i32 = -(ZSTD_TARGETLENGTH_MAX);
 
 const ZSTD_WINDOWLOG_MIN: i32 = 10;
-const ZSTD_HASHLOG_MAX: i32 = 30;
-const ZSTD_HASHLOG_MIN: i32 = 6;
+pub(crate) const ZSTD_HASHLOG_MAX: i32 = 30;
+pub(crate) const ZSTD_HASHLOG_MIN: i32 = 6;
 const ZSTD_CHAINLOG_MAX: i32 = 30;
 const ZSTD_CHAINLOG_MIN: i32 = ZSTD_HASHLOG_MIN;
 const ZSTD_SEARCHLOG_MAX: i32 = ZSTD_WINDOWLOG_MAX as i32 - 1;
@@ -36,7 +36,7 @@ const ZSTD_LDM_HASHLOG_MAX: i32 = ZSTD_HASHLOG_MAX;
 const ZSTD_LDM_MINMATCH_MIN: i32 = 4;
 const ZSTD_LDM_MINMATCH_MAX: i32 = 4096;
 const ZSTD_LDM_BUCKETSIZELOG_MIN: i32 = 1;
-const ZSTD_LDM_BUCKETSIZELOG_MAX: i32 = 8;
+pub(crate) const ZSTD_LDM_BUCKETSIZELOG_MAX: i32 = 8;
 const ZSTD_LDM_HASHRATELOG_MIN: i32 = 0;
 const ZSTD_LDM_HASHRATELOG_MAX: i32 = ZSTD_WINDOWLOG_MAX as i32 - ZSTD_HASHLOG_MIN;
 const ZSTD_TARGETCBLOCKSIZE_MIN: i32 = 1340;
@@ -50,28 +50,28 @@ pub(crate) const ZSTDMT_JOBLOG_MAX: u32 = 30;
 pub(crate) const ZSTDMT_JOBSIZE_MAX: i32 = 1024 << 20;
 
 /// `ZSTD_cParameter`, as far as `node:zlib` lets a parameter through.
-pub mod c_param {
-    pub const FORMAT: i32 = 10;
+pub(crate) mod c_param {
+    pub(crate) const FORMAT: i32 = 10;
     pub const COMPRESSION_LEVEL: i32 = 100;
-    pub const WINDOW_LOG: i32 = 101;
-    pub const HASH_LOG: i32 = 102;
-    pub const CHAIN_LOG: i32 = 103;
-    pub const SEARCH_LOG: i32 = 104;
-    pub const MIN_MATCH: i32 = 105;
-    pub const TARGET_LENGTH: i32 = 106;
-    pub const STRATEGY: i32 = 107;
-    pub const TARGET_C_BLOCK_SIZE: i32 = 130;
-    pub const ENABLE_LONG_DISTANCE_MATCHING: i32 = 160;
-    pub const LDM_HASH_LOG: i32 = 161;
-    pub const LDM_MIN_MATCH: i32 = 162;
-    pub const LDM_BUCKET_SIZE_LOG: i32 = 163;
-    pub const LDM_HASH_RATE_LOG: i32 = 164;
-    pub const CONTENT_SIZE_FLAG: i32 = 200;
-    pub const CHECKSUM_FLAG: i32 = 201;
-    pub const DICT_ID_FLAG: i32 = 202;
-    pub const NB_WORKERS: i32 = 400;
-    pub const JOB_SIZE: i32 = 401;
-    pub const OVERLAP_LOG: i32 = 402;
+    pub(crate) const WINDOW_LOG: i32 = 101;
+    pub(crate) const HASH_LOG: i32 = 102;
+    pub(crate) const CHAIN_LOG: i32 = 103;
+    pub(crate) const SEARCH_LOG: i32 = 104;
+    pub(crate) const MIN_MATCH: i32 = 105;
+    pub(crate) const TARGET_LENGTH: i32 = 106;
+    pub(crate) const STRATEGY: i32 = 107;
+    pub(crate) const TARGET_C_BLOCK_SIZE: i32 = 130;
+    pub(crate) const ENABLE_LONG_DISTANCE_MATCHING: i32 = 160;
+    pub(crate) const LDM_HASH_LOG: i32 = 161;
+    pub(crate) const LDM_MIN_MATCH: i32 = 162;
+    pub(crate) const LDM_BUCKET_SIZE_LOG: i32 = 163;
+    pub(crate) const LDM_HASH_RATE_LOG: i32 = 164;
+    pub(crate) const CONTENT_SIZE_FLAG: i32 = 200;
+    pub(crate) const CHECKSUM_FLAG: i32 = 201;
+    pub(crate) const DICT_ID_FLAG: i32 = 202;
+    pub(crate) const NB_WORKERS: i32 = 400;
+    pub(crate) const JOB_SIZE: i32 = 401;
+    pub(crate) const OVERLAP_LOG: i32 = 402;
 }
 
 /// `ZSTD_format_e`
@@ -134,7 +134,7 @@ const NO_C_PARAMS: CompressionParameters = CompressionParameters {
     strategy: None,
 };
 
-const NO_LDM_PARAMS: LdmParams = LdmParams {
+pub(crate) const NO_LDM_PARAMS: LdmParams = LdmParams {
     enable_ldm: ParamSwitch::Auto,
     hash_log: 0,
     bucket_size_log: 0,
@@ -192,20 +192,6 @@ fn bound_check_unless_0(param: i32, value: i32) -> Result<u32> {
         bound_check(param, value)?;
     }
     Ok(value as u32)
-}
-
-/// `ZSTD_isUpdateAuthorized`: whether the parameter can change while a frame is being written.
-pub(crate) fn is_update_authorized(param: i32) -> bool {
-    matches!(
-        param,
-        c_param::COMPRESSION_LEVEL
-            | c_param::HASH_LOG
-            | c_param::CHAIN_LOG
-            | c_param::SEARCH_LOG
-            | c_param::MIN_MATCH
-            | c_param::TARGET_LENGTH
-            | c_param::STRATEGY
-    )
 }
 
 impl CCtxParams {
@@ -648,8 +634,6 @@ const SIZEOF_OPTIMAL: usize = 28;
 const SIZEOF_RAW_SEQ: usize = 12;
 const SIZEOF_LDM_ENTRY: usize = 8;
 const ZSTD_CWKSP_ALIGNMENT_BYTES: usize = 64;
-const ZSTD_WORKSPACETOOLARGE_FACTOR: usize = 3;
-const ZSTD_WORKSPACETOOLARGE_MAXDURATION: i32 = 128;
 
 /// `ZSTD_cwksp_aligned64_alloc_size`
 const fn aligned64(size: usize) -> usize {
@@ -699,7 +683,7 @@ pub(crate) struct Workspace {
     object_end: usize,
     table_end: usize,
     alloc_start: usize,
-    oversized_duration: i32,
+    oversized_duration: usize,
 }
 
 /// What a context needs room for.

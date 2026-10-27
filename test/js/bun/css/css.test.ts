@@ -9232,6 +9232,12 @@ describe("rules", () => {
         "@media (min-width:1px){.a:fullscreen .b:fullscreen{color:red}}.y{}@media (min-width:1px){.c{color:blue}}",
         "@media (min-width:1px){.a:-webkit-full-screen .b:-webkit-full-screen{color:red}.a:fullscreen .b:fullscreen{color:red}.c{color:#00f}}",
       ],
+      // After the passes of `.k`, `.j` prints outside any pass, and `:fullscreen` of `.p` keeps its unprefixed name.
+      [
+        ".p:fullscreen{& .k:fullscreen{color:red}& .j{color:blue}}",
+        ".p:-webkit-full-screen .j{color:#00f}.p:-webkit-full-screen .k:-webkit-full-screen{color:red}" +
+          ".p:fullscreen .k:fullscreen{color:red}.p:fullscreen .j{color:#00f}",
+      ],
     ]);
     // Firefox has `:is()` from 78.
     test.each([

@@ -72,15 +72,19 @@ if (process.platform === "linux") {
   for (const name of ["a", "b", "c"]) fs.writeFileSync(path.join(moved, name), "x");
   fs.writeFileSync(path.join(root, "gone"), "x");
   const early = { inside: false, after: false };
+  const notSeen = new Set(["moved", "moved/a", "moved/b", "moved/c"]);
+  let allBeforeGone = false;
   let events = 0;
   let nextTicks = 0;
   const sawGone = Promise.withResolvers();
   const watcher = fs.watch(root, { recursive: true }, (_eventType, filename) => {
     if (filename === "gone") {
       if (nextTicks !== events) early.after = true;
+      allBeforeGone = notSeen.size === 0;
       sawGone.resolve();
-    } else if (events < 4 && nextTicks !== 0) {
-      early.inside = true;
+    } else {
+      notSeen.delete(filename);
+      if (events < 4 && nextTicks !== 0) early.inside = true;
     }
     events++;
     process.nextTick(() => nextTicks++);
@@ -94,6 +98,7 @@ if (process.platform === "linux") {
     watcher.close();
   }
 
+  observed["a directory moved into a recursive watcher and its entries arrived before the next event"] = allBeforeGone;
   observed["a nextTick ran between the events of a directory moved into a recursive watcher"] = early.inside;
   observed["the event after that directory arrived before a nextTick of its events"] = early.after;
 }

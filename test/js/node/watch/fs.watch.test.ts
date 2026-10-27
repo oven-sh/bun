@@ -82,6 +82,7 @@ describe("fs.watch", () => {
         "an event saw the enterWith() store of the event before it": false,
         "a loop of `await once(watcher, 'change')` saw every event": true,
         ...(isLinux && {
+          "a directory moved into a recursive watcher and its entries arrived before the next event": true,
           "a nextTick ran between the events of a directory moved into a recursive watcher": false,
           "the event after that directory arrived before a nextTick of its events": false,
         }),

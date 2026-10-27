@@ -1682,6 +1682,12 @@ impl Hash8 {
     pub(crate) const fn of(self, bytes: u64) -> u32 {
         (bytes.wrapping_mul(self.mul) ^ self.salt).wrapping_shr(self.shift) as u32
     }
+
+    /// [`Self::of`], when the salt is known to be 0.
+    #[inline(always)]
+    pub(crate) const fn of_unsalted(self, bytes: u64) -> u32 {
+        bytes.wrapping_mul(self.mul).wrapping_shr(self.shift) as u32
+    }
 }
 
 // ── the window ────────────────────────────────────────────────────────────

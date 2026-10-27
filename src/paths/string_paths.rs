@@ -14,8 +14,8 @@ use bun_core::{WStr, ZStr};
 
 // Generic code-unit bound for fns that operate over both u8 and u16 paths:
 // `crate::PathChar` (provides
-// `from_u8`/`IS_U16`) plus `Into<u32>` + `NoUninit` for `strings::contains_char_t`.
-pub trait Ch: PathChar + Into<u32> + bun_core::NoUninit {}
+// `from_u8`/`IS_U16`) plus `Into<u32>` for `strings::contains_char_t`.
+pub trait Ch: PathChar + Into<u32> {}
 impl Ch for u8 {}
 impl Ch for u16 {}
 

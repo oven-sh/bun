@@ -150,9 +150,11 @@ pub(crate) trait CompressionStreamImpl:
         if write_result.len() < 2 {
             return;
         }
-        let (r0, r1) = write_result.split_at_mut(1);
+        let (mut avail_in, mut avail_out) = (0, 0);
         self.stream()
-            .with_mut(|s| s.update_write_result(&mut r1[0], &mut r0[0]));
+            .with_mut(|s| s.update_write_result(&mut avail_in, &mut avail_out));
+        write_result[0] = bun_core::Unaligned::new(avail_out);
+        write_result[1] = bun_core::Unaligned::new(avail_in);
     }
 
     fn poll_ref(&self) -> &JsCell<CountedKeepAlive>;

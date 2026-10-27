@@ -212,7 +212,7 @@ mod _impl {
                     init_params_array_value,
                 ));
             }
-            for (i, &x) in params_.as_u32().iter().enumerate() {
+            for (i, x) in params_.as_u32().iter().map(|x| x.get()).enumerate() {
                 if x == u32::MAX {
                     continue;
                 }

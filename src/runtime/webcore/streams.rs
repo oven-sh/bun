@@ -205,12 +205,6 @@ impl StreamError {
 }
 
 impl StreamResult {
-    pub(crate) fn slice16(&self) -> &[u16] {
-        // Caller guarantees bytes are u16-aligned and even length;
-        // bytemuck checks both at runtime.
-        bytemuck::cast_slice(self.slice())
-    }
-
     pub(crate) fn slice(&self) -> &[u8] {
         match self {
             StreamResult::Owned(owned) => owned.slice(),
@@ -1670,7 +1664,7 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
         self.writable_result(len)
     }
 
-    pub(crate) fn write_utf16(&mut self, data: &StreamResult) -> Writable {
+    pub(crate) fn write_utf16(&mut self, text: &[u16]) -> Writable {
         if self.is_done() || self.requested_end {
             return Writable::Owned(0);
         }
@@ -1681,15 +1675,11 @@ impl<const SSL: bool> HTTPServerWritable<SSL> {
             return Writable::Done;
         }
 
-        let bytes = data.slice();
-
-        bun_core::scoped_log!(HTTPServerWritableLog, "writeUTF16({})", bytes.len());
+        bun_core::scoped_log!(HTTPServerWritableLog, "writeUTF16({})", size_of_val(text));
 
         // we must always buffer UTF-16
         // we assume the case of all-ascii UTF-16 string is pretty uncommon
-        // bytes are u16-aligned per Result.slice16 invariant; bytemuck checks at runtime.
-        let utf16: &[u16] = bytemuck::cast_slice(bytes);
-        let written = match self.buffer.write_utf16(utf16) {
+        let written = match self.buffer.write_utf16(text) {
             Ok(n) => n,
             Err(_) => return Writable::Err(SysError::from_code(sys::E::ENOMEM, sys::Tag::write)),
         };
@@ -2293,17 +2283,16 @@ impl NetworkSink {
         }
     }
 
-    pub(crate) fn write_utf16(&mut self, data: &StreamResult) -> Writable {
+    pub(crate) fn write_utf16(&mut self, text: &[u16]) -> Writable {
         if self.ended {
             return Writable::Owned(0);
         }
-        let bytes = data.slice();
-        let len = bytes.len() as BlobSizeType;
+        let len = size_of_val(text) as BlobSizeType;
         let has_source = !matches!(self.source, SourceHandle::None);
         // we must always buffer UTF-16
         // we assume the case of all-ascii UTF-16 string is pretty uncommon
         let result = match self.task_ref() {
-            Some(task) => task.write_utf16(bytes, false),
+            Some(task) => task.write_utf16(text, false),
             None => return Writable::Owned(len),
         };
         match result {

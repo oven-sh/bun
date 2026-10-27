@@ -6,6 +6,7 @@ use crate::jsc::{
 use crate::node::validators::{validate_object, validate_string};
 use bun_collections::smallvec::SmallVec;
 use bun_core::Utf8Bytes;
+use bun_core::strings::CodeUnits;
 use bun_node_path::{
     CHAR_BACKWARD_SLASH, CHAR_FORWARD_SLASH, CHAR_STR_DOT, PathCharCwd, PathParsed,
     basename_posix_t, basename_windows_t, dirname_posix_t, dirname_windows_t, extname_posix_t,
@@ -20,19 +21,12 @@ use bun_paths::MAX_PATH_BYTES;
 /// Create a JS string from a `[T]` slice (T = u8 | u16).
 ///
 /// In practice every JS entry point converts to a UTF-8 slice first and
-/// instantiates with `T = u8`, so the `u16` arm is never reached at runtime — but it must still
-/// type-check. Dispatch on `T::IS_U16` and route the cold u16 arm through
-/// a UTF-16 `BunString` clone + `to_js` so the generic body unifies.
+/// instantiates with `T = u8`, so the `u16` arm is never reached at runtime.
 #[inline]
 fn create_js_string_t<T: PathCharCwd>(global: &JSGlobalObject, s: &[T]) -> JsResult<JSValue> {
-    if T::IS_U16 {
-        // T == u16 when IS_U16; bytemuck statically checks the layout.
-        let s16: &[u16] = bytemuck::cast_slice::<T, u16>(s);
-        bun_core::String::clone_utf16(s16).into_js(global)
-    } else {
-        // T == u8 when !IS_U16; bytemuck statically checks the layout.
-        let s8: &[u8] = bytemuck::cast_slice::<T, u8>(s);
-        bun_string_jsc::create_utf8_for_js(global, s8)
+    match T::units(s) {
+        CodeUnits::U16(s) => bun_core::String::clone_utf16(s).into_js(global),
+        CodeUnits::U8(s) => bun_string_jsc::create_utf8_for_js(global, s),
     }
 }
 
@@ -55,17 +49,14 @@ impl<'a, T: PathCharCwd> PathScratch<'a, T> {
 
     #[inline]
     fn new(pool: &'a mut RarePathBuf, len: usize) -> Self {
-        if !T::IS_U16 && len <= Self::POOL_MAX {
-            // SAFETY-adjacent: `!IS_U16` ⇒ `T == u8`; `cast_slice_mut::<u8, u8>`
-            // is the bytemuck identity cast — never panics, no alignment hazard.
-            let bytes = &mut pool.get(len)[..len];
-            Self::Pooled(bytemuck::cast_slice_mut::<u8, T>(bytes))
-        } else {
-            // `T: Pod` ⇒ `T: Zeroable + Copy`. Spill is rare (u8 only when
-            // >128 KB) or path-sized (u16), so the zero-fill is negligible and
-            // buys a safe `&mut [T]` in `slice()`.
-            Self::Spill(vec![<T as bytemuck::Zeroable>::zeroed(); len].into_boxed_slice())
+        if !T::IS_U16
+            && len <= Self::POOL_MAX
+            && let Some(pooled) = T::from_bytes_mut(&mut pool.get(len)[..len])
+        {
+            return Self::Pooled(pooled);
         }
+        // Spill is rare (u8 over 128 KB) or path-sized (u16), so the zero-fill is negligible.
+        Self::Spill(vec![T::default(); len].into_boxed_slice())
     }
 
     #[inline]

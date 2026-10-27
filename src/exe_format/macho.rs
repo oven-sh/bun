@@ -49,6 +49,17 @@ macro_rules! shift_fields {
     }};
 }
 
+/// Read the `T` at the start of `command`, let `edit` change it, and write it back.
+fn edit_command<T: bun_core::Pod>(
+    command: &mut [u8],
+    edit: impl FnOnce(&mut T) -> Result<(), MachoError>,
+) -> Result<(), MachoError> {
+    let mut value: T = bun_core::read_prefix(command).ok_or(MachoError::InvalidObject)?;
+    edit(&mut value)?;
+    write_struct(command, &value);
+    Ok(())
+}
+
 /// Read and validate the `mach_header_64` at the start of `obj`.
 /// `--compile-executable-path` accepts arbitrary files, so reject inputs too
 /// short for the header or whose load-command table runs past EOF; callers
@@ -381,38 +392,19 @@ impl MachoFile {
 
         while let Some(entry) = iter.next() {
             let cmd = entry.hdr;
-            let cmd_ptr: *mut u8 = entry.data.as_ptr().cast_mut();
-
-            // `cmdsize` (= `entry.data.len()`) is untrusted; reject commands too
-            // small for the typed struct we're about to read/write so the
-            // unaligned access stays within this command's bytes.
-            let require = |sz: usize| -> Result<(), MachoError> {
-                if entry.data.len() < sz {
-                    return Err(MachoError::InvalidObject);
-                }
-                Ok(())
-            };
+            // `cmdsize` is untrusted: `edit_command` rejects a command too small for its struct.
+            let command = &mut self.data[size_of::<macho::mach_header_64>() + entry.offset..]
+                [..entry.data.len()];
 
             match cmd.cmd {
                 macho::LC::SYMTAB => {
-                    require(size_of::<macho::symtab_command>())?;
-                    // SAFETY: cmd_ptr points into self.data's load-command region with at least
-                    // size_of::<symtab_command>() bytes (checked above); symtab_command is
-                    // #[repr(C)] POD. read/write_unaligned tolerate the Vec<u8>'s arbitrary
-                    // alignment.
-                    unsafe {
-                        let mut symtab: macho::symtab_command =
-                            core::ptr::read_unaligned(cmd_ptr.cast::<macho::symtab_command>());
+                    edit_command(command, |symtab: &mut macho::symtab_command| {
                         shift_fields!(shifter, symtab, symoff, stroff);
-                        core::ptr::write_unaligned(cmd_ptr.cast::<macho::symtab_command>(), symtab);
-                    }
+                        Ok(())
+                    })?
                 }
                 macho::LC::DYSYMTAB => {
-                    require(size_of::<macho::dysymtab_command>())?;
-                    // SAFETY: as above; dysymtab_command is #[repr(C)] POD.
-                    unsafe {
-                        let mut dysymtab: macho::dysymtab_command =
-                            core::ptr::read_unaligned(cmd_ptr.cast::<macho::dysymtab_command>());
+                    edit_command(command, |dysymtab: &mut macho::dysymtab_command| {
                         shift_fields!(
                             shifter,
                             dysymtab,
@@ -423,11 +415,8 @@ impl MachoFile {
                             extreloff,
                             locreloff
                         );
-                        core::ptr::write_unaligned(
-                            cmd_ptr.cast::<macho::dysymtab_command>(),
-                            dysymtab,
-                        );
-                    }
+                        Ok(())
+                    })?
                 }
                 macho::LC::DYLD_CHAINED_FIXUPS
                 | macho::LC::CODE_SIGNATURE
@@ -436,32 +425,22 @@ impl MachoFile {
                 | macho::LC::DYLIB_CODE_SIGN_DRS
                 | macho::LC::LINKER_OPTIMIZATION_HINT
                 | macho::LC::DYLD_EXPORTS_TRIE => {
-                    require(size_of::<macho::linkedit_data_command>())?;
-                    // SAFETY: as above; linkedit_data_command is #[repr(C)] POD.
-                    unsafe {
-                        let mut linkedit_cmd: macho::linkedit_data_command =
-                            core::ptr::read_unaligned(
-                                cmd_ptr.cast::<macho::linkedit_data_command>(),
-                            );
-                        shift_fields!(shifter, linkedit_cmd, dataoff);
+                    edit_command(
+                        command,
+                        |linkedit_cmd: &mut macho::linkedit_data_command| {
+                            shift_fields!(shifter, linkedit_cmd, dataoff);
 
-                        // Special handling for code signature
-                        if cmd.cmd == macho::LC::CODE_SIGNATURE {
-                            // Update the size of the code signature to the newer signature size
-                            linkedit_cmd.datasize = u32::try_from(sig_size).expect("int cast");
-                        }
-                        core::ptr::write_unaligned(
-                            cmd_ptr.cast::<macho::linkedit_data_command>(),
-                            linkedit_cmd,
-                        );
-                    }
+                            // Special handling for code signature
+                            if cmd.cmd == macho::LC::CODE_SIGNATURE {
+                                // Update the size of the code signature to the newer signature size
+                                linkedit_cmd.datasize = u32::try_from(sig_size).expect("int cast");
+                            }
+                            Ok(())
+                        },
+                    )?
                 }
                 macho::LC::DYLD_INFO | macho::LC::DYLD_INFO_ONLY => {
-                    require(size_of::<macho::dyld_info_command>())?;
-                    // SAFETY: as above; dyld_info_command is #[repr(C)] POD.
-                    unsafe {
-                        let mut dyld_info: macho::dyld_info_command =
-                            core::ptr::read_unaligned(cmd_ptr.cast::<macho::dyld_info_command>());
+                    edit_command(command, |dyld_info: &mut macho::dyld_info_command| {
                         shift_fields!(
                             shifter,
                             dyld_info,
@@ -471,11 +450,8 @@ impl MachoFile {
                             lazy_bind_off,
                             export_off
                         );
-                        core::ptr::write_unaligned(
-                            cmd_ptr.cast::<macho::dyld_info_command>(),
-                            dyld_info,
-                        );
-                    }
+                        Ok(())
+                    })?
                 }
                 _ => {}
             }

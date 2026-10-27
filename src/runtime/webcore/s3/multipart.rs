@@ -112,6 +112,7 @@ use bun_s3_signing::storage_class::StorageClass;
 // File-level mods are declared flat in `webcore.rs` via `#[path]`, so `super`
 // here is `crate::webcore`, not the `s3` directory. Route through the `s3`
 // re-export hub instead.
+use crate::webcore::fetch::fetch_request_body_sink::RequestBodyChunk as Chunk;
 use crate::webcore::s3::multipart_options::MultiPartUploadOptions;
 use crate::webcore::s3::simple_request::{
     self as s3_simple_request, S3CommitResult, S3DeleteResult, S3DownloadResult, S3PartResult,
@@ -1112,30 +1113,19 @@ impl MultiPartUpload {
         self.available.get().mask == IntegerBitSet::<{ Self::MAX_QUEUE_SIZE }>::init_full().mask
     }
 
-    fn append_chunk(&self, encoding: WriteEncoding, chunk: &[u8]) -> Result<(), AllocError> {
+    fn append_chunk(&self, chunk: Chunk<'_>) -> Result<(), AllocError> {
         let before = self.buffered.get().size();
-        self.buffered.with_mut(|buffered| match encoding {
-            WriteEncoding::Bytes => buffered.write(chunk),
-            WriteEncoding::Latin1 => buffered.write_latin1::<true>(chunk),
-            WriteEncoding::Utf16 => {
-                // @alignCast — caller guarantees chunk is u16-aligned; bytemuck checks at runtime.
-                let utf16: &[u16] = bytemuck::cast_slice(chunk);
-                buffered.write_utf16(utf16)
-            }
+        self.buffered.with_mut(|buffered| match chunk {
+            Chunk::Bytes(bytes) => buffered.write(bytes),
+            Chunk::Latin1(text) => buffered.write_latin1::<true>(text),
+            Chunk::Utf16(text) => buffered.write_utf16(text),
         })?;
         self.uploaded_bytes
             .set(self.uploaded_bytes.get() + (self.buffered.get().size() - before) as u64);
         Ok(())
     }
 
-    // The encoding is a plain runtime arg — the three thin wrappers below
-    // pass a constant, so the optimizer still specializes each branch.
-    fn write(
-        &self,
-        encoding: WriteEncoding,
-        chunk: &[u8],
-        is_last: bool,
-    ) -> Result<UploadBackpressure, AllocError> {
+    fn write(&self, chunk: Chunk<'_>, is_last: bool) -> Result<UploadBackpressure, AllocError> {
         if self.ended.get() {
             return Ok(UploadBackpressure::Done); // no backpressure since we are done
         }
@@ -1163,7 +1153,7 @@ impl MultiPartUpload {
         if is_last {
             self.ended.set(true);
             if !chunk.is_empty() {
-                self.append_chunk(encoding, chunk)?;
+                self.append_chunk(chunk)?;
             }
             self.process_buffered(self.part_size_in_bytes());
         } else {
@@ -1175,7 +1165,7 @@ impl MultiPartUpload {
                     UploadBackpressure::WantMore
                 });
             }
-            self.append_chunk(encoding, chunk)?;
+            self.append_chunk(chunk)?;
             let part_size = self.part_size_in_bytes();
             if self.buffered.get().size() >= part_size {
                 // send the part we have enough data
@@ -1196,15 +1186,15 @@ impl MultiPartUpload {
         chunk: &[u8],
         is_last: bool,
     ) -> Result<UploadBackpressure, AllocError> {
-        self.write(WriteEncoding::Latin1, chunk, is_last)
+        self.write(Chunk::Latin1(chunk), is_last)
     }
 
     pub(crate) fn write_utf16(
         &self,
-        chunk: &[u8],
+        chunk: &[u16],
         is_last: bool,
     ) -> Result<UploadBackpressure, AllocError> {
-        self.write(WriteEncoding::Utf16, chunk, is_last)
+        self.write(Chunk::Utf16(chunk), is_last)
     }
 
     pub(crate) fn write_bytes(
@@ -1212,7 +1202,7 @@ impl MultiPartUpload {
         chunk: &[u8],
         is_last: bool,
     ) -> Result<UploadBackpressure, AllocError> {
-        self.write(WriteEncoding::Bytes, chunk, is_last)
+        self.write(Chunk::Bytes(chunk), is_last)
     }
 }
 
@@ -1221,11 +1211,4 @@ pub(crate) enum UploadBackpressure {
     WantMore,
     Backpressure,
     Done,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum WriteEncoding {
-    Bytes,
-    Latin1,
-    Utf16,
 }

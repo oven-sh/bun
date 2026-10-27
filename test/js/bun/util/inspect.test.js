@@ -1,3 +1,4 @@
+import { ptr, toArrayBuffer } from "bun:ffi";
 import { describe, expect, it } from "bun:test";
 import {
   bunEnv,
@@ -285,6 +286,32 @@ it("BigIntArray", () => {
       );
     }
   }
+});
+
+it("TypedArray over an ArrayBuffer at an odd address prints", () => {
+  const bytes = new Uint8Array(32).map((_, i) => i + 1);
+  // `.buffer` moves the bytes of a small typed array, so it comes before `ptr()`.
+  const view = new DataView(bytes.buffer, 1, 16);
+  const address = ptr(bytes) + 1;
+  expect(address % 2).toBe(1);
+  for (const [TypedArray, get, suffix] of [
+    [Int16Array, "getInt16", ""],
+    [Uint16Array, "getUint16", ""],
+    [Int32Array, "getInt32", ""],
+    [Uint32Array, "getUint32", ""],
+    [Float16Array, "getFloat16", ""],
+    [Float32Array, "getFloat32", ""],
+    [Float64Array, "getFloat64", ""],
+    [BigInt64Array, "getBigInt64", "n"],
+    [BigUint64Array, "getBigUint64", "n"],
+  ]) {
+    const length = 16 / TypedArray.BYTES_PER_ELEMENT;
+    const expected = Array.from({ length }, (_, i) => view[get](i * TypedArray.BYTES_PER_ELEMENT, true) + suffix);
+    expect(Bun.inspect(new TypedArray(toArrayBuffer(address, 0, 16)))).toBe(
+      `${TypedArray.name}(${length}) [ ${expected.join(", ")} ]`,
+    );
+  }
+  expect(bytes[0]).toBe(1);
 });
 
 for (let TypedArray of [Float32Array, Float64Array]) {

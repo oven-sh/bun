@@ -657,7 +657,7 @@ impl NetworkTask {
         let mut last_modified: &[u8] = b"";
         let mut etag: &[u8] = b"";
         if let Some(manifest) = loaded_manifest {
-            if (needs_extended && manifest.pkg.has_extended_manifest) || !needs_extended {
+            if (needs_extended && manifest.pkg.has_extended_manifest()) || !needs_extended {
                 last_modified = manifest.pkg.last_modified.slice(&manifest.string_buf);
                 etag = manifest.pkg.etag.slice(&manifest.string_buf);
             }

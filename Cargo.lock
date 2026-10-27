@@ -169,7 +169,6 @@ dependencies = [
  "bun_ptr",
  "bun_sys",
  "bun_wyhash",
- "bytemuck",
  "const_format",
  "enum-map",
  "enumset",
@@ -272,7 +271,6 @@ dependencies = [
  "bun_watcher",
  "bun_wyhash",
  "bun_zstd",
- "bytemuck",
  "enum-map",
  "lol_html",
  "scopeguard",
@@ -377,10 +375,10 @@ dependencies = [
  "bun_highway",
  "bun_opaque",
  "bun_output_tags",
+ "bun_pod",
  "bun_simdutf_sys",
  "bun_windows_sys",
  "bun_wyhash",
- "bytemuck",
  "const_format",
  "itoa",
  "libc",
@@ -552,7 +550,6 @@ dependencies = [
  "bun_core",
  "bun_sha_hmac",
  "bun_sys",
- "bytemuck",
  "strum",
  "thiserror",
 ]
@@ -688,7 +685,6 @@ dependencies = [
  "bun_collections",
  "bun_core",
  "bun_url",
- "bytemuck",
  "enumset",
  "strum",
 ]
@@ -760,7 +756,6 @@ dependencies = [
  "bun_uws",
  "bun_which",
  "bun_wyhash",
- "bytemuck",
  "const_format",
  "enum-map",
  "scopeguard",
@@ -842,7 +837,6 @@ dependencies = [
  "bun_react_compiler",
  "bun_url",
  "bun_wyhash",
- "bytemuck",
  "criterion",
  "enumset",
  "regex",
@@ -888,7 +882,6 @@ dependencies = [
  "bun_ptr",
  "bun_sourcemap",
  "bun_wyhash",
- "bytemuck",
  "const_format",
  "enum-map",
  "enumset",
@@ -941,7 +934,6 @@ dependencies = [
  "bun_uws",
  "bun_watcher",
  "bun_wyhash",
- "bytemuck",
  "libc",
  "scopeguard",
  "strum",
@@ -1231,7 +1223,6 @@ dependencies = [
  "bun_core",
  "bun_paths",
  "bun_sys",
- "bytemuck",
 ]
 
 [[package]]
@@ -1283,7 +1274,6 @@ dependencies = [
  "bun_highway",
  "bun_simdutf_sys",
  "bun_wyhash",
- "bytemuck",
  "criterion",
  "quick-xml",
  "roxmltree",
@@ -1356,6 +1346,14 @@ name = "bun_platform"
 version = "0.0.0"
 dependencies = [
  "bun_core",
+ "libc",
+]
+
+[[package]]
+name = "bun_pod"
+version = "0.0.0"
+dependencies = [
+ "bun_windows_sys",
  "libc",
 ]
 
@@ -1550,7 +1548,6 @@ dependencies = [
  "bun_wyhash",
  "bun_zlib",
  "bun_zstd",
- "bytemuck",
  "const_format",
  "encoding_rs",
  "enum-map",
@@ -1713,8 +1710,8 @@ name = "bun_shim_impl"
 version = "0.0.0"
 dependencies = [
  "bun_opaque",
+ "bun_pod",
  "bun_windows_sys",
- "bytemuck",
 ]
 
 [[package]]
@@ -1893,7 +1890,6 @@ dependencies = [
  "bun_paths",
  "bun_windows_sys",
  "bun_wyhash",
- "bytemuck",
  "enum-map",
  "libc",
  "rustix",
@@ -2082,12 +2078,6 @@ dependencies = [
  "bun_opaque",
  "strum",
 ]
-
-[[package]]
-name = "bytemuck"
-version = "1.25.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c8efb64bd706a16a1bdde310ae86b351e4d21550d98d056f22f8a7f7a2183fec"
 
 [[package]]
 name = "byteorder"

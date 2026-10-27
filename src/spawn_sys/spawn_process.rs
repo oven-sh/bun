@@ -143,8 +143,7 @@ pub type Rusage = WinRusage;
 #[cfg(unix)]
 pub type Rusage = libc::rusage;
 
-// SAFETY: `i64`/`u64` only (via `WinTimeval`); all-zero matches `Default`.
-unsafe impl bun_core::ffi::Zeroable for WinRusage {}
+bun_core::impl_zeroable!(WinRusage);
 
 #[inline]
 pub fn rusage_zeroed() -> Rusage {

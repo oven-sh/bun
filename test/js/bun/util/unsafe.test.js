@@ -1,3 +1,4 @@
+import { ptr, toArrayBuffer } from "bun:ffi";
 import { expect, it, jest } from "bun:test";
 import { bunEnv, bunExe, gc, isLinux, isMacOS, isWindows } from "harness";
 import { readFileSync } from "node:fs";
@@ -41,6 +42,26 @@ it("arrayBufferToString u16", () => {
   gc(true);
   expect(charCodes.length).toBe("hello world".length);
   gc(true);
+});
+
+it("arrayBufferToString u16 at an odd address", () => {
+  for (const text of ["hello world", "h\u00e9llo w\u2603rld"]) {
+    const bytes = new Uint8Array(1 + text.length * 2);
+    for (let i = 0; i < text.length; i++) {
+      new DataView(bytes.buffer).setUint16(1 + i * 2, text.charCodeAt(i), true);
+    }
+    const address = ptr(bytes) + 1;
+    expect(address % 2).toBe(1);
+    expect(Bun.unsafe.arrayBufferToString(new Uint16Array(toArrayBuffer(address, 0, text.length * 2)))).toBe(text);
+    expect(bytes[0]).toBe(0);
+  }
+});
+
+it("arrayBufferToString u16 of nothing", () => {
+  expect(Bun.unsafe.arrayBufferToString(new Uint16Array(0))).toBe("");
+  const detached = new Uint16Array(4);
+  detached.buffer.transfer();
+  expect(Bun.unsafe.arrayBufferToString(detached)).toBe("");
 });
 
 it("Bun.allocUnsafe", () => {

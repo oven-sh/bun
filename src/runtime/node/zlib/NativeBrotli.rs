@@ -250,7 +250,7 @@ mod _impl {
 
             let params_ = params_buf.as_u32();
 
-            for (i, &d) in params_.iter().enumerate() {
+            for (i, d) in params_.iter().map(|d| d.get()).enumerate() {
                 // (d == -1) {
                 if d == u32::MAX {
                     continue;

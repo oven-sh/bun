@@ -24,6 +24,14 @@ pub(crate) enum RequestBodyChunk<'a> {
 
 impl<'a> RequestBodyChunk<'a> {
     #[inline]
+    pub(crate) fn is_empty(&self) -> bool {
+        match *self {
+            Self::Bytes(b) | Self::Latin1(b) => b.is_empty(),
+            Self::Utf16(u) => u.is_empty(),
+        }
+    }
+
+    #[inline]
     pub(crate) fn utf8_len(&self) -> usize {
         match *self {
             Self::Bytes(b) => b.len(),
@@ -160,9 +168,8 @@ impl FetchRequestBodySink {
         self.write_chunk(RequestBodyChunk::Latin1(bytes))
     }
 
-    pub fn write_utf16(&mut self, data: &StreamResult) -> Writable {
-        // Caller guarantees u16 alignment / even length; bytemuck checks at runtime.
-        self.write_chunk(RequestBodyChunk::Utf16(bytemuck::cast_slice(data.slice())))
+    pub fn write_utf16(&mut self, text: &[u16]) -> Writable {
+        self.write_chunk(RequestBodyChunk::Utf16(text))
     }
 
     pub fn flush_from_js(

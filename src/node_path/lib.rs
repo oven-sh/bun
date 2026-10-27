@@ -11,7 +11,9 @@ pub use tidy::{
     relative_posix_latin1, resolve_absolute_posix_latin1,
 };
 
-use bun_core::strings;
+#[cfg(windows)]
+use bun_core::strings::CodeUnitsMut;
+use bun_core::strings::{self, CodeUnits};
 use bun_paths::{self, MAX_PATH_BYTES, Platform};
 
 const PATH_MIN_WIDE: usize = 4096; // 4 KB
@@ -21,10 +23,9 @@ const PATH_MIN_WIDE: usize = 4096; // 4 KB
 pub use bun_paths::PathChar;
 
 /// Runtime-only extension over [`PathChar`]: adds the `bun_sys`-coupled
-/// per-width `get_cwd` plus the `bytemuck::Pod`/`Default` bounds this module
-/// needs for `PathScratch`'s `cast_slice` and zero-init. Every generic `_t`
+/// per-width `get_cwd` plus `Default` for zero-init. Every generic `_t`
 /// fn here bounds on `PathCharCwd` (only `u8`/`u16` ever instantiate it).
-pub trait PathCharCwd: PathChar + Default + bytemuck::Pod {
+pub trait PathCharCwd: PathChar + Default {
     /// Per-width `get_cwd` — replaces the `IS_U16` runtime dispatch in `get_cwd_t`.
     fn get_cwd(buf: &mut [Self]) -> bun_sys::Result<&mut [Self]>;
 }
@@ -49,15 +50,9 @@ fn l<T: PathCharCwd>(s: &'static [u8]) -> &'static [T] {
 
 /// Compares ASCII values case-insensitively, non-ASCII values are compared directly
 fn eql_ignore_case_t<T: PathCharCwd>(a: &[T], b: &[T]) -> bool {
-    if !T::IS_U16 {
-        // T == u8 when !IS_U16; bytemuck statically checks the layout.
-        let a8: &[u8] = bytemuck::cast_slice::<T, u8>(a);
-        let b8: &[u8] = bytemuck::cast_slice::<T, u8>(b);
-        return strings::eql_case_insensitive_ascii(a8, b8, true);
+    if let (CodeUnits::U8(a), CodeUnits::U8(b)) = (T::units(a), T::units(b)) {
+        return strings::eql_case_insensitive_ascii(a, b, true);
     }
-    // In practice the only callers instantiate with `T == u8`; provide a sound
-    // u16 compare so
-    // the generic body type-checks and behaves correctly if ever exercised.
     if a.len() != b.len() {
         return false;
     }
@@ -2286,40 +2281,38 @@ pub fn resolve_windows_t<'a, T: PathCharCwd>(
                         &mut buf2[buf_offset..buf_size],
                         &tmp_buf[0..resolved_device_len],
                     );
-                    if T::IS_U16 {
-                        // `getenv_w` requires the NUL be addressable via the slice's
-                        // pointer (it forwards `.as_ptr()` as LPCWSTR). `buf2` is a
-                        // reused arena buffer with arbitrary prior contents past
-                        // `buf_size`, so write the terminator explicitly.
-                        buf2[buf_size] = T::from_u8(0);
-                        // T == u16 when IS_U16; bytemuck statically checks the layout.
-                        break 'brk bytemuck::cast_slice::<T, u16>(&buf2[..=buf_size]);
+                    // `getenv_w` forwards `.as_ptr()` as LPCWSTR, and neither buffer is zeroed past the key.
+                    match T::units_mut(buf2) {
+                        CodeUnitsMut::U16(key) => {
+                            key[buf_size] = 0;
+                            &key[..=buf_size]
+                        }
+                        CodeUnitsMut::U8(key) => {
+                            let n = strings::convert_utf8_to_utf16_in_buffer(
+                                &mut u16_buf[..],
+                                &key[..buf_size],
+                            )
+                            .len();
+                            u16_buf[n] = 0;
+                            &u16_buf[..=n]
+                        }
                     }
-                    // T == u8 when !IS_U16; bytemuck statically checks the layout.
-                    let key8: &[u8] = bytemuck::cast_slice::<T, u8>(&buf2[..buf_size]);
-                    // Write the NUL after widening; a pooled buffer is not zeroed.
-                    let n = strings::convert_utf8_to_utf16_in_buffer(&mut u16_buf[..], key8).len();
-                    u16_buf[n] = 0;
-                    &u16_buf[..=n]
                 };
                 // TODO: Enable test once spawnResult.stdout works on Windows.
                 // test/js/node/path/resolve.test.js
                 if let Some(r) = bun_sys::windows::getenv_w(key_w) {
                     // Store in tmp_buf AFTER the device: buf2[0..resolved_tail_len]
                     // already backs the accumulated tail, so writing there clobbers it.
-                    if T::IS_U16 {
-                        buf_size = r.len().min(tmp_buf.len() - resolved_device_len);
-                        // T == u16 when IS_U16; bytemuck checks the layout at runtime.
-                        let dst: &mut [u16] = bytemuck::cast_slice_mut::<T, u16>(
-                            &mut tmp_buf[resolved_device_len..resolved_device_len + buf_size],
-                        );
-                        memmove(dst, &r[..buf_size]);
-                    } else {
-                        // T == u8 when !IS_U16; bytemuck statically checks the layout.
-                        let dst: &mut [u8] =
-                            bytemuck::cast_slice_mut::<T, u8>(&mut tmp_buf[resolved_device_len..]);
-                        buf_size = strings::convert_utf16_to_utf8_in_buffer(dst, &r).len();
-                    }
+                    buf_size = match T::units_mut(&mut tmp_buf[resolved_device_len..]) {
+                        CodeUnitsMut::U16(dst) => {
+                            let n = r.len().min(dst.len());
+                            memmove(&mut dst[..n], &r[..n]);
+                            n
+                        }
+                        CodeUnitsMut::U8(dst) => {
+                            strings::convert_utf16_to_utf8_in_buffer(dst, &r).len()
+                        }
+                    };
                     env_path_len = Some(buf_size);
                 }
             }

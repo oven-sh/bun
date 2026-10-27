@@ -1,6 +1,8 @@
 use core::mem::size_of;
 use core::ops::Range;
 
+use bun_core::AnyBitPattern;
+
 use crate::cut_model::{CutCapacity, CutModel, NoCutReason};
 use crate::image::{
     AddressRange, Architecture, ExecutableFormat, ImageError, MappedSpan, RemovedFileRanges,
@@ -164,10 +166,9 @@ fn read_header(macho: &[u8]) -> Result<mach_header_64> {
 fn parse(macho: &[u8]) -> Result<Parsed> {
     let header = read_header(macho)?;
     let commands_end = HEADER_SIZE + header.sizeofcmds as usize;
-    let mut iterator = LoadCommandIterator::new(header.ncmds, &macho[HEADER_SIZE..commands_end]);
     let mut commands = Vec::new();
     let mut segments: Vec<Segment> = Vec::new();
-    while let Some(entry) = iterator.next() {
+    for entry in LoadCommandIterator::new(header.ncmds, &macho[HEADER_SIZE..commands_end]) {
         let start = HEADER_SIZE + entry.offset;
         let range = start..start + entry.data.len();
         let kind = command_kind(entry.cmd());
@@ -296,12 +297,11 @@ fn to_u32(value: u64) -> Result<u32> {
     u32::try_from(value).map_err(|_| ImageError::MalformedHeaders)
 }
 
-fn read_command<T: Copy>(command: &[u8]) -> Result<T> {
-    let bytes = command.get(..size_of::<T>());
-    bytes.map(read_struct).ok_or(ImageError::MalformedHeaders)
+fn read_command<T: AnyBitPattern>(command: &[u8]) -> Result<T> {
+    bun_core::read_prefix(command).ok_or(ImageError::MalformedHeaders)
 }
 
-fn find_command<T: Copy>(macho: &[u8], parsed: &Parsed, cmd: u32) -> Result<Option<T>> {
+fn find_command<T: AnyBitPattern>(macho: &[u8], parsed: &Parsed, cmd: u32) -> Result<Option<T>> {
     let ranges = parsed.commands.iter().map(|(_, range)| range.clone());
     let mut matching = ranges.filter(|range| read_struct::<u32>(&macho[range.start..]) == cmd);
     match (matching.next(), matching.next()) {

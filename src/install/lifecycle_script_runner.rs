@@ -1057,7 +1057,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             }
             Status::Signaled(signal) => {
                 self.print_output();
-                let signal_code = bun_sys::SignalCode::from(signal);
+                let signal_code = bun_sys::SignalCode(signal);
 
                 bun_core::pretty_errorln!(
                     "<r><red>error<r><d>:<r> <b>{}<r> script from \"<b>{}<r>\" terminated by {}<r>",

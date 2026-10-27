@@ -803,7 +803,7 @@ mod tests {
         bytes.iter().all(|&byte| byte == 0)
     }
 
-    fn edited<T: Copy>(elf: &[u8], offset: usize, edit: impl FnOnce(&mut T)) -> Vec<u8> {
+    fn edited<T: bun_core::Pod>(elf: &[u8], offset: usize, edit: impl FnOnce(&mut T)) -> Vec<u8> {
         let mut elf = elf.to_vec();
         let mut value: T = read_struct(&elf[offset..]);
         edit(&mut value);

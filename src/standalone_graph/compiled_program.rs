@@ -52,10 +52,7 @@ const _: () = assert!(size_of::<CompiledProgramRecord>() == RECORD_SIZE);
 const _: () = assert!(size_of::<CompiledEntryPointRecord>() == RECORD_SIZE);
 const _: () = assert!(cfg!(target_endian = "little"));
 
-// SAFETY: four `u32`s, so there is no padding.
-unsafe impl bun_core::NoUninit for CompiledProgramRecord {}
-// SAFETY: four `u32`s, so there is no padding.
-unsafe impl bun_core::NoUninit for CompiledEntryPointRecord {}
+bun_core::impl_no_uninit!(CompiledProgramRecord, CompiledEntryPointRecord);
 
 pub struct CompiledEntryPointInput<'a> {
     pub module_id: bun_aot::engine::EngineModuleId,

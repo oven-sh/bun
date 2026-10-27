@@ -1,5 +1,8 @@
 use core::mem::offset_of;
 
+use bun_core::ffi::zeroed;
+use bun_core::{bytes_of, slice_as_bytes};
+
 use crate::elf_program_headers::tests::toy_byte;
 use crate::macho_ranges::*;
 use crate::macho_types::{
@@ -171,16 +174,6 @@ pub(super) fn cut(first_page: u64, end_page: u64) -> AddressRange {
     }
 }
 
-fn zeroed<T: Copy>() -> T {
-    read_struct(&vec![0u8; size_of::<T>()])
-}
-
-fn bytes_of<T: Copy>(value: &T) -> Vec<u8> {
-    let mut bytes = vec![0; size_of::<T>()];
-    write_struct(&mut bytes, value);
-    bytes
-}
-
 fn words(values: &[u32]) -> Vec<u8> {
     values
         .iter()
@@ -294,7 +287,7 @@ fn create_segment_command(segment: &ToySegment, file_offset: u64) -> Vec<u8> {
     command.initprot = segment.protection;
     command.nsects = segment.sections.len() as u32;
     command.flags = segment.flags;
-    let mut bytes = bytes_of(&command);
+    let mut bytes = bytes_of(&command).to_vec();
     bytes[SEGMENT_NAME_OFFSET..][..SEGMENT_NAME_SIZE].copy_from_slice(&pad_name(segment.name));
     for section in &segment.sections {
         let offset_in_segment = section.addresses.start - segment.addresses.start;
@@ -398,11 +391,11 @@ fn create_linkedit_data_command(cmd: u32, blob: Blob) -> Vec<u8> {
         dataoff: blob.offset,
         datasize: blob.size,
     })
+    .to_vec()
 }
 
 fn create_symbol_table_commands(linkedit: &mut Vec<u8>) -> [Vec<u8>; 2] {
-    let symbols: Vec<u8> = TOY_SYMBOLS.iter().flat_map(bytes_of).collect();
-    let symbols = append_blob(linkedit, &symbols);
+    let symbols = append_blob(linkedit, slice_as_bytes(&TOY_SYMBOLS));
     let indirect_symbols = append_blob(linkedit, &words(&INDIRECT_SYMBOLS));
     let names = append_blob(linkedit, SYMBOL_NAMES);
     let symbol_table = symtab_command {
@@ -425,7 +418,10 @@ fn create_symbol_table_commands(linkedit: &mut Vec<u8>) -> [Vec<u8>; 2] {
         nindirectsyms: INDIRECT_SYMBOLS.len() as u32,
         ..zeroed()
     };
-    [bytes_of(&symbol_table), bytes_of(&dynamic_symbol_table)]
+    [
+        bytes_of(&symbol_table).to_vec(),
+        bytes_of(&dynamic_symbol_table).to_vec(),
+    ]
 }
 
 fn create_toy_commands(options: ToyOptions, text_start: u64) -> ToyCommands {
@@ -487,7 +483,7 @@ pub(super) fn create_toy(options: ToyOptions) -> Vec<u8> {
         flags: MH_NOUNDEFS | MH_DYLDLINK | MH_TWOLEVEL,
         reserved: 0,
     };
-    let mut bytes = bytes_of(&header);
+    let mut bytes = bytes_of(&header).to_vec();
     bytes.extend(commands.concat());
     bytes.resize(LINKEDIT_FILE_OFFSET, 0);
     bytes.extend(linkedit);

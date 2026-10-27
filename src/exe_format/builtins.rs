@@ -219,7 +219,10 @@ impl Image<'_> {
         }
     }
 
-    pub(crate) fn struct_at<T: Copy>(&mut self, offset: usize) -> Result<T, SectionError> {
+    pub(crate) fn struct_at<T: bun_core::AnyBitPattern>(
+        &mut self,
+        offset: usize,
+    ) -> Result<T, SectionError> {
         Ok(read_struct(&self.bytes(offset, size_of::<T>())?))
     }
 }

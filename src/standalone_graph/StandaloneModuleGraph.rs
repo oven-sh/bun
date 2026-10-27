@@ -489,6 +489,7 @@ pub(crate) struct CompiledModuleGraphFile {
     pub module_format: ModuleFormat,
     pub side: FileSide,
 }
+bun_core::impl_no_uninit!(CompiledModuleGraphFile);
 
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -892,16 +893,8 @@ impl File {
     /// An `Encoding::Utf16` body as code units.
     fn utf16_units(&self) -> &'static [u16] {
         debug_assert!(self.encoding == Encoding::Utf16);
-        let bytes = self.contents.as_bytes();
-        debug_assert!(bytes.as_ptr().addr().is_multiple_of(align_of::<u16>()));
-        #[expect(
-            clippy::cast_ptr_alignment,
-            reason = "`to_bytes` writes UTF-16 at an even offset and the section base is page-aligned (the 128-byte bytecode alignment relies on the same property)"
-        )]
-        // SAFETY: even byte count at a 2-byte-aligned offset of a section that is never freed.
-        unsafe {
-            core::slice::from_raw_parts(bytes.as_ptr().cast::<u16>(), bytes.len() / 2)
-        }
+        // `to_bytes` writes UTF-16 at an even offset of a page-aligned section.
+        bun_core::cast_slice(self.contents.as_bytes())
     }
 
     /// `contents` as the file's bytes: the section itself, or a UTF-8 transcode of a UTF-16 body made once.
@@ -2053,15 +2046,7 @@ pub(crate) fn to_bytes(
     let entry_point_path_ptrs = program
         .map(|program| compiled_program::append_entry_point_paths(&mut string_builder, program));
 
-    // SAFETY: `CompiledModuleGraphFile` is `#[repr(C)]` POD with no padding-dependent
-    // invariants; reinterpreting its backing storage as bytes is sound.
-    let modules_as_bytes: &[u8] = unsafe {
-        core::slice::from_raw_parts(
-            modules.as_ptr().cast::<u8>(),
-            modules.len() * size_of::<CompiledModuleGraphFile>(),
-        )
-    };
-    let modules_ptr = string_builder.append_count(modules_as_bytes);
+    let modules_ptr = string_builder.append_count(bun_core::slice_as_bytes(&modules));
     let hashes_ptr = string_builder.append_count(&source_hashes);
     debug_assert_eq!(hashes_ptr.offset, modules_ptr.offset + modules_ptr.length);
     let builtin_table_ptr = string_builder.append_count(&builtin_bytecode_table);
@@ -2163,7 +2148,8 @@ pub(crate) fn to_bytes(
         flags,
     };
 
-    // SAFETY: `Offsets` is `#[repr(C)]` POD; same `modules_as_bytes` rationale as above.
+    // SAFETY: `Offsets` is `#[repr(C)]` POD without padding. (`impl_no_uninit!` cannot see
+    // through the associated type `bitflags!` stores `Flags` in.)
     let offsets_as_bytes: &[u8] = unsafe {
         core::slice::from_raw_parts((&raw const offsets).cast::<u8>(), size_of::<Offsets>())
     };

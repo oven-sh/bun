@@ -38,13 +38,13 @@ fn segment_command_offset(bytes: &[u8], segment_index: usize) -> usize {
     segments.nth(segment_index).unwrap().1.start
 }
 
-fn edit_struct<T: Copy>(bytes: &mut [u8], offset: usize, edit: impl FnOnce(&mut T)) {
+fn edit_struct<T: bun_core::Pod>(bytes: &mut [u8], offset: usize, edit: impl FnOnce(&mut T)) {
     let mut value: T = read_struct(&bytes[offset..]);
     edit(&mut value);
     write_struct(&mut bytes[offset..], &value);
 }
 
-fn edit_command<T: Copy>(bytes: &mut [u8], cmd: u32, edit: impl FnOnce(&mut T)) {
+fn edit_command<T: bun_core::Pod>(bytes: &mut [u8], cmd: u32, edit: impl FnOnce(&mut T)) {
     let offset = command_offset(bytes, cmd);
     edit_struct(bytes, offset, edit);
 }
@@ -77,7 +77,7 @@ fn edit_fixups_header(bytes: &mut [u8], edit: impl FnOnce(&mut dyld_chained_fixu
     edit_struct(bytes, command.dataoff as usize, edit);
 }
 
-fn read_command_of<T: Copy>(bytes: &[u8], cmd: u32) -> Option<T> {
+fn read_command_of<T: AnyBitPattern>(bytes: &[u8], cmd: u32) -> Option<T> {
     find_command(bytes, &parse(bytes).unwrap(), cmd).unwrap()
 }
 

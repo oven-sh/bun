@@ -39,7 +39,7 @@ fn toy_section(name: &[u8], virtual_size: u32, raw_size: u32, flags: u32) -> Sec
     header
 }
 
-fn edit_struct<T: Copy>(bytes: &mut [u8], offset: usize, edit: impl FnOnce(&mut T)) {
+fn edit_struct<T: bun_core::Pod>(bytes: &mut [u8], offset: usize, edit: impl FnOnce(&mut T)) {
     let mut value: T = read_struct(&bytes[offset..]);
     edit(&mut value);
     write_struct(&mut bytes[offset..], &value);

@@ -63,11 +63,8 @@ macro_rules! impl_js_sink_forwarders {
         ) -> $crate::webcore::streams::result::Writable {
             Self::write(self, data)
         }
-        fn write_utf16(
-            &mut self,
-            data: &$crate::webcore::streams::Result,
-        ) -> $crate::webcore::streams::result::Writable {
-            Self::write_utf16(self, data)
+        fn write_utf16(&mut self, text: &[u16]) -> $crate::webcore::streams::result::Writable {
+            Self::write_utf16(self, text)
         }
         fn write_latin1(
             &mut self,
@@ -102,7 +99,7 @@ pub(crate) trait JsSinkType: Sized + 'static {
     /// `this` is the object's live sink and must not be used after the call.
     unsafe fn finalize(this: *mut Self);
     fn write_bytes(&mut self, data: &streams::Result) -> streams::result::Writable;
-    fn write_utf16(&mut self, data: &streams::Result) -> streams::result::Writable;
+    fn write_utf16(&mut self, text: &[u16]) -> streams::result::Writable;
     fn write_latin1(&mut self, data: &streams::Result) -> streams::result::Writable;
     fn end(&mut self, err: Option<SysError>) -> sys::Result<()>;
     fn end_from_js(&mut self, cx: &JsThread<'_>) -> sys::Result<JSValue>;
@@ -213,9 +210,7 @@ fn write_chunk<'a, T: JsSinkType>(
             sink.write_bytes(&Temporary(RawSlice::new(bytes)))
         }),
         SinkChunk::Text(text) if text.is_empty() => return Ok(JSValue::js_number(0.0)),
-        SinkChunk::Text(text) if text.is_utf16() => sink.write_utf16(&Temporary(RawSlice::new(
-            bytemuck::cast_slice(text.utf16()),
-        ))),
+        SinkChunk::Text(text) if text.is_utf16() => sink.write_utf16(text.utf16()),
         SinkChunk::Text(text) => sink.write_latin1(&Temporary(RawSlice::new(text.latin1()))),
         SinkChunk::Other(value) => return Err(throw_invalid_chunk(cx.global(), value.to_js())),
     };

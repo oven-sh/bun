@@ -70,6 +70,8 @@ struct CodeViewRecord {
     age: u32,
 }
 
+bun_core::impl_pod!(UuidCommand, DebugDirectoryEntry, CodeViewRecord);
+
 pub fn find_file_identity(file: &mut builtins::Image<'_>) -> Result<[u8; 16], IdentityError> {
     let magic = file
         .bytes(0, ExecutableFormat::MAGIC_SIZE)
@@ -263,9 +265,8 @@ fn find_macho_file_identity(file: &mut builtins::Image<'_>) -> Result<[u8; 16], 
 }
 
 fn find_uuid(command_count: u32, commands: &[u8]) -> Result<[u8; 16], IdentityError> {
-    let mut iterator = LoadCommandIterator::new(command_count, commands);
     let mut visited_count = 0u32;
-    while let Some(command) = iterator.next() {
+    for command in LoadCommandIterator::new(command_count, commands) {
         visited_count += 1;
         if command.cmd() != LC::UUID {
             continue;
@@ -479,6 +480,7 @@ mod process {
 
 #[cfg(test)]
 mod tests {
+    use bun_core::ffi::zeroed;
     use bun_sys::elf::PT_LOAD;
 
     use super::IdentityError::{Malformed, NoBuildId, UnrecognizedExecutable};
@@ -516,10 +518,6 @@ mod tests {
     const DEBUG_DIRECTORY_FILE_OFFSET: usize = RDATA_FILE_OFFSET + DEBUG_DIRECTORY_OFFSET;
     const DEBUG_DATA_OFFSET: usize = 0x100;
     const DEBUG_DATA_STRIDE: usize = 0x40;
-
-    fn zeroed<T: Copy>() -> T {
-        read_struct(&vec![0; size_of::<T>()])
-    }
 
     fn description_record(kind: [u8; 8], body: &[u8]) -> Vec<u8> {
         let mut record = kind.to_vec();
@@ -602,7 +600,7 @@ mod tests {
         with_image(bytes, usize::MAX, find_file_identity)
     }
 
-    fn check_patches<T: Copy>(file: &[u8], offset: usize, patches: &[Patch<T>]) {
+    fn check_patches<T: bun_core::Pod>(file: &[u8], offset: usize, patches: &[Patch<T>]) {
         for (index, &(change, error)) in patches.iter().enumerate() {
             let mut file = file.to_vec();
             let mut value: T = read_struct(&file[offset..]);

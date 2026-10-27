@@ -124,6 +124,7 @@ pub(crate) struct NoteHeader {
     pub(crate) descriptor_size: u32,
     pub(crate) note_type: u32,
 }
+bun_core::impl_pod!(NoteHeader);
 
 #[derive(Copy, Clone)]
 struct FileExtent {

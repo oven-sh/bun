@@ -9,6 +9,7 @@ on:
     paths:
       - "src/**/*.rs"
       - "src/**/Cargo.toml"
+      - "src/pod/README.md"
       - "src/**/*.bind.ts"
       - "src/codegen/**"
       - "src/trim/features/**"

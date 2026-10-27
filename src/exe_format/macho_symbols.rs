@@ -31,7 +31,7 @@ struct LinkeditLayout {
     after_strings: usize,
 }
 
-fn write_command<T: Copy>(data: &mut [u8], at: usize, command: &T) {
+fn write_command<T: bun_core::NoUninit>(data: &mut [u8], at: usize, command: &T) {
     write_struct(&mut data[at..][..size_of::<T>()], command);
 }
 
@@ -92,8 +92,7 @@ impl MachoFile {
         let mut linkedit: Option<(usize, segment_command_64)> = None;
         let mut bun: Option<(u8, u64)> = None;
         let mut ordinal: usize = 0;
-        let mut iter = self.iterator();
-        while let Some(entry) = iter.next() {
+        for entry in self.iterator() {
             let at = lc_base + entry.offset;
             match entry.hdr.cmd {
                 LC::SEGMENT_64 => {
@@ -289,10 +288,8 @@ mod tests {
         padded
     }
 
-    fn append_struct<T: Copy>(file: &mut Vec<u8>, value: &T) {
-        let at = file.len();
-        file.resize(at + size_of::<T>(), 0);
-        write_command(file, at, value);
+    fn append_struct<T: bun_core::NoUninit>(file: &mut Vec<u8>, value: &T) {
+        file.extend_from_slice(bun_core::bytes_of(value));
     }
 
     fn write_segment(
@@ -411,11 +408,11 @@ mod tests {
         file
     }
 
-    fn read_at<T: Copy>(file: &[u8], at: usize) -> T {
+    fn read_at<T: bun_core::AnyBitPattern>(file: &[u8], at: usize) -> T {
         read_struct(&file[at..][..size_of::<T>()])
     }
 
-    fn edit_at<T: Copy>(file: &[u8], at: usize, edit: impl FnOnce(&mut T)) -> Vec<u8> {
+    fn edit_at<T: bun_core::Pod>(file: &[u8], at: usize, edit: impl FnOnce(&mut T)) -> Vec<u8> {
         let mut edited = file.to_vec();
         let mut value: T = read_at(file, at);
         edit(&mut value);

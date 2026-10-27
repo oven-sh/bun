@@ -146,6 +146,8 @@ fn to_usize(v: u64) -> Result<usize, SectionError> {
 
 #[cfg(test)]
 mod tests {
+    use bun_core::ffi::zeroed;
+
     use super::*;
     use crate::elf::{SHT_PROGBITS, SHT_STRTAB};
     use crate::image::read_bytes_at;
@@ -228,11 +230,7 @@ mod tests {
     };
     const TOY_SECTIONS: [ToySection; 4] = [BUILTIN_MODULES, TRIM_TABLE, FEATURE_STATE, PAYLOAD];
 
-    fn zeroed<T: Copy>() -> T {
-        read_struct(&vec![0u8; size_of::<T>()])
-    }
-
-    fn edit_struct<T: Copy>(bytes: &mut [u8], offset: usize, edit: impl FnOnce(&mut T)) {
+    fn edit_struct<T: bun_core::Pod>(bytes: &mut [u8], offset: usize, edit: impl FnOnce(&mut T)) {
         let mut value: T = read_struct(&bytes[offset..]);
         edit(&mut value);
         write_struct(&mut bytes[offset..], &value);

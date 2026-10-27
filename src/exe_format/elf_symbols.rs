@@ -566,6 +566,7 @@ pub(crate) mod tests {
         st_value: u64,
         st_size: u64,
     }
+    bun_core::impl_any_bit_pattern!(Elf64_Sym);
     const _: () = assert!(size_of::<Elf64_Sym>() == SYMBOL_ENTRY_SIZE);
     const GLOBAL_FUNCTION: u8 = 1 << 4 | STT_FUNC;
 

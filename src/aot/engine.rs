@@ -18,7 +18,7 @@ use core::ptr::NonNull;
 
 #[cfg(not(test))]
 use bun_aot_interface::engine::shared;
-use bun_core::ffi::{Zeroable, zeroed};
+use bun_core::ffi::zeroed;
 use bun_options_types::aot_options::{AotOptions, ExplainSet, HeapSize, ReportDetail};
 use bun_removable_features::FeatureSet;
 
@@ -61,8 +61,7 @@ pub struct EngineOptions {
 /// A thread that joins a build touches megabytes of its own first.
 const PROGRAM_BYTES_PER_THREAD: usize = 512 << 10;
 
-// SAFETY: an abi record of integers, a float, byte arrays, flag words, records of integers and `repr(u32)` enums that each have a member 0.
-unsafe impl Zeroable for CompileOptions {}
+bun_core::impl_zeroable!(CompileOptions);
 
 fn default_record() -> CompileOptions {
     let mut record: CompileOptions = zeroed();

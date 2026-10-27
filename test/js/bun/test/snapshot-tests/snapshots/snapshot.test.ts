@@ -437,6 +437,10 @@ test("inline snapshot of a React element does not call getters on its type, key,
   expect({ $$typeof, type: "div", props: proxyProps }).toMatchInlineSnapshot(`<div id="x" />`);
   expect({ $$typeof, type: "div", props: new Proxy(proxyProps, {}) }).toMatchInlineSnapshot(`<div id="x" />`);
   expect(called).toBe(0);
+  // A revoked Proxy has no props. Its old target is not read.
+  const { proxy: revokedProps, revoke } = Proxy.revocable({ id: "x" }, {});
+  revoke();
+  expect({ $$typeof, type: "div", props: revokedProps }).toMatchInlineSnapshot(`<div />`);
 
   // Data props, including a numeric key, still print.
   expect({ $$typeof, type: "div", key: "k", props: { 0: "a", children: "hi" } }).toMatchInlineSnapshot(

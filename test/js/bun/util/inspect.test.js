@@ -1585,7 +1585,7 @@ it("does not call a $$typeof getter while checking for a React element", () => {
     },
     enumerable: false,
   });
-  expect(() => Bun.inspect(hidden)).not.toThrow();
+  expect(Bun.inspect(hidden)).toBe("{\n  $$typeof: [Getter],\n}");
   expect(called).toBe(0);
 
   // A plain data property still marks a React element.
@@ -1622,9 +1622,54 @@ it("prints a React element without calling getters on its type, key, props or ch
   expect(Bun.inspect({ $$typeof, type: "div", props: proxyProps })).toBe('<div id="x" />');
   expect(Bun.inspect({ $$typeof, type: "div", props: new Proxy(proxyProps, {}) })).toBe('<div id="x" />');
   expect(called).toBe(0);
+  // A revoked Proxy has no props. Its old target is not read.
+  const { proxy: revokedProps, revoke } = Proxy.revocable({ id: "x" }, {});
+  revoke();
+  expect(Bun.inspect({ $$typeof, type: "div", props: revokedProps })).toBe("<div />");
+  expect(Bun.inspect({ $$typeof, type: "div", props: new Proxy(revokedProps, {}) })).toBe("<div />");
 
   // Data props, including a numeric key, still print.
   expect(Bun.inspect({ $$typeof, type: "div", key: "k", props: { 0: "a", b: 1, children: "hi" } })).toBe(
     '<div key="k" 0="a" b=1>hi</div>',
   );
+});
+
+// The global of a node:vm context throws a stack overflow from every property lookup, a
+// non-observable one too. The read of `props.children` left that error pending, which aborts a
+// build with assertions.
+it.skipIf(!isASAN)("reports a stack overflow from the props of a React element", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const vm = require("node:vm");
+       const props = vm.runInContext("globalThis", vm.createContext({}));
+       const element = { $$typeof: Symbol.for("react.element"), type: "div", props };
+       const inspect = Bun.inspect;
+       let out;
+       (function recurse() {
+         try {
+           recurse();
+         } catch {
+           if (out === undefined) {
+             try {
+               out = inspect(element);
+             } catch (e) {
+               out = "threw: " + e.message;
+             }
+           }
+         }
+       })();
+       console.log(out);`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: "threw: Maximum call stack size exceeded.\n",
+    stderr: "",
+    exitCode: 0,
+  });
 });

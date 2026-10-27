@@ -2307,17 +2307,20 @@ impl JSValue {
         }
     }
     /// Own data property lookup that never runs user code: an accessor, a Proxy, a module namespace or `undefined` is `None`.
+    /// `Err` only for an error of the lookup itself (a stack overflow).
     pub fn get_own_non_observable(
         self,
         global: &JSGlobalObject,
         property_name: impl AsRef<[u8]>,
-    ) -> Option<JSValue> {
+    ) -> JsResult<Option<JSValue>> {
         let name = bun_core::StringView::borrow_utf8(property_name.as_ref());
+        crate::top_scope!(scope, global);
         let v = JSC__JSValue__getOwnNonObservable(self, global, &name);
+        scope.return_if_exception()?;
         if v.is_empty() || v.is_undefined() {
-            None
+            Ok(None)
         } else {
-            Some(v)
+            Ok(Some(v))
         }
     }
     /// `JSValue.getOwnObject` — own-property lookup; throws "{prop} must be an
@@ -2546,6 +2549,20 @@ impl JSValue {
     /// `ZERO` if `self` is not a proxy.
     pub fn get_proxy_target(self) -> JSValue {
         Bun__JSValue__getProxyTarget(self)
+    }
+
+    /// What a chain of Proxies stands for: its innermost target, or the first
+    /// revoked Proxy in the chain. No trap runs.
+    pub fn through_proxies(self) -> JSValue {
+        let mut value = self;
+        while value.is_cell() && value.js_type() == JSType::ProxyObject {
+            let handler = value.get_proxy_internal_field(ProxyField::Handler);
+            if handler.is_empty() || handler.is_undefined_or_null() {
+                break;
+            }
+            value = value.get_proxy_internal_field(ProxyField::Target);
+        }
+        value
     }
 
     // ── ArrayBufferView accessors. ─────────────────────

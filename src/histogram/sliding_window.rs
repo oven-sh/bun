@@ -109,3 +109,52 @@ impl SlidingWindow {
             + self.size_of_parts
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Two parts of 10 ns each, from `now_ns` on.
+    fn window(now_ns: u64) -> Result<SlidingWindow, &'static str> {
+        let empty = Histogram::new(1, 1000, 3).ok_or("the range is valid")?;
+        let rotation = Rotation::EveryNanoseconds(10);
+        Ok(SlidingWindow::new(empty, 2, rotation, now_ns))
+    }
+
+    #[test]
+    fn a_value_is_there_until_the_ring_comes_around() -> Result<(), &'static str> {
+        let mut window = window(1005)?;
+        window.record(7, 1005);
+        for (now_ns, count) in [(1005, 1), (1014, 1), (1015, 1), (1024, 1), (1025, 0)] {
+            assert_eq!(window.snapshot(now_ns).count(), count, "at {now_ns}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn a_part_replaces_the_one_that_is_out_of_date() -> Result<(), &'static str> {
+        let mut window = window(0)?;
+        window.record(1, 0);
+        window.record(2, 10);
+        window.record(3, 20);
+        let snapshot = window.snapshot(20);
+        assert_eq!(
+            (snapshot.count(), snapshot.min(), snapshot.max()),
+            (2, 2, 3)
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn reset_begins_the_first_part() -> Result<(), &'static str> {
+        let mut window = window(1005)?;
+        window.record(7, 1005);
+        window.reset(1017);
+        assert_eq!(window.snapshot(1017).count(), 0);
+        window.record(7, 1017);
+        for (now_ns, count) in [(1026, 1), (1036, 1), (1037, 0)] {
+            assert_eq!(window.snapshot(now_ns).count(), count, "at {now_ns}");
+        }
+        Ok(())
+    }
+}

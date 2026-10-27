@@ -54,6 +54,23 @@ test("the garbage collector knows the size of a histogram", () => {
   expect(estimateShallowMemoryUsageOf(histogram)).toBeWithin(88 * (chunk + 8), 88 * (chunk + 8) + 1024);
 });
 
+test("the garbage collector knows the size of a sliding window", () => {
+  const window = perf.createSlidingWindowHistogram({ chunks: 2, recordsPerChunk: 1 });
+  const size = () => estimateShallowMemoryUsageOf(window);
+  const empty = size();
+  // The table of the chunks there can be, and one chunk.
+  const part = 88 * 8 + chunk;
+  window.record(1);
+  expect(size() - empty).toBeWithin(part, part + 256);
+  const one = size() - empty;
+  for (const value of [1e9, 1, 1e9]) {
+    window.record(value);
+    expect(size() - empty).toBe(2 * one);
+  }
+  window.reset();
+  expect(size()).toBe(empty);
+});
+
 // The tests below count them, and a count that is `undefined` would end their loops at once.
 test("heapStats() counts the histograms of each class", () => {
   const recordable = perf.createHistogram();

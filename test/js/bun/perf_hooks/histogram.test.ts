@@ -3086,3 +3086,81 @@ describe("arguments of the statistics", () => {
     }
   });
 });
+
+describe("edges", () => {
+  // lowest 1, highest 1000, figures 1, one value in each of the buckets 5 and 8.
+  const bytes = "ab00020101021903e80301040205050608070008fb3ff00000000000000918700a8405010301";
+  const invalid = "TypeError ERR_INVALID_ARG_VALUE: Invalid histogram export data";
+
+  test("recordCorrected does not go below the interval where the lowest value is above 1", () => {
+    const h = createHistogram({ lowest: 1024, highest: 1e9 });
+    h.recordCorrected(1000, 100);
+    assert.strictEqual(h.count, 10);
+  });
+
+  test("diff with more of a value than there is", () => {
+    assert.strictEqual(
+      thrown(() => filled([5]).diff(filled([5, 5]))),
+      "TypeError ERR_INVALID_ARG_VALUE: other contains values that are not in the histogram",
+    );
+  });
+
+  test("one value in a wide bucket", () => {
+    const h = filled([1e6]);
+    assert.deepStrictEqual([...h.percentilesAt([50])], [[50, 1000447]]);
+    assert.deepStrictEqual(h.percentileCI(50), bare({ value: 1000447, lower: 1000447, upper: 1000447 }));
+  });
+
+  test("two histograms without any variance", () => {
+    const [fives, sevens] = [filled([5, 5]), filled([7, 7])];
+    assert.deepStrictEqual(
+      [fives.welchTest(sevens), fives.cohensD(sevens), fives.mannWhitneyTest(filled([5, 5]))],
+      [
+        bare({ tStatistic: 0, degreesOfFreedom: 0, pValue: 1, confidenceInterval: bare({ lower: 0, upper: 0 }) }),
+        0,
+        bare({ uStatistic: 2, zScore: 0, pValue: 1 }),
+      ],
+    );
+  });
+
+  // Node.js compares the buckets by their indexes.
+  test("a value counts as the middle of its bucket", notInNode, () => {
+    assert.strictEqual(filled([300]).cliffsD(filled([1], { lowest: 1024, highest: 1e9 })), -1);
+  });
+
+  test("a second step of logBuckets that is out of range", () => {
+    assert.deepStrictEqual(
+      [...filled([5, 70]).logBuckets(1, 2 ** 53)],
+      [
+        [1, 0],
+        [9002801208229888, 2],
+      ],
+    );
+  });
+
+  test("reset of a sliding window begins a chunk", () => {
+    const window = createSlidingWindowHistogram({ chunks: 1, recordsPerChunk: 2 });
+    window.record(1);
+    window.reset();
+    window.record(2);
+    window.record(3);
+    assert.strictEqual(window.snapshot().count, 2);
+  });
+
+  test("importHistogram", () => {
+    assert.strictEqual(fromHex(bytes).mean, 6.5);
+    assert.strictEqual(fromHex(bytes.replace("0700", "0701")).mean, 7.5);
+    assert.strictEqual(fromHex(bytes.replace("08fb3ff0000000000000", "0801")).mean, 6.5);
+    for (const [field, other] of [
+      ["091870", "091871"],
+      ["0505", "051b8000000000000000"],
+      ["0608", "061b8000000000000000"],
+    ]) {
+      assert.strictEqual(
+        thrown(() => fromHex(bytes.replace(field, other))),
+        invalid,
+        other,
+      );
+    }
+  });
+});

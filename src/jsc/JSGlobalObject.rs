@@ -84,6 +84,15 @@ impl core::fmt::Debug for GlobalRef {
 
 bun_core::declare_scope!(TerminationTaken, hidden);
 
+/// What Node's `ERR_INVALID_ARG_TYPE` and `ERR_INVALID_ARG_VALUE` call `name`.
+pub fn argument_or_property(name: &[u8]) -> &'static str {
+    if name.contains(&b'.') {
+        "property"
+    } else {
+        "argument"
+    }
+}
+
 impl JSGlobalObject {
     /// Alias of the macro-provided [`as_mut_ptr`](Self::as_mut_ptr) kept for
     /// call-site readability where mutation is not the intent.
@@ -560,8 +569,9 @@ impl JSGlobalObject {
         self.err(
             JscError::INVALID_ARG_TYPE,
             format_args!(
-                "The \"{}\" argument must be of type {}. Received {}",
+                "The \"{}\" {} must be of type {}. Received {}",
                 bstr::BStr::new(argname.as_ref()),
+                argument_or_property(argname.as_ref()),
                 bstr::BStr::new(typename.as_ref()),
                 actual_string_value
             ),
@@ -582,8 +592,9 @@ impl JSGlobalObject {
         self.err(
             JscError::INVALID_ARG_TYPE,
             format_args!(
-                "The \"{}\" argument must be {}. Received {}",
+                "The \"{}\" {} must be {}. Received {}",
                 bstr::BStr::new(argname.as_ref()),
+                argument_or_property(argname.as_ref()),
                 bstr::BStr::new(typename.as_ref()),
                 actual_string_value
             ),
@@ -627,8 +638,9 @@ impl JSGlobalObject {
         self.err(
             JscError::INVALID_ARG_TYPE,
             format_args!(
-                "The \"{}\" argument must be one of type {}. Received {}",
+                "The \"{}\" {} must be one of type {}. Received {}",
                 bstr::BStr::new(argname.as_ref()),
+                argument_or_property(argname.as_ref()),
                 bstr::BStr::new(typename.as_ref()),
                 actual_string_value
             ),

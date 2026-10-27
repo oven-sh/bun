@@ -162,12 +162,14 @@ mod _impl {
 
             let mut pledged_src_size: u64 = u64::MAX;
             if pledged_src_size_value.is_number() {
-                pledged_src_size = u64::from(validators::validate_uint32(
-                    global,
-                    pledged_src_size_value,
-                    format_args!("pledgedSrcSize"),
-                    false,
-                )?);
+                // `as` is V8's `IntegerValue`: it truncates, saturates, and maps NaN to 0.
+                let signed = pledged_src_size_value.as_number() as i64;
+                pledged_src_size = u64::try_from(signed).map_err(|_| {
+                    validators::throw_err_invalid_arg_value(
+                        global,
+                        format_args!("pledgedSrcSize may not be negative"),
+                    )
+                })?;
             }
 
             // Bind the ArrayBuffer view to a local so the borrowed byte_slice()

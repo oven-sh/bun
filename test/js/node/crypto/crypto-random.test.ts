@@ -44,6 +44,16 @@ describe("randomInt args validation", () => {
     expect(() => randomInt(10, 5)).toThrow(RangeError);
   });
 
+  it("max is printed as in Node.js", () => {
+    const outOfRange = (min: number, received: string) =>
+      RangeError(
+        `The value of "max" is out of range. It must be greater than the value of "min" (${min}). Received ${received}`,
+      );
+    expect(() => randomInt(-0)).toThrow(outOfRange(0, "-0"));
+    expect(() => randomInt(0, -(2 ** 40))).toThrow(outOfRange(0, "-1_099_511_627_776"));
+    expect(() => randomInt(2 ** 40, 2 ** 40)).toThrow(outOfRange(2 ** 40, "1_099_511_627_776"));
+  });
+
   it("we allow negative numbers", () => {
     expect(() => randomInt(-2, -1)).not.toThrow(RangeError);
   });

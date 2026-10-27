@@ -139,19 +139,17 @@ pub(crate) fn validate_int32(
     // Number.isInteger semantics like Node's validateInt32: -0 and integral doubles
     // outside the int52 range are integers; the range check below rejects out-of-range.
     if !num.is_finite() || num.fract() != 0.0 {
-        let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
         return Err(throw_range_error(
             global_this,
             format_args!(
                 "The value of \"{}\" is out of range. It must be an integer. Received {}",
                 name,
-                value.to_fmt(&mut formatter)
+                bun_core::fmt::NodeNumber(num)
             ),
         ));
     }
     // Use floating point comparison here to ensure values out of i32 range get caught instead of clamp/truncated.
     if num < (min as f64) || num > (max as f64) {
-        let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
         return Err(throw_range_error(
             global_this,
             format_args!(
@@ -159,7 +157,7 @@ pub(crate) fn validate_int32(
                 name,
                 min,
                 max,
-                value.to_fmt(&mut formatter)
+                bun_core::fmt::NodeNumber(num)
             ),
         ));
     }
@@ -182,20 +180,18 @@ pub(crate) fn validate_uint32(
     }
     let num = value.as_number();
     if !num.is_finite() || num.fract() != 0.0 {
-        let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
         return Err(throw_range_error(
             global_this,
             format_args!(
                 "The value of \"{}\" is out of range. It must be an integer. Received {}",
                 name,
-                value.to_fmt(&mut formatter)
+                bun_core::fmt::NodeNumber(num)
             ),
         ));
     }
     let min: f64 = if greater_than_zero { 1.0 } else { 0.0 };
     let max: f64 = f64::from(u32::MAX);
     if num < min || num > max {
-        let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
         return Err(throw_range_error(
             global_this,
             format_args!(
@@ -203,7 +199,7 @@ pub(crate) fn validate_uint32(
                 name,
                 min,
                 max,
-                value.to_fmt(&mut formatter)
+                bun_core::fmt::NodeNumber(num)
             ),
         ));
     }

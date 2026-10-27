@@ -3707,20 +3707,35 @@ impl Display for NodeNumber {
             return f.write_str("-0");
         }
         let digits = double(number).to_string();
-        let sign = usize::from(number < 0.0);
-        let is_large = number.is_finite() && number.fract() == 0.0 && number.abs() > 4294967296.0;
-        let ungrouped = if is_large {
-            sign + (digits.len() - sign - 1) % 3 + 1
-        } else {
-            digits.len()
-        };
-        f.write_str(&digits[..ungrouped])?;
-        for group in digits.as_bytes()[ungrouped..].chunks(3) {
-            f.write_char('_')?;
-            write_bytes(f, group)?;
+        if number.is_finite() && number.fract() == 0.0 && number.abs() > 4294967296.0 {
+            return add_numerical_separator(f, digits.as_bytes());
         }
-        Ok(())
+        f.write_str(&digits)
     }
+}
+/// The decimal digits of a BigInt as Node's `ERR_OUT_OF_RANGE` prints them.
+pub struct NodeBigInt<'a>(pub &'a [u8]);
+impl Display for NodeBigInt<'_> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let Self(digits) = *self;
+        let magnitude = digits.strip_prefix(b"-").unwrap_or(digits);
+        if magnitude.len() > 10 || (magnitude.len() == 10 && magnitude > b"4294967296".as_slice()) {
+            add_numerical_separator(f, digits)?;
+        } else {
+            write_bytes(f, digits)?;
+        }
+        f.write_char('n')
+    }
+}
+fn add_numerical_separator(f: &mut Formatter<'_>, digits: &[u8]) -> fmt::Result {
+    let sign = usize::from(digits.first() == Some(&b'-'));
+    let (ungrouped, groups) = digits.split_at(sign + (digits.len() - sign - 1) % 3 + 1);
+    write_bytes(f, ungrouped)?;
+    for group in groups.chunks(3) {
+        f.write_char('_')?;
+        write_bytes(f, group)?;
+    }
+    Ok(())
 }
 impl OutOfRangeValue for NodeNumber {
     fn write_received(&self, f: &mut Formatter<'_>) -> fmt::Result {
@@ -3728,6 +3743,14 @@ impl OutOfRangeValue for NodeNumber {
     }
     fn type_name() -> &'static str {
         "f64"
+    }
+}
+impl OutOfRangeValue for NodeBigInt<'_> {
+    fn write_received(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, " Received {self}")
+    }
+    fn type_name() -> &'static str {
+        "[]const u8"
     }
 }
 impl OutOfRangeValue for i64 {

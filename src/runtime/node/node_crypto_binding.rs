@@ -347,6 +347,7 @@ fn random_int<'a>(
         ));
     }
 
+    let received = bun_core::fmt::NodeNumber(max);
     let min = min as i64;
     let max = max as i64;
 
@@ -356,7 +357,7 @@ fn random_int<'a>(
                 jsc::ErrorCode::OUT_OF_RANGE,
                 format_args!(
                     "The value of \"max\" is out of range. It must be greater than the value of \"min\" ({}). Received {}",
-                    min, max
+                    min, received
                 ),
             )
             .throw());

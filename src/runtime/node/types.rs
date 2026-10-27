@@ -1444,9 +1444,13 @@ impl VectorArrayBuffer {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-pub(crate) fn mode_from_js(ctx: &JSGlobalObject, value: JSValue) -> JsResult<Option<Mode>> {
+pub(crate) fn mode_from_js(
+    ctx: &JSGlobalObject,
+    value: JSValue,
+    name: &str,
+) -> JsResult<Option<Mode>> {
     let mode_int: u32 = if value.is_number() {
-        validators::validate_uint32(ctx, value, format_args!("mode"), false)?
+        validators::validate_uint32(ctx, value, name, false)?
     } else {
         if value.is_undefined_or_null() {
             return Ok(None);
@@ -1455,7 +1459,7 @@ pub(crate) fn mode_from_js(ctx: &JSGlobalObject, value: JSValue) -> JsResult<Opt
         // Node gates on `typeof value === 'string'`, so a `new String(...)`
         // wrapper falls through to the number-only validator.
         if !value.is_string_literal() {
-            return Err(ctx.throw_invalid_argument_type_value(b"mode", b"number", value));
+            return Err(ctx.throw_invalid_argument_type_value(name, "number", value));
         }
 
         // An easier method of constructing the mode is to use a sequence of
@@ -1475,7 +1479,9 @@ pub(crate) fn mode_from_js(ctx: &JSGlobalObject, value: JSValue) -> JsResult<Opt
                 .err(
                     jsc::ErrorCode::INVALID_ARG_VALUE,
                     format_args!(
-                        "The argument 'mode' must be a 32-bit unsigned integer or an octal string. Received {}",
+                        "The {} '{}' must be a 32-bit unsigned integer or an octal string. Received {}",
+                        jsc::argument_or_property(name.as_bytes()),
+                        name,
                         actual
                     ),
                 )
@@ -1486,12 +1492,7 @@ pub(crate) fn mode_from_js(ctx: &JSGlobalObject, value: JSValue) -> JsResult<Opt
         // as numeric modes (> u32::MAX is ERR_OUT_OF_RANGE). `slice` is already
         // [0-7]+, so the only parse error is Overflow; u64::MAX stays out of range.
         let parsed = strings::parse_int::<u64>(slice, 8).unwrap_or(u64::MAX);
-        validators::validate_uint32(
-            ctx,
-            JSValue::js_number_from_uint64(parsed),
-            format_args!("mode"),
-            false,
-        )?
+        validators::validate_uint32(ctx, JSValue::js_number_from_uint64(parsed), name, false)?
     };
 
     Ok(Some(mode_int as Mode))

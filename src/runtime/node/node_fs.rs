@@ -171,7 +171,7 @@ mod node {
         ctx: &bun_jsc::JSGlobalObject,
         value: bun_jsc::JSValue,
     ) -> bun_jsc::JsResult<Option<bun_sys::Mode>> {
-        super::super::types::mode_from_js(ctx, value)
+        super::super::types::mode_from_js(ctx, value, "mode")
     }
 }
 
@@ -2906,17 +2906,7 @@ pub(crate) mod args {
             let len: BlobSizeType = if len_value.is_undefined() {
                 0
             } else {
-                BlobSizeType::try_from(
-                    validators::validate_integer(
-                        ctx,
-                        len_value,
-                        "len",
-                        Some(i52::MIN),
-                        Some(BLOB_SIZE_MAX as i64),
-                    )?
-                    .max(0),
-                )
-                .expect("infallible: validated range")
+                validators::validate_integer(ctx, len_value, "len", None, None)?.max(0) as u64
             };
             Ok(FTruncate { fd, len: Some(len) })
         }
@@ -3496,7 +3486,7 @@ pub(crate) mod args {
                             delay,
                             "options.retryDelay",
                             Some(0),
-                            Some(c_uint::MAX as i64),
+                            Some(i32::MAX as i64),
                         )?)
                         .expect("infallible: validated range");
                     }
@@ -3566,7 +3556,8 @@ pub(crate) mod args {
                         recursive = b;
                     }
                     if let Some(mode_) = val.get(ctx, "mode")? {
-                        mode = node::mode_from_js(ctx, mode_)?.unwrap_or(mode);
+                        mode = super::super::types::mode_from_js(ctx, mode_, "options.mode")?
+                            .unwrap_or(mode);
                     }
                 }
                 // Node branches on `typeof options === 'object'`, so a `String`
@@ -3870,7 +3861,7 @@ pub(crate) mod args {
                         let max_offset = buf_len as i64;
                         if args.offset as i64 > max_offset {
                             return Err(ctx.throw_range_error(
-                                args.offset as f64,
+                                bun_core::fmt::NodeNumber(args.offset as f64),
                                 bun_jsc::RangeErrorOptions {
                                     field_name: b"offset",
                                     max: max_offset,
@@ -4142,11 +4133,10 @@ pub(crate) mod args {
                 {
                     let position_bytes = position.to_string(ctx)?.to_owned_slice();
                     return Err(ctx.throw_range_error(
-                        &position_bytes[..],
+                        bun_core::fmt::NodeBigInt(&position_bytes),
                         bun_jsc::RangeErrorOptions {
                             field_name: b"position",
-                            min: -1,
-                            max: max_position,
+                            msg: format!(">= -1 && <= {max_position}").as_bytes(),
                             ..Default::default()
                         },
                     ));
@@ -10209,7 +10199,6 @@ impl NodeFSFunctionEnum {
 #[allow(non_camel_case_types)]
 struct i52;
 impl i52 {
-    const MIN: i64 = -(1i64 << 51);
     /// Node's `GetOffset`: only a safe JS integer selects positional I/O.
     #[inline]
     fn offset_from_js(v: JSValue) -> Option<i64> {

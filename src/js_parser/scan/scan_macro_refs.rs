@@ -1,4 +1,4 @@
-//! The check that no use of a macro import is left outside of a call, and the walk that finds where such a use is.
+//! The check that the finished AST names no macro import outside of a call, and the walk that finds each such name.
 
 use std::io::Write as _;
 
@@ -10,7 +10,7 @@ use bun_collections::VecExt as _;
 use crate::lexer as js_lexer;
 use crate::parser::{MacroRefs, RuntimeFeatures};
 
-/// A replaced macro call un-counts its target, so a use that `ast` still counts is an error. `_parse` halts on it.
+/// Bun removes a macro import and replaces only its calls, so a name of it that `ast` still holds is an error. `_parse` halts on it.
 #[cold]
 #[inline(never)]
 pub(crate) fn reject_macro_value_uses(
@@ -20,6 +20,7 @@ pub(crate) fn reject_macro_value_uses(
     source: &bun_ast::Source,
     log: &mut bun_ast::Log,
 ) {
+    // The visit pass counts no use in code that it knows is dead, and a replaced call un-counts its target.
     let has_use = |r#ref: Ref| ast.symbols[r#ref.inner_index() as usize].use_count_estimate != 0;
     if !refs.keys().iter().any(|r#ref| has_use(*r#ref)) {
         return;
@@ -38,17 +39,20 @@ pub(crate) fn reject_macro_value_uses(
     if !features.dead_code_elimination {
         return;
     }
-    let located = locate_macro_refs(ast.parts.as_slice(), refs);
+    let (located, is_cut) = locate_macro_refs(ast.parts.as_slice(), refs);
     let place = |at: u32| {
         let found = &located[at as usize];
         (found.loc.start, found.r#ref.inner_index())
     };
-    // In source order. The visit pass copies the computed key of a decorated member, so the walk finds that identifier twice.
+    // In source order, which the log needs to find each line once. A decorated member's computed key is in the AST twice.
     let mut order = bun_collections::index_sort::identity(located.len());
     bun_collections::index_sort::sort_indices_unstable(&mut order, &mut |a, b| {
         place(a).cmp(&place(b))
     });
     order.dedup_by(|a, b| place(*a) == place(*b));
+    // Dead code that the output keeps can name a macro import. Without a counted use that is not an error.
+    order.retain(|at| has_use(located[*at as usize].r#ref));
+
     let mut reporter = Reporter {
         refs,
         ast,
@@ -58,25 +62,42 @@ pub(crate) fn reject_macro_value_uses(
         macros_run: !features.no_macros && !source.path.is_node_module(),
         bindings: (0..refs.count()).map(|_| Binding::default()).collect(),
     };
+    for at in &order {
+        reporter.binding(located[*at as usize].r#ref).is_named = true;
+    }
+    reporter.locate_imports();
     for at in order {
         let found = located[at as usize];
-        if has_use(found.r#ref) {
-            reporter.report(found.r#ref, Some(found.loc));
-        }
+        reporter.report(found.r#ref, Some(found));
     }
-    // The visit pass can count a use and then fold its node away.
-    for r#ref in refs.keys() {
-        if has_use(*r#ref) {
-            reporter.report(*r#ref, None);
+    // A walk that stopped at `MAX_DEPTH` did not see every name, so there the count decides for a binding with no error.
+    if is_cut {
+        for r#ref in refs.keys() {
+            if has_use(*r#ref) {
+                reporter.report(*r#ref, None);
+            }
         }
     }
 }
 
 #[derive(Default)]
 struct Binding {
-    /// The note at the import. Its place in the source is found once for all of the errors of the binding.
+    /// An identifier in the AST names it, and the visit pass counted a use of it.
+    is_named: bool,
+    /// The note at the import, for the first error at an identifier.
     import_note: Option<bun_ast::Data>,
     has_error: bool,
+}
+
+/// What the messages say about the import of a binding.
+struct Import<'r> {
+    name: &'r [u8],
+    /// The name of the export, which a macro remap can give a local name.
+    export: &'r [u8],
+    path: &'r [u8],
+    /// A macro remap replaced a plain import of a package.
+    is_remapped: bool,
+    range: bun_ast::Range,
 }
 
 struct Reporter<'r, 'a> {
@@ -88,9 +109,62 @@ struct Reporter<'r, 'a> {
     bindings: Vec<Binding>,
 }
 
-impl Reporter<'_, '_> {
-    /// An error at `at`, or at the import when no identifier is left and the binding has no error yet.
-    fn report(&mut self, r#ref: Ref, at: Option<Loc>) {
+impl<'r> Reporter<'r, '_> {
+    fn binding(&mut self, r#ref: Ref) -> &mut Binding {
+        let index = self.refs.get_index(&r#ref).expect("a key of the map");
+        &mut self.bindings[index]
+    }
+
+    fn import(&self, index: usize) -> Import<'r> {
+        let (r#ref, data) = (self.refs.keys()[index], self.refs.values()[index]);
+        let symbol = &self.ast.symbols[r#ref.inner_index() as usize];
+        let name: &'r [u8] = symbol.original_name.slice();
+        Import {
+            name,
+            export: data.name.unwrap_or(name),
+            path: self.ast.import_records.as_slice()[data.import_record_id as usize]
+                .path
+                .text,
+            // Only a binding that a macro remap replaces is declared as an import.
+            is_remapped: symbol.kind == ast::symbol::Kind::Import,
+            range: match self.ast.module_scope.members.get(name) {
+                Some(member) if member.ref_.eql(r#ref) => {
+                    js_lexer::range_of_identifier(self.source, member.loc)
+                }
+                _ => bun_ast::Range::NONE,
+            },
+        }
+    }
+
+    /// The note at the import of each binding that is named. `refs` is in the order of the imports, so the log finds each line once.
+    fn locate_imports(&mut self) {
+        for index in 0..self.bindings.len() {
+            if !self.bindings[index].is_named {
+                continue;
+            }
+            let import = self.import(index);
+            let (name, path) = (bstr::BStr::new(import.name), bstr::BStr::new(import.path));
+            let mut removed = Vec::<u8>::new();
+            let _ = if import.is_remapped {
+                write!(
+                    &mut removed,
+                    "Bun removes this import of \"{name}\" because a macro remap replaces it with \"{path}\""
+                )
+            } else {
+                write!(
+                    &mut removed,
+                    "Bun removes this macro import of \"{name}\" from \"{path}\""
+                )
+            };
+            let note = self
+                .log
+                .tracked_range_data(Some(self.source), import.range, removed);
+            self.bindings[index].import_note = Some(note);
+        }
+    }
+
+    /// An error at the identifier `at`, or at the import for a binding that has no error yet. The first error of a binding has the notes.
+    fn report(&mut self, r#ref: Ref, at: Option<MacroRefUse>) {
         let index = self.refs.get_index(&r#ref).expect("a key of the map");
         let is_first = !self.bindings[index].has_error;
         if at.is_none() && !is_first {
@@ -98,71 +172,32 @@ impl Reporter<'_, '_> {
         }
         self.bindings[index].has_error = true;
 
-        let data = self.refs.values()[index];
-        let symbol = &self.ast.symbols[r#ref.inner_index() as usize];
-        let name: &[u8] = symbol.original_name.slice();
-        // Only a binding that a macro remap replaces is declared as an import.
-        let is_remapped = symbol.kind == ast::symbol::Kind::Import;
-        let import_range = match self.ast.module_scope.members.get(name) {
-            Some(member) if member.ref_.eql(r#ref) => {
-                js_lexer::range_of_identifier(self.source, member.loc)
-            }
-            _ => bun_ast::Range::NONE,
-        };
-        // The JSX factory and fragment are names that the source does not write at the element.
-        let is_written = at.is_none_or(|loc| {
-            self.source
-                .contents
-                .get(loc.start as usize..)
-                .is_some_and(|rest| rest.starts_with(name))
-        });
-        let path = self.ast.import_records.as_slice()[data.import_record_id as usize]
-            .path
-            .text;
-        let export = bstr::BStr::new(data.name.unwrap_or(name));
-        let (name, path) = (bstr::BStr::new(name), bstr::BStr::new(path));
-
-        let mut notes = Vec::<bun_ast::Data>::with_capacity(2);
-        if at.is_some() {
-            let source = self.source;
-            let note = self.bindings[index].import_note.get_or_insert_with(|| {
-                let mut removed = Vec::<u8>::new();
-                let _ = if is_remapped {
-                    write!(
-                        &mut removed,
-                        "Bun removes this import of \"{name}\" because a macro remap replaces it with \"{path}\""
-                    )
-                } else {
-                    write!(
-                        &mut removed,
-                        "Bun removes this macro import of \"{name}\" from \"{path}\""
-                    )
-                };
-                bun_ast::range_data(Some(source), import_range, removed)
-            });
-            notes.push(note.clone());
-        }
+        let import = self.import(index);
+        let (name, export) = (bstr::BStr::new(import.name), bstr::BStr::new(import.export));
+        let mut notes = Vec::<bun_ast::Data>::new();
         if is_first {
-            let mut advice = Vec::<u8>::new();
-            if self.macros_run {
-                advice.extend_from_slice(
-                    b"Bun replaces each direct call of a macro with its result. ",
-                );
+            if let Some(note) = self.bindings[index].import_note.take() {
+                notes.push(note);
             }
-            let _ = if !is_written {
+            let replaced: &str = match self.macros_run {
+                true => "Bun replaces each direct call of a macro with its result. ",
+                false => "",
+            };
+            let mut advice = Vec::<u8>::new();
+            let _ = if import.is_remapped {
                 write!(
                     &mut advice,
-                    "\"{name}\" is the JSX factory or fragment of this file, so each JSX element names it. Import the macro under another name."
+                    "{replaced}To use \"{export}\" of the package at runtime, read it from a namespace import of the package, or remove the macro remap."
                 )
-            } else if is_remapped {
+            } else if at.is_some_and(|it| it.is_jsx_name) {
                 write!(
                     &mut advice,
-                    "To use \"{export}\" of the package at runtime, read it from a namespace import of the package, or remove the macro remap."
+                    "Bun does not run a macro for a JSX element. \"{name}\" is the JSX factory or fragment of this file, so each element names it at runtime. Import the macro under another name, and add a regular import that declares \"{name}\"."
                 )
             } else if self.macros_run {
                 write!(
                     &mut advice,
-                    "To inline a value, call a macro that returns it. To use \"{name}\" at runtime, add a regular import of it under another name."
+                    "{replaced}To inline a value, call a macro that returns it. To use \"{name}\" at runtime, add a regular import of it under another name."
                 )
             } else {
                 write!(
@@ -174,15 +209,15 @@ impl Reporter<'_, '_> {
         }
 
         match at {
-            Some(loc) => self.log.add_range_error_fmt_with_notes(
+            Some(found) => self.log.add_range_error_fmt_with_notes(
                 Some(self.source),
-                js_lexer::range_of_identifier(self.source, loc),
+                js_lexer::range_of_identifier(self.source, found.loc),
                 notes.into_boxed_slice(),
                 format_args!("\"{name}\" is a macro import and is not defined at runtime"),
             ),
             None => self.log.add_range_error_fmt_with_notes(
                 Some(self.source),
-                import_range,
+                import.range,
                 notes.into_boxed_slice(),
                 format_args!(
                     "\"{name}\" is a macro import and is not defined at runtime, but this file uses it outside of a call"
@@ -205,39 +240,51 @@ const MAX_DEPTH: u32 = 512;
 struct MacroRefUse {
     r#ref: Ref,
     loc: Loc,
+    /// The parser wrote it: it is the factory or the fragment of a JSX element.
+    is_jsx_name: bool,
 }
 
 struct Locator<'r, 'a> {
     refs: &'r MacroRefs<'a>,
     found: Vec<MacroRefUse>,
+    /// Where the last JSX element starts. The parser puts the factory and the fragment of the element there.
+    jsx_start: i32,
     depth: u32,
+    is_cut: bool,
     stack_check: bun_core::StackCheck,
 }
 
-/// Each identifier that names a key of `refs`, in statement order. One nested deeper than `MAX_DEPTH` is not in it.
-fn locate_macro_refs(parts: &[ast::Part], refs: &MacroRefs<'_>) -> Vec<MacroRefUse> {
+/// Each identifier that names a key of `refs`, in statement order, and whether nesting deeper than `MAX_DEPTH` hid a part.
+fn locate_macro_refs(parts: &[ast::Part], refs: &MacroRefs<'_>) -> (Vec<MacroRefUse>, bool) {
     let mut locator = Locator {
         refs,
         found: Vec::new(),
+        jsx_start: i32::MIN,
         depth: 0,
+        is_cut: false,
         stack_check: bun_core::StackCheck::init(),
     };
     for part in parts {
         locator.stmts(part.stmts.slice());
     }
-    locator.found
+    (locator.found, locator.is_cut)
 }
 
 impl Locator<'_, '_> {
     fn name(&mut self, r#ref: Ref, loc: Loc) {
         if self.refs.contains_key(&r#ref) {
-            self.found.push(MacroRefUse { r#ref, loc });
+            self.found.push(MacroRefUse {
+                r#ref,
+                loc,
+                is_jsx_name: loc.start == self.jsx_start,
+            });
         }
     }
 
     /// Every `enter` that says yes is followed by a `leave`.
     fn enter(&mut self) -> bool {
         if self.depth >= MAX_DEPTH || !self.stack_check.is_safe_to_recurse() {
+            self.is_cut = true;
             return false;
         }
         self.depth += 1;
@@ -451,6 +498,9 @@ impl Locator<'_, '_> {
                     &e.target
                 }
                 Data::ECall(e) => {
+                    if e.was_jsx_element {
+                        self.jsx_start = expr.loc.start;
+                    }
                     chain.push(expr);
                     &e.target
                 }

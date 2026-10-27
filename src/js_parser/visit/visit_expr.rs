@@ -451,11 +451,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // for the Automatic + key-after-spread path and discard the result.
                         if let Some(first) = p.options.jsx.factory.first() {
                             let name: &'a [u8] = p.arena.alloc_slice_copy(first);
-                            let result = p.find_symbol(expr.loc, name).expect("unreachable");
-                            // This lookup leaves no name in the output, so it is not a use of a macro import.
-                            if Self::ALLOW_MACROS && !p.macro_.refs.is_empty() {
-                                p.ignore_usage_if_macro_ref(result.r#ref);
-                            }
+                            let _ = p.find_symbol(expr.loc, name).expect("unreachable");
                         }
                         p.jsx_import(JSXImport::CreateElement, expr.loc)
                     };
@@ -698,22 +694,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if let Some(tag) = e_.tag {
             if Self::ALLOW_MACROS {
                 let ref_ = match &e_.tag.unwrap().data {
-                    Data::EImportIdentifier(ident) => Some((ident.ref_, tag.loc)),
+                    Data::EImportIdentifier(ident) => Some(ident.ref_),
                     Data::EDot(dot) => match &dot.target.data {
-                        Data::EIdentifier(id) => Some((id.ref_, dot.target.loc)),
+                        Data::EIdentifier(id) => Some(id.ref_),
                         _ => None,
                     },
                     _ => None,
                 };
 
-                if let Some((ref_, ref_loc)) = ref_
+                if let Some(ref_) = ref_
                     && !p.options.features.is_macro_runtime
                 {
                     // After a stack overflow, part of the template wasn't visited, so don't run the macro.
                     if let Some(macro_ref_data) = p.macro_.refs.get(&ref_).copied()
                         && !p.reported_stack_overflow.get()
                     {
-                        p.ignore_usage_of_macro_call_target(ref_, ref_loc);
+                        p.ignore_usage(ref_);
                         if p.is_control_flow_dead {
                             *e = p.new_expr(E::Undefined {}, e_.tag.unwrap().loc);
                             return;
@@ -1208,7 +1204,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     .join_with_comma(e_.value);
                 }
 
-                // A macro import is not declared at runtime. A name that a substitution moved here was read as a value before.
+                // A macro import is not declared at runtime. In a revisit the operand is a name that was read as a value before.
                 if Self::ALLOW_MACROS
                     && id_before
                     && !p.macro_.refs.is_empty()
@@ -2333,21 +2329,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 && !p.options.features.is_macro_runtime
                 && !p.reported_stack_overflow.get()
             {
-                let (ref_, ref_loc) = match &e_.target.data {
-                    Data::EImportIdentifier(ident) => (ident.ref_, e_.target.loc),
-                    Data::EDot(dot) => (
+                let ref_ = match &e_.target.data {
+                    Data::EImportIdentifier(ident) => ident.ref_,
+                    Data::EDot(dot) => {
                         dot.target
                             .data
                             .e_identifier()
                             .expect("infallible: variant checked")
-                            .ref_,
-                        dot.target.loc,
-                    ),
+                            .ref_
+                    }
                     _ => unreachable!(),
                 };
 
                 let macro_ref_data = *p.macro_.refs.get(&ref_).unwrap();
-                p.ignore_usage_of_macro_call_target(ref_, ref_loc);
+                p.ignore_usage(ref_);
                 if p.is_control_flow_dead {
                     *e = p.new_expr(E::Undefined {}, e_.target.loc);
                     return;

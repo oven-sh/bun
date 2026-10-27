@@ -814,12 +814,12 @@ describe("macro VM env loader", () => {
   });
 });
 
-// Bun removes a macro import from the output and replaces only a call of it with the macro's result. A reference that
-// is still counted after the visit pass names a binding that the output does not declare, so it is an error wherever
-// the file is transpiled.
+// Bun removes a macro import from the output and replaces only a call of it with the macro's result. A name of it
+// that is left after the visit pass is a binding that the output does not declare, so it is an error wherever the file
+// is transpiled.
 describe("a macro import that is used outside of a call", () => {
   const notDefined = (name: string) => `"${name}" is a macro import and is not defined at runtime`;
-  // Where no identifier is left to point at: the error is at the import.
+  // Where the walk that finds the identifier stops at its depth limit: the error is at the import.
   const notDefinedInFile = (name: string) => `${notDefined(name)}, but this file uses it outside of a call`;
   const importNote = (name: string) => `Bun removes this macro import of "${name}" from "./m.ts"`;
   const replaced = `Bun replaces each direct call of a macro with its result.`;
@@ -827,7 +827,7 @@ describe("a macro import that is used outside of a call", () => {
   const advice = (name: string) =>
     `${replaced} To inline a value, call a macro that returns it. ${runtimeAdvice(name)}`;
   const jsxAdvice = (name: string) =>
-    `${replaced} "${name}" is the JSX factory or fragment of this file, so each JSX element names it. Import the macro under another name.`;
+    `Bun does not run a macro for a JSX element. "${name}" is the JSX factory or fragment of this file, so each element names it at runtime. Import the macro under another name, and add a regular import that declares "${name}".`;
 
   const macroFile = [
     `export function m(x?: unknown) { return 42; }`,
@@ -836,6 +836,7 @@ describe("a macro import that is used outside of a call", () => {
     `export const K = [1, 2, 3].join(",");`,
     `export function boom() { throw new Error("boom"); }`,
     `export function failed() { return new Error("failed"); }`,
+    `export function echo(x: unknown) { return x; }`,
     ``,
   ].join("\n");
   const named = `import { m } from "./m.ts" with { type: "macro" };`;
@@ -858,8 +859,10 @@ describe("a macro import that is used outside of a call", () => {
       "method-call.js": `USE.call(null);`,
       "call-of-call.js": `console.log(USE.bind(null)()());`,
       "unary.js": `console.log(!USE);`,
-      // `typeof USE` alone is "undefined". The operand of these is not the name alone.
+      // `typeof USE` alone is "undefined". The operand of these is not the name alone, so they read its value.
       "typeof-member.js": `console.log(typeof USE.name);`,
+      "typeof-comma.js": `console.log(typeof (0, USE));`,
+      "typeof-conditional.js": `console.log(typeof (true ? USE : 0));`,
       "binary-left.js": `console.log(USE + 1);`,
       "binary-right.js": `console.log(1 + USE);`,
       "logical.js": `console.log(globalThis.x || USE);`,
@@ -1002,18 +1005,17 @@ describe("a macro import that is used outside of a call", () => {
     "property.ts": [`${named} console.log(m.name, m.call(null));`, notDefined("m"), notDefined("m")],
     // The linker used to panic on the property once the call beside it had removed the count of the import.
     "property-beside-call.ts": [`${named} console.log(m.name, m());`, notDefined("m")],
-    // The same, where the visit pass also removes the function that reads the property.
-    "removed-property-beside-call.ts": [
-      `${named} export function g() { (() => m.name); return m(); }`,
-      notDefinedInFile("m"),
-    ],
     "two-imports.ts": [`${named} ${star} console.log(m, ns);`, notDefined("m"), notDefined("ns")],
     // Where the minifier inlines `f`, the call it leaves is not one that the macro replaced.
     "function-alias.ts": [`${named} function g() { const f = m; return f("x"); } console.log(g());`, notDefined("m")],
     // A bundle does not keep this function, and it is still an error.
     "uncalled-function.ts": [`${named} function uncalled() { return m; } console.log("loaded");`, notDefined("m")],
     // Where the minifier inlines `f`, the operand of `typeof` is the value that `f` read.
-    "typeof-alias.ts": [`${named} function g() { const f = m; return typeof f; } console.log(g());`, notDefined("m")],
+    "typeof-alias.ts": [
+      `${named} ${star} function g() { const f = m; return typeof f; } function h() { const f = ns; return typeof f; } console.log(g(), h());`,
+      notDefined("m"),
+      notDefined("ns"),
+    ],
     // Dead code that the output keeps can still name a macro import. That alone is not an error.
     "dead-beside-live.ts": [
       `import { m, o } from "./m.ts" with { type: "macro" }; if (false) { switch (o) {} } console.log(m);`,
@@ -1026,9 +1028,7 @@ describe("a macro import that is used outside of a call", () => {
       notDefined("fn"),
       notDefined("ns"),
     ],
-    // The visit pass counts a use before it removes the node that holds it. The count decides.
-    "removed-node.ts": [`${named} export function g() { void m; }`, notDefinedInFile("m")],
-    // The walk that finds the identifier stops at `MAX_DEPTH`. The error does not depend on it.
+    // The walk that finds the identifier stops at `MAX_DEPTH`. There the count of uses decides.
     "deep.js": [
       `${named} console.log(${Buffer.alloc(600, "[").toString()}m${Buffer.alloc(600, "]").toString()});`,
       notDefinedInFile("m"),
@@ -1040,12 +1040,12 @@ describe("a macro import that is used outside of a call", () => {
     ],
   };
 
-  // The error follows what the visit pass replaces and removes, and that depends on how the file is transpiled.
+  // The error follows what the visit pass replaces and removes, and that depends on how the file is transpiled: a name
+  // that is not in the output is not an error.
   // `minified` is Bun.build() with `minify.syntax`, and `inspect` is an import under the inspector, which folds less.
   type Verdicts = { build: string[]; minified: string[]; import: string[]; inspect: string[]; transform: string[] };
   type Folded = Record<string, { source: string; stdout: string } & Verdicts>;
   const atIdentifier = [notDefined("m")];
-  const atImport = [notDefinedInFile("m")];
   // A call that is replaced once its target is folded to the name of the import.
   const folded: Folded = {
     // The comma is folded away.
@@ -1085,35 +1085,35 @@ describe("a macro import that is used outside of a call", () => {
       inspect: [notDefined("m"), notDefined("m"), notDefined("m"), notDefined("ns")],
       transform: [notDefined("m"), notDefined("m"), notDefined("m"), notDefined("ns")],
     },
-    // A statement with no effect is removed, and its use with it where each statement is a part of its own.
-    "void-statement.ts": {
-      source: `${named} void m; console.log("void-statement", m());`,
-      stdout: "void-statement 42",
-      build: [],
-      minified: [],
-      import: [],
-      inspect: [],
-      transform: atImport,
-    },
   };
-  // The minifier removes what follows a `return`. The reference was counted before that, so the error stays.
+  // The minifier removes what follows a `return`, and the name with it.
   const removed: Folded = {
     "after-return.ts": {
-      source: `${named} function g(a: unknown) { if (a) { return 1; console.log(m); } return m(); } console.log(g(0));`,
-      stdout: "",
+      source: `${named} function g(a: unknown) { if (a) { return 1; console.log(m); } return m(); } console.log("after-return", g(0));`,
+      stdout: "after-return 42",
       build: atIdentifier,
-      minified: atImport,
-      import: atImport,
+      minified: [],
+      import: [],
       inspect: atIdentifier,
       transform: atIdentifier,
     },
     // The linker used to panic on both bundles of this one.
     "property-after-return.ts": {
-      source: `${named} function g(a: unknown) { if (a) { return 1; console.log(m.name); } return m(); } console.log(g(0));`,
-      stdout: "",
+      source: `${named} function g(a: unknown) { if (a) { return 1; console.log(m.name); } return m(); } console.log("property-after-return", g(0));`,
+      stdout: "property-after-return 42",
       build: atIdentifier,
-      minified: atImport,
-      import: atImport,
+      minified: [],
+      import: [],
+      inspect: atIdentifier,
+      transform: atIdentifier,
+    },
+    // `typeof m` is "undefined", so the code after this `return` never runs.
+    "typeof-early-return.ts": {
+      source: `${named} function g() { if (typeof m !== "function") return 1; return m.name; } console.log("typeof-early-return", g());`,
+      stdout: "typeof-early-return 1",
+      build: atIdentifier,
+      minified: [],
+      import: [],
       inspect: atIdentifier,
       transform: atIdentifier,
     },
@@ -1156,6 +1156,17 @@ describe("a macro import that is used outside of a call", () => {
     [
       `import Alias = ns.K; let aliased: Alias | undefined; console.log("type-alias", aliased);`,
       "type-alias undefined",
+    ],
+    // A macro call behind a guard that is always false is dead code: the macro does not run.
+    [`import { boom, echo } from "./m.ts" with { type: "macro" };`, ""],
+    [`if (typeof boom === "function") { console.log(boom()); } console.log("typeof-guard");`, "typeof-guard"],
+    // The operand is a constant for a macro too.
+    [`console.log("typeof-argument", echo(typeof m));`, "typeof-argument undefined"],
+    // The visit pass removes an expression that has no effect, and the name of the macro import with it.
+    [`void m; console.log("void-statement", m());`, "void-statement 42"],
+    [
+      `function removed() { void m; (() => m.name); return m(); } console.log("removed-expression", removed());`,
+      "removed-expression 42",
     ],
     // A use in a branch that the visit pass knows is dead is not in the output.
     [`if (false) console.log(typeof m, m, ns); console.log("dead-branch");`, "dead-branch"],
@@ -1378,10 +1389,12 @@ describe("a macro import that is used outside of a call", () => {
         removed: verdictsOf(removed),
         // The driver takes the files in the order of their names.
         printed: runs
-          ? Object.keys(folded)
-              .sort()
-              .filter(file => folded[file][way].length === 0)
-              .map(file => folded[file].stdout)
+          ? [folded, removed].flatMap(table =>
+              Object.keys(table)
+                .sort()
+                .filter(file => table[file][way].length === 0)
+                .map(file => table[file].stdout),
+            )
           : [],
       });
       expect(exitCode).toBe(0);
@@ -1398,24 +1411,51 @@ describe("a macro import that is used outside of a call", () => {
   });
 
   // With --no-macros, and in node_modules, a call of a macro is an error of its own. Any other reference is still the
-  // name of a removed binding, and the advice names only the regular import.
+  // name of a removed binding, and the advice names only the regular import. A call behind `typeof m === "function"`
+  // is dead code, which is not an error there.
   test.concurrent("where macros do not run, a reference is an error and the advice does not name a call", async () => {
+    const guarded = `typeof m === "function" ? m() : "fallback"`;
+    const live = `typeof m === "function" ? "runtime" : m()`;
+    const dependency = (name: string, value: string) => ({
+      [`node_modules/${name}/package.json`]: JSON.stringify({ name, version: "1.0.0", type: "module" }),
+      [`node_modules/${name}/index.js`]: `import { m } from "../../m.ts" with { type: "macro" };\nexport const f = ${value};\n`,
+      [`uses-${name}.js`]: `import { f } from "${name}";\nconsole.log(f);\n`,
+    });
     using dir = tempDir("macro-value-use", {
       "m.ts": macroFile,
       "alias.js": `${named} const f = m; console.log(f("x"));\n`,
-      "uses-dependency.js": `import { f } from "dependency";\nconsole.log(f);\n`,
-      "node_modules/dependency/package.json": JSON.stringify({ name: "dependency", version: "1.0.0", type: "module" }),
-      "node_modules/dependency/index.js": `import { m } from "../../m.ts" with { type: "macro" };\nexport const f = m;\n`,
+      "guarded.js": `${named} console.log(${guarded});\n`,
+      "live.js": `${named} console.log(${live});\n`,
+      ...dependency("alias", "m"),
+      ...dependency("guarded", guarded),
+      ...dependency("live", live),
     });
-    const [noMacros, dependency] = await Promise.all([
-      run(String(dir), "build", "--no-macros", "--no-bundle", "./alias.js"),
-      run(String(dir), "build", "--target=bun", "./uses-dependency.js"),
+    const noMacros = (file: string) => run(String(dir), "build", "--no-macros", "--no-bundle", file);
+    const bundle = (file: string) => run(String(dir), "build", "--target=bun", file);
+    const [alias, aliasDependency, guardedCall, guardedDependency, liveCall, liveDependency] = await Promise.all([
+      noMacros("./alias.js"),
+      bundle("./uses-alias.js"),
+      noMacros("./guarded.js"),
+      bundle("./uses-guarded.js"),
+      noMacros("./live.js"),
+      bundle("./uses-live.js"),
     ]);
-    for (const { stderr } of [noMacros, dependency]) {
+    for (const { stderr } of [alias, aliasDependency]) {
       expect(stderr).toContain(`error: ${notDefined("m")}`);
       expect(stderr).toContain(`note: ${runtimeAdvice("m")}`);
     }
-    expect([noMacros.exitCode, dependency.exitCode]).toEqual([1, 1]);
+    expect({
+      guardedCall: [guardedCall.lines, guardedCall.stderr],
+      guardedDependency: [guardedDependency.lines.includes(`var f = "fallback";`), guardedDependency.stderr],
+    }).toEqual({
+      guardedCall: [[`console.log("fallback");`], ""],
+      guardedDependency: [true, ""],
+    });
+    expect(liveCall.stderr).toContain("error: Macros are disabled");
+    expect(liveDependency.stderr).toContain("error: For security reasons, macros cannot be run from node_modules.");
+    expect(
+      [alias, aliasDependency, guardedCall, guardedDependency, liveCall, liveDependency].map(it => it.exitCode),
+    ).toEqual([1, 1, 0, 0, 1, 1]);
   });
 
   // The parser names the JSX factory at each element. The classic factory and fragment are in the output. The
@@ -1439,6 +1479,19 @@ describe("a macro import that is used outside of a call", () => {
           `console.log("automatic", React(), (<div {...{ id: "x" }} key="k" />).props.id);`,
         ].join("\n"),
       ],
+      // What the note of the error says to do.
+      [
+        "classic-remedy.jsx",
+        [
+          `/** @jsxRuntime classic */`,
+          `/** @jsx h */`,
+          `/** @jsxFrag Fragment */`,
+          `import { m as hMacro } from "./m.ts" with { type: "macro" };`,
+          `import { h, Fragment } from "./h.js";`,
+          `console.log("classic-remedy", hMacro(), (<div />).type, (<></>).type);`,
+        ].join("\n"),
+      ],
+      ["h.js", `export function h(type, props) { return { type, props }; }\nexport const Fragment = "fragment";`],
     ];
     using dir = tempDir("macro-value-use", {
       ...fixture({ jsx: sources }),
@@ -1451,22 +1504,72 @@ describe("a macro import that is used outside of a call", () => {
         return { errors: JSON.parse(lines.at(-1)!).jsx, printed: lines.slice(0, -1), stderr, exitCode };
       }),
     );
-    // The advice is a note of the first error of a binding only.
+    // The notes are on the first error of a binding only.
     const classic = [
       [notDefined("h"), 5, 13, [importNote("h"), 4, 10], [jsxAdvice("h"), null, null]],
-      [notDefined("h"), 5, 22, [importNote("h"), 4, 10]],
+      [notDefined("h"), 5, 22],
     ];
     // A bundle warns that it takes `createElement` for this element.
     const warning = [expect.stringContaining(`"key" prop after a {...spread}`), 2, 45];
+    const noErrors = { "classic-remedy.jsx": [], "h.js": [] };
     expect({ build, imported }).toEqual({
-      build: { errors: { "automatic.jsx": [warning], "classic.jsx": classic }, printed: [], stderr: "", exitCode: 0 },
+      build: {
+        errors: { "automatic.jsx": [warning], "classic.jsx": classic, ...noErrors },
+        printed: [],
+        stderr: "",
+        exitCode: 0,
+      },
       imported: {
-        errors: { "automatic.jsx": [], "classic.jsx": classic },
-        printed: ["automatic 42 x"],
+        errors: { "automatic.jsx": [], "classic.jsx": classic, ...noErrors },
+        printed: ["automatic 42 x", "classic-remedy 42 div fragment"],
         stderr: "",
         exitCode: 0,
       },
     });
+  });
+
+  // The React Compiler writes the body of a component again. A name that it drops is not in the output. A name that
+  // it writes is not one of the JSX lowering.
+  test.concurrent("with the React Compiler, only a name that the output keeps is an error", async () => {
+    const component = (...body: string[]) =>
+      [
+        named,
+        `export function Component(props) {`,
+        ...body,
+        `}`,
+        `console.log(Component({ a: 1 }).props.children);`,
+        ``,
+      ].join("\n");
+    using dir = tempDir("macro-value-use", {
+      "m.ts": macroFile,
+      "dropped.jsx": component(`  const unused = m;`, `  return <div>{m()}{props.a}</div>;`),
+      "for-in.jsx": component(
+        `  const keys = [];`,
+        `  for (const k in m) keys.push(k);`,
+        `  return <div>{keys}{props.a}</div>;`,
+      ),
+      "node_modules/react/package.json": JSON.stringify({
+        name: "react",
+        version: "0.0.0",
+        type: "module",
+        exports: {
+          "./jsx-dev-runtime": "./jsx.js",
+          "./jsx-runtime": "./jsx.js",
+          "./compiler-runtime": "./compiler.js",
+        },
+      }),
+      "node_modules/react/jsx.js": `export function jsxDEV(type, props) { return { type, props }; }\nexport const jsx = jsxDEV, jsxs = jsxDEV;\n`,
+      "node_modules/react/compiler.js": `export function c(size) { return new Array(size).fill(Symbol.for("react.memo_cache_sentinel")); }\n`,
+    });
+    const build = (file: string) =>
+      run(String(dir), "build", "--react-compiler", "--target=bun", `./${file}`, "--outdir", "out");
+    const [dropped, forIn] = await Promise.all([build("dropped.jsx"), build("for-in.jsx")]);
+    expect({ stderr: dropped.stderr, exitCode: dropped.exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    const ran = await run(String(dir), "out/dropped.js");
+    expect(ran).toEqual({ lines: ["[ 42, 1 ]"], stderr: "", exitCode: 0 });
+    expect(forIn.stderr).toContain(`error: ${notDefined("m")}`);
+    expect(forIn.stderr).toContain(`note: ${advice("m")}`);
+    expect(forIn.exitCode).toBe(1);
   });
 
   // A macro that returns an Error leaves its call in place, and that call was visited as a call. The minifier then
@@ -1510,7 +1613,8 @@ describe("a macro import that is used outside of a call", () => {
     expect([repl.exitCode, alias.exitCode, print.exitCode, coverage.exitCode]).toEqual([0, 1, 0, 0]);
   });
 
-  // The module format of the dev server moves each export into an object before the check.
+  // The module format of the dev server moves each export into an object before the check, so the walk meets the
+  // export clause last. The errors are in the order of the source.
   test.concurrent("the module format of the dev server has the same errors", async () => {
     using dir = tempDir("macro-value-use", {
       "m.ts": macroFile,
@@ -1527,7 +1631,7 @@ describe("a macro import that is used outside of a call", () => {
       [...stderr.matchAll(/^error: (.*)\n +at .*[\\/]([^\\/\n]+)$/gm)].map(
         ([, message, where]) => `${message} at ${where}`,
       );
-    expect(Object.fromEntries(files.map((file, i) => [file, errorsIn(builds[i].stderr).sort()]))).toEqual({
+    expect(Object.fromEntries(files.map((file, i) => [file, errorsIn(builds[i].stderr)]))).toEqual({
       "alias.js": [`${notDefined("m")} at alias.js:2:11`],
       "exports.js": [
         `${notDefined("m")} at exports.js:2:10`,
@@ -1598,10 +1702,10 @@ describe("a macro import that is used outside of a call", () => {
         return e;
       }
     };
-    // The advice is a note of the first error of a binding only.
+    // The notes are on the first error of a binding only.
     const expected = [
       [notDefined("m"), 2],
-      [notDefined("m"), 1],
+      [notDefined("m"), 0],
     ];
     expect(errors(thrownBy(() => transpiler.scan(source)))).toEqual(expected);
     expect(errors(thrownBy(() => transpiler.transformSync(source)))).toEqual(expected);
@@ -1612,22 +1716,59 @@ describe("a macro import that is used outside of a call", () => {
     expect(keepsDeadCode.transformSync(source)).toContain("const f = m;");
   });
 
-  // Each reference is one error. The place of the import in the source is found once for all of them.
-  test("a file with thousands of references has an error at each, with the same note at the import", () => {
-    const count = 20_000;
-    const source = Buffer.alloc(count * 3, "m;\n").toString() + named + "\n";
-    let errors: unknown[][] = [];
+  const errorsOfTransform = (source: string, options: ConstructorParameters<typeof Bun.Transpiler>[0] = {}) => {
     try {
-      new Bun.Transpiler({ loader: "js" }).transformSync(source);
+      new Bun.Transpiler({ loader: "js", ...options }).transformSync(source);
+      return [];
     } catch (e: any) {
-      errors = errorsOf(e?.errors ?? [e]);
+      return errorsOf(e?.errors ?? [e]);
     }
+  };
+
+  // The advice follows the node that names the import, and not how the source spells the name at the error.
+  test("a name that the source spells in another way has the same error and advice", () => {
+    const expected = [[notDefined("m"), 2, 11, [importNote("m"), 1, 10], [advice("m"), null, null]]];
+    expect({
+      escaped: errorsOfTransform(`${named}\nconst f = \\u006d;\n`),
+      defined: errorsOfTransform(`${named}\nconst f = X;\n`, { define: { X: "m" } }),
+    }).toEqual({ escaped: expected, defined: expected });
+  });
+
+  // A decorator is in the call that applies it, which the walk meets after the class.
+  test("the errors are in the order of the source, with the notes on the first", () => {
+    const source = `${named}\n${dec}\n@dec(m) class A { static x = m; }\nconsole.log(A);\n`;
+    expect(errorsOfTransform(source, { loader: "ts", tsconfig })).toEqual([
+      [notDefined("m"), 3, 6, [importNote("m"), 1, 10], [advice("m"), null, null]],
+      [notDefined("m"), 3, 30],
+    ]);
+  });
+
+  // Each reference is one error. The log finds the line of each, and of the import, in one pass over the source.
+  test("a file with thousands of references has an error at each, with the notes on the first", () => {
+    const count = 40_000;
+    const errors = errorsOfTransform(Buffer.alloc(count * 3, "m;\n").toString() + named + "\n");
     // Reference N is on line N. An AggregateError does not hold all of the errors.
     expect([errors[0], errors[1], errors.at(-1)]).toEqual([
       [notDefined("m"), 1, 1, [importNote("m"), count + 1, 10], [advice("m"), null, null]],
-      [notDefined("m"), 2, 1, [importNote("m"), count + 1, 10]],
-      [notDefined("m"), errors.length, 1, [importNote("m"), count + 1, 10]],
+      [notDefined("m"), 2, 1],
+      [notDefined("m"), errors.length, 1],
     ]);
+  });
+
+  test("a file with thousands of macro imports has an error at the reference of each", () => {
+    const count = 10_000;
+    const names = Array.from({ length: count }, (_, i) => `b${i}`);
+    const imports = names.map(name => `import { m as ${name} } from "./m.ts" with { type: "macro" };\n`);
+    const errors = errorsOfTransform(imports.join("") + names.join(";\n") + ";\n");
+    // Import N is on line N, and its reference is `count` lines after it.
+    const at = (n: number) => [
+      notDefined(`b${n}`),
+      count + n + 1,
+      1,
+      [importNote(`b${n}`), n + 1, 10],
+      [advice(`b${n}`), null, null],
+    ];
+    expect([errors[0], errors[1], errors.at(-1)]).toEqual([at(0), at(1), at(errors.length - 1)]);
   });
 
   // A type that is named like a macro import is not a reference to it. The metadata of a decorated member names the

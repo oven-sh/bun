@@ -561,8 +561,6 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// We must be careful to avoid revisiting nodes that have scopes.
     /// A revisited node can be part of a `define` value, which is shared with other parses.
     pub(crate) is_revisit_for_substitution: bool,
-    /// Where the name that the last substitution moved was written, in a file with a macro import. Read in its revisit.
-    pub(crate) substituted_loc: bun_ast::Loc,
 
     pub(crate) method_call_must_be_replaced_with_undefined: bool,
 
@@ -2742,14 +2740,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ) {
                     let prev_substituting = self.is_revisit_for_substitution;
                     self.is_revisit_for_substitution = true;
-                    // A call that was moved was visited as a call before. A name that was moved was not.
-                    if Self::ALLOW_MACROS && !self.macro_.refs.is_empty() {
-                        self.substituted_loc = match replacement.data {
-                            js_ast::ExprData::EIdentifier(_)
-                            | js_ast::ExprData::EImportIdentifier(_) => replacement.loc,
-                            _ => bun_ast::Loc::EMPTY,
-                        };
-                    }
                     // O(n^2) and we will need to think more carefully about
                     // this once we implement syntax compression
                     *expr = result;
@@ -4478,15 +4468,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         self.import_items_for_namespace
             .insert(stmt.namespace_ref, item_refs);
         Ok(self.s(stmt, loc))
-    }
-
-    /// The parse pass counts a decorator-metadata type name as a use. Only uses that the visit pass counts are errors.
-    #[cold]
-    pub(crate) fn reset_macro_use_counts(&mut self) {
-        for i in 0..self.macro_.refs.count() {
-            let r#ref = self.macro_.refs.keys()[i];
-            self.symbols[r#ref.inner_index() as usize].use_count_estimate = 0;
-        }
     }
 
     #[inline]
@@ -6619,16 +6600,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // the value is ignored because that's what the TypeScript compiler does.
     }
 
-    /// Un-counts the identifier at `loc`, the target of a macro call that is replaced.
-    pub(crate) fn ignore_usage_of_macro_call_target(&mut self, r#ref: Ref, loc: bun_ast::Loc) {
-        // A revisit counts nothing. The identifier that the substitution moved here still has its count.
-        let was_revisit = self.is_revisit_for_substitution;
-        self.is_revisit_for_substitution = was_revisit && loc.start != self.substituted_loc.start;
-        self.ignore_usage(r#ref);
-        self.is_revisit_for_substitution = was_revisit;
-    }
-
-    /// Un-counts a use of `ref` that leaves no name in the output, if `ref` is a macro import. Says whether it is one.
+    /// Un-counts the operand of a `typeof` that is folded, if `ref` is a macro import. Says whether it is one.
     #[cold]
     #[inline(never)]
     pub(crate) fn ignore_usage_if_macro_ref(&mut self, r#ref: Ref) -> bool {
@@ -9823,7 +9795,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             span_uses: Vec::new(),
             is_inside_single_stmt_body: false,
             is_revisit_for_substitution: false,
-            substituted_loc: bun_ast::Loc::EMPTY,
             method_call_must_be_replaced_with_undefined: false,
             has_non_local_export_declare_inside_namespace: false,
             await_target: None,

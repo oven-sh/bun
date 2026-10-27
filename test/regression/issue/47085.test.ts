@@ -91,8 +91,7 @@ function tryBuildHelper(syscall: string): string | null {
 
 const fixture = join(import.meta.dir, "47085-fixture.js");
 
-// Runs the fixture under the helper. Returns null when the environment refuses
-// to install a seccomp filter.
+// Runs the fixture under the helper.
 async function runUnderSeccomp(bin: string, errno: number, mode: string, stdin?: string) {
   await using proc = Bun.spawn({
     cmd: [bin, String(errno), bunExe(), fixture, mode],
@@ -104,13 +103,16 @@ async function runUnderSeccomp(bin: string, errno: number, mode: string, stdin?:
   if (stdin !== undefined) proc.stdin.write(stdin);
   proc.stdin.end();
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  if (exitCode === 77) return null;
   return { stdout, stderr, exitCode };
 }
 
 describe.skipIf(!isLinux)("stdio on a socketpair when seccomp denies the socket syscalls", () => {
   const sendto = tryBuildHelper("__NR_sendto");
   const recvfrom = tryBuildHelper("__NR_recvfrom");
+  // Some runners forbid a nested seccomp filter. The helper exits 77 then.
+  const seccompAllowed = sendto != null && spawnSync(sendto, [String(EPERM), "true"], { stdio: "ignore" }).status === 0;
+  const skip = sendto == null || recvfrom == null || !seccompAllowed;
+  const skipReason = sendto == null || recvfrom == null ? "no cc or seccomp headers" : "seccomp not permitted here";
 
   const cases: Array<{ name: string; helper: string | null; mode: string; stdin?: string; expected: object }> = [
     {
@@ -156,18 +158,8 @@ describe.skipIf(!isLinux)("stdio on a socketpair when seccomp denies the socket 
     ["TRAP", TRAP],
   ] as const) {
     for (const c of cases) {
-      test.concurrent(`${c.name} with ${errnoName}`, async () => {
-        if (c.helper == null) {
-          // bun:test has no runtime skip. Say so loudly instead of passing in silence.
-          console.warn(`SKIP ${c.name}: cc or seccomp headers not available`);
-          return;
-        }
-        const out = await runUnderSeccomp(c.helper, errno, c.mode, c.stdin);
-        if (out == null) {
-          console.warn(`SKIP ${c.name}: seccomp not permitted in this environment`);
-          return;
-        }
-        expect(out).toEqual(c.expected);
+      test.concurrent.skipIf(skip)(`${c.name} with ${errnoName}${skip ? ` (${skipReason})` : ""}`, async () => {
+        expect(await runUnderSeccomp(c.helper!, errno, c.mode, c.stdin)).toEqual(c.expected);
       });
     }
   }
